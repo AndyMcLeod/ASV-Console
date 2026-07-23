@@ -223,3 +223,8 @@ browser:
   against real ENC fetched from `/api/enc` (see the many scratchpad `*.js` tests).
 - Delete a stale `mission.json` to pick up new vessel defaults (it persists old
   buffer/arrival).
+- **NDBC station id case:** `activestations.xml` lists coastal / C-MAN ids in
+  **lowercase** (`lwsd1`, `cman4`), but the realtime2 data files are served under
+  **UPPERCASE** (`LWSD1.txt`) — using the raw id 404s and silently drops the nearest
+  local wind stations (near Lewes it fell back to a buoy 55 km out). Ids are now
+  normalised to uppercase at ingestion + at the data URL; keep them that way.

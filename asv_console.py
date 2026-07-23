@@ -1283,7 +1283,10 @@ def _load_ndbc_stations(timeout=30.0):
         la = re.search(r'lat="([-0-9.]+)"', tag)
         lo = re.search(r'lon="([-0-9.]+)"', tag)
         if sid and la and lo:
-            stations.append({"id": sid.group(1), "lat": float(la.group(1)),
+            # NDBC lists coastal/C-MAN ids in lowercase (lwsd1, cman4), but the
+            # realtime2 data files are served under UPPERCASE ids - normalise here so
+            # the id is canonical for the data URL, the display, and the cache.
+            stations.append({"id": sid.group(1).upper(), "lat": float(la.group(1)),
                              "lon": float(lo.group(1))})
     if stations:
         try:
@@ -1297,7 +1300,9 @@ def _load_ndbc_stations(timeout=30.0):
 def _fetch_ndbc_obs(station_id, timeout=15.0):
     """Latest realtime2 row -> {field: float|None}. 'MM' (missing) -> None."""
     try:
-        txt = _env_http_get(NDBC_OBS_URL % station_id, timeout)
+        # realtime2 filenames are UPPERCASE; upper() here too so a stale lowercase
+        # cache (written before id normalisation) still resolves instead of 404ing.
+        txt = _env_http_get(NDBC_OBS_URL % station_id.upper(), timeout)
     except Exception:
         return None
     rows = [ln for ln in txt.splitlines() if ln.strip()]
