@@ -156,6 +156,7 @@
 </head>
 <body>
   <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
+  <div id="lineTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.94);color:#bfe8c8;border:1px solid #2a7a45;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
@@ -760,8 +761,9 @@ function render(){
 }
 
 // signed cross-track distance to the nearest planned line
+let activeXTE = Infinity;                       // boat's distance to the active line (m)
 function updateXTE(){
-  activeLine = -1;
+  activeLine = -1; activeXTE = Infinity;
   if(!asv || !mission.lines.length) return;
   let best = 1e12;
   mission.lines.forEach((L,i)=>{
@@ -771,6 +773,39 @@ function updateXTE(){
     const cx = a.e+t*dx, cy = a.n+t*dy, d = Math.hypot(cx, cy);
     if(d < best){ best = d; activeLine = i; }
   });
+  activeXTE = best;
+}
+function fmtETA(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60;
+  return m>0 ? m+"m "+String(s).padStart(2,"0")+"s" : s+"s"; }
+// point-to-segment distance in pixels
+function distPtSegPx(px,py, ax,ay, bx,by){ const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy||1;
+  let t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/l2)); return Math.hypot(px-(ax+t*dx), py-(ay+t*dy)); }
+// nearest survey line (mission.lines index) within `tol` px of (cx,cy) map-local, or -1
+function surveyLineAtPx(cx, cy, tol){ const o=originPx(); let best=-1, bd=tol||8;
+  mission.lines.forEach((L,i)=>{ const a=worldPx(L.a.lat,L.a.lon,zoom), b=worldPx(L.b.lat,L.b.lon,zoom);
+    const d=distPtSegPx(cx,cy, a.x-o.x,a.y-o.y, b.x-o.x,b.y-o.y); if(d<bd){ bd=d; best=i; } });
+  return best;
+}
+// Operational awareness: hovering the survey line the ASV is CURRENTLY on (during a
+// running survey) shows the time to the end of that line. Only the active line.
+function updateLineTip(e){
+  const tip=$("#lineTip"); const hide=()=>{ tip.style.display="none"; };
+  if(dragging||patDrag||boundDrag!=null||searchDrag){ return hide(); }
+  const running = S && S.run==="running" && S.behavior==="survey";
+  if(!running || !asv || activeLine<0 || !mission.lines.length){ return hide(); }
+  const r=mapEl.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
+  const hovered = surveyLineAtPx(cx, cy, 9);
+  const onLine = activeXTE <= Math.max(15, (mission.arrival_radius_m||5)*4);
+  if(hovered<0 || hovered!==activeLine || !onLine){ return hide(); }
+  const L=mission.lines[activeLine];
+  const hd=(asv.hdg!=null?asv.hdg:0)*Math.PI/180, fe=Math.sin(hd), fn=Math.cos(hd);
+  const aE=toEN(L.a,asv), bE=toEN(L.b,asv);
+  const end=(aE.e*fe+aE.n*fn) > (bE.e*fe+bE.n*fn) ? L.a : L.b;   // endpoint ahead of the boat
+  const dist=distTo({lat:asv.lat,lon:asv.lon}, end);
+  const sog=(S.status&&S.status.sog_kn)||0;
+  const spd=(sog>0.3?sog:(SPEED_KN[mission.speed]||SPEED_KN.survey))*0.514444;
+  tip.textContent="line "+(activeLine+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
+  tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
 
 // --- survey-pattern rendering + editing ---------------------------------- //
@@ -2310,6 +2345,7 @@ window.addEventListener("mousemove", e=>{
   const o = originPx(), r = mapEl.getBoundingClientRect();
   const ll = worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom);
   $("#r_cursor").textContent = fmtLL(ll.lat, ll.lon);
+  updateLineTip(e);                              // time-to-end-of-line when hovering the active line
   if(patDrag){ pat[patDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
@@ -2319,6 +2355,7 @@ window.addEventListener("mousemove", e=>{
   center = worldToLatLon(c.x-(e.clientX-last.x), c.y-(e.clientY-last.y), zoom);
   last = {x:e.clientX,y:e.clientY}; render();
 });
+mapEl.addEventListener("mouseleave", ()=>{ $("#lineTip").style.display="none"; });
 mapEl.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1:-1, e.clientX, e.clientY); }, {passive:false});
 window.addEventListener("wheel", e=>{ if(e.ctrlKey) e.preventDefault(); }, {passive:false});
 function zoomAt(dz, sx, sy){
