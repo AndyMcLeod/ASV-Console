@@ -359,7 +359,8 @@
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
       <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
       <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
-      <div class="vrow"><span class="vk">Mission</span><span class="vv" id="v_missdur" title="Estimated survey duration (coverage + transits + approach) at the plan speed, from the last Punch Out">--</span></div>
+      <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
+      <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
       <div class="vcomms">
         <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
         <div class="vbar"><i id="v_commsbar"></i></div>
@@ -901,7 +902,7 @@ function updatePatReadout(){
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
   patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
-  const md=$("#v_missdur"); if(md) md.textContent="--"; updatePatReadout(); }
+  ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; }); updatePatReadout(); }
 function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
@@ -2219,17 +2220,21 @@ async function punchOut(){
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
     const nRoute=patRoutes.length-nTeardrop, nU=patUnsafe.length;
-    // Estimated mission duration: the run length (survey coverage lines + inter-line
-    // transits, + the approach from the boat) at the plan speed.
-    let runLen=0;
-    for(const seg of patClip) runLen += distTo(seg[0], seg[1]);
+    // Estimated durations at the plan speed, kept SEPARATE:
+    //  - SURVEY = the survey run itself (coverage lines + inter-line transits)
+    //  - APPROACH = the transit from the boat to the survey start (straight-line
+    //    estimate; the real approach is ENC-routed at Upload)
+    let surveyLen=0;
+    for(const seg of patClip) surveyLen += distTo(seg[0], seg[1]);
     for(let k=0;k<patClip.length-1;k++){ const via=patTransits[k]||[];
       const pts=[patClip[k][1], ...via, patClip[k+1][0]];
-      for(let i=1;i<pts.length;i++) runLen += distTo(pts[i-1], pts[i]); }
-    if(asv && patClip.length) runLen += distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]);   // approach
+      for(let i=1;i<pts.length;i++) surveyLen += distTo(pts[i-1], pts[i]); }
+    const approachLen = (asv && patClip.length) ? distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]) : 0;
     const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;               // m/s
-    const durTxt = spd>0 && patClip.length ? `${fmtDur(runLen/spd)} @ ${mission.speed||"survey"} (${(runLen/1000).toFixed(2)} km)` : "--";
-    $("#v_missdur").textContent = durTxt;                                        // vessel-card readout
+    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${mission.speed||"survey"} (${(surveyLen/1000).toFixed(2)} km)` : "--";
+    const approachTxt = spd>0 && approachLen>0 ? `${fmtDur(approachLen/spd)} (${(approachLen/1000).toFixed(2)} km)` : "--";
+    $("#v_surveydur").textContent = surveyTxt;                                   // vessel-card readouts
+    $("#v_approach").textContent = approachTxt;
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
@@ -2237,7 +2242,8 @@ async function punchOut(){
       (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
-      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Mission ~${durTxt}. Add to plan.`;
+      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+
+      `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+`. Add to plan.`;
     if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
