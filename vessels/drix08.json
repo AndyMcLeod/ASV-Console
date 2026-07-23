@@ -2,7 +2,7 @@
   "id": "drix08",
   "name": "DriX H-8 (Exail)",
   "class": "8 m survey USV",
-  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: modeled as DIESEL FUEL (power.type=fuel) - 250 L capacity, speed-cubed burn calibrated to Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn -> ~0.8 L/h idle rising to ~10.4 L/h at 14 kn). The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. SPAWN: the DriX's operating base - UDel College of Earth, Ocean & Environment, Hugh R. Sharp Campus, 700 Pilottown Rd, Lewes DE. Point is in the deep dredged berth (charted ~1.9 m) on the Lewes-Rehoboth Canal off the research pier, ~26 m from the dock (verified in clear water via NOAA ENC, not on land). ESTIMATED: above-water windage height, autopilot gains, search-pattern sizes. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius).",
+  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: modeled as DIESEL FUEL (power.type=fuel) - 250 L capacity, speed-cubed burn calibrated to Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn -> ~0.8 L/h idle rising to ~10.4 L/h at 14 kn). The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. SPAWN: the DriX's operating base - UDel College of Earth, Ocean & Environment, Hugh R. Sharp Campus, 700 Pilottown Rd, Lewes DE. Point is on the Lewes-Rehoboth Canal CENTERLINE in the deep dredged channel (charted ~1.9 m) off the research pier - ~120 m from the pier and ~120 m clearance from either bank (verified via NOAA ENC: in the dredged deep-water area, clear of land/docks). ESTIMATED: above-water windage height, autopilot gains, search-pattern sizes. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius).",
 
   "hull": {
     "loa_m": 7.71,
@@ -53,5 +53,5 @@
     }
   },
 
-  "spawn": { "lat": 38.789000, "lon": -75.160030 }
+  "spawn": { "lat": 38.789650, "lon": -75.160940 }
 }
