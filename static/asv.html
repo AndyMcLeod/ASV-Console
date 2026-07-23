@@ -723,6 +723,7 @@ function render(){
     ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
     ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
   }
+  drawViolation(toScreen);                          // refusal highlight (on top)
   $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
   $("#r_wpts").textContent = mission.waypoints.length;
 }
@@ -1160,6 +1161,16 @@ function bboxAround(ll, radM){
 // local ENU (metres) about a reference lat/lon
 function llEN(lat,lon,ref){ return {e:(lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180), n:(lat-ref.lat)*M_PER_DEG_LAT}; }
 function bbOf(pts){ let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18; for(const p of pts){ if(p.e<x0)x0=p.e; if(p.e>x1)x1=p.e; if(p.n<y0)y0=p.n; if(p.n>y1)y1=p.n; } return {x0,y0,x1,y1}; }
+// A human-readable category for a keep-out, so a refusal can say WHAT blocks it.
+function nogoKind(r, depthbad){
+  if(depthbad) return "water shallower than "+NOGO_MIN_DEPTH_M.toFixed(1)+" m";
+  if(r==="dock"||r==="dock_line") return "a dock / pier";
+  if(r==="hazard_area"||r==="hazard_point") return "a charted hazard";
+  if(r==="dredged") return "a dredged area";
+  if(r==="restricted") return "a restricted area";
+  if(r==="shore_line") return "the shoreline";
+  return "land";
+}
 function buildKeepouts(ref, enf, dr, feats){
   const polys=[], lines=[], points=[];
   for(const f of (feats || enc.features)){ const g=f.geometry, r=f.role;
@@ -1169,9 +1180,10 @@ function buildKeepouts(ref, enf, dr, feats){
     if(depthbad&&!enf.depth) continue;
     if(haz&&!enf.haz) continue;
     if(area&&!enf.area) continue;
-    if(land||depthbad||area) eachRing(g,rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>2) polys.push({ring,bb:bbOf(ring)}); });
-    else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts)}); });
-    else if(haz) eachPoint(g,c=>points.push(llEN(c[1],c[0],ref)));
+    const kind=nogoKind(r, depthbad);
+    if(land||depthbad||area) eachRing(g,rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>2) polys.push({ring,bb:bbOf(ring),kind}); });
+    else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts),kind}); });
+    else if(haz) eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; points.push(q); });
   }
   return {polys, lines, points};
 }
@@ -1190,6 +1202,27 @@ function blocked(p, ko, buf){
   for(const pt of ko.points){ if(Math.abs(p.e-pt.e)>buf||Math.abs(p.n-pt.n)>buf) continue;
     if(Math.hypot(p.e-pt.e,p.n-pt.n)<buf) return true; }
   return false;
+}
+// Like blocked(), but returns the OFFENDING keep-out (kind + geometry) so a refusal
+// can name it and highlight it. null when p is clear.
+function blockedInfo(p, ko, buf){
+  for(const poly of ko.polys){ if(!inBB(p,poly.bb,buf)) continue;
+    if(pinp(p,poly.ring)) return {kind:poly.kind, type:"poly", ring:poly.ring};
+    const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return {kind:poly.kind, type:"poly", ring:poly.ring}; } }
+  for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
+    for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return {kind:ln.kind, type:"line", pts:ln.pts}; } }
+  for(const pt of ko.points){ if(Math.abs(p.e-pt.e)>buf||Math.abs(p.n-pt.n)>buf) continue;
+    if(Math.hypot(p.e-pt.e,p.n-pt.n)<buf) return {kind:pt.kind, type:"point", pt:{e:pt.e,n:pt.n}}; }
+  return null;
+}
+// Walk the DIRECT line from->to and return the first spot that's blocked (+ what by),
+// used to explain/point at a "boxed in" target that itself sits in clear water.
+function firstBlockAlong(fromLL, toLL, ref, ko, buf){
+  const a=llEN(fromLL.lat,fromLL.lon,ref), b=llEN(toLL.lat,toLL.lon,ref);
+  const L=Math.hypot(b.e-a.e,b.n-a.n); const n=Math.max(2,Math.ceil(L/Math.max(2,buf/2)));
+  for(let i=0;i<=n;i++){ const t=i/n; const p={e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t};
+    const info=blockedInfo(p,ko,buf); if(info) return {at:fromEN(p.e,p.n,ref), info}; }
+  return null;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
 function clipLine(a, b, ref, ko, buf){
@@ -1695,9 +1728,12 @@ function keepRight(pts, ref, ko, buf){
 function planNogoRoute(from, to){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
-  if(blocked(llEN(to.lat,to.lon,ref), ko, buf)) return {error:"target is inside / too close to a nogo zone"};
+  const bi = blockedInfo(llEN(to.lat,to.lon,ref), ko, buf);
+  if(bi) return {error:"the target sits in "+bi.kind, reason:{mode:"target", info:bi, at:to}};
   const leg = legPath(from, to, ref, ko, buf);
-  if(!leg) return {error:"no clear route to the target without crossing a nogo zone"};
+  if(!leg){ const fb=firstBlockAlong(from, to, ref, ko, buf);
+    return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
+            reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
   const routed = leg.length > 1;
   const kr = keepRight([{lat:from.lat,lon:from.lon}, ...leg], ref, ko, buf);
   return {route: kr.slice(1), direct: !routed, routed};
@@ -1730,7 +1766,15 @@ function routePlan(start, wps, keepRightAll){
 function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target);
-  if(plan.error){ showBanner("Go-To refused: "+plan.error+". Pick a reachable point in clear water."); flashNote("Go-To refused: "+plan.error); return; }
+  if(plan.error){
+    setViolation(plan.reason);
+    const tip = (plan.reason && plan.reason.mode==="target")
+      ? "Pick a point in open water."
+      : "Try a point on the near side of it, or lower the Buf m / relax the nogo enforce toggles.";
+    showBanner("Go-To refused: "+plan.error+" — highlighted on the chart. "+tip);
+    flashNote("Go-To refused: "+plan.error); render(); return;
+  }
+  clearViolation();
   cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
   runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
   if(plan.routed) showBanner("Go-To: routed around nogo zone(s) via "+plan.route.length+" waypoints.");
@@ -1741,7 +1785,12 @@ function doRTH(){
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); return; }
   if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
-  if(plan.error){ showBanner("RTH refused: "+plan.error+". Home is unreachable without crossing a nogo zone — reposition or clear the obstacle."); flashNote("RTH refused: "+plan.error); return; }
+  if(plan.error){
+    setViolation(plan.reason);
+    showBanner("RTH refused: "+plan.error+" — highlighted on the chart. Reposition Home to clear water, or relax the nogo (Buf m / enforce toggles).");
+    flashNote("RTH refused: "+plan.error); render(); return;
+  }
+  clearViolation();
   cmd("/api/cmd/rth", {route:plan.route});
   runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
   if(plan.routed) showBanner("RTH: routed around nogo zone(s) via "+plan.route.length+" waypoints.");
@@ -1816,6 +1865,47 @@ function drawNogo(toScreen){
   ctx.restore();
 }
 
+// --- nogo violation highlight (why a Go-To / RTH was refused) -------------- //
+// When a route is refused, remember the offending keep-out + the exact spot so the
+// chart can point at it and the banner can name it. Auto-clears after a while.
+let nogoViolation=null, violationTimer=null;
+function setViolation(reason){
+  clearTimeout(violationTimer);
+  if(!reason || !nogo.ready){ nogoViolation=null; return; }
+  const ref=nogo.ref, info=reason.info; let poly=null, pt=null;
+  if(info){
+    if(info.type==="poly")      poly=info.ring.map(q=>fromEN(q.e,q.n,ref));
+    else if(info.type==="line") poly=info.pts.map(q=>fromEN(q.e,q.n,ref));
+    else if(info.type==="point")pt=fromEN(info.pt.e,info.pt.n,ref);
+  }
+  nogoViolation={kind: info?info.kind:"a nogo zone", mode:reason.mode, closed:info&&info.type==="poly",
+                 poly, pt, at:reason.at||reason.target||null};
+  violationTimer=setTimeout(()=>{ nogoViolation=null; render(); }, 12000);
+}
+function clearViolation(){ clearTimeout(violationTimer); if(nogoViolation){ nogoViolation=null; } }
+function drawViolation(toScreen){
+  if(!nogoViolation) return; const V=nogoViolation;
+  ctx.save();
+  const pulse=(0.55+0.35*Math.sin(Date.now()/240)).toFixed(2);
+  if(V.poly && V.poly.length){                       // outline the offending feature
+    ctx.beginPath(); V.poly.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+    if(V.closed) ctx.closePath();
+    if(V.closed){ ctx.fillStyle="rgba(255,90,60,0.16)"; ctx.fill(); }
+    ctx.strokeStyle="rgba(255,90,60,"+pulse+")"; ctx.lineWidth=3; ctx.stroke();
+  }
+  const mk=V.at || V.pt;                              // the exact blocked spot
+  if(mk){ const s=toScreen(mk.lat,mk.lon);
+    ctx.beginPath(); ctx.arc(s.x,s.y,7,0,2*Math.PI);
+    ctx.fillStyle="rgba(255,70,50,0.92)"; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(s.x-3,s.y-3); ctx.lineTo(s.x+3,s.y+3); ctx.moveTo(s.x+3,s.y-3); ctx.lineTo(s.x-3,s.y+3);
+    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke();
+    const label=(V.mode==="target"?"target in ":"blocked by ")+V.kind;
+    ctx.font="bold 11px Consolas,monospace"; const tw=ctx.measureText(label).width;
+    ctx.fillStyle="rgba(20,10,4,0.85)"; ctx.fillRect(s.x+11, s.y-9, tw+8, 16);
+    ctx.fillStyle="#ff8a5c"; ctx.fillText(label, s.x+15, s.y+3);
+  }
+  ctx.restore();
+}
 // Make sure the shared nogo model's fetched features cover the survey area; if
 // not (survey drawn outside the operating area), extend the fetch to their union.
 // The transit re-extract center stays the vessel so it never ping-pongs.

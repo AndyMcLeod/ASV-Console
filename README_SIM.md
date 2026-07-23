@@ -128,6 +128,12 @@ link (sim or real) only obeys. Order matters:
 there + hold), **Transit** (`TRAN`, draw a line → **Follow**), **Hold** (station-keep
 here), **Return-to-Home** (drive to home + hold; home auto-set at launch or via **Set
 Home**). All are routed clear of the ENC nogo model, or refuse an unreachable target.
+When a Go-To / RTH is refused, the console **names and highlights the specific
+obstruction** on the chart — it says whether the *target itself* sits in a nogo
+(e.g. "target sits in water shallower than 2.5 m" / "a dock / pier" / "the
+shoreline" / "a restricted area") or the target is clear but *boxed in* (the first
+crossing along the direct path is marked), pulses the offending feature red, and
+drops an ✕ marker at the exact blocked spot.
 
 Each gate that blocks a command returns a clear reason (HTTP **409** on the API),
 e.g. *"ARM before uploading a plan"*, *"add at least one waypoint first"*.
