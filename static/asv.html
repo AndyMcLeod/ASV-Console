@@ -1774,6 +1774,49 @@ function keepRight(pts, ref, ko, buf){
 // Plan an ENC-aware path from -> to ending at `to`. {route} on success, {error}
 // when the target sits in a nogo zone or no clear route exists (refuse + warn).
 // Keeps to the starboard side of channels (Rule 9).
+// GATE-PAIRING: pair the lateral marks into channel GATES (a port-hand + a
+// starboard-hand mark straddling the channel), and where a route exits through the
+// OUTERMOST gate, steer it through the gate CENTRE and STAND ON past it (by the gate
+// width) along the channel axis before it turns - so the fairway projects past the
+// seaward buoys instead of cutting the mouth. No-op when there are no gates, the
+// route doesn't use one, or the projected legs aren't clear (falls back to the input).
+function pairGates(marks){
+  const ports=(marks||[]).filter(m=>m.side<0), stbds=(marks||[]).filter(m=>m.side>0), gates=[];
+  for(const p of ports){ let best=null, bd=1e9;
+    for(const s of stbds){ const d=Math.hypot(s.e-p.e, s.n-p.n); if(d>=15 && d<=400 && d<bd){ bd=d; best=s; } }
+    if(best){ const C={e:(p.e+best.e)/2, n:(p.n+best.n)/2}, gx=(best.e-p.e)/bd, gy=(best.n-p.n)/bd;
+      gates.push({C, width:bd, axis:[-gy, gx]}); } }   // axis = perpendicular to the gate line
+  return gates;
+}
+function gateProject(pathLL, ref, ko, buf){
+  const gates = pairGates(ko && ko.marks); if(pathLL.length<2 || !gates.length) return pathLL;
+  const en = pathLL.map(p=>llEN(p.lat,p.lon,ref));
+  const A=en[0], B=en[en.length-1];
+  let rte=B.e-A.e, rtn=B.n-A.n; const rl=Math.hypot(rte,rtn)||1; rte/=rl; rtn/=rl;   // overall outbound
+  const clearEN=(P,Q)=>{ const L=Math.hypot(Q.e-P.e,Q.n-P.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
+    for(let k=0;k<=n;k++){ const t=k/n; if(blocked({e:P.e+(Q.e-P.e)*t,n:P.n+(Q.n-P.n)*t},ko,buf)) return false; } return true; };
+  const distToPath=(C)=>{ let d=1e9; for(let i=1;i<en.length;i++){ const a=en[i-1],b=en[i],dx=b.e-a.e,dy=b.n-a.n,l2=dx*dx+dy*dy||1;
+    const t=Math.max(0,Math.min(1,((C.e-a.e)*dx+(C.n-a.n)*dy)/l2)); d=Math.min(d,Math.hypot(C.e-(a.e+t*dx),C.n-(a.n+t*dy))); } return d; };
+  // pick the OUTERMOST gate the route actually uses (centre near the path, ordered by
+  // along-route distance) and the outbound axis direction (aligned with the route).
+  let pick=null;
+  for(const g of gates){ if(distToPath(g.C) > g.width*1.2) continue;
+    let ax=g.axis[0], ay=g.axis[1]; if(ax*rte+ay*rtn < 0){ ax=-ax; ay=-ay; }
+    const along=(g.C.e-A.e)*rte+(g.C.n-A.n)*rtn;
+    if(!pick || along>pick.along) pick={g,ax,ay,along}; }
+  if(!pick) return pathLL;
+  const g=pick.g, ax=pick.ax, ay=pick.ay;
+  const outPt={e:g.C.e+ax*g.width, n:g.C.n+ay*g.width};    // stand on ~one gate-width past the centre
+  const proj=p=>(p.e-A.e)*rte+(p.n-A.n)*rtn;
+  const cAlong=proj(g.C), outAlong=proj(outPt);
+  if(proj(B) <= outAlong) return pathLL;                    // target isn't past the gate -> don't project (no backtrack)
+  const pre=en.filter(p=>proj(p) < cAlong - g.width*0.3);   // keep the run up to the gate
+  const post=en.filter(p=>proj(p) > outAlong);              // ... and after the stand-on
+  if(!pre.length) pre.push(A); if(!post.length) post.push(B);
+  const seq=[...pre, g.C, outPt, ...post];                  // through the gate, stand on, then on
+  for(let i=1;i<seq.length;i++){ if(!clearEN(seq[i-1], seq[i])) return pathLL; }   // any obstruction -> keep original
+  return seq.map(p=>fromEN(p.e,p.n,ref));
+}
 function planNogoRoute(from, to){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
@@ -1784,7 +1827,8 @@ function planNogoRoute(from, to){
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
   const routed = leg.length > 1;
-  const kr = keepRight([{lat:from.lat,lon:from.lon}, ...leg], ref, ko, buf);
+  const path = gateProject([{lat:from.lat,lon:from.lon}, ...leg], ref, ko, buf);  // project past the outer gate
+  const kr = keepRight(path, ref, ko, buf);
   return {route: kr.slice(1), direct: !routed, routed};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
