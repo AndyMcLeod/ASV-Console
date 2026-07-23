@@ -157,7 +157,10 @@
 <body>
   <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
   <div id="lineTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.94);color:#bfe8c8;border:1px solid #2a7a45;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
-  <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;max-height:44vh;overflow:auto;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;padding:8px 10px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);"></div>
+  <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
+    <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
+    <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
+  </div>
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
@@ -836,13 +839,14 @@ function buildLineTable(){ const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
     return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function renderLineTable(){
-  const el=$("#lineTablePanel"); if(!el || el.style.display==="none") return;
+  const panel=$("#lineTablePanel"); if(!panel || panel.style.display==="none") return;
+  const el=$("#lineTableBody"); if(!el) return;   // header ("Survey lines" + drag grip) is a sibling, kept intact
   const t=buildLineTable();
-  if(!t.length){ el.innerHTML="<b style='color:var(--ink)'>Survey lines</b><br>Punch Out + Add to plan to populate."; return; }
+  if(!t.length){ el.innerHTML="Punch Out + Add to plan to populate."; return; }
   const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
   const rows=t.map(r=>`<tr><td style="${cell}">${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
-  el.innerHTML=`<b style="color:var(--ink)">Survey lines</b> · ${mission.speed||"survey"} speed`+
+  el.innerHTML=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
 }
@@ -2616,6 +2620,31 @@ window.addEventListener("mousemove", e=>{
 window.addEventListener("mouseup", ()=>{
   if(!survDrag) return; survDrag = null;
   try{ localStorage.setItem(SURVPANEL_KEY, JSON.stringify({left: parseFloat(linePanelEl.style.left), top: parseFloat(linePanelEl.style.top)})); }catch(e){}
+});
+
+// --- draggable survey-lines (LINES) card --------------------------------- //
+// Same drag/persist pattern as the SURV panel. The card starts bottom-anchored
+// (bottom:44px); dragging switches it to left/top (bottom -> auto) so it can go
+// anywhere over the chart. Only the header grabs — the body scrolls freely.
+const LINESPANEL_KEY = "asv_linespanel_pos_v1";
+const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
+(function(){ try{ const p = JSON.parse(localStorage.getItem(LINESPANEL_KEY));
+  if(p && p.left!=null && p.top!=null){ lineTableEl.style.left = p.left+"px"; lineTableEl.style.top = p.top+"px"; lineTableEl.style.bottom = "auto"; }
+}catch(e){} })();
+let lineTableDrag = null;
+lineTableHead.addEventListener("mousedown", e=>{ e.stopPropagation();
+  const r = lineTableEl.getBoundingClientRect(); lineTableDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+window.addEventListener("mousemove", e=>{
+  if(!lineTableDrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = e.clientX - lineTableDrag.dx, top = e.clientY - lineTableDrag.dy;
+  left = Math.max(0, Math.min(mr.width - lineTableEl.offsetWidth, left));
+  top  = Math.max(0, Math.min(mr.height - lineTableEl.offsetHeight, top));
+  lineTableEl.style.left = left+"px"; lineTableEl.style.top = top+"px"; lineTableEl.style.bottom = "auto";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!lineTableDrag) return; lineTableDrag = null;
+  try{ localStorage.setItem(LINESPANEL_KEY, JSON.stringify({left: parseFloat(lineTableEl.style.left), top: parseFloat(lineTableEl.style.top)})); }catch(e){}
 });
 
 function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 1 m)
