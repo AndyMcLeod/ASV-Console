@@ -1828,11 +1828,12 @@ function doTransit(){
   runRoute = plan.route; runUnsafe = plan.unroutable || [];   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
-    render();
-    showBanner(plan.unroutable.length+" transit leg(s) cross a nogo zone with NO clear detour (red) — NOT started. Edit the line.");
-    flashNote("Transit blocked: "+plan.unroutable.length+" unroutable leg(s).");
+    const reasons=legReasons(plan.unroutable); setViolations(reasons); render();
+    showBanner(plan.unroutable.length+" transit leg(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — NOT started. Edit the line.");
+    flashNote("Transit blocked: "+plan.unroutable.length+" leg(s) — "+kindsSummary(reasons)+".");
     return;
   }
+  clearViolation();
   cmd("/api/cmd/transit", {route: plan.route});
   const added = plan.route.length - transit.length;
   if(added>0) showBanner("Transit: routed clear of ENC obstacles ("+added+" detour waypoint(s) added).");
@@ -1865,44 +1866,71 @@ function drawNogo(toScreen){
   ctx.restore();
 }
 
-// --- nogo violation highlight (why a Go-To / RTH was refused) -------------- //
-// When a route is refused, remember the offending keep-out + the exact spot so the
-// chart can point at it and the banner can name it. Auto-clears after a while.
-let nogoViolation=null, violationTimer=null;
-function setViolation(reason){
-  clearTimeout(violationTimer);
-  if(!reason || !nogo.ready){ nogoViolation=null; return; }
+// --- nogo violation highlight (why a route / leg was refused) -------------- //
+// When a route is refused (Go-To / RTH) or one or more plan legs can't be routed
+// clear (Transit / Survey Upload / Punch Out), remember the offending keep-out(s)
+// + the exact spot(s) so the chart points at them and the banner names them.
+// Supports MANY violations (a survey can have several unroutable transits).
+let nogoViolations=[], violationTimer=null;
+function violationFromReason(reason){
+  if(!reason) return null;
   const ref=nogo.ref, info=reason.info; let poly=null, pt=null;
   if(info){
     if(info.type==="poly")      poly=info.ring.map(q=>fromEN(q.e,q.n,ref));
     else if(info.type==="line") poly=info.pts.map(q=>fromEN(q.e,q.n,ref));
     else if(info.type==="point")pt=fromEN(info.pt.e,info.pt.n,ref);
   }
-  nogoViolation={kind: info?info.kind:"a nogo zone", mode:reason.mode, closed:info&&info.type==="poly",
-                 poly, pt, at:reason.at||reason.target||null};
-  violationTimer=setTimeout(()=>{ nogoViolation=null; render(); }, 12000);
+  return {kind: info?info.kind:"a nogo zone", mode:reason.mode, closed:!!(info&&info.type==="poly"),
+          poly, pt, at:reason.at||reason.target||null};
 }
-function clearViolation(){ clearTimeout(violationTimer); if(nogoViolation){ nogoViolation=null; } }
+function setViolations(reasons){
+  clearTimeout(violationTimer);
+  reasons = (reasons||[]).filter(Boolean);
+  if(!nogo.ready || !reasons.length){ nogoViolations=[]; return; }
+  const seen=new Set(); nogoViolations=[];
+  for(const r of reasons){ const v=violationFromReason(r); if(!v) continue;   // dedupe near-identical spots
+    const key=v.kind+"|"+(v.at?v.at.lat.toFixed(4)+","+v.at.lon.toFixed(4):"");
+    if(seen.has(key)) continue; seen.add(key); nogoViolations.push(v); }
+  violationTimer=setTimeout(()=>{ nogoViolations=[]; render(); }, 12000);
+}
+function setViolation(reason){ setViolations(reason?[reason]:[]); }   // single (Go-To / RTH)
+function clearViolation(){ clearTimeout(violationTimer); nogoViolations=[]; }
+// Offending feature + spot for one unroutable leg a->b (its direct line is blocked).
+function legReason(a, b){
+  if(!nogo.ready) return null;
+  const fb=firstBlockAlong(a, b, nogo.ref, nogo.ko, nogo.buffer);
+  return fb ? {mode:"leg", info:fb.info, at:fb.at} : null;
+}
+function legReasons(legs){ return (legs||[]).map(([a,b])=>legReason(a,b)).filter(Boolean); }
+// English list of the distinct offending feature kinds, for the banner.
+function kindsSummary(reasons){
+  const kinds=[...new Set((reasons||[]).map(r=>r&&r.info?r.info.kind:null).filter(Boolean))];
+  if(!kinds.length) return "a nogo zone";
+  if(kinds.length===1) return kinds[0];
+  if(kinds.length===2) return kinds[0]+" and "+kinds[1];
+  return kinds.slice(0,-1).join(", ")+", and "+kinds[kinds.length-1];
+}
 function drawViolation(toScreen){
-  if(!nogoViolation) return; const V=nogoViolation;
+  if(!nogoViolations.length) return;
   ctx.save();
   const pulse=(0.55+0.35*Math.sin(Date.now()/240)).toFixed(2);
-  if(V.poly && V.poly.length){                       // outline the offending feature
-    ctx.beginPath(); V.poly.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
-    if(V.closed) ctx.closePath();
-    if(V.closed){ ctx.fillStyle="rgba(255,90,60,0.16)"; ctx.fill(); }
-    ctx.strokeStyle="rgba(255,90,60,"+pulse+")"; ctx.lineWidth=3; ctx.stroke();
-  }
-  const mk=V.at || V.pt;                              // the exact blocked spot
-  if(mk){ const s=toScreen(mk.lat,mk.lon);
-    ctx.beginPath(); ctx.arc(s.x,s.y,7,0,2*Math.PI);
-    ctx.fillStyle="rgba(255,70,50,0.92)"; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(s.x-3,s.y-3); ctx.lineTo(s.x+3,s.y+3); ctx.moveTo(s.x+3,s.y-3); ctx.lineTo(s.x-3,s.y+3);
-    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke();
-    const label=(V.mode==="target"?"target in ":"blocked by ")+V.kind;
-    ctx.font="bold 11px Consolas,monospace"; const tw=ctx.measureText(label).width;
-    ctx.fillStyle="rgba(20,10,4,0.85)"; ctx.fillRect(s.x+11, s.y-9, tw+8, 16);
-    ctx.fillStyle="#ff8a5c"; ctx.fillText(label, s.x+15, s.y+3);
+  for(const V of nogoViolations){
+    if(V.poly && V.poly.length){                     // outline the offending feature
+      ctx.beginPath(); V.poly.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+      if(V.closed){ ctx.closePath(); ctx.fillStyle="rgba(255,90,60,0.16)"; ctx.fill(); }
+      ctx.strokeStyle="rgba(255,90,60,"+pulse+")"; ctx.lineWidth=3; ctx.stroke();
+    }
+    const mk=V.at || V.pt;                            // the exact blocked spot
+    if(mk){ const s=toScreen(mk.lat,mk.lon);
+      ctx.beginPath(); ctx.arc(s.x,s.y,7,0,2*Math.PI);
+      ctx.fillStyle="rgba(255,70,50,0.92)"; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(s.x-3,s.y-3); ctx.lineTo(s.x+3,s.y+3); ctx.moveTo(s.x+3,s.y-3); ctx.lineTo(s.x-3,s.y+3);
+      ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke();
+      const label=(V.mode==="target"?"target in ":"blocked by ")+V.kind;
+      ctx.font="bold 11px Consolas,monospace"; const tw=ctx.measureText(label).width;
+      ctx.fillStyle="rgba(20,10,4,0.85)"; ctx.fillRect(s.x+11, s.y-9, tw+8, 16);
+      ctx.fillStyle="#ff8a5c"; ctx.fillText(label, s.x+15, s.y+3);
+    }
   }
   ctx.restore();
 }
@@ -2036,9 +2064,10 @@ async function punchOut(){
       (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Add to plan.`;
-    if(nU) showBanner(`${nU} transit(s) could NOT be routed around a keep-out (RED). Edit the plan — the ASV would cross the obstacle on those legs.`);
-    else if(nRoute) showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`);
-    else showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan.");
+    if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
+      showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
+    else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
+    else { clearViolation(); showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan."); }
     updatePatReadout(); render();
   }catch(e){ $("#sp_hint").textContent="Punch Out failed: "+e; }
   finally{ punchBusy=false; $("#sp_punch").disabled=false; }
@@ -2348,12 +2377,13 @@ $("#b_upload").onclick = ()=>{
   if(runUnsafe.length){
     // An unroutable transit would drive the boat straight across a nogo zone.
     // REFUSE the upload (plan stays not-uploaded, so Start stays gated) and show
-    // WHERE (red legs) so the operator can reposition / edit. RC remains master.
-    render();
-    showBanner(runUnsafe.length+" transit(s) cross a nogo zone with NO clear detour (red) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
-    flashNote("Upload blocked: "+runUnsafe.length+" unroutable transit(s).");
+    // WHAT + WHERE (named highlight + red legs) so the operator can reposition / edit.
+    const reasons=legReasons(runUnsafe); setViolations(reasons); render();
+    showBanner(runUnsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
+    flashNote("Upload blocked: "+runUnsafe.length+" transit(s) — "+kindsSummary(reasons)+".");
     return;
   }
+  clearViolation();
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   cmd("/api/cmd/upload", {route: plan.route});
