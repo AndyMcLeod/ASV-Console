@@ -732,6 +732,14 @@ function render(){
     }
     ctx.restore();
   }
+  // Survey-line TURN waypoints — the line endpoints (reversals) and the teardrop
+  // arc points between lines — carry no W# label: the line already has an L# label,
+  // and the arc is a dense smooth loop whose per-point numbers are pure clutter. The
+  // diamonds still draw. Non-survey waypoints (search-route / manually placed) keep
+  // their labels. Endpoints match by exact coordinate (waypoint & line endpoints
+  // share source values and stay synced on drag); arc points carry a `turn` flag.
+  const turnKeys = new Set();
+  mission.lines.forEach(L=>{ turnKeys.add(L.a.lat+","+L.a.lon); turnKeys.add(L.b.lat+","+L.b.lon); });
   mission.waypoints.forEach((p,i)=>{
     const s = toScreen(p.lat,p.lon);
     const reached = asv && (i < (window._wpIndex||0));
@@ -739,7 +747,8 @@ function render(){
     ctx.moveTo(s.x,s.y-6); ctx.lineTo(s.x+6,s.y); ctx.lineTo(s.x,s.y+6); ctx.lineTo(s.x-6,s.y);
     ctx.closePath(); ctx.fillStyle= reached ? "#3fbf6b" : "#ff9a3c"; ctx.fill();
     ctx.lineWidth=1.5; ctx.strokeStyle="#160d02"; ctx.stroke();
-    ctx.fillStyle="#ffb066"; ctx.fillText("W"+(i+1), s.x+8, s.y+4);
+    const isTurn = p.turn || turnKeys.has(p.lat+","+p.lon);
+    if(!isTurn){ ctx.fillStyle="#ffb066"; ctx.fillText("W"+(i+1), s.x+8, s.y+4); }
   });
   if(S.home){                                     // home / launch point
     const h = toScreen(S.home.lat, S.home.lon);
@@ -982,8 +991,8 @@ function commitPattern(){
   lines.forEach((l,k)=>{
     mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon}});
     mission.waypoints.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon});
-    if(transits && k<lines.length-1 && transits[k])       // interleave the detour
-      transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon}));
+    if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
+      transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
   });
   resetPattern(); updateXTE(); saveMission(); render();
 }
@@ -2216,7 +2225,12 @@ function teardropTurn(E, F, hE, ref, ko, buf, minR){
   for(const d of [1,-1]){ const am=a0+d*Math.PI/2;
     const proj=Math.cos(am)*uE.e + Math.sin(am)*uE.n;
     if(proj>bestProj){ bestProj=proj; dir=d; } }
-  const n=Math.max(4, Math.ceil(Math.PI*R/1.5));       // ~1.5 m arc spacing
+  // ~3 m arc spacing (min 4 segments): enough to render a smooth semicircle and let
+  // the follower's approach radius round it, at roughly half the waypoint count of a
+  // 1.5 m arc. Chords cut INBOARD (away from the outboard-hugged nogo) and each is
+  // legClear-validated below, so a sparser arc stays clear. Small-boat turns (small R)
+  // sit on the 4-segment floor and are unchanged.
+  const n=Math.max(4, Math.ceil(Math.PI*R/3));
   const pts=[];
   for(let i=1;i<n;i++){ const ang=a0+dir*Math.PI*(i/n);
     pts.push(en2ll(C.e+R*Math.cos(ang), C.n+R*Math.sin(ang))); }

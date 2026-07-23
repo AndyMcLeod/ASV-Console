@@ -206,7 +206,10 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
 3. **Punch Out (optional):** trim the lines to ENC-clear water; the turns become
    smooth **teardrops** (radius-clamped to what the boat can hold at the run speed —
    tighter spacing/higher speed falls back to a straight hop) and the lines shorten a
-   touch to give the turns room.
+   touch to give the turns room. Turn waypoints (reversals + teardrop arc) draw
+   **unlabeled** — the line's own `L#` label identifies it — and the arc uses a
+   coarse (~3 m) point spacing, so a wide survey keeps only a handful of waypoints per
+   turn.
 4. **Set run params:** arrival radius, speed (Low/Survey/High), and **completion**
    (Complete / Loiter / Repeat) in the command bar.
 5. **Arm → Upload → Start.** Upload routes the transit to the survey clear of

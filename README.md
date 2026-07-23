@@ -127,7 +127,11 @@ with the survey-planning and command steps below.
    to give the turn room within cleared water. A teardrop is only used where its
    radius is one the boat can actually hold at the run speed; for spacing/speed too
    tight to hold, the turn stays a straight hop (the readout says so) rather than a
-   loop the boat would overshoot. Turns and any longer transit are
+   loop the boat would overshoot. The turn waypoints — the line reversals and the
+   teardrop's arc points — are drawn **unlabeled** (each line already carries its own
+   `L#` label, so per-point `W#` numbers are just clutter), and the arc is sampled
+   coarsely (~3 m) so a wide-spacing survey doesn't flood the plan with turn
+   waypoints. Turns and any longer transit are
    **nogo-validated**: a transit that would cross a keep-out is **auto-routed around
    it** (grid A\*, drawn amber); only a transit with *no* clear route stays **red**
    and flagged.
