@@ -43,7 +43,7 @@
 
   "planning": {
     "nogo_buffer_m": 5.0,
-    "under_keel_clearance_m": 0.5,
+    "under_keel_clearance_m": 0.3,
     "search": {
       "expbox_step_m": 40,
       "sector_radius_m": 100,
