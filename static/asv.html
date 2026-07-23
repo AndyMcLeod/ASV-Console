@@ -184,7 +184,7 @@
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">&minus;</button>
     <button class="ctl small on" id="follow" title="Keep the boat centred">BOAT</button>
-    <button class="ctl small" id="wptBtn" title="Waypoint / edit mode: drag a waypoint to move it, click a waypoint to delete, click a survey line to delete it, click open water to add. Edit a punched plan before Upload.">WPT</button>
+    <button class="ctl small" id="wptBtn" title="Waypoint / edit mode: drag a waypoint to move it, click a waypoint to delete, SHIFT-click a survey line to delete it, click open water to add. Edit a punched plan before Upload.">WPT</button>
     <button class="ctl small" id="lineBtn" title="Survey pattern (CAMP 3-click): click start corner, opposite corner, then a point that sets line spacing + direction. Lines fill the box automatically.">SURV</button>
     <button class="ctl small" id="bndBtn" title="Survey-area boundary (CAMP-style): click the chart to drop points, click the first point to close. Survey lines are clipped to this arbitrary polygon.">BND</button>
     <button class="ctl small" id="srchBtn" title="Search patterns (Project-11 style): Expanding box / Sector / Parallel search. Click a datum, set params, Add to plan.">SRCH</button>
@@ -2372,10 +2372,11 @@ window.addEventListener("mouseup", e=>{
   const o = originPx(), r = mapEl.getBoundingClientRect();
   const ll = worldToLatLon(o.x+(e.clientX-r.left), o.y+(e.clientY-r.top), zoom);
   if(mode === "wpt"){
-    // (clicking a waypoint to delete is handled by the wpDrag path above.) Here:
-    // click a survey LINE to delete it (+ its endpoint waypoints); click open water to ADD a waypoint.
-    const li = surveyLineAtPx(e.clientX-r.left, e.clientY-r.top, 8);
-    if(li >= 0) deleteLineByIndex(li);
+    // (clicking a waypoint to delete is handled by the wpDrag path above.)
+    // SHIFT-click a survey LINE to delete it (+ its endpoint waypoints); a plain
+    // click adds a waypoint - so adding near a line no longer deletes it.
+    if(e.shiftKey){ const li = surveyLineAtPx(e.clientX-r.left, e.clientY-r.top, 8);
+      if(li >= 0) deleteLineByIndex(li); }
     else mission.waypoints.push({lat:ll.lat, lon:ll.lon});
     saveMission(); render();
   } else if(mode === "survey"){
