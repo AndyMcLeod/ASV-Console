@@ -59,6 +59,13 @@ fuel %/endurance/range. Validation branches on the type. The DriX is `fuel`.
 planning.under_keel_clearance_m` (a deep-draft boat avoids more shallow water). The
 client reads it via `/api/vessel` and **re-extracts** the nogo model on a switch.
 
+**COLREGS Rule 9 keep-right** — transits offset to the starboard side of a channel
+(a lane 20% right of center). It engages only where both channel walls are within a
+detection reach; that reach is `planning.channel_reach_m` (optional; falls back to
+`nogo_buffer_m*10`, the tight-marina scale). The DriX sets 120 m so it keeps right
+in the wide (~150 m) Lewes dredged fairway; small boats in tight marinas keep the
+default.
+
 - **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
   load (missing/mistyped field → clear, path-pointed error; a bad file never runs
   with placeholder physics). `apply_vessel()` publishes the values to the module

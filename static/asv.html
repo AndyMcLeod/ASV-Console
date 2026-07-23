@@ -462,6 +462,10 @@ let water = {}, waterOffset = 0;
 // (charted depth + live water-level offset). Fetched once around the first fix.
 let NOGO_MIN_DEPTH_M = 1.0;                     // corrected-depth nogo floor (vessel-driven: draft + under-keel clearance)
 let NOGO_BUFFER_M = 3;                          // keep-clear buffer default (vessel-derived via loadVessel)
+// COLREGS Rule 9 keep-right wall-detection reach (m): a channel/fairway engages
+// keep-right only when BOTH walls are within this on each side. Vessel-driven
+// (planning.channel_reach_m); null -> the buf*10 default (tight-marina scale).
+let CHANNEL_REACH_M = null;
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
 const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
 // The nogo is the SINGLE keep-out model: behaviors and the survey Punch Out both
@@ -513,6 +517,8 @@ function applyVesselToUI(v){
   // avoid more shallow water). Drives the ENC extract + keep-out reclassification.
   if(v.hull && v.planning && typeof v.hull.draft_m==="number" && typeof v.planning.under_keel_clearance_m==="number")
     NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
+  // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
+  CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
   // vessel-scaled search-pattern defaults (only overwrite blanks/unfocused inputs)
   const s = (v.planning && v.planning.search) || {};
   const setDefault = (id,val)=>{ const el=$("#"+id); if(el && val!=null && document.activeElement!==el) el.value=val; };
@@ -1530,7 +1536,7 @@ function legPath(A, B, ref, ko, buf){
 // path already runs straight there, when the target/start sits inside the
 // extension, or when the extension can't be kept clear.
 function channelEndExtend(samp, ref, ko, buf){
-  const STEP=Math.max(3,buf), REACH=Math.max(35,buf*10), MS=Math.max(1,buf/2);
+  const STEP=Math.max(3,buf), REACH=Math.max(35, CHANNEL_REACH_M!=null?CHANNEL_REACH_M:buf*10), MS=Math.max(1,buf/2);
   const march=(s,de,dn)=>{ for(let d=STEP; d<=REACH; d+=MS){
     if(blocked({e:s.e+de*d,n:s.n+dn*d},ko,buf)) return d; } return Infinity; };
   const clearEN=(A,B)=>{ const L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
@@ -1636,7 +1642,7 @@ function keepRight(pts, ref, ko, buf){
   samp = channelEndExtend(samp, ref, ko, buf);
   const cum=[0]; for(let i=1;i<samp.length;i++) cum.push(cum[i-1]+Math.hypot(samp[i].e-samp[i-1].e, samp[i].n-samp[i-1].n));
   const totL = cum[cum.length-1] || 1;
-  const REACH = Math.max(35, buf*10);             // wall-search reach either side (m)
+  const REACH = Math.max(35, CHANNEL_REACH_M!=null?CHANNEL_REACH_M:buf*10);  // wall-search reach either side (m)
   const STANDOFF = buf + 2;                        // hard floor off either wall
   const MAXOFF = Math.max(10, buf*8);             // cap on any single lane correction (m)
   const TAPER = Math.max(8, buf*3);               // fade the offset to 0 near the endpoints
