@@ -183,7 +183,7 @@
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">&minus;</button>
     <button class="ctl small on" id="follow" title="Keep the boat centred">BOAT</button>
-    <button class="ctl small" id="wptBtn" title="Waypoint mode: click chart to add, click a waypoint to remove">WPT</button>
+    <button class="ctl small" id="wptBtn" title="Waypoint / edit mode: drag a waypoint to move it, click a waypoint to delete, click a survey line to delete it, click open water to add. Edit a punched plan before Upload.">WPT</button>
     <button class="ctl small" id="lineBtn" title="Survey pattern (CAMP 3-click): click start corner, opposite corner, then a point that sets line spacing + direction. Lines fill the box automatically.">SURV</button>
     <button class="ctl small" id="bndBtn" title="Survey-area boundary (CAMP-style): click the chart to drop points, click the first point to close. Survey lines are clipped to this arbitrary polygon.">BND</button>
     <button class="ctl small" id="srchBtn" title="Search patterns (Project-11 style): Expanding box / Sector / Parallel search. Click a datum, set params, Add to plan.">SRCH</button>
@@ -2289,8 +2289,25 @@ async function punchOut(){
 }
 function showBanner(t){ const b=$("#encbanner"); b.textContent=t; b.style.display="block"; }
 
+// --- survey plan editing (drag / delete waypoints & lines) --------------- //
+// mission.waypoints is the run plan; mission.lines is the drawn survey structure.
+// Editing keeps the two in sync by matching endpoints on position.
+const _eqLL=(a,b)=>Math.abs(a.lat-b.lat)<1e-7 && Math.abs(a.lon-b.lon)<1e-7;
+function waypointAtPx(clientX, clientY){ const o=originPx(), r=mapEl.getBoundingClientRect();
+  const cx=clientX-r.left, cy=clientY-r.top;
+  return mission.waypoints.findIndex(p=>{ const s=worldPx(p.lat,p.lon,zoom);
+    return Math.hypot(s.x-o.x-cx, s.y-o.y-cy) < 10; }); }
+function syncLineEndpoint(oldLL, newLL){ for(const L of mission.lines){
+  if(_eqLL(L.a,oldLL)) L.a={lat:newLL.lat,lon:newLL.lon};
+  if(_eqLL(L.b,oldLL)) L.b={lat:newLL.lat,lon:newLL.lon}; } }
+function deleteWaypoint(i){ const p={...mission.waypoints[i]}; mission.waypoints.splice(i,1);
+  mission.lines=mission.lines.filter(L=>!(_eqLL(L.a,p)||_eqLL(L.b,p)));   // drop a line whose endpoint went
+  updateXTE(); saveMission(); }
+function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; mission.lines.splice(li,1);
+  mission.waypoints=mission.waypoints.filter(p=>!(_eqLL(p,L.a)||_eqLL(p,L.b)));  // + its endpoint waypoints
+  updateXTE(); saveMission(); }
 // --- interaction --------------------------------------------------------- //
-let dragging=false, last=null, downAt=null;
+let dragging=false, last=null, downAt=null, wpDrag=null;
 mapEl.addEventListener("mousedown", e=>{
   if(mode === "survey"){ const h = patHandleAt(e.clientX, e.clientY);
     if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY}; return; } }   // grab handle, no pan
@@ -2298,12 +2315,19 @@ mapEl.addEventListener("mousedown", e=>{
     if(i>=0){ boundDrag = i; downAt={x:e.clientX,y:e.clientY}; return; } }
   if(mode === "search" && searchHandleAt(e.clientX, e.clientY)){
     searchDrag = true; downAt={x:e.clientX,y:e.clientY}; return; }   // grab datum, no pan
+  if(mode === "wpt"){ const i = waypointAtPx(e.clientX, e.clientY);  // grab a waypoint to drag / click-delete
+    if(i>=0){ wpDrag={i, prev:{...mission.waypoints[i]}}; downAt={x:e.clientX,y:e.clientY}; return; } }
   dragging=true; last={x:e.clientX,y:e.clientY};
   downAt={x:e.clientX,y:e.clientY}; mapEl.classList.add("drag"); });
 window.addEventListener("mouseup", e=>{
   if(patDrag){ patDrag=null; downAt=null; updatePatReadout(); saveMission(); return; }
   if(boundDrag!=null){ boundDrag=null; downAt=null; patClip=null; updatePatReadout(); saveMission(); render(); return; }
   if(searchDrag){ searchDrag=false; downAt=null; updateSearchPanel(); return; }
+  if(wpDrag){ const moved=downAt?Math.hypot(e.clientX-downAt.x,e.clientY-downAt.y):0;
+    const i=wpDrag.i; wpDrag=null; downAt=null;
+    if(moved<5) deleteWaypoint(i);               // barely moved = click to DELETE the waypoint
+    else saveMission();                          // moved = a drag, keep the new position
+    render(); return; }
   const wasDrag = dragging; dragging=false; mapEl.classList.remove("drag");
   if(!wasDrag || !downAt) return;
   const moved = Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y); downAt = null;
@@ -2311,11 +2335,10 @@ window.addEventListener("mouseup", e=>{
   const o = originPx(), r = mapEl.getBoundingClientRect();
   const ll = worldToLatLon(o.x+(e.clientX-r.left), o.y+(e.clientY-r.top), zoom);
   if(mode === "wpt"){
-    const hit = mission.waypoints.findIndex(p=>{
-      const s = worldPx(p.lat,p.lon,zoom);
-      return Math.hypot(s.x-o.x-(e.clientX-r.left), s.y-o.y-(e.clientY-r.top)) < 12;
-    });
-    if(hit >= 0) mission.waypoints.splice(hit,1);
+    // (clicking a waypoint to delete is handled by the wpDrag path above.) Here:
+    // click a survey LINE to delete it (+ its endpoint waypoints); click open water to ADD a waypoint.
+    const li = surveyLineAtPx(e.clientX-r.left, e.clientY-r.top, 8);
+    if(li >= 0) deleteLineByIndex(li);
     else mission.waypoints.push({lat:ll.lat, lon:ll.lon});
     saveMission(); render();
   } else if(mode === "survey"){
@@ -2349,6 +2372,9 @@ window.addEventListener("mousemove", e=>{
   if(patDrag){ pat[patDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
+  if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
+    syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
+    $("#lineTip").style.display="none"; updateXTE(); render(); return; }
   if(!dragging) return;
   follow = false; setFollow();
   const c = worldPx(center.lat, center.lon, zoom);
