@@ -671,6 +671,7 @@ function render(){
   const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
   if(encShow) drawENC(toScreen);
   drawNogo(toScreen);
+  drawMarks(toScreen);
   if(track.length > 1){
     ctx.beginPath();
     track.forEach((p,i)=>{ const s = toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
@@ -1198,10 +1199,18 @@ function nogoKind(r, depthbad){
   return "land";
 }
 function buildKeepouts(ref, enf, dr, feats){
-  const polys=[], lines=[], points=[];
+  const polys=[], lines=[], points=[], marks=[];
   for(const f of (feats || enc.features)){ const g=f.geometry, r=f.role;
     const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
     const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
+    // LATERAL channel marks (buoys/beacons): collected as channel-defining marks
+    // (used as Rule 9 channel walls in keepRight) AND kept clear as small point
+    // keep-outs (don't hit a buoy). CATLAM: 1/3 = port-hand, 2/4 = starboard-hand.
+    if(r==="chan_mark"){ const cat=f.props&&f.props.CATLAM;
+      eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref);
+        marks.push({e:q.e, n:q.n, side:(cat==2||cat==4)?1:(cat==1||cat==3)?-1:0});
+        if(enf.haz){ const p={e:q.e,n:q.n,kind:"a channel buoy"}; points.push(p); } });
+      continue; }
     if((land||shore)&&!enf.land) continue;
     if(depthbad&&!enf.depth) continue;
     if(haz&&!enf.haz) continue;
@@ -1211,7 +1220,7 @@ function buildKeepouts(ref, enf, dr, feats){
     else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts),kind}); });
     else if(haz) eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; points.push(q); });
   }
-  return {polys, lines, points};
+  return {polys, lines, points, marks};
 }
 function pinp(p, ring){ let inside=false;
   for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const xi=ring[i].e,yi=ring[i].n,xj=ring[j].e,yj=ring[j].n;
@@ -1658,6 +1667,17 @@ function keepRight(pts, ref, ko, buf){
   const LANE = 0.20;                               // ride right of CENTER by 20% of width
   const march=(s,de,dn)=>{ for(let d=STEP; d<=REACH; d+=Math.max(1,buf/2)){
     if(blocked({e:s.e+de*d, n:s.n+dn*d}, ko, buf)) return d; } return Infinity; };
+  // LATERAL CHANNEL MARKS as walls: a buoy/beacon abeam on a side is the channel
+  // edge there, even where no shallow/land wall is charted - this is what lets the
+  // fairway (and keep-right) extend OUT to the seaward buoy gate and hold right
+  // between the marks. Side is geometric (per current travel), so it's correct
+  // whether transiting in or out. `de,dn` = the side unit; `te,tn` = travel unit.
+  const marks = ko.marks || [];
+  const markWall=(s,de,dn,te,tn)=>{ let best=Infinity;
+    for(const m of marks){ const dx=m.e-s.e, dy=m.n-s.n;
+      if(Math.abs(dx*te+dy*tn) > Math.max(22, buf*4)) continue;      // must be ~abeam
+      const cross=dx*de+dy*dn; if(cross>STANDOFF*0.5 && cross<=REACH+20) best=Math.min(best,cross); }
+    return best; };
   // LANE-LINE model (operator's spec): find BOTH walls perpendicular to travel,
   // define the channel CENTER, and track the line 20% of the width to STARBOARD
   // of it (30% off the starboard wall / 70% off port). Replaces the old
@@ -1671,7 +1691,10 @@ function keepRight(pts, ref, ko, buf){
     const a=samp[Math.max(0,i-1)], b=samp[Math.min(N-1,i+1)];
     let te=b.e-a.e, tn=b.n-a.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
     SB.push([tn,-te]);                             // starboard unit vector
-    if(i>0 && i<N-1){ RC[i]=march(samp[i],tn,-te); LC[i]=march(samp[i],-tn,te); }
+    if(i>0 && i<N-1){
+      RC[i]=Math.min(march(samp[i],tn,-te), markWall(samp[i], tn,-te, te,tn));   // stbd wall (or a mark)
+      LC[i]=Math.min(march(samp[i],-tn,te), markWall(samp[i],-tn, te, te,tn));   // port wall (or a mark)
+    }
   }
   const med=(arr,i)=>{ const v=[];                 // ±2-sample median: kills pier-gap spikes
     for(let k=-2;k<=2;k++){ const j=i+k; if(j>=1&&j<N-1) v.push(arr[j]); }
@@ -1889,6 +1912,20 @@ function drawNogo(toScreen){
   for(const f of nogo.features){ const r=f.role;
     if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
       eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
+  ctx.restore();
+}
+// Lateral channel marks (buoys/beacons) the console uses to define the channel:
+// green = port-hand (CATLAM 1/3), red = starboard-hand (CATLAM 2/4), amber = other.
+function drawMarks(toScreen){
+  const feats = (nogo.features && nogo.features.length) ? nogo.features : (enc && enc.features);
+  if(!feats) return;
+  ctx.save();
+  for(const f of feats){ if(f.role!=="chan_mark") continue;
+    const cat=f.props&&f.props.CATLAM;
+    const col=(cat==1||cat==3)?"#3fbf6b":(cat==2||cat==4)?"#e0483f":"#e8c14a";
+    eachPoint(f.geometry, c=>{ const s=toScreen(c[1],c[0]);
+      ctx.beginPath(); ctx.arc(s.x,s.y,4.5,0,2*Math.PI); ctx.fillStyle=col; ctx.fill();
+      ctx.lineWidth=1.2; ctx.strokeStyle="#0a141c"; ctx.stroke(); }); }
   ctx.restore();
 }
 

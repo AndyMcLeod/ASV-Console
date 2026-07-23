@@ -750,10 +750,17 @@ ENC_ROLES = {
     "depth_area":    ["Depth_Area"],
     "depth_contour": ["Depth_Contour_line"],
     "sounding":      ["Sounding_point"],
-    # point obstructions: aids, piles/dolphins, isolated pier/hulk points, rocks/wrecks
-    "hazard_point":  ["Buoy_Lateral_point", "Buoy_Isolated_Danger_point",
+    # LATERAL channel marks (buoys + beacons) - the port/starboard-hand marks that
+    # define the sides of a marked channel/fairway. Kept SEPARATE from generic
+    # hazard points so the console can use them as channel walls (COLREGS Rule 9:
+    # keep right between them) and extend the fairway out to the seaward gate.
+    # CATLAM gives the side; the client also treats them geometrically per travel.
+    "chan_mark":     ["Buoy_Lateral_point", "Beacon_Lateral_point"],
+    # point obstructions: mid-channel/danger aids, piles/dolphins, isolated pier/hulk
+    # points, rocks/wrecks (NOT lateral channel marks - those are chan_mark above).
+    "hazard_point":  ["Buoy_Isolated_Danger_point",
                       "Buoy_Safe_Water_point", "Buoy_Special_Purpose_General_point",
-                      "Beacon_Lateral_point", "Beacon_Safe_Water_point",
+                      "Beacon_Safe_Water_point",
                       "Beacon_Special_Purpose_General_point",
                       "Mooring_Warping_Facility_point", "Pile_point",
                       "Shoreline_Construction_point", "Hulk_point",
@@ -762,7 +769,9 @@ ENC_ROLES = {
     "dredged":       ["Dredged_Area"],
     "restricted":    ["Restricted_Area"],
 }
-ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM")
+# CATLAM = category of lateral mark (1 port-hand, 2 starboard-hand, 3 pref-chan-to-
+# stbd, 4 pref-chan-to-port); COLOUR for the buoy symbol. Kept for chan_mark use.
+ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR")
 
 _enc_layermaps = {}          # band -> {className: layerId}
 _enc_layermap_lock = threading.Lock()
@@ -886,9 +895,10 @@ def fetch_enc_features(bbox, min_depth=0.0):
     global _enc_down_until
     key = "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
-    # query silently dropped) + the expanded structure classes - so old caches that
-    # are missing the finger piers are ignored and re-fetched correctly.
-    cache = os.path.join(ENC_DIR, "features_v2_%s.json" % key)
+    # query silently dropped) + the expanded structure classes; v3 splits lateral
+    # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR. Bumping
+    # the version ignores older caches that lack the new role/props.
+    cache = os.path.join(ENC_DIR, "features_v3_%s.json" % key)
     data = None
     try:
         with open(cache, "r", encoding="utf-8") as f:

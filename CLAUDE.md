@@ -64,7 +64,11 @@ client reads it via `/api/vessel` and **re-extracts** the nogo model on a switch
 detection reach; that reach is `planning.channel_reach_m` (optional; falls back to
 `nogo_buffer_m*10`, the tight-marina scale). The DriX sets 120 m so it keeps right
 in the wide (~150 m) Lewes dredged fairway; small boats in tight marinas keep the
-default.
+default. **Lateral channel marks** (ENC `chan_mark` role = lateral buoys + beacons,
+with `CATLAM`) act as channel walls too: where the shallow/land walls give out but a
+buoy is abeam, the mark is the edge — so the fairway (and keep-right) extends out to
+the seaward buoy gate and the boat holds right between the marks. Marks are also
+small keep-outs (don't hit a buoy) and drawn green (port-hand) / red (starboard-hand).
 
 - **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
   load (missing/mistyped field → clear, path-pointed error; a bad file never runs
