@@ -96,10 +96,13 @@ Go-To, Return-to-Home, Hold/station-keep, Set-Home, Transit (multi-vertex),
 Search patterns (expanding box / sector / parallel), and Survey (CAMP-style
 boustrophedon with Punch-Out clipping to NOAA ENC features + arbitrary polygon
 clip). Punch-Out also **excludes a navigation channel when the survey spans across
-it** (`channelSpanKeepouts`): a coverage line that runs outside→into a dredged
-area→outside gets a gap there. It applies ONLY to the survey-line clip, not to the
-transit routing — so normal transits still cross the channel, and a survey confined
-*within* a channel (never out→in→out) is unaffected. Every commanded motion routes
+it** (`channelSpanKeepouts`): a coverage line that runs outside→into the channel
+→outside gets a gap there. The channel is the ENC **dredged area** OR the
+**buoy-gate fairway** — `pairGates()` pairs the lateral marks and sweeps each gate
+line ±one gate-width into a corridor polygon (so a marked inlet with no dredged
+polygon is covered too). It applies ONLY to the survey-line clip, not to the transit
+routing — so normal transits still cross the channel, and a survey confined *within*
+a channel (never out→in→out) is unaffected. Every commanded motion routes
 clear of a startup-built **nogo model**
 (shoreline + manmade features + water shallower than a 1 m corrected floor),
 with COLREGS Rule-9 keep-right in channels. Real-time water-level datum

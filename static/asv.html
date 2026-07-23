@@ -1231,10 +1231,23 @@ function buildKeepouts(ref, enf, dr, feats){
 // don't count as a crossing. A survey CONTAINED within the channel (never goes
 // out->in->out) excludes nothing. This augments ONLY the survey-line clip, never the
 // transit routing, so normal transits and internal-channel surveys are unaffected.
-function channelSpanKeepouts(src, ref, feats){
+function channelSpanKeepouts(src, ref, feats, marks){
   const chans=[];
+  // 1) dredged-area channels
   for(const f of (feats||[])){ if(f.role!=="dredged") continue;
     eachRing(f.geometry, rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>=3) chans.push({ring, bb:bbOf(ring)}); }); }
+  // 2) buoy-gate FAIRWAY corridors: pair the lateral marks into gates, then sweep
+  // each gate line +/- one gate-width along the channel axis into a corridor polygon
+  // (the marked fairway where no dredged polygon is charted, e.g. an inlet mouth).
+  for(const g of pairGates(marks)){
+    const gux=g.axis[1], guy=-g.axis[0];         // gate-line unit (port -> starboard)
+    const P={e:g.C.e-gux*g.width/2, n:g.C.n-guy*g.width/2};   // port mark
+    const S={e:g.C.e+gux*g.width/2, n:g.C.n+guy*g.width/2};   // starboard mark
+    const [ax,ay]=g.axis, Le=g.width;            // extend one gate-width each way along the channel
+    const ring=[ {e:P.e-ax*Le,n:P.n-ay*Le}, {e:S.e-ax*Le,n:S.n-ay*Le},
+                 {e:S.e+ax*Le,n:S.n+ay*Le}, {e:P.e+ax*Le,n:P.n+ay*Le} ];
+    chans.push({ring, bb:bbOf(ring)});
+  }
   if(!chans.length) return [];
   const inChan=(p)=>{ for(const c of chans){ if(inBB(p,c.bb,0) && pinp(p,c.ring)) return true; } return false; };
   const samples=(l)=>{ const a=llEN(l[0].lat,l[0].lon,ref), b=llEN(l[1].lat,l[1].lon,ref);
@@ -2161,7 +2174,7 @@ async function punchOut(){
     // If the survey SPANS ACROSS a channel, exclude that channel from the coverage
     // lines only (koClip). Transits keep using `ko`, so they may still cross it; an
     // internal-channel survey (no line crosses the channel edge) excludes nothing.
-    const chanExcl = channelSpanKeepouts(src, ref, nogo.features);
+    const chanExcl = channelSpanKeepouts(src, ref, nogo.features, ko.marks);
     const koClip = chanExcl.length ? {...ko, polys:[...ko.polys, ...chanExcl]} : ko;
     const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
     // Re-order so the ASV covers each obstacle-free region as a serpentine and no
