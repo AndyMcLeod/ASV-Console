@@ -42,7 +42,7 @@
   },
 
   "planning": {
-    "nogo_buffer_m": 10.0,
+    "nogo_buffer_m": 5.0,
     "under_keel_clearance_m": 0.5,
     "search": {
       "expbox_step_m": 40,
