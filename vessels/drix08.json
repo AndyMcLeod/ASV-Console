@@ -1,24 +1,24 @@
 {
   "id": "drix08",
-  "name": "DriX 8 (Exail)",
+  "name": "DriX H-8 (Exail)",
   "class": "8 m survey USV",
-  "notes": "Exail DriX (8 m class). Provenance of figures: DOC-DERIVED from 'DriX Supervisor Training Notes' = turn radius ~10 m (-> max_turn_rate_deg_s at survey speed), ~4 kn engine idle and ~1 kn trolling-valve min (-> speed ladder), 24 V 5 Ah lithium service battery (-> battery banding), ~1 kW payload draw. ESTIMATED (DriX-8 class, adjust to spec sheet): loa/beam/draft/above-water height, transit top speed, guidance gains, search sizes, drain model, spawn. DriX is diesel-powered with alternator charging; the battery block here models the 24 V service bank for the sim's gauge only.",
+  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). DOC-DERIVED (DriX Supervisor Training Notes): 24 V 5 Ah lithium service battery -> battery banding; ~1 kW payload. ESTIMATED: above-water windage height, autopilot gains, search-pattern sizes, drain model, spawn. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius). The battery block models the 24 V service bank for the sim's gauge only; propulsion endurance is diesel/fuel-limited.",
 
   "hull": {
-    "loa_m": 8.0,
-    "beam_m": 0.9,
-    "above_water_h_m": 1.2,
+    "loa_m": 7.71,
+    "beam_m": 0.824,
+    "above_water_h_m": 1.0,
     "draft_m": 2.0,
     "wind_cd": 1.0,
     "hull_cd": 1.0
   },
 
   "propulsion": {
-    "speeds_kn": { "low": 1.0, "survey": 4.0, "high": 12.0 }
+    "speeds_kn": { "low": 4.0, "survey": 7.0, "high": 14.0 }
   },
 
   "maneuvering": {
-    "max_turn_rate_deg_s": 12,
+    "max_turn_rate_deg_s": 20,
     "approach_m": 6.0,
     "lookahead_m": 20.0,
     "arrival_radius_m": 5.0
