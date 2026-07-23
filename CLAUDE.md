@@ -61,9 +61,10 @@ respawns with the new physics).
   the server and UI never disagree.
 - **Adding a vessel:** drop a new `vessels/<id>.json` (copy an existing one; it
   must be complete — validation requires every field). `vessels/zboat_1800hs.json`
-  models the small survey ASV; `vessels/example_usv_4m.json` is a larger
-  illustrative USV for comparison. A profile may name a real modeled vessel (it's
-  data); keep the console *core* generic (no vendor protocol / manual figures).
+  models the small survey ASV; `vessels/drix08.json` models the Exail DriX 8 (see
+  its `notes` for which figures are doc-derived vs estimated); `vessels/example_usv_4m.json`
+  is a larger illustrative USV for comparison. A profile may name a real modeled
+  vessel (it's data); keep the console *core* generic (no vendor protocol / manual figures).
 
 ## Behaviors (all ENC-aware, arm-gated)
 

@@ -1,0 +1,49 @@
+{
+  "id": "drix08",
+  "name": "DriX 8 (Exail)",
+  "class": "8 m survey USV",
+  "notes": "Exail DriX (8 m class). Provenance of figures: DOC-DERIVED from 'DriX Supervisor Training Notes' = turn radius ~10 m (-> max_turn_rate_deg_s at survey speed), ~4 kn engine idle and ~1 kn trolling-valve min (-> speed ladder), 24 V 5 Ah lithium service battery (-> battery banding), ~1 kW payload draw. ESTIMATED (DriX-8 class, adjust to spec sheet): loa/beam/draft/above-water height, transit top speed, guidance gains, search sizes, drain model, spawn. DriX is diesel-powered with alternator charging; the battery block here models the 24 V service bank for the sim's gauge only.",
+
+  "hull": {
+    "loa_m": 8.0,
+    "beam_m": 0.9,
+    "above_water_h_m": 1.2,
+    "draft_m": 2.0,
+    "wind_cd": 1.0,
+    "hull_cd": 1.0
+  },
+
+  "propulsion": {
+    "speeds_kn": { "low": 1.0, "survey": 4.0, "high": 12.0 }
+  },
+
+  "maneuvering": {
+    "max_turn_rate_deg_s": 12,
+    "approach_m": 6.0,
+    "lookahead_m": 20.0,
+    "arrival_radius_m": 5.0
+  },
+
+  "autopilot": {
+    "xte_ki_deg": 0.15,
+    "xte_i_max_deg": 8.0
+  },
+
+  "power": {
+    "battery_v": { "full": 28.0, "warn": 24.5, "crit": 23.0, "empty": 22.0 },
+    "drain": { "idle": 0.0002, "load": 0.0008 }
+  },
+
+  "planning": {
+    "nogo_buffer_m": 10.0,
+    "search": {
+      "expbox_step_m": 40,
+      "sector_radius_m": 100,
+      "parallel_length_m": 200,
+      "parallel_spacing_m": 30,
+      "parallel_lanes": 8
+    }
+  },
+
+  "spawn": { "lat": 42.137083, "lon": -80.087367 }
+}

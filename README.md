@@ -52,9 +52,10 @@ The console studies ASV behavior **across different vessel types**. Every
 vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains,
 battery banding + drain, planning defaults, spawn — lives in one self-contained
 file under `vessels/<id>.json`, and that file is the single source of truth (the
-server and the UI both read it, nothing is hardcoded twice). Two profiles ship:
-`zboat_1800hs` (a small ~1.9 m survey ASV) and `example_usv_4m` (a larger
-illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
+server and the UI both read it, nothing is hardcoded twice). Profiles that ship:
+`zboat_1800hs` (a small ~1.9 m survey ASV), `drix08` (the Exail DriX 8 m survey
+USV), and `example_usv_4m` (a larger illustrative USV). Add your own by dropping a
+new complete `vessels/<id>.json`.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
 selector** in the top bar (allowed only when disarmed and stopped — swapping

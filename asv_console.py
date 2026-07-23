@@ -107,7 +107,7 @@ SPEED_KN = {}
 WP_APPROACH_M = WP_LOOKAHEAD_M = 0.0
 XTE_KI_DEG = XTE_I_MAX_DEG = 0.0
 BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
-WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = 0.0
+WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
 MAX_TURN_RATE_DEG_S = 60.0
 DRAIN_IDLE = DRAIN_LOAD = 0.0
 SPAWN_LAT = SPAWN_LON = 0.0
@@ -209,7 +209,7 @@ def apply_vessel(v):
     global VESSEL, BATT_FULL_V, BATT_WARN_V, BATT_CRIT_V, BATT_EMPTY_V, SPEED_KN
     global WP_APPROACH_M, WP_LOOKAHEAD_M, XTE_KI_DEG, XTE_I_MAX_DEG
     global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
-    global WIND_A_SIDE, WIND_A_FRONT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
+    global WIND_A_SIDE, WIND_A_FRONT, HULL_A_LAT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
     global SPAWN_LAT, SPAWN_LON, ARRIVAL_DEFAULT_M, NOGO_BUFFER_DEFAULT_M
     VESSEL = v
     h, p, m, a = v["hull"], v["propulsion"], v["maneuvering"], v["autopilot"]
@@ -227,6 +227,7 @@ def apply_vessel(v):
     WIND_CD = float(h["wind_cd"]); HULL_CD = float(h["hull_cd"])
     WIND_A_SIDE = BOAT_LEN_M * BOAT_ABOVE_H      # beam-on windage silhouette (m^2)
     WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H    # bow/stern-on windage silhouette (m^2)
+    HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M       # underwater lateral area (m^2), for leeway drag
     NOGO_BUFFER_DEFAULT_M = float(pl["nogo_buffer_m"])
     SPAWN_LAT = float(sp["lat"]); SPAWN_LON = float(sp["lon"])
     return v
@@ -1178,9 +1179,9 @@ RHO_AIR = 1.225                # kg/m^3
 RHO_WATER = 1000.0             # kg/m^3 (fresh water - Great Lakes)
 G_ACCEL = 9.81
 # Above-water windage silhouette + hull drag come from the active vessel's `hull`
-# block (loa/beam/above_water_h/draft/wind_cd/hull_cd); BOAT_*, WIND_A_* and the
-# Cd's are published by apply_vessel(). See vessels/<id>.json.
-HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M      # underwater lateral area ~0.23 m^2
+# block (loa/beam/above_water_h/draft/wind_cd/hull_cd); BOAT_*, WIND_A_*, HULL_A_LAT
+# and the Cd's are published by apply_vessel() (recomputed on a vessel switch too).
+# See vessels/<id>.json.
 WAVE_DRIFT_CD = 0.03          # mean wave-drift coeff (small boat, mostly wave-transparent;
                               # kept small so the gusty WIND drives the wandering, not waves)
 LEEWAY_CAP_MS = 0.9           # cap the set (~1.75 kn) - only bites in extreme conditions,
