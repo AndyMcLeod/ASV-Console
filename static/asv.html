@@ -415,7 +415,17 @@ const TILE = 256, MINZ = 3, MAXZ = 20, MAX_TRACK = 8000, M_PER_DEG_LAT = 111320;
 let zoom = 13;
 let center = {lat: 42.137083, lon: -80.087367}; // fallback until first fix (spawn: 42 08.225'N 80 05.242'W)
 let haveFix = false, follow = true;
-let track = [];
+// The ASV trail persists across a page refresh: it's mirrored to localStorage as
+// it grows and restored on load, so reloading the page doesn't wipe the breadcrumb.
+const TRACK_KEY = "asv_track_v1";
+function loadTrack(){ try{ const t=JSON.parse(localStorage.getItem(TRACK_KEY));
+  return Array.isArray(t) ? t.slice(-MAX_TRACK) : []; }catch(e){ return []; } }
+let trackSaveTimer=null;
+function saveTrack(){ clearTimeout(trackSaveTimer);      // throttle writes (trail grows fast)
+  trackSaveTimer=setTimeout(()=>{ try{ localStorage.setItem(TRACK_KEY, JSON.stringify(track)); }catch(e){} }, 800); }
+function clearTrack(){ track=[]; clearTimeout(trackSaveTimer);
+  try{ localStorage.removeItem(TRACK_KEY); }catch(e){} }
+let track = loadTrack();                      // restore the trail from the last session
 let asv = null;                              // {lat,lon,hdg}
 
 // --- mission plan -------------------------------------------------------- //
@@ -530,6 +540,7 @@ async function switchVessel(id){
                                           body:JSON.stringify({id})});
     const d = await r.json();
     if(!r.ok){ flashNote(d.error || "vessel switch failed"); await loadVessel(); return; }
+    clearTrack();                                  // new boat respawns elsewhere - drop the old trail
     applyVesselToUI(d.vessel);
     // a switch respawns the sim boat and reseeds vessel-scaled defaults; refresh
     // the mission-derived controls, then RE-EXTRACT the nogo model at the vessel's
@@ -2152,7 +2163,7 @@ function zoomAt(dz, sx, sy){
 $("#zin").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(1, r.left+w/2, r.top+h/2); };
 $("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(-1, r.left+w/2, r.top+h/2); };
 $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
-$("#clear").onclick = ()=>{ track=[]; render(); };
+$("#clear").onclick = ()=>{ clearTrack(); render(); };
 function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
@@ -2529,7 +2540,7 @@ function onState(s){
     $("#p_pos").textContent = fmtLL(asv.lat, asv.lon);
     const last = track[track.length-1];
     if(!last || Math.hypot(last.lat-asv.lat, last.lon-asv.lon) > 5e-6){
-      track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift();
+      track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift(); saveTrack();
     }
     if(!haveFix){ haveFix=true; center={lat:asv.lat,lon:asv.lon}; }
     if(follow) center = {lat:asv.lat, lon:asv.lon};
