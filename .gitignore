@@ -1,0 +1,18 @@
+# runtime / generated
+__pycache__/
+*.pyc
+charts/
+mission.json
+comms_config.json
+logs/
+*.log
+*.jsonl
+*.part
+
+# proprietary vendor material - do not publish
+*.pdf
+reference/
+recordings/
+
+# stray screenshots dropped in the project dir
+Screenshots/

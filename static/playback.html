@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>ASV Playback</title>
+<style>
+  :root{
+    --abyss:#05080c; --hull:#0a1119; --line:#16222e; --line2:#22323f;
+    --ink:#d7e3ea; --ink-dim:#8ba0ad; --ink-faint:#54697a; --bronze:#c8862b;
+    --ok:#3fbf6b; --warn:#d99a2b; --bad:#d9534f; --track:#39c0ff; --asv:#ffcf3f;
+    --plan:#ffd76a; --route:#3fbf6b;
+    --mono:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--abyss);color:var(--ink);font-family:var(--sans);overflow:hidden;touch-action:none;}
+  #map{position:absolute;inset:0;overflow:hidden;cursor:grab;background:#0a141c;}
+  #map.drag{cursor:grabbing;}
+  #tiles img{position:absolute;width:256px;height:256px;user-select:none;-webkit-user-drag:none;image-rendering:auto;}
+  #overlay{position:absolute;inset:0;pointer-events:none;}
+
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+    padding:8px 14px;background:linear-gradient(180deg,rgba(13,22,32,.96),rgba(10,17,25,.86));
+    border-bottom:1px solid var(--line);z-index:5;}
+  .brand{font-family:var(--mono);letter-spacing:.14em;font-size:13px;color:var(--bronze);text-transform:uppercase;}
+  .brand .sub{color:var(--ink-faint);letter-spacing:.06em;margin-left:6px;font-size:10px;}
+  .spacer{flex:1}
+  select,.linkbtn{font-family:var(--mono);font-size:11px;color:var(--ink);background:#0e1a24;
+    border:1px solid var(--line2);border-radius:3px;padding:5px 8px;cursor:pointer;}
+  select:hover,.linkbtn:hover{border-color:var(--bronze);color:var(--bronze);}
+  .linkbtn{text-decoration:none;text-transform:uppercase;letter-spacing:.06em;}
+  .pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:2px;border:1px solid var(--line2);
+    color:var(--ink-dim);display:flex;align-items:center;gap:6px;white-space:nowrap;}
+  .pill b{color:var(--ink);font-weight:600;}
+  .pill .k{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
+
+  .controls{position:absolute;top:110px;right:14px;display:flex;flex-direction:column;gap:8px;z-index:5;}
+  .ctl{width:40px;height:40px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink);
+    font-family:var(--mono);font-size:18px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .ctl:hover{border-color:var(--bronze);color:var(--bronze);}
+  .ctl.small{font-size:10px;letter-spacing:.04em;height:34px;text-transform:uppercase;}
+  .ctl.on{background:var(--bronze);color:#160d02;border-color:var(--bronze);font-weight:700;}
+
+  /* vessel-status card (state at the playback cursor) */
+  .vcard{position:absolute;top:110px;left:14px;width:236px;z-index:5;background:rgba(10,17,25,.94);
+    border:1px solid var(--line2);border-radius:5px;padding:10px 12px;box-shadow:0 4px 18px rgba(0,0,0,.5);}
+  .vcard h3{margin:0 0 8px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--bronze);font-weight:600;display:flex;align-items:center;justify-content:space-between;}
+  .vrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11.5px;padding:2.5px 0;
+    border-top:1px solid rgba(34,50,63,.5);}
+  .vrow:first-of-type{border-top:none;}
+  .vrow .l{color:var(--ink-faint);text-transform:uppercase;font-size:9px;letter-spacing:.06em;align-self:center;}
+  .vrow .v{color:var(--ink);text-align:right;}
+  .vrow .v.ok{color:var(--ok);} .vrow .v.warn{color:var(--warn);} .vrow .v.bad{color:var(--bad);}
+  .vrow .v.auto{color:var(--track);}
+  .vnote{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--ink-dim);line-height:1.45;
+    border-top:1px solid rgba(34,50,63,.5);padding-top:7px;min-height:14px;}
+
+  /* event timeline (commands + transitions) */
+  .events{position:absolute;top:110px;left:262px;bottom:96px;width:300px;z-index:5;display:flex;flex-direction:column;
+    background:rgba(10,17,25,.9);border:1px solid var(--line2);border-radius:5px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.5);}
+  .events.hidden{display:none;}
+  .events h3{margin:0;padding:8px 12px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--bronze);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;}
+  .evlist{overflow-y:auto;flex:1;}
+  .ev{display:grid;grid-template-columns:52px 1fr;gap:8px;padding:5px 12px;font-family:var(--mono);font-size:11px;
+    cursor:pointer;border-left:2px solid transparent;}
+  .ev:hover{background:rgba(200,134,43,.08);}
+  .ev.cur{background:rgba(57,192,255,.12);border-left-color:var(--track);}
+  .ev.past .lab{color:var(--ink);} .ev .lab{color:var(--ink-dim);}
+  .ev .tt{color:var(--ink-faint);}
+  .ev .det{color:var(--ink-faint);font-size:10px;}
+  .ev.cmd .lab{color:var(--asv);} .ev.err .lab{color:var(--bad);}
+  .ev.state .lab{color:var(--track);}
+  .ev .tag{font-size:9px;padding:0 4px;border:1px solid var(--line2);border-radius:2px;color:var(--ink-faint);margin-left:5px;}
+
+  /* transport bar */
+  .transport{position:absolute;left:14px;right:14px;bottom:14px;z-index:6;display:flex;align-items:center;gap:12px;
+    background:rgba(10,17,25,.95);border:1px solid var(--line2);border-radius:6px;padding:9px 14px;box-shadow:0 4px 18px rgba(0,0,0,.5);}
+  .tbtn{font-family:var(--mono);font-size:14px;cursor:pointer;border:1px solid var(--line2);background:#0e1a24;color:var(--ink);
+    width:38px;height:34px;border-radius:3px;display:flex;align-items:center;justify-content:center;}
+  .tbtn:hover{border-color:var(--bronze);color:var(--bronze);}
+  .tbtn.play{border-color:#2b6d3f;} .tbtn.play:hover{border-color:var(--ok);color:var(--ok);}
+  #scrub{flex:1;appearance:none;height:5px;border-radius:3px;background:var(--line2);outline:none;cursor:pointer;}
+  #scrub::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border-radius:50%;background:var(--track);cursor:pointer;border:2px solid #05080c;}
+  #scrub::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--track);cursor:pointer;border:2px solid #05080c;}
+  .tclock{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:nowrap;min-width:118px;text-align:center;}
+  .tclock .k{color:var(--ink-faint);}
+  .tmeta{font-family:var(--mono);font-size:10px;color:var(--ink-faint);white-space:nowrap;text-transform:uppercase;letter-spacing:.05em;}
+
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:7;flex-direction:column;gap:8px;
+    font-family:var(--mono);color:var(--ink-dim);text-align:center;pointer-events:none;}
+  .empty b{color:var(--bronze);letter-spacing:.1em;}
+  .toast{position:absolute;top:64px;left:50%;transform:translateX(-50%);z-index:9;font-family:var(--mono);font-size:11px;
+    background:rgba(10,17,25,.96);border:1px solid var(--line2);border-radius:3px;padding:6px 12px;color:var(--ink-dim);opacity:0;transition:opacity .2s;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+  <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
+
+  <div class="topbar">
+    <span class="brand">ASV Playback<span class="sub">session review — read-only</span></span>
+    <select id="logpick" title="Recorded session to replay"></select>
+    <span class="pill"><span class="k">Mode</span><b id="p_mode">—</b></span>
+    <span class="pill"><span class="k">Dur</span><b id="p_dur">—</b></span>
+    <span class="pill"><span class="k">Cmds</span><b id="p_cmds">—</b></span>
+    <span class="pill"><span class="k">Fixes</span><b id="p_fixes">—</b></span>
+    <span class="spacer"></span>
+    <a class="linkbtn" href="/" title="Back to the live command console">Live Console →</a>
+  </div>
+
+  <div class="controls">
+    <button class="ctl" id="zin" title="Zoom in">+</button>
+    <button class="ctl" id="zout" title="Zoom out">–</button>
+    <button class="ctl small on" id="follow" title="Keep the boat centred during playback">BOAT</button>
+    <button class="ctl small on" id="t_track" title="Show the boat's travelled track">TRK</button>
+    <button class="ctl small on" id="t_plan" title="Show planned survey lines / waypoints / routes">PLAN</button>
+    <button class="ctl small on" id="t_events" title="Show the event timeline">EVTS</button>
+  </div>
+
+  <div class="vcard">
+    <h3>Vessel <span id="v_clock" style="color:var(--ink-faint);font-weight:400;">—</span></h3>
+    <div class="vrow"><span class="l">Position</span><span class="v" id="v_pos">—</span></div>
+    <div class="vrow"><span class="l">Heading</span><span class="v" id="v_hdg">—</span></div>
+    <div class="vrow"><span class="l">SOG</span><span class="v" id="v_sog">—</span></div>
+    <div class="vrow"><span class="l">Battery</span><span class="v" id="v_batt">—</span></div>
+    <div class="vrow"><span class="l">Autonomy</span><span class="v" id="v_auto">—</span></div>
+    <div class="vrow"><span class="l">Behavior</span><span class="v" id="v_beh">—</span></div>
+    <div class="vrow"><span class="l">Waypoint</span><span class="v" id="v_wp">—</span></div>
+    <div class="vnote" id="v_note"></div>
+  </div>
+
+  <div class="events" id="events">
+    <h3>Event timeline <span id="ev_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <div class="evlist" id="evlist"></div>
+  </div>
+
+  <div class="transport">
+    <button class="tbtn" id="restart" title="Jump to start">⏮</button>
+    <button class="tbtn play" id="playpause" title="Play / pause (space)">▶</button>
+    <select id="speed" title="Playback speed">
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+      <option value="8">8×</option>
+      <option value="16">16×</option>
+      <option value="60">60×</option>
+    </select>
+    <input type="range" id="scrub" min="0" max="1000" value="0" step="1"/>
+    <span class="tclock"><span id="t_now">00:00</span> <span class="k">/</span> <span id="t_end">00:00</span></span>
+    <span class="tmeta" id="t_wall">—</span>
+  </div>
+
+  <div class="empty" id="empty"><b>ASV PLAYBACK</b><span>Loading recordings…</span></div>
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
+const TILE = 256, MINZ = 3, MAXZ = 20, FIT_MAXZ = 16, M_PER_DEG_LAT = 111320;
+
+let zoom = 14;
+let center = {lat: 42.137083, lon: -80.087367};
+let follow = true, showTrack = true, showPlan = true;
+
+// ---- Web-Mercator projection (identical to the live console) -------------- //
+const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
+function worldPx(lat, lon, z){
+  const s = TILE * Math.pow(2, z);
+  const x = (lon + 180) / 360 * s;
+  const sinLat = Math.sin(lat * Math.PI/180);
+  const y = (0.5 - Math.log((1+sinLat)/(1-sinLat)) / (4*Math.PI)) * s;
+  return {x, y};
+}
+function worldToLatLon(x, y, z){
+  const s = TILE * Math.pow(2, z);
+  const lon = x / s * 360 - 180;
+  const n = Math.PI - 2*Math.PI*y/s;
+  const lat = 180/Math.PI * Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
+  return {lat, lon};
+}
+function viewSize(){ return {w: mapEl.clientWidth, h: mapEl.clientHeight}; }
+function originPx(){ const {w,h}=viewSize(), c=worldPx(center.lat,center.lon,zoom); return {x:c.x-w/2, y:c.y-h/2}; }
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function fmtLL(lat, lon){
+  const d = (v,pos,neg)=>{ const h=v<0?neg:pos; v=Math.abs(v); const dd=Math.floor(v), mm=(v-dd)*60;
+    return `${dd}°${mm.toFixed(3)}'${h}`; };
+  return `${d(lat,'N','S')} ${d(lon,'E','W')}`;
+}
+
+// ---- parsed session ------------------------------------------------------- //
+let EVENTS = [];      // every log record, in order
+let FIXES = [];       // {t,lat,lon,hdg,sog,batt,batt_pct,batt_state} - the track
+let STATES = [];      // full state snapshots {t, ...}
+let MARKS = [];       // timeline rows (commands + state transitions) {t,cls,lab,det,tag,ev}
+let T0 = 0, T1 = 0, DUR = 0;
+let pt = 0;           // playback cursor (seconds since T0)
+let playing = false, speed = 1, lastRAF = 0;
+
+const CMD_LABEL = {
+  "/api/cmd/arm":"ARM", "/api/cmd/upload":"UPLOAD", "/api/cmd/start":"START",
+  "/api/cmd/pause":"PAUSE", "/api/cmd/stop":"STOP", "/api/cmd/estop":"E-STOP",
+  "/api/cmd/rth":"RTH", "/api/cmd/goto":"GO-TO", "/api/cmd/transit":"TRANSIT",
+  "/api/cmd/hold":"HOLD", "/api/cmd/sethome":"SET-HOME", "/api/cmd/approach":"APPROACH",
+  "/api/mission":"PLAN EDIT", "/api/comms":"COMMS CFG", "/api/waterlevel":"WATER LVL",
+  "/api/connect":"CONNECT", "/api/disconnect":"DISCONNECT",
+};
+
+function fmtDur(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), ss=s%60;
+  return (m<60? `${m}:${String(ss).padStart(2,'0')}` : `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}:${String(ss).padStart(2,'0')}`); }
+
+// ---- load the list of recordings ------------------------------------------ //
+async function loadList(){
+  let logs = [];
+  try{ const r = await fetch("/api/logs"); logs = (await r.json()).logs || []; }catch(e){}
+  const sel = $("#logpick"); sel.innerHTML = "";
+  if(!logs.length){ showEmpty("No recordings found in logs/ yet.","Run a session in the live console, then come back."); return; }
+  for(const L of logs){
+    const o = document.createElement("option");
+    const d = new Date(L.mtime*1000);
+    o.value = L.name;
+    o.textContent = `${L.name.replace(/^asv_|\.jsonl$/g,"")}  ·  ${(L.size/1024).toFixed(0)} KB`;
+    sel.appendChild(o);
+  }
+  sel.value = logs[0].name;
+  await loadLog(logs[0].name);
+}
+
+async function loadLog(name){
+  stopPlay();
+  let text = "";
+  try{ const r = await fetch("/api/log?file="+encodeURIComponent(name)); text = await r.text(); }
+  catch(e){ showEmpty("Could not read the recording.", String(e)); return; }
+  EVENTS = [];
+  for(const line of text.split("\n")){ if(!line.trim()) continue;
+    try{ EVENTS.push(JSON.parse(line)); }catch(e){} }
+  parseSession();
+  if(!FIXES.length && !MARKS.length){ showEmpty("Recording has no events.", name); return; }
+  hideEmpty();
+  buildEventList();
+  fitToData();
+  pt = 0; applyAt(0); render();
+  updateMeta(name);
+}
+
+function parseSession(){
+  FIXES = []; STATES = []; MARKS = [];
+  let mode = "—";
+  for(const e of EVENTS){
+    const t = e.t || 0;
+    if(e.kind === "state"){
+      const s = e.state || {}; STATES.push({t, ...s});
+      const st = s.status || {};
+      if(st.lat_deg!=null && st.lon_deg!=null)
+        FIXES.push({t, lat:st.lat_deg, lon:st.lon_deg, hdg:st.heading_deg, sog:st.sog_kn,
+                    batt:st.battery_v, batt_pct:st.battery_pct, batt_state:s.status.battery_state});
+      MARKS.push({t, cls:"state", lab: (s.autonomy||s.run||"state").toUpperCase(),
+                  det: s.note || "", tag: s.behavior, ev:e});
+      if(s.mode) mode = s.mode;
+    } else if(e.kind === "telemetry"){
+      const st = e.status || {};
+      if(st.lat_deg!=null && st.lon_deg!=null)
+        FIXES.push({t, lat:st.lat_deg, lon:st.lon_deg, hdg:st.heading_deg, sog:st.sog_kn,
+                    batt:st.battery_v, batt_pct:st.battery_pct, batt_state:st.battery_state});
+    } else if(e.kind === "command"){
+      const lab = CMD_LABEL[e.path] || e.path;
+      const err = e.code >= 400;
+      let det = "";
+      const b = e.body || {};
+      if(e.path === "/api/cmd/arm") det = b.on ? "on" : "off";
+      else if(e.path === "/api/cmd/estop") det = b.on ? "latch" : "release";
+      else if(e.path === "/api/cmd/goto" && b.lat!=null) det = fmtLL(b.lat, b.lon);
+      else if(b.route && b.route.length) det = b.route.length + " wpts";
+      else if(e.path === "/api/mission") det = ((b.waypoints||[]).length) + " wpts, " + ((b.lines||[]).length) + " lines";
+      else if(e.path === "/api/cmd/approach") det = (b.m!=null? b.m+" m":"");
+      if(err) det = (det? det+" · ":"") + "REJECTED " + e.code + (e.error? " ("+e.error+")":"");
+      MARKS.push({t, cls: err? "cmd err":"cmd", lab, det, tag: err? null : (e.code===200?null:e.code), ev:e});
+    } else if(e.kind === "connect"){
+      mode = e.mode || mode;
+      MARKS.push({t, cls:"state", lab:"CONNECT", det:(e.mode||"")+(e.host? " "+e.host:""), ev:e});
+    } else if(e.kind === "disconnect"){
+      MARKS.push({t, cls:"state", lab:"DISCONNECT", det:e.mode||"", ev:e});
+    } else if(e.kind === "session_start"){
+      MARKS.push({t, cls:"state", lab:"SESSION START", det:(e.argv||[]).join(" "), ev:e});
+    } else if(e.kind === "session_end"){
+      MARKS.push({t, cls:"state", lab:"SESSION END", det:"", ev:e});
+    }
+  }
+  FIXES.sort((a,b)=>a.t-b.t); STATES.sort((a,b)=>a.t-b.t); MARKS.sort((a,b)=>a.t-b.t);
+  const ts = EVENTS.map(e=>e.t||0).filter(Boolean);
+  T0 = ts.length? Math.min(...ts) : 0; T1 = ts.length? Math.max(...ts) : 0; DUR = Math.max(0.001, T1-T0);
+  window._mode = mode;
+}
+
+function updateMeta(name){
+  $("#p_mode").textContent = window._mode || "—";
+  $("#p_dur").textContent = fmtDur(DUR);
+  $("#p_cmds").textContent = MARKS.filter(m=>m.cls.startsWith("cmd")).length;
+  $("#p_fixes").textContent = FIXES.length;
+  $("#ev_count").textContent = MARKS.length + " events";
+  $("#t_end").textContent = fmtDur(DUR);
+  $("#scrub").max = Math.max(1, Math.round(DUR*10));   // 0.1s resolution
+}
+
+// ---- fit the map to the recorded extent ----------------------------------- //
+function fitToData(){
+  const pts = FIXES.length? FIXES : (STATES.filter(s=>s.status&&s.status.lat_deg).map(s=>({lat:s.status.lat_deg,lon:s.status.lon_deg})));
+  if(!pts.length) return;
+  let minLa=90,maxLa=-90,minLo=180,maxLo=-180;
+  for(const p of pts){ minLa=Math.min(minLa,p.lat); maxLa=Math.max(maxLa,p.lat); minLo=Math.min(minLo,p.lon); maxLo=Math.max(maxLo,p.lon); }
+  center = {lat:(minLa+maxLa)/2, lon:(minLo+maxLo)/2};
+  const {w,h} = viewSize();
+  // cap the auto-fit at the chart's practical max (NOAA ENC tiles run ~z16); a
+  // tiny/stationary extent would otherwise fit at z20 and render blank tiles.
+  let z = FIT_MAXZ;
+  for(; z>MINZ; z--){
+    const a = worldPx(minLa,minLo,z), b = worldPx(maxLa,maxLo,z);
+    if(Math.abs(b.x-a.x) < w*0.82 && Math.abs(b.y-a.y) < h*0.72) break;
+  }
+  zoom = Math.max(MINZ, Math.min(MAXZ, z));
+}
+
+// ---- resolve state at the playback cursor --------------------------------- //
+function fixAt(absT){
+  if(!FIXES.length) return null;
+  if(absT <= FIXES[0].t) return FIXES[0];
+  if(absT >= FIXES[FIXES.length-1].t) return FIXES[FIXES.length-1];
+  let lo=0, hi=FIXES.length-1;
+  while(hi-lo>1){ const mid=(lo+hi)>>1; if(FIXES[mid].t<=absT) lo=mid; else hi=mid; }
+  const a=FIXES[lo], b=FIXES[hi], f=(absT-a.t)/Math.max(1e-6,(b.t-a.t));
+  return {t:absT, lat:a.lat+(b.lat-a.lat)*f, lon:a.lon+(b.lon-a.lon)*f,
+          hdg:a.hdg, sog:(a.sog!=null&&b.sog!=null)? a.sog+(b.sog-a.sog)*f : a.sog,
+          batt:a.batt, batt_pct:a.batt_pct, batt_state:a.batt_state};
+}
+function lastStateAt(absT){
+  let s=null; for(const st of STATES){ if(st.t<=absT) s=st; else break; } return s;
+}
+function trackTo(absT){
+  const out=[]; for(const f of FIXES){ if(f.t<=absT) out.push(f); else break; } return out;
+}
+// planned overlays reconstructed from command bodies up to the cursor
+function planAt(absT){
+  let mission=null, route=null;
+  for(const e of EVENTS){
+    if((e.t||0) > absT) break;
+    if(e.kind!=="command" || (e.code&&e.code>=400)) continue;
+    const b = e.body||{};
+    if(e.path==="/api/mission") mission = b;
+    else if(e.path==="/api/cmd/upload" && b.route) route = b.route;
+    else if((e.path==="/api/cmd/goto"||e.path==="/api/cmd/transit"||e.path==="/api/cmd/rth") && b.route) route = b.route;
+    else if(e.path==="/api/cmd/stop"||e.path==="/api/cmd/estop") route = null;
+  }
+  return {mission, route};
+}
+
+// ---- draw ----------------------------------------------------------------- //
+function render(){
+  const {w,h} = viewSize(); cv.width=w; cv.height=h;
+  const o = originPx(), n = Math.pow(2,zoom);
+  const x0=Math.floor(o.x/TILE), x1=Math.floor((o.x+w)/TILE), y0=Math.floor(o.y/TILE), y1=Math.floor((o.y+h)/TILE);
+  const want=new Set(), url=TILE_URL(zoom);
+  for(let tx=x0;tx<=x1;tx++) for(let ty=y0;ty<=y1;ty++){
+    if(ty<0||ty>=n) continue;
+    const wx=((tx%n)+n)%n, key=`${zoom}/${wx}/${ty}`; want.add(key);
+    let img=tilesEl.querySelector(`img[data-k="${key}"]`);
+    if(!img){ img=new Image(); img.dataset.k=key; img.src=url(wx,ty); img.onerror=()=>{img.style.visibility="hidden";}; tilesEl.appendChild(img); }
+    img.style.left=(tx*TILE-o.x)+"px"; img.style.top=(ty*TILE-o.y)+"px";
+  }
+  tilesEl.querySelectorAll("img").forEach(img=>{ if(!want.has(img.dataset.k)) img.remove(); });
+
+  ctx.clearRect(0,0,w,h);
+  const toScreen = (lat,lon)=>{ const p=worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
+  const absT = T0 + pt;
+
+  // planned survey lines / waypoints / routes (reconstructed from commands)
+  if(showPlan){
+    const {mission, route} = planAt(absT);
+    if(mission && mission.lines){
+      ctx.font="10px Consolas,monospace";
+      mission.lines.forEach(L=>{ if(!L.a||!L.b) return; const a=toScreen(L.a.lat,L.a.lon), b=toScreen(L.b.lat,L.b.lon);
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+        ctx.setLineDash([7,5]); ctx.strokeStyle="rgba(255,215,106,0.5)"; ctx.lineWidth=1.5; ctx.stroke(); ctx.setLineDash([]); });
+    }
+    if(mission && mission.boundary && mission.boundary.length>1){
+      ctx.beginPath(); mission.boundary.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+      if(mission.boundary_closed) ctx.closePath();
+      ctx.setLineDash(mission.boundary_closed?[]:[6,4]); ctx.strokeStyle="rgba(200,120,220,0.8)"; ctx.lineWidth=1.6; ctx.stroke(); ctx.setLineDash([]);
+    }
+    if(route && route.length){                        // the uploaded / commanded run path
+      ctx.beginPath(); route.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+      ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(63,191,107,0.75)"; ctx.lineWidth=1.6; ctx.stroke(); ctx.setLineDash([]);
+      const wpIdx = window._wpIdx||0;
+      ctx.font="10px Consolas,monospace";
+      route.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);
+        ctx.beginPath(); ctx.moveTo(s.x,s.y-5); ctx.lineTo(s.x+5,s.y); ctx.lineTo(s.x,s.y+5); ctx.lineTo(s.x-5,s.y); ctx.closePath();
+        ctx.fillStyle=(i<wpIdx)?"#3fbf6b":"#ff9a3c"; ctx.fill(); ctx.lineWidth=1; ctx.strokeStyle="#160d02"; ctx.stroke(); });
+    }
+  }
+
+  // travelled track up to the cursor
+  const trk = showTrack ? trackTo(absT) : [];
+  if(trk.length>1){
+    ctx.beginPath(); trk.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+    ctx.strokeStyle=getCSS("--track"); ctx.lineWidth=2; ctx.globalAlpha=.9; ctx.stroke(); ctx.globalAlpha=1;
+  }
+
+  // home marker (from last state)
+  const s0 = lastStateAt(absT);
+  if(s0 && s0.home){ const h=toScreen(s0.home.lat,s0.home.lon);
+    ctx.fillStyle="#3fbf6b"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#3fbf6b"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText("H", h.x+7, h.y-5); }
+
+  // boat marker (interpolated)
+  const boat = fixAt(absT);
+  if(boat){ const s=toScreen(boat.lat,boat.lon);
+    if(boat.hdg!=null){ const a=(boat.hdg-90)*Math.PI/180, L=16;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x+Math.cos(a)*L, s.y+Math.sin(a)*L);
+      ctx.strokeStyle=getCSS("--asv"); ctx.lineWidth=2; ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+    if(follow) { center={lat:boat.lat,lon:boat.lon}; }
+  }
+}
+
+// ---- apply state to the readouts + timeline ------------------------------- //
+function applyAt(ptv){
+  pt = Math.max(0, Math.min(DUR, ptv));
+  const absT = T0 + pt;
+  const boat = fixAt(absT), s = lastStateAt(absT);
+  // wp index: latest telemetry/state carrying wp_index
+  let wpIdx=0, wpTot=0, run=null;
+  for(const e of EVENTS){ if((e.t||0)>absT) break;
+    if(e.kind==="state"){ const st=e.state||{}; if(st.wp_index!=null) wpIdx=st.wp_index; if(st.wp_total!=null) wpTot=st.wp_total; if(st.run) run=st.run; }
+    else if(e.kind==="telemetry"){ if(e.wp_index!=null) wpIdx=e.wp_index; if(e.run) run=e.run; } }
+  window._wpIdx = wpIdx;
+
+  $("#v_clock").textContent = boat? "@ "+fmtDur(pt) : "";
+  $("#v_pos").textContent = boat? fmtLL(boat.lat, boat.lon) : "—";
+  $("#v_hdg").textContent = (boat&&boat.hdg!=null)? boat.hdg.toFixed(0)+"°" : "—";
+  $("#v_sog").textContent = (boat&&boat.sog!=null)? boat.sog.toFixed(2)+" kn" : "—";
+  const bel=$("#v_batt");
+  if(boat&&boat.batt!=null){ bel.textContent = boat.batt.toFixed(1)+" V"+(boat.batt_pct!=null?" ("+boat.batt_pct+"%)":"");
+    bel.className="v "+(boat.batt_state==="critical"?"bad":boat.batt_state==="warn"?"warn":"ok"); }
+  else { bel.textContent="—"; bel.className="v"; }
+  const auto = s? (s.autonomy||"—") : "—";
+  const ael=$("#v_auto"); ael.textContent=auto.toUpperCase();
+  ael.className="v "+(auto==="auto"||auto==="hold"?"auto":auto==="e-stop"||auto==="failsafe"?"bad":auto==="armed"?"warn":auto==="safe"?"ok":"");
+  $("#v_beh").textContent = s? [s.behavior,s.completion].filter(Boolean).join(" · ").toUpperCase() : "—";
+  $("#v_wp").textContent = wpTot? `${wpIdx} / ${wpTot}` : "—";
+  $("#v_note").textContent = s? (s.note||"") : "";
+
+  $("#t_now").textContent = fmtDur(pt);
+  const wall = boat? new Date((absT)*1000) : (s? new Date(s.t*1000):null);
+  $("#t_wall").textContent = wall? wall.toLocaleTimeString() : "—";
+  if(!draggingScrub) $("#scrub").value = Math.round(pt*10);
+
+  highlightEvents(absT);
+}
+
+// ---- event timeline ------------------------------------------------------- //
+function buildEventList(){
+  const box=$("#evlist"); box.innerHTML="";
+  MARKS.forEach((m,i)=>{
+    const row=document.createElement("div");
+    row.className="ev "+m.cls; row.dataset.i=i;
+    row.innerHTML = `<span class="tt">${fmtDur((m.t||0)-T0)}</span><span><span class="lab">${m.lab}</span>`+
+      (m.tag? `<span class="tag">${m.tag}</span>`:"")+
+      (m.det? `<div class="det">${escapeHtml(m.det)}</div>`:"")+`</span>`;
+    row.onclick = ()=>{ seek((m.t||0)-T0); stopPlay(); };
+    box.appendChild(row);
+  });
+}
+function highlightEvents(absT){
+  const rows=$("#evlist").children; let curIdx=-1;
+  for(let i=0;i<MARKS.length;i++){ if((MARKS[i].t||0)<=absT) curIdx=i; else break; }
+  for(let i=0;i<rows.length;i++){
+    rows[i].classList.toggle("past", (MARKS[i].t||0)<=absT);
+    rows[i].classList.toggle("cur", i===curIdx);
+  }
+  if(curIdx>=0 && rows[curIdx] && playing){
+    const r=rows[curIdx], box=$("#evlist");
+    if(r.offsetTop < box.scrollTop || r.offsetTop > box.scrollTop+box.clientHeight-30)
+      box.scrollTop = r.offsetTop - box.clientHeight/2;
+  }
+}
+function escapeHtml(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ---- transport ------------------------------------------------------------ //
+function seek(v){ applyAt(v); render(); }
+function startPlay(){ if(playing||DUR<=0) return; if(pt>=DUR) pt=0; playing=true; $("#playpause").textContent="⏸"; lastRAF=performance.now(); requestAnimationFrame(tick); }
+function stopPlay(){ playing=false; $("#playpause").textContent="▶"; }
+function tick(now){
+  if(!playing) return;
+  const dt=(now-lastRAF)/1000; lastRAF=now;
+  pt += dt*speed;
+  if(pt>=DUR){ pt=DUR; applyAt(pt); render(); stopPlay(); return; }
+  applyAt(pt); render(); requestAnimationFrame(tick);
+}
+
+// ---- empty / toast -------------------------------------------------------- //
+function showEmpty(a,b){ const e=$("#empty"); e.style.display="flex"; e.innerHTML=`<b>ASV PLAYBACK</b><span>${escapeHtml(a)}</span>`+(b?`<span style="font-size:11px;color:var(--ink-faint)">${escapeHtml(b)}</span>`:""); }
+function hideEmpty(){ $("#empty").style.display="none"; }
+let toastTimer=null;
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"),1600); }
+
+// ---- interactions --------------------------------------------------------- //
+let dragging=false, last={x:0,y:0};
+mapEl.addEventListener("mousedown", e=>{ dragging=true; last={x:e.clientX,y:e.clientY}; mapEl.classList.add("drag"); });
+window.addEventListener("mouseup", ()=>{ dragging=false; mapEl.classList.remove("drag"); });
+window.addEventListener("mousemove", e=>{
+  const o=originPx(), r=mapEl.getBoundingClientRect();
+  if(!dragging) return;
+  follow=false; $("#follow").classList.remove("on");
+  const c=worldPx(center.lat,center.lon,zoom);
+  center=worldToLatLon(c.x-(e.clientX-last.x), c.y-(e.clientY-last.y), zoom);
+  last={x:e.clientX,y:e.clientY}; render();
+});
+mapEl.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1:-1, e.clientX, e.clientY); }, {passive:false});
+function zoomAt(dz, sx, sy){
+  const nz=Math.max(MINZ,Math.min(MAXZ,zoom+dz)); if(nz===zoom) return;
+  const r=mapEl.getBoundingClientRect(), o=originPx();
+  const anchor=worldToLatLon(o.x+(sx-r.left), o.y+(sy-r.top), zoom);
+  zoom=nz;
+  const o2=originPx(), p=worldPx(anchor.lat,anchor.lon,zoom);
+  center=worldToLatLon(p.x-((sx-r.left)-viewSize().w/2), p.y-((sy-r.top)-viewSize().h/2), zoom);
+  render();
+}
+$("#zin").onclick=()=>zoomAt(1, mapEl.getBoundingClientRect().left+viewSize().w/2, mapEl.getBoundingClientRect().top+viewSize().h/2);
+$("#zout").onclick=()=>zoomAt(-1, mapEl.getBoundingClientRect().left+viewSize().w/2, mapEl.getBoundingClientRect().top+viewSize().h/2);
+$("#follow").onclick=()=>{ follow=!follow; $("#follow").classList.toggle("on",follow); const b=fixAt(T0+pt); if(follow&&b){center={lat:b.lat,lon:b.lon};} render(); };
+$("#t_track").onclick=()=>{ showTrack=!showTrack; $("#t_track").classList.toggle("on",showTrack); render(); };
+$("#t_plan").onclick=()=>{ showPlan=!showPlan; $("#t_plan").classList.toggle("on",showPlan); render(); };
+$("#t_events").onclick=()=>{ $("#events").classList.toggle("hidden"); $("#t_events").classList.toggle("on", !$("#events").classList.contains("hidden")); };
+
+$("#playpause").onclick=()=>{ playing? stopPlay() : startPlay(); };
+$("#restart").onclick=()=>{ stopPlay(); seek(0); };
+$("#speed").onchange=e=>{ speed=parseFloat(e.target.value); };
+$("#logpick").onchange=e=>loadLog(e.target.value);
+
+let draggingScrub=false;
+const scrub=$("#scrub");
+scrub.addEventListener("input", ()=>{ draggingScrub=true; seek(scrub.value/10); });
+scrub.addEventListener("change", ()=>{ draggingScrub=false; });
+scrub.addEventListener("mousedown", ()=>{ stopPlay(); });
+
+window.addEventListener("keydown", e=>{
+  if(e.target.tagName==="SELECT"||e.target.tagName==="INPUT") return;
+  if(e.code==="Space"){ e.preventDefault(); playing?stopPlay():startPlay(); }
+  else if(e.code==="ArrowRight"){ seek(Math.min(DUR, pt+ (e.shiftKey?10:2))); stopPlay(); }
+  else if(e.code==="ArrowLeft"){ seek(Math.max(0, pt- (e.shiftKey?10:2))); stopPlay(); }
+  else if(e.code==="Home"){ stopPlay(); seek(0); }
+  else if(e.code==="End"){ stopPlay(); seek(DUR); }
+});
+window.addEventListener("resize", render);
+
+loadList();
+</script>
+</body>
+</html>

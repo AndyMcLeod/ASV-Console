@@ -1,0 +1,2455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>ASV Command</title>
+<style>
+  :root{
+    --abyss:#05080c; --hull:#0a1119; --line:#16222e; --line2:#22323f;
+    --ink:#d7e3ea; --ink-dim:#8ba0ad; --ink-faint:#54697a; --bronze:#c8862b;
+    --ok:#3fbf6b; --warn:#d99a2b; --bad:#d9534f; --track:#39c0ff; --asv:#ffcf3f;
+    --mono:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--abyss);color:var(--ink);font-family:var(--sans);overflow:hidden;touch-action:none;}
+  #map{position:absolute;inset:0;overflow:hidden;cursor:grab;background:#0a141c;}
+  #map.drag{cursor:grabbing;}
+  #tiles img{position:absolute;width:256px;height:256px;user-select:none;-webkit-user-drag:none;image-rendering:auto;}
+  #overlay{position:absolute;inset:0;pointer-events:none;}
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+    padding:8px 14px;background:linear-gradient(180deg,rgba(13,22,32,.96),rgba(10,17,25,.86));
+    border-bottom:1px solid var(--line);z-index:5;}
+  .brand{font-family:var(--mono);letter-spacing:.14em;font-size:13px;color:var(--bronze);text-transform:uppercase;}
+  .spacer{flex:1}
+  .pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:2px;border:1px solid var(--line2);
+    color:var(--ink-dim);display:flex;align-items:center;gap:6px;white-space:nowrap;}
+  .pill b{color:var(--ink);font-weight:600;}
+  .pill .k{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
+  /* fixed-width telemetry values (mono font -> ch units are exact): each pill is
+     sized to its maximum possible content and the value centered, so the bar
+     doesn't reflow/jump as digits change (e.g. "3 kn" vs "2.65 kn"). */
+  .pill b{display:inline-block;text-align:center;}
+  #p_pos{min-width:24ch;} #p_sog{min-width:7ch;} #p_hdg{min-width:6ch;}
+  #p_cog{min-width:4ch;} #p_home{min-width:15ch;} #p_pitch{min-width:6ch;}
+  #p_roll{min-width:6ch;} #p_batt{min-width:7ch;} #p_wpt{min-width:9ch;}
+  #p_time{min-width:8ch;}
+  .pill.state{border-color:var(--line2);text-transform:uppercase;letter-spacing:.08em;font-size:10px;}
+  .pill.safe b{color:var(--ok);} .pill.armed b{color:var(--warn);} .pill.auto b{color:var(--track);}
+  .pill.estop{border-color:var(--bad);} .pill.estop b{color:var(--bad);}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-faint);}
+  .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok);}
+  .dot.lost{background:var(--bad);box-shadow:0 0 8px var(--bad);}
+  .batt b.ok{color:var(--ok);} .batt b.warn{color:var(--warn);} .batt b.critical{color:var(--bad);}
+
+  /* master-control safety banner - always visible */
+  .rcbanner{position:absolute;left:50%;transform:translateX(-50%);top:auto;bottom:84px;z-index:6;
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;color:#160d02;background:var(--bronze);
+    border-radius:3px;padding:4px 12px;box-shadow:0 2px 8px rgba(0,0,0,.4);text-align:center;}
+
+  .controls{position:absolute;top:96px;right:14px;display:flex;flex-direction:column;gap:8px;z-index:5;}
+  .ctl{width:40px;height:40px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink);
+    font-family:var(--mono);font-size:18px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .ctl:hover{border-color:var(--bronze);color:var(--bronze);}
+  .ctl.small{font-size:10px;letter-spacing:.04em;height:34px;text-transform:uppercase;}
+  .ctl.on{background:var(--bronze);color:#160d02;border-color:var(--bronze);font-weight:700;}
+  .ctl.mode-on{background:var(--bronze);color:#160d02;}
+
+  /* command bar - the C2 surface */
+  .cmdbar{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:6;display:flex;gap:8px;
+    align-items:center;background:rgba(10,17,25,.94);border:1px solid var(--line2);border-radius:5px;
+    padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.5);}
+  .cbtn{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;
+    border:1px solid var(--line2);background:#0e1a24;color:var(--ink);padding:8px 12px;border-radius:3px;min-width:64px;}
+  .cbtn:hover:not(:disabled){border-color:var(--bronze);color:var(--bronze);}
+  .cbtn:disabled{opacity:.35;cursor:not-allowed;}
+  .cbtn.arm.on{background:var(--warn);color:#160d02;border-color:var(--warn);font-weight:700;}
+  .cbtn.go{border-color:#2b6d3f;} .cbtn.go:hover:not(:disabled){border-color:var(--ok);color:var(--ok);}
+  .cbtn.estop{background:#3a1210;border-color:var(--bad);color:#ff8f8b;font-weight:700;}
+  .cbtn.estop.on{background:var(--bad);color:#fff;}
+  .cbtn.estop:hover{border-color:var(--bad);color:#fff;}
+  .cdiv{width:1px;align-self:stretch;background:var(--line);margin:0 2px;}
+
+  .panel{position:absolute;left:14px;top:96px;z-index:6;width:158px;background:rgba(10,17,25,.92);
+    border:1px solid var(--line);border-radius:3px;padding:8px;display:flex;flex-direction:column;gap:6px;}
+  .panel .prow{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+  .panel label{font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;}
+  .panel input,.panel select{width:64px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);
+    font-family:var(--mono);font-size:11px;padding:3px 4px;border-radius:2px;}
+  .panel .phint{font-family:var(--sans);font-size:9.5px;color:var(--ink-faint);line-height:1.35;}
+  .panel .phead{cursor:move;margin:-8px -8px 2px;padding:6px 8px;background:linear-gradient(180deg,#182636,#101c28);
+    border-bottom:1px solid var(--line);border-radius:3px 3px 0 0;font-family:var(--mono);font-size:9px;
+    color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;user-select:none;
+    display:flex;align-items:center;gap:6px;}
+  .panel .phead::before{content:"⠿";color:var(--ink-faint);font-size:11px;line-height:1;}
+
+  .readout{position:absolute;left:14px;bottom:84px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--ink-dim);
+    background:rgba(10,17,25,.8);border:1px solid var(--line);border-radius:3px;padding:6px 10px;display:flex;gap:16px;}
+  .readout b{color:var(--ink);}
+  .attrib{position:absolute;right:8px;bottom:8px;z-index:5;font-family:var(--sans);font-size:10px;color:var(--ink-faint);
+    background:rgba(5,8,12,.7);padding:2px 6px;border-radius:2px;}
+  .attrib a{color:var(--ink-dim);text-decoration:none;}
+
+  .vcard{position:absolute;z-index:7;width:196px;background:rgba(10,17,25,.94);border:1px solid var(--line2);
+    border-radius:4px;box-shadow:0 4px 18px rgba(0,0,0,.45);font-family:var(--mono);user-select:none;}
+  .vcard .vhead{cursor:move;padding:6px 9px;background:linear-gradient(180deg,#182636,#101c28);
+    border-bottom:1px solid var(--line);border-radius:4px 4px 0 0;display:flex;align-items:center;
+    justify-content:space-between;font-size:10px;letter-spacing:.08em;color:var(--bronze);text-transform:uppercase;}
+  .vcard .vhead .vclose{cursor:pointer;color:var(--ink-faint);padding:0 3px;}
+  .vcard .vhead .vclose:hover{color:var(--bad);}
+  .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;}
+  .vcard .vrow{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
+  .vcard .vrow .vk{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
+  .vcard .vrow .vv{color:var(--ink);font-weight:600;}
+  .vcard .vv.warn{color:var(--warn);} .vcard .vv.critical{color:var(--bad);} .vcard .vv.ok{color:var(--ok);}
+  .vcard .vcomms{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;}
+  .vcard .vcommsline{display:flex;align-items:center;justify-content:space-between;font-size:10px;}
+  .vcard .vbar{height:5px;border-radius:2px;background:var(--line2);margin:4px 0 3px;overflow:hidden;}
+  .vcard .vbar i{display:block;height:100%;background:var(--ink-faint);width:0%;}
+  .vcard .vdetail{font-family:var(--sans);font-size:9px;color:var(--ink-faint);line-height:1.3;white-space:normal;word-break:break-word;}
+  .vminipill{display:none;position:absolute;z-index:7;font-family:var(--mono);font-size:10px;padding:4px 9px;
+    border-radius:2px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink-dim);cursor:pointer;}
+  .note{position:absolute;left:50%;transform:translateX(-50%);top:52px;z-index:6;font-family:var(--mono);font-size:10.5px;
+    color:var(--ink-dim);background:rgba(10,17,25,.85);border:1px solid var(--line);border-radius:3px;padding:3px 10px;max-width:70vw;text-align:center;}
+  /* quick-start help card */
+  .qsback{position:absolute;inset:0;z-index:8;background:rgba(3,6,10,.55);}
+  .qs{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:430px;max-width:92vw;
+    background:rgba(10,17,25,.98);border:1px solid var(--line2);border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.6);font-family:var(--sans);}
+  .qs .qh{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#182636,#101c28);border-radius:6px 6px 0 0;}
+  .qs .qh b{font-family:var(--mono);letter-spacing:.1em;font-size:12px;color:var(--bronze);text-transform:uppercase;}
+  .qs .qh .qx{cursor:pointer;color:var(--ink-faint);font-size:18px;line-height:1;} .qs .qh .qx:hover{color:var(--bad);}
+  .qs .qb{padding:12px 16px;font-size:12.5px;line-height:1.5;color:var(--ink-dim);}
+  .qs .qb ol{margin:0;padding-left:18px;} .qs .qb li{margin:5px 0;}
+  .qs .qb ol[type="a"]{margin:3px 0 3px 0;}
+  .qs .qb b{color:var(--ink);} .qs .qb .tag{font-family:var(--mono);font-size:11px;color:var(--bronze);
+    border:1px solid var(--line2);border-radius:2px;padding:0 4px;}
+  .qs .qnote{margin-top:10px;font-family:var(--mono);font-size:10.5px;color:#160d02;background:var(--bronze);
+    border-radius:3px;padding:5px 9px;}
+  /* punch-out controls */
+  .panel input[type=number]{width:50px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);
+    font-family:var(--mono);font-size:11px;padding:2px 4px;border-radius:2px;}
+  .prow.punchsep{border-top:1px solid var(--line);margin-top:3px;padding-top:6px;}
+  .panel .enf{display:flex;flex-direction:column;gap:2px;margin:2px 0;}
+  .panel .enf label{display:flex;align-items:center;gap:5px;font-family:var(--sans);font-size:10px;
+    color:var(--ink-dim);text-transform:none;letter-spacing:0;cursor:pointer;}
+  .panel .enf input{width:auto;}
+  .ctl.small.punch{background:#123; border-color:var(--track); color:var(--track); font-weight:700;}
+  .ctl.small.punch:hover{background:var(--track); color:#04121a;}
+  .ctl.small.punch:disabled{opacity:.5; cursor:default;}
+  .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
+    font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
+    padding:4px 10px;max-width:80vw;text-align:center;display:none;}
+  /* in-GUI confirmation (does not depend on native confirm(), which some
+     embedded browsers suppress; auto-skipped in simulator mode) */
+  .cfmwrap{position:absolute;inset:0;z-index:12;display:none;align-items:center;justify-content:center;
+    background:rgba(3,6,10,.6);}
+  .cfmbox{width:380px;max-width:92vw;background:rgba(10,17,25,.98);border:1px solid var(--line2);
+    border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.6);padding:16px 18px;}
+  .cfmttl{font-family:var(--mono);letter-spacing:.1em;font-size:11px;color:var(--bronze);
+    text-transform:uppercase;margin-bottom:8px;}
+  .cfmmsg{font-family:var(--sans);font-size:13px;color:var(--ink);line-height:1.5;white-space:pre-line;margin-bottom:14px;}
+  .cfmrow{display:flex;gap:8px;justify-content:flex-end;}
+  .cfmrow .ctl{width:auto;padding:0 14px;height:32px;}
+</style>
+</head>
+<body>
+  <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
+
+  <div class="topbar">
+    <div class="brand"><b>ASV</b> Command</div>
+    <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
+    <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
+    <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
+    <div class="spacer"></div>
+    <div class="pill"><span class="k">POS</span><b id="p_pos">no fix</b></div>
+    <div class="pill"><span class="k">SOG</span><b id="p_sog">--</b></div>
+    <div class="pill"><span class="k">HDG</span><b id="p_hdg">--</b></div>
+    <div class="pill" title="Course over ground — the direction the boat is actually tracking (differs from heading by the crab angle when wind/waves set it off its bow line)."><span class="k">COG</span><b id="p_cog">--</b></div>
+    <div class="pill" title="Bearing and range from Home to the ASV."><span class="k">HOME→</span><b id="p_home">--</b></div>
+    <div class="pill" title="Vessel pitch (bow up +). In the sim, driven by the sea state (head seas pitch most)."><span class="k">PITCH</span><b id="p_pitch">--</b></div>
+    <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
+    <div class="pill batt"><span class="k">BATT</span><b id="p_batt">--</b></div>
+    <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
+    <div class="pill"><span class="k">TIME</span><b id="p_time">--</b></div>
+  </div>
+
+  <div class="note" id="note">Not connected.</div>
+
+  <div class="controls">
+    <button class="ctl" id="zin" title="Zoom in">+</button>
+    <button class="ctl" id="zout" title="Zoom out">&minus;</button>
+    <button class="ctl small on" id="follow" title="Keep the boat centred">BOAT</button>
+    <button class="ctl small" id="wptBtn" title="Waypoint mode: click chart to add, click a waypoint to remove">WPT</button>
+    <button class="ctl small" id="lineBtn" title="Survey pattern (CAMP 3-click): click start corner, opposite corner, then a point that sets line spacing + direction. Lines fill the box automatically.">SURV</button>
+    <button class="ctl small" id="bndBtn" title="Survey-area boundary (CAMP-style): click the chart to drop points, click the first point to close. Survey lines are clipped to this arbitrary polygon.">BND</button>
+    <button class="ctl small" id="srchBtn" title="Search patterns (Project-11 style): Expanding box / Sector / Parallel search. Click a datum, set params, Add to plan.">SRCH</button>
+    <button class="ctl small" id="tranBtn" title="Transit: click the chart to draw a single- or multi-segment transit line, then Follow. The ASV drives it clear of ENC obstacles and station-keeps at the end. No survey plan needed.">TRAN</button>
+    <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; editing in BND always shows it.">AREA</button>
+    <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
+    <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
+    <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
+    <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
+    <button class="ctl" id="helpBtn" title="Quick start / help">?</button>
+  </div>
+
+  <div class="panel" id="linePanel" style="display:none">
+    <div class="phead" id="linePanelHead" title="Drag to move">Survey settings</div>
+    <div class="prow"><label>Align</label>
+      <select id="sp_align" title="Where the leftover margin goes across the survey width">
+        <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
+      </select></div>
+    <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
+    <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
+    <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
+    <div class="prow punchsep"><label>Min depth m</label><input type="number" id="sp_mindepth" value="2" min="0" max="500" step="0.5" title="Survey COVERAGE minimum — don't survey shallower than this. Separate from the fixed 1 m nogo navigability floor (which every behaviour always avoids)."/></div>
+    <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
+    <div class="prow"><label>Water m</label>
+      <span style="display:flex;gap:3px;align-items:center;">
+        <input type="number" id="sp_water" step="0.05" placeholder="auto" title="Live water level above chart datum (LWD in the Great Lakes, MLLW in the oceans), ADDED to charted depths. Blank = auto from the nearest NOAA tide station; type a value to override."/>
+        <button class="ctl small" id="sp_water_ref" style="width:22px;height:22px;padding:0;font-size:13px;" title="Refresh from the nearest tide station">&#8635;</button>
+      </span></div>
+    <div class="phint" id="sp_water_note">tide station: --</div>
+    <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviours (Go-To / RTH / search / survey) route clear by."/></div>
+    <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behaviour (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviours.">
+      <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
+      <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
+      <label><input type="checkbox" id="enf_haz" checked/>Aids &amp; hazards</label>
+      <label><input type="checkbox" id="enf_area"/>Dredged / restricted</label>
+    </div>
+    <button class="ctl small punch" id="sp_punch" title="Trim survey-line extents to ENC chart features (shoreline, docks, aids, hazards, water below min depth)">Punch Out</button>
+    <button class="ctl small" id="sp_add" disabled>Add to plan</button>
+    <div class="prow" style="gap:4px">
+      <button class="ctl small" id="sp_reset" title="Discard the pattern being drawn" style="flex:1">Reset</button>
+      <button class="ctl small" id="ln_clr" title="Delete all waypoints and planned lines" style="flex:1">CLR&nbsp;PLAN</button>
+    </div>
+    <div class="phint" id="sp_hint">Click the survey start corner (A).</div>
+  </div>
+
+  <div class="panel" id="boundPanel" style="display:none">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Survey area</div>
+    <button class="ctl small" id="bnd_close" title="Close the polygon (needs ≥3 points)">Close area</button>
+    <button class="ctl small" id="bnd_clr" title="Delete the boundary polygon">Clear area</button>
+    <div class="phint" id="bnd_hint">Click the chart to drop boundary points; click the first point to close. Survey lines clip to this area.</div>
+  </div>
+
+  <div class="panel" id="searchPanel" style="display:none">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Search pattern</div>
+    <div class="prow"><label>Pattern</label>
+      <select id="sr_type" title="Canned search-pattern generator (à la Project-11 track_patterns)">
+        <option value="expbox" selected>Expanding box</option>
+        <option value="sector">Sector</option>
+        <option value="parallel">Parallel</option>
+      </select></div>
+    <div class="prow"><label>Heading°</label><input type="number" id="sr_heading" value="0" min="0" max="359" step="5" title="Initial leg bearing (°true)"/></div>
+    <div class="prow"><label>Turn</label>
+      <select id="sr_turn" title="Direction the pattern rotates / steps">
+        <option value="1" selected>CW</option><option value="-1">CCW</option>
+      </select></div>
+    <!-- Expanding box -->
+    <div class="prow sr-expbox"><label>Leg step m</label><input type="number" id="sr_step" value="8" min="1" step="2" title="First leg length; each pair of legs grows by this."/></div>
+    <div class="prow sr-expbox"><label>Legs</label><input type="number" id="sr_legs" value="10" min="2" max="60" step="1" title="Number of legs in the spiral"/></div>
+    <!-- Sector -->
+    <div class="prow sr-sector" style="display:none"><label>Radius m</label><input type="number" id="sr_radius" value="20" min="5" step="5" title="Leg length from the datum (triangle side)"/></div>
+    <div class="prow sr-sector" style="display:none"><label>Sectors</label><input type="number" id="sr_sectors" value="3" min="1" max="12" step="1" title="Number of triangular passes"/></div>
+    <div class="prow sr-sector" style="display:none"><label>Rotate°</label><input type="number" id="sr_rotate" value="120" min="10" max="180" step="10" title="Bearing rotation between passes"/></div>
+    <!-- Parallel -->
+    <div class="prow sr-parallel" style="display:none"><label>Lane len m</label><input type="number" id="sr_length" value="30" min="5" step="5" title="Length of each parallel lane"/></div>
+    <div class="prow sr-parallel" style="display:none"><label>Spacing m</label><input type="number" id="sr_spacing" value="5" min="1" step="1" title="Across-track lane spacing"/></div>
+    <div class="prow sr-parallel" style="display:none"><label>Lanes</label><input type="number" id="sr_lanes" value="8" min="1" max="80" step="1" title="Number of lanes"/></div>
+    <div class="prow"><label>Legs</label><span class="phint" id="sr_count" style="color:var(--ink);">--</span></div>
+    <button class="ctl small" id="sr_add" disabled>Add to plan</button>
+    <button class="ctl small" id="sr_reset" title="Discard the search pattern being drawn">Reset</button>
+    <div class="phint" id="sr_hint">Click the chart to set the datum (search origin), then tune the params.</div>
+  </div>
+
+  <div class="panel" id="envPanel" style="display:none">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Environment (sim)</div>
+    <label class="prow" style="cursor:pointer;"><span>Enabled</span>
+      <input type="checkbox" id="env_on" checked title="Apply wind + wave forces to the sim boat. Off = deterministic clean tracking."/></label>
+    <div class="phint" id="env_src">locating weather…</div>
+    <div class="prow"><label>Wind kn</label><input type="number" id="env_wind_kn" step="1" min="0" placeholder="auto" title="Override wind speed (blank = live buoy)."/></div>
+    <div class="prow"><label>Wind from°</label><input type="number" id="env_wind_from" step="5" min="0" max="360" placeholder="auto" title="Override wind direction (FROM)."/></div>
+    <div class="prow"><label>Sea Hs m</label><input type="number" id="env_hs" step="0.1" min="0" placeholder="auto" title="Override significant wave height (blank = live)."/></div>
+    <div class="prow"><label>Sea from°</label><input type="number" id="env_wave_from" step="5" min="0" max="360" placeholder="auto" title="Override wave direction (FROM)."/></div>
+    <div class="prow" style="gap:4px">
+      <button class="ctl small" id="env_apply" title="Apply the manual override values above" style="flex:1">Apply</button>
+      <button class="ctl small" id="env_auto" title="Drop the override, use live buoy data" style="flex:1">Auto</button>
+      <button class="ctl small" id="env_ref" title="Refetch from the nearest NOAA buoys" style="width:26px;">&#8635;</button>
+    </div>
+  </div>
+  <div class="panel" id="transitPanel" style="display:none">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
+    <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
+    <button class="ctl small punch" id="tr_follow" disabled title="Drive the transit line now (ENC-routed around obstacles), station-keep at the end. Requires ARM.">Follow</button>
+    <div class="prow" style="gap:4px">
+      <button class="ctl small" id="tr_undo" title="Remove the last transit point" style="flex:1">Undo</button>
+      <button class="ctl small" id="tr_clr" title="Discard the transit line" style="flex:1">Clear</button>
+    </div>
+    <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
+  </div>
+
+  <div class="readout">
+    <span>cursor <b id="r_cursor">--</b></span>
+    <span>z <b id="r_zoom">13</b></span>
+    <span>track <b id="r_track">0</b></span>
+    <span>wpts <b id="r_wpts">0</b></span>
+  </div>
+
+  <div class="encbanner" id="encbanner"></div>
+
+  <div class="attrib">Chart: <a href="https://www.charts.noaa.gov/" target="_blank" rel="noopener">NOAA ENC</a></div>
+
+  <div class="rcbanner">RC TRANSMITTER IS MASTER &mdash; Sw A &amp; the RC E-STOP are the true failsafe</div>
+
+  <!-- run parameters + command bar -->
+  <div class="cmdbar">
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Vendor VCU waypoint arrival radius uploaded in the route plan. Separate from the Punch-Out Buffer. The ASV follows the survey line and approaches within ~1 m of each waypoint turn.">Arr m</label>
+    <input id="c_arrival" type="number" value="2" min="1" max="50" step="1"
+      title="Vendor VCU waypoint arrival radius (route-plan parameter). NOT the Punch-Out obstacle buffer."
+      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Waypoint approach radius: how close the ASV follows the survey line before turning onto the next leg. Separate from the arrival radius and the Punch-Out buffer. Applies live to the simulator.">Appr m</label>
+    <input id="c_approach" type="number" value="1" min="0.5" max="50" step="0.5"
+      title="Waypoint approach radius — the ASV line-follows to within this of each turn (~1 m recommended). Separate from arrival radius / Punch-Out buffer. Applies live to the sim."
+      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Nogo keep-clear buffer: how far the ASV stays off every charted structure / shallow when routing (Go-To / RTH / search / survey). Lower it (e.g. 3-5 m) to thread a tight marina; raise it for more standoff. Shared with the SURV panel Buffer; re-routes live.">Buf m</label>
+    <input id="c_buffer" type="number" value="3" min="0" max="200" step="1"
+      title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behaviour; re-routes live."
+      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+    <select id="c_speed" style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+      <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+    </select>
+    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+      <option value="complete" selected>Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
+    </select>
+    <span class="cdiv"></span>
+    <button class="cbtn arm" id="b_arm">Arm</button>
+    <button class="cbtn" id="b_upload" disabled>Upload</button>
+    <button class="cbtn go" id="b_start" disabled>Start</button>
+    <button class="cbtn" id="b_pause" disabled>Pause</button>
+    <button class="cbtn" id="b_stop" disabled>Stop</button>
+    <span class="cdiv"></span>
+    <button class="cbtn" id="b_goto" disabled title="Go-To: click, then pick a point on the chart — the ASV drives there and station-keeps">Go-To</button>
+    <button class="cbtn" id="b_hold" disabled title="Hold / station-keep at the present position">Hold</button>
+    <button class="cbtn" id="b_rth" disabled title="Return-to-Home: drive to the home point and station-keep">RTH</button>
+    <button class="cbtn" id="b_home" disabled title="Set Home to the present position">Set&nbsp;Home</button>
+    <span class="cdiv"></span>
+    <button class="cbtn estop" id="b_estop">E-STOP</button>
+  </div>
+
+  <div class="vcard" id="vcard">
+    <div class="vhead" id="vcardHead"><span>VESSEL STATUS</span><span class="vclose" id="vcardClose" title="Hide (click VESSEL to bring back)">&times;</span></div>
+    <div class="vbody">
+      <div class="vrow"><span class="vk">Autonomy</span><span class="vv" id="v_auto">--</span></div>
+      <div class="vrow"><span class="vk">Speed</span><span class="vv" id="v_sog">--</span></div>
+      <div class="vrow"><span class="vk">Heading</span><span class="vv" id="v_hdg">--</span></div>
+      <div class="vrow"><span class="vk">Course (COG)</span><span class="vv" id="v_cog" title="Course over ground — actual track direction (heading minus crab)">--</span></div>
+      <div class="vrow"><span class="vk">From home</span><span class="vv" id="v_home" title="Bearing and range from Home to the ASV">--</span></div>
+      <div class="vrow"><span class="vk">Pitch</span><span class="vv" id="v_pitch">--</span></div>
+      <div class="vrow"><span class="vk">Roll</span><span class="vv" id="v_roll">--</span></div>
+      <div class="vrow"><span class="vk">Wind</span><span class="vv" id="v_wind" title="Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only.">--</span></div>
+      <div class="vrow"><span class="vk">Sea</span><span class="vv" id="v_sea" title="Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only.">--</span></div>
+      <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
+      <div class="vrow"><span class="vk">Battery</span><span class="vv" id="v_batt">--</span></div>
+      <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
+      <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
+      <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
+      <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
+      <div class="vcomms">
+        <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
+        <div class="vbar"><i id="v_commsbar"></i></div>
+        <div class="vdetail" id="v_commsdetail">not polled yet</div>
+      </div>
+    </div>
+  </div>
+  <div class="vminipill" id="vReopen" title="Show vessel status">VESSEL</div>
+
+  <div class="cfmwrap" id="confirm">
+    <div class="cfmbox">
+      <div class="cfmttl" id="confirmTtl">Confirm</div>
+      <div class="cfmmsg" id="confirmMsg"></div>
+      <div class="cfmrow">
+        <button class="ctl small" id="confirmNo">Cancel</button>
+        <button class="ctl small punch" id="confirmYes">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="qsback" id="qsBack" style="display:none"></div>
+  <div class="qs" id="quickstart" style="display:none">
+    <div class="qh"><b>Quick Start &mdash; Survey Planning</b><span class="qx" id="qsClose" title="Close">&times;</span></div>
+    <div class="qb">
+      <ol>
+        <li><b>Plan a survey area.</b> Click <span class="tag">SURV</span>, then click three points on the chart:
+          <ol type="a">
+            <li><b>Start corner</b> (A)</li>
+            <li><b>Opposite / diagonal corner</b> (B) &mdash; sets each line's length and the area width</li>
+            <li><b>Spacing &amp; direction</b> (C) &mdash; distance from A sets the line spacing; its bearing sets the line orientation</li>
+          </ol>
+          Parallel survey lines fill the box automatically (boustrophedon). <b>Drag A / B / C</b> to adjust &mdash; spacing, line count and dimensions update live, or <b>type a Spacing</b> to force it. Click <span class="tag">Add&nbsp;to&nbsp;plan</span> to commit.</li>
+        <li><b>Survey area (optional).</b> Click <span class="tag">BND</span> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
+        <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behaviour avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip green, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
+        <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (green kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
+        <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
+        <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
+        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as the <i>Run mode</i> on the vessel card.</li>
+        <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
+        <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviours &mdash; all available once Armed, no survey plan required.</li>
+      </ol>
+      <div class="qnote">The RC transmitter is master &mdash; Sw A &amp; the RC E-STOP are the true failsafe.</div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+
+// --- map config ---------------------------------------------------------- //
+const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
+const TILE = 256, MINZ = 3, MAXZ = 20, MAX_TRACK = 8000, M_PER_DEG_LAT = 111320;
+
+let zoom = 13;
+let center = {lat: 42.137083, lon: -80.087367}; // fallback until first fix (spawn: 42 08.225'N 80 05.242'W)
+let haveFix = false, follow = true;
+let track = [];
+let asv = null;                              // {lat,lon,hdg}
+
+// --- mission plan -------------------------------------------------------- //
+let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey", completion: "complete", buffer_m: 3};
+let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
+let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
+let mode = "pan", activeLine = -1, saveTimer = null;
+// CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
+let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
+let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'
+let patClip = null;                            // Punch-Out result: clipped survey lines [[p0,p1]..]
+let patUnsafe = [];                            // transits with no clear route (flagged red)
+let patRoutes = [];                            // transits auto-routed around obstacles (amber polylines)
+let patTransits = [];                          // per-gap detour waypoints, interleaved on commit
+// Canned search patterns (Project-11 track_patterns style): datum + params ->
+// an ordered waypoint route. Purely client-side generators; committed to
+// mission.waypoints and run through the normal upload/start flow.
+let search = {type:"expbox", datum:null, turn:1};   // in-memory only (like pat)
+let searchDrag = false;                        // datum handle being dragged
+// single/multi-segment transit line (draw + follow behaviour) - [{lat,lon}] vertices
+let transit = [];                              // in-memory draft; Follow ENC-routes + drives it
+// CAMP-style arbitrary survey-area boundary: lines are clipped to this polygon
+let boundary = [];                             // [{lat,lon}] vertices
+let boundaryClosed = false, boundDrag = null;  // closed ring? / vertex being dragged
+let boundaryShow = true;                       // overlay visibility (a selective layer toggle)
+// ENC chart features (fetched by Punch Out) + overlay state
+let enc = {features:[], band:null, minDepth:null};
+let encShow = true, punchBusy = false;
+// real-time water level above the chart datum (m); ADDED to charted ENC depths
+let water = {}, waterOffset = 0;
+// --- app-level ENC NOGO model (established at startup) -------------------- //
+// Every behavior (Go-To / RTH / search patterns / survey) routes clear of these
+// nogo zones: shoreline + manmade features + water shallower than 1 m CORRECTED
+// (charted depth + live water-level offset). Fetched once around the first fix.
+const NOGO_MIN_DEPTH_M = 1.0;                  // corrected-depth nogo threshold
+const NOGO_BUFFER_M = 3;                       // keep-clear buffer for routing
+const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
+const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
+// The nogo is the SINGLE keep-out model: behaviors and the survey Punch Out both
+// clip against it (shared ref/features/enforce/buffer). Its depth floor is fixed
+// at NOGO_MIN_DEPTH_M (navigability). The survey's Min/Max depth is a survey-only
+// COVERAGE window layered on top of this floor inside punchOut().
+let nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
+            buffer:NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
+let nogoShow = true;                            // nogo overlay wash visibility
+let nogoInit = false;                           // one-shot startup extraction guard
+
+function saveMission(){
+  clearTimeout(saveTimer);
+  // fold the survey-area boundary into the persisted plan so it survives a reload
+  const payload = ()=>({...mission, boundary, boundary_closed: boundaryClosed});
+  saveTimer = setTimeout(()=>{ fetch("/api/mission",
+    {method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify(payload())}).catch(()=>{}); }, 400);
+}
+async function loadMission(){
+  try{ const r = await fetch("/api/mission"); const m = await r.json();
+    if(m && m.waypoints){
+      mission = {waypoints:m.waypoints||[], lines:m.lines||[],
+                 arrival_radius_m:m.arrival_radius_m ?? 2,
+                 approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
+                 completion:m.completion||"complete", buffer_m:m.buffer_m ?? 3};
+      boundary = Array.isArray(m.boundary) ? m.boundary : [];
+      boundaryClosed = !!m.boundary_closed;
+      $("#c_arrival").value = mission.arrival_radius_m ?? 2;
+      $("#c_approach").value = mission.approach_radius_m ?? 1;
+      $("#c_speed").value = mission.speed || "survey";
+      $("#c_completion").value = mission.completion || "complete";
+      // apply the persisted nogo buffer to both controls + the shared model
+      nogo.buffer = mission.buffer_m ?? 10;
+      $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer; render(); } }catch(e){}
+}
+function toEN(p, ref){
+  return {e:(p.lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180),
+          n:(p.lat-ref.lat)*M_PER_DEG_LAT};
+}
+function fromEN(e, n, ref){
+  return {lat: ref.lat + n/M_PER_DEG_LAT,
+          lon: ref.lon + e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))};
+}
+
+// --- geodesy (flat-earth, fine at survey scale) -------------------------- //
+// Azimuth 0=N, 90=E, clockwise - matching CAMP's QGeoCoordinate convention so
+// the survey-pattern maths below is a faithful port of CAMP surveypattern.cpp.
+function azTo(a, b){
+  const mlon = M_PER_DEG_LAT*Math.cos((a.lat+b.lat)/2*Math.PI/180);
+  return (Math.atan2((b.lon-a.lon)*mlon, (b.lat-a.lat)*M_PER_DEG_LAT)*180/Math.PI + 360) % 360;
+}
+function distTo(a, b){
+  const mlon = M_PER_DEG_LAT*Math.cos((a.lat+b.lat)/2*Math.PI/180);
+  return Math.hypot((b.lat-a.lat)*M_PER_DEG_LAT, (b.lon-a.lon)*mlon);
+}
+function atDA(p, dist, az){                    // move dist(m) along azimuth az(deg)
+  const r = az*Math.PI/180;
+  return {lat: p.lat + dist*Math.cos(r)/M_PER_DEG_LAT,
+          lon: p.lon + dist*Math.sin(r)/(M_PER_DEG_LAT*Math.cos(p.lat*Math.PI/180))};
+}
+
+// CAMP 3-click survey pattern (port of SurveyPattern::getLines). A=start,
+// B=diagonal end, C=spacing/direction (optional; defaults to diag/10 at 90deg).
+// Returns {lines:[[p0,p1],...] boustrophedon, spacing, direction, legLength,
+// width, count}. align: 0=start, 1=center, 2=finish.
+const MAX_SURVEY_LINES = 600;                  // safety/perf cap on derived count
+function surveyPattern(A, B, C, align){
+  if(!A || !B) return null;
+  const diagD = distTo(A, B), diagA = azTo(A, B);
+  let spacing, spacingAngle;
+  if(C){ spacing = distTo(A, C); spacingAngle = azTo(A, C); }
+  else { spacing = diagD/10; spacingAngle = 90; }
+  if(!(spacing > 0.01)) return null;
+  const legHeading = spacingAngle - 90;
+  const legLength = diagD*Math.cos((diagA-legHeading)*Math.PI/180);
+  const width = diagD*Math.sin((diagA-legHeading)*Math.PI/180);
+  let count = Math.ceil(Math.abs(width)/spacing - 1e-3);   // stable at ~exact multiples
+  count = Math.max(1, Math.min(MAX_SURVEY_LINES, count));
+  const residual = Math.abs(width) - (count-1)*spacing;
+  const sgn = width >= 0 ? 1 : -1;             // fill toward B's side
+  const lines = [];
+  let p0 = atDA(A, align*residual/2*sgn, spacingAngle);
+  let p1 = atDA(p0, legLength, legHeading);
+  lines.push([p0, p1]);
+  for(let i=1;i<count;i++){
+    const prev = lines[i-1];
+    lines.push([ atDA(prev[1], spacing*sgn, spacingAngle),    // boustrophedon:
+                 atDA(prev[0], spacing*sgn, spacingAngle) ]); // reverse each leg
+  }
+  return {lines, spacing, direction:(spacingAngle-90+360)%360,
+          legLength:Math.abs(legLength), width:Math.abs(width), count};
+}
+
+const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
+function worldPx(lat, lon, z){
+  const s = TILE * Math.pow(2, z);
+  const x = (lon + 180) / 360 * s;
+  const sinLat = Math.sin(lat * Math.PI/180);
+  const y = (0.5 - Math.log((1+sinLat)/(1-sinLat)) / (4*Math.PI)) * s;
+  return {x, y};
+}
+function worldToLatLon(x, y, z){
+  const s = TILE * Math.pow(2, z);
+  const lon = x / s * 360 - 180;
+  const n = Math.PI - 2*Math.PI*y/s;
+  const lat = 180/Math.PI * Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
+  return {lat, lon};
+}
+function viewSize(){ return {w: mapEl.clientWidth, h: mapEl.clientHeight}; }
+function originPx(){
+  const {w,h} = viewSize(), c = worldPx(center.lat, center.lon, zoom);
+  return {x: c.x - w/2, y: c.y - h/2};
+}
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function render(){
+  const {w,h} = viewSize();
+  cv.width = w; cv.height = h;
+  const o = originPx();
+  const n = Math.pow(2, zoom);
+  const x0 = Math.floor(o.x/TILE), x1 = Math.floor((o.x+w)/TILE);
+  const y0 = Math.floor(o.y/TILE), y1 = Math.floor((o.y+h)/TILE);
+  const want = new Set(), url = TILE_URL(zoom);
+  for(let tx=x0; tx<=x1; tx++) for(let ty=y0; ty<=y1; ty++){
+    if(ty<0 || ty>=n) continue;
+    const wx = ((tx%n)+n)%n, key = `${zoom}/${wx}/${ty}`;
+    want.add(key);
+    let img = tilesEl.querySelector(`img[data-k="${key}"]`);
+    if(!img){ img = new Image(); img.dataset.k = key; img.src = url(wx, ty);
+      img.onerror = ()=>{ img.style.visibility="hidden"; }; tilesEl.appendChild(img); }
+    img.style.left = (tx*TILE - o.x) + "px"; img.style.top = (ty*TILE - o.y) + "px";
+  }
+  tilesEl.querySelectorAll("img").forEach(img=>{ if(!want.has(img.dataset.k)) img.remove(); });
+
+  ctx.clearRect(0,0,w,h);
+  const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
+  if(encShow) drawENC(toScreen);
+  drawNogo(toScreen);
+  if(track.length > 1){
+    ctx.beginPath();
+    track.forEach((p,i)=>{ const s = toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+    ctx.strokeStyle = getCSS("--track"); ctx.lineWidth = 2; ctx.globalAlpha = .9; ctx.stroke(); ctx.globalAlpha = 1;
+  }
+  ctx.font = "10px Consolas,monospace";
+  mission.lines.forEach((L,i)=>{
+    const a = toScreen(L.a.lat,L.a.lon), b = toScreen(L.b.lat,L.b.lon), act = (i===activeLine);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a" : "rgba(255,215,106,0.55)";
+    ctx.lineWidth = act?2.5:1.5; ctx.stroke(); ctx.setLineDash([]);
+    for(const p of [a,b]){ ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,2*Math.PI); ctx.fillStyle="#ffd76a"; ctx.fill(); }
+    ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+(i+1), a.x+5, a.y-5);
+  });
+  drawBoundary(toScreen);
+  drawPattern(toScreen);
+  drawSearch(toScreen);
+  drawTransit(toScreen);
+  // the uploaded ENC-routed run path (approach from the boat + obstacle detours),
+  // so the operator sees the real path the ASV will take, clear of land. Only the
+  // portion STILL AHEAD of the boat is drawn (from the boat to the next unreached
+  // waypoint onward) - so it doesn't trail a line back to already-passed waypoints.
+  if(runRoute && runRoute.length && (S.run==="running"||S.run==="paused"||S.plan_uploaded)){
+    ctx.save();
+    const ahead = runRoute.slice(Math.min(window._wpIndex||0, runRoute.length));
+    if(ahead.length){
+      ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(63,191,107,0.7)"; ctx.lineWidth=1.6;
+      ctx.beginPath();
+      if(asv){ const s0=toScreen(asv.lat,asv.lon); ctx.moveTo(s0.x,s0.y); } // from the boat forward
+      ahead.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); (i||asv)?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    if(runUnsafe.length){                           // legs with no clear detour - flagged red
+      ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3;
+      runUnsafe.forEach(([a,b])=>{ const p=toScreen(a.lat,a.lon), q=toScreen(b.lat,b.lon);
+        ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
+      ctx.setLineDash([]);
+    }
+    // Behaviour routes (Go-To / RTH / Transit) have no mission.waypoints, so draw the
+    // route's waypoints here as diamonds - same style/labels as a survey's W#. (Hold has
+    // no transit, and clears runRoute.)
+    if(S.behavior==="goto" || S.behavior==="rth" || S.behavior==="transit"){
+      const idx = window._wpIndex||0;
+      ctx.font="10px Consolas,monospace";
+      runRoute.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);
+        ctx.beginPath();
+        ctx.moveTo(s.x,s.y-6); ctx.lineTo(s.x+6,s.y); ctx.lineTo(s.x,s.y+6); ctx.lineTo(s.x-6,s.y);
+        ctx.closePath(); ctx.fillStyle = (i<idx) ? "#3fbf6b" : "#ff9a3c"; ctx.fill();
+        ctx.lineWidth=1.5; ctx.strokeStyle="#160d02"; ctx.stroke();
+        ctx.fillStyle="#ffb066"; ctx.fillText("W"+(i+1), s.x+8, s.y+4); });
+    }
+    ctx.restore();
+  }
+  mission.waypoints.forEach((p,i)=>{
+    const s = toScreen(p.lat,p.lon);
+    const reached = asv && (i < (window._wpIndex||0));
+    ctx.beginPath();
+    ctx.moveTo(s.x,s.y-6); ctx.lineTo(s.x+6,s.y); ctx.lineTo(s.x,s.y+6); ctx.lineTo(s.x-6,s.y);
+    ctx.closePath(); ctx.fillStyle= reached ? "#3fbf6b" : "#ff9a3c"; ctx.fill();
+    ctx.lineWidth=1.5; ctx.strokeStyle="#160d02"; ctx.stroke();
+    ctx.fillStyle="#ffb066"; ctx.fillText("W"+(i+1), s.x+8, s.y+4);
+  });
+  if(S.home){                                     // home / launch point
+    const h = toScreen(S.home.lat, S.home.lon);
+    ctx.fillStyle="#3fbf6b"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#3fbf6b"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText("H", h.x+7, h.y-5);
+  }
+  if(asv){
+    const s = toScreen(asv.lat, asv.lon);
+    if(asv.hdg != null){
+      const a = (asv.hdg-90)*Math.PI/180, L=26;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x+Math.cos(a)*L, s.y+Math.sin(a)*L);
+      ctx.strokeStyle=getCSS("--asv"); ctx.lineWidth=2; ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+  }
+  $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
+  $("#r_wpts").textContent = mission.waypoints.length;
+}
+
+// signed cross-track distance to the nearest planned line
+function updateXTE(){
+  activeLine = -1;
+  if(!asv || !mission.lines.length) return;
+  let best = 1e12;
+  mission.lines.forEach((L,i)=>{
+    const a = toEN(L.a, asv), b = toEN(L.b, asv);
+    const dx = b.e-a.e, dy = b.n-a.n, len2 = dx*dx+dy*dy || 1;
+    const t = Math.max(0, Math.min(1, -(a.e*dx+a.n*dy)/len2));
+    const cx = a.e+t*dx, cy = a.n+t*dy, d = Math.hypot(cx, cy);
+    if(d < best){ best = d; activeLine = i; }
+  });
+}
+
+// --- survey-pattern rendering + editing ---------------------------------- //
+const HANDLE = {A:{c:"#3fbf6b",t:"A"}, B:{c:"#d9534f",t:"B"}, C:{c:"#39c0ff",t:"C"}};
+function patScreen(k){ if(!pat[k]) return null;
+  const p = worldPx(pat[k].lat,pat[k].lon,zoom), o = originPx(); return {x:p.x-o.x, y:p.y-o.y}; }
+function patHandleAt(cx, cy){
+  const r = mapEl.getBoundingClientRect();
+  for(const k of ["A","B","C"]){ const s = patScreen(k); if(!s) continue;
+    if(Math.hypot(s.x-(cx-r.left), s.y-(cy-r.top)) < 11) return k; }
+  return null;
+}
+function currentPattern(){ return surveyPattern(pat.A, pat.B, pat.C, pat.align); }
+function boundaryActive(){ return boundaryClosed && boundary.length >= 3; }
+// ref for local ENU planning maths: centroid of the pattern's bounding box
+function planRef(){
+  const sp = currentPattern();
+  if(sp){ let S=1e9,N=-1e9,W=1e9,E=-1e9;
+    sp.lines.forEach(l=>l.forEach(p=>{S=Math.min(S,p.lat);N=Math.max(N,p.lat);W=Math.min(W,p.lon);E=Math.max(E,p.lon);}));
+    return {lat:(S+N)/2, lon:(W+E)/2}; }
+  return center;
+}
+// The survey lines that feed everything (draw/punch/commit): the pattern's
+// parallel legs, clipped to the arbitrary boundary polygon if one is closed
+// (CAMP SurveyArea behaviour - exact line-vs-polygon intersection).
+function patSourceLines(){
+  const sp = currentPattern(); if(!sp) return [];
+  if(!boundaryActive()) return sp.lines;
+  const ref = planRef(), ring = boundary.map(p=>llEN(p.lat,p.lon,ref));
+  const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>out.push(s)));
+  return out;
+}
+function lerpLL(a,b,t){ return {lat:a.lat+(b.lat-a.lat)*t, lon:a.lon+(b.lon-a.lon)*t}; }
+function segInt(p1,p2,p3,p4){                  // param t along p1->p2 where it meets p3->p4
+  const d1x=p2.e-p1.e,d1y=p2.n-p1.n,d2x=p4.e-p3.e,d2y=p4.n-p3.n, den=d1x*d2y-d1y*d2x;
+  if(Math.abs(den)<1e-9) return null;
+  const t=((p3.e-p1.e)*d2y-(p3.n-p1.n)*d2x)/den, u=((p3.e-p1.e)*d1y-(p3.n-p1.n)*d1x)/den;
+  return (t>=0&&t<=1&&u>=0&&u<=1) ? t : null;
+}
+// exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs
+function clipToPoly(a,b,ring,ref){
+  const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref), ts=[0,1];
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const t=segInt(ae,be,ring[j],ring[i]); if(t!=null) ts.push(t); }
+  ts.sort((x,y)=>x-y);
+  const out=[];
+  for(let k=0;k<ts.length-1;k++){ const t0=ts[k],t1=ts[k+1]; if(t1-t0<1e-6) continue;
+    const tm=(t0+t1)/2, mid={e:ae.e+(be.e-ae.e)*tm, n:ae.n+(be.n-ae.n)*tm};
+    if(pinp(mid,ring)) out.push([lerpLL(a,b,t0), lerpLL(a,b,t1)]); }
+  return out;
+}
+function drawBoundary(toScreen){
+  if(!boundary.length || (!boundaryShow && mode!=="bound")) return;  // hidden, unless editing
+  ctx.save();
+  const pts = boundary.map(p=>toScreen(p.lat,p.lon));
+  ctx.beginPath(); pts.forEach((s,i)=> i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y));
+  if(boundaryActive()) ctx.closePath();
+  ctx.setLineDash(boundaryActive()?[]:[6,4]);
+  ctx.strokeStyle = boundaryActive() ? "rgba(200,120,220,0.95)" : "rgba(200,120,220,0.7)";
+  ctx.lineWidth = 1.8; ctx.stroke();
+  if(boundaryActive()){ ctx.fillStyle="rgba(200,120,220,0.08)"; ctx.fill(); }
+  ctx.setLineDash([]);
+  pts.forEach((s,i)=>{ ctx.beginPath(); ctx.arc(s.x,s.y,4,0,2*Math.PI);
+    ctx.fillStyle = (i===0 && !boundaryActive()) ? "#ffd76a" : "#c878dc";   // first vertex = close target
+    ctx.fill(); ctx.lineWidth=1.2; ctx.strokeStyle="#160d02"; ctx.stroke(); });
+  ctx.restore();
+}
+function drawPattern(toScreen){
+  if(!pat.A) return;
+  const sp = currentPattern();
+  const seg = arr=>{ ctx.beginPath(); arr.forEach(l=>{ const a=toScreen(l[0].lat,l[0].lon), b=toScreen(l[1].lat,l[1].lon);
+    ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }); ctx.stroke(); };
+  if(sp){
+    const src = patSourceLines();
+    ctx.save();
+    if(patClip){
+      ctx.setLineDash([2,4]); ctx.strokeStyle="rgba(57,192,255,0.22)"; ctx.lineWidth=1; seg(src);
+      ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(patClip);
+      if(patRoutes.length){                        // transits auto-routed around obstacles
+        ctx.setLineDash([6,4]); ctx.strokeStyle="rgba(217,154,60,0.95)"; ctx.lineWidth=1.8;
+        patRoutes.forEach(rt=>{ ctx.beginPath(); rt.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);
+          i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); });
+        ctx.setLineDash([]);
+      }
+      if(patUnsafe.length){                        // transits with no clear route
+        ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3; seg(patUnsafe);
+        ctx.setLineDash([]);
+      }
+    } else {
+      ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(57,192,255,0.9)"; ctx.lineWidth=1.5; seg(src);
+      if(!boundaryActive()){                       // connectors only fit the unclipped boustrophedon
+        ctx.strokeStyle="rgba(57,192,255,0.30)"; ctx.beginPath();
+        for(let i=1;i<src.length;i++){ const p=toScreen(src[i-1][1].lat,src[i-1][1].lon),
+          q=toScreen(src[i][0].lat,src[i][0].lon); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  } else if(pat.B){
+    const a=toScreen(pat.A.lat,pat.A.lon), b=toScreen(pat.B.lat,pat.B.lon);
+    ctx.save(); ctx.setLineDash([3,4]); ctx.strokeStyle="rgba(57,192,255,0.6)"; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
+  }
+  ctx.save(); ctx.font="10px Consolas,monospace";
+  for(const k of ["A","B","C"]){ const s = patScreen(k); if(!s) continue;
+    ctx.beginPath(); ctx.arc(s.x,s.y,5,0,2*Math.PI); ctx.fillStyle=HANDLE[k].c; ctx.fill();
+    ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
+    ctx.fillStyle=HANDLE[k].c; ctx.fillText(HANDLE[k].t, s.x+7, s.y-6); }
+  ctx.restore();
+}
+function updatePatReadout(){
+  const sp = currentPattern();
+  $("#sp_add").disabled = !(pat.A && pat.B);
+  if(sp){
+    // reflect the derived spacing + direction in the inputs, but don't clobber mid-type
+    if(document.activeElement !== $("#sp_spacing")) $("#sp_spacing").value = sp.spacing.toFixed(1);
+    if(document.activeElement !== $("#sp_dir")) $("#sp_dir").value = sp.direction.toFixed(0);
+    $("#sp_len").textContent = sp.legLength.toFixed(0)+" m";
+    $("#sp_width").textContent = sp.width.toFixed(0)+" m";
+    $("#sp_count").textContent = patClip ? (patClip.length+" clipped")
+      : (boundaryActive() ? (patSourceLines().length+" in area") : sp.count);
+    if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, or Punch Out / Add to plan."
+      : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add).";
+  } else {
+    if(!pat.A){ $("#sp_spacing").value = ""; $("#sp_dir").value = ""; }  // keep typed values until A/B exist
+    ["#sp_len","#sp_width","#sp_count"].forEach(id=>$(id).textContent="--");
+    $("#sp_hint").textContent = pat.A ? "Click the opposite corner of the survey area."
+      : "Click the survey start corner (A).";
+  }
+}
+function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
+  patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none"; updatePatReadout(); }
+function commitPattern(){
+  const sp = currentPattern(); if(!sp) return;
+  const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
+  const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
+  lines.forEach((l,k)=>{
+    mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon}});
+    mission.waypoints.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon});
+    if(transits && k<lines.length-1 && transits[k])       // interleave the detour
+      transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon}));
+  });
+  resetPattern(); updateXTE(); saveMission(); render();
+}
+
+// --- arbitrary survey-area boundary (CAMP SurveyArea) -------------------- //
+function boundHandleAt(cx, cy){
+  const r = mapEl.getBoundingClientRect(), o = originPx();
+  for(let i=0;i<boundary.length;i++){ const s = worldPx(boundary[i].lat,boundary[i].lon,zoom);
+    if(Math.hypot(s.x-o.x-(cx-r.left), s.y-o.y-(cy-r.top)) < 11) return i; }
+  return -1;
+}
+function seedPatternFromBoundary(){          // convenience: lines appear as soon as the ring closes
+  if(!boundaryActive() || (pat.A && pat.B)) return;   // don't clobber a pattern the user drew
+  let S=1e9,N=-1e9,W=1e9,E=-1e9;
+  boundary.forEach(p=>{S=Math.min(S,p.lat);N=Math.max(N,p.lat);W=Math.min(W,p.lon);E=Math.max(E,p.lon);});
+  pat.A={lat:S,lon:W}; pat.B={lat:N,lon:E}; pat.C=atDA(pat.A,5,90);   // 5 m N-S lines by default (small-boat scale)
+}
+function closeBoundary(){
+  if(boundary.length < 3){ $("#bnd_hint").textContent="Need at least 3 points to close the area."; return; }
+  boundaryClosed = true; boundDrag = null; patClip = null; seedPatternFromBoundary();
+  $("#bnd_hint").textContent = "Area set. Draw / adjust the SURV pattern; lines clip to this area.";
+  updatePatReadout(); saveMission(); render();
+}
+function clearBoundary(){
+  boundary = []; boundaryClosed = false; boundDrag = null; patClip = null;
+  $("#bnd_hint").textContent = "Click the chart to drop boundary points; click the first point to close.";
+  updatePatReadout(); saveMission(); render();
+}
+// boundary overlay visibility toggle (persisted per browser)
+const BND_VIS_KEY = "asv_bnd_show_v1";
+function setBoundaryShow(v){
+  boundaryShow = v;
+  $("#areaBtn").classList.toggle("on", boundaryShow);
+  try{ localStorage.setItem(BND_VIS_KEY, boundaryShow ? "1" : "0"); }catch(e){}
+  render();
+}
+
+// --- canned search patterns (Project-11 track_patterns) ------------------ //
+// Each generator returns an ordered route [{lat,lon},...]. Flat-earth geodesy
+// (atDA/azTo) is fine at search scale, matching the survey pattern.
+const MAX_SEARCH_LEGS = 400;                    // safety/perf cap
+// Expanding square: legs step, step, 2*step, 2*step, 3*step ... turning 90 each.
+function expandingBox(d, step, legs, heading, turn){
+  const pts=[{lat:d.lat,lon:d.lon}]; let h=heading, cur=d;
+  legs=Math.max(2, Math.min(MAX_SEARCH_LEGS, legs|0));
+  for(let i=0;i<legs;i++){
+    const L=step*(Math.floor(i/2)+1);
+    cur=atDA(cur, L, h); pts.push(cur);
+    h=(h + 90*turn + 360)%360;
+  }
+  return pts;
+}
+// Sector search (IAMSAR): each pass an equilateral triangle with the datum as a
+// vertex (out radius, cross-leg, back to datum); successive passes rotated.
+function sectorSearch(d, radius, passes, rotate, heading, turn){
+  const pts=[{lat:d.lat,lon:d.lon}];
+  passes=Math.max(1, Math.min(60, passes|0));
+  for(let p=0;p<passes;p++){
+    const base=(heading + p*rotate*turn + 3600)%360;
+    const P1=atDA(d, radius, base);
+    const P2=atDA(P1, radius, (base + 120*turn + 360)%360);
+    pts.push(P1, P2, {lat:d.lat,lon:d.lon});     // return to datum
+    if(pts.length>MAX_SEARCH_LEGS) break;
+  }
+  return pts;
+}
+// Parallel / creeping-line: boustrophedon lanes offset across-track from datum.
+function parallelTrack(d, len, spacing, lanes, heading, turn){
+  const pts=[]; const across=(heading + 90*turn + 360)%360;
+  lanes=Math.max(1, Math.min(MAX_SEARCH_LEGS, lanes|0));
+  for(let i=0;i<lanes;i++){
+    const s=atDA(d, spacing*i, across), e=atDA(s, len, heading);
+    if(i%2===0) pts.push(s, e); else pts.push(e, s);   // reverse alternate lanes
+  }
+  return pts;
+}
+function searchParams(){
+  return {
+    heading: (parseFloat($("#sr_heading").value)||0),
+    turn: parseInt($("#sr_turn").value)||1,
+    step: Math.max(1, parseFloat($("#sr_step").value)||8),
+    legs: parseInt($("#sr_legs").value)||10,
+    radius: Math.max(5, parseFloat($("#sr_radius").value)||20),
+    sectors: parseInt($("#sr_sectors").value)||3,
+    rotate: Math.max(10, parseFloat($("#sr_rotate").value)||120),
+    length: Math.max(5, parseFloat($("#sr_length").value)||30),
+    spacing: Math.max(1, parseFloat($("#sr_spacing").value)||5),
+    lanes: parseInt($("#sr_lanes").value)||8,
+  };
+}
+function searchRoute(){
+  if(!search.datum) return [];
+  const q = searchParams();
+  if(search.type==="expbox")   return expandingBox(search.datum, q.step, q.legs, q.heading, q.turn);
+  if(search.type==="sector")   return sectorSearch(search.datum, q.radius, q.sectors, q.rotate, q.heading, q.turn);
+  if(search.type==="parallel") return parallelTrack(search.datum, q.length, q.spacing, q.lanes, q.heading, q.turn);
+  return [];
+}
+function searchScreen(){ if(!search.datum) return null;
+  const p=worldPx(search.datum.lat,search.datum.lon,zoom), o=originPx(); return {x:p.x-o.x, y:p.y-o.y}; }
+function searchHandleAt(cx, cy){
+  const s=searchScreen(); if(!s) return false;
+  const r=mapEl.getBoundingClientRect();
+  return Math.hypot(s.x-(cx-r.left), s.y-(cy-r.top)) < 11;
+}
+// nogo-aware version of the raw pattern: legs are clipped to nogo-clear pieces
+// and the transits between pieces routed around obstacles (à la survey Punch Out).
+let searchRouted = null;                         // {route,routes[],unsafe[],clipped[]}
+let searchNogoTimer = null;
+function computeSearchNogo(){
+  const raw = searchRoute(); searchRouted = null;
+  if(raw.length<2 || !nogo.ready) return raw;
+  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  const segs=[];                                 // nogo-clear sub-segments of every leg
+  for(let i=1;i<raw.length;i++) clipLine(raw[i-1], raw[i], ref, ko, buf).forEach(s=>segs.push(s));
+  const routes=[], unsafe=[]; const out=[];
+  if(segs.length){
+    out.push(segs[0][0], segs[0][1]);
+    for(let k=1;k<segs.length;k++){
+      const A=segs[k-1][1], B=segs[k][0];        // transit between kept pieces
+      if(distTo(A,B) > 0.5){
+        if(!legClear(A,B,ref,ko,buf)){
+          const via=routeAround(A,B,ref,ko,buf);
+          if(via && via.length){                    // routed search TRANSIT: Rule 9 keep-right
+            const kr=keepRight([A,...via,B], ref, ko, buf);
+            kr.slice(1,-1).forEach(p=>out.push({lat:p.lat,lon:p.lon})); routes.push(kr);
+          }
+          else unsafe.push([A,B]);
+        }
+      }
+      out.push(segs[k][0], segs[k][1]);
+    }
+  }
+  searchRouted = {route:out, routes, unsafe, clipped:segs, empty:!segs.length};
+  return out;
+}
+function scheduleSearchNogo(){                    // debounced (routing is a touch heavy)
+  searchRouted = null;
+  clearTimeout(searchNogoTimer);
+  if(!search.datum || mode!=="search" || !nogo.ready) return;
+  searchNogoTimer = setTimeout(()=>{ computeSearchNogo();
+    $("#sr_count").textContent = search.datum ? routeCountLabel() : "--"; render(); }, 180);
+}
+function routeCountLabel(){
+  if(searchRouted){ const u=searchRouted.unsafe.length;
+    return searchRouted.route.length+" wpts (nogo-aware"+(u?`, ${u} unroutable`:"")+")"; }
+  return searchRoute().length+" wpts";
+}
+function drawSearch(toScreen){
+  if(mode!=="search" || !search.datum) return;
+  const raw=searchRoute();
+  const drawPoly=(pts,close)=>{ ctx.beginPath(); pts.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); if(close)ctx.closePath(); ctx.stroke(); };
+  ctx.save();
+  if(searchRouted){                                // nogo-aware preview: green kept + amber detours + red unroutable
+    ctx.setLineDash([2,4]); ctx.strokeStyle="rgba(57,192,255,0.20)"; ctx.lineWidth=1; drawPoly(raw,false);
+    ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5;
+    searchRouted.clipped.forEach(s=>drawPoly(s,false));
+    if(searchRouted.routes.length){ ctx.setLineDash([6,4]); ctx.strokeStyle="rgba(217,154,60,0.95)"; ctx.lineWidth=1.8;
+      searchRouted.routes.forEach(rt=>drawPoly(rt,false)); ctx.setLineDash([]); }
+    if(searchRouted.unsafe.length){ ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3;
+      searchRouted.unsafe.forEach(s=>drawPoly(s,false)); ctx.setLineDash([]); }
+  } else if(raw.length>1){                          // raw preview (nogo not ready / pending)
+    ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(57,192,255,0.9)"; ctx.lineWidth=1.5; drawPoly(raw,false);
+    ctx.setLineDash([]);
+    const s0=toScreen(raw[0].lat,raw[0].lon);
+    ctx.beginPath(); ctx.arc(s0.x,s0.y,3,0,2*Math.PI); ctx.fillStyle="rgba(57,192,255,0.9)"; ctx.fill();
+  }
+  const d=searchScreen();                            // datum handle
+  ctx.beginPath(); ctx.arc(d.x,d.y,5,0,2*Math.PI); ctx.fillStyle="#39c0ff"; ctx.fill();
+  ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
+  ctx.fillStyle="#39c0ff"; ctx.font="10px Consolas,monospace"; ctx.fillText("D", d.x+7, d.y-6);
+  ctx.restore();
+}
+function updateSearchPanel(){
+  ["expbox","sector","parallel"].forEach(t=>
+    document.querySelectorAll(".sr-"+t).forEach(el=> el.style.display = (search.type===t)?"flex":"none"));
+  const raw = searchRoute();
+  $("#sr_count").textContent = search.datum ? routeCountLabel() : "--";
+  $("#sr_add").disabled = !(search.datum && raw.length>1);
+  $("#sr_hint").textContent = search.datum
+    ? (nogo.ready ? "Drag the D datum or tune params; legs clip to nogo (green kept / amber routed / red blocked). Add to plan."
+                  : "Drag the D datum or tune params; Add to plan. (Nogo not loaded — route not ENC-checked.)")
+    : "Click the chart to set the datum (search origin).";
+  scheduleSearchNogo();
+}
+function resetSearch(){ search.datum=null; searchDrag=false; searchRouted=null; clearTimeout(searchNogoTimer); updateSearchPanel(); render(); }
+function commitSearch(){
+  if(nogo.ready) computeSearchNogo();
+  const route = (nogo.ready && searchRouted) ? searchRouted.route : searchRoute();
+  if(route.length<2){ flashNote("Search pattern lies entirely inside nogo zones — nothing to add."); return; }
+  route.forEach(p=> mission.waypoints.push({lat:p.lat, lon:p.lon}));
+  if(searchRouted && searchRouted.unsafe.length)
+    showBanner(searchRouted.unsafe.length+" search transit(s) cross a nogo zone with no detour (RED) — review the committed plan.");
+  resetSearch(); updateXTE(); saveMission(); render();
+}
+
+// --- ENC chart features + Punch Out -------------------------------------- //
+// GeoJSON geometry iterators ([lon,lat] order).
+function eachRing(g, fn){ if(!g) return;
+  if(g.type==="Polygon") g.coordinates.forEach(fn);
+  else if(g.type==="MultiPolygon") g.coordinates.forEach(poly=>poly.forEach(fn)); }
+function eachPath(g, fn){ if(!g) return;
+  if(g.type==="LineString") fn(g.coordinates);
+  else if(g.type==="MultiLineString") g.coordinates.forEach(fn); }
+function eachPoint(g, fn){ if(!g) return;
+  if(g.type==="Point") fn(g.coordinates);
+  else if(g.type==="MultiPoint") g.coordinates.forEach(fn); }
+
+// survey depth window from the panel: {min, max} in metres (max 0 = no maximum)
+function depthRange(){
+  const mn = Math.max(0, parseFloat($("#sp_mindepth").value)||0);
+  const mv = parseFloat($("#sp_maxdepth").value);
+  return {min: mn, max: (mv>0 ? mv : 0)};
+}
+// Is this ENC depth area OUTSIDE the survey depth window? Classify by the band's
+// DEEPEST value so a band that straddles the minimum (e.g. 1.8-3.6 m vs a 2 m
+// min) is KEPT - only bands entirely shallower than the minimum are excluded, so
+// genuinely deeper water is no longer clipped. Too-deep only applies if a max is
+// set (blank max => deep water is fine to survey).
+function depthExcluded(f, dr){
+  if(f.role !== "depth_area") return false;
+  const d1 = f.props.DRVAL1, d2 = f.props.DRVAL2;
+  // charted depths are to a fixed datum (LWD / MLLW); add the live water level to
+  // get ACTUAL available depth right now.
+  const deepest = (d2!=null) ? d2 + waterOffset : (d1!=null ? d1 + waterOffset : null);
+  const shallowest = (d1!=null) ? d1 + waterOffset : (d2!=null ? d2 + waterOffset : null);
+  const tooShallow = (deepest!=null && deepest < dr.min);
+  const tooDeep = (dr.max>0 && shallowest!=null && shallowest > dr.max);
+  return tooShallow || tooDeep;
+}
+function drawENC(toScreen){
+  if(!enc.features.length) return;
+  ctx.save();
+  const fillPoly=(g,fill,stroke)=>{ ctx.beginPath(); let any=false;
+    eachRing(g,r=>{ any=true; r.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); });
+    if(!any) return; ctx.fillStyle=fill; ctx.fill("evenodd");
+    if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke(); } };
+  const strokePath=(g,stroke,w,dash)=>{ ctx.setLineDash(dash||[]); ctx.strokeStyle=stroke; ctx.lineWidth=w;
+    eachPath(g,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); });
+    ctx.setLineDash([]); };
+  // fills: land / docks / informational areas. Shallow-water (depth) shading is
+  // owned SOLELY by the NOGO layer (drawNogo) - the single depth-shading layer.
+  for(const f of enc.features){ const g=f.geometry, r=f.role;
+    if(r==="land") fillPoly(g,"rgba(120,96,58,0.38)","rgba(150,120,70,0.7)");
+    else if(r==="dock"||r==="hazard_area") fillPoly(g,"rgba(200,120,40,0.30)","rgba(210,140,60,0.85)");
+    else if(r==="dredged"||r==="restricted") fillPoly(g,"rgba(90,140,190,0.10)",null); }
+  // lines
+  for(const f of enc.features){ const g=f.geometry, r=f.role;
+    if(r==="shore_line") strokePath(g,"rgba(185,150,90,0.95)",1.6,[]);
+    else if(r==="dock_line") strokePath(g,"rgba(210,140,60,0.95)",1.6,[]);
+    else if(r==="depth_contour") strokePath(g,"rgba(95,145,195,0.55)",1,[3,3]);
+    else if(r==="dredged"||r==="restricted") strokePath(g,"rgba(110,160,205,0.7)",1.2,[5,4]); }
+  // points
+  for(const f of enc.features){ const g=f.geometry, r=f.role;
+    if(r==="hazard_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
+      ctx.strokeStyle="#d9534f"; ctx.lineWidth=1.6; ctx.beginPath();
+      ctx.moveTo(s.x-4,s.y-4); ctx.lineTo(s.x+4,s.y+4); ctx.moveTo(s.x+4,s.y-4); ctx.lineTo(s.x-4,s.y+4); ctx.stroke(); });
+    else if(r==="sounding") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
+      ctx.fillStyle="rgba(139,160,173,0.5)"; ctx.beginPath(); ctx.arc(s.x,s.y,1.1,0,2*Math.PI); ctx.fill(); }); }
+  ctx.restore();
+}
+
+// bbox of the current survey pattern (+pad metres), for the ENC fetch
+function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
+  let S=1e9,N=-1e9,W=1e9,E=-1e9;
+  sp.lines.forEach(l=>l.forEach(p=>{ S=Math.min(S,p.lat);N=Math.max(N,p.lat);W=Math.min(W,p.lon);E=Math.max(E,p.lon); }));
+  const dlat=(pad||0)/M_PER_DEG_LAT, dlon=(pad||0)/(M_PER_DEG_LAT*Math.cos((S+N)/2*Math.PI/180));
+  return {W:W-dlon,S:S-dlat,E:E+dlon,N:N+dlat}; }
+async function fetchENCBbox(b, minDepth){
+  const url=`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${minDepth}`;
+  const d=await (await fetch(url)).json();
+  enc={features:d.features||[], band:d.band, minDepth}; return d;
+}
+function bboxAround(ll, radM){
+  const dlat=radM/M_PER_DEG_LAT, dlon=radM/(M_PER_DEG_LAT*Math.cos(ll.lat*Math.PI/180));
+  return {W:ll.lon-dlon, S:ll.lat-dlat, E:ll.lon+dlon, N:ll.lat+dlat};
+}
+
+// local ENU (metres) about a reference lat/lon
+function llEN(lat,lon,ref){ return {e:(lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180), n:(lat-ref.lat)*M_PER_DEG_LAT}; }
+function bbOf(pts){ let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18; for(const p of pts){ if(p.e<x0)x0=p.e; if(p.e>x1)x1=p.e; if(p.n<y0)y0=p.n; if(p.n>y1)y1=p.n; } return {x0,y0,x1,y1}; }
+function buildKeepouts(ref, enf, dr, feats){
+  const polys=[], lines=[], points=[];
+  for(const f of (feats || enc.features)){ const g=f.geometry, r=f.role;
+    const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
+    const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
+    if((land||shore)&&!enf.land) continue;
+    if(depthbad&&!enf.depth) continue;
+    if(haz&&!enf.haz) continue;
+    if(area&&!enf.area) continue;
+    if(land||depthbad||area) eachRing(g,rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>2) polys.push({ring,bb:bbOf(ring)}); });
+    else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts)}); });
+    else if(haz) eachPoint(g,c=>points.push(llEN(c[1],c[0],ref)));
+  }
+  return {polys, lines, points};
+}
+function pinp(p, ring){ let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const xi=ring[i].e,yi=ring[i].n,xj=ring[j].e,yj=ring[j].n;
+    if(((yi>p.n)!=(yj>p.n)) && (p.e < (xj-xi)*(p.n-yi)/(yj-yi)+xi)) inside=!inside; } return inside; }
+function dSeg(p,a,b){ const dx=b.e-a.e, dy=b.n-a.n, l2=dx*dx+dy*dy||1;
+  let t=((p.e-a.e)*dx+(p.n-a.n)*dy)/l2; t=t<0?0:t>1?1:t;
+  return Math.hypot(p.e-(a.e+t*dx), p.n-(a.n+t*dy)); }
+function inBB(p,bb,buf){ return p.e>=bb.x0-buf&&p.e<=bb.x1+buf&&p.n>=bb.y0-buf&&p.n<=bb.y1+buf; }
+function blocked(p, ko, buf){
+  for(const poly of ko.polys){ if(!inBB(p,poly.bb,buf)) continue; if(pinp(p,poly.ring)) return true;
+    const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return true; } }
+  for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
+    for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return true; } }
+  for(const pt of ko.points){ if(Math.abs(p.e-pt.e)>buf||Math.abs(p.n-pt.n)>buf) continue;
+    if(Math.hypot(p.e-pt.e,p.n-pt.n)<buf) return true; }
+  return false;
+}
+// clip one survey line to the sub-segments that clear every keep-out (sampled)
+function clipLine(a, b, ref, ko, buf){
+  const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
+  const L=Math.hypot(be.e-ae.e, be.n-ae.n); if(L<1) return [];
+  const n=Math.max(2, Math.ceil(L/Math.max(2, buf/3)));
+  const good=[]; for(let i=0;i<=n;i++){ const t=i/n;
+    good.push(!blocked({e:ae.e+(be.e-ae.e)*t, n:ae.n+(be.n-ae.n)*t}, ko, buf)); }
+  const segs=[]; let s=-1;
+  const push=(i0,i1)=>{ if(i1<=i0) return; const t0=i0/n, t1=i1/n;
+    segs.push([{lat:a.lat+(b.lat-a.lat)*t0, lon:a.lon+(b.lon-a.lon)*t0},
+               {lat:a.lat+(b.lat-a.lat)*t1, lon:a.lon+(b.lon-a.lon)*t1}]); };
+  for(let i=0;i<=n;i++){ if(good[i]){ if(s<0) s=i; } else { if(s>=0){ push(s,i-1); s=-1; } } }
+  if(s>=0) push(s,n);
+  return segs;
+}
+
+// Order the clipped survey segments so the ASV never gets a leg numbered straight
+// through a keep-out. Boustrophedon Cellular Decomposition: a keep-out that splits
+// a line puts the near/far parts in DIFFERENT coverage cells, so they are never
+// numbered back-to-back; each cell is covered as a continuous serpentine (turn
+// onto the adjacent line) and only left via a validated transit. Any residual
+// transit that still crosses a keep-out is returned in `unsafe` for the operator
+// to review (Option 1 flags rather than auto-routing around).
+// Returns {ordered:[[entry,exit]..] (traversal-oriented), unsafe:[[a,b]..]}.
+function regionOrder(segs, ref, legHeading, spacing, legSafe){
+  if(segs.length <= 1) return {ordered: segs.map(s=>[s[0],s[1]]), unsafe: []};
+  const rad = legHeading*Math.PI/180, su = Math.sin(rad), cu = Math.cos(rad);
+  const along = p=>{ const q=llEN(p.lat,p.lon,ref); return q.e*su + q.n*cu; };       // along-track
+  const cross = p=>{ const q=llEN(p.lat,p.lon,ref); return q.e*cu - q.n*su; };       // across-track
+  const items = segs.map(s=>{ const a0=along(s[0]), a1=along(s[1]);
+    return {p0:s[0], p1:s[1], amin:Math.min(a0,a1), amax:Math.max(a0,a1),
+            cross:(cross(s[0])+cross(s[1]))/2}; });
+  const minC = Math.min(...items.map(i=>i.cross)), sp = spacing>0.5 ? spacing : 1;
+  items.forEach(i=> i.li = Math.round((i.cross-minC)/sp));   // survey-line index (across-track)
+  const byLine = new Map();
+  items.forEach(i=>{ if(!byLine.has(i.li)) byLine.set(i.li,[]); byLine.get(i.li).push(i); });
+  const lines = [...byLine.keys()].sort((a,b)=>a-b);
+  lines.forEach(li=> byLine.get(li).sort((a,b)=>a.amin-b.amin));
+
+  // --- sweep decomposition: cells each hold <=1 interval per line -----------
+  const cells = []; let open = [];
+  for(const li of lines){
+    const ivals = byLine.get(li);
+    const cellIvals = open.map(()=>[]);            // ivals overlapping each open cell
+    const ivalCells = ivals.map(()=>[]);           // open cells overlapping each ival
+    open.forEach((c,ci)=> ivals.forEach((iv,ii)=>{
+      if(Math.min(c.front.amax,iv.amax) > Math.max(c.front.amin,iv.amin)){
+        cellIvals[ci].push(ii); ivalCells[ii].push(ci); } }));
+    const used = new Array(open.length).fill(false), nextOpen = [];
+    ivals.forEach((iv,ii)=>{
+      const cs = ivalCells[ii];
+      if(cs.length===1 && cellIvals[cs[0]].length===1){        // clean continue
+        const c = open[cs[0]]; used[cs[0]]=true;
+        c.items.push(iv); c.front = {amin:iv.amin, amax:iv.amax}; nextOpen.push(c);
+      } else {                                                 // split / merge / new
+        cs.forEach(ci=>{ if(!used[ci]){ used[ci]=true; cells.push(open[ci]); } });
+        nextOpen.push({items:[iv], front:{amin:iv.amin, amax:iv.amax}});
+      }
+    });
+    open.forEach((c,ci)=>{ if(!used[ci] && cellIvals[ci].length===0) cells.push(c); });
+    open = nextOpen;
+  }
+  open.forEach(c=>cells.push(c));
+
+  // --- sequence cells (greedy nearest), serpentine within, orient + validate -
+  const cellList = cells.filter(c=>c.items.length);
+  const ordered = [], unsafe = [];
+  let exit = null;
+  const remaining = cellList.slice();
+  while(remaining.length){
+    let idx = 0;
+    if(exit === null){                             // start: lowest line, then along-track
+      let best = Infinity;
+      remaining.forEach((c,i)=>{ const k = Math.min(...c.items.map(v=>v.li))*1e6 +
+        Math.min(...c.items.map(v=>v.amin)); if(k<best){ best=k; idx=i; } });
+    } else {
+      let best = Infinity;
+      remaining.forEach((c,i)=>{ const d = Math.min(...c.items.map(v=>
+        Math.min(distTo(exit,v.p0), distTo(exit,v.p1)))); if(d<best){ best=d; idx=i; } });
+    }
+    const cell = remaining.splice(idx,1)[0];
+    cell.items.forEach(iv=>{                        // items are in ascending line order
+      let entry = iv.p0, ex = iv.p1;
+      if(exit!==null && distTo(exit,iv.p1) < distTo(exit,iv.p0)){ entry = iv.p1; ex = iv.p0; }
+      if(exit!==null && !legSafe(exit, entry)) unsafe.push([exit, entry]);
+      ordered.push([entry, ex]); exit = ex;
+    });
+  }
+  return {ordered, unsafe};
+}
+
+// Option 2: route a blocked transit A->B AROUND the keep-outs. Grid A* over the
+// local region (cells within `buffer` of a keep-out are blocked, baking in the
+// clearance), then line-of-sight string-pulling to a few turn waypoints. Returns
+// the intermediate waypoints (latlon, excluding A & B), or null if no clear route
+// exists in a bounded region (then the transit stays flagged red).
+// --- occupancy rasterization (fast keep-out grid for routeAround) --------- //
+// Stamp / fill the keep-out model into a local grid, instead of testing every
+// cell against every polygon (which was O(cells x polys) and forced a coarse
+// cell that couldn't thread a channel on a long transit). Scanline-fill polygons,
+// stamp line/point features, then dilate by the buffer. Build cost is ~O(edges +
+// filled cells), so a FINE cell stays affordable at km scale.
+function stampSeg(blk, W, H, x0, y0, cell, a, b){
+  const ax=(a.e-x0)/cell, ay=(a.n-y0)/cell, bx=(b.e-x0)/cell, by=(b.n-y0)/cell;
+  const steps=Math.max(1, Math.ceil(Math.hypot(bx-ax, by-ay)));
+  for(let i=0;i<=steps;i++){ const t=i/steps;
+    const gx=Math.round(ax+(bx-ax)*t), gy=Math.round(ay+(by-ay)*t);
+    if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; }
+}
+function dilateGrid(blk, W, H, rad){              // separable box dilation, rad cells
+  if(rad<1) return;
+  const tmp=new Uint8Array(W*H);
+  for(let y=0;y<H;y++){ const row=y*W;
+    for(let x=0;x<W;x++){ let v=0; for(let dx=-rad;dx<=rad;dx++){ const xx=x+dx; if(xx>=0&&xx<W&&blk[row+xx]){v=1;break;} } tmp[row+x]=v; } }
+  for(let x=0;x<W;x++){
+    for(let y=0;y<H;y++){ let v=0; for(let dy=-rad;dy<=rad;dy++){ const yy=y+dy; if(yy>=0&&yy<H&&tmp[yy*W+x]){v=1;break;} } blk[y*W+x]=v; } }
+}
+function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer){
+  const X1=x0+W*cell, Y1=y0+H*cell;
+  const gxOf=e=>(e-x0)/cell, gyOf=n=>(n-y0)/cell;
+  for(const poly of ko.polys){ const bb=poly.bb;
+    if(bb.x1<x0||bb.x0>X1||bb.y1<y0||bb.y0>Y1) continue;      // window cull
+    const rg=poly.ring;
+    const gy0=Math.max(0,Math.floor(gyOf(bb.y0))), gy1=Math.min(H-1,Math.ceil(gyOf(bb.y1)));
+    for(let gy=gy0; gy<=gy1; gy++){ const yc=y0+(gy+0.5)*cell; const xs=[];
+      for(let i=0,j=rg.length-1;i<rg.length;j=i++){ const yi=rg[i].n, yj=rg[j].n;
+        if((yi>yc)!=(yj>yc)) xs.push(rg[j].e+(rg[i].e-rg[j].e)*(yc-yj)/(yi-yj)); }
+      xs.sort((p,q)=>p-q);
+      for(let k=0;k+1<xs.length;k+=2){
+        const gxa=Math.max(0,Math.floor(gxOf(xs[k]))), gxb=Math.min(W-1,Math.ceil(gxOf(xs[k+1])));
+        for(let gx=gxa; gx<=gxb; gx++) blk[gy*W+gx]=1; } }
+    for(let i=0,j=rg.length-1;i<rg.length;j=i++) stampSeg(blk,W,H,x0,y0,cell, rg[j], rg[i]); }  // edges (thin slivers)
+  for(const ln of ko.lines){ const bb=ln.bb;
+    if(bb.x1<x0||bb.x0>X1||bb.y1<y0||bb.y0>Y1) continue;
+    for(let i=1;i<ln.pts.length;i++) stampSeg(blk,W,H,x0,y0,cell, ln.pts[i-1], ln.pts[i]); }
+  for(const pt of ko.points){ const gx=Math.round(gxOf(pt.e)), gy=Math.round(gyOf(pt.n));
+    if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; }
+  dilateGrid(blk, W, H, Math.max(1, Math.round(buffer/cell)));
+}
+function routeAround(A, B, ref, ko, buffer){
+  const en2ll=(e,n)=>({lat:ref.lat+n/M_PER_DEG_LAT, lon:ref.lon+e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))});
+  const ae=llEN(A.lat,A.lon,ref), be=llEN(B.lat,B.lon,ref);
+  let x0=Math.min(ae.e,be.e), x1=Math.max(ae.e,be.e), y0=Math.min(ae.n,be.n), y1=Math.max(ae.n,be.n);
+  // Region = A-B bbox + a BOUNDED swing margin (does NOT scale with the whole
+  // transit length - that made the cell coarsen until it could no longer thread a
+  // channel and the leg got wrongly flagged red). The occupancy below is RASTERIZED
+  // (fast), so a fine channel-resolving cell is affordable even at km scale.
+  const dist=Math.hypot(be.e-ae.e, be.n-ae.n);
+  const margin=Math.max(40, buffer*4, Math.min(dist, 900));
+  x0-=margin; x1+=margin; y0-=margin; y1+=margin;
+  const maxDim=1400;                             // grid-dim cap (coarsen only if huge)
+  const cell=Math.max(3, buffer/2, (x1-x0)/maxDim, (y1-y0)/maxDim);
+  const W=Math.floor((x1-x0)/cell)+1, H=Math.floor((y1-y0)/cell)+1;
+  if(W<2||H<2) return null;
+  const EX=gx=>x0+gx*cell, NY=gy=>y0+gy*cell;
+  const blk=new Uint8Array(W*H);
+  rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer);   // scanline fill + dilation
+  const snapR=Math.max(6, Math.ceil(90/cell));   // start/goal free-cell snap (~90 m, as the old coarse grid reached)
+  const freeNear=(gx,gy)=>{ for(let r=0;r<=snapR;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const x=gx+dx,y=gy+dy; if(x<0||y<0||x>=W||y>=H)continue; if(!blk[y*W+x])return [x,y]; } return null; };
+  const s=freeNear(Math.round((ae.e-x0)/cell),Math.round((ae.n-y0)/cell));
+  const g=freeNear(Math.round((be.e-x0)/cell),Math.round((be.n-y0)/cell));
+  if(!s||!g) return null;
+  const gS=s[1]*W+s[0], gG=g[1]*W+g[0], N=W*H;
+  const gc=new Float64Array(N).fill(Infinity), came=new Int32Array(N).fill(-1), closed=new Uint8Array(N);
+  const hh=i=>Math.hypot((i%W)-g[0], ((i/W)|0)-g[1]);
+  const heap=[];                                 // binary min-heap of [f, node]
+  const hpush=(f,i)=>{ heap.push([f,i]); let k=heap.length-1; while(k>0){const p=(k-1)>>1; if(heap[p][0]<=heap[k][0])break; const t=heap[p];heap[p]=heap[k];heap[k]=t;k=p;} };
+  const hpop=()=>{ const top=heap[0],last=heap.pop(); if(heap.length){heap[0]=last;let k=0,n=heap.length; for(;;){let l=2*k+1,r=2*k+2,m=k; if(l<n&&heap[l][0]<heap[m][0])m=l; if(r<n&&heap[r][0]<heap[m][0])m=r; if(m===k)break; const t=heap[m];heap[m]=heap[k];heap[k]=t;k=m;}} return top; };
+  const HW=1.6;                                  // heuristic weight: greedier search,
+  gc[gS]=0; hpush(HW*hh(gS),gS);                  // near-optimal detour, far fewer nodes
+  const nb=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.41421],[1,-1,1.41421],[-1,1,1.41421],[-1,-1,1.41421]];
+  let found=false, pops=0; const POP_CAP=900000;   // bound a no-path search's cost
+  while(heap.length){ if(++pops>POP_CAP) break; const cur=hpop()[1]; if(closed[cur])continue; closed[cur]=1; if(cur===gG){found=true;break;}
+    const cgx=cur%W, cgy=(cur/W)|0;
+    for(const [dx,dy,w] of nb){ const nx=cgx+dx, ny=cgy+dy; if(nx<0||ny<0||nx>=W||ny>=H)continue; const ni=ny*W+nx; if(blk[ni])continue;
+      if(dx&&dy && (blk[cgy*W+nx]||blk[ny*W+cgx]))continue;      // no diagonal corner-cut
+      const cand=gc[cur]+w; if(cand<gc[ni]){ gc[ni]=cand; came[ni]=cur; hpush(cand+HW*hh(ni),ni); } } }
+  if(!found) return null;
+  const path=[]; for(let c=gG;c!==-1;c=came[c]) path.push(c); path.reverse();
+  // Collapse collinear runs (a grid A* path is long straight/diagonal segments) so
+  // the O(n^2) line-of-sight string-pull below runs over a few dozen TURN points,
+  // not the hundreds a fine grid produces - that O(n^2) x exact-clear() was the real
+  // cost blow-up on long transits, not A* itself.
+  const key=[path[0]];
+  for(let i=1;i<path.length-1;i++){ const a=path[i-1],b=path[i],c=path[i+1];
+    const ax=a%W,ay=(a/W)|0, bx=b%W,by=(b/W)|0, cx=c%W,cy=(c/W)|0;
+    if((bx-ax)*(cy-by)!==(by-ay)*(cx-bx)) key.push(b); }         // keep only direction changes
+  if(path.length>1) key.push(path[path.length-1]);
+  const pts=[A, ...key.map(c=>en2ll(EX(c%W),NY((c/W)|0))), B];
+  // Line-of-sight clearance against the RASTER (O(1) per sample), not exact
+  // blocked() (polygon tests). The raster is conservative (over-approximates the
+  // keep-outs), so a raster-clear shortcut is genuinely clear - and this keeps the
+  // O(n^2) string-pull cheap on long transits (exact clear() over km segments was
+  // the blow-up). Sampled at the grid resolution.
+  const clear=(p,q)=>{ const pe=llEN(p.lat,p.lon,ref), qe=llEN(q.lat,q.lon,ref);
+    const L=Math.hypot(qe.e-pe.e,qe.n-pe.n), n=Math.max(1,Math.ceil(L/cell));
+    for(let i=0;i<=n;i++){ const t=i/n, e=pe.e+(qe.e-pe.e)*t, nn=pe.n+(qe.n-pe.n)*t;
+      const gx=Math.round((e-x0)/cell), gy=Math.round((nn-y0)/cell);
+      if(gx<0||gy<0||gx>=W||gy>=H||blk[gy*W+gx]) return false; } return true; };
+  const simp=[pts[0]]; let ci=0;                 // line-of-sight string pull (raster clear)
+  while(ci<pts.length-1){ let nx=ci+1; for(let j=pts.length-1;j>ci;j--){ if(clear(pts[ci],pts[j])){nx=j;break;} } simp.push(pts[nx]); ci=nx; }
+  // NB: we do NOT reject a route whose leg touching A isn't clear - the boat's own
+  // position can legitimately sit within the keep-out buffer (moored at a dock, or
+  // marginal charted depth), and the route's job is to lead it OUT. The raster is
+  // conservative (over-approximates the keep-outs, never under - verified), so the
+  // interior legs the string-pull produced are already clear.
+  return simp.slice(1,-1);
+}
+// --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
+function nogoDR(){ return {min: NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
+function featuresBboxRef(feats){                // ENU reference = centroid of the fetched features' extent
+  let s0=1e9,n0=-1e9,w0=1e9,e0=-1e9, any=false;
+  const scan=c=>{ any=true; const lon=c[0],lat=c[1];
+    if(lat<s0)s0=lat; if(lat>n0)n0=lat; if(lon<w0)w0=lon; if(lon>e0)e0=lon; };
+  for(const f of feats){ const g=f.geometry;
+    eachRing(g,r=>r.forEach(scan)); eachPath(g,p=>p.forEach(scan)); eachPoint(g,scan); }
+  return any ? {lat:(s0+n0)/2, lon:(w0+e0)/2} : null;
+}
+function rebuildNogo(){                         // (re)build the keep-out model from nogo.features + shared config
+  const feats = nogo.features || enc.features || [];
+  nogo.ref = featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center);
+  nogo.ko = buildKeepouts(nogo.ref, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
+  const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
+  nogo.ready = n>0;
+  nogo.note = n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
+                  : "no nogo features in this area";
+  updateNogoUI();
+}
+function bboxContains(outer, inner){            // does the fetched coverage cover a survey bbox?
+  return outer && inner && outer.W<=inner.W && outer.S<=inner.S && outer.E>=inner.E && outer.N>=inner.N;
+}
+async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
+  if(nogo.busy) return;
+  const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
+  const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
+  nogo.busy=true; updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
+  try{
+    const d = await fetchENCBbox(b, NOGO_MIN_DEPTH_M);
+    if(!d || !d.band){
+      nogo.ready=false; nogo.busy=false;
+      nogo.note = (d&&d.note) || "no ENC coverage / offline";
+      updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
+      render(); return;
+    }
+    nogo.features = (enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
+    nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
+    rebuildNogo(); nogo.busy=false;
+    encShow=true; $("#chrtBtn").classList.add("on");
+    nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones.");
+    render();
+  }catch(e){ nogo.busy=false; nogo.ready=false; updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); }
+}
+function nogoStatus(t){ showBanner(t); }
+function updateNogoUI(){
+  const btn=$("#nogoBtn");
+  if(btn){ btn.classList.toggle("on", nogoShow && nogo.ready); btn.disabled = false; }
+  const el=$("#v_nogo");
+  if(el){ el.textContent = nogo.busy ? "loading…" : (nogo.ready ? nogo.note : (nogo.note||"none"));
+    el.style.color = nogo.busy ? "var(--warn)" : (nogo.ready ? "" : "var(--warn)"); }
+}
+// sampled straight-leg clearance vs a keep-out model
+function legClear(a, b, ref, ko, buf){
+  const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
+  const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
+  for(let i=0;i<=n;i++){ const t=i/n;
+    if(blocked({e:ae.e+(be.e-ae.e)*t, n:ae.n+(be.n-ae.n)*t}, ko, buf)) return false; }
+  return true;
+}
+// Clear waypoint list from A to B ending at B: the direct leg if clear, else a
+// routeAround detour. Returns null if no clear route exists.
+function legPath(A, B, ref, ko, buf){
+  if(legClear(A, B, ref, ko, buf)) return [{lat:B.lat, lon:B.lon}];
+  const via = routeAround(A, B, ref, ko, buf);
+  if(via && via.length) return [...via.map(p=>({lat:p.lat,lon:p.lon})), {lat:B.lat, lon:B.lon}];
+  return null;
+}
+// COLREGS Rule 9 (narrow channels): when TRANSITING a channel, keep to the
+// STARBOARD side (relative to the direction of travel) so opposing traffic passes
+// port-to-port. Given a clear path `pts` [start … end], offset it toward the
+// starboard wall wherever a wall exists on the right within range (a channel /
+// shore-to-starboard); no wall on the right (open water) => no offset. Endpoints
+// are fixed and the offset tapers to 0 near them. Falls back to the original path
+// if the offset can't be kept clear. Sim + real behave the same (client-planned).
+//
+// Channel END EXTENSION (operator's rule): a channel effectively extends past
+// its physical ends by a distance equal to its own (minimum) width. Without it
+// the route turns the instant the walls end - cutting diagonally across the
+// mouth right where opposing traffic enters/exits. This pre-pass finds channel
+// exit / entry transitions along the sampled path and splices in a straight
+// STAND-ON leg along the channel axis (length = channel width) before the turn
+// (exit), or an aligned approach before the mouth (entry). Skipped when the
+// path already runs straight there, when the target/start sits inside the
+// extension, or when the extension can't be kept clear.
+function channelEndExtend(samp, ref, ko, buf){
+  const STEP=Math.max(3,buf), REACH=Math.max(35,buf*10), MS=Math.max(1,buf/2);
+  const march=(s,de,dn)=>{ for(let d=STEP; d<=REACH; d+=MS){
+    if(blocked({e:s.e+de*d,n:s.n+dn*d},ko,buf)) return d; } return Infinity; };
+  const clearEN=(A,B)=>{ const L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
+    for(let k=0;k<=n;k++){ const t=k/n; if(blocked({e:A.e+(B.e-A.e)*t,n:A.n+(B.n-A.n)*t},ko,buf)) return false; } return true; };
+  const resamp=(A,B)=>{ const out=[], L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/STEP));
+    for(let k=1;k<=n;k++){ const t=k/n; out.push({e:A.e+(B.e-A.e)*t, n:A.n+(B.n-A.n)*t}); } return out; };
+  const width=(s,i)=>{ const a=s[Math.max(0,i-1)], b=s[Math.min(s.length-1,i+1)];
+    let te=b.e-a.e, tn=b.n-a.n; const L=Math.hypot(te,tn)||1; te/=L; tn/=L;
+    const rc=march(s[i],tn,-te), lc=march(s[i],-tn,te);
+    return (rc<Infinity && lc<Infinity) ? rc+lc : 0; };    // 0 = not wall-to-wall channel
+  let s=samp;
+  for(let guard=0; guard<6; guard++){
+    const cum=[0]; for(let i=1;i<s.length;i++) cum.push(cum[i-1]+Math.hypot(s[i].e-s[i-1].e, s[i].n-s[i-1].n));
+    const w=s.map((_,i)=>width(s,i));
+    let spliced=false;
+    for(let i=2;i<s.length-2 && !spliced;i++){
+      const exit = w[i]>0 && !w[i+1], entry = !w[i] && w[i+1]>0;
+      if(!exit && !entry) continue;
+      // channel width = min over the adjacent in-channel stretch (~5 samples)
+      let W=1e9;
+      for(let k=0;k<5;k++){ const j=exit? i-k : i+1+k; if(j>=0&&j<s.length&&w[j]>0) W=Math.min(W,w[j]); }
+      if(W>=1e9) continue;
+      W=Math.max(12, Math.min(2*REACH, W));
+      const anchor = exit ? s[i] : s[i+1];
+      // channel axis direction AT the mouth (pointing out of it, both cases)
+      const back = exit ? s[Math.max(0,i-3)] : s[Math.min(s.length-1,i+4)];
+      let te=anchor.e-back.e, tn=anchor.n-back.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
+      // room: don't stand on past the target / before the start
+      if(exit  && (cum[cum.length-1]-cum[i]) < W*0.8) continue;
+      if(entry && cum[i+1] < W*0.8) continue;
+      // already straight through the extension zone? (max lateral dev off the axis)
+      let turns=false;
+      if(exit){ for(let j=i+1;j<s.length && cum[j]-cum[i]<=W;j++){
+          if(Math.abs((s[j].e-anchor.e)*tn-(s[j].n-anchor.n)*te) > Math.max(6,W*0.25)){ turns=true; break; } } }
+      else { for(let j=i;j>=0 && cum[i+1]-cum[j]<=W;j--){
+          if(Math.abs((s[j].e-anchor.e)*tn-(s[j].n-anchor.n)*te) > Math.max(6,W*0.25)){ turns=true; break; } } }
+      if(!turns) continue;
+      // Extend along the outward axis - but NEVER splice a HAIRPIN: the rejoin
+      // leg must turn <= ~110 deg at the extension point (cos >= -0.34), else the
+      // boat would drive out past the mouth and double straight back (seen live:
+      // an out-and-back waypoint knot). Shrink the extension and retry; skip the
+      // extension entirely if no sane rejoin exists.
+      // The maneuver is spliced as a QUADRATIC BEZIER (control point = the
+      // extension point): the curve leaves the mouth tangent ALONG the channel
+      // axis (the stand-on) and sweeps smoothly onto the rejoin leg, instead of
+      // the sharp two-leg dogleg the boat had to corner through (seen live: an
+      // odd swing-out at the mouth). Falls back to the straight dogleg when the
+      // curve can't be kept clear.
+      const bezier=(A2,C2,B2)=>{ const out=[], L=Math.hypot(C2.e-A2.e,C2.n-A2.n)+Math.hypot(B2.e-C2.e,B2.n-C2.n);
+        const n=Math.max(6, Math.ceil(L/STEP));
+        for(let k=1;k<=n;k++){ const t2=k/n, u=1-t2;
+          out.push({e:u*u*A2.e+2*u*t2*C2.e+t2*t2*B2.e, n:u*u*A2.n+2*u*t2*C2.n+t2*t2*B2.n}); }
+        return out; };
+      const polyClear=(from,arr)=>{ let prev=from;
+        for(const q of arr){ if(!clearEN(prev,q)) return false; prev=q; } return true; };
+      let We=W, done=false;
+      while(We>=10 && !done){
+        const P={e:anchor.e+te*We, n:anchor.n+tn*We};
+        if(blocked(P,ko,buf) || !clearEN(anchor,P)){ We*=0.75; continue; }
+        let r=-1;
+        if(exit){
+          for(let j=i+1;j<s.length;j++){ if(cum[j]-cum[i]>3*W) break;
+            if(cum[j]-cum[i]<We*0.9 || !clearEN(P,s[j])) continue;
+            const ve=s[j].e-P.e, vn=s[j].n-P.n, vl=Math.hypot(ve,vn)||1;
+            if((ve*te+vn*tn)/vl >= -0.34){ r=j; break; } }
+          if(r>=0){
+            const bez=bezier(anchor,P,s[r]);
+            const mid=polyClear(anchor,bez) ? bez : [...resamp(anchor,P), ...resamp(P,s[r])];
+            s=[...s.slice(0,i+1), ...mid, ...s.slice(r+1)]; done=true;
+          }
+        } else {
+          for(let j=i;j>=0;j--){ if(cum[i+1]-cum[j]>3*W) break;
+            if(cum[i+1]-cum[j]<We*0.9 || !clearEN(s[j],P)) continue;
+            const ve=P.e-s[j].e, vn=P.n-s[j].n, vl=Math.hypot(ve,vn)||1;
+            if((ve*(-te)+vn*(-tn))/vl >= -0.34){ r=j; break; } }
+          if(r>=0){
+            const bez=bezier(s[r],P,s[i+1]);
+            const mid=polyClear(s[r],bez) ? bez : [...resamp(s[r],P), ...resamp(P,s[i+1])];
+            s=[...s.slice(0,r+1), ...mid, ...s.slice(i+2)]; done=true;
+          }
+        }
+        if(!done) We*=0.75;
+      }
+      if(!done) continue;
+      spliced=true;
+    }
+    if(!spliced) break;                               // no more transitions to fix
+  }
+  return s;
+}
+function keepRight(pts, ref, ko, buf){
+  if(!pts || pts.length < 2 || !ko) return pts;
+  const STEP = Math.max(3, buf);
+  const en = pts.map(p=>llEN(p.lat,p.lon,ref));
+  let samp = [];
+  for(let i=0;i<en.length-1;i++){ const a=en[i], b=en[i+1];
+    const L=Math.hypot(b.e-a.e,b.n-a.n), ns=Math.max(1,Math.round(L/STEP));
+    for(let k=0;k<ns;k++){ const t=k/ns; samp.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); } }
+  samp.push(en[en.length-1]);
+  if(samp.length < 3) return pts;                 // too short to offset
+  // operator's rule: a channel extends past its ends by its own width - stand on
+  // straight out of a mouth (and line up into one) instead of turning across it.
+  samp = channelEndExtend(samp, ref, ko, buf);
+  const cum=[0]; for(let i=1;i<samp.length;i++) cum.push(cum[i-1]+Math.hypot(samp[i].e-samp[i-1].e, samp[i].n-samp[i-1].n));
+  const totL = cum[cum.length-1] || 1;
+  const REACH = Math.max(35, buf*10);             // wall-search reach either side (m)
+  const STANDOFF = buf + 2;                        // hard floor off either wall
+  const MAXOFF = Math.max(10, buf*8);             // cap on any single lane correction (m)
+  const TAPER = Math.max(8, buf*3);               // fade the offset to 0 near the endpoints
+  const LANE = 0.20;                               // ride right of CENTER by 20% of width
+  const march=(s,de,dn)=>{ for(let d=STEP; d<=REACH; d+=Math.max(1,buf/2)){
+    if(blocked({e:s.e+de*d, n:s.n+dn*d}, ko, buf)) return d; } return Infinity; };
+  // LANE-LINE model (operator's spec): find BOTH walls perpendicular to travel,
+  // define the channel CENTER, and track the line 20% of the width to STARBOARD
+  // of it (30% off the starboard wall / 70% off port). Replaces the old
+  // wall-standoff march, whose noisy single-wall distances (pier teeth, gaps,
+  // corners) made the ride inconsistent. Both walls required = a channel; a
+  // single shore or open water leaves the path untouched. Wall distances are
+  // MEDIAN-filtered and the lane offsets MEAN-smoothed so the line doesn't jitter.
+  const N=samp.length;
+  const SB=[], RC=new Float64Array(N).fill(Infinity), LC=new Float64Array(N).fill(Infinity);
+  for(let i=0;i<N;i++){
+    const a=samp[Math.max(0,i-1)], b=samp[Math.min(N-1,i+1)];
+    let te=b.e-a.e, tn=b.n-a.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
+    SB.push([tn,-te]);                             // starboard unit vector
+    if(i>0 && i<N-1){ RC[i]=march(samp[i],tn,-te); LC[i]=march(samp[i],-tn,te); }
+  }
+  const med=(arr,i)=>{ const v=[];                 // ±2-sample median: kills pier-gap spikes
+    for(let k=-2;k<=2;k++){ const j=i+k; if(j>=1&&j<N-1) v.push(arr[j]); }
+    v.sort((x,y)=>x-y); return v[Math.floor(v.length/2)]; };
+  const off=new Float64Array(N);                   // signed lane correction (+ = starboard)
+  for(let i=1;i<N-1;i++){
+    const rc=med(RC,i), lc=med(LC,i);
+    if(rc<Infinity && lc<Infinity){                // both walls seen -> it's a channel
+      const w=rc+lc;
+      let d=(rc-lc)/2 + LANE*w;                    // to the lane line: 0.3w off stbd wall
+      d=Math.min(d, rc-STANDOFF);                  // never scrape the starboard wall
+      d=Math.max(d, -(lc-STANDOFF));               // never get pushed into the port wall
+      off[i]=Math.max(-MAXOFF, Math.min(MAXOFF, d));
+    }
+    const dEnd=Math.min(cum[i], totL-cum[i]); if(dEnd<TAPER) off[i]*=dEnd/TAPER;
+  }
+  const offS=new Float64Array(N);                  // low-pass the lane (~±3 samples ≈ 20 m)
+  for(let i=0;i<N;i++){ let s2=0,n2=0;
+    for(let k=-3;k<=3;k++){ const j=i+k; if(j>=0&&j<N){ s2+=off[j]; n2++; } }
+    offS[i]=s2/n2; }
+  const outEN=[];
+  for(let i=0;i<N;i++){
+    const s=samp[i];
+    if(i===0 || i===N-1){ outEN.push({e:s.e,n:s.n}); continue; }
+    const [re,rn]=SB[i]; let d=offS[i];
+    let pe=s.e+re*d, pn=s.n+rn*d, tries=0;
+    while(Math.abs(d)>0.1 && blocked({e:pe,n:pn},ko,buf) && tries<12){ d*=0.6; pe=s.e+re*d; pn=s.n+rn*d; tries++; }
+    if(blocked({e:pe,n:pn},ko,buf)){ pe=s.e; pn=s.n; }
+    outEN.push({e:pe,n:pn});
+  }
+  // DEVIATION-CONSTRAINED line-of-sight thinning: emit the farthest offset point
+  // whose chord is (a) exact-legClear AND (b) stays laterally within KEEP_TOL of
+  // the offset polyline. Plain shortest-chord string-pull UNDID the offset - in a
+  // dogleg channel the longest merely-clear chord legally cuts back across the
+  // middle (seen live: the Go-To crossed to port mid-canal). Hugging the offset
+  // polyline preserves the starboard track for the WHOLE channel length. If an
+  // offset point can't be linked, revert it to its (clear) base sample and
+  // continue; give up to the un-offset path only if even that fails.
+  const KEEP_TOL = Math.max(3, buf);              // max lateral sag off the offset path (m)
+  const hugs=(i0,i1)=>{                            // chord outEN[i0]->outEN[i1] hugs the polyline?
+    const A=outEN[i0], B=outEN[i1];
+    const L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/STEP));
+    for(let k=1;k<n;k++){ const t=k/n, pe=A.e+(B.e-A.e)*t, pn=A.n+(B.n-A.n)*t;
+      let best=1e18;                               // distance to the nearest offset vertex in-window
+      for(let m=i0;m<=i1;m++){ const d=(outEN[m].e-pe)**2+(outEN[m].n-pn)**2; if(d<best)best=d; }
+      if(best > KEEP_TOL*KEEP_TOL) return false; }
+    return true; };
+  const ll = outEN.map(p=>fromEN(p.e,p.n,ref));
+  const base = samp.map(p=>fromEN(p.e,p.n,ref));
+  const kr=[ll[0]]; let ci=0;
+  while(ci < ll.length-1){
+    let nx=-1;
+    for(let j=Math.min(ll.length-1, ci+40); j>ci; j--){
+      if(hugs(ci,j) && legClear(kr[kr.length-1], ll[j], ref, ko, buf)){ nx=j; break; } }
+    if(nx<0){                                     // offset next point unreachable:
+      const j=ci+1;                               // fall back to the base sample there
+      if(!legClear(kr[kr.length-1], base[j], ref, ko, buf)) return pts;
+      ll[j]=base[j]; outEN[j]=samp[j]; nx=j;
+    }
+    kr.push(ll[nx]); ci=nx;
+  }
+  // Enforce a MINIMUM waypoint spacing: bends/splices retained ~STEP-spaced
+  // vertices which became waypoint KNOTS in the uploaded plan (diamond blobs the
+  // follower weaves through at its 1 m approach radius). Drop a vertex closer
+  // than MINSP to the last kept one when the direct chord to its successor is
+  // exact-clear; clearance always wins over spacing.
+  const MINSP = Math.max(6, buf*2);
+  const thin=[kr[0]];
+  for(let i2=1;i2<kr.length-1;i2++){
+    const prev=thin[thin.length-1];
+    if(distTo(prev, kr[i2]) < MINSP && legClear(prev, kr[i2+1], ref, ko, buf)) continue;
+    thin.push(kr[i2]);
+  }
+  thin.push(kr[kr.length-1]);
+  return thin;
+}
+// Plan an ENC-aware path from -> to ending at `to`. {route} on success, {error}
+// when the target sits in a nogo zone or no clear route exists (refuse + warn).
+// Keeps to the starboard side of channels (Rule 9).
+function planNogoRoute(from, to){
+  if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
+  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  if(blocked(llEN(to.lat,to.lon,ref), ko, buf)) return {error:"target is inside / too close to a nogo zone"};
+  const leg = legPath(from, to, ref, ko, buf);
+  if(!leg) return {error:"no clear route to the target without crossing a nogo zone"};
+  const routed = leg.length > 1;
+  const kr = keepRight([{lat:from.lat,lon:from.lon}, ...leg], ref, ko, buf);
+  return {route: kr.slice(1), direct: !routed, routed};
+}
+// Route an ENTIRE run plan clear of nogo: the approach from `start` (present
+// position) to wp0, plus every inter-waypoint transit. Detour waypoints are
+// inserted where a leg would cross land / a nogo zone. The APPROACH (a transit)
+// keeps to the starboard side of any channel (Rule 9); survey-line legs are left
+// on their planned track. `keepRightAll` (pure-transit routes) keeps every leg
+// starboard. Returns the full routed list + any legs that couldn't be routed.
+function routePlan(start, wps, keepRightAll){
+  if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
+  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
+  wps.forEach((wp, i)=>{
+    const leg = legPath(prev, wp, ref, ko, buf);
+    if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
+    let seg = [prev, ...leg];                       // prev … wp
+    // Rule 9 keep-right applies to every TRANSIT: the approach (leg 0), any leg of
+    // a pure-transit route (keepRightAll), and any ROUTED DETOUR (leg.length>1 -
+    // routeAround inserted a transit around obstacles). A straight mission leg in
+    // between is left alone - at Upload we can't tell a survey coverage line from
+    // a plain hop, and coverage lines must stay on their planned track.
+    if(keepRightAll || i===0 || leg.length>1) seg = keepRight(seg, ref, ko, buf);
+    for(let k=1;k<seg.length;k++) out.push({lat:seg[k].lat, lon:seg[k].lon});
+    prev = wp;
+  });
+  return {route: out, unroutable};
+}
+function doGoTo(target){
+  if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target);
+  if(plan.error){ showBanner("Go-To refused: "+plan.error+". Pick a reachable point in clear water."); flashNote("Go-To refused: "+plan.error); return; }
+  cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
+  runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
+  if(plan.routed) showBanner("Go-To: routed around nogo zone(s) via "+plan.route.length+" waypoints.");
+  else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
+  render();
+}
+function doRTH(){
+  if(!S.home){ flashNote("No home set (no GPS fix yet)."); return; }
+  if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
+  if(plan.error){ showBanner("RTH refused: "+plan.error+". Home is unreachable without crossing a nogo zone — reposition or clear the obstacle."); flashNote("RTH refused: "+plan.error); return; }
+  cmd("/api/cmd/rth", {route:plan.route});
+  runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
+  if(plan.routed) showBanner("RTH: routed around nogo zone(s) via "+plan.route.length+" waypoints.");
+  else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
+  render();
+}
+// --- transit line (draw + follow) ---------------------------------------- //
+function drawTransit(toScreen){                   // the transit DRAFT being drawn (cyan)
+  if(!transit.length) return;
+  ctx.save();
+  if(transit.length>1){                            // the polyline
+    ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(57,192,255,0.9)"; ctx.lineWidth=1.6;
+    ctx.beginPath(); transit.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.font="10px Consolas,monospace";
+  transit.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);   // numbered vertices
+    ctx.beginPath(); ctx.arc(s.x,s.y,5,0,2*Math.PI); ctx.fillStyle="#39c0ff"; ctx.fill();
+    ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
+    ctx.fillStyle="#39c0ff"; ctx.fillText("T"+(i+1), s.x+7, s.y-6); });
+  ctx.restore();
+}
+function updateTransitPanel(){
+  $("#tr_count").textContent = transit.length;
+  $("#tr_follow").disabled = !(transit.length>=1 && S.armed && !S.estop);
+  $("#tr_hint").textContent = transit.length
+    ? (S.armed ? "Follow to drive the transit (ENC-routed), or click to add more points."
+               : "ARM to Follow. Click to add more points.")
+    : "Click the chart to drop transit points (1+). Then Follow.";
+}
+function doTransit(){
+  if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
+  if(!asv){ flashNote("No position fix yet."); return; }
+  const plan = routePlan({lat:asv.lat,lon:asv.lon}, transit, true);   // pure transit: keep right (Rule 9)
+  runRoute = plan.route; runUnsafe = plan.unroutable || [];   // draw the path either way
+  if(plan.unroutable && plan.unroutable.length){
+    // Refuse to drive a transit that crosses a nogo zone with no clear detour.
+    render();
+    showBanner(plan.unroutable.length+" transit leg(s) cross a nogo zone with NO clear detour (red) — NOT started. Edit the line.");
+    flashNote("Transit blocked: "+plan.unroutable.length+" unroutable leg(s).");
+    return;
+  }
+  cmd("/api/cmd/transit", {route: plan.route});
+  const added = plan.route.length - transit.length;
+  if(added>0) showBanner("Transit: routed clear of ENC obstacles ("+added+" detour waypoint(s) added).");
+  setMode("pan"); render();
+}
+// nogo overlay: a red wash on the keep-out zones so they read at a glance
+// The single depth-shading layer: RED = hard nogo (land / manmade / water below
+// the 1 m navigability floor that every behaviour avoids); AMBER = water outside
+// the survey COVERAGE window (navigable, just not surveyed) - shown only while a
+// survey pattern is being planned. drawENC no longer shades depth (no duplication).
+function drawNogo(toScreen){
+  if(!nogoShow || !nogo.ready || !nogo.features) return;
+  const floorDr=nogoDR();                          // < 1 m corrected -> nogo
+  const surveyDr=depthRange();                      // survey coverage window (panel)
+  const hasPat=!!currentPattern();                  // amber tier only while planning a survey
+  ctx.save();
+  const fill=(g,c)=>{ ctx.beginPath(); let any=false;
+    eachRing(g,r=>{ any=true; r.forEach((p,i)=>{ const s=toScreen(p[1],p[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); });
+    if(any){ ctx.fillStyle=c; ctx.fill("evenodd"); } };
+  for(const f of nogo.features){ const r=f.role, g=f.geometry;
+    if(nogo.enf.land && (r==="land"||r==="dock"||r==="hazard_area")){ fill(g,"rgba(217,83,79,0.20)"); continue; }
+    if(r==="depth_area"){
+      if(nogo.enf.depth && depthExcluded(f,floorDr)) fill(g,"rgba(217,83,79,0.20)");           // hard nogo (red)
+      else if(hasPat && depthExcluded(f,surveyDr)) fill(g,"rgba(196,150,74,0.22)"); }          // outside survey window (amber)
+  }
+  ctx.strokeStyle="rgba(217,83,79,0.85)"; ctx.lineWidth=1.4;
+  for(const f of nogo.features){ const r=f.role;
+    if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
+      eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
+  ctx.restore();
+}
+
+// Make sure the shared nogo model's fetched features cover the survey area; if
+// not (survey drawn outside the operating area), extend the fetch to their union.
+// The transit re-extract center stays the vessel so it never ping-pongs.
+async function ensureNogoArea(){
+  const b=encBbox(120); if(!b) return false;
+  if(nogo.ready && bboxContains(nogo.bbox, b)) return true;
+  const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
+                          E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
+  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb);
+  return nogo.ready;
+}
+// Shorten a survey segment by `m` metres at BOTH ends (settle on-line + leave room
+// for the turn). Leaves it untouched if that would make it too short.
+function shortenSeg(a, b, m){
+  const d=distTo(a,b); if(d < 2*m + 2) return [a,b];
+  const t0=m/d, t1=1-m/d;
+  return [ {lat:a.lat+(b.lat-a.lat)*t0, lon:a.lon+(b.lon-a.lon)*t0},
+           {lat:a.lat+(b.lat-a.lat)*t1, lon:a.lon+(b.lon-a.lon)*t1} ];
+}
+// Boat minimum turn radius (m) it can actually HOLD at a given speed, with a
+// margin for line-following overshoot. A teardrop tighter than this can't be
+// tracked: the boat overshoots OUTBOARD - into the nogo the arc was hugging -
+// even though the (idealised) arc validates clear. This is the clamp that guards
+// against that: below it, no teardrop is generated (fall back to a straight hop
+// / routed transit, which stay at the box edge, clear).
+const SPEED_KN = {low:1.5, survey:3.0, high:6.0};       // mirrors server SPEED_KN
+const MAX_TURN_RATE_DEG_S = 60;                          // mirrors SimVcu turn cap
+function minTurnRadiusM(speedKey){
+  const kn = SPEED_KN[speedKey] || 3.0;
+  const v = kn*0.514444, w = MAX_TURN_RATE_DEG_S*Math.PI/180;   // m/s, rad/s
+  return (v/w) * 1.4;                                    // 1.4× the physical v/ω (tracking margin)
+}
+// Teardrop turn: instead of a hard reversal at the line end, sweep a smooth
+// semicircular loop (bulging OUTBOARD, radius = half the line offset) so the ASV
+// rolls onto the next line ALIGNED with its heading. Returns the arc waypoints
+// (excluding E, F), or null if degenerate, TOO TIGHT to hold (< minR), or the
+// loop would touch a nogo zone.
+function teardropTurn(E, F, hE, ref, ko, buf, minR){
+  const en2ll=(e,n)=>({lat:ref.lat+n/M_PER_DEG_LAT, lon:ref.lon+e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))});
+  const Ee=llEN(E.lat,E.lon,ref), Fe=llEN(F.lat,F.lon,ref);
+  const R=Math.hypot(Ee.e-Fe.e, Ee.n-Fe.n)/2;
+  if(R < Math.max(0.75, minR||0) || R>60) return null;   // too tight to hold (overshoots) / degenerate
+  const C={e:(Ee.e+Fe.e)/2, n:(Ee.n+Fe.n)/2};
+  const a0=Math.atan2(Ee.n-C.n, Ee.e-C.e);
+  const uE={e:Math.sin(hE*Math.PI/180), n:Math.cos(hE*Math.PI/180)};   // exit heading = outboard
+  let dir=1, bestProj=-1e9;                            // pick the 180° sweep that bulges outboard
+  for(const d of [1,-1]){ const am=a0+d*Math.PI/2;
+    const proj=Math.cos(am)*uE.e + Math.sin(am)*uE.n;
+    if(proj>bestProj){ bestProj=proj; dir=d; } }
+  const n=Math.max(4, Math.ceil(Math.PI*R/1.5));       // ~1.5 m arc spacing
+  const pts=[];
+  for(let i=1;i<n;i++){ const ang=a0+dir*Math.PI*(i/n);
+    pts.push(en2ll(C.e+R*Math.cos(ang), C.n+R*Math.sin(ang))); }
+  let prev=E; for(const q of [...pts, F]){ if(!legClear(prev,q,ref,ko,buf)) return null; prev=q; }
+  return pts;
+}
+async function punchOut(){
+  if(punchBusy) return;
+  const sp=currentPattern();
+  if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (SURV, then 3 clicks)."; return; }
+  const surveyDr=depthRange();                     // survey COVERAGE window (panel)
+  const dr={min: Math.max(NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
+  applyNogoControls();                             // fold panel buffer/enforce into the shared nogo
+  punchBusy=true; $("#sp_punch").disabled=true; $("#sp_hint").textContent="Extracting ENC / nogo for the survey area…";
+  try{
+    const ok=await ensureNogoArea();
+    encShow=true; $("#chrtBtn").classList.add("on"); render();
+    if(!ok || !nogo.features || !nogo.features.length){
+      patClip=null;
+      const why=nogo.note||"no ENC features returned";
+      $("#sp_hint").textContent="Punch Out: "+why+" — lines unchanged.";
+      showBanner("Punch Out found no ENC coverage here ("+why+") — survey lines were NOT trimmed. Verify the plan manually.");
+      updatePatReadout(); return;
+    }
+    // Clip against the SHARED nogo model (same features/ref/enforce/buffer the
+    // behaviors use) — but with the survey's coverage depth window layered on the
+    // fixed navigability floor. So a survey is trimmed to exactly the water the
+    // vessel is allowed in, plus the operator's depth-of-interest band.
+    const ref=nogo.ref, buffer=nogo.buffer, enf=nogo.enf;
+    const ko=buildKeepouts(ref, enf, dr, nogo.features);
+    const src=patSourceLines();                // boundary-clipped legs (if any) feed the ENC clip
+    const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,ko,buffer).forEach(s=>clipped.push(s)));
+    // Re-order so the ASV covers each obstacle-free region as a serpentine and no
+    // leg is numbered through a keep-out; flag any residual crossing transit.
+    const legSafe=(a,b)=>{ const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
+      const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,buffer/2)));
+      for(let i=0;i<=n;i++){ const t=i/n;
+        if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, ko, buffer)) return false; }
+      return true; };
+    const ro=regionOrder(clipped, ref, sp.direction, sp.spacing, legSafe);
+    // SHORTEN each survey segment (settle on-line + leave room for the turn to loop
+    // within cleared water) - this is what makes the teardrop fit without hitting nogo.
+    const turnMargin = Math.max(2, sp.spacing*0.5);
+    // teardrop must be a radius the boat can HOLD at the run speed, else it overshoots
+    // outboard into the nogo - clamp to the min turn radius (fall back to a straight hop).
+    const minTurnR = minTurnRadiusM(mission.speed || "survey");
+    patClip = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin)).filter(s=>distTo(s[0],s[1])>1);
+    patTransits=[]; patRoutes=[]; patUnsafe=[]; let nTeardrop=0, nTight=0;
+    // For each line-to-line transit: prefer a TEARDROP turn (smooth, rolls onto the
+    // next line aligned); else keep straight if clear; else route around; else flag.
+    for(let k=0;k<patClip.length-1;k++){
+      const Ap=patClip[k][1], Bp=patClip[k+1][0];
+      const hE=azTo(patClip[k][0], patClip[k][1]), hF=azTo(patClip[k+1][0], patClip[k+1][1]);
+      const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)
+      let via=null;
+      if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
+        via = teardropTurn(Ap, Bp, hE, ref, ko, buffer, minTurnR);  // radius-clamped + nogo-validated
+        if(via){ nTeardrop++; }
+        else if(distTo(Ap,Bp)/2 < minTurnR) nTight++;               // too tight to hold at this speed
+      }
+      if(via){ patTransits.push(via); patRoutes.push([Ap,...via,Bp]); continue; }
+      if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }        // straight turn is clear
+      const around=routeAround(Ap,Bp,ref,ko,buffer);
+      if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
+        const kr=keepRight([Ap,...around,Bp], ref, ko, buffer);
+        patTransits.push(kr.slice(1,-1)); patRoutes.push(kr);
+      }
+      else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
+    }
+    const nRoute=patRoutes.length-nTeardrop, nU=patUnsafe.length;
+    const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
+    $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
+      `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      (nTeardrop?`, ${nTeardrop} teardrop turn(s)`:``)+
+      (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
+      (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
+      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Add to plan.`;
+    if(nU) showBanner(`${nU} transit(s) could NOT be routed around a keep-out (RED). Edit the plan — the ASV would cross the obstacle on those legs.`);
+    else if(nRoute) showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`);
+    else showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan.");
+    updatePatReadout(); render();
+  }catch(e){ $("#sp_hint").textContent="Punch Out failed: "+e; }
+  finally{ punchBusy=false; $("#sp_punch").disabled=false; }
+}
+function showBanner(t){ const b=$("#encbanner"); b.textContent=t; b.style.display="block"; }
+
+// --- interaction --------------------------------------------------------- //
+let dragging=false, last=null, downAt=null;
+mapEl.addEventListener("mousedown", e=>{
+  if(mode === "survey"){ const h = patHandleAt(e.clientX, e.clientY);
+    if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY}; return; } }   // grab handle, no pan
+  if(mode === "bound"){ const i = boundHandleAt(e.clientX, e.clientY);
+    if(i>=0){ boundDrag = i; downAt={x:e.clientX,y:e.clientY}; return; } }
+  if(mode === "search" && searchHandleAt(e.clientX, e.clientY)){
+    searchDrag = true; downAt={x:e.clientX,y:e.clientY}; return; }   // grab datum, no pan
+  dragging=true; last={x:e.clientX,y:e.clientY};
+  downAt={x:e.clientX,y:e.clientY}; mapEl.classList.add("drag"); });
+window.addEventListener("mouseup", e=>{
+  if(patDrag){ patDrag=null; downAt=null; updatePatReadout(); saveMission(); return; }
+  if(boundDrag!=null){ boundDrag=null; downAt=null; patClip=null; updatePatReadout(); saveMission(); render(); return; }
+  if(searchDrag){ searchDrag=false; downAt=null; updateSearchPanel(); return; }
+  const wasDrag = dragging; dragging=false; mapEl.classList.remove("drag");
+  if(!wasDrag || !downAt) return;
+  const moved = Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y); downAt = null;
+  if(moved > 5 || mode === "pan") return;
+  const o = originPx(), r = mapEl.getBoundingClientRect();
+  const ll = worldToLatLon(o.x+(e.clientX-r.left), o.y+(e.clientY-r.top), zoom);
+  if(mode === "wpt"){
+    const hit = mission.waypoints.findIndex(p=>{
+      const s = worldPx(p.lat,p.lon,zoom);
+      return Math.hypot(s.x-o.x-(e.clientX-r.left), s.y-o.y-(e.clientY-r.top)) < 12;
+    });
+    if(hit >= 0) mission.waypoints.splice(hit,1);
+    else mission.waypoints.push({lat:ll.lat, lon:ll.lon});
+    saveMission(); render();
+  } else if(mode === "survey"){
+    if(!pat.A) pat.A = ll; else if(!pat.B) pat.B = ll; else if(!pat.C) pat.C = ll;
+    patClip=null;                              // geometry changed - invalidate any punch
+    updatePatReadout(); render();
+  } else if(mode === "bound"){
+    if(!boundaryClosed){
+      if(boundary.length>=3){                  // click the first vertex to close the ring
+        const s = worldPx(boundary[0].lat,boundary[0].lon,zoom);
+        if(Math.hypot(s.x-o.x-(e.clientX-r.left), s.y-o.y-(e.clientY-r.top)) < 12){ closeBoundary(); return; }
+      }
+      boundary.push({lat:ll.lat, lon:ll.lon}); patClip=null; updatePatReadout(); saveMission(); render();
+    }
+  } else if(mode === "search"){                  // click sets / moves the datum
+    search.datum = {lat:ll.lat, lon:ll.lon};
+    updateSearchPanel(); render();
+  } else if(mode === "transit"){                 // click drops a transit vertex
+    transit.push({lat:ll.lat, lon:ll.lon});
+    updateTransitPanel(); render();
+  } else if(mode === "goto"){                    // click a point -> ENC-aware Go-To
+    doGoTo(ll);
+    setMode("pan");
+  }
+});
+window.addEventListener("mousemove", e=>{
+  const o = originPx(), r = mapEl.getBoundingClientRect();
+  const ll = worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom);
+  $("#r_cursor").textContent = fmtLL(ll.lat, ll.lon);
+  if(patDrag){ pat[patDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
+  if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
+  if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
+  if(!dragging) return;
+  follow = false; setFollow();
+  const c = worldPx(center.lat, center.lon, zoom);
+  center = worldToLatLon(c.x-(e.clientX-last.x), c.y-(e.clientY-last.y), zoom);
+  last = {x:e.clientX,y:e.clientY}; render();
+});
+mapEl.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1:-1, e.clientX, e.clientY); }, {passive:false});
+window.addEventListener("wheel", e=>{ if(e.ctrlKey) e.preventDefault(); }, {passive:false});
+function zoomAt(dz, sx, sy){
+  const nz = Math.max(MINZ, Math.min(MAXZ, zoom+dz)); if(nz===zoom) return;
+  const r = mapEl.getBoundingClientRect(), o = originPx();
+  const anchor = worldToLatLon(o.x+(sx-r.left), o.y+(sy-r.top), zoom);
+  zoom = nz;
+  const {w,h}=viewSize(), ap = worldPx(anchor.lat, anchor.lon, zoom);
+  center = worldToLatLon(ap.x - ((sx-r.left) - w/2), ap.y - ((sy-r.top) - h/2), zoom); render();
+}
+$("#zin").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(1, r.left+w/2, r.top+h/2); };
+$("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(-1, r.left+w/2, r.top+h/2); };
+$("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
+$("#clear").onclick = ()=>{ track=[]; render(); };
+function setFollow(){ $("#follow").classList.toggle("on", follow); }
+function setMode(m){
+  mode = (mode === m) ? "pan" : m;
+  // pattern + boundary persist across mode switches (they compose); use Reset /
+  // Clear BND to discard them explicitly.
+  $("#wptBtn").classList.toggle("mode-on", mode==="wpt");
+  $("#lineBtn").classList.toggle("mode-on", mode==="survey");
+  $("#bndBtn").classList.toggle("mode-on", mode==="bound");
+  $("#srchBtn").classList.toggle("mode-on", mode==="search");
+  $("#tranBtn").classList.toggle("mode-on", mode==="transit");
+  $("#linePanel").style.display = mode==="survey" ? "flex" : "none";
+  $("#boundPanel").style.display = mode==="bound" ? "flex" : "none";
+  $("#searchPanel").style.display = mode==="search" ? "flex" : "none";
+  $("#transitPanel").style.display = mode==="transit" ? "flex" : "none";
+  mapEl.style.cursor = mode==="pan" ? "" : "crosshair";
+  if(mode==="survey") updatePatReadout();
+  if(mode==="search"){                             // seed a datum so a preview appears
+    if(!search.datum) search.datum = {lat:center.lat, lon:center.lon};
+    updateSearchPanel();
+  }
+  if(mode==="transit") updateTransitPanel();
+  render();
+}
+$("#wptBtn").onclick = ()=>setMode("wpt");
+$("#lineBtn").onclick = ()=>setMode("survey");
+$("#bndBtn").onclick = ()=>setMode("bound");
+$("#srchBtn").onclick = ()=>setMode("search");
+$("#sr_type").onchange = ()=>{ search.type = $("#sr_type").value; updateSearchPanel(); render(); };
+$("#sr_turn").onchange = ()=>{ search.turn = parseInt($("#sr_turn").value)||1; updateSearchPanel(); render(); };
+["#sr_heading","#sr_step","#sr_legs","#sr_radius","#sr_sectors","#sr_rotate","#sr_length","#sr_spacing","#sr_lanes"]
+  .forEach(id=>{ $(id).oninput = ()=>{ updateSearchPanel(); render(); }; });
+$("#sr_add").onclick = commitSearch;
+$("#sr_reset").onclick = resetSearch;
+$("#tranBtn").onclick = ()=>setMode("transit");
+$("#tr_follow").onclick = doTransit;
+$("#tr_undo").onclick = ()=>{ transit.pop(); updateTransitPanel(); render(); };
+$("#tr_clr").onclick = ()=>{ transit=[]; updateTransitPanel(); render(); };
+$("#areaBtn").onclick = ()=>setBoundaryShow(!boundaryShow);
+$("#bnd_close").onclick = closeBoundary;
+$("#bnd_clr").onclick = clearBoundary;
+$("#sp_add").onclick = commitPattern;
+$("#sp_reset").onclick = ()=>{ resetPattern(); render(); };
+$("#sp_align").onchange = ()=>{ pat.align = parseInt($("#sp_align").value)||0; patClip=null; updatePatReadout(); render(); };
+// force line spacing: move C to the typed distance along the current direction
+$("#sp_spacing").onchange = ()=>{
+  const v = parseFloat($("#sp_spacing").value);
+  if(!(v>0) || !pat.A) return;
+  const ang = pat.C ? azTo(pat.A, pat.C) : 90;   // keep direction, set the distance = spacing
+  pat.C = atDA(pat.A, v, ang);
+  patClip=null; updatePatReadout(); render();
+};
+// force line direction: rotate the pattern to the typed bearing, keeping spacing + box
+$("#sp_dir").onchange = ()=>{
+  const v = parseFloat($("#sp_dir").value);
+  if(!isFinite(v) || !pat.A || !pat.B) return;
+  const spacing = pat.C ? distTo(pat.A, pat.C) : distTo(pat.A, pat.B)/10;   // keep spacing
+  pat.C = atDA(pat.A, spacing, (((v%360)+360)%360) + 90);   // spacingAngle = direction + 90
+  patClip=null; updatePatReadout(); render();
+};
+// Buffer + enforce toggles are the SHARED nogo controls (they define the keep-out
+// model every behaviour routes clear of); fold them into nogo + rebuild live.
+function applyNogoControls(){
+  nogo.buffer = Math.max(0, parseFloat($("#sp_buffer").value)||0);
+  nogo.enf = {land:$("#enf_land").checked, depth:$("#enf_depth").checked,
+              haz:$("#enf_haz").checked, area:$("#enf_area").checked};
+  if(nogo.features && nogo.features.length) rebuildNogo();   // behaviours update immediately
+}
+// The nogo keep-clear buffer, edited from EITHER the command bar (#c_buffer, always
+// accessible - lower it to thread a tight marina) or the SURV panel (#sp_buffer).
+// Both stay in sync; it persists and re-routes every behaviour live.
+function setBuffer(v){
+  v = Math.max(0, Math.min(200, parseFloat(v)||0));
+  nogo.buffer = v;
+  $("#sp_buffer").value = v; $("#c_buffer").value = v;
+  mission.buffer_m = v; saveMission();
+  if(nogo.features && nogo.features.length) rebuildNogo();    // re-route Go-To/RTH/search/survey
+  patClip = null; updatePatReadout(); render();
+}
+$("#c_buffer").onchange = ()=>setBuffer($("#c_buffer").value);
+$("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
+// survey Min/Max depth = survey-only coverage window (re-clip preview only)
+["#sp_mindepth","#sp_maxdepth"].forEach(id=>{
+  $(id).onchange = ()=>{ patClip=null; updatePatReadout(); render(); };
+});
+// enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
+["#enf_land","#enf_depth","#enf_haz","#enf_area"].forEach(id=>{
+  $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };
+});
+$("#sp_punch").onclick = punchOut;
+$("#chrtBtn").onclick = ()=>{ encShow=!encShow; $("#chrtBtn").classList.toggle("on", encShow); render(); };
+$("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo never loaded, extract it now
+  if(!nogo.ready && !nogo.busy){ refreshNogo(); return; }
+  nogoShow=!nogoShow; updateNogoUI(); render();
+};
+$("#ln_clr").onclick = ()=>{ mission.waypoints=[]; mission.lines=[]; resetPattern();
+  runRoute=null; runUnsafe=[]; updateXTE(); saveMission(); render(); };
+$("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
+$("#c_approach").onchange = ()=>{
+  const v = Math.max(0.5, Math.min(50, parseFloat($("#c_approach").value)||1));
+  mission.approach_radius_m = v; $("#c_approach").value = v; saveMission();
+  cmd("/api/cmd/approach", {m:v});               // apply live to the running sim
+};
+$("#c_speed").onchange = ()=>{ mission.speed = $("#c_speed").value; saveMission(); };
+$("#c_completion").onchange = ()=>{ mission.completion = $("#c_completion").value; saveMission();
+  flashNote("Plan completion: "+mission.completion+" (applies on the next Upload)."); };
+window.addEventListener("resize", render);
+
+// --- vessel-status card drag/persist ------------------------------------- //
+const VCARD_KEY = "asv_vcard_v1";
+const vcard = $("#vcard"), vhead = $("#vcardHead"), vreopen = $("#vReopen");
+function vcardDefaultPos(){ const r = mapEl.getBoundingClientRect(); return {left: Math.max(14, r.width - 196 - 64), top: 96}; }
+function loadVcardPrefs(){ try{ return JSON.parse(localStorage.getItem(VCARD_KEY)) || {}; }catch(e){ return {}; } }
+function saveVcardPrefs(p){ try{ localStorage.setItem(VCARD_KEY, JSON.stringify(p)); }catch(e){} }
+function placeVcard(){
+  const prefs = loadVcardPrefs();
+  const pos = (prefs.left!=null && prefs.top!=null) ? prefs : vcardDefaultPos();
+  vcard.style.left = pos.left+"px"; vcard.style.top = pos.top+"px";
+  vreopen.style.left = pos.left+"px"; vreopen.style.top = pos.top+"px";
+  const hidden = !!prefs.hidden;
+  vcard.style.display = hidden ? "none" : "block"; vreopen.style.display = hidden ? "block" : "none";
+}
+let vdrag = null;
+vhead.addEventListener("mousedown", e=>{
+  if(e.target===$("#vcardClose")) return;
+  e.stopPropagation(); const r = vcard.getBoundingClientRect();
+  vdrag = {dx: e.clientX-r.left, dy: e.clientY-r.top};
+});
+window.addEventListener("mousemove", e=>{
+  if(!vdrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = e.clientX - vdrag.dx, top = e.clientY - vdrag.dy;
+  left = Math.max(0, Math.min(mr.width - vcard.offsetWidth, left));
+  top  = Math.max(0, Math.min(mr.height - vcard.offsetHeight, top));
+  vcard.style.left = left+"px"; vcard.style.top = top+"px";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!vdrag) return; vdrag = null;
+  saveVcardPrefs({...loadVcardPrefs(), left: parseFloat(vcard.style.left), top: parseFloat(vcard.style.top)});
+});
+$("#vcardClose").addEventListener("click", e=>{ e.stopPropagation();
+  saveVcardPrefs({...loadVcardPrefs(), hidden:true}); vcard.style.display="none"; vreopen.style.display="block"; });
+vreopen.addEventListener("click", ()=>{
+  saveVcardPrefs({...loadVcardPrefs(), hidden:false}); vcard.style.display="block"; vreopen.style.display="none"; });
+placeVcard();
+
+// --- draggable survey settings panel (only the SURV pop-up; other mode panels stay put) ---
+const SURVPANEL_KEY = "asv_survpanel_pos_v1";
+const linePanelEl = $("#linePanel"), linePanelHead = $("#linePanelHead");
+(function(){ try{ const p = JSON.parse(localStorage.getItem(SURVPANEL_KEY));
+  if(p && p.left!=null && p.top!=null){ linePanelEl.style.left = p.left+"px"; linePanelEl.style.top = p.top+"px"; }
+}catch(e){} })();
+let survDrag = null;
+linePanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
+  const r = linePanelEl.getBoundingClientRect(); survDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+window.addEventListener("mousemove", e=>{
+  if(!survDrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = e.clientX - survDrag.dx, top = e.clientY - survDrag.dy;
+  left = Math.max(0, Math.min(mr.width - linePanelEl.offsetWidth, left));
+  top  = Math.max(0, Math.min(mr.height - linePanelEl.offsetHeight, top));
+  linePanelEl.style.left = left+"px"; linePanelEl.style.top = top+"px";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!survDrag) return; survDrag = null;
+  try{ localStorage.setItem(SURVPANEL_KEY, JSON.stringify({left: parseFloat(linePanelEl.style.left), top: parseFloat(linePanelEl.style.top)})); }catch(e){}
+});
+
+function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 1 m)
+  const f=(v,pos,neg)=> `${Math.abs(v).toFixed(5)}° ${v>=0?pos:neg}`;
+  return `${f(lat,'N','S')}  ${f(lon,'E','W')}`;
+}
+
+// --- command surface ----------------------------------------------------- //
+async function cmd(path, body){
+  try{
+    const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+                                 body: JSON.stringify(body||{})});
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok){ flashNote(j.error || ("command failed ("+r.status+")")); }
+    return j;
+  }catch(e){ flashNote("network error"); return {}; }
+}
+let noteTimer = null;
+function flashNote(msg){
+  const el = $("#note"); el.textContent = msg; el.style.color = "var(--warn)";
+  clearTimeout(noteTimer); noteTimer = setTimeout(()=>{ el.style.color = ""; }, 4000);
+}
+
+let S = {};   // latest server state
+// In-GUI confirmation. Native confirm() is suppressed by some embedded/kiosk
+// browsers (it silently returns false), which was blocking ARM/START. This modal
+// works everywhere. In SIMULATOR mode there is no real boat to endanger, so the
+// prompt is skipped entirely - the sim just runs.
+function guiConfirm(title, msg){
+  return new Promise(resolve=>{
+    if(S.mode === "sim"){ resolve(true); return; }
+    const ov = $("#confirm");
+    $("#confirmTtl").textContent = title; $("#confirmMsg").textContent = msg;
+    ov.style.display = "flex";
+    const done = v=>{ ov.style.display="none"; $("#confirmYes").onclick=null; $("#confirmNo").onclick=null; resolve(v); };
+    $("#confirmYes").onclick = ()=>done(true);
+    $("#confirmNo").onclick  = ()=>done(false);
+  });
+}
+$("#b_arm").onclick = async ()=>{
+  if(S.armed) return cmd("/api/cmd/arm", {on:false});
+  if(!await guiConfirm("Arm for autonomous command",
+    "Confirm the RC Autonomy switch (Sw A) is forward and an operator is holding the RC transmitter.")) return;
+  cmd("/api/cmd/arm", {on:true});
+};
+$("#b_upload").onclick = ()=>{
+  const wps = mission.waypoints || [];
+  // Route the whole run path clear of ENC obstacles: the transit from the boat to
+  // the first waypoint AND every leg between waypoints. Detours are inserted so the
+  // ASV never crosses land / a nogo zone on a transit.
+  if(!wps.length || !nogo.ready || !asv){ runRoute=null; cmd("/api/cmd/upload"); return; }
+  const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
+  runRoute = plan.route;                          // drawn so the operator sees the real path
+  runUnsafe = plan.unroutable || [];
+  const added = plan.route.length - wps.length;
+  if(runUnsafe.length){
+    // An unroutable transit would drive the boat straight across a nogo zone.
+    // REFUSE the upload (plan stays not-uploaded, so Start stays gated) and show
+    // WHERE (red legs) so the operator can reposition / edit. RC remains master.
+    render();
+    showBanner(runUnsafe.length+" transit(s) cross a nogo zone with NO clear detour (red) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
+    flashNote("Upload blocked: "+runUnsafe.length+" unroutable transit(s).");
+    return;
+  }
+  if(added > 0)
+    showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
+  cmd("/api/cmd/upload", {route: plan.route});
+  render();
+};
+$("#b_start").onclick = async ()=>{
+  if(!await guiConfirm("Start the autonomous survey",
+    "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
+  cmd("/api/cmd/start");
+};
+$("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
+$("#b_stop").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
+$("#b_rth").onclick = doRTH;
+$("#b_goto").onclick = ()=>{ setMode("goto"); flashNote("Go-To: click a point on the chart."); };
+$("#b_hold").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/hold"); render(); }; // station-keep: no transit to draw
+$("#b_home").onclick = ()=>cmd("/api/cmd/sethome");
+$("#b_estop").onclick = async ()=>{
+  const on = !S.estop;
+  if(on && !await guiConfirm("Latch the command E-STOP",
+    "This halts commanding. For a real emergency use the RC transmitter E-stop / Sw A - that is the true failsafe.")) return;
+  if(on){ runRoute=null; runUnsafe=[]; }
+  cmd("/api/cmd/estop", {on});
+};
+
+function applyCmdState(s){
+  const connected = s.link && s.link !== "idle" || s.mode;
+  const armed = !!s.armed, estop = !!s.estop, run = s.run;
+  $("#b_arm").classList.toggle("on", armed);
+  $("#b_arm").textContent = armed ? "Disarm" : "Arm";
+  $("#b_arm").disabled = !connected || estop;
+  $("#b_upload").disabled = !armed || estop;
+  $("#b_start").disabled = !armed || estop || !s.plan_uploaded || run==="running";
+  $("#b_pause").disabled = run!=="running";
+  $("#b_stop").disabled = !(run==="running" || run==="paused");
+  $("#b_rth").disabled = !armed || estop || !s.home;
+  $("#b_goto").disabled = !armed || estop;
+  $("#b_goto").classList.toggle("on", mode==="goto");
+  $("#b_hold").disabled = !armed || estop;
+  $("#b_home").disabled = !connected;
+  $("#b_estop").classList.toggle("on", estop);
+  $("#b_estop").textContent = estop ? "CLEAR" : "E-STOP";
+  // transit Follow follows the same arm gate as Go-To (no survey plan needed)
+  const trf = $("#tr_follow");
+  if(trf) trf.disabled = !(transit.length>=1 && armed && !estop);
+}
+
+// --- live data via SSE --------------------------------------------------- //
+function onState(s){
+  S = s;
+  const st = s.status || {};
+  window._wpIndex = s.wp_index || 0;
+  $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
+  $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
+  $("#note").textContent = s.note || "";
+
+  // autonomy pill
+  const auto = (s.autonomy||"safe").toUpperCase();
+  const ap = $("#p_autonomy");
+  ap.className = "pill state " + (s.estop?"estop":(s.autonomy==="auto"?"auto":(s.armed?"armed":"safe")));
+  $("#autonomy").textContent = s.estop ? "E-STOP" : auto;
+  $("#v_auto").textContent = s.estop ? "E-STOP" : auto;
+
+  $("#p_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
+  $("#p_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
+  $("#p_time").textContent = st.time || "--";
+  $("#v_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
+  $("#v_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
+  const pitchTxt = st.pitch_deg!=null ? st.pitch_deg+"°" : "--";
+  const rollTxt = st.roll_deg!=null ? st.roll_deg+"°" : "--";
+  $("#v_pitch").textContent = pitchTxt; $("#p_pitch").textContent = pitchTxt;
+  $("#v_roll").textContent = rollTxt; $("#p_roll").textContent = rollTxt;
+
+  // course over ground + bearing / range from home to the ASV
+  const cogTxt = st.cog_deg!=null ? Math.round(st.cog_deg)+"°" : "--";
+  $("#p_cog").textContent = cogTxt; $("#v_cog").textContent = cogTxt;
+  let homeTxt = "--";
+  if(S.home && st.lat_deg!=null && st.lon_deg!=null){
+    const brg = azTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
+    const rng = distTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
+    const rtxt = rng>=1000 ? (rng/1000).toFixed(2)+" km" : Math.round(rng)+" m";
+    homeTxt = String(Math.round(brg)%360).padStart(3,"0")+"° · "+rtxt;
+  }
+  $("#p_home").textContent = homeTxt; $("#v_home").textContent = homeTxt;
+
+  // battery
+  const bstate = st.battery_state || "unknown";
+  const bcls = bstate==="critical"?"critical":bstate==="warn"?"warn":bstate==="ok"?"ok":"";
+  const btxt = st.battery_v!=null ? (st.battery_v+" V" + (st.battery_pct!=null?" ("+st.battery_pct+"%)":"")) : "on RC";
+  const pb = $("#p_batt"); pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
+  const vb = $("#v_batt"); vb.textContent = btxt; vb.className = "vv " + bcls;
+
+  // waypoint progress
+  const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");
+  $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
+
+  // run mode: active behaviour + plan completion (+ lap count when repeating)
+  const beh = s.behavior || "survey", comp = s.completion || "complete";
+  const laps = (st.laps!=null) ? st.laps : 0;
+  let mtxt = beh + " · " + comp;
+  if(comp==="repeat" && (s.run==="running")) mtxt += " · lap "+(laps+1);
+  $("#v_mode").textContent = mtxt;
+
+  // comms
+  const cm = s.comms || {};
+  const modeLab = {wifi:"WiFi", starlink:"Starlink", none:"COMMS", auto:"COMMS"}[cm.mode] || "COMMS";
+  $("#v_commsmode").textContent = modeLab;
+  $("#v_commspct").textContent = cm.signal_pct!=null ? cm.signal_pct+"%" : (cm.ok ? "OK" : "--");
+  const pct = cm.signal_pct!=null ? cm.signal_pct : (cm.ok ? 100 : 0);
+  const bar = $("#v_commsbar"); bar.style.width = pct+"%";
+  bar.style.background = !cm.ok ? "var(--bad)" : (pct>=66 ? "var(--ok)" : pct>=33 ? "var(--warn)" : "var(--bad)");
+  $("#v_commsdetail").textContent = cm.detail || cm.note || "no link";
+
+  // real-time water level (corrects charted depths); applied in depthExcluded
+  water = s.water || {};
+  waterOffset = (water.ok && water.offset_m!=null) ? water.offset_m : 0;
+  updateWaterUI(water);
+
+  // environmental simulator (SIM ONLY): wind + sea state pushing the boat
+  updateEnvUI(s.env || {}, st);
+
+  applyCmdState(s);
+
+  if(st.lat_deg!=null && st.lon_deg!=null){
+    asv = {lat:st.lat_deg, lon:st.lon_deg, hdg: st.heading_deg!=null?st.heading_deg:null};
+    $("#p_pos").textContent = fmtLL(asv.lat, asv.lon);
+    const last = track[track.length-1];
+    if(!last || Math.hypot(last.lat-asv.lat, last.lon-asv.lon) > 5e-6){
+      track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift();
+    }
+    if(!haveFix){ haveFix=true; center={lat:asv.lat,lon:asv.lon}; }
+    if(follow) center = {lat:asv.lat, lon:asv.lon};
+    // On the first fix, establish the ENC nogo zones for the operating area; as the
+    // boat transits out of that area, re-extract so behaviors stay ENC-aware.
+    if(!nogoInit){ nogoInit=true; refreshNogo({lat:asv.lat,lon:asv.lon}); }
+    else if(nogo.ready && !nogo.busy && nogo.center &&
+            distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
+      refreshNogo({lat:asv.lat,lon:asv.lon});
+    }
+    updateXTE(); render();
+  }
+}
+function connect(){
+  const es = new EventSource("/events");
+  es.onmessage = ev=>{ try{ const m=JSON.parse(ev.data); if(m.type==="state") onState(m); }catch(e){} };
+  es.onerror = ()=>{ $("#dot").className="dot lost"; };
+}
+// --- real-time water level UI -------------------------------------------- //
+function updateWaterUI(wl){
+  const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;
+  const val = off!=null ? ((off>=0?"+":"")+off.toFixed(2)+" m") : "--";
+  const stns = wl.stations || [];
+  const more = stns.length>1 ? ` +${stns.length-1}` : "";
+  const method = (wl.method && wl.method!=="single") ? " · "+wl.method : "";
+  const kind = wl.data_kind;                    // observed | predicted | chart
+  const kindLbl = kind==="predicted" ? " · predicted" : "";
+  const detail = wl.source==="manual" ? ("manual override "+val)
+    : (wl.ok ? `${wl.name||"station"}${more} · ${wl.datum||""}${method}${kindLbl} · ${val} above datum`
+             : (wl.note || "no live/predicted data — using chart datum"));
+  const hdr = kind==="predicted" ? "PREDICTED tide, interpolated from:" : "observed, interpolated from:";
+  const tip = (wl.ok && stns.length) ? (hdr+"\n" + stns.map(s=>
+    `  ${s.name} — ${s.dist_km} km, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
+  // caution colour when we fell back off real-time data
+  const warnCol = (!wl.ok || kind==="predicted");
+  const mark = wl.source==="manual" ? "*" : (kind==="predicted" ? "~" : (kind==="chart"||!wl.ok ? "!" : ""));
+  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark; vw.title = tip;
+    vw.style.color = warnCol ? "var(--warn)" : ""; }
+  const swn = $("#sp_water_note"); if(swn){ swn.textContent = detail; swn.title = tip;
+    swn.style.color = warnCol ? "var(--warn)" : ""; }
+  const so = $("#sp_water");
+  if(so && wl.source!=="manual" && document.activeElement!==so){ so.value=""; so.placeholder = off!=null ? off.toFixed(2) : "auto"; }
+}
+$("#sp_water").onchange = ()=>{
+  const v = $("#sp_water").value.trim();
+  fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({manual_offset: v==="" ? null : parseFloat(v)})})
+    .then(r=>r.json()).then(j=>{ if(j.water){ water=j.water;
+      waterOffset=(water.ok&&water.offset_m!=null)?water.offset_m:0; updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
+};
+
+// --- environmental simulator UI (SIM ONLY) ------------------------------- //
+function dirTxt(d){ return d==null ? "" : Math.round(d)+"°"; }
+function updateEnvUI(env, st){
+  const simOff = env.source==="off";
+  const w = env.wind, sea = env.sea;
+  $("#v_wind").textContent = simOff ? "-- (sim only)"
+    : (w && w.speed_kn!=null ? (w.speed_kn+" kn @ "+dirTxt(w.dir_from_deg)) : (env.enabled ? "calm" : "off"));
+  $("#v_sea").textContent = simOff ? "--"
+    : (sea && sea.hs_m!=null ? (sea.hs_m.toFixed(2)+" m / "+ (sea.tp_s!=null?sea.tp_s+"s":"?") +" @ "+dirTxt(sea.dir_from_deg) + (sea.derived?" ~":"")) : "--");
+  // applied set + crab from the sim telemetry
+  const set = st.env_set_kn, sd = st.env_set_deg, crab = st.crab_deg;
+  $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
+  const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
+  const src=$("#env_src"); if(src){
+    src.textContent = simOff ? "sim only — connect the simulator"
+      : (env.source==="manual" ? "manual override (buoys paused)"
+        : (env.ok ? (env.note||"NDBC buoys") : (env.note||"no buoy data")));
+    src.style.color = (env.ok||env.source==="manual") ? "var(--ink-dim)" : "var(--warn)";
+  }
+  const cb=$("#env_on"); if(cb && document.activeElement!==cb) cb.checked = !!env.enabled;
+  // reflect live values as placeholders in the (blank) override fields
+  const ph=(id,v)=>{ const el=$(id); if(el && document.activeElement!==el && el.value==="") el.placeholder = v; };
+  if(env.source!=="manual"){ ph("#env_wind_kn", w?String(Math.round(w.speed_kn)):"auto");
+    ph("#env_wind_from", w?String(Math.round(w.dir_from_deg)):"auto");
+    ph("#env_hs", sea?sea.hs_m.toFixed(1):"auto"); ph("#env_wave_from", sea?String(Math.round(sea.dir_from_deg)):"auto"); }
+}
+function postEnv(body, cb){
+  fetch("/api/env", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})
+    .then(r=>r.json()).then(j=>{ if(j.env) updateEnvUI(j.env, S.status||{}); if(cb) cb(j); }).catch(()=>{});
+}
+$("#envBtn").onclick = ()=>{
+  const p=$("#envPanel"), show = p.style.display==="none";
+  if(show){ setMode("pan"); }                     // hide any mode panel behind it
+  p.style.display = show ? "block" : "none";
+  $("#envBtn").classList.toggle("on", show);
+};
+$("#env_on").onchange = ()=>postEnv({enabled: $("#env_on").checked});
+$("#env_ref").onclick = ()=>{ $("#env_src").textContent="refetching from nearest buoys…"; postEnv({refresh:true}); };
+$("#env_auto").onclick = ()=>{ ["#env_wind_kn","#env_wind_from","#env_hs","#env_wave_from"].forEach(i=>$(i).value=""); postEnv({auto:true}); };
+$("#env_apply").onclick = ()=>{
+  const num=id=>{ const v=$(id).value.trim(); return v===""?undefined:parseFloat(v); };
+  const body={}; const map={"#env_wind_kn":"wind_kn","#env_wind_from":"wind_from","#env_hs":"hs_m","#env_wave_from":"wave_from"};
+  for(const id in map){ const v=num(id); if(v!==undefined) body[map[id]]=v; }
+  if(!Object.keys(body).length){ showBanner("Enter at least one override value, or use Auto."); return; }
+  postEnv(body);
+};
+$("#sp_water_ref").onclick = ()=>{
+  $("#sp_water_note").textContent = "refreshing from nearest tide station…";
+  fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({refresh:true})}).catch(()=>{});
+};
+
+// --- quick-start help ---------------------------------------------------- //
+const QS_KEY = "asv_qs_seen_v1";
+function showQS(v){
+  $("#quickstart").style.display = v ? "block" : "none";
+  $("#qsBack").style.display = v ? "block" : "none";
+}
+$("#helpBtn").onclick = ()=>showQS(true);
+$("#qsClose").onclick = ()=>{ showQS(false); try{ localStorage.setItem(QS_KEY,"1"); }catch(e){} };
+$("#qsBack").onclick = ()=>{ showQS(false); try{ localStorage.setItem(QS_KEY,"1"); }catch(e){} };
+try{ if(!localStorage.getItem(QS_KEY)) showQS(true); }catch(e){ showQS(true); }
+try{ boundaryShow = localStorage.getItem(BND_VIS_KEY) !== "0"; }catch(e){}
+$("#areaBtn").classList.toggle("on", boundaryShow);
+
+setFollow(); render(); loadMission(); applyNogoControls(); updateNogoUI(); connect();
+</script>
+</body>
+</html>
