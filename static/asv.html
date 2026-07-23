@@ -173,7 +173,7 @@
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
     <div class="pill batt"><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
-    <div class="pill"><span class="k">TIME</span><b id="p_time">--</b></div>
+    <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
 
   <div class="note" id="note">Not connected.</div>
@@ -359,6 +359,7 @@
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
       <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
       <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
+      <div class="vrow"><span class="vk">Mission</span><span class="vv" id="v_missdur" title="Estimated survey duration (coverage + transits + approach) at the plan speed, from the last Punch Out">--</span></div>
       <div class="vcomms">
         <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
         <div class="vbar"><i id="v_commsbar"></i></div>
@@ -588,6 +589,8 @@ function distTo(a, b){
   const mlon = M_PER_DEG_LAT*Math.cos((a.lat+b.lat)/2*Math.PI/180);
   return Math.hypot((b.lat-a.lat)*M_PER_DEG_LAT, (b.lon-a.lon)*mlon);
 }
+function fmtDur(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600), m=Math.round((sec%3600)/60);
+  return h>0 ? h+"h "+String(m).padStart(2,"0")+"m" : (m>0 ? m+"m" : "<1m"); }
 function atDA(p, dist, az){                    // move dist(m) along azimuth az(deg)
   const r = az*Math.PI/180;
   return {lat: p.lat + dist*Math.cos(r)/M_PER_DEG_LAT,
@@ -897,7 +900,8 @@ function updatePatReadout(){
   }
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
-  patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none"; updatePatReadout(); }
+  patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
+  const md=$("#v_missdur"); if(md) md.textContent="--"; updatePatReadout(); }
 function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
@@ -2215,6 +2219,17 @@ async function punchOut(){
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
     const nRoute=patRoutes.length-nTeardrop, nU=patUnsafe.length;
+    // Estimated mission duration: the run length (survey coverage lines + inter-line
+    // transits, + the approach from the boat) at the plan speed.
+    let runLen=0;
+    for(const seg of patClip) runLen += distTo(seg[0], seg[1]);
+    for(let k=0;k<patClip.length-1;k++){ const via=patTransits[k]||[];
+      const pts=[patClip[k][1], ...via, patClip[k+1][0]];
+      for(let i=1;i<pts.length;i++) runLen += distTo(pts[i-1], pts[i]); }
+    if(asv && patClip.length) runLen += distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]);   // approach
+    const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;               // m/s
+    const durTxt = spd>0 && patClip.length ? `${fmtDur(runLen/spd)} @ ${mission.speed||"survey"} (${(runLen/1000).toFixed(2)} km)` : "--";
+    $("#v_missdur").textContent = durTxt;                                        // vessel-card readout
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
@@ -2222,7 +2237,7 @@ async function punchOut(){
       (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
-      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Add to plan.`;
+      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Mission ~${durTxt}. Add to plan.`;
     if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
@@ -2608,7 +2623,7 @@ function onState(s){
 
   $("#p_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
   $("#p_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
-  $("#p_time").textContent = st.time || "--";
+  // (the TIME pill is driven by tickClock() every second — local · UTC)
   $("#v_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
   $("#v_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
   const pitchTxt = st.pitch_deg!=null ? st.pitch_deg+"°" : "--";
@@ -2806,6 +2821,12 @@ try{ if(!localStorage.getItem(QS_KEY)) showQS(true); }catch(e){ showQS(true); }
 try{ boundaryShow = localStorage.getItem(BND_VIS_KEY) !== "0"; }catch(e){}
 $("#areaBtn").classList.toggle("on", boundaryShow);
 
+// TIME pill: local + UTC, ticking every second (independent of state updates).
+function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
+  const L=p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+  const U=p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds());
+  const el=$("#p_time"); if(el) el.textContent = L+" · "+U+"Z"; }
+setInterval(tickClock, 1000); tickClock();
 setFollow(); render(); loadVessel().then(loadMission); applyNogoControls(); updateNogoUI(); connect();
 </script>
 </body>
