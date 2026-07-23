@@ -415,16 +415,25 @@ const TILE = 256, MINZ = 3, MAXZ = 20, MAX_TRACK = 8000, M_PER_DEG_LAT = 111320;
 let zoom = 13;
 let center = {lat: 42.137083, lon: -80.087367}; // fallback until first fix (spawn: 42 08.225'N 80 05.242'W)
 let haveFix = false, follow = true;
-// The ASV trail persists across a page refresh: it's mirrored to localStorage as
-// it grows and restored on load, so reloading the page doesn't wipe the breadcrumb.
+// The ASV trail persists across a page refresh WITHIN a server session (mirrored to
+// localStorage + restored on load), but is DROPPED when the sim reboots: the stored
+// trail is tagged with the server's boot id, and a mismatch on reconnect clears it
+// (the run is in the session logs, recoverable from there).
 const TRACK_KEY = "asv_track_v1";
-function loadTrack(){ try{ const t=JSON.parse(localStorage.getItem(TRACK_KEY));
-  return Array.isArray(t) ? t.slice(-MAX_TRACK) : []; }catch(e){ return []; } }
+let savedBootId = null, sessionBootId = null, bootChecked = false;
+function loadTrack(){ try{ const raw=JSON.parse(localStorage.getItem(TRACK_KEY));
+  if(Array.isArray(raw)) return raw.slice(-MAX_TRACK);                 // legacy (untagged)
+  if(raw && Array.isArray(raw.track)){ savedBootId=raw.bootId||null; return raw.track.slice(-MAX_TRACK); }
+}catch(e){} return []; }
 let trackSaveTimer=null;
 function saveTrack(){ clearTimeout(trackSaveTimer);      // throttle writes (trail grows fast)
-  trackSaveTimer=setTimeout(()=>{ try{ localStorage.setItem(TRACK_KEY, JSON.stringify(track)); }catch(e){} }, 800); }
+  trackSaveTimer=setTimeout(()=>{ try{ localStorage.setItem(TRACK_KEY, JSON.stringify({bootId:sessionBootId, track})); }catch(e){} }, 800); }
 function clearTrack(){ track=[]; clearTimeout(trackSaveTimer);
   try{ localStorage.removeItem(TRACK_KEY); }catch(e){} }
+// On the first state after load, drop the restored trail if the server rebooted.
+function checkBoot(id){ sessionBootId = id || null;
+  if(bootChecked) return; bootChecked = true;
+  if(savedBootId && sessionBootId && savedBootId !== sessionBootId){ clearTrack(); render(); } }
 let track = loadTrack();                      // restore the trail from the last session
 let asv = null;                              // {lat,lon,hdg}
 
@@ -2450,6 +2459,7 @@ function applyCmdState(s){
 // --- live data via SSE --------------------------------------------------- //
 function onState(s){
   S = s;
+  checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));

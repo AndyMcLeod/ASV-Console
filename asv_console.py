@@ -77,6 +77,10 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # instead of being hardcoded and duplicated across server and client.
 VESSELS_DIR = os.path.join(APP_DIR, "vessels")
 DEFAULT_VESSEL_ID = "zboat_1800hs"
+# Unique per server run. Sent in every state so the browser can tell a page refresh
+# (same run - keep the trail) from a reboot (new run - drop the stale trail; the run
+# is in the session logs). Changes on every restart.
+BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 
 DEFAULT_WEB_PORT = 8781
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
@@ -2351,6 +2355,7 @@ class Engine:
             st["battery_state"] = "unknown"
         return {
             "type": "state",
+            "boot_id": BOOT_ID,
             "mode": self._mode,
             "host": self._host,
             "link": self.link,
