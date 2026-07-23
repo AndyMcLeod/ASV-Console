@@ -44,21 +44,30 @@ python asv_console.py --sim --vessel example_usv_4m             # study a differ
 ## Vessel configuration (the single source of truth for a modeled ASV)
 
 Every vessel-specific parameter lives in one self-contained `vessels/<id>.json`
-file — hull/windage, speeds, turn rate, guidance gains, battery banding + drain,
-planning defaults, and spawn. The console studies ASV behavior **across vessel
-types**: `--vessel <id>` picks the active profile at startup, and the UI's vessel
-picker (or `POST /api/vessel`) switches live when disarmed & idle (the sim
-respawns with the new physics).
+file — hull/windage, speeds, turn rate, guidance gains, an **energy model**,
+planning defaults (incl. under-keel clearance), and spawn. The console studies ASV
+behavior **across vessel types**: `--vessel <id>` picks the active profile at
+startup, and the UI's vessel picker (or `POST /api/vessel`) switches live when
+disarmed & idle (the sim respawns with the new physics).
+
+**Energy model** — `power.type` is `"battery"` (voltage that sags with load; block
+`battery_v` + `drain`) or `"fuel"` (diesel litres burned at ~`idle + (full-idle)·
+(v/vmax)^exp`; block `fuel`). Battery vessels report V/%, fuel vessels report
+fuel %/endurance/range. Validation branches on the type. The DriX is `fuel`.
+
+**Vessel-aware nogo** — the nogo depth floor is `hull.draft_m +
+planning.under_keel_clearance_m` (a deep-draft boat avoids more shallow water). The
+client reads it via `/api/vessel` and **re-extracts** the nogo model on a switch.
 
 - **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
   load (missing/mistyped field → clear, path-pointed error; a bad file never runs
   with placeholder physics). `apply_vessel()` publishes the values to the module
-  globals `SimVcu` reads (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `BATT_*`, `WP_*`,
-  `WIND_*`, `DRAIN_*`, `SPAWN_*`, etc.). **Do not reintroduce hardcoded vessel
-  constants** — add/adjust the vessel file instead.
+  globals `SimVcu` reads (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `BATT_*`/`DRAIN_*` or
+  `FUEL_*`, `POWER_TYPE`, `MIN_NAV_DEPTH_M`, `WP_*`, `WIND_*`, `SPAWN_*`, etc.).
+  **Do not reintroduce hardcoded vessel constants** — add/adjust the vessel file.
 - **Client:** `loadVessel()` fetches `/api/vessel` and drives the JS mirrors
-  (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `NOGO_BUFFER_M`, search-pattern sizes), so
-  the server and UI never disagree.
+  (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `NOGO_BUFFER_M`, `NOGO_MIN_DEPTH_M`,
+  search-pattern sizes) and the energy gauge (BATT vs FUEL), so server and UI agree.
 - **Adding a vessel:** drop a new `vessels/<id>.json` (copy an existing one; it
   must be complete — validation requires every field). `vessels/zboat_1800hs.json`
   models the small survey ASV; `vessels/drix08.json` models the Exail DriX H-8 (7.71 m diesel USV; see

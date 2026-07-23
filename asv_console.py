@@ -109,10 +109,22 @@ XTE_KI_DEG = XTE_I_MAX_DEG = 0.0
 BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
 WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
 MAX_TURN_RATE_DEG_S = 60.0
-DRAIN_IDLE = DRAIN_LOAD = 0.0
+# Energy model: "battery" (draining voltage) or "fuel" (diesel litres burned).
+POWER_TYPE = "battery"
+DRAIN_IDLE = DRAIN_LOAD = 0.0                            # battery: per-second voltage drain
+FUEL_CAPACITY_L = 0.0                                    # fuel: tank size (L)
+FUEL_BURN_IDLE = FUEL_BURN_FULL = 0.0                    # fuel: L/h at idle vs at top speed
+FUEL_BURN_EXP = 3.0                                      # fuel: burn ~ idle + (full-idle)*(v/vmax)^exp
+FUEL_WARN_FRAC = 0.25
+FUEL_CRIT_FRAC = 0.10
 SPAWN_LAT = SPAWN_LON = 0.0
 ARRIVAL_DEFAULT_M = 2.0
 NOGO_BUFFER_DEFAULT_M = 3.0
+UNDER_KEEL_CLEARANCE_M = 0.9
+# Minimum navigable water depth (m) for the active vessel = draft + under-keel
+# clearance. Water shallower than this is nogo. The client reads it via /api/vessel
+# and rebuilds the nogo model on a vessel switch, so a deep-draft boat avoids more.
+MIN_NAV_DEPTH_M = 1.0
 
 # The active vessel (parsed dict). Set by apply_vessel().
 VESSEL = None
@@ -134,11 +146,22 @@ _VESSEL_SCHEMA = [
     ("maneuvering.arrival_radius_m", (int, float)),
     ("autopilot.xte_ki_deg", (int, float)),
     ("autopilot.xte_i_max_deg", (int, float)),
+    ("planning.nogo_buffer_m", (int, float)),
+    ("planning.under_keel_clearance_m", (int, float)),
+    ("spawn.lat", (int, float)), ("spawn.lon", (int, float)),
+]
+
+# The `power` block is validated conditionally on power.type (see validate_vessel).
+_POWER_BATTERY_SCHEMA = [
     ("power.battery_v.full", (int, float)), ("power.battery_v.warn", (int, float)),
     ("power.battery_v.crit", (int, float)), ("power.battery_v.empty", (int, float)),
     ("power.drain.idle", (int, float)), ("power.drain.load", (int, float)),
-    ("planning.nogo_buffer_m", (int, float)),
-    ("spawn.lat", (int, float)), ("spawn.lon", (int, float)),
+]
+_POWER_FUEL_SCHEMA = [
+    ("power.fuel.capacity_l", (int, float)),
+    ("power.fuel.burn_lph_idle", (int, float)), ("power.fuel.burn_lph_full", (int, float)),
+    ("power.fuel.burn_exp", (int, float)),
+    ("power.fuel.warn_frac", (int, float)), ("power.fuel.crit_frac", (int, float)),
 ]
 
 
@@ -152,11 +175,8 @@ def _dig(d, path):
     return cur
 
 
-def validate_vessel(v, source="<vessel>"):
-    """Raise ValueError with a clear, path-pointed message if v is malformed."""
-    if not isinstance(v, dict):
-        raise ValueError("%s: vessel config must be a JSON object" % source)
-    for path, typ in _VESSEL_SCHEMA:
+def _check_fields(v, schema, source):
+    for path, typ in schema:
         try:
             val = _dig(v, path)
         except KeyError:
@@ -164,10 +184,30 @@ def validate_vessel(v, source="<vessel>"):
         if isinstance(val, bool) or not isinstance(val, typ):
             names = typ.__name__ if isinstance(typ, type) else "/".join(t.__name__ for t in typ)
             raise ValueError("%s: field '%s' must be %s (got %r)" % (source, path, names, val))
-    # battery ordering sanity - banding assumes full > warn > crit > empty
-    b = v["power"]["battery_v"]
-    if not (b["full"] > b["warn"] > b["crit"] > b["empty"]):
-        raise ValueError("%s: power.battery_v must satisfy full > warn > crit > empty" % source)
+
+
+def validate_vessel(v, source="<vessel>"):
+    """Raise ValueError with a clear, path-pointed message if v is malformed."""
+    if not isinstance(v, dict):
+        raise ValueError("%s: vessel config must be a JSON object" % source)
+    _check_fields(v, _VESSEL_SCHEMA, source)
+    # Energy model: power.type selects which sub-block is required. Default
+    # "battery" when absent (back-compat with the earliest profiles).
+    ptype = v.get("power", {}).get("type", "battery") if isinstance(v.get("power"), dict) else None
+    if ptype not in ("battery", "fuel"):
+        raise ValueError("%s: power.type must be 'battery' or 'fuel' (got %r)" % (source, ptype))
+    if ptype == "battery":
+        _check_fields(v, _POWER_BATTERY_SCHEMA, source)
+        b = v["power"]["battery_v"]
+        if not (b["full"] > b["warn"] > b["crit"] > b["empty"]):
+            raise ValueError("%s: power.battery_v must satisfy full > warn > crit > empty" % source)
+    else:
+        _check_fields(v, _POWER_FUEL_SCHEMA, source)
+        f = v["power"]["fuel"]
+        if f["capacity_l"] <= 0:
+            raise ValueError("%s: power.fuel.capacity_l must be > 0" % source)
+        if not (0 <= f["crit_frac"] < f["warn_frac"] <= 1):
+            raise ValueError("%s: power.fuel requires 0 <= crit_frac < warn_frac <= 1" % source)
     return v
 
 
@@ -211,12 +251,22 @@ def apply_vessel(v):
     global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
     global WIND_A_SIDE, WIND_A_FRONT, HULL_A_LAT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
     global SPAWN_LAT, SPAWN_LON, ARRIVAL_DEFAULT_M, NOGO_BUFFER_DEFAULT_M
+    global POWER_TYPE, FUEL_CAPACITY_L, FUEL_BURN_IDLE, FUEL_BURN_FULL, FUEL_BURN_EXP
+    global FUEL_WARN_FRAC, FUEL_CRIT_FRAC, UNDER_KEEL_CLEARANCE_M, MIN_NAV_DEPTH_M
     VESSEL = v
     h, p, m, a = v["hull"], v["propulsion"], v["maneuvering"], v["autopilot"]
     pw, pl, sp = v["power"], v["planning"], v["spawn"]
-    BATT_FULL_V = float(pw["battery_v"]["full"]); BATT_WARN_V = float(pw["battery_v"]["warn"])
-    BATT_CRIT_V = float(pw["battery_v"]["crit"]); BATT_EMPTY_V = float(pw["battery_v"]["empty"])
-    DRAIN_IDLE = float(pw["drain"]["idle"]); DRAIN_LOAD = float(pw["drain"]["load"])
+    POWER_TYPE = pw.get("type", "battery")
+    if POWER_TYPE == "battery":
+        BATT_FULL_V = float(pw["battery_v"]["full"]); BATT_WARN_V = float(pw["battery_v"]["warn"])
+        BATT_CRIT_V = float(pw["battery_v"]["crit"]); BATT_EMPTY_V = float(pw["battery_v"]["empty"])
+        DRAIN_IDLE = float(pw["drain"]["idle"]); DRAIN_LOAD = float(pw["drain"]["load"])
+    else:                                                      # fuel (diesel)
+        fu = pw["fuel"]
+        FUEL_CAPACITY_L = float(fu["capacity_l"])
+        FUEL_BURN_IDLE = float(fu["burn_lph_idle"]); FUEL_BURN_FULL = float(fu["burn_lph_full"])
+        FUEL_BURN_EXP = float(fu["burn_exp"])
+        FUEL_WARN_FRAC = float(fu["warn_frac"]); FUEL_CRIT_FRAC = float(fu["crit_frac"])
     SPEED_KN = {k: float(pk) for k, pk in p["speeds_kn"].items()}
     WP_APPROACH_M = float(m["approach_m"]); WP_LOOKAHEAD_M = float(m["lookahead_m"])
     MAX_TURN_RATE_DEG_S = float(m["max_turn_rate_deg_s"])
@@ -229,6 +279,8 @@ def apply_vessel(v):
     WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H    # bow/stern-on windage silhouette (m^2)
     HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M       # underwater lateral area (m^2), for leeway drag
     NOGO_BUFFER_DEFAULT_M = float(pl["nogo_buffer_m"])
+    UNDER_KEEL_CLEARANCE_M = float(pl["under_keel_clearance_m"])
+    MIN_NAV_DEPTH_M = BOAT_DRAFT_M + UNDER_KEEL_CLEARANCE_M   # water shallower than this is nogo
     SPAWN_LAT = float(sp["lat"]); SPAWN_LON = float(sp["lon"])
     return v
 
@@ -1568,7 +1620,10 @@ class SimVcu(VcuLink):
         self.sog_kn = 0.0
         self.pitch = 0.0
         self.roll = 0.0
+        # Energy state: a draining battery voltage OR a diesel fuel tank (litres),
+        # per the active vessel's power.type. Only the relevant one is used.
         self.battery_v = BATT_FULL_V
+        self.fuel_l = FUEL_CAPACITY_L
         self.t0 = time.time()
         self._t_sim = 0.0              # accumulated sim time (drives wave/attitude phase)
 
@@ -1783,8 +1838,15 @@ class SimVcu(VcuLink):
         # remember this tick's drift for next tick's crab feedforward (one-tick lag
         # = the same delayed estimate a real boat gets from COG-vs-heading)
         self._drift_en = (drift_e, drift_n)
-        drain = (DRAIN_IDLE + DRAIN_LOAD * (self.sog_kn / max(1e-6, SPEED_KN["high"]))) * dt
-        self.battery_v = max(BATT_EMPTY_V, self.battery_v - drain)
+        # Energy burn: battery voltage sags linearly with load; diesel burns fuel at
+        # a rate that climbs ~cubically with speed (idle hotel load -> full-throttle).
+        if POWER_TYPE == "fuel":
+            frac = clamp(self.sog_kn / max(1e-6, SPEED_KN["high"]), 0.0, 1.0)
+            burn_lph = FUEL_BURN_IDLE + (FUEL_BURN_FULL - FUEL_BURN_IDLE) * (frac ** FUEL_BURN_EXP)
+            self.fuel_l = max(0.0, self.fuel_l - burn_lph * dt / 3600.0)
+        else:
+            drain = (DRAIN_IDLE + DRAIN_LOAD * (self.sog_kn / max(1e-6, SPEED_KN["high"]))) * dt
+            self.battery_v = max(BATT_EMPTY_V, self.battery_v - drain)
 
         # COG + true SOG from the ACTUAL ground track (forward thrust + environmental
         # leeway): SOG over ground includes the drift, so it differs from the boat's
@@ -1803,7 +1865,11 @@ class SimVcu(VcuLink):
             "sog_kn": round(sog_ground, 2),        # true speed over ground (incl. drift)
             "pitch_deg": self.pitch,
             "roll_deg": self.roll,
-            "battery_v": round(self.battery_v, 2),
+            "energy_type": POWER_TYPE,
+            # battery vessels report a voltage; fuel vessels report tank litres (the
+            # other stays None so state()/UI shows only the relevant gauge)
+            "battery_v": round(self.battery_v, 2) if POWER_TYPE == "battery" else None,
+            "fuel_l": round(self.fuel_l, 1) if POWER_TYPE == "fuel" else None,
             "time": time.strftime("%H:%M:%S", time.gmtime()),
             "wp_index": self._wp_index,
             "wp_total": len(self._plan),
@@ -2261,13 +2327,27 @@ class Engine:
 
     def state(self):
         st = dict(self.status)
+        etype = st.get("energy_type", POWER_TYPE)
+        if etype == "fuel" and st.get("fuel_l") is not None and FUEL_CAPACITY_L > 0:
+            # Diesel: report tank %, and a live endurance (hrs) + range (nm) at the
+            # CURRENT speed's burn rate, plus a warn/crit band on the reserve.
+            fl = st["fuel_l"]
+            st["fuel_pct"] = round(clamp(fl / FUEL_CAPACITY_L * 100.0, 0, 100), 0)
+            frac = clamp((st.get("sog_kn") or 0.0) / max(1e-6, SPEED_KN["high"]), 0.0, 1.0)
+            burn_lph = FUEL_BURN_IDLE + (FUEL_BURN_FULL - FUEL_BURN_IDLE) * (frac ** FUEL_BURN_EXP)
+            st["burn_lph"] = round(burn_lph, 2)
+            st["endurance_h"] = round(fl / burn_lph, 1) if burn_lph > 0 else None
+            st["range_nm"] = (round(st["endurance_h"] * (st.get("sog_kn") or 0.0), 1)
+                              if st.get("endurance_h") is not None else None)
+            st["fuel_state"] = ("critical" if st["fuel_pct"] < FUEL_CRIT_FRAC * 100 else
+                                "warn" if st["fuel_pct"] < FUEL_WARN_FRAC * 100 else "ok")
         bv = st.get("battery_v")
-        if bv is not None:
+        if bv is not None and BATT_FULL_V > BATT_EMPTY_V:
             st["battery_pct"] = round(clamp((bv - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V)
                                             * 100.0, 0, 100), 0)
             st["battery_state"] = ("critical" if bv < BATT_CRIT_V else
                                    "warn" if bv < BATT_WARN_V else "ok")
-        else:
+        elif etype != "fuel":
             st["battery_state"] = "unknown"
         return {
             "type": "state",

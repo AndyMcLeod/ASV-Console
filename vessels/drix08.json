@@ -2,7 +2,7 @@
   "id": "drix08",
   "name": "DriX H-8 (Exail)",
   "class": "8 m survey USV",
-  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). DOC-DERIVED (DriX Supervisor Training Notes): 24 V 5 Ah lithium service battery -> battery banding; ~1 kW payload. ESTIMATED: above-water windage height, autopilot gains, search-pattern sizes, drain model, spawn. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius). The battery block models the 24 V service bank for the sim's gauge only; propulsion endurance is diesel/fuel-limited.",
+  "notes": "Exail DriX H-8 medium-range USV. DIESEL-POWERED (single 38 HP diesel, straight shaft + fixed-pitch prop, 250 L fuel @ ~2 L/h -> multi-day endurance), NOT battery-propelled. OFFICIAL SPECS (Exail / naval-technology): LOA 7.71 m, beam 0.824 m, draft 2.0 m, 1,380 kg / 1.4 t, max 14 kn, survey/operating 7 kn, loiter 4 kn, 180 deg turn ~17 yd @ 14 kn (~8-10 m radius, matches the training notes' ~10 m). ENERGY: modeled as DIESEL FUEL (power.type=fuel) - 250 L capacity, speed-cubed burn calibrated to Exail's published endurances (10 d @ 4 kn, 7 d @ 7 kn, 24 h @ 14 kn -> ~0.8 L/h idle rising to ~10.4 L/h at 14 kn). The onboard 24 V 5 Ah lithium service battery (from the training notes) powers hotel/payload loads only and is engine/alternator-charged; it is NOT the propulsion energy source and is not modeled as the endurance limit. ESTIMATED: above-water windage height, autopilot gains, search-pattern sizes, spawn. max_turn_rate_deg_s (20) is chosen to give ~10 m turn radius at the 7 kn survey speed (the sim models a constant yaw-rate cap, not a constant min radius).",
 
   "hull": {
     "loa_m": 7.71,
@@ -30,12 +30,20 @@
   },
 
   "power": {
-    "battery_v": { "full": 28.0, "warn": 24.5, "crit": 23.0, "empty": 22.0 },
-    "drain": { "idle": 0.0002, "load": 0.0008 }
+    "type": "fuel",
+    "fuel": {
+      "capacity_l": 250,
+      "burn_lph_idle": 0.8,
+      "burn_lph_full": 10.4,
+      "burn_exp": 3.5,
+      "warn_frac": 0.25,
+      "crit_frac": 0.10
+    }
   },
 
   "planning": {
     "nogo_buffer_m": 10.0,
+    "under_keel_clearance_m": 0.5,
     "search": {
       "expbox_step_m": 40,
       "sector_radius_m": 100,

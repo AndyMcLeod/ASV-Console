@@ -30,12 +30,14 @@
   },
 
   "power": {
+    "type": "battery",
     "battery_v": { "full": 26.5, "warn": 23.0, "crit": 20.0, "empty": 18.0 },
     "drain": { "idle": 0.0006, "load": 0.0025 }
   },
 
   "planning": {
     "nogo_buffer_m": 3.0,
+    "under_keel_clearance_m": 0.9,
     "search": {
       "expbox_step_m": 8,
       "sector_radius_m": 20,

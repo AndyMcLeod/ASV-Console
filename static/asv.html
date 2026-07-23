@@ -171,7 +171,7 @@
     <div class="pill" title="Bearing and range from Home to the ASV."><span class="k">HOME→</span><b id="p_home">--</b></div>
     <div class="pill" title="Vessel pitch (bow up +). In the sim, driven by the sea state (head seas pitch most)."><span class="k">PITCH</span><b id="p_pitch">--</b></div>
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
-    <div class="pill batt"><span class="k">BATT</span><b id="p_batt">--</b></div>
+    <div class="pill batt"><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
     <div class="pill"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
@@ -354,7 +354,7 @@
       <div class="vrow"><span class="vk">Wind</span><span class="vv" id="v_wind" title="Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Sea</span><span class="vv" id="v_sea" title="Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
-      <div class="vrow"><span class="vk">Battery</span><span class="vv" id="v_batt">--</span></div>
+      <div class="vrow"><span class="vk" id="v_batt_k">Battery</span><span class="vv" id="v_batt">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
       <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
@@ -450,7 +450,7 @@ let water = {}, waterOffset = 0;
 // Every behavior (Go-To / RTH / search patterns / survey) routes clear of these
 // nogo zones: shoreline + manmade features + water shallower than 1 m CORRECTED
 // (charted depth + live water-level offset). Fetched once around the first fix.
-const NOGO_MIN_DEPTH_M = 1.0;                  // corrected-depth nogo threshold
+let NOGO_MIN_DEPTH_M = 1.0;                     // corrected-depth nogo floor (vessel-driven: draft + under-keel clearance)
 let NOGO_BUFFER_M = 3;                          // keep-clear buffer default (vessel-derived via loadVessel)
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
 const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
@@ -499,6 +499,10 @@ function applyVesselToUI(v){
   if(v.propulsion && v.propulsion.speeds_kn) SPEED_KN = {...v.propulsion.speeds_kn};
   if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
   if(v.planning && typeof v.planning.nogo_buffer_m === "number") NOGO_BUFFER_M = v.planning.nogo_buffer_m;
+  // nogo navigability floor = draft + under-keel clearance (deep-draft vessels
+  // avoid more shallow water). Drives the ENC extract + keep-out reclassification.
+  if(v.hull && v.planning && typeof v.hull.draft_m==="number" && typeof v.planning.under_keel_clearance_m==="number")
+    NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
   // vessel-scaled search-pattern defaults (only overwrite blanks/unfocused inputs)
   const s = (v.planning && v.planning.search) || {};
   const setDefault = (id,val)=>{ const el=$("#"+id); if(el && val!=null && document.activeElement!==el) el.value=val; };
@@ -528,11 +532,14 @@ async function switchVessel(id){
     if(!r.ok){ flashNote(d.error || "vessel switch failed"); await loadVessel(); return; }
     applyVesselToUI(d.vessel);
     // a switch respawns the sim boat and reseeds vessel-scaled defaults; refresh
-    // the mission-derived controls and the nogo model so the map reflects the boat.
+    // the mission-derived controls, then RE-EXTRACT the nogo model at the vessel's
+    // new depth floor (a deeper-draft boat pulls in depth areas the old floor
+    // didn't fetch, so re-extract rather than just reclassify the cache).
     await loadMission();
-    if(typeof rebuildNogo==="function" && nogo.ready) rebuildNogo();
+    if(asv && typeof refreshNogo==="function") refreshNogo({lat:asv.lat, lon:asv.lon});
+    else if(typeof rebuildNogo==="function" && nogo.ready) rebuildNogo();
     render();
-    flashNote("Vessel: " + (d.vessel.name || id));
+    flashNote("Vessel: " + (d.vessel.name || id) + " · nogo floor " + NOGO_MIN_DEPTH_M.toFixed(1) + " m");
   }catch(e){ flashNote("vessel switch failed"); }
 }
 function toEN(p, ref){
@@ -2342,11 +2349,29 @@ function onState(s){
   $("#p_home").textContent = homeTxt; $("#v_home").textContent = homeTxt;
 
   // battery
-  const bstate = st.battery_state || "unknown";
-  const bcls = bstate==="critical"?"critical":bstate==="warn"?"warn":bstate==="ok"?"ok":"";
-  const btxt = st.battery_v!=null ? (st.battery_v+" V" + (st.battery_pct!=null?" ("+st.battery_pct+"%)":"")) : "on RC";
-  const pb = $("#p_batt"); pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
-  const vb = $("#v_batt"); vb.textContent = btxt; vb.className = "vv " + bcls;
+  // Energy gauge: diesel vessels show FUEL (% · endurance · range); electric
+  // vessels show BATT (V · %). Which one is driven by the vessel's power.type.
+  const pbk = $("#p_batt_k"), vbk = $("#v_batt_k");
+  const pb = $("#p_batt"), vb = $("#v_batt");
+  if(st.energy_type==="fuel" || st.fuel_l!=null){
+    const fstate = st.fuel_state || "unknown";
+    const fcls = fstate==="critical"?"critical":fstate==="warn"?"warn":fstate==="ok"?"ok":"";
+    if(pbk) pbk.textContent = "FUEL";
+    if(vbk) vbk.textContent = "Fuel";
+    pb.textContent = (st.fuel_pct!=null ? st.fuel_pct+"%" : "--"); pb.className = fcls;
+    let vtxt = (st.fuel_l!=null ? st.fuel_l+" L" : "--") + (st.fuel_pct!=null ? " ("+st.fuel_pct+"%)" : "");
+    if(st.endurance_h!=null) vtxt += " · " + st.endurance_h + " h";
+    if(st.range_nm!=null)    vtxt += " · " + st.range_nm + " nm";
+    vb.textContent = vtxt; vb.className = "vv " + fcls;
+  } else {
+    const bstate = st.battery_state || "unknown";
+    const bcls = bstate==="critical"?"critical":bstate==="warn"?"warn":bstate==="ok"?"ok":"";
+    if(pbk) pbk.textContent = "BATT";
+    if(vbk) vbk.textContent = "Battery";
+    const btxt = st.battery_v!=null ? (st.battery_v+" V" + (st.battery_pct!=null?" ("+st.battery_pct+"%)":"")) : "on RC";
+    pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
+    vb.textContent = btxt; vb.className = "vv " + bcls;
+  }
 
   // waypoint progress
   const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");

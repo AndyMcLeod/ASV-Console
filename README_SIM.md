@@ -152,10 +152,14 @@ Run states: `idle · running · paused · stopped · complete`.
 
 ---
 
-## 5. Battery model & thresholds
+## 5. Energy model (battery or diesel fuel)
 
-Thresholds come from the **active vessel** (`power.battery_v` in its profile) and
-drive only the display banding. For the default `zboat_1800hs` profile:
+The energy model comes from the **active vessel** (`power.type`), and the sim
+depletes it live so you can watch the gauge band change on a long run.
+
+**Battery vessels** (`power.type: "battery"` — e.g. `zboat_1800hs`, `example_usv_4m`)
+report a voltage that sags with load, banded from `power.battery_v`. For the
+default `zboat_1800hs`:
 
 | | Voltage | Meaning |
 |---|---|---|
@@ -164,9 +168,13 @@ drive only the display banding. For the default `zboat_1800hs` profile:
 | Critical | 20.0 V | approaching loss of control |
 | Empty | 18.0 V | complete failure (steering fails first) |
 
-A different vessel carries its own banding (e.g. `example_usv_4m` runs a 52 V
-pack). `battery_pct` is mapped linearly empty → full. In sim the battery visibly drains
-so you can watch the gauge cross into warn/critical during a long run.
+**Fuel vessels** (`power.type: "fuel"` — the diesel `drix08`) report **fuel % plus
+live endurance (h) and range (nm)** at the current speed instead of a voltage. The
+sim burns from `power.fuel`: `burn ≈ idle + (full − idle)·(v/vmax)^exp` L/h, with
+warn/crit reserve bands. The DriX's block (250 L, 0.8→10.4 L/h, exp 3.5) reproduces
+Exail's published endurances (~10 d @ 4 kn, ~7 d @ 7 kn, 24 h @ 14 kn; ~1,000 nm
+range). Its 24 V lithium service battery powers hotel/payload loads only and isn't
+the propulsion energy source, so it isn't modeled as the endurance limit.
 
 > **Caveat carried from the manual:** on the real boat, battery voltage is
 > telemetered to the **RC transmitter**, and it is not yet confirmed to be on the

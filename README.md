@@ -49,13 +49,18 @@ python asv_console.py --sim --vessel example_usv_4m      # start on a different 
 ### Vessel profiles
 
 The console studies ASV behavior **across different vessel types**. Every
-vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains,
-battery banding + drain, planning defaults, spawn — lives in one self-contained
-file under `vessels/<id>.json`, and that file is the single source of truth (the
-server and the UI both read it, nothing is hardcoded twice). Profiles that ship:
-`zboat_1800hs` (a small ~1.9 m survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m
-diesel-powered survey USV), and `example_usv_4m` (a larger illustrative USV). Add your own by dropping a
-new complete `vessels/<id>.json`.
+vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains, an
+**energy model** (battery *or* diesel fuel), planning defaults (incl. under-keel
+clearance), spawn — lives in one self-contained file under `vessels/<id>.json`,
+and that file is the single source of truth (the server and the UI both read it,
+nothing is hardcoded twice). Profiles that ship: `zboat_1800hs` (a small ~1.9 m
+battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey USV
+— shows fuel/endurance/range, not battery), and `example_usv_4m` (a larger
+illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
+
+Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
+that vessel's `draft + under-keel clearance`, so the deep-draft DriX (2.5 m floor)
+avoids shallow water the shallow-draft Z-Boat (1.0 m) can cross.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
 selector** in the top bar (allowed only when disarmed and stopped — swapping
