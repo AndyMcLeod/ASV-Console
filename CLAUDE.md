@@ -95,7 +95,12 @@ Marks are also small keep-outs (don't hit a buoy) and drawn green (port-hand) / 
 Go-To, Return-to-Home, Hold/station-keep, Set-Home, Transit (multi-vertex),
 Search patterns (expanding box / sector / parallel), and Survey (CAMP-style
 boustrophedon with Punch-Out clipping to NOAA ENC features + arbitrary polygon
-clip). Every commanded motion routes clear of a startup-built **nogo model**
+clip). Punch-Out also **excludes a navigation channel when the survey spans across
+it** (`channelSpanKeepouts`): a coverage line that runs outside→into a dredged
+area→outside gets a gap there. It applies ONLY to the survey-line clip, not to the
+transit routing — so normal transits still cross the channel, and a survey confined
+*within* a channel (never out→in→out) is unaffected. Every commanded motion routes
+clear of a startup-built **nogo model**
 (shoreline + manmade features + water shallower than a 1 m corrected floor),
 with COLREGS Rule-9 keep-right in channels. Real-time water-level datum
 correction from NOAA CO-OPS; wind/wave sim from NOAA NDBC buoys.

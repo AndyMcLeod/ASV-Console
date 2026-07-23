@@ -1222,6 +1222,39 @@ function buildKeepouts(ref, enf, dr, feats){
   }
   return {polys, lines, points, marks};
 }
+// PUNCH-OUT channel exclusion (survey coverage only): if a survey line SPANS ACROSS
+// a channel, that channel is returned as keep-out polygons so the coverage lines
+// clip out of it. "Spans across" = a survey line runs OUTSIDE -> INSIDE the channel
+// -> OUTSIDE again (it crosses the fairway). The channel is the ENC dredged area,
+// which is often FRAGMENTED into adjacent polygons, so a sample is treated as "in
+// the channel" if it's inside ANY dredged poly - internal poly-to-poly boundaries
+// don't count as a crossing. A survey CONTAINED within the channel (never goes
+// out->in->out) excludes nothing. This augments ONLY the survey-line clip, never the
+// transit routing, so normal transits and internal-channel surveys are unaffected.
+function channelSpanKeepouts(src, ref, feats){
+  const chans=[];
+  for(const f of (feats||[])){ if(f.role!=="dredged") continue;
+    eachRing(f.geometry, rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>=3) chans.push({ring, bb:bbOf(ring)}); }); }
+  if(!chans.length) return [];
+  const inChan=(p)=>{ for(const c of chans){ if(inBB(p,c.bb,0) && pinp(p,c.ring)) return true; } return false; };
+  const samples=(l)=>{ const a=llEN(l[0].lat,l[0].lon,ref), b=llEN(l[1].lat,l[1].lon,ref);
+    const L=Math.hypot(b.e-a.e,b.n-a.n), n=Math.max(2,Math.ceil(L/5)), out=[];
+    for(let i=0;i<=n;i++){ const t=i/n; out.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); } return out; };
+  // spanning = some survey line goes out -> in -> out across the channel region
+  let spans=false;
+  for(const l of src){ let seenOut=false, inAfterOut=false, outAfterIn=false, inRun=false;
+    for(const p of samples(l)){ const ic=inChan(p);
+      if(ic){ if(seenOut) inAfterOut=true; inRun=true; }
+      else { if(inRun) outAfterIn=true; seenOut=true; inRun=false; } }
+    if(inAfterOut && outAfterIn){ spans=true; break; } }
+  if(!spans) return [];
+  // exclude only the dredged polys the survey actually enters (the crossed channel)
+  const out=[];
+  for(const c of chans){ let entered=false;
+    for(const l of src){ for(const p of samples(l)){ if(inBB(p,c.bb,0) && pinp(p,c.ring)){ entered=true; break; } } if(entered) break; }
+    if(entered) out.push({ring:c.ring, bb:c.bb, kind:"a navigation channel"}); }
+  return out;
+}
 function pinp(p, ring){ let inside=false;
   for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const xi=ring[i].e,yi=ring[i].n,xj=ring[j].e,yj=ring[j].n;
     if(((yi>p.n)!=(yj>p.n)) && (p.e < (xj-xi)*(p.n-yi)/(yj-yi)+xi)) inside=!inside; } return inside; }
@@ -2125,7 +2158,12 @@ async function punchOut(){
     const ref=nogo.ref, buffer=nogo.buffer, enf=nogo.enf;
     const ko=buildKeepouts(ref, enf, dr, nogo.features);
     const src=patSourceLines();                // boundary-clipped legs (if any) feed the ENC clip
-    const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,ko,buffer).forEach(s=>clipped.push(s)));
+    // If the survey SPANS ACROSS a channel, exclude that channel from the coverage
+    // lines only (koClip). Transits keep using `ko`, so they may still cross it; an
+    // internal-channel survey (no line crosses the channel edge) excludes nothing.
+    const chanExcl = channelSpanKeepouts(src, ref, nogo.features);
+    const koClip = chanExcl.length ? {...ko, polys:[...ko.polys, ...chanExcl]} : ko;
+    const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
     // Re-order so the ASV covers each obstacle-free region as a serpentine and no
     // leg is numbered through a keep-out; flag any residual crossing transit.
     const legSafe=(a,b)=>{ const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
@@ -2170,6 +2208,7 @@ async function punchOut(){
       (nTeardrop?`, ${nTeardrop} teardrop turn(s)`:``)+
       (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
+      (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+`. Add to plan.`;
     if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
