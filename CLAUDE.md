@@ -16,13 +16,15 @@ shore link is a generic serial-over-IP control link.
 ## Run it
 
 ```bash
-python asv_console.py --sim --browser none --port 8791   # headless, for testing
-python asv_console.py --sim                               # opens a browser tab
+python asv_console.py --sim --browser none --port 8791          # headless, for testing
+python asv_console.py --sim                                     # opens a browser tab
+python asv_console.py --sim --vessel example_usv_4m             # study a different ASV
 ```
 
 - Web UI at `http://localhost:<port>/`; playback at `/playback`.
 - Commands: `POST /api/cmd/{arm,upload,start,pause,stop,estop,rth,goto,hold,sethome,transit}`.
-- State + telemetry stream over SSE at `/events`; snapshot at `/api/state`.
+- Vessels: `GET /api/vessel` (active + params + available list), `GET /api/vessels` (list), `POST /api/vessel {id}` (switch — only when disarmed & idle).
+- State + telemetry stream over SSE at `/events`; snapshot at `/api/state` (live telemetry is nested under `status`).
 - Session recorder writes `logs/*.jsonl` (disable with `--no-log`); playback reads them via `/api/logs`, `/api/log?file=`.
 - `--acm <host>` (generic VCU host) + `--transport {tcp,serial}` for a real link; `RealVcu` opens the transport but **refuses to actuate** (no wire format implemented — honest 409, never a fabricated frame).
 
@@ -38,6 +40,30 @@ python asv_console.py --sim                               # opens a browser tab
   cannot touch the RC autonomy switch or E-stop. Link-loss is safe (stop
   commanding, surface the vehicle failsafe: motors 0 / steering straight; never
   auto-resume). Commands are validated/clamped before encode.
+
+## Vessel configuration (the single source of truth for a modeled ASV)
+
+Every vessel-specific parameter lives in one self-contained `vessels/<id>.json`
+file — hull/windage, speeds, turn rate, guidance gains, battery banding + drain,
+planning defaults, and spawn. The console studies ASV behavior **across vessel
+types**: `--vessel <id>` picks the active profile at startup, and the UI's vessel
+picker (or `POST /api/vessel`) switches live when disarmed & idle (the sim
+respawns with the new physics).
+
+- **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
+  load (missing/mistyped field → clear, path-pointed error; a bad file never runs
+  with placeholder physics). `apply_vessel()` publishes the values to the module
+  globals `SimVcu` reads (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `BATT_*`, `WP_*`,
+  `WIND_*`, `DRAIN_*`, `SPAWN_*`, etc.). **Do not reintroduce hardcoded vessel
+  constants** — add/adjust the vessel file instead.
+- **Client:** `loadVessel()` fetches `/api/vessel` and drives the JS mirrors
+  (`SPEED_KN`, `MAX_TURN_RATE_DEG_S`, `NOGO_BUFFER_M`, search-pattern sizes), so
+  the server and UI never disagree.
+- **Adding a vessel:** drop a new `vessels/<id>.json` (copy an existing one; it
+  must be complete — validation requires every field). `vessels/zboat_1800hs.json`
+  models the small survey ASV; `vessels/example_usv_4m.json` is a larger
+  illustrative USV for comparison. A profile may name a real modeled vessel (it's
+  data); keep the console *core* generic (no vendor protocol / manual figures).
 
 ## Behaviors (all ENC-aware, arm-gated)
 

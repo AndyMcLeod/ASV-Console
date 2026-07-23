@@ -1,0 +1,49 @@
+{
+  "id": "example_usv_4m",
+  "name": "Example USV 4 m",
+  "class": "mid-size survey USV",
+  "notes": "Illustrative larger survey USV for comparing behavior against the small-class boat. All figures are simulation estimates, not a real vessel.",
+
+  "hull": {
+    "loa_m": 4.0,
+    "beam_m": 1.6,
+    "above_water_h_m": 0.8,
+    "draft_m": 0.35,
+    "wind_cd": 1.0,
+    "hull_cd": 1.0
+  },
+
+  "propulsion": {
+    "speeds_kn": { "low": 2.0, "survey": 4.5, "high": 9.0 }
+  },
+
+  "maneuvering": {
+    "max_turn_rate_deg_s": 25,
+    "approach_m": 3.0,
+    "lookahead_m": 8.0,
+    "arrival_radius_m": 5.0
+  },
+
+  "autopilot": {
+    "xte_ki_deg": 0.3,
+    "xte_i_max_deg": 10.0
+  },
+
+  "power": {
+    "battery_v": { "full": 52.0, "warn": 46.0, "crit": 42.0, "empty": 40.0 },
+    "drain": { "idle": 0.0004, "load": 0.0018 }
+  },
+
+  "planning": {
+    "nogo_buffer_m": 8.0,
+    "search": {
+      "expbox_step_m": 20,
+      "sector_radius_m": 60,
+      "parallel_length_m": 80,
+      "parallel_spacing_m": 15,
+      "parallel_lanes": 8
+    }
+  },
+
+  "spawn": { "lat": 42.137083, "lon": -80.087367 }
+}

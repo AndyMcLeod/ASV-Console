@@ -71,6 +71,12 @@ COMMS_CONFIG_PATH = os.path.join(APP_DIR, "comms_config.json")
 # Session recordings: every command / setting / action + a telemetry trace, one
 # per server run, written as append-only JSONL for a future playback mode.
 LOG_DIR = os.path.join(APP_DIR, "logs")
+# Per-vessel configuration files (one self-contained JSON per modeled ASV). The
+# active vessel supplies every hull/propulsion/maneuvering/power parameter the
+# simulator and the UI use, so those values live in ONE place (the vessel file)
+# instead of being hardcoded and duplicated across server and client.
+VESSELS_DIR = os.path.join(APP_DIR, "vessels")
+DEFAULT_VESSEL_ID = "zboat_1800hs"
 
 DEFAULT_WEB_PORT = 8781
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
@@ -80,17 +86,155 @@ DEFAULT_VCU_PORT = 4001
 
 STARLINK_HOST, STARLINK_PORT = "192.168.100.1", 9200
 
-# Battery thresholds (representative small-ASV pack): starts
-# 26-27 V, low-voltage alarm ~23 V, servo (steering) fails
-# before the motor at ~18 V (complete failure). Used only for display banding.
-BATT_FULL_V = 26.5
-BATT_WARN_V = 23.0
-BATT_CRIT_V = 20.0
-BATT_EMPTY_V = 18.0
-
-
 def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
+
+
+# --------------------------------------------------------------------------- #
+#  Vessel configuration - the single source of truth for a modeled ASV        #
+# --------------------------------------------------------------------------- #
+# Every vessel-specific parameter (hull/windage, speeds, turn rate, guidance
+# gains, battery banding + drain, planning defaults, spawn) is loaded from a
+# self-contained vessels/<id>.json and applied to the module globals below via
+# apply_vessel(). SimVcu, the mission store and the UI all read these globals /
+# the served /api/vessel, so a vessel is defined in exactly one file. Swap the
+# active vessel with --vessel <id> (or POST /api/vessel) to study another ASV.
+
+# Globals filled by apply_vessel() (defaults are placeholders, overwritten at
+# import once the default vessel is loaded).
+BATT_FULL_V = BATT_WARN_V = BATT_CRIT_V = BATT_EMPTY_V = 0.0
+SPEED_KN = {}
+WP_APPROACH_M = WP_LOOKAHEAD_M = 0.0
+XTE_KI_DEG = XTE_I_MAX_DEG = 0.0
+BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
+WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = 0.0
+MAX_TURN_RATE_DEG_S = 60.0
+DRAIN_IDLE = DRAIN_LOAD = 0.0
+SPAWN_LAT = SPAWN_LON = 0.0
+ARRIVAL_DEFAULT_M = 2.0
+NOGO_BUFFER_DEFAULT_M = 3.0
+
+# The active vessel (parsed dict). Set by apply_vessel().
+VESSEL = None
+
+# Schema for validation: (dotted path, python type). Every one is required; a
+# missing key or wrong type makes the vessel file load fail with a clear error
+# so a malformed profile never silently runs with placeholder physics.
+_VESSEL_SCHEMA = [
+    ("id", str), ("name", str),
+    ("hull.loa_m", (int, float)), ("hull.beam_m", (int, float)),
+    ("hull.above_water_h_m", (int, float)), ("hull.draft_m", (int, float)),
+    ("hull.wind_cd", (int, float)), ("hull.hull_cd", (int, float)),
+    ("propulsion.speeds_kn.low", (int, float)),
+    ("propulsion.speeds_kn.survey", (int, float)),
+    ("propulsion.speeds_kn.high", (int, float)),
+    ("maneuvering.max_turn_rate_deg_s", (int, float)),
+    ("maneuvering.approach_m", (int, float)),
+    ("maneuvering.lookahead_m", (int, float)),
+    ("maneuvering.arrival_radius_m", (int, float)),
+    ("autopilot.xte_ki_deg", (int, float)),
+    ("autopilot.xte_i_max_deg", (int, float)),
+    ("power.battery_v.full", (int, float)), ("power.battery_v.warn", (int, float)),
+    ("power.battery_v.crit", (int, float)), ("power.battery_v.empty", (int, float)),
+    ("power.drain.idle", (int, float)), ("power.drain.load", (int, float)),
+    ("planning.nogo_buffer_m", (int, float)),
+    ("spawn.lat", (int, float)), ("spawn.lon", (int, float)),
+]
+
+
+def _dig(d, path):
+    """Fetch a dotted path from nested dicts; raise KeyError if any hop missing."""
+    cur = d
+    for key in path.split("."):
+        if not isinstance(cur, dict) or key not in cur:
+            raise KeyError(path)
+        cur = cur[key]
+    return cur
+
+
+def validate_vessel(v, source="<vessel>"):
+    """Raise ValueError with a clear, path-pointed message if v is malformed."""
+    if not isinstance(v, dict):
+        raise ValueError("%s: vessel config must be a JSON object" % source)
+    for path, typ in _VESSEL_SCHEMA:
+        try:
+            val = _dig(v, path)
+        except KeyError:
+            raise ValueError("%s: missing required field '%s'" % (source, path))
+        if isinstance(val, bool) or not isinstance(val, typ):
+            names = typ.__name__ if isinstance(typ, type) else "/".join(t.__name__ for t in typ)
+            raise ValueError("%s: field '%s' must be %s (got %r)" % (source, path, names, val))
+    # battery ordering sanity - banding assumes full > warn > crit > empty
+    b = v["power"]["battery_v"]
+    if not (b["full"] > b["warn"] > b["crit"] > b["empty"]):
+        raise ValueError("%s: power.battery_v must satisfy full > warn > crit > empty" % source)
+    return v
+
+
+def vessel_path(vessel_id):
+    return os.path.join(VESSELS_DIR, "%s.json" % vessel_id)
+
+
+def load_vessel(vessel_id):
+    """Read + validate vessels/<id>.json. Raises ValueError/OSError on failure."""
+    path = vessel_path(vessel_id)
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            v = json.load(f)
+        except ValueError as e:
+            raise ValueError("%s: invalid JSON (%s)" % (os.path.basename(path), e))
+    return validate_vessel(v, source=os.path.basename(path))
+
+
+def list_vessels():
+    """[{id,name,class}] for every valid vessels/*.json (invalid ones skipped)."""
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(VESSELS_DIR) if n.endswith(".json"))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            with open(os.path.join(VESSELS_DIR, name), "r", encoding="utf-8") as f:
+                v = json.load(f)
+            validate_vessel(v, source=name)
+            out.append({"id": v["id"], "name": v["name"], "class": v.get("class", "")})
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def apply_vessel(v):
+    """Publish a validated vessel dict to the module globals SimVcu/UI read."""
+    global VESSEL, BATT_FULL_V, BATT_WARN_V, BATT_CRIT_V, BATT_EMPTY_V, SPEED_KN
+    global WP_APPROACH_M, WP_LOOKAHEAD_M, XTE_KI_DEG, XTE_I_MAX_DEG
+    global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
+    global WIND_A_SIDE, WIND_A_FRONT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
+    global SPAWN_LAT, SPAWN_LON, ARRIVAL_DEFAULT_M, NOGO_BUFFER_DEFAULT_M
+    VESSEL = v
+    h, p, m, a = v["hull"], v["propulsion"], v["maneuvering"], v["autopilot"]
+    pw, pl, sp = v["power"], v["planning"], v["spawn"]
+    BATT_FULL_V = float(pw["battery_v"]["full"]); BATT_WARN_V = float(pw["battery_v"]["warn"])
+    BATT_CRIT_V = float(pw["battery_v"]["crit"]); BATT_EMPTY_V = float(pw["battery_v"]["empty"])
+    DRAIN_IDLE = float(pw["drain"]["idle"]); DRAIN_LOAD = float(pw["drain"]["load"])
+    SPEED_KN = {k: float(pk) for k, pk in p["speeds_kn"].items()}
+    WP_APPROACH_M = float(m["approach_m"]); WP_LOOKAHEAD_M = float(m["lookahead_m"])
+    MAX_TURN_RATE_DEG_S = float(m["max_turn_rate_deg_s"])
+    ARRIVAL_DEFAULT_M = float(m["arrival_radius_m"])
+    XTE_KI_DEG = float(a["xte_ki_deg"]); XTE_I_MAX_DEG = float(a["xte_i_max_deg"])
+    BOAT_LEN_M = float(h["loa_m"]); BOAT_BEAM_M = float(h["beam_m"])
+    BOAT_ABOVE_H = float(h["above_water_h_m"]); BOAT_DRAFT_M = float(h["draft_m"])
+    WIND_CD = float(h["wind_cd"]); HULL_CD = float(h["hull_cd"])
+    WIND_A_SIDE = BOAT_LEN_M * BOAT_ABOVE_H      # beam-on windage silhouette (m^2)
+    WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H    # bow/stern-on windage silhouette (m^2)
+    NOGO_BUFFER_DEFAULT_M = float(pl["nogo_buffer_m"])
+    SPAWN_LAT = float(sp["lat"]); SPAWN_LON = float(sp["lon"])
+    return v
+
+
+# Load the default vessel at import so every module global is populated before
+# any class method or the mission store reads it. --vessel overrides in main().
+apply_vessel(load_vessel(DEFAULT_VESSEL_ID))
 
 
 # --------------------------------------------------------------------------- #
@@ -235,7 +379,7 @@ def load_mission():
             return {
                 "waypoints": m.get("waypoints") or [],
                 "lines": m.get("lines") or [],
-                "arrival_radius_m": m.get("arrival_radius_m", 2.0),
+                "arrival_radius_m": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
                 "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
                 "speed": m.get("speed") or "survey",
                 # plan-run completion semantics (Survey/search as a typed behavior):
@@ -244,7 +388,7 @@ def load_mission():
                               ("complete", "loiter", "repeat") else "complete",
                 # keep-clear buffer (m) around every nogo zone - the tightness the
                 # ASV threads between piers; smaller for tight marinas.
-                "buffer_m": m.get("buffer_m", 3.0),
+                "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
                 # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
                 # plan drawn at the dock survives a reload / a session at sea.
                 "boundary": m.get("boundary") or [],
@@ -252,9 +396,9 @@ def load_mission():
             }
     except (OSError, ValueError):
         pass
-    return {"waypoints": [], "lines": [], "arrival_radius_m": 2.0,
+    return {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
             "approach_radius_m": WP_APPROACH_M, "speed": "survey", "completion": "complete",
-            "buffer_m": 3.0, "boundary": [], "boundary_closed": False}
+            "buffer_m": NOGO_BUFFER_DEFAULT_M, "boundary": [], "boundary_closed": False}
 
 
 def save_mission(m):
@@ -1033,16 +1177,9 @@ _ENV_UA = {"User-Agent": "asv-console/1.0 (+sim environmental data)"}
 RHO_AIR = 1.225                # kg/m^3
 RHO_WATER = 1000.0             # kg/m^3 (fresh water - Great Lakes)
 G_ACCEL = 9.81
-# survey ASV above-water windage silhouette (ESTIMATES; the exact figures are in
-# the proprietary manual - hull ~1.9 m x 0.75 m, low freeboard + a thin mast):
-BOAT_LEN_M = 1.9
-BOAT_BEAM_M = 0.75
-BOAT_ABOVE_H = 0.35            # avg above-water height (freeboard + low deck/mast)
-BOAT_DRAFT_M = 0.12            # underwater depth (for the lateral drag area)
-WIND_CD = 1.0                 # drag coeff of a boxy hull/superstructure
-WIND_A_SIDE = BOAT_LEN_M * BOAT_ABOVE_H     # beam-on windage  ~0.66 m^2
-WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H   # bow/stern-on     ~0.26 m^2
-HULL_CD = 1.0                 # lateral (sway) hull drag coeff
+# Above-water windage silhouette + hull drag come from the active vessel's `hull`
+# block (loa/beam/above_water_h/draft/wind_cd/hull_cd); BOAT_*, WIND_A_* and the
+# Cd's are published by apply_vessel(). See vessels/<id>.json.
 HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M      # underwater lateral area ~0.23 m^2
 WAVE_DRIFT_CD = 0.03          # mean wave-drift coeff (small boat, mostly wave-transparent;
                               # kept small so the gusty WIND drives the wandering, not waves)
@@ -1355,7 +1492,8 @@ def range_bearing(lat1, lon1, lat2, lon2):
 #  VCU command link (the seam) - SimVcu + a honest RealVcu stub               #
 # --------------------------------------------------------------------------- #
 
-SPEED_KN = {"low": 1.5, "survey": 3.0, "high": 6.0}   # manual: survey ~2.8-3.5 kt
+# SPEED_KN (low/survey/high, knots) comes from the active vessel's `propulsion`
+# block, published by apply_vessel(). See vessels/<id>.json.
 
 
 class VcuProtocolError(Exception):
@@ -1393,25 +1531,21 @@ class VcuLink:
 # 2 m boat threads tight marinas), NOT sized for a large survey vessel.
 # How close the ASV approaches a waypoint before turning onto the next leg - the
 # "approach radius". Kept SEPARATE from the survey arrival_radius_m and entirely
-# separate from the Punch-Out obstacle buffer. Small (~0.5 boat length) so the
-# boat follows the line to ~1 m of each turn instead of cutting the corner.
-WP_APPROACH_M = 1.0
-# Line-following look-ahead (m): the guidance aims this far ahead ON the line, so
-# the boat tracks the survey line (correcting cross-track error) rather than
-# steering point-to-point straight at the next waypoint. ~1.5 boat lengths - short
-# so a 2 m boat holds tight lines/turns in constrained water (was 8 m = corner-cut).
-WP_LOOKAHEAD_M = 3.0
-# Disturbance rejection for the line follower (what a real autopilot has). The
-# look-ahead LOS alone is proportional-only: under a CONSTANT wind/wave drift it
-# must hold a standing cross-track offset (~lookahead*tan(crab)) to command any
-# crab at all - seen live as the boat riding a line parallel to the survey line.
-# (1) CRAB FEEDFORWARD: aim the ground COURSE at the look-ahead point and point
-# the bow upwind of it by the measured drift triangle (drift is estimated from
-# the previous tick, exactly like a real boat measuring COG-vs-heading).
-# (2) XTE INTEGRAL TRIM: a slow integrator biases the aim upwind to zero the
-# residual (PI structure; clamped for anti-windup, reset on upload/start).
-XTE_KI_DEG = 0.4               # deg of aim bias per (m of XTE * s)
-XTE_I_MAX_DEG = 12.0           # integral clamp (deg)
+# separate from the Punch-Out obstacle buffer. All of the guidance scale figures
+# below are vessel-specific and come from the active vessel file (published by
+# apply_vessel()); the comments explain what each one does:
+#   WP_APPROACH_M   (maneuvering.approach_m) - how close the ASV follows the line
+#     before turning onto the next leg (~0.5 boat length; small so it doesn't cut
+#     corners).
+#   WP_LOOKAHEAD_M  (maneuvering.lookahead_m) - line-following look-ahead: the
+#     guidance aims this far ahead ON the line so the boat tracks the line
+#     (correcting cross-track error) instead of steering point-to-point.
+#   XTE_KI_DEG / XTE_I_MAX_DEG (autopilot.*) - disturbance rejection for the line
+#     follower. The look-ahead LOS alone is proportional-only, so under a CONSTANT
+#     wind/wave drift it holds a standing cross-track offset. A slow integrator
+#     (PI structure, clamped for anti-windup, reset on upload/start) biases the aim
+#     upwind to zero the residual, on top of the crab feedforward in tick().
+# See vessels/<id>.json.
 
 
 class SimVcu(VcuLink):
@@ -1420,8 +1554,13 @@ class SimVcu(VcuLink):
     and line-following waypoint autonomy that reacts to upload/start/pause/stop/
     estop exactly as the real run-control flow will."""
 
-    # Spawn position (operator-specified): 42 08.225' N / 80 05.242' W.
-    def __init__(self, start_lat=42.137083, start_lon=-80.087367):
+    # Spawn defaults to the active vessel's `spawn` (SPAWN_LAT/SPAWN_LON); an
+    # explicit start_lat/lon still overrides it.
+    def __init__(self, start_lat=None, start_lon=None):
+        if start_lat is None:
+            start_lat = SPAWN_LAT
+        if start_lon is None:
+            start_lon = SPAWN_LON
         self.lat = start_lat
         self.lon = start_lon
         self.heading = 90.0
@@ -1540,7 +1679,7 @@ class SimVcu(VcuLink):
                 d_cross = de * math.cos(chi) - dn * math.sin(chi)   # drift, + = right of course
                 desired -= math.degrees(math.asin(clamp(d_cross / v_thru, -0.9, 0.9)))
             desired -= self._xte_i
-            self.heading = _turn_toward(self.heading, desired, 60.0 * dt)  # <=60 deg/s (nimble 2 m boat)
+            self.heading = _turn_toward(self.heading, desired, MAX_TURN_RATE_DEG_S * dt)  # vessel turn-rate cap
             # advance once the boat passes the waypoint along-track, or is within the
             # tight approach radius - it follows the line to ~WP_APPROACH_M of the turn
             if along >= seg_len - self._approach_m or dist_b <= self._approach_m:
@@ -1563,7 +1702,7 @@ class SimVcu(VcuLink):
             if dist_h <= max(self._approach_m, 2.0):
                 target_kn = 0.0                    # arrived - hold position
             else:
-                self.heading = _turn_toward(self.heading, brg_h, 60.0 * dt)
+                self.heading = _turn_toward(self.heading, brg_h, MAX_TURN_RATE_DEG_S * dt)
                 target_kn = SPEED_KN["low"]
 
         # smooth speed toward target
@@ -1643,7 +1782,7 @@ class SimVcu(VcuLink):
         # remember this tick's drift for next tick's crab feedforward (one-tick lag
         # = the same delayed estimate a real boat gets from COG-vs-heading)
         self._drift_en = (drift_e, drift_n)
-        drain = (0.0006 + 0.0025 * (self.sog_kn / max(1e-6, SPEED_KN["high"]))) * dt
+        drain = (DRAIN_IDLE + DRAIN_LOAD * (self.sog_kn / max(1e-6, SPEED_KN["high"]))) * dt
         self.battery_v = max(BATT_EMPTY_V, self.battery_v - drain)
 
         # COG + true SOG from the ACTUAL ground track (forward thrust + environmental
@@ -2256,6 +2395,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(ENV.snapshot()))
         elif self.path == "/api/mission":
             self._send(200, json.dumps(load_mission()))
+        elif self.path == "/api/vessel":
+            # active vessel (full params for the UI) + the available list (picker)
+            self._send(200, json.dumps({"vessel": VESSEL, "active": VESSEL["id"],
+                                        "available": list_vessels()}))
+        elif self.path == "/api/vessels":
+            self._send(200, json.dumps({"vessels": list_vessels(), "active": VESSEL["id"]}))
         elif self.path == "/api/comms":
             with COMMS._lock:
                 cfg = {"mode": COMMS.mode, "host": COMMS.host, "username": COMMS.username}
@@ -2323,6 +2468,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/mission":
             save_mission(body)
             return 200, {"ok": True}
+        if path == "/api/vessel":
+            # Switch the active vessel. Only when SAFE (disarmed, not e-stopped,
+            # idle) - swapping physics under a running boat is incoherent. In sim
+            # mode we respawn so the new spawn/params take effect immediately.
+            vid = (body.get("id") or "").strip()
+            if not vid:
+                return 400, {"error": "missing vessel id"}
+            st = ENGINE.state()
+            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
+                return 409, {"error": "disarm and stop the run before switching vessel"}
+            try:
+                v = load_vessel(vid)
+            except (OSError, ValueError) as e:
+                return 400, {"error": "vessel '%s': %s" % (vid, e)}
+            apply_vessel(v)
+            if st.get("mode") == "sim":
+                ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
+            return 200, {"ok": True, "vessel": VESSEL}
         if path == "/api/comms":
             COMMS.configure(mode=body.get("mode"), host=body.get("host"),
                             username=body.get("username"), password=body.get("password"))
@@ -2447,12 +2610,23 @@ def main():
     ap.add_argument("--transport", choices=["tcp", "serial"], default="tcp",
                     help="VCU link transport (serial-over-IP default)")
     ap.add_argument("--vcu-port", type=int, default=DEFAULT_VCU_PORT)
+    ap.add_argument("--vessel", default=DEFAULT_VESSEL_ID,
+                    help="vessel profile id from vessels/<id>.json (default: %s)" % DEFAULT_VESSEL_ID)
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
     ap.add_argument("--no-log", action="store_true",
                     help="disable the session recorder (logs/*.jsonl for future playback)")
     args = ap.parse_args()
+
+    # Load the requested vessel profile (default already applied at import). Fail
+    # loudly on a bad id / malformed file rather than silently running the default.
+    if args.vessel != DEFAULT_VESSEL_ID:
+        try:
+            apply_vessel(load_vessel(args.vessel))
+        except (OSError, ValueError) as e:
+            print("vessel '%s' could not be loaded: %s" % (args.vessel, e))
+            raise SystemExit(2)
 
     if args.fetch_charts:
         try:
@@ -2485,6 +2659,7 @@ def main():
         ENGINE.connect(args.transport, args.vcu, args.vcu_port, args.transport)
 
     print("ASV Simulator Console serving at %s" % url)
+    print("  Vessel: %s (%s)" % (VESSEL["name"], VESSEL["id"]))
     print("  RC transmitter is master - this console is additive shore-side C2.")
     if LOG.enabled:
         print("  Recording session to %s" % LOG.path)

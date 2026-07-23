@@ -154,17 +154,18 @@ Run states: `idle · running · paused · stopped · complete`.
 
 ## 5. Battery model & thresholds
 
-Thresholds mirror the manual (Ch. 2, *Battery Voltage Monitoring*) and drive only
-the display banding:
+Thresholds come from the **active vessel** (`power.battery_v` in its profile) and
+drive only the display banding. For the default `zboat_1800hs` profile:
 
 | | Voltage | Meaning |
 |---|---|---|
 | Full (start) | **26.5 V** | ~26–27 V at rest |
-| **Warn / alarm** | **23.0 V** | factory low-voltage alarm — bring the boat back |
+| **Warn / alarm** | **23.0 V** | low-voltage alarm — bring the boat back |
 | Critical | 20.0 V | approaching loss of control |
 | Empty | 18.0 V | complete failure (steering fails first) |
 
-`battery_pct` is mapped linearly 18.0 → 26.5 V. In sim the battery visibly drains
+A different vessel carries its own banding (e.g. `example_usv_4m` runs a 52 V
+pack). `battery_pct` is mapped linearly empty → full. In sim the battery visibly drains
 so you can watch the gauge cross into warn/critical during a long run.
 
 > **Caveat carried from the manual:** on the real boat, battery voltage is
@@ -228,6 +229,21 @@ Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
 `/api/enc?bbox=…` (ENC features) · `/api/waterlevel` · `/api/env` (sim wind/sea +
 POST override/enable/refresh). A blocked gate returns **409** with the reason.
 
+**Live telemetry (position, heading, SOG/COG, battery, attitude) is nested under
+the `status` key of `/api/state`**, alongside the top-level C2 state
+(`armed`/`run`/`behavior`/…).
+
+**Vessel profiles:** `GET /api/vessel` returns the active vessel (full parameters
+for the UI) plus the `available` list; `GET /api/vessels` returns just the list;
+`POST /api/vessel {"id":"…"}` switches the active vessel — allowed only when
+disarmed, not e-stopped, and idle (otherwise **409**), and it respawns the sim
+boat with the new physics.
+
+```bash
+curl -s localhost:8781/api/vessel | python -m json.tool          # active + available
+curl -s -X POST localhost:8781/api/vessel -d '{"id":"example_usv_4m"}'  # switch (must be safe/idle)
+```
+
 ---
 
 ## 8. Command-line flags
@@ -238,6 +254,7 @@ POST override/enable/refresh). A blocked gate returns **409** with the reason.
 | `--host` | `127.0.0.1` | Web UI bind address. |
 | `--port` | `8781` | Web UI port. |
 | `--browser` | `edge` | `edge` / `chrome` / `default` / `none`. |
+| `--vessel ID` | `zboat_1800hs` | Active vessel profile from `vessels/<id>.json` (hull/speeds/turn/battery/…). |
 | `--vcu HOST` | — | Auto-connect to a **real** VCU (serial-over-IP) instead of sim. |
 | `--transport` | `tcp` | `tcp` (serial-over-IP) or `serial` (COM port) for a real VCU. |
 | `--vcu-port` | `4001` | Real-VCU port. |

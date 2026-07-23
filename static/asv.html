@@ -159,6 +159,7 @@
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
+    <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
@@ -450,7 +451,7 @@ let water = {}, waterOffset = 0;
 // nogo zones: shoreline + manmade features + water shallower than 1 m CORRECTED
 // (charted depth + live water-level offset). Fetched once around the first fix.
 const NOGO_MIN_DEPTH_M = 1.0;                  // corrected-depth nogo threshold
-const NOGO_BUFFER_M = 3;                       // keep-clear buffer for routing
+let NOGO_BUFFER_M = 3;                          // keep-clear buffer default (vessel-derived via loadVessel)
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
 const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
 // The nogo is the SINGLE keep-out model: behaviors and the survey Punch Out both
@@ -486,6 +487,53 @@ async function loadMission(){
       // apply the persisted nogo buffer to both controls + the shared model
       nogo.buffer = mission.buffer_m ?? 10;
       $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer; render(); } }catch(e){}
+}
+// --- active vessel: the single source of truth for the boat's parameters ---- //
+// Fetched from /api/vessel (which the server derives from vessels/<id>.json), so
+// the client no longer hardcodes speeds / turn rate / buffer / search sizes.
+let VESSEL = null;
+function applyVesselToUI(v){
+  if(!v) return;
+  VESSEL = v;
+  // physics mirrors the sim uses for routing/turn geometry
+  if(v.propulsion && v.propulsion.speeds_kn) SPEED_KN = {...v.propulsion.speeds_kn};
+  if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
+  if(v.planning && typeof v.planning.nogo_buffer_m === "number") NOGO_BUFFER_M = v.planning.nogo_buffer_m;
+  // vessel-scaled search-pattern defaults (only overwrite blanks/unfocused inputs)
+  const s = (v.planning && v.planning.search) || {};
+  const setDefault = (id,val)=>{ const el=$("#"+id); if(el && val!=null && document.activeElement!==el) el.value=val; };
+  setDefault("sr_step",    s.expbox_step_m);
+  setDefault("sr_radius",  s.sector_radius_m);
+  setDefault("sr_length",  s.parallel_length_m);
+  setDefault("sr_spacing", s.parallel_spacing_m);
+  setDefault("sr_lanes",   s.parallel_lanes);
+}
+function fillVesselPicker(available, activeId){
+  const sel = $("#vesselSel"); if(!sel) return;
+  sel.innerHTML = "";
+  (available||[]).forEach(v=>{ const o=document.createElement("option");
+    o.value=v.id; o.textContent=v.name || v.id; if(v.id===activeId) o.selected=true; sel.appendChild(o); });
+}
+async function loadVessel(){
+  try{ const r = await fetch("/api/vessel"); const d = await r.json();
+    applyVesselToUI(d.vessel);
+    fillVesselPicker(d.available, d.active);
+  }catch(e){}
+}
+async function switchVessel(id){
+  try{
+    const r = await fetch("/api/vessel", {method:"POST", headers:{"Content-Type":"application/json"},
+                                          body:JSON.stringify({id})});
+    const d = await r.json();
+    if(!r.ok){ flashNote(d.error || "vessel switch failed"); await loadVessel(); return; }
+    applyVesselToUI(d.vessel);
+    // a switch respawns the sim boat and reseeds vessel-scaled defaults; refresh
+    // the mission-derived controls and the nogo model so the map reflects the boat.
+    await loadMission();
+    if(typeof rebuildNogo==="function" && nogo.ready) rebuildNogo();
+    render();
+    flashNote("Vessel: " + (d.vessel.name || id));
+  }catch(e){ flashNote("vessel switch failed"); }
 }
 function toEN(p, ref){
   return {e:(p.lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180),
@@ -1786,8 +1834,11 @@ function shortenSeg(a, b, m){
 // even though the (idealised) arc validates clear. This is the clamp that guards
 // against that: below it, no teardrop is generated (fall back to a straight hop
 // / routed transit, which stay at the box edge, clear).
-const SPEED_KN = {low:1.5, survey:3.0, high:6.0};       // mirrors server SPEED_KN
-const MAX_TURN_RATE_DEG_S = 60;                          // mirrors SimVcu turn cap
+// Vessel-derived; populated by loadVessel() from /api/vessel (single source of
+// truth = the active vessel file). The literals are only a fallback if the fetch
+// fails before first paint.
+let SPEED_KN = {low:1.5, survey:3.0, high:6.0};
+let MAX_TURN_RATE_DEG_S = 60;
 function minTurnRadiusM(speedKey){
   const kn = SPEED_KN[speedKey] || 3.0;
   const v = kn*0.514444, w = MAX_TURN_RATE_DEG_S*Math.PI/180;   // m/s, rad/s
@@ -2055,6 +2106,7 @@ function setBuffer(v){
   patClip = null; updatePatReadout(); render();
 }
 $("#c_buffer").onchange = ()=>setBuffer($("#c_buffer").value);
+$("#vesselSel").onchange = (e)=>switchVessel(e.target.value);
 $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
 // survey Min/Max depth = survey-only coverage window (re-clip preview only)
 ["#sp_mindepth","#sp_maxdepth"].forEach(id=>{
@@ -2449,7 +2501,7 @@ try{ if(!localStorage.getItem(QS_KEY)) showQS(true); }catch(e){ showQS(true); }
 try{ boundaryShow = localStorage.getItem(BND_VIS_KEY) !== "0"; }catch(e){}
 $("#areaBtn").classList.toggle("on", boundaryShow);
 
-setFollow(); render(); loadMission(); applyNogoControls(); updateNogoUI(); connect();
+setFollow(); render(); loadVessel().then(loadMission); applyNogoControls(); updateNogoUI(); connect();
 </script>
 </body>
 </html>

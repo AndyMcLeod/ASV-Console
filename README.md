@@ -43,7 +43,24 @@ override it from the **ENV** panel (sim only; a real boat feels real weather).
 ```
 python asv_console.py --sim            # simulator, opens a browser tab
 python asv_console.py --sim --browser none --port 8781   # headless, no auto-open
+python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
 ```
+
+### Vessel profiles
+
+The console studies ASV behavior **across different vessel types**. Every
+vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains,
+battery banding + drain, planning defaults, spawn — lives in one self-contained
+file under `vessels/<id>.json`, and that file is the single source of truth (the
+server and the UI both read it, nothing is hardcoded twice). Two profiles ship:
+`zboat_1800hs` (a small ~1.9 m survey ASV) and `example_usv_4m` (a larger
+illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
+
+Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
+selector** in the top bar (allowed only when disarmed and stopped — swapping
+physics under a running boat is refused). Switching in sim respawns the boat with
+the new vessel's parameters, so you can run the same mission on different hulls
+and compare.
 
 Real link (Phase 2+, once the protocol is known), serial-over-IP by default:
 

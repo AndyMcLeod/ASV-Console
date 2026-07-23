@@ -1,0 +1,49 @@
+{
+  "id": "zboat_1800hs",
+  "name": "Z-Boat 1800 HS",
+  "class": "small survey ASV",
+  "notes": "Modeled small-class survey ASV (~1.9 m LOA). All figures are simulation estimates for behavior study, not vendor specifications.",
+
+  "hull": {
+    "loa_m": 1.9,
+    "beam_m": 0.75,
+    "above_water_h_m": 0.35,
+    "draft_m": 0.12,
+    "wind_cd": 1.0,
+    "hull_cd": 1.0
+  },
+
+  "propulsion": {
+    "speeds_kn": { "low": 1.5, "survey": 3.0, "high": 6.0 }
+  },
+
+  "maneuvering": {
+    "max_turn_rate_deg_s": 60,
+    "approach_m": 1.0,
+    "lookahead_m": 3.0,
+    "arrival_radius_m": 2.0
+  },
+
+  "autopilot": {
+    "xte_ki_deg": 0.4,
+    "xte_i_max_deg": 12.0
+  },
+
+  "power": {
+    "battery_v": { "full": 26.5, "warn": 23.0, "crit": 20.0, "empty": 18.0 },
+    "drain": { "idle": 0.0006, "load": 0.0025 }
+  },
+
+  "planning": {
+    "nogo_buffer_m": 3.0,
+    "search": {
+      "expbox_step_m": 8,
+      "sector_radius_m": 20,
+      "parallel_length_m": 30,
+      "parallel_spacing_m": 5,
+      "parallel_lanes": 8
+    }
+  },
+
+  "spawn": { "lat": 42.137083, "lon": -80.087367 }
+}
