@@ -2418,6 +2418,24 @@ def safe_log_path(name):
     return p if os.path.isfile(p) else None
 
 
+class Server(ThreadingHTTPServer):
+    """Threaded HTTP server that swallows benign client-disconnect errors.
+
+    A browser that refreshes/closes a tab, or drops an SSE (`/events`) stream,
+    resets the socket while the server is mid-read; stdlib's socketserver then
+    prints a scary ConnectionReset/Aborted traceback to stderr even though nothing
+    is wrong (each request is its own thread; the server keeps running). Suppress
+    exactly those; let any real error surface as usual."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return  # client went away mid-request - normal, not an error
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -2731,7 +2749,7 @@ def main():
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)
 
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    srv = Server((args.host, args.port), Handler)
     url = "http://%s:%d/" % ("localhost" if args.host in ("0.0.0.0", "127.0.0.1") else args.host, args.port)
 
     if args.sim:
