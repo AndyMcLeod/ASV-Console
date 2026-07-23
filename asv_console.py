@@ -82,7 +82,9 @@ DEFAULT_VESSEL_ID = "zboat_1800hs"
 # is in the session logs). Changes on every restart.
 BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 
-DEFAULT_WEB_PORT = 8781
+# 8791 (not 8781) so this simulator never collides with the Z-Boat console it was
+# derived from - both default to their own port and can run side by side.
+DEFAULT_WEB_PORT = 8791
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
 # address depends on the boat's radio/serial-server config; override on the CLI.
 DEFAULT_VCU_HOST = ""

@@ -20,7 +20,7 @@ cd D:\Claude\ASV
 python asv_console.py --sim
 ```
 
-- Opens the console in Edge at **http://localhost:8781/** and auto-connects the
+- Opens the console in Edge at **http://localhost:8791/** and auto-connects the
   simulator. (`--browser chrome` / `--browser none` to change or suppress this.)
 - A **Quick Start** card appears on first launch (reopen any time with the `?`
   button). Nothing is required but Python 3 standard library — no `pip install`.
@@ -30,7 +30,7 @@ python asv_console.py --sim
 Headless (no browser, e.g. for API/testing):
 
 ```bash
-python asv_console.py --sim --browser none --port 8781
+python asv_console.py --sim --browser none --port 8791
 ```
 
 ---
@@ -227,20 +227,20 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
 ## 7. Full walkthrough — headless API (curl)
 
 Every control is a POST; state is readable at `/api/state` (or streamed at
-`/events`). Useful for testing without a browser. Assuming `--port 8781`:
+`/events`). Useful for testing without a browser. Assuming `--port 8791`:
 
 ```bash
 # plan lives in mission.json (waypoints, arrival_radius_m, speed) - set it in the
 # GUI, or write it directly. Then:
-curl -s -X POST localhost:8781/api/cmd/arm    -H "Content-Type: application/json" -d '{"on":true}'
-curl -s -X POST localhost:8781/api/cmd/upload
-curl -s -X POST localhost:8781/api/cmd/start
-curl -s localhost:8781/api/state | python -m json.tool     # run, autonomy, wp x/N, telemetry
-curl -s -X POST localhost:8781/api/cmd/pause
-curl -s -X POST localhost:8781/api/cmd/start               # resume
-curl -s -X POST localhost:8781/api/cmd/stop
-curl -s -X POST localhost:8781/api/cmd/estop  -H "Content-Type: application/json" -d '{"on":true}'
-curl -s -X POST localhost:8781/api/cmd/estop  -H "Content-Type: application/json" -d '{"on":false}'
+curl -s -X POST localhost:8791/api/cmd/arm    -H "Content-Type: application/json" -d '{"on":true}'
+curl -s -X POST localhost:8791/api/cmd/upload
+curl -s -X POST localhost:8791/api/cmd/start
+curl -s localhost:8791/api/state | python -m json.tool     # run, autonomy, wp x/N, telemetry
+curl -s -X POST localhost:8791/api/cmd/pause
+curl -s -X POST localhost:8791/api/cmd/start               # resume
+curl -s -X POST localhost:8791/api/cmd/stop
+curl -s -X POST localhost:8791/api/cmd/estop  -H "Content-Type: application/json" -d '{"on":true}'
+curl -s -X POST localhost:8791/api/cmd/estop  -H "Content-Type: application/json" -d '{"on":false}'
 ```
 
 Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
@@ -263,8 +263,8 @@ disarmed, not e-stopped, and idle (otherwise **409**), and it respawns the sim
 boat with the new physics.
 
 ```bash
-curl -s localhost:8781/api/vessel | python -m json.tool          # active + available
-curl -s -X POST localhost:8781/api/vessel -d '{"id":"example_usv_4m"}'  # switch (must be safe/idle)
+curl -s localhost:8791/api/vessel | python -m json.tool          # active + available
+curl -s -X POST localhost:8791/api/vessel -d '{"id":"example_usv_4m"}'  # switch (must be safe/idle)
 ```
 
 ---
@@ -275,7 +275,7 @@ curl -s -X POST localhost:8781/api/vessel -d '{"id":"example_usv_4m"}'  # switch
 |---|---|---|
 | `--sim` | off | Auto-connect the simulator at start. |
 | `--host` | `127.0.0.1` | Web UI bind address. |
-| `--port` | `8781` | Web UI port. |
+| `--port` | `8791` | Web UI port. |
 | `--browser` | `edge` | `edge` / `chrome` / `default` / `none`. |
 | `--vessel ID` | `zboat_1800hs` | Active vessel profile from `vessels/<id>.json` (hull/speeds/turn/battery/…). |
 | `--vcu HOST` | — | Auto-connect to a **real** VCU (serial-over-IP) instead of sim. |

@@ -160,7 +160,7 @@ truth loaded by server + served to client). Do NOT reintroduce brand identity in
 the console core; vessel *files* may name real modeled vessels.
 
 ### Current state
-- **Server running** (during dev) on port **8781**, active vessel **drix08**,
+- **Server running** (during dev) on port **8791**, active vessel **drix08**,
   logging ON (`logs/asv_*.jsonl`). Restart pattern: kill stale PIDs on the port
   first (see Testing notes), then `python asv_console.py --sim --vessel drix08`.
 - **Vessels:** `zboat_1800hs` (small battery ASV), `example_usv_4m` (battery),

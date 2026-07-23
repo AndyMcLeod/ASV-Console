@@ -42,7 +42,7 @@ override it from the **ENV** panel (sim only; a real boat feels real weather).
 
 ```
 python asv_console.py --sim            # simulator, opens a browser tab
-python asv_console.py --sim --browser none --port 8781   # headless, no auto-open
+python asv_console.py --sim --browser none --port 8791   # headless, no auto-open
 python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
 ```
 

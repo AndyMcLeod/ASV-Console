@@ -17,7 +17,7 @@ Start the console as usual, then browse to **`/playback`**:
 
 ```
 python asv_console.py --sim            # (or a real --vcu session)
-# then open  http://localhost:8781/playback
+# then open  http://localhost:8791/playback
 ```
 
 - There's a **▶ Playback** link in the live console's top bar.
