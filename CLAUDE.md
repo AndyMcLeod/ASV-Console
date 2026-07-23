@@ -140,6 +140,86 @@ drift behind the code.
 
 ## Not yet done
 
-Not a git repo yet. `RealVcu` command/telemetry codecs are unimplemented by
-design (this is a simulator). Design docs: `PLAN.md`, `ASV_BEHAVIORS_PLAN.md`,
-`ENC_PUNCHOUT_PLAN.md`.
+Git repo (local, no GitHub remote). `RealVcu` command/telemetry codecs are
+unimplemented by design (this is a simulator). Design docs: `PLAN.md`,
+`ASV_BEHAVIORS_PLAN.md`, `ENC_PUNCHOUT_PLAN.md`.
+
+---
+
+## SESSION CHECKPOINT — 2026-07-23 ("ASV Simulator Project Continued 1" handoff)
+
+Full context for resuming in a fresh session. Everything below is committed
+(clean working tree). `git log --oneline` is the authoritative record.
+
+### How this project started
+Derived from `D:\Claude\Zboat` (the Teledyne Z-Boat console) as a **sanitized,
+brand-free generic ASV simulator**. All vendor/model/proprietary identity was
+stripped (VCU not ACM; no ZBoat/Teledyne names, no proprietary wire protocol).
+Then a **per-vessel config system** was added (`vessels/*.json`, single source of
+truth loaded by server + served to client). Do NOT reintroduce brand identity into
+the console core; vessel *files* may name real modeled vessels.
+
+### Current state
+- **Server running** (during dev) on port **8781**, active vessel **drix08**,
+  logging ON (`logs/asv_*.jsonl`). Restart pattern: kill stale PIDs on the port
+  first (see Testing notes), then `python asv_console.py --sim --vessel drix08`.
+- **Vessels:** `zboat_1800hs` (small battery ASV), `example_usv_4m` (battery),
+  `drix08` = **Exail DriX H-8**, 7.71 m **diesel** (fuel model), operating from the
+  **UDel Lewes facility** — spawn `38.789650, -75.160940` (Lewes-Rehoboth Canal
+  centerline). DriX tuned params: `nogo_buffer_m 5`, `under_keel_clearance_m 0.3`
+  (nogo floor 2.3 m), `channel_reach_m 120` (Rule 9 fairway reach for the wide
+  Lewes channel), speeds 4/7/14 kn, `max_turn_rate_deg_s 20`.
+
+### What was built this session (newest first — see commit hashes)
+1. **Survey ops-awareness/editing:** hover current line → time-to-end tooltip;
+   WPT-mode plan editing (drag waypoint / click-delete waypoint / **Shift**-click
+   line to delete / plain click adds); **LINES** panel per-line table (length,
+   plan, actual) logged as `client:survey_lines` via `POST /api/logevent`.
+   Mission duration on Punch Out split into **Survey** + **Approach** vessel-card
+   rows; TIME pill shows **local · UTC** (1 s ticker).
+2. **Punch-Out channel exclusion:** a survey that SPANS ACROSS a channel excludes
+   it from coverage (`channelSpanKeepouts`, survey-clip only — transits unaffected,
+   internal-channel surveys unaffected). Channel = dredged area OR **buoy-gate
+   fairway** (`pairGates` sweeps a corridor).
+3. **Lateral channel marks (buoys/beacons):** server role `chan_mark` + `CATLAM`
+   (cache bumped to `features_v3_`); client draws them (green port / red stbd),
+   keeps clear, uses them as Rule 9 channel walls; `gateProject()` steers a
+   Go-To/RTH through the outer gate centre and stands on past it.
+4. **Rule 9 keep-right** vessel-tunable reach (`channel_reach_m`); DriX now keeps
+   right in the ~150 m Lewes fairway (was tuned for tight marinas).
+5. **DriX fixes:** couldn't route around ENC objects → buffer 10→5 m; UKC 0.5→0.3;
+   spawn moved to Lewes (from Presque Isle).
+6. **Trail:** persists across page refresh within a session, **dropped on sim
+   reboot** (tagged with server `boot_id`).
+7. **Named-reason nogo refusal highlight** for Go-To/RTH AND Survey/Transit/Punch
+   Out legs (pulses the offending feature + ✕ marker; names the kind).
+8. **Server:** suppress benign client-disconnect tracebacks; `boot_id` +
+   `/api/logevent` + `/api/vessel(s)` endpoints; energy model (battery|fuel).
+
+### NEEDS LIVE VERIFICATION (couldn't drive in the sandbox — localhost is blocked
+in the in-app browser, and canvas screenshots time out). All were unit/harness-
+tested where possible, but the click/drag/hover UX itself is unverified in a real
+browser:
+- WPT-mode waypoint **drag** feel + hit radius (10 px); **Shift**-click line delete.
+- **Hover** time-to-end tooltip on the active line during a run.
+- **LINES** panel live actuals + the auto-log on run end.
+- Gate-pairing projection visually threading the Roosevelt Inlet jetty gate.
+
+### Open threads / possible next
+- Only ONE gate is charted in the Lewes ENC cell (Roosevelt Inlet jetty lights +
+  Buoy 4); gate features engage only where marks exist.
+- Mission-duration estimate is straight length ÷ speed (no turn/accel modeling).
+- Could add a playback-viewer table view of the logged `survey_lines` events.
+
+### Key gotchas learned (don't relearn these)
+- **Client-side routing:** `routeAround`/`keepRight`/`planNogoRoute`/`gateProject`
+  are ALL browser JS. Driving via raw `/api/cmd/*` + `upload` with no `route`
+  BYPASSES ENC routing → the boat crosses nogo. The GUI Punch-Out+Upload flow
+  routes clear.
+- **Stale server PIDs** on Windows hold the port and serve old code — always kill
+  by PID before retesting server changes.
+- **Testing pattern that works well:** extract the real JS functions from
+  `static/asv.html` with a brace-balance grabber into a Node harness and run
+  against real ENC fetched from `/api/enc` (see the many scratchpad `*.js` tests).
+- Delete a stale `mission.json` to pick up new vessel defaults (it persists old
+  buffer/arrival).
