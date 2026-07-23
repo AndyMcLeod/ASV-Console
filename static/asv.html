@@ -157,6 +157,7 @@
 <body>
   <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
   <div id="lineTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.94);color:#bfe8c8;border:1px solid #2a7a45;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
+  <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;max-height:44vh;overflow:auto;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;padding:8px 10px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);"></div>
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
@@ -193,6 +194,7 @@
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
     <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
+    <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
     <button class="ctl" id="helpBtn" title="Quick start / help">?</button>
   </div>
 
@@ -806,6 +808,41 @@ function updateLineTip(e){
   const spd=(sog>0.3?sog:(SPEED_KN[mission.speed]||SPEED_KN.survey))*0.514444;
   tip.textContent="line "+(activeLine+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
+}
+// --- per-line timing: length, PLANNED time (length/speed) and ACTUAL time -------
+// (accrued as wall-clock while the survey runs ON each line; robust to Upload
+// re-routing since it keys off the boat's active line, not waypoint indices).
+// Shown in the LINES table and written to the session log on run end.
+let lineActual=[], lineClock=null, prevRun=null, loggedLines=false;
+function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false; }
+function accumLineTime(){
+  const now=performance.now()/1000, onLine = activeXTE<=Math.max(15,(mission.arrival_radius_m||5)*4);
+  if(lineActual.length!==mission.lines.length) lineActual=mission.lines.map((_,k)=>lineActual[k]||0);
+  if(S.run==="running" && S.behavior==="survey" && activeLine>=0 && onLine && lineClock!=null && activeLine<lineActual.length)
+    lineActual[activeLine]+=(now-lineClock);
+  lineClock = (S.run==="running") ? now : null;
+}
+function fmtMS(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+function buildLineTable(){ const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
+  return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
+    return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
+function renderLineTable(){
+  const el=$("#lineTablePanel"); if(!el || el.style.display==="none") return;
+  const t=buildLineTable();
+  if(!t.length){ el.innerHTML="<b style='color:var(--ink)'>Survey lines</b><br>Punch Out + Add to plan to populate."; return; }
+  const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
+  const rows=t.map(r=>`<tr><td style="${cell}">${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`).join("");
+  const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
+  el.innerHTML=`<b style="color:var(--ink)">Survey lines</b> · ${mission.speed||"survey"} speed`+
+    `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
+    `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
+}
+function logLineTable(reason){ if(!mission.lines.length) return;
+  const lines=buildLineTable();
+  fetch("/api/logevent",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, lines,
+      total_len_m:lines.reduce((a,r)=>a+r.len_m,0), total_plan_s:lines.reduce((a,r)=>a+r.plan_s,0),
+      total_actual_s:lines.reduce((a,r)=>a+r.actual_s,0)}})}).catch(()=>{});
 }
 
 // --- survey-pattern rendering + editing ---------------------------------- //
@@ -2396,6 +2433,8 @@ $("#zin").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClien
 $("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(-1, r.left+w/2, r.top+h/2); };
 $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
 $("#clear").onclick = ()=>{ clearTrack(); render(); };
+$("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
+  el.style.display=show?"block":"none"; $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
 function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
@@ -2677,6 +2716,9 @@ function applyCmdState(s){
 function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
+  if(prevRun!=="running" && s.run==="running") resetLineStats();                 // new run: reset per-line actuals
+  if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
+  prevRun=s.run;
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
@@ -2784,7 +2826,7 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); render();
+    updateXTE(); accumLineTime(); renderLineTable(); render();
   }
 }
 function connect(){

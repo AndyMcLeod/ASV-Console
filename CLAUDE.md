@@ -108,6 +108,15 @@ clear of a startup-built **nogo model**
 with COLREGS Rule-9 keep-right in channels. Real-time water-level datum
 correction from NOAA CO-OPS; wind/wave sim from NOAA NDBC buoys.
 
+**Survey operational awareness & editing:** (1) hovering the survey line the ASV is
+currently on (running survey) shows a time-to-end-of-line tooltip (remaining dist /
+live SOG); (2) WPT mode edits a punched plan before Upload — drag a waypoint (its
+line endpoint follows), click a waypoint to delete, click a line to delete it (+ its
+endpoints), click open water to add; (3) the **LINES** panel shows a per-line table
+(length, planned time = length/speed, and ACTUAL time accrued while running — keyed
+off the boat's active line, robust to Upload re-routing), written to the session log
+as a `client:survey_lines` event on run end (`POST /api/logevent`).
+
 Public data sources (kept): NOAA ENC / ENCDirect ArcGIS, NOAA CO-OPS water
 levels, NOAA NDBC buoys, NOAA chart tiles. All cached under `charts/`
 (gitignored, regenerated at runtime).

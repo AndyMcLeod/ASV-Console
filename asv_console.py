@@ -2582,6 +2582,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/mission":
             save_mission(body)
             return 200, {"ok": True}
+        if path == "/api/logevent":
+            # Client-supplied structured event for the session log (e.g. the
+            # per-survey-line plan-vs-actual table). Recorded as a clean event.
+            kind = str(body.get("kind") or "client_event")[:64]
+            data = body.get("data") if isinstance(body.get("data"), dict) else {"value": body.get("data")}
+            if LOG is not None:
+                LOG.event("client:" + kind, **data)
+            return 200, {"ok": True}
         if path == "/api/vessel":
             # Switch the active vessel. Only when SAFE (disarmed, not e-stopped,
             # idle) - swapping physics under a running boat is incoherent. In sim
