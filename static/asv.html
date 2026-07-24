@@ -114,13 +114,20 @@
     color:var(--ink-dim);background:rgba(10,17,25,.85);border:1px solid var(--line);border-radius:3px;padding:3px 10px;max-width:70vw;text-align:center;}
   /* quick-start help card */
   .qsback{position:absolute;inset:0;z-index:8;background:rgba(3,6,10,.55);}
+  /* Bounded to the viewport (max-height) and laid out as a column so the header
+     stays pinned and the BODY scrolls - otherwise a long quick-start overflows
+     past the top and bottom of the screen and gets clipped with no way to reach it. */
   .qs{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:430px;max-width:92vw;
+    max-height:88vh;display:flex;flex-direction:column;
     background:rgba(10,17,25,.98);border:1px solid var(--line2);border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.6);font-family:var(--sans);}
   .qs .qh{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);
-    background:linear-gradient(180deg,#182636,#101c28);border-radius:6px 6px 0 0;}
+    background:linear-gradient(180deg,#182636,#101c28);border-radius:6px 6px 0 0;flex:0 0 auto;}
   .qs .qh b{font-family:var(--mono);letter-spacing:.1em;font-size:12px;color:var(--bronze);text-transform:uppercase;}
   .qs .qh .qx{cursor:pointer;color:var(--ink-faint);font-size:18px;line-height:1;} .qs .qh .qx:hover{color:var(--bad);}
-  .qs .qb{padding:12px 16px;font-size:12.5px;line-height:1.5;color:var(--ink-dim);}
+  /* min-height:0 is required - a flex child defaults to min-height:auto, which
+     refuses to shrink below its content and would defeat the scroll. */
+  .qs .qb{padding:12px 16px;font-size:12.5px;line-height:1.5;color:var(--ink-dim);
+    overflow-y:auto;min-height:0;flex:1 1 auto;border-radius:0 0 6px 6px;}
   .qs .qb ol{margin:0;padding-left:18px;} .qs .qb li{margin:5px 0;}
   .qs .qb ol[type="a"]{margin:3px 0 3px 0;}
   .qs .qb b{color:var(--ink);} .qs .qb .tag{font-family:var(--mono);font-size:11px;color:var(--bronze);
