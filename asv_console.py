@@ -85,6 +85,9 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # 8791 (not 8781) so this simulator never collides with the Z-Boat console it was
 # derived from - both default to their own port and can run side by side.
 DEFAULT_WEB_PORT = 8791
+# Base URL of the standalone AIS provider service (ais_service.py). The console
+# proxies it at /api/ais; override with --ais. The AIS layer is opt-in in the UI.
+AIS_BASE = "http://127.0.0.1:8788"
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
 # address depends on the boat's radio/serial-server config; override on the CLI.
 DEFAULT_VCU_HOST = ""
@@ -983,6 +986,9 @@ COOPS_STATIONS_URL = ("https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/"
                       "stations.json?type=waterlevels")
 COOPS_DATA_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 COOPS_APP = "asv_console"
+# Tide-chart window (ENV card): hours of OBSERVED past + PREDICTED future to fetch.
+TIDE_PAST_H = 12
+TIDE_PRED_H = 24
 WATER_STATIONS_CACHE = os.path.join(CHART_DIR, "coops_stations.json")
 _water_stations = None
 _water_stations_lock = threading.Lock()
@@ -1086,6 +1092,78 @@ def _coops_get(station_id, datum, product, timeout=15.0):
         return {"ok": False, "note": "bad value"}
 
 
+def _coops_series(station_id, datum, product, begin, end, interval=None, timeout=15.0):
+    """CO-OPS datagetter over a TIME RANGE (begin/end are 'YYYYMMDD HH:MM' GMT).
+    Returns {'ok':bool, 'series':[{'t','v'}...], 'note':str}. Never raises."""
+    params = {"product": product, "application": COOPS_APP, "station": station_id,
+              "datum": datum, "time_zone": "gmt", "units": "metric", "format": "json",
+              "begin_date": begin, "end_date": end}
+    if interval:
+        params["interval"] = interval
+    try:
+        req = urllib.request.Request(COOPS_DATA_URL + "?" + urllib.parse.urlencode(params),
+                                     headers={"User-Agent": "ASV-Console/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read())
+    except (OSError, ValueError) as e:
+        return {"ok": False, "note": "fetch failed: %s" % e}
+    if isinstance(d, dict) and d.get("error"):
+        return {"ok": False, "note": (d["error"].get("message") or "CO-OPS error").strip()}
+    key = "predictions" if product == "predictions" else "data"
+    rows = (d.get(key) if isinstance(d, dict) else None) or []
+    out = []
+    for row in rows:
+        try:
+            out.append({"t": row.get("t"), "v": round(float(row.get("v")), 3)})
+        except (TypeError, ValueError):
+            pass
+    if not out:
+        return {"ok": False, "note": "no %s data" % product}
+    return {"ok": True, "series": out}
+
+
+def fetch_tide_series(lat, lon, timeout=15.0):
+    """Water-level TIME SERIES for the tide chart at the nearest CO-OPS station:
+    OBSERVED for the past TIDE_PAST_H hours + PREDICTED for the next TIDE_PRED_H.
+    Great Lakes stations have observed levels but NO astronomical tide predictions
+    (the predicted series comes back empty with a note). Never raises."""
+    sts = _load_water_stations()
+    if not sts:
+        return {"ok": False, "note": "CO-OPS station list unavailable (offline?)"}
+    nearest = min(sts, key=lambda s: _haversine_km(lat, lon, s["lat"], s["lng"]))
+    datum = "LWD" if nearest["gl"] else "MLLW"
+    now = time.time()
+    fmt = lambda ts: time.strftime("%Y%m%d %H:%M", time.gmtime(ts))
+    past_args = (nearest["id"], datum, "water_level", fmt(now - TIDE_PAST_H * 3600), fmt(now), None, timeout)
+    if nearest["gl"]:
+        # Great Lakes water level is weather-driven (seiche / wind setup), not
+        # astronomical - CO-OPS has NO tide predictions here and the predictions call
+        # just 400s. Skip it and say so cleanly rather than surfacing a raw HTTP error.
+        past = _coops_series(*past_args)
+        pred = {"ok": False, "note": "no tide forecast at Great Lakes stations (levels are weather-driven)"}
+    else:
+        # tidal station: fetch observed + predicted in parallel to keep it snappy
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fp = ex.submit(_coops_series, *past_args)
+            fd = ex.submit(_coops_series, nearest["id"], datum, "predictions",
+                           fmt(now), fmt(now + TIDE_PRED_H * 3600), "30", timeout)
+            past, pred = fp.result(), fd.result()
+    res = {"ok": bool(past.get("ok") or pred.get("ok")),
+           "station": nearest["id"], "name": nearest["name"], "datum": datum,
+           "gl": bool(nearest["gl"]), "units": "m", "tz": "GMT",
+           "now": time.strftime("%Y-%m-%d %H:%M", time.gmtime(now)), "now_epoch": int(now),
+           "past_h": TIDE_PAST_H, "pred_h": TIDE_PRED_H,
+           "observed": past.get("series", []), "predicted": pred.get("series", [])}
+    notes = []
+    if not past.get("ok"):
+        notes.append("no observed data (%s)" % (past.get("note") or "?"))
+    if not pred.get("ok"):
+        notes.append(pred.get("note") or "no predictions")
+    if notes:
+        res["note"] = " · ".join(notes)
+    return res
+
+
 def _fetch_station_level(station_id, datum, timeout=15.0):
     """Water level above `datum` at one station: real-time OBSERVED first, else
     PROJECTED tide predictions (tidal stations only - Great Lakes have none).
@@ -1180,6 +1258,7 @@ class WaterLevel:
         self._pos = None
         self._manual = None
         self._last = {"ok": False, "note": "waiting for a GPS fix", "source": "none"}
+        self._tide_cache = None       # (epoch, result) for the tide-chart series
         self._force = threading.Event()
         self._stop = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
@@ -1208,6 +1287,22 @@ class WaterLevel:
         else:
             base["source"] = "station" if base.get("ok") else "none"
         return base
+
+    def tide_series(self, force=False):
+        """Tide-chart series (past observed + future predicted) for the vessel's
+        nearest station. Cached ~5 min (CO-OPS' cadence) unless `force`."""
+        with self._lock:
+            pos = self._pos
+            cached = self._tide_cache
+        if not pos:
+            return {"ok": False, "note": "waiting for a GPS fix"}
+        now = time.time()
+        if cached and not force and now - cached[0] < 300:
+            return cached[1]
+        res = fetch_tide_series(pos[0], pos[1])
+        with self._lock:
+            self._tide_cache = (now, res)
+        return res
 
     def _loop(self):
         while not self._stop.is_set():
@@ -1597,6 +1692,7 @@ class VcuLink:
     def estop(self, on): ...
     def set_neutral(self): ...
     def set_approach(self, m): ...          # live-tune the waypoint approach radius
+    def set_unlimited_energy(self, on): ... # sim testing aid (no-op on real hardware)
 
 
 # SCALE: these defaults are sized for the actual boat - a survey ASV
@@ -1662,6 +1758,7 @@ class SimVcu(VcuLink):
         self._estop = False
         self._xte_i = 0.0              # XTE integral trim (deg) - see XTE_KI_DEG
         self._drift_en = (0.0, 0.0)    # last tick's environmental drift (m/s east,north)
+        self._unlimited_energy = False # testing override: hold energy full, no drain/burn
 
     def open(self):
         pass
@@ -1685,6 +1782,12 @@ class SimVcu(VcuLink):
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
+
+    def set_unlimited_energy(self, on):    # testing aid: full energy, no drain/burn (any time)
+        self._unlimited_energy = bool(on)
+        if on:                             # snap the active source to full immediately on enable
+            self.battery_v = BATT_FULL_V
+            self.fuel_l = FUEL_CAPACITY_L
 
     def start(self):
         if not self._plan:
@@ -1861,7 +1964,12 @@ class SimVcu(VcuLink):
         self._drift_en = (drift_e, drift_n)
         # Energy burn: battery voltage sags linearly with load; diesel burns fuel at
         # a rate that climbs ~cubically with speed (idle hotel load -> full-throttle).
-        if POWER_TYPE == "fuel":
+        # The unlimited-energy testing override holds the active source at full and
+        # skips the drain/burn entirely (both sources, so it works on any vessel).
+        if self._unlimited_energy:
+            self.battery_v = BATT_FULL_V
+            self.fuel_l = FUEL_CAPACITY_L
+        elif POWER_TYPE == "fuel":
             frac = clamp(self.sog_kn / max(1e-6, SPEED_KN["high"]), 0.0, 1.0)
             burn_lph = FUEL_BURN_IDLE + (FUEL_BURN_FULL - FUEL_BURN_IDLE) * (frac ** FUEL_BURN_EXP)
             self.fuel_l = max(0.0, self.fuel_l - burn_lph * dt / 3600.0)
@@ -1891,6 +1999,7 @@ class SimVcu(VcuLink):
             # other stays None so state()/UI shows only the relevant gauge)
             "battery_v": round(self.battery_v, 2) if POWER_TYPE == "battery" else None,
             "fuel_l": round(self.fuel_l, 1) if POWER_TYPE == "fuel" else None,
+            "unlimited_energy": self._unlimited_energy,
             "time": time.strftime("%H:%M:%S", time.gmtime()),
             "wp_index": self._wp_index,
             "wp_total": len(self._plan),
@@ -2006,6 +2115,14 @@ class Engine:
         self.wp_index = 0
         self.wp_total = 0
         self._misses = 0
+        # Identity of the current link session. A fresh value on every connect() -
+        # and Reset reconnects - so the browser can tell a power-cycle from a resume
+        # and drop the stale trail (see checkBoot in asv.html). Starts at BOOT_ID.
+        self.boot_id = BOOT_ID
+        # Energy override (testing aid): report the pack/tank as full regardless of
+        # the real reading, and (in sim) stop the drain/burn. Applies in EVERY mode
+        # and to every behaviour - see set_energy_override / state().
+        self.energy_override = False
 
     # -- SSE plumbing ------------------------------------------------------ #
     def subscribe(self):
@@ -2061,6 +2178,9 @@ class Engine:
             self.run = "idle"
             self.wp_index = self.wp_total = 0
             self._misses = 0
+            # new link session = new identity (a Reset reconnects, so the browser
+            # sees the id change and drops the previous trail)
+            self.boot_id = "%d-%d" % (os.getpid(), int(time.time() * 1000))
             self.link = self.LINK_IDLE
             self._stop.clear()
             self._thread = threading.Thread(target=self._run, daemon=True)
@@ -2144,6 +2264,26 @@ class Engine:
                     self._link.set_approach(m)
                 except Exception:
                     pass
+
+    def set_energy_override(self, on):
+        """Energy override (testing aid): report the pack/tank as full regardless of
+        the real reading, and - in sim - stop the drain/burn. Applies in EVERY mode and
+        to every behaviour, mission running or not: it just forces the energy the console
+        sees (battery voltage or fuel tank, whichever the vessel uses). Not gated on
+        connection or mode."""
+        on = bool(on)
+        with self._lock:
+            self.energy_override = on
+            link = self._link
+        if link is not None:
+            try:
+                link.set_unlimited_energy(on)   # sim: hold at full; real: no-op
+            except Exception:
+                pass
+        with self._lock:
+            self.note = ("Energy override ON - reporting full (all modes)." if on
+                         else "Energy override OFF - actual energy reported.")
+        self._push_state()
 
     def start(self):
         with self._lock:
@@ -2267,6 +2407,29 @@ class Engine:
                 self.note = "Command E-STOP released (still SAFE/disarmed)."
         self._push_state()
 
+    def reset(self):
+        """Simulator power-cycle: a clean slate as if the boat were shut down and
+        restarted. Brings up a FRESH SimVcu (energy full, back at the spawn point,
+        no plan) and returns the console to SAFE / idle with no home. Home re-arms
+        automatically on the next fix. SIM ONLY - a real boat can't be teleported and
+        its battery/fuel can't be refilled from the console, so refuse honestly."""
+        with self._lock:
+            mode = self._mode
+        self._require(mode == "sim", "Reset is a simulator-only convenience - a real "
+                      "boat can't be teleported to spawn or have its energy refilled.")
+        # A fresh sim link IS the power-cycle: new SimVcu (full energy, spawn
+        # position) + SAFE state. connect() takes its own lock, so call it unlocked.
+        self.connect("sim", self._host, self._port, "tcp")
+        with self._lock:
+            self.home = None
+            self.behavior = "survey"
+            self.completion = "complete"
+            self.wp_index = self.wp_total = 0
+            self.note = "Reset - fresh sim boot: energy full, SAFE, no plan or home."
+        if LOG is not None:
+            LOG.event("reset")
+        self._push_state()
+
     def return_home(self, route=None):
         with self._lock:
             home = self.home
@@ -2370,9 +2533,22 @@ class Engine:
                                    "warn" if bv < BATT_WARN_V else "ok")
         elif etype != "fuel":
             st["battery_state"] = "unknown"
+        # Energy override forces a full reading in every mode (even when the link
+        # reports no energy telemetry), so it holds regardless of behaviour. It
+        # tops up whichever gauge the active vessel uses.
+        if self.energy_override:
+            if etype == "fuel":
+                st["fuel_l"] = round(FUEL_CAPACITY_L, 1)
+                st["fuel_pct"] = 100.0
+                st["fuel_state"] = "ok"
+            else:
+                st["battery_v"] = round(BATT_FULL_V, 2)
+                st["battery_pct"] = 100.0
+                st["battery_state"] = "ok"
+        st["unlimited_energy"] = self.energy_override
         return {
             "type": "state",
-            "boot_id": BOOT_ID,
+            "boot_id": self.boot_id,
             "mode": self._mode,
             "host": self._host,
             "link": self.link,
@@ -2483,7 +2659,8 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        root = self.path.split("?", 1)[0]            # tolerate a ?cb= cache-buster on the page URL
+        if root == "/" or root.startswith("/index"):
             # Read the page fresh each request so edits show up on a browser
             # refresh without a server restart (a single-operator console - the
             # tiny re-read is free, and it avoids serving a stale cached UI).
@@ -2512,8 +2689,13 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_enc()
         elif self.path.startswith("/api/waterlevel"):
             self._send(200, json.dumps(WATER.snapshot()))
+        elif self.path.startswith("/api/tide"):     # tide-chart series (ENV card)
+            force = "force=1" in self.path or "force=true" in self.path
+            self._send(200, json.dumps(WATER.tide_series(force=force)))
         elif self.path.startswith("/api/env"):
             self._send(200, json.dumps(ENV.snapshot()))
+        elif self.path.startswith("/api/ais"):
+            self._serve_ais()
         elif self.path == "/api/mission":
             self._send(200, json.dumps(load_mission()))
         elif self.path == "/api/vessel":
@@ -2557,6 +2739,29 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:
             return self._send(500, json.dumps({"error": str(e)}))
         self._send(200, data, "application/x-ndjson; charset=utf-8")
+
+    def _serve_ais(self):
+        # /api/ais?bbox=W,S,E,N -> proxy to the standalone AIS service (ais_service.py,
+        # AIS_BASE). The console queries the service so the browser never touches the
+        # AIS feeds or any API key directly. Returns the service's JSON, or a clean
+        # {ok:false} when it's not running (the layer just shows "AIS offline").
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = urllib.parse.parse_qs(qs)
+        bbox = params.get("bbox", [""])[0]
+        url = "%s/vessels" % AIS_BASE.rstrip("/")
+        query = "max=800"
+        if bbox:
+            query = "bbox=%s&%s" % (urllib.parse.quote(bbox, safe=",-."), query)
+        try:
+            req = urllib.request.Request(url + "?" + query,
+                                         headers={"User-Agent": "asv-console/ais-proxy"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                data = r.read().decode("utf-8", "replace")
+            self._send(200, data, "application/json")
+        except Exception as e:
+            self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
+                                        "note": "AIS service unreachable at %s (%s)"
+                                        % (AIS_BASE, type(e).__name__)}))
 
     def _serve_enc(self):
         # /api/enc?bbox=W,S,E,N&min_depth=X -> role-tagged ENC vector features.
@@ -2672,6 +2877,10 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.set_home()
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
                 ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
+            elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
+                ENGINE.reset()
+            elif path == "/api/cmd/energy":            # energy override (report full) on/off, all modes
+                ENGINE.set_energy_override(bool(body.get("unlimited")))
             else:
                 return 404, {"error": "not found"}
             return 200, {"ok": True, "state": ENGINE.state()}
@@ -2729,6 +2938,7 @@ def pick_browser(pref):
 
 
 def main():
+    global AIS_BASE
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
@@ -2741,6 +2951,8 @@ def main():
     ap.add_argument("--vcu-port", type=int, default=DEFAULT_VCU_PORT)
     ap.add_argument("--vessel", default=DEFAULT_VESSEL_ID,
                     help="vessel profile id from vessels/<id>.json (default: %s)" % DEFAULT_VESSEL_ID)
+    ap.add_argument("--ais", default=AIS_BASE, metavar="URL",
+                    help="AIS provider service base URL (ais_service.py; default %(default)s)")
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
@@ -2774,6 +2986,7 @@ def main():
     # for a future playback mode. Created here (not at import) so --help /
     # --fetch-charts never spawn a log file. Best-effort; never fatal.
     global LOG
+    AIS_BASE = args.ais
     LOG = SessionLogger(enabled=not args.no_log)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],

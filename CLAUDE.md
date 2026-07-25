@@ -27,6 +27,7 @@ python asv_console.py --sim --vessel example_usv_4m             # study a differ
 - State + telemetry stream over SSE at `/events`; snapshot at `/api/state` (live telemetry is nested under `status`).
 - Session recorder writes `logs/*.jsonl` (disable with `--no-log`); playback reads them via `/api/logs`, `/api/log?file=`.
 - `--acm <host>` (generic VCU host) + `--transport {tcp,serial}` for a real link; `RealVcu` opens the transport but **refuses to actuate** (no wire format implemented — honest 409, never a fabricated frame).
+- **AIS layer (2026-07-25):** selectable **AIS** overlay of nearby vessels, data from a **separate stdlib script `ais_service.py`** the console proxies at `/api/ais` (`--ais URL`, default `http://127.0.0.1:8788`). Service sources: **digitraffic** (keyless REST, verified live), **aisstream** (global WS, free key; minimal stdlib WS client), **nmea** (RTL-SDR/AIS-catcher AIVDM over TCP/UDP; bundled stdlib AIVDM decoder verified vs canonical vectors). Feeds + key live in the service, never the browser. Identical layer in the Z-Boat console; `ais_service.py` is the same generic file in both. Situational-awareness only; client draw/hover UX still needs a real-browser check.
 
 ## Architecture
 

@@ -8,7 +8,7 @@
   :root{
     --abyss:#05080c; --hull:#0a1119; --line:#16222e; --line2:#22323f;
     --ink:#d7e3ea; --ink-dim:#8ba0ad; --ink-faint:#54697a; --bronze:#c8862b;
-    --ok:#3fbf6b; --warn:#d99a2b; --bad:#d9534f; --track:#39c0ff; --asv:#ffcf3f;
+    --ok:#3fbf6b; --warn:#d99a2b; --bad:#d9534f; --track:#39c0ff; --asv:#ffcf3f; --magenta:#e05cff;
     --mono:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   }
@@ -42,6 +42,10 @@
   .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok);}
   .dot.lost{background:var(--bad);box-shadow:0 0 8px var(--bad);}
   .batt b.ok{color:var(--ok);} .batt b.warn{color:var(--warn);} .batt b.critical{color:var(--bad);}
+  /* click the energy pill (BATT/FUEL) anywhere to toggle the energy-full override; magenta = on */
+  .pill.batt{cursor:pointer;} .pill.batt:hover{border-color:var(--ink-dim);}
+  .pill.batt.ovr{border-color:var(--magenta);background:rgba(224,92,255,.12);}
+  .pill.batt.ovr .k, .pill.batt.ovr b{color:var(--magenta)!important;}
 
   /* master-control safety banner - always visible */
   .rcbanner{position:absolute;left:50%;transform:translateX(-50%);top:auto;bottom:84px;z-index:6;
@@ -69,6 +73,7 @@
   .cbtn.estop{background:#3a1210;border-color:var(--bad);color:#ff8f8b;font-weight:700;}
   .cbtn.estop.on{background:var(--bad);color:#fff;}
   .cbtn.estop:hover{border-color:var(--bad);color:#fff;}
+  .cbtn.reset{border-style:dashed;} .cbtn.reset:hover:not(:disabled){border-color:var(--bronze);color:var(--bronze);}
   .cdiv{width:1px;align-self:stretch;background:var(--line);margin:0 2px;}
 
   .panel{position:absolute;left:14px;top:96px;z-index:6;width:158px;background:rgba(10,17,25,.92);
@@ -117,7 +122,8 @@
   /* Bounded to the viewport (max-height) and laid out as a column so the header
      stays pinned and the BODY scrolls - otherwise a long quick-start overflows
      past the top and bottom of the screen and gets clipped with no way to reach it. */
-  .qs{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9;width:430px;max-width:92vw;
+  /* anchored to the LOWER-LEFT corner (clear of the bottom-right NOAA-ENC link). */
+  .qs{position:absolute;left:14px;bottom:14px;z-index:9;width:430px;max-width:92vw;
     max-height:88vh;display:flex;flex-direction:column;
     background:rgba(10,17,25,.98);border:1px solid var(--line2);border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.6);font-family:var(--sans);}
   .qs .qh{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);
@@ -126,8 +132,11 @@
   .qs .qh .qx{cursor:pointer;color:var(--ink-faint);font-size:18px;line-height:1;} .qs .qh .qx:hover{color:var(--bad);}
   /* min-height:0 is required - a flex child defaults to min-height:auto, which
      refuses to shrink below its content and would defeat the scroll. */
+  /* bound the body directly (not just via flex) so it ALWAYS scrolls when the card is
+     bottom-anchored - a flex child under an absolute, content-sized card doesn't
+     reliably inherit a scroll height. 46px ≈ the header. */
   .qs .qb{padding:12px 16px;font-size:12.5px;line-height:1.5;color:var(--ink-dim);
-    overflow-y:auto;min-height:0;flex:1 1 auto;border-radius:0 0 6px 6px;}
+    overflow-y:auto;min-height:0;flex:1 1 auto;max-height:calc(88vh - 46px);border-radius:0 0 6px 6px;}
   .qs .qb ol{margin:0;padding-left:18px;} .qs .qb li{margin:5px 0;}
   .qs .qb ol[type="a"]{margin:3px 0 3px 0;}
   .qs .qb b{color:var(--ink);} .qs .qb .tag{font-family:var(--mono);font-size:11px;color:var(--bronze);
@@ -164,6 +173,7 @@
 <body>
   <div id="map"><div id="tiles"></div><canvas id="overlay"></canvas></div>
   <div id="lineTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.94);color:#bfe8c8;border:1px solid #2a7a45;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
+  <div id="aisTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.95);color:#c8dbe6;border:1px solid #3a6a8a;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
   <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
@@ -183,7 +193,7 @@
     <div class="pill" title="Bearing and range from Home to the ASV."><span class="k">HOME→</span><b id="p_home">--</b></div>
     <div class="pill" title="Vessel pitch (bow up +). In the sim, driven by the sea state (head seas pitch most)."><span class="k">PITCH</span><b id="p_pitch">--</b></div>
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
-    <div class="pill batt"><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
+    <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
@@ -202,11 +212,13 @@
     <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; editing in BND always shows it.">AREA</button>
     <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
+    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
-    <button class="ctl" id="helpBtn" title="Quick start / help">?</button>
   </div>
+  <!-- Quick Start / help button — pinned to the LOWER-LEFT corner (opens the popup, which also anchors there). -->
+  <button class="ctl" id="helpBtn" title="Quick start / help" style="position:absolute;left:14px;bottom:14px;z-index:7;">?</button>
 
   <div class="panel" id="linePanel" style="display:none">
     <div class="phead" id="linePanelHead" title="Drag to move">Survey settings</div>
@@ -294,6 +306,19 @@
       <button class="ctl small" id="env_auto" title="Drop the override, use live buoy data" style="flex:1">Auto</button>
       <button class="ctl small" id="env_ref" title="Refetch from the nearest NOAA buoys" style="width:26px;">&#8635;</button>
     </div>
+    <div id="tideBox" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <span style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Tide · water level</span>
+        <span id="tide_ref" title="Refresh tide data from NOAA CO-OPS" style="cursor:pointer;color:var(--ink-faint);font-size:12px;line-height:1;">&#8635;</span>
+      </div>
+      <canvas id="tideChart" style="width:100%;height:104px;display:block;margin-top:4px;"></canvas>
+      <div class="phint" id="tide_note">tide: waiting for a fix…</div>
+    </div>
+    <div id="windBox" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Wind rose</div>
+      <canvas id="windRose" style="width:100%;height:132px;display:block;margin-top:2px;"></canvas>
+      <div class="phint" id="wind_note">--</div>
+    </div>
   </div>
   <div class="panel" id="transitPanel" style="display:none">
     <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
@@ -352,6 +377,7 @@
     <button class="cbtn" id="b_home" disabled title="Set Home to the present position">Set&nbsp;Home</button>
     <span class="cdiv"></span>
     <button class="cbtn estop" id="b_estop">E-STOP</button>
+    <button class="cbtn reset" id="b_reset" title="Sim power-cycle: full energy, boat back at spawn, all plans/lines cleared, SAFE — then reloads the page fresh (cache-busting). As if shut down and restarted.">Reset</button>
   </div>
 
   <div class="vcard" id="vcard">
@@ -372,6 +398,7 @@
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
       <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
       <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
+      <div class="vrow"><span class="vk">Run time</span><span class="vv" id="v_runtime" title="Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent complete. Ticks from Start, including the approach to the survey.">--</span></div>
       <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
       <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
       <div class="vcomms">
@@ -499,6 +526,12 @@ const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+ma
 let nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
             buffer:NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
 let nogoShow = true;                            // nogo overlay wash visibility
+// AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
+const AIS_KEY = "asv_ais_show_v1";
+let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = false;
+const AIS_COL = {cargo:"#4a90d9", tanker:"#d9534f", passenger:"#3fbf6b", fishing:"#39c0ff",
+  tug:"#e8a13f", sailing:"#9b8cf0", pleasure:"#58c0b0", hsc:"#e05fb0", special:"#f0c14a",
+  military:"#b0b0b0", other:"#8fa3b0", unknown:"#8fa3b0"};
 let nogoInit = false;                           // one-shot startup extraction guard
 
 function saveMission(){
@@ -689,6 +722,7 @@ function render(){
   if(encShow) drawENC(toScreen);
   drawNogo(toScreen);
   drawMarks(toScreen);
+  drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
   if(track.length > 1){
     ctx.beginPath();
     track.forEach((p,i)=>{ const s = toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
@@ -828,41 +862,147 @@ function updateLineTip(e){
   tip.textContent="line "+(activeLine+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
-// --- per-line timing: length, PLANNED time (length/speed) and ACTUAL time -------
-// (accrued as wall-clock while the survey runs ON each line; robust to Upload
-// re-routing since it keys off the boat's active line, not waypoint indices).
-// Shown in the LINES table and written to the session log on run end.
+// --- per-component timing: coverage LINES and the TURNS between them ------------
+// A survey is a sequence of independent components - line, turn, line, turn ... -
+// and each is timed on its own:
+//   * LINE time accrues ONLY while the ASV is actually RUNNING that line: moving,
+//     within cross-track tolerance, AND on a heading aligned (parallel or anti-
+//     parallel) with the line. Merely CROSSING a line while transiting (a near-
+//     perpendicular pass) is NOT aligned, so it is never counted - and the turn at
+//     a line's end (heading swinging away) drops out too, so a line's time is the
+//     line body only, not half of each adjoining turn.
+//   * TURN time accrues while the ASV maneuvers between two lines (near a line
+//     endpoint but not running a line). Each turn is its own component {from,to,sec}.
+//     The long approach / inter-area transits (far from the lines) count as neither.
+// Robust to Upload re-routing: keys off geometry (the boat's line + course), not
+// waypoint indices. Shown in the LINES table + written to the session log on end.
 let lineActual=[], lineClock=null, prevRun=null, loggedLines=false;
-function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false; }
+let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
+let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
+function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false;
+  turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; }
+// fold a heading difference to [0,90]: 0 = parallel, 90 = perpendicular (a line runs
+// in either direction, so parallel and anti-parallel both read as aligned).
+function alignDeg(courseDeg, lineDeg){ let d=Math.abs(((courseDeg-lineDeg)%360+360)%360); if(d>180)d=360-d; return Math.min(d,180-d); }
+// turn-zone radius: how close to a line endpoint still counts as a between-lines
+// maneuver vs a long transit. Scaled to the lane spacing so it adapts to the plan.
+function turnZoneM(){
+  let sp=0; if(mission.lines.length>=2){ const g=[]; for(let k=1;k<mission.lines.length;k++) g.push(distTo(mission.lines[k-1].a, mission.lines[k].a)); g.sort((x,y)=>x-y); sp=g[Math.floor(g.length/2)]||0; }
+  return Math.max(20, (mission.arrival_radius_m||2)*8, sp*0.9);
+}
+function nearestEndpointM(){ let d=1e12; for(const L of mission.lines){ d=Math.min(d, distTo(asv,L.a), distTo(asv,L.b)); } return d; }
 function accumLineTime(){
-  const now=performance.now()/1000, onLine = activeXTE<=Math.max(15,(mission.arrival_radius_m||5)*4);
+  const now=performance.now()/1000, dt=(lineClock!=null)?(now-lineClock):0;
   if(lineActual.length!==mission.lines.length) lineActual=mission.lines.map((_,k)=>lineActual[k]||0);
-  if(S.run==="running" && S.behavior==="survey" && activeLine>=0 && onLine && lineClock!=null && activeLine<lineActual.length)
-    lineActual[activeLine]+=(now-lineClock);
+  const running = S.run==="running" && S.behavior==="survey";
+  runLineIdx=-1;
+  if(running && dt>0 && asv && activeLine>=0 && activeLine<mission.lines.length){
+    const XTE_TOL=Math.max(15,(mission.arrival_radius_m||2)*4), ALIGN_TOL=30;
+    const sog=(S.status&&S.status.sog_kn)||0, moving=sog>0.3;
+    const course=moving ? ((S.status&&S.status.cog_deg!=null)?S.status.cog_deg:asv.hdg) : null;
+    const L=mission.lines[activeLine];
+    const aligned = course!=null && alignDeg(course, azTo(L.a,L.b))<=ALIGN_TOL;
+    const onLineBody = moving && aligned && activeXTE<=XTE_TOL;
+    if(onLineBody){
+      runLineIdx=activeLine; lineActual[activeLine]+=dt;
+      if(curTurn>=0){ turnSeg[curTurn].to=activeLine; curTurn=-1; }   // the open turn led INTO this line
+      lastRunLine=activeLine;
+    } else if(lastRunLine>=0 && nearestEndpointM()<=turnZoneM()){
+      // maneuvering near a line end between two lines = a turn (its own component)
+      if(curTurn<0){ curTurn=turnSeg.length; turnSeg.push({from:lastRunLine, to:-1, sec:0}); }
+      turnSeg[curTurn].sec+=dt;
+    }
+    // else: long approach / inter-area transit -> neither line nor turn
+  }
   lineClock = (S.run==="running") ? now : null;
 }
 function fmtMS(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
 function buildLineTable(){ const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
     return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
+function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
 function renderLineTable(){
   const panel=$("#lineTablePanel"); if(!panel || panel.style.display==="none") return;
   const el=$("#lineTableBody"); if(!el) return;   // header ("Survey lines" + drag grip) is a sibling, kept intact
   const t=buildLineTable();
   if(!t.length){ el.innerHTML="Punch Out + Add to plan to populate."; return; }
   const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
-  const rows=t.map(r=>`<tr><td style="${cell}">${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`).join("");
+  const runningSurvey = S && S.run==="running" && S.behavior==="survey";
+  const rows=t.map(r=>{
+    const active = runningSurvey && (r.line-1)===runLineIdx;   // highlight the line being RUN (not merely nearest)
+    const tr = active ? ' style="background:rgba(63,192,255,.14)"' : '';
+    const mark = active ? '<span style="color:#39c0ff">▸</span>' : '';   // ▸ line under way
+    return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
+  }).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
-  el.innerHTML=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
+  let html=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
+  // TURNS - independent components between lines, timed separately from the lines.
+  const tt=buildTurnTable();
+  if(tt.length){
+    const trs=tt.map((r,i)=>{
+      const act=(i===curTurn);                                  // ↻ turn under way
+      const tr=act?' style="background:rgba(63,192,255,.14)"':'';
+      const mark=act?'<span style="color:#39c0ff">↻</span>':'↻';
+      const lbl=r.to?`${r.from}→${r.to}`:`${r.from}→·`;
+      return `<tr${tr}><td style="${cell}">${mark}${r.turn}</td><td style="${cell};color:var(--ink-faint)">${lbl}</td><td style="${cell};color:${r.sec?'#e8d9a0':'var(--ink-faint)'}">${r.sec?fmtMS(r.sec):'--'}</td></tr>`;
+    }).join("");
+    const TT=tt.reduce((a,r)=>a+r.sec,0);
+    html+=`<div style="color:var(--ink-faint);margin-top:7px">turns</div>`+
+      `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
+      `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${TT?fmtMS(TT):'--'}</td></tr></table>`;
+  }
+  el.innerHTML=html;
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
-  const lines=buildLineTable();
+  const lines=buildLineTable(), turns=buildTurnTable();
   fetch("/api/logevent",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, lines,
+    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, lines, turns,
       total_len_m:lines.reduce((a,r)=>a+r.len_m,0), total_plan_s:lines.reduce((a,r)=>a+r.plan_s,0),
-      total_actual_s:lines.reduce((a,r)=>a+r.actual_s,0)}})}).catch(()=>{});
+      total_actual_s:lines.reduce((a,r)=>a+r.actual_s,0),
+      total_turn_s:turns.reduce((a,r)=>a+r.sec,0)}})}).catch(()=>{});
+}
+
+// --- whole-run elapsed + ETA (ticks from Start, through the approach) ------
+// Elapsed accrues wall-clock ONLY while the run is running (freezes on Pause),
+// so it lines up with the distance-based ETA (remaining route / plan speed).
+let runElapsed=0, runClock=null, runTotalM=0;
+function resetRunTimer(){ runElapsed=0; runClock=null; runTotalM=0; }
+function accumRunTime(){
+  const now=performance.now()/1000;
+  if(S && S.run==="running" && runClock!=null) runElapsed += (now-runClock);
+  runClock = (S && S.run==="running") ? now : null;
+}
+// Distance still to run and total route length, from the boat's current target
+// waypoint onward. Uses the drawn ENC-routed path when present, else the raw plan.
+function routeRemainingM(){
+  const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
+  if(rr.length<1 || !asv) return null;
+  const idx=Math.min(window._wpIndex||0, rr.length-1);
+  let remain=distTo({lat:asv.lat,lon:asv.lon}, rr[idx]);
+  for(let i=idx;i<rr.length-1;i++) remain+=distTo(rr[i],rr[i+1]);
+  let total=0; for(let i=0;i<rr.length-1;i++) total+=distTo(rr[i],rr[i+1]);
+  return {remain, total: total||remain};
+}
+function updateRunTime(){
+  const el=$("#v_runtime"); if(!el) return;
+  const run=S&&S.run;
+  if(run!=="running" && run!=="paused"){
+    el.textContent = (run==="complete" && runElapsed>0) ? ("done · "+fmtMS(runElapsed)) : "--";
+    return;
+  }
+  const elapsed=fmtMS(runElapsed);
+  const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444, rr=routeRemainingM();
+  if(!rr || spd<=0){ el.textContent=elapsed+(run==="paused"?" · paused":""); return; }
+  if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;          // full run length captured at Start (incl. approach)
+  const pct=runTotalM>0 ? Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM))) : 0;
+  if(run==="paused"){ el.textContent=elapsed+" · paused · "+pct+"%"; return; }
+  if((S.completion||mission.completion)==="repeat"){
+    const lap=(S.status&&S.status.laps!=null)?S.status.laps:0;
+    el.textContent=elapsed+" · lap "+(lap+1)+" · ~"+fmtMS(rr.remain/spd)+" to lap end"; return;
+  }
+  el.textContent=elapsed+" · ~"+fmtMS(rr.remain/spd)+" left · "+pct+"%";
 }
 
 // --- survey-pattern rendering + editing ---------------------------------- //
@@ -2116,6 +2256,69 @@ function drawMarks(toScreen){
   ctx.restore();
 }
 
+// --- AIS layer: nearby vessels from the standalone AIS service (/api/ais) ------
+// The console proxies ais_service.py; the browser only polls /api/ais for the current
+// viewport. Draw each vessel as a triangle pointing along its course, coloured by
+// ship type; hover for identity/course/speed. Situational awareness only.
+function viewportBBox(){ const o=originPx(), sz=viewSize();
+  const a=worldToLatLon(o.x, o.y, zoom), b=worldToLatLon(o.x+sz.w, o.y+sz.h, zoom);
+  return {W:Math.min(a.lon,b.lon), S:Math.min(a.lat,b.lat), E:Math.max(a.lon,b.lon), N:Math.max(a.lat,b.lat)}; }
+async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
+  try{ const b=viewportBBox();
+    const r=await fetch(`/api/ais?bbox=${b.W.toFixed(4)},${b.S.toFixed(4)},${b.E.toFixed(4)},${b.N.toFixed(4)}`);
+    const d=await r.json();
+    aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
+    aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
+            : (aisVessels.length ? "" : "no vessels in view");
+  }catch(e){ aisVessels=[]; aisNote="AIS query failed"; }
+  finally{ aisBusy=false; render(); }
+}
+function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.toggle("on", on);
+  try{ localStorage.setItem(AIS_KEY, on?"1":"0"); }catch(e){}
+  clearInterval(aisTimer); aisTimer=null;
+  if(on){ pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
+  else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; render(); } }
+function aisAt(clientX, clientY){ if(!aisShow || !aisVessels.length) return null;
+  const o=originPx(), r=mapEl.getBoundingClientRect(), cx=clientX-r.left, cy=clientY-r.top;
+  let best=null, bd=11;
+  for(const v of aisVessels){ const p=worldPx(v.lat,v.lon,zoom);
+    const d=Math.hypot(p.x-o.x-cx, p.y-o.y-cy); if(d<bd){ bd=d; best=v; } }
+  return best; }
+function updateAisTip(e){ const tip=$("#aisTip");
+  if(!aisShow || dragging||patDrag||boundDrag!=null||searchDrag||wpDrag){ tip.style.display="none"; return; }
+  const v=aisAt(e.clientX,e.clientY);
+  if(!v){ tip.style.display="none"; return; }
+  const nm = v.name ? v.name+" · " : "";
+  const sog = v.sog!=null ? v.sog+" kn" : "– kn";
+  const cog = v.cog!=null ? Math.round(v.cog)+"°" : "–";
+  tip.innerHTML = `<b>${nm}MMSI ${v.mmsi}</b><br>${v.cat}${v.type?" ("+v.type+")":""} · SOG ${sog} · COG ${cog} · ${Math.round(v.age)}s ago · ${v.src}`;
+  tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block"; }
+function drawAIS(toScreen){
+  if(!aisShow) return;
+  ctx.save();
+  ctx.font="10px Consolas,monospace"; ctx.textBaseline="alphabetic";
+  for(const v of aisVessels){
+    const s=toScreen(v.lat, v.lon);
+    const stale=(v.age||0)>180;
+    ctx.globalAlpha = stale ? 0.45 : 1;
+    const col = AIS_COL[v.cat] || AIS_COL.unknown;
+    const dir = (v.cog!=null ? v.cog : (v.heading!=null ? v.heading : null));
+    ctx.save(); ctx.translate(s.x, s.y);
+    if(dir!=null) ctx.rotate(dir*Math.PI/180);       // 0deg=N=up; canvas y-down -> compass-correct
+    ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(5,6); ctx.lineTo(0,3); ctx.lineTo(-5,6); ctx.closePath();
+    ctx.fillStyle=col; ctx.fill(); ctx.lineWidth=1; ctx.strokeStyle="#0a141c"; ctx.stroke();
+    if((v.sog||0)>0.5){ ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(0,-14);
+      ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.stroke(); }
+    ctx.restore();
+    if(zoom>=12){ ctx.fillStyle = stale ? "rgba(200,215,225,0.5)" : "#c8dbe6";
+      ctx.fillText(v.name || (""+v.mmsi), s.x+8, s.y+3); }
+  }
+  ctx.globalAlpha=1;
+  if(aisNote){ ctx.fillStyle="rgba(200,215,225,0.75)"; ctx.font="11px Consolas,monospace";
+    ctx.fillText("AIS: "+aisNote, 12, 20); }
+  ctx.restore();
+}
+
 // --- nogo violation highlight (why a route / leg was refused) -------------- //
 // When a route is refused (Go-To / RTH) or one or more plan legs can't be routed
 // clear (Transit / Survey Upload / Punch Out), remember the offending keep-out(s)
@@ -2382,6 +2585,21 @@ mapEl.addEventListener("mousedown", e=>{
   dragging=true; last={x:e.clientX,y:e.clientY};
   downAt={x:e.clientX,y:e.clientY}; mapEl.classList.add("drag"); });
 window.addEventListener("mouseup", e=>{
+  // SHIFT-click a survey line deletes it — in ANY mode (not just WPT) and taking
+  // priority over pan / waypoint-drag, so it "just works" wherever the user clicks.
+  if(e.shiftKey && mission.lines.length && downAt){
+    const moved = Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y);
+    if(moved <= 5){
+      const rr = mapEl.getBoundingClientRect();
+      const li = surveyLineAtPx(e.clientX-rr.left, e.clientY-rr.top, 8);
+      if(li >= 0){
+        deleteLineByIndex(li); saveMission(); render();
+        patDrag=null; boundDrag=null; searchDrag=false; wpDrag=null; dragging=false;
+        downAt=null; mapEl.classList.remove("drag");
+        return;
+      }
+    }
+  }
   if(patDrag){ patDrag=null; downAt=null; updatePatReadout(); saveMission(); return; }
   if(boundDrag!=null){ boundDrag=null; downAt=null; patClip=null; updatePatReadout(); saveMission(); render(); return; }
   if(searchDrag){ searchDrag=false; downAt=null; updateSearchPanel(); return; }
@@ -2432,6 +2650,7 @@ window.addEventListener("mousemove", e=>{
   const ll = worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom);
   $("#r_cursor").textContent = fmtLL(ll.lat, ll.lon);
   updateLineTip(e);                              // time-to-end-of-line when hovering the active line
+  updateAisTip(e);                               // AIS vessel identity/course on hover
   if(patDrag){ pat[patDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
@@ -2461,6 +2680,7 @@ $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ cen
 $("#clear").onclick = ()=>{ clearTrack(); render(); };
 $("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
   el.style.display=show?"block":"none"; $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
+$("#aisBtn").onclick = ()=> setAIS(!aisShow);
 function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
@@ -2740,6 +2960,39 @@ $("#b_estop").onclick = async ()=>{
   if(on){ runRoute=null; runUnsafe=[]; }
   cmd("/api/cmd/estop", {on});
 };
+// Mission Reset (sim power-cycle): clear the persisted plan + trail, power-cycle the
+// sim boat (full energy, spawn point, SAFE), then HARD-RELOAD the page from the
+// server with a cache-buster. The reload makes it a true "shut down and restarted":
+// it drops any client state AND guarantees the freshest UI (a stale cached page can
+// never survive a Reset - handy right after pulling new code).
+$("#b_reset").onclick = async ()=>{
+  if(!await guiConfirm("Reset the mission",
+    "Clears ALL plans and survey / search / transit / Go-To lines and the trail, refills the energy, "
+    +"returns the sim boat to its spawn point, and reloads the page fresh — as if shut down and restarted. (Simulator only.)")) return;
+  // clear the persisted plan + the trail so the reloaded page comes up clean
+  mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
+             speed: "survey", completion: "complete", buffer_m: 3};
+  boundary = []; boundaryClosed = false;
+  clearTrack();
+  flashNote("Resetting — reloading fresh…");
+  clearTimeout(saveTimer);                        // cancel the throttled save; persist now instead
+  try{ await fetch("/api/mission", {method:"POST", headers:{"Content-Type":"application/json"},
+       body: JSON.stringify({...mission, boundary, boundary_closed: boundaryClosed})}); }catch(e){}
+  await cmd("/api/cmd/reset");                     // power-cycle the sim boat server-side
+  // cache-busting reload: a unique URL can't be served from any browser cache, and the
+  // server sends no-store, so the page (all inline JS/CSS) always comes back fresh.
+  location.replace(location.pathname + "?cb=" + Date.now());
+};
+
+// Energy override: click the energy pill (BATT/FUEL) anywhere to toggle "report the
+// energy as full" (and stop the sim drain/burn). Applies in every mode/behaviour,
+// running or not. The pill turns MAGENTA while the override is on (see onState).
+$("#battPill").onclick = ()=>{
+  const on = !(S.status && S.status.unlimited_energy);
+  cmd("/api/cmd/energy", {unlimited: on});
+  flashNote(on ? "Energy override ON — reporting full."
+               : "Energy override OFF — actual energy reported.");
+};
 
 function applyCmdState(s){
   const connected = s.link && s.link !== "idle" || s.mode;
@@ -2758,6 +3011,7 @@ function applyCmdState(s){
   $("#b_home").disabled = !connected;
   $("#b_estop").classList.toggle("on", estop);
   $("#b_estop").textContent = estop ? "CLEAR" : "E-STOP";
+  $("#b_reset").disabled = s.mode !== "sim";     // sim power-cycle only (real boat can't be teleported/refilled)
   // transit Follow follows the same arm gate as Go-To (no survey plan needed)
   const trf = $("#tr_follow");
   if(trf) trf.disabled = !(transit.length>=1 && armed && !estop);
@@ -2767,9 +3021,10 @@ function applyCmdState(s){
 function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
-  if(prevRun!=="running" && s.run==="running") resetLineStats();                 // new run: reset per-line actuals
+  if(prevRun!=="running" && prevRun!=="paused" && s.run==="running"){ resetLineStats(); resetRunTimer(); }  // new run: reset per-line actuals + whole-run timer
   if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
   prevRun=s.run;
+  accumRunTime();                                // accrue whole-run elapsed (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
@@ -2829,6 +3084,8 @@ function onState(s){
     pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
     vb.textContent = btxt; vb.className = "vv " + bcls;
   }
+  // energy-override: the energy pill turns MAGENTA while the override is on (click it to toggle)
+  $("#battPill").classList.toggle("ovr", !!st.unlimited_energy);
 
   // waypoint progress
   const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");
@@ -2877,7 +3134,7 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); accumLineTime(); renderLineTable(); render();
+    updateXTE(); accumLineTime(); updateRunTime(); renderLineTable(); render();
   }
 }
 function connect(){
@@ -2943,16 +3200,114 @@ function updateEnvUI(env, st){
   if(env.source!=="manual"){ ph("#env_wind_kn", w?String(Math.round(w.speed_kn)):"auto");
     ph("#env_wind_from", w?String(Math.round(w.dir_from_deg)):"auto");
     ph("#env_hs", sea?sea.hs_m.toFixed(1):"auto"); ph("#env_wave_from", sea?String(Math.round(sea.dir_from_deg)):"auto"); }
+  if($("#envPanel").style.display!=="none") drawWindRose(env);
+}
+// Compass rose for the wind (and, faintly, the sea) below the tide chart. The arrow
+// flies WITH the wind (tail on the FROM bearing, head downwind), the ring is labelled
+// N/E/S/W, and the caption gives speed + the FROM bearing.
+function compassName(d){ const n=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]; return n[Math.round(((d%360)+360)%360/22.5)%16]; }
+function drawWindRose(env){
+  const cv=$("#windRose"), note=$("#wind_note"); if(!cv) return;
+  const dpr=window.devicePixelRatio||1, cssW=cv.clientWidth||228, cssH=cv.clientHeight||132;
+  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  const ctx=cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,cssW,cssH);
+  const cx=cssW/2, cy=cssH/2, R=Math.min(cx,cy)-14;
+  const P=(ox,oy,brg,rad)=>{ const a=brg*Math.PI/180; return {x:ox+rad*Math.sin(a), y:oy-rad*Math.cos(a)}; };
+  // ring + 30° ticks + cardinal labels
+  ctx.strokeStyle="rgba(120,150,180,.35)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,2*Math.PI); ctx.stroke();
+  for(let b=0;b<360;b+=30){ const p0=P(cx,cy,b,R-(b%90===0?7:4)), p1=P(cx,cy,b,R);
+    ctx.strokeStyle="rgba(120,150,180,"+(b%90===0?".55":".3")+")"; ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke(); }
+  ctx.font="9px Consolas,monospace"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="rgba(200,215,230,.6)";
+  [["N",0],["E",90],["S",180],["W",270]].forEach(([t,b])=>{ const p=P(cx,cy,b,R+8); ctx.fillText(t,p.x,p.y); });
+  const off = env && env.source==="off";
+  const w = env && env.wind, sea = env && env.sea;
+  // arrow flying WITH the flow: tail on the FROM bearing, head on the downwind bearing
+  const arrow=(fromDeg,color,lw,headLen)=>{
+    const flow=(fromDeg+180)%360, tail=P(cx,cy,fromDeg,R*0.82), tip=P(cx,cy,flow,R*0.82);
+    ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(tail.x,tail.y); ctx.lineTo(tip.x,tip.y); ctx.stroke();
+    const b1=P(tip.x,tip.y,(fromDeg-25+360)%360,headLen), b2=P(tip.x,tip.y,(fromDeg+25)%360,headLen);  // barbs point upwind
+    ctx.beginPath(); ctx.moveTo(tip.x,tip.y); ctx.lineTo(b1.x,b1.y); ctx.moveTo(tip.x,tip.y); ctx.lineTo(b2.x,b2.y); ctx.stroke();
+  };
+  ctx.textBaseline="middle"; ctx.textAlign="center";
+  if(off){ ctx.fillStyle="var(--ink-faint)"; ctx.fillText("sim only", cx, cy); if(note){ note.textContent="sim only — connect the simulator"; note.style.color="var(--ink-faint)"; } return; }
+  // sea direction (faint, dashed) first so the wind sits on top
+  if(sea && sea.dir_from_deg!=null){ ctx.setLineDash([4,3]); arrow(sea.dir_from_deg, "rgba(74,144,208,.7)", 1.4, 6); ctx.setLineDash([]); }
+  if(w && w.speed_kn!=null && w.speed_kn>0.2){
+    arrow(w.dir_from_deg, "#e0a83f", 2.2, 9);
+    ctx.fillStyle="var(--ink)"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText(w.speed_kn.toFixed(0), cx, cy-1);
+    ctx.font="8px Consolas,monospace"; ctx.fillStyle="rgba(200,215,230,.6)"; ctx.fillText("kn", cx, cy+9);
+    if(note){ note.textContent="wind "+w.speed_kn.toFixed(0)+" kn from "+Math.round(w.dir_from_deg)+"° ("+compassName(w.dir_from_deg)+")"
+      +(sea&&sea.dir_from_deg!=null?" · sea from "+Math.round(sea.dir_from_deg)+"°":""); note.style.color="var(--ink-dim)"; }
+  } else {
+    ctx.fillStyle="var(--ink-faint)"; ctx.font="10px Consolas,monospace"; ctx.fillText("calm", cx, cy);
+    if(note){ note.textContent = env&&env.enabled ? "calm — no wind" : "wind forces off"; note.style.color="var(--ink-faint)"; }
+  }
 }
 function postEnv(body, cb){
   fetch("/api/env", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})
     .then(r=>r.json()).then(j=>{ if(j.env) updateEnvUI(j.env, S.status||{}); if(cb) cb(j); }).catch(()=>{});
 }
+// --- tide / water-level chart (ENV card): 12 h observed + 24 h predicted ------
+// Fetched from NOAA CO-OPS at the vessel's nearest station while the ENV card is up;
+// refreshed on CO-OPS' ~6 min cadence. A red vertical line marks the current time,
+// observed is solid, predicted dashed. (Great Lakes stations have no tide prediction.)
+let tideData=null, tideTimer=null, tideBusy=false;
+function fetchTide(force){
+  if(tideBusy) return; tideBusy=true;
+  const note=$("#tide_note"); if(note && !tideData) note.textContent="tide: loading…";
+  fetch("/api/tide"+(force?"?force=1":"")).then(r=>r.json())
+    .then(j=>{ tideData=j; drawTide(); }).catch(()=>{}).finally(()=>{ tideBusy=false; });
+}
+function _tideEpoch(s){ return s ? Date.parse(s.replace(" ","T")+"Z")/1000 : null; }
+function drawTide(){
+  const cv=$("#tideChart"), note=$("#tide_note"); if(!cv) return;
+  const dpr=window.devicePixelRatio||1, cssW=cv.clientWidth||232, cssH=cv.clientHeight||104;
+  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  const ctx=cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,cssW,cssH);
+  const d=tideData;
+  const obs=((d&&d.observed)||[]).map(p=>({t:_tideEpoch(p.t),v:p.v})).filter(p=>p.t);
+  const prd=((d&&d.predicted)||[]).map(p=>({t:_tideEpoch(p.t),v:p.v})).filter(p=>p.t);
+  const all=obs.concat(prd);
+  if(!d || !all.length){
+    note.textContent = (d&&d.note) ? d.note : (d&&!d.ok ? (d.note||"tide unavailable") : "tide: no samples");
+    note.style.color="var(--warn)"; return;
+  }
+  const now=d.now_epoch||(Date.now()/1000), t0=now-(d.past_h||12)*3600, t1=now+(d.pred_h||24)*3600;
+  let vmin=Math.min(...all.map(p=>p.v)), vmax=Math.max(...all.map(p=>p.v));
+  if(vmax-vmin<0.1){ const m=(vmin+vmax)/2; vmin=m-0.5; vmax=m+0.5; }
+  const padV=(vmax-vmin)*0.14; vmin-=padV; vmax+=padV;
+  const padL=26, padR=6, padT=6, padB=13, W=cssW, H=cssH;
+  const X=t=>padL+(t-t0)/(t1-t0)*(W-padL-padR), Y=v=>padT+(vmax-v)/(vmax-vmin)*(H-padT-padB);
+  ctx.font="9px Consolas,monospace"; ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+  // horizontal gridlines + level labels (m)
+  ctx.strokeStyle="rgba(120,150,180,.16)"; ctx.lineWidth=1;
+  [vmax,(vmin+vmax)/2,vmin].forEach(v=>{ const y=Y(v); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    ctx.fillStyle="rgba(200,215,230,.55)"; ctx.fillText(v.toFixed(2), 1, y+3); });
+  // x hour ticks every 12 h
+  ctx.textAlign="center"; ctx.fillStyle="rgba(200,215,230,.5)";
+  for(let h=-(d.past_h||12); h<=(d.pred_h||24); h+=12){ const x=X(now+h*3600); ctx.fillText((h>0?"+"+h:h)+"h", x, H-3); }
+  ctx.textAlign="left";
+  const plot=(pts,color,dash)=>{ if(pts.length<1) return; ctx.setLineDash(dash||[]); ctx.strokeStyle=color; ctx.lineWidth=1.6;
+    ctx.beginPath(); pts.forEach((p,i)=>{ const x=X(p.t),y=Y(p.v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke(); ctx.setLineDash([]); };
+  plot(obs, "#3fbf6b");                                   // observed = solid green
+  plot(obs.length&&prd.length ? [obs[obs.length-1]].concat(prd) : prd, "#e0a83f", [5,3]); // predicted = dashed amber
+  // red NOW line
+  ctx.strokeStyle="#ff5a3c"; ctx.lineWidth=1.4; const xn=X(now);
+  ctx.beginPath(); ctx.moveTo(xn,padT); ctx.lineTo(xn,H-padB); ctx.stroke();
+  note.style.color="var(--ink-dim)";
+  note.textContent = (d.name||d.station||"station")+" · "+(d.datum||"")+(d.note?" · "+d.note:"");
+}
+$("#tide_ref").onclick = ()=>{ $("#tide_note").textContent="tide: refreshing…"; fetchTide(true); };
+window.addEventListener("resize", ()=>{ if($("#envPanel").style.display!=="none"){ if(tideData) drawTide(); drawWindRose(S.env||{}); } });
 $("#envBtn").onclick = ()=>{
   const p=$("#envPanel"), show = p.style.display==="none";
   if(show){ setMode("pan"); }                     // hide any mode panel behind it
   p.style.display = show ? "block" : "none";
   $("#envBtn").classList.toggle("on", show);
+  if(show){ fetchTide(); tideTimer=setInterval(fetchTide, 360000); drawWindRose(S.env||{}); }   // refresh while open
+  else if(tideTimer){ clearInterval(tideTimer); tideTimer=null; }
 };
 $("#env_on").onchange = ()=>postEnv({enabled: $("#env_on").checked});
 $("#env_ref").onclick = ()=>{ $("#env_src").textContent="refetching from nearest buoys…"; postEnv({refresh:true}); };
@@ -2982,6 +3337,7 @@ $("#qsBack").onclick = ()=>{ showQS(false); try{ localStorage.setItem(QS_KEY,"1"
 try{ if(!localStorage.getItem(QS_KEY)) showQS(true); }catch(e){ showQS(true); }
 try{ boundaryShow = localStorage.getItem(BND_VIS_KEY) !== "0"; }catch(e){}
 $("#areaBtn").classList.toggle("on", boundaryShow);
+try{ if(localStorage.getItem(AIS_KEY)==="1") setAIS(true); }catch(e){}   // restore AIS layer toggle
 
 // TIME pill: local + UTC, ticking every second (independent of state updates).
 function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");

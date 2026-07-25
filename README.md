@@ -83,6 +83,42 @@ python asv_console.py --fetch-charts "42.137,-80.087,3" --zooms 8-16
 A **Quick Start** card opens on first launch (and any time via the `?` button)
 with the survey-planning and command steps below.
 
+### AIS layer (nearby vessels)
+
+Marine **AIS** (Automatic Identification System) is how ships broadcast their
+identity, position, course and speed — over VHF, and onto the internet via shore
+and satellite receivers. The **AIS** toolbar button overlays nearby vessels on the
+chart: a triangle pointing along each vessel's course, coloured by ship type
+(cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
+and full details on hover. It is **situational awareness only** — subject to feed
+coverage, latency and gaps — not a navigation or collision-avoidance system.
+
+The data comes from a **separate service, `ais_service.py`**, which the console
+queries (proxied at `/api/ais`); the feeds and any API key stay out of the console
+and the browser. Run it alongside the console and open the **AIS** button:
+
+```
+python ais_service.py --source digitraffic                 # keyless, real vessels (Finnish/Baltic waters)
+python ais_service.py --source aisstream --aisstream-key KEY --bbox -80.3,42.0,-79.9,42.3   # global (US incl.)
+python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110                 # local RTL-SDR receiver
+```
+
+Sources (any combination, comma-separated):
+
+- **digitraffic** — Finland/Fintraffic open REST feed ([meri.digitraffic.fi](https://www.digitraffic.fi/en/marine-traffic/)),
+  keyless, CC BY 4.0. Real live vessels in Finnish/Baltic waters — proves the pipeline
+  out of the box.
+- **aisstream** — [aisstream.io](https://aisstream.io/) global real-time WebSocket, needs a
+  **free API key** (`--aisstream-key` or `$AISSTREAM_KEY`). Covers US waters. Pass `--bbox W,S,E,N`
+  to limit the subscription to your operating area.
+- **nmea** — a local **RTL-SDR + [AIS-catcher](https://github.com/jvde-github/AIS-Catcher) / rtl-ais**
+  receiver emitting NMEA **AIVDM** (VHF 161.975 / 162.025 MHz) over TCP or UDP — the real
+  onboard receiver path, decoded by the service (a bundled stdlib AIVDM decoder; no pip).
+
+Point the console at a non-default service with `--ais http://host:port` (default
+`http://127.0.0.1:8788`). If the service isn't running, the layer simply shows
+"AIS service offline" and no vessels.
+
 ## Using it
 
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
