@@ -19,7 +19,11 @@ Sources (enable any combination with --source, comma-separated):
   * nmea         a local AIS receiver (RTL-SDR + AIS-catcher / rtl-ais) emitting NMEA
                  AIVDM over TCP or UDP — the real onboard VHF path, decoded here.
 
-Run:
+Run (zero-config): set an aisstream key up ONCE, then just start it:
+  echo YOUR_FREE_KEY > ais_key.txt      # one-time; or set $AISSTREAM_KEY
+  python ais_service.py                 # --source auto: aisstream if a key exists, else digitraffic
+
+Or pick sources explicitly:
   python ais_service.py --source digitraffic --port 8788
   python ais_service.py --source aisstream --aisstream-key KEY --bbox -80.3,42.0,-79.9,42.3
   python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110
@@ -684,9 +688,26 @@ def make_handler(reg, sources):
     return Handler
 
 
+def resolve_aisstream_key(args):
+    """aisstream key, set once and forgotten: --aisstream-key, then $AISSTREAM_KEY,
+    then an `ais_key.txt` file next to this script (first non-comment line)."""
+    if args.aisstream_key:
+        return args.aisstream_key.strip()
+    if os.environ.get("AISSTREAM_KEY"):
+        return os.environ["AISSTREAM_KEY"].strip()
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ais_key.txt")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    return line
+    except OSError:
+        pass
+    return None
+
+
 def build_sources(reg, args):
-    names = [s.strip() for s in args.source.split(",") if s.strip()]
-    out = []
     bbox = None
     if args.bbox:
         try:
@@ -695,13 +716,21 @@ def build_sources(reg, args):
                 bbox = None
         except ValueError:
             bbox = None
+    key = resolve_aisstream_key(args)
+    names = [s.strip() for s in args.source.split(",") if s.strip()]
+    if names == ["auto"]:
+        # zero-config: use the global feed if a key is set up, else the keyless one.
+        names = ["aisstream"] if key else ["digitraffic"]
+        print("[ais] source 'auto' -> %s%s" % (names[0],
+              "" if key else " (no aisstream key found; set up ais_key.txt for global coverage)"),
+              file=sys.stderr)
+    out = []
     for n in names:
         if n == "digitraffic":
             out.append(DigitrafficSource(reg))
         elif n == "aisstream":
-            key = args.aisstream_key or os.environ.get("AISSTREAM_KEY")
             if not key:
-                print("[ais] aisstream source needs --aisstream-key or $AISSTREAM_KEY; skipping",
+                print("[ais] aisstream needs a key (--aisstream-key, $AISSTREAM_KEY, or ais_key.txt); skipping",
                       file=sys.stderr)
                 continue
             out.append(AisstreamSource(reg, key, bbox=bbox))
@@ -709,15 +738,16 @@ def build_sources(reg, args):
             out.append(NmeaSource(reg, host=args.nmea_host, port=args.nmea_port,
                                   udp=args.nmea_udp))
         else:
-            print("[ais] unknown source '%s' (want digitraffic|aisstream|nmea)" % n,
+            print("[ais] unknown source '%s' (want auto|digitraffic|aisstream|nmea)" % n,
                   file=sys.stderr)
     return out
 
 
 def main():
     ap = argparse.ArgumentParser(description="Open-AIS aggregator queried by the console.")
-    ap.add_argument("--source", default="digitraffic",
-                    help="comma list: digitraffic,aisstream,nmea")
+    ap.add_argument("--source", default="auto",
+                    help="auto (default: aisstream if a key is set up, else digitraffic), "
+                         "or a comma list of digitraffic,aisstream,nmea")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP query port")
     ap.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     ap.add_argument("--ttl", type=float, default=DEFAULT_TTL,

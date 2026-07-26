@@ -2741,25 +2741,43 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, "application/x-ndjson; charset=utf-8")
 
     def _serve_ais(self):
-        # /api/ais?bbox=W,S,E,N -> proxy to the standalone AIS service (ais_service.py,
+        # /api/ais?center=LAT,LON -> proxy to the standalone AIS service (ais_service.py,
         # AIS_BASE). The console queries the service so the browser never touches the
-        # AIS feeds or any API key directly. Returns the service's JSON, or a clean
-        # {ok:false} when it's not running (the layer just shows "AIS offline").
+        # AIS feeds or any API key directly. It also picks the AREA here: on a Great
+        # Lake, pull the WHOLE lake (enclosed water); at sea, a 50 km box around the
+        # boat. Returns the service's vessels + an `area` tag, or {ok:false} when the
+        # service isn't running (the layer just shows "AIS offline").
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = urllib.parse.parse_qs(qs)
-        bbox = params.get("bbox", [""])[0]
-        url = "%s/vessels" % AIS_BASE.rstrip("/")
-        query = "max=800"
-        if bbox:
-            query = "bbox=%s&%s" % (urllib.parse.quote(bbox, safe=",-."), query)
+        lat = lon = None
+        if params.get("center"):
+            try:
+                lat, lon = (float(x) for x in params["center"][0].split(","))
+            except (ValueError, TypeError):
+                lat = lon = None
+        if lat is None:
+            return self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
+                              "area": {"mode": "none"}, "note": "no position for the AIS area"}))
+        lake = _lake_of(lat, lon)
+        if lake:                                     # whole enclosed lake
+            a, b, c, d = GREAT_LAKES_BOXES[lake]
+            bbox = (c, a, d, b)                       # W,S,E,N
+            area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
+        else:                                         # open water: 50 km box
+            dlat = 50000.0 / 111320.0
+            dlon = 50000.0 / (111320.0 * max(0.15, math.cos(math.radians(lat))))
+            bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+            area = {"mode": "sea", "name": "50 km"}
+        url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
+            AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
         try:
-            req = urllib.request.Request(url + "?" + query,
-                                         headers={"User-Agent": "asv-console/ais-proxy"})
+            req = urllib.request.Request(url, headers={"User-Agent": "asv-console/ais-proxy"})
             with urllib.request.urlopen(req, timeout=6) as r:
-                data = r.read().decode("utf-8", "replace")
-            self._send(200, data, "application/json")
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            data["area"] = area
+            self._send(200, json.dumps(data), "application/json")
         except Exception as e:
-            self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0,
+            self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0, "area": area,
                                         "note": "AIS service unreachable at %s (%s)"
                                         % (AIS_BASE, type(e).__name__)}))
 

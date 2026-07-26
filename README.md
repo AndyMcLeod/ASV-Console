@@ -87,15 +87,25 @@ with the survey-planning and command steps below.
 
 Marine **AIS** (Automatic Identification System) is how ships broadcast their
 identity, position, course and speed — over VHF, and onto the internet via shore
-and satellite receivers. The **AIS** toolbar button overlays nearby vessels on the
-chart: a triangle pointing along each vessel's course, coloured by ship type
+and satellite receivers. The **AIS** button is a simple on/off overlay of the vessel traffic around the boat —
+the **whole lake** when you're on an enclosed lake (e.g. a Great Lake), or **within
+50 km** at sea: a triangle pointing along each vessel's course, coloured by ship type
 (cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
-and full details on hover. It is **situational awareness only** — subject to feed
-coverage, latency and gaps — not a navigation or collision-avoidance system.
+and full details on hover — **and** in an **AIS traffic table** (each vessel by
+range / bearing / speed, sorted nearest-first) that opens with the layer and can be
+closed to a chip / reopened at will. It is **situational awareness only** — subject to
+feed coverage, latency and gaps — not a navigation or collision-avoidance system.
 
 The data comes from a **separate service, `ais_service.py`**, which the console
 queries (proxied at `/api/ais`); the feeds and any API key stay out of the console
-and the browser. Run it alongside the console and open the **AIS** button:
+and the browser. Set a key up **once** and just run it (zero-config):
+
+```
+echo YOUR_FREE_KEY > ais_key.txt     # one-time: a free aisstream.io key (or set $AISSTREAM_KEY)
+python ais_service.py                # --source auto: aisstream if a key exists, else keyless digitraffic
+```
+
+Or pick sources explicitly:
 
 ```
 python ais_service.py --source digitraffic                 # keyless, real vessels (Finnish/Baltic waters)

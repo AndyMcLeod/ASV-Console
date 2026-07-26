@@ -178,6 +178,11 @@
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
   </div>
+  <div id="aisTablePanel" style="position:absolute;z-index:41;display:none;right:14px;top:120px;width:264px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
+    <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
+    <div id="aisTableBody" style="max-height:46vh;overflow:auto;padding:6px 8px;"></div>
+  </div>
+  <div class="vminipill" id="aisReopen" title="Show AIS traffic table" style="display:none;right:14px;top:120px;">AIS &#10287;</div>
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
@@ -2260,24 +2265,60 @@ function drawMarks(toScreen){
 // The console proxies ais_service.py; the browser only polls /api/ais for the current
 // viewport. Draw each vessel as a triangle pointing along its course, coloured by
 // ship type; hover for identity/course/speed. Situational awareness only.
-function viewportBBox(){ const o=originPx(), sz=viewSize();
-  const a=worldToLatLon(o.x, o.y, zoom), b=worldToLatLon(o.x+sz.w, o.y+sz.h, zoom);
-  return {W:Math.min(a.lon,b.lon), S:Math.min(a.lat,b.lat), E:Math.max(a.lon,b.lon), N:Math.max(a.lat,b.lat)}; }
+// AIS area is chosen SERVER-SIDE by /api/ais from the boat position: on a Great Lake
+// it returns the WHOLE lake's traffic, at sea a 50 km box. The browser just sends its
+// centre and renders whatever comes back (no client-side range filter). `aisArea`
+// carries the mode/name for the table header. aisCenter() is still used for the
+// range/bearing columns.
+let aisArea = null;
+function aisCenter(){ return asv ? {lat:asv.lat, lon:asv.lon} : center; }
+function aisAreaLabel(){ return (aisArea && aisArea.name) ? aisArea.name : "area"; }
 async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
-  try{ const b=viewportBBox();
-    const r=await fetch(`/api/ais?bbox=${b.W.toFixed(4)},${b.S.toFixed(4)},${b.E.toFixed(4)},${b.N.toFixed(4)}`);
+  try{ const c=aisCenter();
+    const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}`);
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
+    aisArea = (d && d.area) ? d.area : null;
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
-            : (aisVessels.length ? "" : "no vessels in view");
+            : (aisVessels.length ? "" : "no vessels in "+aisAreaLabel());
   }catch(e){ aisVessels=[]; aisNote="AIS query failed"; }
-  finally{ aisBusy=false; render(); }
+  finally{ aisBusy=false; renderAisTable(); render(); }
 }
 function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.toggle("on", on);
   try{ localStorage.setItem(AIS_KEY, on?"1":"0"); }catch(e){}
   clearInterval(aisTimer); aisTimer=null;
-  if(on){ pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
-  else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; render(); } }
+  if(on){ setAisTable(true); pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
+  else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
+// The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
+// at will). Lists the within-50 km vessels by range, with bearing / SOG.
+let aisTableShown=false;
+function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round(nm); }
+function setAisTable(show){ aisTableShown=show;
+  const p=$("#aisTablePanel"), chip=$("#aisReopen");
+  if(p) p.style.display = show ? "block" : "none";
+  if(chip) chip.style.display = (aisShow && !show) ? "block" : "none";
+  if(show) renderAisTable(); }
+function renderAisTable(){
+  const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
+  const el=$("#aisTableBody"); if(!el) return;
+  const c=aisCenter();
+  let rows=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
+                                  brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null}));
+  rows.sort((a,b)=>(a.rng==null?1e12:a.rng)-(b.rng==null?1e12:b.rng));   // area scoped by /api/ais
+  if(!rows.length){ el.innerHTML = `<span style="color:var(--ink-faint)">${aisNote || ("No vessels in "+aisAreaLabel()+".")}</span>`; return; }
+  const cell="padding:2px 5px;white-space:nowrap", head="padding:2px 5px;color:var(--ink-faint)";
+  const body=rows.slice(0,60).map(r=>{ const v=r.v, col=AIS_COL[v.cat]||AIS_COL.unknown;
+    let nm=v.name || ("MMSI "+v.mmsi); if(nm.length>15) nm=nm.slice(0,15);
+    return `<tr title="${v.cat}${v.type?" ("+v.type+")":""} · COG ${v.cog!=null?Math.round(v.cog)+"°":"–"} · ${Math.round(v.age)}s ago">`
+      +`<td style="${cell}"><span style="color:${col}">&#9650;</span> ${nm}</td>`
+      +`<td style="${cell};text-align:right">${r.rng!=null?fmtNm(r.rng):"–"}</td>`
+      +`<td style="${cell};text-align:right">${r.brg!=null?r.brg+"°":"–"}</td>`
+      +`<td style="${cell};text-align:right">${v.sog!=null?v.sog:"–"}</td></tr>`; }).join("");
+  el.innerHTML=`<div style="color:var(--ink);margin-bottom:3px">${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}</div>`
+    +`<table style="border-collapse:collapse;width:100%"><tr><td style="${head}">vessel</td>`
+    +`<td style="${head};text-align:right">nm</td><td style="${head};text-align:right">brg</td>`
+    +`<td style="${head};text-align:right">kn</td></tr>${body}</table>`;
+}
 function aisAt(clientX, clientY){ if(!aisShow || !aisVessels.length) return null;
   const o=originPx(), r=mapEl.getBoundingClientRect(), cx=clientX-r.left, cy=clientY-r.top;
   let best=null, bd=11;
@@ -2298,7 +2339,7 @@ function drawAIS(toScreen){
   ctx.save();
   ctx.font="10px Consolas,monospace"; ctx.textBaseline="alphabetic";
   for(const v of aisVessels){
-    const s=toScreen(v.lat, v.lon);
+    const s=toScreen(v.lat, v.lon);                // area already scoped by /api/ais
     const stale=(v.age||0)>180;
     ctx.globalAlpha = stale ? 0.45 : 1;
     const col = AIS_COL[v.cat] || AIS_COL.unknown;
@@ -2681,6 +2722,8 @@ $("#clear").onclick = ()=>{ clearTrack(); render(); };
 $("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
   el.style.display=show?"block":"none"; $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
 $("#aisBtn").onclick = ()=> setAIS(!aisShow);
+$("#aisTableClose").onclick = ()=> setAisTable(false);   // close to the reopen chip
+$("#aisReopen").onclick = ()=> setAisTable(true);
 function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
@@ -2872,6 +2915,27 @@ window.addEventListener("mousemove", e=>{
 window.addEventListener("mouseup", ()=>{
   if(!lineTableDrag) return; lineTableDrag = null;
   try{ localStorage.setItem(LINESPANEL_KEY, JSON.stringify({left: parseFloat(lineTableEl.style.left), top: parseFloat(lineTableEl.style.top)})); }catch(e){}
+});
+// --- draggable AIS traffic table ---------------------------------------- //
+const AISPANEL_KEY = "asv_aispanel_pos_v1";
+const aisTableEl = $("#aisTablePanel"), aisTableHead = $("#aisTablePanelHead");
+(function(){ try{ const p = JSON.parse(localStorage.getItem(AISPANEL_KEY));
+  if(p && p.left!=null && p.top!=null){ aisTableEl.style.left = p.left+"px"; aisTableEl.style.top = p.top+"px"; aisTableEl.style.right = "auto"; }
+}catch(e){} })();
+let aisTableDrag = null;
+aisTableHead.addEventListener("mousedown", e=>{ if(e.target.id==="aisTableClose") return; e.stopPropagation();
+  const r = aisTableEl.getBoundingClientRect(); aisTableDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+window.addEventListener("mousemove", e=>{
+  if(!aisTableDrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = e.clientX - aisTableDrag.dx, top = e.clientY - aisTableDrag.dy;
+  left = Math.max(0, Math.min(mr.width - aisTableEl.offsetWidth, left));
+  top  = Math.max(0, Math.min(mr.height - aisTableEl.offsetHeight, top));
+  aisTableEl.style.left = left+"px"; aisTableEl.style.top = top+"px"; aisTableEl.style.right = "auto";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!aisTableDrag) return; aisTableDrag = null;
+  try{ localStorage.setItem(AISPANEL_KEY, JSON.stringify({left: parseFloat(aisTableEl.style.left), top: parseFloat(aisTableEl.style.top)})); }catch(e){}
 });
 
 function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 1 m)

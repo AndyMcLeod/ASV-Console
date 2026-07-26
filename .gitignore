@@ -16,3 +16,6 @@ recordings/
 
 # stray screenshots dropped in the project dir
 Screenshots/
+
+# AIS: local aisstream.io API key (never commit)
+ais_key.txt
