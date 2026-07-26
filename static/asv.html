@@ -1761,6 +1761,47 @@ function routeAround(A, B, ref, ko, buffer){
   // interior legs the string-pull produced are already clear.
   return simp.slice(1,-1);
 }
+// RESOLUTION FIX for distant transits. routeAround grids the WHOLE A->B bbox at a
+// cell capped by maxDim, so the cell coarsens past ~4 km and can no longer thread
+// local features. Split a long leg into fine-grid-sized sub-legs (each keeps the 3 m
+// cell), route each with the (validated) routeAround, and stitch. The stitched path
+// is clear by construction: routeAround guarantees each sub-leg's interior is clear
+// to/from its endpoints, and the split points are nudged to clear water first. Falls
+// back to a single routeAround if a split point can't be cleared or any sub-leg is
+// unroutable, so it NEVER does worse than before; short legs are returned untouched.
+const SEG_LEN_M = 2200;                            // sub-leg length that keeps cell ~3 m
+function snapClearLL(p, ref, ko, buf, pe, pn){     // nudge p along +/-(pe,pn) to clear water
+  if(!blocked(llEN(p.lat,p.lon,ref), ko, buf)) return p;
+  const base=llEN(p.lat,p.lon,ref), lim=Math.max(150, buf*20);
+  for(let d=Math.max(3,buf); d<=lim; d+=Math.max(3,buf)){
+    for(const s of [1,-1]){ const e=base.e+pe*d*s, n=base.n+pn*d*s;
+      if(!blocked({e,n}, ko, buf)) return fromEN(e,n,ref); } }
+  return null;                                     // couldn't clear -> caller falls back
+}
+function routeAroundSeg(A, B, ref, ko, buf){
+  const ae=llEN(A.lat,A.lon,ref), be=llEN(B.lat,B.lon,ref);
+  const dist=Math.hypot(be.e-ae.e, be.n-ae.n);
+  const margin=Math.max(40, buf*4, Math.min(dist,900));
+  const cellSingle=Math.max(3, buf/2, (dist+2*margin)/1400);
+  if(cellSingle <= 4.5) return routeAround(A, B, ref, ko, buf);   // already fine enough
+  let te=be.e-ae.e, tn=be.n-ae.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
+  const pe=tn, pn=-te;                             // perpendicular unit (for split-point nudge)
+  const K=Math.max(2, Math.ceil(dist/SEG_LEN_M));
+  const bpts=[A];
+  for(let i=1;i<K;i++){ const t=i/K, raw={lat:A.lat+(B.lat-A.lat)*t, lon:A.lon+(B.lon-A.lon)*t};
+    const snapped=snapClearLL(raw, ref, ko, buf, pe, pn);
+    if(!snapped) return routeAround(A, B, ref, ko, buf);          // can't clear a split -> fallback
+    bpts.push(snapped); }
+  bpts.push(B);
+  const out=[];
+  for(let i=0;i<bpts.length-1;i++){
+    const via=routeAround(bpts[i], bpts[i+1], ref, ko, buf);
+    if(via===null) return routeAround(A, B, ref, ko, buf);        // any sub-leg unroutable -> fallback
+    out.push(...via);
+    if(i < bpts.length-2) out.push(bpts[i+1]);                    // shared interior split point
+  }
+  return out;
+}
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 function nogoDR(){ return {min: NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
 function featuresBboxRef(feats){                // ENU reference = centroid of the fetched features' extent
@@ -1825,7 +1866,7 @@ function legClear(a, b, ref, ko, buf){
 // routeAround detour. Returns null if no clear route exists.
 function legPath(A, B, ref, ko, buf){
   if(legClear(A, B, ref, ko, buf)) return [{lat:B.lat, lon:B.lon}];
-  const via = routeAround(A, B, ref, ko, buf);
+  const via = routeAroundSeg(A, B, ref, ko, buf);   // keeps a fine grid on long transits
   if(via && via.length) return [...via.map(p=>({lat:p.lat,lon:p.lon})), {lat:B.lat, lon:B.lon}];
   return null;
 }

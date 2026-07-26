@@ -222,8 +222,11 @@ browser:
   extend the fetch to the target (surveys do); (2) resolution: `routeAround`'s grid
   coarsens past ~4 km (cell = bbox/1400). **COVERAGE FIX shipped:** `ensureNogoCovers`
   (mirror of `ensureNogoArea`); the three behaviors are now `async` and `await` it
-  (boat ⋃ target) before planning. **Resolution fix still open** (segment long
-  transits / coarse-to-fine).
+  (boat ⋃ target) before planning. **Resolution fix also shipped:** `routeAroundSeg`
+  splits a leg >~4.5 km into ~2.2 km sub-legs (each keeps the fine 3 m grid), routes
+  each with `routeAround`, stitches; `legPath` calls it. Safe by construction (falls
+  back to a single `routeAround`); short legs byte-identical. Harness-validated on the
+  Z-Boat (same code). Live GUI spot-check owed.
 - **Stale server PIDs** on Windows hold the port and serve old code — always kill
   by PID before retesting server changes.
 - **Testing pattern that works well:** extract the real JS functions from
