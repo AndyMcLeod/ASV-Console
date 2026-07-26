@@ -98,19 +98,21 @@ feed coverage, latency and gaps — not a navigation or collision-avoidance syst
 
 The data comes from a **separate service, `ais_service.py`**, which the console
 queries (proxied at `/api/ais`); the feeds and any API key stay out of the console
-and the browser. Set a key up **once** and just run it (zero-config):
+and the browser. **The console auto-starts it** — you never run it yourself. It's
+scoped to your operating area (the whole lake, or a box around the boat) and is reaped
+when the console exits (a parent-PID watchdog, robust even to a hard kill). The only
+optional setup is a **free aisstream.io key for real US / Great Lakes coverage**, set
+up once (otherwise it falls back to keyless digitraffic, Finnish/Baltic waters):
 
 ```
-echo YOUR_FREE_KEY > ais_key.txt     # one-time: a free aisstream.io key (or set $AISSTREAM_KEY)
-python ais_service.py                # --source auto: aisstream if a key exists, else keyless digitraffic
+echo YOUR_FREE_KEY > ais_key.txt     # one-time; or set $AISSTREAM_KEY. Then just run the console.
 ```
 
-Or pick sources explicitly:
+`--no-ais-service` disables the auto-start (to use an external one); `--ais URL` points
+at it. Running `ais_service.py` by hand is only for advanced/standalone use:
 
 ```
-python ais_service.py --source digitraffic                 # keyless, real vessels (Finnish/Baltic waters)
-python ais_service.py --source aisstream --aisstream-key KEY --bbox -80.3,42.0,-79.9,42.3   # global (US incl.)
-python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110                 # local RTL-SDR receiver
+python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110   # a local RTL-SDR receiver
 ```
 
 Sources (any combination, comma-separated):

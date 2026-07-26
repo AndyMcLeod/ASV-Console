@@ -42,6 +42,7 @@ opens a browser tab. See --help.
 """
 
 import argparse
+import atexit
 import json
 import math
 import os
@@ -49,6 +50,7 @@ import queue
 import re
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -2955,6 +2957,88 @@ def pick_browser(pref):
     return None
 
 
+# --- auto-started AIS provider (ais_service.py as a child process) ---------- #
+_ais_proc = None
+
+
+def _ais_local_port():
+    """(host, port) if AIS_BASE is a local service we should auto-start, else None."""
+    try:
+        u = urllib.parse.urlparse(AIS_BASE)
+        host, port = (u.hostname or "127.0.0.1"), (u.port or 8788)
+    except ValueError:
+        return None
+    return ("127.0.0.1", port) if host in ("127.0.0.1", "localhost", "0.0.0.0") else None
+
+
+def _port_alive(host, port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.4)
+    try:
+        s.connect((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _start_ais_service():
+    """Launch the bundled ais_service.py alongside the console so the AIS layer just
+    works - no separate command. Skips a remote --ais or an already-running service,
+    scopes the aisstream subscription to the operating area (whole lake on a Great
+    Lake, else a box around spawn), and is reaped when the console exits (the service
+    runs a --parent-pid watchdog, robust to a hard kill)."""
+    global _ais_proc
+    hp = _ais_local_port()
+    if not hp:
+        return                                    # remote --ais: the user runs their own
+    host, port = hp
+    if _port_alive(host, port):
+        print("[ais] using the AIS service already on %s:%d" % (host, port))
+        return
+    script = os.path.join(APP_DIR, "ais_service.py")
+    if not os.path.isfile(script):
+        print("[ais] ais_service.py not found next to the console; AIS layer stays offline")
+        return
+    lake = _lake_of(SPAWN_LAT, SPAWN_LON)
+    if lake:                                      # subscribe to the whole lake
+        a, b, c, d = GREAT_LAKES_BOXES[lake]
+        bbox = "%.4f,%.4f,%.4f,%.4f" % (c, a, d, b)
+    else:                                         # at sea: a box around spawn
+        bbox = "%.4f,%.4f,%.4f,%.4f" % (SPAWN_LON - 1.5, SPAWN_LAT - 1.5,
+                                        SPAWN_LON + 1.5, SPAWN_LAT + 1.5)
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        logf = open(os.path.join(LOG_DIR, "ais_service.log"), "a", encoding="utf-8")
+    except OSError:
+        logf = subprocess.DEVNULL
+    try:
+        _ais_proc = subprocess.Popen(
+            [sys.executable, script, "--source", "auto", "--host", host,
+             "--port", str(port), "--bbox=" + bbox, "--parent-pid", str(os.getpid())],
+            cwd=APP_DIR, stdout=logf, stderr=subprocess.STDOUT)
+        atexit.register(_stop_ais_service)
+        print("[ais] auto-started ais_service.py on %s:%d (source auto, bbox %s)"
+              % (host, port, bbox))
+    except Exception as e:
+        print("[ais] could not auto-start ais_service.py: %s" % e)
+
+
+def _stop_ais_service():
+    global _ais_proc
+    if _ais_proc and _ais_proc.poll() is None:
+        try:
+            _ais_proc.terminate()
+            try:
+                _ais_proc.wait(timeout=3)
+            except Exception:
+                _ais_proc.kill()
+        except Exception:
+            pass
+    _ais_proc = None
+
+
 def main():
     global AIS_BASE
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
@@ -2971,6 +3055,8 @@ def main():
                     help="vessel profile id from vessels/<id>.json (default: %s)" % DEFAULT_VESSEL_ID)
     ap.add_argument("--ais", default=AIS_BASE, metavar="URL",
                     help="AIS provider service base URL (ais_service.py; default %(default)s)")
+    ap.add_argument("--no-ais-service", action="store_true",
+                    help="don't auto-start the bundled ais_service.py (use an external one)")
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
@@ -3005,6 +3091,8 @@ def main():
     # --fetch-charts never spawn a log file. Best-effort; never fatal.
     global LOG
     AIS_BASE = args.ais
+    if not args.no_ais_service:
+        _start_ais_service()                      # bundled AIS provider - no separate command
     LOG = SessionLogger(enabled=not args.no_log)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],

@@ -743,8 +743,41 @@ def build_sources(reg, args):
     return out
 
 
+def _pid_alive(pid):
+    """Cross-platform: is process `pid` still running? (stdlib only)."""
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        k.GetExitCodeProcess(h, ctypes.byref(code))
+        k.CloseHandle(h)
+        return code.value == 259           # STILL_ACTIVE
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def _watch_parent(pid):
+    """Exit when the parent (the console that auto-started us) is gone - however it
+    died (Ctrl+C, hard kill, crash). This keeps an auto-started service from being
+    orphaned and squatting the port, on any platform."""
+    while True:
+        time.sleep(5)
+        if not _pid_alive(pid):
+            print("[ais] parent %s gone -> exiting" % pid, file=sys.stderr)
+            os._exit(0)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Open-AIS aggregator queried by the console.")
+    ap.add_argument("--parent-pid", type=int, default=0,
+                    help="exit automatically when this process (the console) exits")
     ap.add_argument("--source", default="auto",
                     help="auto (default: aisstream if a key is set up, else digitraffic), "
                          "or a comma list of digitraffic,aisstream,nmea")
@@ -758,6 +791,9 @@ def main():
     ap.add_argument("--nmea-port", type=int, default=10110, help="NMEA AIVDM source port")
     ap.add_argument("--nmea-udp", action="store_true", help="bind UDP instead of TCP-connect")
     args = ap.parse_args()
+
+    if args.parent_pid:
+        threading.Thread(target=_watch_parent, args=(args.parent_pid,), daemon=True).start()
 
     reg = Registry(ttl=args.ttl)
     sources = build_sources(reg, args)
