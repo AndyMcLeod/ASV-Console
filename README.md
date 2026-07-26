@@ -118,9 +118,13 @@ Sources (any combination, comma-separated):
 - **digitraffic** — Finland/Fintraffic open REST feed ([meri.digitraffic.fi](https://www.digitraffic.fi/en/marine-traffic/)),
   keyless, CC BY 4.0. Real live vessels in Finnish/Baltic waters — proves the pipeline
   out of the box.
-- **aisstream** — [aisstream.io](https://aisstream.io/) global real-time WebSocket, needs a
-  **free API key** (`--aisstream-key` or `$AISSTREAM_KEY`). Covers US waters. Pass `--bbox W,S,E,N`
-  to limit the subscription to your operating area.
+- **aisstream** — [aisstream.io](https://aisstream.io/) global real-time WebSocket; the
+  source for real **US / Great Lakes** coverage (a bundled stdlib WebSocket client — no
+  pip). Needs a **free API key**: set it up once with `echo KEY > ais_key.txt` (or
+  `--aisstream-key` / `$AISSTREAM_KEY`), and `--source auto` uses it. Scope the feed to
+  your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
+  Erie: `--bbox=-83.7,41.2,-78.7,43.05`. **Verified live on Lake Erie** — real lakers,
+  tankers, tour and Coast Guard boats; ship types fill in over the ~6 min AIS static cycle.
 - **nmea** — a local **RTL-SDR + [AIS-catcher](https://github.com/jvde-github/AIS-Catcher) / rtl-ais**
   receiver emitting NMEA **AIVDM** (VHF 161.975 / 162.025 MHz) over TCP or UDP — the real
   onboard receiver path, decoded by the service (a bundled stdlib AIVDM decoder; no pip).
