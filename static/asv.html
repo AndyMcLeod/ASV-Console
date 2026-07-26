@@ -2149,8 +2149,9 @@ function routePlan(start, wps, keepRightAll){
   });
   return {route: out, unroutable};
 }
-function doGoTo(target){
+async function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
+  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target);
   if(plan.error){
     setViolation(plan.reason);
@@ -2167,9 +2168,10 @@ function doGoTo(target){
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
-function doRTH(){
+async function doRTH(){
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); return; }
   if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
+  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
   if(plan.error){
     setViolation(plan.reason);
@@ -2207,9 +2209,10 @@ function updateTransitPanel(){
                : "ARM to Follow. Click to add more points.")
     : "Click the chart to drop transit points (1+). Then Follow.";
 }
-function doTransit(){
+async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
   if(!asv){ flashNote("No position fix yet."); return; }
+  await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   const plan = routePlan({lat:asv.lat,lon:asv.lon}, transit, true);   // pure transit: keep right (Rule 9)
   runRoute = plan.route; runUnsafe = plan.unroutable || [];   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
@@ -2442,6 +2445,25 @@ async function ensureNogoArea(){
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb);
+  return nogo.ready;
+}
+// COVERAGE FIX: make sure the nogo model covers a set of lat/lon points (the boat +
+// a Go-To / RTH / Transit target that may lie OUTSIDE the ~5 km operating box)
+// before we plan to them. Without this, obstacles near a distant target aren't
+// modelled and the leg is planned as if that water were clear. Extends the fetch to
+// the union (like ensureNogoArea does for surveys). No-op when already covered.
+async function ensureNogoCovers(pts, padM){
+  pts = (pts || []).filter(p => p && p.lat != null && p.lon != null);
+  if(!pts.length) return nogo.ready;
+  let S=1e9, N=-1e9, W=1e9, E=-1e9;
+  for(const p of pts){ S=Math.min(S,p.lat); N=Math.max(N,p.lat); W=Math.min(W,p.lon); E=Math.max(E,p.lon); }
+  const pad=padM||300, mid=(S+N)/2;
+  const dlat=pad/M_PER_DEG_LAT, dlon=pad/(M_PER_DEG_LAT*Math.cos(mid*Math.PI/180));
+  const b={W:W-dlon, S:S-dlat, E:E+dlon, N:N+dlat};
+  if(nogo.ready && bboxContains(nogo.bbox, b)) return true;   // already covered
+  const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
+                          E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
+  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb);
   return nogo.ready;
 }
 // Shorten a survey segment by `m` metres at BOTH ends (settle on-line + leave room

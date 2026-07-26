@@ -217,6 +217,13 @@ browser:
   are ALL browser JS. Driving via raw `/api/cmd/*` + `upload` with no `route`
   BYPASSES ENC routing → the boat crosses nogo. The GUI Punch-Out+Upload flow
   routes clear.
+- **Go-To distance (2026-07-25):** two effects made distant Go-To inconsistent —
+  (1) coverage: the nogo model is a ~5 km box and `doGoTo`/`doRTH`/`doTransit` didn't
+  extend the fetch to the target (surveys do); (2) resolution: `routeAround`'s grid
+  coarsens past ~4 km (cell = bbox/1400). **COVERAGE FIX shipped:** `ensureNogoCovers`
+  (mirror of `ensureNogoArea`); the three behaviors are now `async` and `await` it
+  (boat ⋃ target) before planning. **Resolution fix still open** (segment long
+  transits / coarse-to-fine).
 - **Stale server PIDs** on Windows hold the port and serve old code — always kill
   by PID before retesting server changes.
 - **Testing pattern that works well:** extract the real JS functions from
