@@ -537,6 +537,11 @@ let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = f
 const AIS_COL = {cargo:"#4a90d9", tanker:"#d9534f", passenger:"#3fbf6b", fishing:"#39c0ff",
   tug:"#e8a13f", sailing:"#9b8cf0", pleasure:"#58c0b0", hsc:"#e05fb0", special:"#f0c14a",
   military:"#b0b0b0", other:"#8fa3b0", unknown:"#8fa3b0"};
+// Readable ship-type label from the category slug (+ the raw AIS type code when known).
+const AIS_LABEL = {cargo:"Cargo", tanker:"Tanker", passenger:"Passenger", fishing:"Fishing",
+  tug:"Tug / tow", sailing:"Sailing", pleasure:"Pleasure craft", hsc:"High-speed craft",
+  special:"Pilot / SAR / gov", military:"Military", other:"Other", unknown:"Unknown type"};
+function aisTypeLabel(v){ return (AIS_LABEL[v.cat]||v.cat) + (v.type ? " (AIS "+v.type+")" : ""); }
 let nogoInit = false;                           // one-shot startup extraction guard
 
 function saveMission(){
@@ -2309,7 +2314,7 @@ function renderAisTable(){
   const cell="padding:2px 5px;white-space:nowrap", head="padding:2px 5px;color:var(--ink-faint)";
   const body=rows.slice(0,60).map(r=>{ const v=r.v, col=AIS_COL[v.cat]||AIS_COL.unknown;
     let nm=v.name || ("MMSI "+v.mmsi); if(nm.length>15) nm=nm.slice(0,15);
-    return `<tr title="${v.cat}${v.type?" ("+v.type+")":""} · COG ${v.cog!=null?Math.round(v.cog)+"°":"–"} · ${Math.round(v.age)}s ago">`
+    return `<tr title="${aisTypeLabel(v)} · COG ${v.cog!=null?Math.round(v.cog)+"°":"–"} · ${Math.round(v.age)}s ago">`
       +`<td style="${cell}"><span style="color:${col}">&#9650;</span> ${nm}</td>`
       +`<td style="${cell};text-align:right">${r.rng!=null?fmtNm(r.rng):"–"}</td>`
       +`<td style="${cell};text-align:right">${r.brg!=null?r.brg+"°":"–"}</td>`
@@ -2332,7 +2337,7 @@ function updateAisTip(e){ const tip=$("#aisTip");
   const nm = v.name ? v.name+" · " : "";
   const sog = v.sog!=null ? v.sog+" kn" : "– kn";
   const cog = v.cog!=null ? Math.round(v.cog)+"°" : "–";
-  tip.innerHTML = `<b>${nm}MMSI ${v.mmsi}</b><br>${v.cat}${v.type?" ("+v.type+")":""} · SOG ${sog} · COG ${cog} · ${Math.round(v.age)}s ago · ${v.src}`;
+  tip.innerHTML = `<b>${nm}MMSI ${v.mmsi}</b><br>${aisTypeLabel(v)}<br>SOG ${sog} · COG ${cog} · ${Math.round(v.age)}s ago · ${v.src}`;
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block"; }
 function drawAIS(toScreen){
   if(!aisShow) return;
