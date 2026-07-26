@@ -13,6 +13,20 @@ brand names, model numbers, vendor manual citations, or a specific wire-protocol
 format. The onboard controller is the generic **VCU (Vehicle Control Unit)**; the
 shore link is a generic serial-over-IP control link.
 
+## ⇒ START HERE (handoff 2026-07-25, fresh context window)
+**Repo:** local git only (no GitHub remote), clean, HEAD **`c350e00`**. Default web
+port **8791** (Z-Boat is 8781 — they can run side by side). Run: `python asv_console.py
+--sim`. **This session (2026-07-25)** added, all committed (details below in this file):
+survey-turn declutter; draggable LINES card; **NDBC uppercase station-id fix**; the
+default port 8791; Quick-Start scroll fix; the **AIS layer** (same generic
+`ais_service.py` as the Z-Boat — console auto-starts it, lake-aware area, traffic
+table, zero-config `ais_key.txt`/`--source auto`; see the AIS note); and the **Go-To
+distance fixes** (coverage `ensureNogoCovers` + resolution `routeAroundSeg` sectioning;
+see the gotcha note). Most of this session ALSO drove the **backport of these features
+into the Z-Boat** (`D:\Claude\Zboat`) — keep the ASV brand-free; the Z-Boat is branded.
+**Open:** live GUI spot-checks owed (AIS draw/table, Go-To fixes); for real US AIS
+coverage drop an aisstream key in `ais_key.txt` here too (only the Z-Boat dir has one).
+
 ## Run it
 
 ```bash
