@@ -235,10 +235,20 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    behaviour** — Go-To, RTH, the drawn Transit line, the approach leg to a survey,
    the routed transits between survey lines (Punch Out), search-pattern transits,
    and any obstacle detour inserted at Upload — automatically keeps to the
-   **starboard side of a channel** (relative to the direction of travel): the
-   console finds both channel walls, defines the **centerline**, and tracks a
-   smoothed lane **20 % of the channel width to starboard of center** so opposing
-   traffic passes port-to-port. In open water (no wall to starboard) the track is unchanged, and
+   **starboard side of a channel** (relative to the direction of travel). Where the
+   channel is charted with **lateral buoys** the console reads them the way a
+   mariner does: it groups each buoyage system's red and green marks into two
+   **buoy lines**, reads the **direction of travel from the buoy numbering**
+   (numbers rise toward land — rising along the route means inbound, red kept to
+   starboard; falling means outbound, green to starboard), and rides a lane just
+   inside the correct line — even pulling the track back across it if the planned
+   path strayed to the wrong side. The Go-To/RTH/Transit banner reports the
+   reading (e.g. *buoy lane INBOUND (red to starboard)*). Where no buoyage is
+   charted the console falls back to geometry: it finds both channel walls,
+   defines the **centerline**, and tracks a smoothed lane **20 % of the channel
+   width to starboard of center** so opposing traffic passes port-to-port. In
+   open water the track lines up with any buoyed fairway ahead and is otherwise
+   unchanged, and
    the offset never trades away obstacle clearance — it falls back to the
    centerline path wherever the channel is too tight. Survey coverage lines and
    teardrop turns are not offset (they must stay on their planned geometry).

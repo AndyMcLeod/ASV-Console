@@ -42,6 +42,25 @@ a twice-shipped bug in the sibling console; if it ever resurfaces, check the
 sequence gate first and do NOT re-add a geometry-only guard. Harness-verified
 (4 cases against the real page functions).
 
+## BUOY-LINE KEEP-RIGHT: full backport (2026-07-28)
+
+The keep-right is now the sibling's current **IALA-B buoy-line generation** (the
+old wall-only version lagged behind while routing work continued on the branded
+console). Added: `MARK_TAIL`/`markId`/`markSystems`/`crossToLine` (mark identity +
+buoy lines), `buoyageDir`/`buoyLaneAt`/`lastBuoyage`/`buoyageNote` (direction of
+travel + signed lane constraint). Replaced with the current generation:
+`buildKeepouts` (marks carry `num`/`sys`; returns grouped `sys`), `keepRight`
+(buoy-lane tier + wall tier + open-water approach alignment, fast occupancy grid,
+curvature limit, clear-water envelope), `channelEndExtend` (grid-aware), and
+`drawMarks` (draws the buoy lines). The ASV's `channel_reach_m` vessel override is
+preserved inside the new `keepRight`/`channelEndExtend` (the sibling hardcodes
+`buf*10`). Banners now report the buoyage reading. Same-day routing fixes carried
+in the same code: escalating-region long-goto fix and stitch/knot pruning were
+already ported (`ea5e92a`, `85dcf55`). Verified by `tools/buoy_lane_test.js`
+(ported alongside, cache picker keyed to the Erie transit): all checks green —
+INBOUND/OUTBOUND direction read, 100% right-side in the fairway, no hairpin at
+the buoy gap, no nogo violation, confidence guard holds.
+
 ## Run it
 
 ```bash
@@ -89,20 +108,32 @@ fuel %/endurance/range. Validation branches on the type. The DriX is `fuel`.
 planning.under_keel_clearance_m` (a deep-draft boat avoids more shallow water). The
 client reads it via `/api/vessel` and **re-extracts** the nogo model on a switch.
 
-**COLREGS Rule 9 keep-right** — transits offset to the starboard side of a channel
-(a lane 20% right of center). It engages only where both channel walls are within a
-detection reach; that reach is `planning.channel_reach_m` (optional; falls back to
-`nogo_buffer_m*10`, the tight-marina scale). The DriX sets 120 m so it keeps right
-in the wide (~150 m) Lewes dredged fairway; small boats in tight marinas keep the
-default. **Lateral channel marks** (ENC `chan_mark` role = lateral buoys + beacons, with
-`CATLAM`) drive channel behavior: a mark abeam on a side is a keep-right wall there,
-and `pairGates()`/`gateProject()` pair a port-hand + starboard-hand mark into a
-**gate** and, where a Go-To/RTH exits through the outermost gate, steer the route
-**through the gate centre** and **stand on one gate-width past it** along the channel
-axis before turning — so the fairway projects past the seaward buoys instead of
-cutting the mouth. No-op with no gates / target not past the gate / any unclear leg.
-Marks are also small keep-outs (don't hit a buoy) and drawn green (port-hand) / red
-(starboard-hand).
+**COLREGS Rule 9 keep-right (IALA-B buoy-line generation, backported 2026-07-28)** —
+every transit offsets to the starboard side of a channel. The primary channel model
+is the **buoy lines**: lateral marks (ENC `chan_mark` role = buoys + beacons, with
+`CATLAM`) carry their channel identity in OBJNAM — `markId()` strips the designator
+to get the SYSTEM name + buoy NUMBER, `markSystems()` groups and sorts each system's
+port-hand and starboard-hand marks into two polylines (the red line and the green
+line), and `buoyageDir()` correlates buoy number against along-track distance to
+read the **direction of travel** (numbers rising = INBOUND, red kept to starboard;
+falling = OUTBOUND, green to starboard; ambiguous/short hop = no claim). At each
+path sample `buoyLaneAt()` gives a SIGNED offset to the line that must be kept to
+starboard — so a path on the wrong side is pulled back **across** the line, which a
+purely geometric wall search can never see. Where no buoyage answers, a wall-based
+tier takes over (both channel walls within reach → lane 20% right of center), and
+in open water an approach-alignment query (`buoyLaneAt` with an extended fairway
+projection) lines the track up with an upcoming buoyed channel instead of a blind
+bias. The reach is `planning.channel_reach_m` (optional vessel override; falls back
+to `nogo_buffer_m*10`, the tight-marina scale — the DriX sets 120 m for the ~150 m
+Lewes fairway). The offset never trades away obstacle clearance (fast occupancy
+grid + exact check), a curvature limit keeps the result followable, and
+`channelEndExtend()` stands the track straight on out of a channel mouth.
+`pairGates()`/`gateProject()` still steer a Go-To/RTH through the outermost gate
+centre and one gate-width past it. Marks are small keep-outs (don't hit a buoy) and
+drawn green (port-hand) / red (starboard-hand) with their buoy lines; Go-To/RTH/
+Transit banners report the reading ("buoy lane INBOUND (red to starboard)").
+Regression harness: `node tools/buoy_lane_test.js` — **run it after ANY routing
+change** (it exercises the real page functions against a cached Erie Harbor ENC).
 
 - **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
   load (missing/mistyped field → clear, path-pointed error; a bad file never runs
