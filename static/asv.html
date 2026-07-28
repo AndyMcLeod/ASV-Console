@@ -1834,7 +1834,22 @@ function routeAroundSeg(A, B, ref, ko, buf){
     out.push(...via);
     if(i < bpts.length-2) out.push(bpts[i+1]);                    // shared interior split point
   }
-  return out;
+  // STITCH PRUNE. A split point nudged to the wrong side of an obstacle makes one
+  // sub-leg route TO it and the next route BACK around it - a hairpin the operator
+  // sees as an "odd diversion" (a 161° reversal on a long RTH). Any waypoint
+  // forming a sharp turn whose neighbours connect clear is redundant: drop it.
+  // Exact legClear over a handful of stitch points - cheap, and it can only ever
+  // shorten a path that is already clear by construction.
+  const full=[{lat:A.lat,lon:A.lon}, ...out, {lat:B.lat,lon:B.lon}];
+  let changed=true;
+  while(changed){ changed=false;
+    for(let i=1;i<full.length-1;i++){
+      const t=((azTo(full[i],full[i+1])-azTo(full[i-1],full[i])+540)%360)-180;
+      if(Math.abs(t)>60 && legClear(full[i-1], full[i+1], ref, ko, buf)){
+        full.splice(i,1); changed=true; break; }
+    }
+  }
+  return full.slice(1,-1);
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 function nogoDR(){ return {min: NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
