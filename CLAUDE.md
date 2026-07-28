@@ -27,6 +27,21 @@ into the Z-Boat** (`D:\Claude\Zboat`) — keep the ASV brand-free; the Z-Boat is
 **Open:** live GUI spot-checks owed (AIS draw/table, Go-To fixes); for real US AIS
 coverage drop an aisstream key in `ais_key.txt` here too (only the Z-Boat dir has one).
 
+## LINE-TIMING: sequence-keyed activation (2026-07-27)
+
+The LINES-card actual-time accrual is now **sequence-keyed**: a coverage line
+accrues time ONLY while the boat's current uploaded-route leg (the waypoint pair
+it is between, from the live `wp_index`) IS that line — `currentLegLine()` matches
+leg endpoints against committed line endpoints (either direction, 5 m tolerance).
+Approach / detour / teardrop / inter-area legs match no line and can never
+activate one; the old geometry checks (moving + aligned + XTE) remain only as a
+secondary dropout within a line's own leg. The hover time-to-end tooltip gates on
+the same `runLineIdx`. This fixes lines "activating" and banking time while the
+boat merely transits across or parallel to them on its way to the survey start —
+a twice-shipped bug in the sibling console; if it ever resurfaces, check the
+sequence gate first and do NOT re-add a geometry-only guard. Harness-verified
+(4 cases against the real page functions).
+
 ## Run it
 
 ```bash

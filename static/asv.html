@@ -857,19 +857,18 @@ function updateLineTip(e){
   const tip=$("#lineTip"); const hide=()=>{ tip.style.display="none"; };
   if(dragging||patDrag||boundDrag!=null||searchDrag){ return hide(); }
   const running = S && S.run==="running" && S.behavior==="survey";
-  if(!running || !asv || activeLine<0 || !mission.lines.length){ return hide(); }
+  if(!running || !asv || runLineIdx<0 || !mission.lines.length){ return hide(); }
   const r=mapEl.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
   const hovered = surveyLineAtPx(cx, cy, 9);
-  const onLine = activeXTE <= Math.max(15, (mission.arrival_radius_m||5)*4);
-  if(hovered<0 || hovered!==activeLine || !onLine){ return hide(); }
-  const L=mission.lines[activeLine];
+  if(hovered<0 || hovered!==runLineIdx){ return hide(); }   // only the line being RUN (sequence-keyed)
+  const L=mission.lines[runLineIdx];
   const hd=(asv.hdg!=null?asv.hdg:0)*Math.PI/180, fe=Math.sin(hd), fn=Math.cos(hd);
   const aE=toEN(L.a,asv), bE=toEN(L.b,asv);
   const end=(aE.e*fe+aE.n*fn) > (bE.e*fe+bE.n*fn) ? L.a : L.b;   // endpoint ahead of the boat
   const dist=distTo({lat:asv.lat,lon:asv.lon}, end);
   const sog=(S.status&&S.status.sog_kn)||0;
   const spd=(sog>0.3?sog:(SPEED_KN[mission.speed]||SPEED_KN.survey))*0.514444;
-  tip.textContent="line "+(activeLine+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
+  tip.textContent="line "+(runLineIdx+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
 // --- per-component timing: coverage LINES and the TURNS between them ------------
@@ -881,11 +880,17 @@ function updateLineTip(e){
 //     perpendicular pass) is NOT aligned, so it is never counted - and the turn at
 //     a line's end (heading swinging away) drops out too, so a line's time is the
 //     line body only, not half of each adjoining turn.
+//   * "Running" is SEQUENCE-KEYED: the boat's current route leg (the uploaded
+//     waypoint pair it is between) must BE that coverage line (endpoints match).
+//     Merely crossing over lines - or riding parallel to one - while transiting
+//     to the survey start can therefore never activate a line: those legs match
+//     no line. (Twice-shipped bug: the old geometry-only guard of course-alignment
+//     + cross-track tolerance let a shallow-angle approach accrue time. Geometry
+//     is now a SECONDARY dropout only.)
 //   * TURN time accrues while the ASV maneuvers between two lines (near a line
-//     endpoint but not running a line). Each turn is its own component {from,to,sec}.
-//     The long approach / inter-area transits (far from the lines) count as neither.
-// Robust to Upload re-routing: keys off geometry (the boat's line + course), not
-// waypoint indices. Shown in the LINES table + written to the session log on end.
+//     endpoint, a line already run, but no line leg active). Each turn is its own
+//     component {from,to,sec}. Approaches / inter-area transits count as neither.
+// Shown in the LINES table + written to the session log on run end.
 let lineActual=[], lineClock=null, prevRun=null, loggedLines=false;
 let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
 let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
@@ -901,28 +906,57 @@ function turnZoneM(){
   return Math.max(20, (mission.arrival_radius_m||2)*8, sp*0.9);
 }
 function nearestEndpointM(){ let d=1e12; for(const L of mission.lines){ d=Math.min(d, distTo(asv,L.a), distTo(asv,L.b)); } return d; }
+// SEQUENCE KEY: which coverage line IS the boat's current route leg? The uploaded
+// route interleaves approach/detour/turn points between the line endpoints, so a
+// leg either matches one committed line (both endpoints, either direction) or it
+// matches none (-1: approach, detour, teardrop, inter-area transit). Being NEAR a
+// line never activates it - only actually running its leg does.
+const LINE_MATCH_M = 5;                        // endpoint match tolerance (m)
+let _legLine = {key:"", line:-1};              // memo per (route, leg)
+function currentLegLine(){
+  const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
+  const idx=window._wpIndex||0;
+  if(idx<1 || idx>=rr.length) return -1;       // pre-first-wp approach, or done
+  const key=idx+":"+rr.length+":"+mission.lines.length;
+  if(_legLine.key===key) return _legLine.line;
+  const a=rr[idx-1], b=rr[idx]; let found=-1;
+  for(let k=0;k<mission.lines.length;k++){ const L=mission.lines[k];
+    if((distTo(a,L.a)<=LINE_MATCH_M && distTo(b,L.b)<=LINE_MATCH_M) ||
+       (distTo(a,L.b)<=LINE_MATCH_M && distTo(b,L.a)<=LINE_MATCH_M)){ found=k; break; } }
+  _legLine={key, line:found};
+  return found;
+}
 function accumLineTime(){
   const now=performance.now()/1000, dt=(lineClock!=null)?(now-lineClock):0;
   if(lineActual.length!==mission.lines.length) lineActual=mission.lines.map((_,k)=>lineActual[k]||0);
   const running = S.run==="running" && S.behavior==="survey";
   runLineIdx=-1;
-  if(running && dt>0 && asv && activeLine>=0 && activeLine<mission.lines.length){
-    const XTE_TOL=Math.max(15,(mission.arrival_radius_m||2)*4), ALIGN_TOL=30;
-    const sog=(S.status&&S.status.sog_kn)||0, moving=sog>0.3;
-    const course=moving ? ((S.status&&S.status.cog_deg!=null)?S.status.cog_deg:asv.hdg) : null;
-    const L=mission.lines[activeLine];
-    const aligned = course!=null && alignDeg(course, azTo(L.a,L.b))<=ALIGN_TOL;
-    const onLineBody = moving && aligned && activeXTE<=XTE_TOL;
-    if(onLineBody){
-      runLineIdx=activeLine; lineActual[activeLine]+=dt;
-      if(curTurn>=0){ turnSeg[curTurn].to=activeLine; curTurn=-1; }   // the open turn led INTO this line
-      lastRunLine=activeLine;
+  if(running && dt>0 && asv){
+    const seqLine=currentLegLine();
+    if(seqLine>=0 && seqLine<mission.lines.length){
+      // the boat's current leg IS this line - geometry is only a secondary dropout
+      // (pauses the clock while off-line or already swung into the end turn)
+      const XTE_TOL=Math.max(15,(mission.arrival_radius_m||2)*4), ALIGN_TOL=30;
+      const sog=(S.status&&S.status.sog_kn)||0, moving=sog>0.3;
+      const course=moving ? ((S.status&&S.status.cog_deg!=null)?S.status.cog_deg:asv.hdg) : null;
+      const L=mission.lines[seqLine];
+      const a=toEN(L.a,asv), b=toEN(L.b,asv);
+      const dx=b.e-a.e, dy=b.n-a.n, len2=dx*dx+dy*dy||1;
+      const t=Math.max(0,Math.min(1,-(a.e*dx+a.n*dy)/len2));
+      const xte=Math.hypot(a.e+t*dx, a.n+t*dy);
+      const aligned = course!=null && alignDeg(course, azTo(L.a,L.b))<=ALIGN_TOL;
+      if(moving && aligned && xte<=XTE_TOL){
+        runLineIdx=seqLine; lineActual[seqLine]+=dt;
+        if(curTurn>=0){ turnSeg[curTurn].to=seqLine; curTurn=-1; }   // the open turn led INTO this line
+        lastRunLine=seqLine;
+      }
     } else if(lastRunLine>=0 && nearestEndpointM()<=turnZoneM()){
-      // maneuvering near a line end between two lines = a turn (its own component)
+      // no line leg active, but a line was just run and we're near a line end:
+      // a between-lines maneuver (teardrop / routed turn) = a turn component
       if(curTurn<0){ curTurn=turnSeg.length; turnSeg.push({from:lastRunLine, to:-1, sec:0}); }
       turnSeg[curTurn].sec+=dt;
     }
-    // else: long approach / inter-area transit -> neither line nor turn
+    // else: approach / inter-area transit -> neither line nor turn
   }
   lineClock = (S.run==="running") ? now : null;
 }
