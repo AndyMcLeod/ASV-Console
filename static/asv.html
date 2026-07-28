@@ -1725,7 +1725,7 @@ function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer){
     if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; }
   dilateGrid(blk, W, H, Math.max(1, Math.round(buffer/cell)));
 }
-function routeAround(A, B, ref, ko, buffer){
+function routeAround(A, B, ref, ko, buffer, marginOv, maxDimOv){
   const en2ll=(e,n)=>({lat:ref.lat+n/M_PER_DEG_LAT, lon:ref.lon+e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))});
   const ae=llEN(A.lat,A.lon,ref), be=llEN(B.lat,B.lon,ref);
   let x0=Math.min(ae.e,be.e), x1=Math.max(ae.e,be.e), y0=Math.min(ae.n,be.n), y1=Math.max(ae.n,be.n);
@@ -1733,10 +1733,12 @@ function routeAround(A, B, ref, ko, buffer){
   // transit length - that made the cell coarsen until it could no longer thread a
   // channel and the leg got wrongly flagged red). The occupancy below is RASTERIZED
   // (fast), so a fine channel-resolving cell is affordable even at km scale.
+  // `marginOv`/`maxDimOv`: legPath's ESCALATION retries pass wider regions here
+  // when the default window cannot round a large landmass (see legPath).
   const dist=Math.hypot(be.e-ae.e, be.n-ae.n);
-  const margin=Math.max(40, buffer*4, Math.min(dist, 900));
+  const margin=marginOv || Math.max(40, buffer*4, Math.min(dist, 900));
   x0-=margin; x1+=margin; y0-=margin; y1+=margin;
-  const maxDim=1400;                             // grid-dim cap (coarsen only if huge)
+  const maxDim=maxDimOv || 1400;                 // grid-dim cap (coarsen only if huge)
   const cell=Math.max(3, buffer/2, (x1-x0)/maxDim, (y1-y0)/maxDim);
   const W=Math.floor((x1-x0)/cell)+1, H=Math.floor((y1-y0)/cell)+1;
   if(W<2||H<2) return null;
@@ -1834,13 +1836,15 @@ function routeAroundSeg(A, B, ref, ko, buf){
     out.push(...via);
     if(i < bpts.length-2) out.push(bpts[i+1]);                    // shared interior split point
   }
-  // STITCH PRUNE. A split point nudged to the wrong side of an obstacle makes one
-  // sub-leg route TO it and the next route BACK around it - a hairpin the operator
-  // sees as an "odd diversion" (a 161° reversal on a long RTH). Any waypoint
-  // forming a sharp turn whose neighbours connect clear is redundant: drop it.
-  // Exact legClear over a handful of stitch points - cheap, and it can only ever
-  // shorten a path that is already clear by construction.
-  const full=[{lat:A.lat,lon:A.lon}, ...out, {lat:B.lat,lon:B.lon}];
+  // stitch prune: see pruneStitch - kills the split-point hairpin by dropping
+  // sharp-turn waypoints whose neighbours connect clear.
+  return pruneStitch([{lat:A.lat,lon:A.lon}, ...out, {lat:B.lat,lon:B.lon}], ref, ko, buf).slice(1,-1);
+}
+// Drop any waypoint forming a sharp turn (>60°) whose neighbours connect clear
+// (exact legClear). A stitched/refined path keeps only turns an obstacle forces;
+// it can only ever SHORTEN a path that is already clear by construction.
+function pruneStitch(full, ref, ko, buf){
+  full = full.slice();
   let changed=true;
   while(changed){ changed=false;
     for(let i=1;i<full.length-1;i++){
@@ -1849,7 +1853,7 @@ function routeAroundSeg(A, B, ref, ko, buf){
         full.splice(i,1); changed=true; break; }
     }
   }
-  return full.slice(1,-1);
+  return full;
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 function nogoDR(){ return {min: NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
@@ -1917,6 +1921,65 @@ function legPath(A, B, ref, ko, buf){
   if(legClear(A, B, ref, ko, buf)) return [{lat:B.lat, lon:B.lon}];
   const via = routeAroundSeg(A, B, ref, ko, buf);   // keeps a fine grid on long transits
   if(via && via.length) return [...via.map(p=>({lat:p.lat,lon:p.lon})), {lat:B.lat, lon:B.lon}];
+  // ESCALATING SWING REGION + FINE-ESCAPE COMPOSITION. The fast search region is
+  // the A-B bbox + <=900 m, which cannot round a LARGE landmass - the detour
+  // leaves that window by kilometres, so a long Go-To was refused while short
+  // ones worked. Two stacked constraints: (1) the swing needs a WIDER region ->
+  // retry with margin 2700/8100 m (grid coarsens; the raster over-approximates
+  // keep-outs, so any path found is genuinely clear); (2) at the coarse cell a
+  // tight BASIN/MARINA closes over the start or goal (the free-cell snap fails)
+  // -> ESCAPE first: fine-route to a nearby open-water point, then escalate from
+  // there. Sections + a safe fallback. Coarse legs are refined with the fine
+  // default region and the stitches pruned. Bounded by a time budget.
+  const T0=Date.now(), BUDGET_MS=9000;
+  const wide=(P0,P1)=>{ for(const m of [2700, 8100]){
+      if(Date.now()-T0>BUDGET_MS) return null;
+      const c=routeAround(P0, P1, ref, ko, buf, m, 2000); if(c) return c; } return null; };
+  const openRing=(C, toward)=>{      // open-water escape candidates, best-first
+    const out=[]; const dC=distTo(C, toward);
+    for(const r of [400, 800, 1600]) for(let a=0;a<360;a+=30){
+      const e=llEN(C.lat,C.lon,ref);
+      const p=fromEN(e.e + r*Math.sin(a*Math.PI/180), e.n + r*Math.cos(a*Math.PI/180), ref);
+      if(blocked(llEN(p.lat,p.lon,ref), ko, buf*2)) continue;    // want genuinely open water
+      if(distTo(p, toward) > dC + r) continue;                    // don't wander away
+      out.push(p);
+    }
+    return out.sort((p,q)=>distTo(p,toward)-distTo(q,toward)).slice(0,6);
+  };
+  const compose=(pts)=>{             // refine coarse legs, prune stitches, return [...mids, B]
+    const fine=[pts[0]];
+    for(let i=0;i<pts.length-1;i++){
+      if(i) fine.push(pts[i]);
+      const sub=routeAroundSeg(pts[i], pts[i+1], ref, ko, buf);
+      if(sub && sub.length) fine.push(...sub);
+    }
+    fine.push(pts[pts.length-1]);
+    return pruneStitch(fine, ref, ko, buf).slice(1).map(p=>({lat:p.lat,lon:p.lon}));
+  };
+  let c = wide(A, B);                                        // (1) direct, wider regions
+  if(c) return compose([{lat:A.lat,lon:A.lon}, ...c, {lat:B.lat,lon:B.lon}]);
+  for(const E of openRing(A, B)){                            // (2) escape a tight START
+    if(Date.now()-T0>BUDGET_MS) break;
+    const e1=routeAround(A, E, ref, ko, buf); if(!e1) continue;
+    const c2=wide(E, B);
+    if(c2) return compose([{lat:A.lat,lon:A.lon}, ...e1, E, ...c2, {lat:B.lat,lon:B.lon}]);
+  }
+  for(const F of openRing(B, A)){                            // (3) escape a tight GOAL
+    if(Date.now()-T0>BUDGET_MS) break;
+    const f1=routeAround(F, B, ref, ko, buf); if(!f1) continue;
+    const c2=wide(A, F);
+    if(c2) return compose([{lat:A.lat,lon:A.lon}, ...c2, F, ...f1, {lat:B.lat,lon:B.lon}]);
+  }
+  for(const E of openRing(A, B).slice(0,3)){                 // (4) both ends tight
+    if(Date.now()-T0>BUDGET_MS) break;
+    const e1=routeAround(A, E, ref, ko, buf); if(!e1) continue;
+    for(const F of openRing(B, A).slice(0,3)){
+      if(Date.now()-T0>BUDGET_MS) break;
+      const f1=routeAround(F, B, ref, ko, buf); if(!f1) continue;
+      const c2=wide(E, F);
+      if(c2) return compose([{lat:A.lat,lon:A.lon}, ...e1, E, ...c2, F, ...f1, {lat:B.lat,lon:B.lon}]);
+    }
+  }
   return null;
 }
 // COLREGS Rule 9 (narrow channels): when TRANSITING a channel, keep to the
@@ -2212,7 +2275,10 @@ function planNogoRoute(from, to){
   const routed = leg.length > 1;
   const path = gateProject([{lat:from.lat,lon:from.lon}, ...leg], ref, ko, buf);  // project past the outer gate
   const kr = keepRight(path, ref, ko, buf);
-  return {route: kr.slice(1), direct: !routed, routed};
+  // knot prune: the keep-right offset can fold a sharp (but legitimate) corner
+  // into a small reversal knot; drop knot waypoints whose neighbours connect clear
+  const clean = pruneStitch(kr, ref, ko, buf);
+  return {route: clean.slice(1), direct: !routed, routed};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -2242,6 +2308,8 @@ function routePlan(start, wps, keepRightAll){
 async function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
+  showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
+  await new Promise(r=>setTimeout(r,50));
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target);
   if(plan.error){
     setViolation(plan.reason);
@@ -2262,6 +2330,8 @@ async function doRTH(){
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); return; }
   if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
+  showBanner("Routing home… a long transit around obstacles can take several seconds.");
+  await new Promise(r=>setTimeout(r,50));
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
   if(plan.error){
     setViolation(plan.reason);
