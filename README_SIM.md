@@ -249,7 +249,9 @@ Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
 `/api/cmd/hold` · `/api/cmd/sethome` · `/api/cmd/approach`. The behaviour commands
 (`goto`/`rth`/`transit`) accept an ENC-aware `{route:[…]}` computed by the browser;
 `upload` accepts one too. Data: `/api/state` · `/events` (SSE) · `/api/mission` ·
-`/api/enc?bbox=…` (ENC features) · `/api/waterlevel` · `/api/env` (sim wind/sea +
+`/api/enc?bbox=…` (ENC features) · `/api/chartinfo?bbox=…` (chart-source metadata:
+ENC cells + zone-of-confidence polygons, for the Chart source card) ·
+`/api/waterlevel` · `/api/env` (sim wind/sea +
 POST override/enable/refresh). A blocked gate returns **409** with the reason.
 
 **Live telemetry (position, heading, SOG/COG, battery, attitude) is nested under

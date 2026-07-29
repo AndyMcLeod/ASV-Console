@@ -150,6 +150,19 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    arrival radius, speed (Low / Survey / High), and **completion** (below) in the
    command bar. The plan persists server-side (`mission.json`).
 
+   **Chart source (`SRC`).** The ENC's answer to a paper chart's title block, as a
+   card: which **cell** the vessel is in (e.g. `US5DE1EF`) and how many more are in
+   view, the **usage band**, the **chart datum** with the *live* water-level
+   correction being applied, and WGS 84 / Mercator. It states the **sounding units
+   on both sides**, because they differ: the chart image prints **feet**, while the
+   ENC data and every depth the console computes — including this vessel's
+   draft-derived nogo floor — are **metres**. Below that, the part a printed title
+   block can't give you: the IHO **zone of confidence under the vessel right now**,
+   with the **survey dates** and source behind it, read from the chart's own
+   `M_QUAL` polygons and re-evaluated as the vessel moves. It matters — the DriX
+   operating area at Lewes returns a mix of ZOC B and **ZOC D** (the lowest
+   confidence class), and the card flags the poor ones in amber as you enter them.
+
    **Search patterns.** `SRCH` generates a canned search route (à la CCOM's
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
    creeping-line**. Click a datum, tune the params (leg / radius / spacing /

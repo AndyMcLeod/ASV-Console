@@ -61,6 +61,44 @@ already ported (`ea5e92a`, `85dcf55`). Verified by `tools/buoy_lane_test.js`
 INBOUND/OUTBOUND direction read, 100% right-side in the fairway, no hairpin at
 the buoy gap, no nogo violation, confidence guard holds.
 
+## CHART SOURCE CARD (`SRC`) — backported 2026-07-29
+
+The ENC's answer to a paper chart's title block, ported from the sibling. Server
+`fetch_chart_info()` → **`/api/chartinfo?bbox=`** reads two S-57 META layers on the same
+band the routing extract used: `Coverage_area` (M_COVR — cell identity; `DSNM`'s 3rd
+character is the usage band) and `Quality_of_Data_area` (M_QUAL — `CATZOC`, survey dates,
+source) **with geometry**, so confidence can be reported per position. Client `#chartPanel`
+shows cell / usage / units / datum / correction, then the zone of confidence **under the
+vessel**, amber at ZOC C or worse.
+
+**Deliberately a separate endpoint** — folding M_COVR/M_QUAL into `ENC_ROLES` would bloat
+every routing keep-out cache and force a `features_v3` → `v4` bump, dumping every cached
+extract for data no route consults. Caches to `charts/enc/chartinfo_v1_<bbox>.json`;
+soft-fails per layer and honours the ENC circuit breaker.
+
+**Two divergences from the sibling, both deliberate:**
+1. **No multi-window UI split here**, so there is no `UI_BRIDGED` / hide-list /
+   `UI_CARD_TITLES` registration — the card is a plain draggable panel in the one window
+   (same shape as the AIS traffic table).
+2. **The nogo floor is VESSEL-DERIVED** (`hull.draft_m + planning.under_keel_clearance_m`),
+   so the units tooltip quotes the live `NOGO_MIN_DEPTH_M` instead of the sibling's fixed
+   1 m. Keep it dynamic on future ports.
+
+**UNITS — display ≠ data.** The rendered NOAA tiles print soundings in **FEET**; the ENC
+vector data and everything this console computes/logs (nogo floor, corrected depths) are
+**METRES**. Verified empirically (the chart service's metadata endpoint 500s and the tile
+request carries no units parameter): US `Depth_Area` bands come out at exact foot contours
+(1.8/3.6/5.4/7.3/9.1/18.2 m = 6/12/18/24/30/60 ft) while the chart prints numbers only
+consistent with feet. The card says both out loud. **Don't "fix" it to say metres.**
+
+**Live-verified over the DriX base (Lewes, DE):** 4 cells (`US5DE1DF/DG/EF/EG`), 13 quality
+polygons — 7 × ZOC B and **6 × ZOC D**, the lowest confidence class. The spawn resolves to
+`US5DE1EF`, ZOC B, source `US,US,reprt,L-297/15`. Harness-tested against that real payload.
+
+**Client-code style rule inherited with the port:** the extract-page-functions harnesses
+desync on a nested backtick inside `${…}` and on a regex literal containing a quote — this
+card uses plain concatenation and `split('"').join()`.
+
 ## Run it
 
 ```bash

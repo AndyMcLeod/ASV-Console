@@ -182,6 +182,14 @@
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
     <div id="aisTableBody" style="max-height:46vh;overflow:auto;padding:6px 8px;"></div>
   </div>
+  <!-- CHART SOURCE: the ENC equivalent of a paper chart's title block. Cells and
+       zone-of-confidence come from the S-57 META objects (/api/chartinfo); units,
+       datum and the live correction come from the console's own water-level feed. -->
+  <div id="chartPanel" style="position:absolute;z-index:41;display:none;right:14px;top:300px;width:288px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
+    <div id="chartPanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#9635; Chart source</span><span id="chartClose" title="Close (reopen with SRC)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
+    <div id="chartBody" style="max-height:46vh;overflow:auto;padding:7px 9px;"></div>
+  </div>
+
   <div class="vminipill" id="aisReopen" title="Show AIS traffic table" style="display:none;right:14px;top:120px;">AIS &#10287;</div>
 
   <div class="topbar">
@@ -221,6 +229,7 @@
     <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
+    <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — cells in use, scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
   </div>
   <!-- Quick Start / help button — pinned to the LOWER-LEFT corner (opens the popup, which also anchors there). -->
   <button class="ctl" id="helpBtn" title="Quick start / help" style="position:absolute;left:14px;bottom:14px;z-index:7;">?</button>
@@ -3521,6 +3530,196 @@ function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 
   return `${f(lat,'N','S')}  ${f(lon,'E','W')}`;
 }
 
+
+// --- CHART SOURCE: the ENC's title block --------------------------------- //
+// A paper chart prints its title block ONCE: cell, scale, units, datum, source.
+// An ENC carries the same facts as S-57 META objects, and M_QUAL carries the zone
+// of confidence as POLYGONS - the part a printed block cannot express, because
+// confidence varies WITHIN a sheet (recent resurveys sit alongside pockets still
+// charted from mid-20th-century leadline work). So this card reports the ZOC UNDER
+// THE VESSEL. Cells + quality come from /api/chartinfo (deliberately NOT the
+// routing extract); units, datum and the applied correction come from the console's
+// own water feed - it states the datum it is actually correcting to, not a chart
+// annotation.
+//
+// UNITS - two different things, and confusing them is how boats get grounded:
+//   * the rendered chart TILES print soundings in FEET (the NOAA chart service
+//     default for US charts). Established from the data, not assumed: US ENC
+//     Depth_Area bands come out at 1.8 / 3.6 / 5.4 / 7.3 / 9.1 / 18.2 m - exactly
+//     6/12/18/24/30/60 FEET - and the rendered chart prints numbers in the 20s-30s
+//     over water whose deepest charted band is ~9 m, which only reads as feet.
+//     (The service's own metadata endpoint 500s, so there is no units field to
+//     query - hence the empirical check.)
+//   * the ENC VECTOR data is METRES (S-57 mandates it), and so is every number this
+//     console computes with: the nogo floor, corrected depths, the logs.
+// The operator reads feet off the chart while the console reasons in metres, so the
+// card says both out loud rather than letting the operator assume they match.
+const CHART_DISPLAY_UNITS = "feet";                // what the tile service prints
+const CHART_DATA_UNITS = "metres";                 // what S-57 stores / the console uses
+const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m"],
+  3:["ZOC B","\u00b150 m"], 4:["ZOC C","\u00b1500 m"],
+  5:["ZOC D","worse than ZOC C"], 6:["ZOC U","unassessed"]};
+const ENC_USAGE_LBL = {"1":"Overview","2":"General","3":"Coastal","4":"Approach",
+  "5":"Harbour","6":"Berthing"};
+let chartInfo = null, chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
+function cellName(props){ return String((props&&props.DSNM) || "").replace(/\.\d+$/, ""); }
+// Even-odd point-in-polygon over a GeoJSON geometry, reusing the routing
+// primitives (the test point is its own ENU reference, so holes subtract).
+function ptInGeom(lat, lon, geom){
+  if(!geom) return false;
+  const ref = {lat, lon}, p = {e:0, n:0};
+  let inside = false;
+  eachRing(geom, rg=>{ const ring = rg.map(c=>llEN(c[1], c[0], ref));
+    if(ring.length > 2 && pinp(p, ring)) inside = !inside; });
+  return inside;
+}
+function bboxCovers(b, ll){ return b && ll && ll.lon>=b.W && ll.lon<=b.E && ll.lat>=b.S && ll.lat<=b.N; }
+async function ensureChartInfo(){
+  const here = asv ? {lat:asv.lat, lon:asv.lon} : center;
+  if(chartBusy || bboxCovers(chartInfoBox, here) || Date.now() < chartRetryAt) return;
+  // prefer the nogo's own extraction box so the card describes the same sheet the
+  // routing is using; fall back to a box around the vessel.
+  const b = (nogo.bbox && bboxCovers(nogo.bbox, here)) ? nogo.bbox : bboxAround(here, 4000);
+  chartBusy = true;
+  updateChartCard();                            // show the reading state at once
+  // A FIRST fetch for an uncached bbox goes out to NOAA twice (ids, then geometry
+  // by id) and can take tens of seconds; cap it so a hung request can't wedge the
+  // card, and back off on failure so a broken feed isn't retried every tick.
+  const ac = (typeof AbortController !== "undefined") ? new AbortController() : null;
+  const killer = setTimeout(()=>{ try{ if(ac) ac.abort(); }catch(e){} }, 90000);
+  try{
+    const r = await fetch(`/api/chartinfo?bbox=${b.W},${b.S},${b.E},${b.N}`,
+                          ac ? {signal: ac.signal} : undefined);
+    const d = await r.json();
+    if(!r.ok || d.error){
+      chartInfo = {note:"chart source unavailable ("+(d.error || ("HTTP "+r.status))+")", cells:[], quality:[]};
+      chartRetryAt = Date.now() + 30000;
+    } else { chartInfo = d; chartInfoBox = b; chartRetryAt = 0; }
+  }catch(e){
+    chartInfo = {note:(e && e.name === "AbortError") ? "chart source timed out" : "chart source unavailable",
+                 cells:[], quality:[]};
+    chartRetryAt = Date.now() + 30000;
+  }
+  clearTimeout(killer);
+  chartBusy = false;
+  updateChartCard();                            // repaint with the result (or the error)
+}
+// Worst (most conservative) zone of confidence containing the point - M_QUAL
+// polygons can overlap, and a survey operator wants the pessimistic answer.
+function qualityAt(lat, lon){
+  let worst = null;
+  for(const q of (chartInfo && chartInfo.quality) || []){
+    if(!ptInGeom(lat, lon, q.geometry)) continue;
+    const z = Number(q.props.CATZOC) || 6;
+    if(!worst || z > (Number(worst.CATZOC) || 6)) worst = q.props;
+  }
+  return worst;
+}
+function fmtEncDate(v){                            // "20070622" | "1949" -> readable
+  const s = String(v || "");
+  return /^\d{8}$/.test(s) ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}` : s;
+}
+// Throttling gates the DOM WRITE on CONTENT, not on position. A position-based
+// guard is wrong twice over: it swallows the repaint when the fetch lands (the card
+// then sits on "reading the chart source" until the vessel moves - forever, for one
+// holding station), and it leaves the readout stale when the DATA changes under a
+// stationary vessel (a new water-level offset). The lookups here are cheap; only
+// the write needs rationing.
+let chartLastHtml = null;
+function updateChartCard(){
+  const el = $("#chartPanel"); if(!el || el.style.display === "none") return;
+  const here = asv ? {lat:asv.lat, lon:asv.lon} : center;
+  // plain concatenation, NOT a nested template literal: the extract-page-functions
+  // harnesses scan for balanced braces and a backtick inside ${...} desynchronises them
+  const row = (k, v, t)=>{
+    const tip = t ? ' title="' + String(t).split('"').join("&quot;") + '"' : "";
+    return '<div style="display:flex;gap:8px;padding:1.5px 0;">'
+         + '<span style="min-width:84px;color:var(--ink-faint);flex:none;">' + k + '</span>'
+         + '<span style="flex:1;"' + tip + '>' + v + '</span></div>';
+  };
+  const hdr = t=> `<div style="margin:6px 0 2px;padding-top:5px;border-top:1px solid #1d3348;` +
+    `color:var(--ink-faint);font-size:9px;letter-spacing:.08em;text-transform:uppercase;">${t}</div>`;
+  const cells = (chartInfo && chartInfo.cells) || [];
+  const names = [...new Set(cells.map(c=>cellName(c.props)).filter(Boolean))].sort();
+  const inCell = cells.find(c=> ptInGeom(here.lat, here.lon, c.geometry));
+  const mine = inCell ? cellName(inCell.props) : (names[0] || null);
+  const title = inCell && inCell.props.TITLE;
+  const usage = mine ? ENC_USAGE_LBL[mine.charAt(2)] : null;
+  const band = (chartInfo && chartInfo.band) || nogo.band || null;
+  const others = names.filter(n=> n !== mine).length;
+  const dat = (water && water.datum) || null;
+  const off = (water && water.ok && water.offset_m != null) ? water.offset_m : null;
+  let h = "";
+  if(!chartInfo){ h = `<div style="color:var(--ink-faint);">${chartBusy
+      ? "reading the chart source…<div style=\"margin-top:3px;font-size:10px;\">first read of a new area fetches from NOAA — this can take up to a minute</div>"
+      : "no chart source yet"}</div>`; }
+  else if(!names.length){ h = `<div style="color:var(--ink-faint);">${chartInfo.note || "no ENC coverage here"}</div>`; }
+  else {
+    h += row("Cell", `<b style="color:var(--ink);">${mine||"--"}</b>` +
+             (others ? ` <span style="color:var(--ink-faint);">+${others} in view</span>` : ""),
+             names.join(", "));
+    if(title) h += row("Title", title);
+    h += row("Usage", (usage || "--") + (band ? ` <span style="color:var(--ink-faint);">(${band.replace("enc_","")})</span>` : ""),
+             "ENC usage band from the cell name's 3rd character");
+    // Units, stated explicitly for both sides - the operator reads the chart in
+    // FEET while every number the console computes is METRES. The nogo floor is
+    // VESSEL-DERIVED here (draft + under-keel clearance), so quote it live.
+    h += row("Soundings", 'chart <b style="color:var(--ink);">' + CHART_DISPLAY_UNITS +
+             '</b> · data ' + CHART_DATA_UNITS,
+             "The chart image prints soundings in FEET (NOAA chart service default). "+
+             "The ENC data, the " + NOGO_MIN_DEPTH_M.toFixed(1) + " m nogo floor for this "+
+             "vessel and every depth the console computes or logs are METRES. "+
+             "They do not match - convert before comparing.");
+    h += row("Datum", dat || "--",
+             "Chart datum of the depth data. The console corrects to it live.");
+    h += row("Correction", off != null ? `${off>=0?"+":""}${off.toFixed(2)} m live`
+             : `<span style="color:var(--ink-faint);">none (uncorrected)</span>`,
+             water && water.name ? `CO-OPS ${water.station} ${water.name}` : "live water level");
+    h += row("Horizontal", "WGS 84 · Mercator");
+    const q = qualityAt(here.lat, here.lon);
+    h += hdr("At the vessel");
+    if(q){
+      const z = CATZOC_LBL[Number(q.CATZOC)] || ["ZOC U","unassessed"];
+      const poor = Number(q.CATZOC) >= 4;
+      h += row("Confidence", `<b style="color:${poor?"#e0a33f":"var(--ink)"};">${z[0]}</b>`+
+               ` <span style="color:var(--ink-faint);">${z[1]}</span>`,
+               "IHO zone of confidence (CATZOC "+q.CATZOC+") - position accuracy of the charted data here");
+      if(q.SURSTA || q.SUREND)
+        h += row("Surveyed", (fmtEncDate(q.SURSTA)||"?") + " → " + (fmtEncDate(q.SUREND)||"?"),
+                 "Dates of the hydrographic survey this data came from");
+      if(q.SORIND) h += row("Source", `<span style="font-size:10px;">${q.SORIND}</span>`+
+                 (q.SORDAT ? ` <span style="color:var(--ink-faint);">${fmtEncDate(q.SORDAT)}</span>` : ""));
+      if(poor) h += `<div style="margin-top:4px;color:#e0a33f;font-size:10px;">Low-confidence data here — treat charted depths and positions with caution.</div>`;
+    } else {
+      h += `<div style="color:var(--ink-faint);">no quality polygon at this position</div>`;
+    }
+    h += `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #1d3348;color:var(--ink-faint);font-size:10px;">Planning aid — ENC scale and currency vary. Not for navigation.</div>`;
+  }
+  if(h === chartLastHtml) return;                  // nothing changed - leave the DOM alone
+  chartLastHtml = h;
+  $("#chartBody").innerHTML = h;
+}
+function setChartCard(show){
+  const el = $("#chartPanel"); if(!el) return;
+  el.style.display = show ? "block" : "none";
+  $("#srcBtn").classList.toggle("on", show);
+  if(show){ chartLastHtml = null; ensureChartInfo(); updateChartCard(); }   // card was empty: force a first paint
+}
+$("#srcBtn").onclick = ()=> setChartCard($("#chartPanel").style.display === "none");
+$("#chartClose").onclick = ()=> setChartCard(false);
+(function(){                                        // drag the card
+  const el = $("#chartPanel"), head = $("#chartPanelHead"); if(!el || !head) return;
+  let d = null;
+  head.addEventListener("mousedown", e=>{ if(e.target.id === "chartClose") return; e.stopPropagation();
+    const r = el.getBoundingClientRect(); d = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+  window.addEventListener("mousemove", e=>{ if(!d) return;
+    const mr = mapEl.getBoundingClientRect();
+    el.style.left = Math.max(0, Math.min(mr.width - el.offsetWidth, e.clientX-d.dx)) + "px";
+    el.style.top  = Math.max(0, Math.min(mr.height - el.offsetHeight, e.clientY-d.dy)) + "px";
+    el.style.right = "auto"; });
+  window.addEventListener("mouseup", ()=>{ d = null; });
+})();
+
 // --- command surface ----------------------------------------------------- //
 async function cmd(path, body){
   try{
@@ -3753,6 +3952,9 @@ function onState(s){
   // real-time water level (corrects charted depths); applied in depthExcluded
   water = s.water || {};
   waterOffset = (water.ok && water.offset_m!=null) ? water.offset_m : 0;
+  // Chart source card: follow the vessel (zone of confidence is position-dependent).
+  // Both calls no-op cheaply unless the card is open and something actually changed.
+  if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }
   updateWaterUI(water);
 
   // environmental simulator (SIM ONLY): wind + sea state pushing the boat

@@ -973,6 +973,69 @@ def fetch_enc_features(bbox, min_depth=0.0):
     return data
 
 
+# --- CHART SOURCE (the S-57 META objects = an ENC's answer to a paper title block)
+# M_COVR ("Coverage_area") carries the cell identity - DSNM "US5PA1CF.000", whose
+# 3rd character is the usage band (5 = harbour). M_QUAL ("Quality_of_Data_area")
+# carries the zone of confidence and the survey dates as POLYGONS, which is the
+# part a paper title block cannot express: confidence varies WITHIN a sheet, so
+# serving the polygons lets the client report the ZOC under the VESSEL.
+#
+# Deliberately a SEPARATE endpoint rather than extra roles in /api/enc: those would
+# bloat the routing keep-out cache and force a features_v3 -> v4 bump, invalidating
+# every cached extract on disk - for data no route ever consults.
+ENC_META_CLASSES = {"cells": "Coverage_area", "quality": "Quality_of_Data_area"}
+META_KEEP_PROPS = ("DSNM", "TITLE", "CATCOV", "CATZOC", "SURSTA", "SUREND",
+                   "SORDAT", "SORIND", "POSACC", "SOUACC", "TECSOU", "VERDAT")
+# ENC usage band from the cell name's 3rd character (S-57 dataset naming).
+ENC_USAGE = {"1": "Overview", "2": "General", "3": "Coastal",
+             "4": "Approach", "5": "Harbour", "6": "Berthing"}
+
+
+def fetch_chart_info(bbox):
+    """Chart-source metadata for a bbox: the ENC cells covering it + the
+    zone-of-confidence polygons within it. Cached on disk like the feature
+    extract, and it never raises - an empty answer degrades the card, not the run."""
+    global _enc_down_until
+    key = "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
+    cache = os.path.join(ENC_DIR, "chartinfo_v1_%s.json" % key)
+    try:
+        with open(cache, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass
+    if time.monotonic() < _enc_down_until:
+        return {"band": None, "cells": [], "quality": [], "note": "ENC offline"}
+    band = _enc_pick_band(bbox)
+    if band is None:
+        return {"band": None, "cells": [], "quality": [], "note": "no ENC coverage here"}
+    lm = _enc_layer_map(band)
+    out = {"band": band, "cells": [], "quality": [], "note": ""}
+    for key_name, cls in ENC_META_CLASSES.items():
+        lid = lm.get(cls)
+        if lid is None:                       # layer absent in this band - skip, don't fail
+            continue
+        try:
+            ids = _enc_query_ids(band, lid, bbox)
+            feats = _enc_query_by_ids(band, lid, ids) if ids else []
+        except (OSError, ValueError):
+            continue
+        for ft in feats:
+            props = ft.get("properties") or {}
+            kept = {k: props.get(k) for k in META_KEEP_PROPS if props.get(k) not in (None, "", " ")}
+            if not kept:
+                continue
+            out[key_name].append({"props": kept, "geometry": ft.get("geometry")})
+    os.makedirs(ENC_DIR, exist_ok=True)
+    tmp = cache + ".part"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(out, f)
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    return out
+
+
 # --------------------------------------------------------------------------- #
 #  Real-time water level (NOAA CO-OPS) - correct ENC charted depths to "now"   #
 # --------------------------------------------------------------------------- #
@@ -2689,6 +2752,8 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_tile()
         elif self.path.startswith("/api/enc"):
             self._serve_enc()
+        elif self.path.startswith("/api/chartinfo"):
+            self._serve_chartinfo()
         elif self.path.startswith("/api/waterlevel"):
             self._send(200, json.dumps(WATER.snapshot()))
         elif self.path.startswith("/api/tide"):     # tide-chart series (ENV card)
@@ -2796,6 +2861,23 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = fetch_enc_features(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch
+            return self._send(502, json.dumps({"error": str(e)}))
+        self._send(200, json.dumps(data))
+
+    def _serve_chartinfo(self):
+        # /api/chartinfo?bbox=W,S,E,N -> ENC cells + zone-of-confidence polygons
+        # for the Chart source card. Separate from /api/enc by design (see
+        # fetch_chart_info): no routing cache is touched.
+        try:
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1])
+            bbox = [float(v) for v in q["bbox"][0].split(",")]
+            if len(bbox) != 4:
+                raise ValueError
+        except (KeyError, ValueError, IndexError):
+            return self._send(400, json.dumps({"error": "usage: /api/chartinfo?bbox=W,S,E,N"}))
+        try:
+            data = fetch_chart_info(bbox)
+        except Exception as e:                    # never take the server down on a chart fetch
             return self._send(502, json.dumps({"error": str(e)}))
         self._send(200, json.dumps(data))
 
