@@ -1224,7 +1224,7 @@ function updateRunTime(){
   if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;          // full run length captured at Start (incl. approach)
   const pct=runTotalM>0 ? Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM))) : 0;
   if(run==="paused"){ el.textContent=elapsed+" · paused · "+pct+"%"; return; }
-  if((S.completion||mission.completion)==="repeat"){
+  if(runCompletion()==="repeat"){                 // is the RUN in progress lapping?
     const lap=(S.status&&S.status.laps!=null)?S.status.laps:0;
     el.textContent=elapsed+" · lap "+(lap+1)+" · ~"+fmtMS(rr.remain/spd)+" to lap end"; return;
   }
@@ -4176,6 +4176,22 @@ $("#c_approach").onchange = ()=>{
   cmd("/api/cmd/approach", {m:v});               // apply live to the running sim
 };
 $("#c_speed").onchange = ()=>{ mission.speed = $("#c_speed").value; saveMission(); };
+// TWO DIFFERENT THINGS, and keeping them apart is the whole point:
+//   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,
+//                     so this reads "loiter" during a Go-To, correctly.
+//   S.completion    - the operator's END-OF-PLAN SETTING, straight from the mission
+//                     store on the server. A behaviour can never change it.
+// They were one field once, so commanding a Go-To made "End of Plan: RTH" read back as
+// Loiter and silently disarmed the end-of-plan RTH chain.
+function runCompletion(){ return (S && (S.run_completion || S.completion)) || mission.completion || "loiter"; }
+// Close the loop: the selector mirrors the SERVER's setting, so the two can never drift
+// apart unnoticed. Skipped while the operator has the control open, so it can't fight a
+// selection mid-change.
+function syncCompletionSel(s){
+  const el=$("#c_completion"); if(!el || !s || !s.completion) return;
+  if(document.activeElement===el) return;
+  if(el.value !== s.completion){ el.value = s.completion; mission.completion = s.completion; }
+}
 $("#c_completion").onchange = ()=>{ mission.completion = $("#c_completion").value; saveMission();
   flashNote("Plan completion: "+mission.completion+" (applies on the next Upload)."); };
 window.addEventListener("resize", render);
@@ -4828,6 +4844,7 @@ function onState(s){
   accumRunTime();                                // accrue whole-run elapsed (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
+  syncCompletionSel(s);                          // the selector mirrors the server setting
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
   // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
@@ -4902,7 +4919,10 @@ function onState(s){
   $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
 
   // run mode: active behaviour + plan completion (+ lap count when repeating)
-  const beh = s.behavior || "survey", comp = s.completion || "rth";
+  // RUN MODE describes the run IN PROGRESS, so it shows run_completion - a Go-To reads
+  // "goto · loiter" because that Go-To really does station-keep. The operator's
+  // end-of-plan SETTING is the command-bar selector, driven from s.completion below.
+  const beh = s.behavior || "survey", comp = s.run_completion || s.completion || "rth";
   const laps = (st.laps!=null) ? st.laps : 0;
   let mtxt = beh + " · " + comp;
   if(comp==="repeat" && (s.run==="running")) mtxt += " · lap "+(laps+1);
@@ -5159,7 +5179,7 @@ function updateMissionCard(){
   const ended = st.holding || st.drifting;
   $("#mi_toend").textContent = ended ? "arrived"
     : (rr && spd>0 ? fmtLenM(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
-  $("#mi_endmode").textContent = S.completion || mission.completion || "loiter";
+  $("#mi_endmode").textContent = runCompletion();
   // plan status -> through to the END state (the common paradigm's last phase)
   const end=(runRoute&&runRoute.length)?runRoute[runRoute.length-1]
            :((mission.waypoints||[]).length?mission.waypoints[mission.waypoints.length-1]:null);
@@ -5176,7 +5196,7 @@ function updateMissionCard(){
       + (dEnd!=null? ": "+fmtLenM(dEnd)+" off" : "")
       + " (arrival "+(mission.arrival_radius_m||2)+" m)";
   } else if(run==="running"){
-    const lap=(st.laps!=null && (S.completion==="repeat")) ? " · lap "+(st.laps+1) : "";
+    const lap=(st.laps!=null && runCompletion()==="repeat") ? " · lap "+(st.laps+1) : "";
     s = "running"+lap+((rr&&runTotalM>0)?" · "+Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM)))+"%":"");
   } else if(run==="paused"){ s = "paused — Resume with Start, or Stop"; }
   else if(nogo.busy){ s = "loading — extracting the chart and routing clear of the nogo…"; }

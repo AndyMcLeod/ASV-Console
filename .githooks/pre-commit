@@ -72,8 +72,17 @@ if command -v python >/dev/null 2>&1; then
     echo "  (roc_tracks.py)."
     fail=1
   fi
+  echo "pre-commit: end-of-plan completion regression test..."
+  if ! python tests/completion_modes.py; then
+    echo ""
+    echo "pre-commit: completion-modes test FAILED."
+    echo "  The operator's END-OF-PLAN SETTING and the completion of the run IN"
+    echo "  PROGRESS have been conflated again - a behaviour is writing the setting,"
+    echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
+    fail=1
+  fi
 else
-  echo "pre-commit: python not found - skipping the ROC test."
+  echo "pre-commit: python not found - skipping the ROC and completion tests."
 fi
 
 if [ "$fail" -ne 0 ]; then

@@ -306,6 +306,46 @@ Public data sources (kept): NOAA ENC / ENCDirect ArcGIS, NOAA CO-OPS water
 levels, NOAA NDBC buoys, NOAA chart tiles. All cached under `charts/`
 (gitignored, regenerated at runtime).
 
+## END-OF-PLAN SETTING vs RUN COMPLETION — one field per concept (2026-08-01)
+
+**Bug Andy hit (and had hit before):** End of Plan **RTH** selected, console acting on
+**loiter**. Confirmed live — the mission store said `rth`, `/api/state` said `loiter`.
+
+**Root cause: a CONFLATED FIELD.** `Engine.completion` was doing two unrelated jobs —
+the operator's persistent END-OF-PLAN SETTING (owned by the mission store, decides what
+happens when a survey/search PLAN finishes) *and* the completion of the RUN CURRENTLY IN
+PROGRESS. Go-To / RTH / Hold / Transit all correctly station-keep at their own endpoint,
+so `_run_route()` set the field to `"loiter"` — **and thereby overwrote the setting with
+it.** Nothing restored it until the next `start()` re-read the mission. The command bar
+still SHOWED RTH, the RUN MODE pill read `goto · loiter`, and the client's end-of-plan
+RTH chain (which gates on that value) was silently disarmed in between.
+
+**The robust fix is structural, not a patch — one field per concept:**
+- `plan_completion()` — THE SETTING. Cached in `_PLAN_COMPLETION`, refreshed by
+  `_cache_plan_completion()`, which **every** mission read and write funnels through, so
+  the cache cannot drift from disk and the 4 Hz telemetry loop never touches the file.
+  **No Engine method writes it** — that is the invariant that kills the whole bug class.
+- `Engine.run_completion` — what the run in progress does at ITS end. `_run_route` sets
+  `loiter` (correct for a Go-To); `start()` sets it from `plan_completion()`.
+- **Both** are published: `completion` (setting) and `run_completion` (this run). Client:
+  the command-bar selector and the RTH chain read `s.completion`; the RUN MODE pill and
+  Mission card read `runCompletion()`. `syncCompletionSel()` mirrors the server's setting
+  back into the selector (skipped while focused), so the two **cannot drift unnoticed**.
+
+**Test:** `python tests/completion_modes.py` — 10 assertions, ~5 s, drives a REAL console
+over the API because the failure was an interaction between a command and persisted
+state, which a unit test of either half alone would have missed. In the pre-commit hook.
+Teeth-verified: publishing `run_completion` as `completion` → 3,7,8,9 fail; `_run_route`
+writing the setting (the exact old code) → 3,7; `start()` ignoring the setting → 10;
+breaking the cache refresh → 8.
+
+**Note on check 10:** the first version of this test passed all its mutations except
+`start()` ignoring the setting, because it never STARTED a plan — the setting would have
+been perfectly preserved and then never used. Preserving a setting and *honouring* it are
+two assertions, and a test needs both. (The same pass also caught a flake in the test
+itself: it assumed a position fix instead of waiting for one, so it failed on the wrong
+check. A test that fails for the wrong reason discredits every assertion around it.)
+
 ## CHARTED POINT HAZARDS HAVE AN EXTENT (2026-08-01)
 
 **Bug Andy hit:** a live Go-To out of Lewes planned straight over a charted wreck. The

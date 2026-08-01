@@ -184,6 +184,9 @@ c.push(H1("5  Server reference (asv_console.py)"));
 c.push(H2("5.1  Engine"));
 c.push(P("`Engine` owns the link, the armed/e-stop state, the run state machine and the telemetry loop. It ticks the link, absorbs telemetry into a state snapshot, and pushes that snapshot to every SSE subscriber. It also resolves HOME on every tick (chapter 9) and drives the moving-HOME chase."));
 c.push(P("Run states are `idle`, `running`, `paused` and `complete`. Behaviors are `survey`, `goto`, `rth`, `transit` and `hold`. Completion modes are `rth`, `complete`, `loiter` and `repeat`."));
+c.push(H3("5.1.1  End-of-plan setting versus run completion"));
+c.push(P("Two different things, deliberately kept in two different places. The END-OF-PLAN SETTING is the operator's persistent choice of what happens when a survey or search PLAN finishes; it is owned by the mission store and read through a cached accessor that every mission read and write refreshes. NO ENGINE METHOD WRITES IT. The RUN COMPLETION is what the run currently in progress does at its own end — a Go-To, return-to-home, hold or transit all station-keep at their endpoint, so a Go-To legitimately runs as “loiter”."));
+c.push(P("They were one field once. Because a Go-To correctly set that field to loiter, commanding one silently overwrote the operator's end-of-plan selection: the command bar still showed the selection while the console acted on loiter, and the end-of-plan return-to-home chain, which gates on that value, was disarmed until the next plan start re-read the mission. Both values are now published on the state, the client reads the setting for the selector and the chain and the run value for the mode readout, and the selector mirrors the server's setting so the two cannot drift apart unnoticed."));
 c.push(H2("5.2  SimVcu"));
 c.push(P("The simulator: waypoint following by look-ahead line-of-sight guidance, a yaw-rate-capped heading response, a speed model, and a power model that is either battery voltage sag or diesel fuel burn depending on the vessel file. Wind and sea state from the environment monitor push it off track, and the guidance answers with a crab feedforward plus a cross-track integral term, the way a real autopilot does."));
 c.push(H2("5.3  Supporting services"));
@@ -324,11 +327,12 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Four headless harnesses guard geometry that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
+c.push(P("Five regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
 c.push(TBL(["Harness", "Guards"], [
   ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
   ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
   ["`python tests/roc_tracks.py`", "ROC arrival geometry, the staged/active HOME gate, moving HOME, NMEA validation, and that every vessel-derived default tracks the vessel"],
+  ["`python tests/completion_modes.py`", "The operator's end-of-plan SETTING versus the completion of the run in progress: that a behaviour can never change the setting, and that a plan run adopts it. Drives a real console over the API."],
   ["`node tests/wreck_clearance.js`", "Charted point-hazard extent: that a wreck keeps a route off it in BOTH the exact check and the search raster, that a charted sounding over it is honoured and tide-corrected, that point-sized marks are unaffected, and that the vessel's buffer floor holds"],
 ], [2700, 6660]));
 c.push(SP());

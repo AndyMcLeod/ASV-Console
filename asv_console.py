@@ -447,6 +447,14 @@ LOG = None
 _mission_lock = threading.Lock()
 
 
+def _cache_plan_completion(v):
+    """Validate an end-of-plan value and refresh the cache. Every mission read and write
+    funnels through here, so `plan_completion()` cannot drift from what is on disk."""
+    global _PLAN_COMPLETION
+    _PLAN_COMPLETION = v if v in ("complete", "loiter", "repeat", "rth") else "rth"
+    return _PLAN_COMPLETION
+
+
 def load_mission():
     try:
         with open(MISSION_PATH, "r", encoding="utf-8") as f:
@@ -461,8 +469,7 @@ def load_mission():
                 # plan-run completion semantics (Survey/search as a typed behavior):
                 # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
                 # | rth (chain the ENC-routed Return-to-Home). Default: rth.
-                "completion": m.get("completion") if m.get("completion") in
-                              ("complete", "loiter", "repeat", "rth") else "rth",
+                "completion": _cache_plan_completion(m.get("completion")),
                 # keep-clear buffer (m) around every nogo zone - the tightness the
                 # ASV threads between piers; smaller for tight marinas.
                 "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
@@ -478,6 +485,17 @@ def load_mission():
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "boundary": [], "boundary_closed": False}
 
 
+# The operator's END-OF-PLAN setting, cached so the 4 Hz telemetry loop never touches
+# the disk. Refreshed wherever the mission is read or written, which is every path that
+# can change it. This is the SETTING - it is emphatically not "what the current run does
+# at its end", and conflating those two is what this cache exists to keep impossible.
+_PLAN_COMPLETION = "rth"
+
+
+def plan_completion():
+    return _PLAN_COMPLETION
+
+
 def save_mission(m):
     data = json.dumps({
         "waypoints": m.get("waypoints") or [],
@@ -485,8 +503,7 @@ def save_mission(m):
         "arrival_radius_m": m.get("arrival_radius_m", 2.0),
         "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
         "speed": m.get("speed") or "survey",
-        "completion": m.get("completion") if m.get("completion") in
-                      ("complete", "loiter", "repeat", "rth") else "rth",
+        "completion": _cache_plan_completion(m.get("completion")),
         "buffer_m": m.get("buffer_m", 3.0),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
@@ -2202,7 +2219,12 @@ class Engine:
         self.plan_uploaded = False
         self.run = "idle"          # idle | running | paused | stopped | complete
         self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
-        self.completion = "rth"       # plan-run completion: complete | loiter | repeat | rth
+        # WHAT THE RUN CURRENTLY IN PROGRESS DOES AT ITS END - transient, and rewritten
+        # by every command. It is NOT the operator's end-of-plan SETTING: that lives in
+        # the mission store and is read via plan_completion(). One field serving both
+        # roles is exactly how "End of Plan: RTH" came back as loiter - a Go-To sets
+        # loiter (correctly, for a Go-To) and used to clobber the setting with it.
+        self.run_completion = "rth"   # complete | loiter | repeat | rth
         self.home = None           # {lat,lon} launch/home point (auto-set on 1st fix)
         # A selected ROC OWNS home: its arrival point overrides the first-fix launch
         # point, and for a ship (Mothership) it moves every tick, so a running RTH
@@ -2358,14 +2380,14 @@ class Engine:
             # the raw mission waypoints when no routed plan is supplied.
             wpts = self._sanitize_route(route) if route else (m.get("waypoints") or [])
             self._require(len(wpts) >= 1, "add at least one waypoint first")
-            self.completion = m.get("completion", "complete")
+            self.run_completion = plan_completion()   # a plan run honours the setting
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), m.get("speed", "survey"),
-                             m.get("approach_radius_m", WP_APPROACH_M), completion=self.completion)
+                             m.get("approach_radius_m", WP_APPROACH_M), completion=self.run_completion)
             self.plan_uploaded = True
             self.wp_total = len(wpts)
             self.wp_index = 0
             self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
-                len(wpts), " · ENC-routed" if route else "", self.completion)
+                len(wpts), " · ENC-routed" if route else "", self.run_completion)
         self._push_state()
 
     def set_approach(self, m):
@@ -2411,7 +2433,7 @@ class Engine:
                          "loiter": "Survey started (will loiter / station-keep at the end).",
                          "repeat": "Survey started (will repeat the route).",
                          "rth": "Survey started (will Return-to-Home at the end)."}.get(
-                             self.completion, "Survey started.")
+                             self.run_completion, "Survey started.")
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
@@ -2428,7 +2450,9 @@ class Engine:
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter")
             link.start()
             self.plan_uploaded = True
-            self.completion = "loiter"     # goto/rth/hold always station-keep at the end
+            # goto/rth/hold/transit always station-keep at their own endpoint. This is
+            # the RUN's completion only - the operator's end-of-plan setting is untouched.
+            self.run_completion = "loiter"
             self.wp_total = len(route)
             self.wp_index = 0
             self.run = "running"
@@ -2539,7 +2563,7 @@ class Engine:
         with self._lock:
             self.home = None
             self.behavior = "survey"
-            self.completion = "complete"
+            self.run_completion = "complete"
             self.wp_index = self.wp_total = 0
             self.note = ("Spawned here - fresh sim boot: energy full, SAFE, no plan or home."
                          if spawn else
@@ -2742,7 +2766,14 @@ class Engine:
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
-            "completion": self.completion,
+            # Two DIFFERENT things, deliberately both published:
+            #   completion      - the operator's END-OF-PLAN SETTING (the mission store).
+            #                     The command-bar selector and the end-of-plan RTH chain
+            #                     read this, so a Go-To can never appear to change it.
+            #   run_completion  - what the run in progress does at ITS end (a Go-To
+            #                     station-keeps). The RUN MODE readout shows this.
+            "completion": plan_completion(),
+            "run_completion": self.run_completion,
             "home": self.home,
             "home_source": self.home_source,      # None (first-fix/manual) | active ROC id
             "home_following": self._rth_follow,   # True while RTH is chasing a moving ROC

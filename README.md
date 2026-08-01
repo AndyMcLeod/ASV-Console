@@ -450,8 +450,9 @@ cd tools && npm install && node build_tech_manual.js
 
 ## Tests & git hooks
 
-Three regression tests guard the geometry that has bitten repeatedly. All run the real
-page code against synthetic worlds; stdlib Node, no deps, no server:
+Five regression suites guard the behaviour that has bitten repeatedly. Most run the
+real page code against synthetic worlds with stdlib Node and no server; the last two are
+stdlib Python, and one drives a real console:
 
 ```
 node tests/buoy_lane.js
@@ -481,6 +482,16 @@ says (including a *relative* offset following the ship round), that only an **ac
 can be HOME, that a steaming ship's HOME actually moves, that corrupt NMEA is rejected
 rather than fed to the boat, and that every vessel-derived default **re-derives on a
 vessel switch** rather than going stale.
+
+```
+python tests/completion_modes.py
+```
+
+**End-of-plan setting vs the run in progress** — that commanding a Go-To (which correctly
+station-keeps at its own endpoint) can never change the operator's **End of Plan**
+selection, and that a plan run actually *adopts* that selection. This one drives a real
+console over the API, because the failure it guards was an interaction between a command
+and persisted state.
 
 A pre-commit hook runs all three automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
