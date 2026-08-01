@@ -264,6 +264,15 @@ for the UI) plus the `available` list; `GET /api/vessels` returns just the list;
 disarmed, not e-stopped, and idle (otherwise **409**), and it respawns the sim
 boat with the new physics.
 
+**Click-to-spawn:** `POST /api/cmd/spawn {"lat":…,"lon":…}` places the sim boat at a
+point (the **Spawn** button arms this, and the next chart click sends it). The server
+runs the *same* power-cycle as Reset with a spawn override, so a fresh `SimVcu` comes
+up there — full energy, SAFE, no plan or home, and a new `boot_id` (which drops the
+trail). The boat is never teleported while live; placing it is a re-boot, which is why
+a real link refuses it (**409**), as it does for a bad or out-of-range lat/lon. The
+active vessel's configured spawn (`vessels/<id>.json` — Erie for `zboat_1800hs`, Lewes
+for `drix08`) is untouched and comes back on the next start or vessel switch.
+
 ```bash
 curl -s localhost:8791/api/vessel | python -m json.tool          # active + available
 curl -s -X POST localhost:8791/api/vessel -d '{"id":"example_usv_4m"}'  # switch (must be safe/idle)

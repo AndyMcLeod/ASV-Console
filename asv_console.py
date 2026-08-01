@@ -2221,14 +2221,19 @@ class Engine:
             LOG.state(ev)
 
     # -- connection -------------------------------------------------------- #
-    def connect(self, mode, host, port, transport):
+    def connect(self, mode, host, port, transport, spawn=None):
+        """`spawn` = {"lat":..,"lon":..} places a NEW sim boat there instead of at the
+        active vessel's configured spawn - the click-to-spawn path. Ignored for a real
+        link. The per-vessel default still lives in vessels/<id>.json (Erie for the
+        Z-Boat, Lewes for the DriX)."""
         self.disconnect()
         with self._lock:
             self._mode = mode
             self._host = host
             self._port = int(port) if port else DEFAULT_VCU_PORT
             if mode == "sim":
-                self._link = SimVcu()
+                self._link = (SimVcu(float(spawn["lat"]), float(spawn["lon"]))
+                              if spawn else SimVcu())
                 self.note = "Simulator connected. No hardware in the loop."
             else:
                 self._link = RealVcu(host, self._port, transport=transport)
@@ -2472,27 +2477,32 @@ class Engine:
                 self.note = "Command E-STOP released (still SAFE/disarmed)."
         self._push_state()
 
-    def reset(self):
+    def reset(self, spawn=None):
         """Simulator power-cycle: a clean slate as if the boat were shut down and
         restarted. Brings up a FRESH SimVcu (energy full, back at the spawn point,
         no plan) and returns the console to SAFE / idle with no home. Home re-arms
         automatically on the next fix. SIM ONLY - a real boat can't be teleported and
-        its battery/fuel can't be refilled from the console, so refuse honestly."""
+        its battery/fuel can't be refilled from the console, so refuse honestly.
+        `spawn` = {"lat":..,"lon":..} brings the boat up THERE instead of at the active
+        vessel's configured spawn (click-to-spawn); everything else is identical, so
+        placing the boat reuses the power-cycle rather than teleporting a live one."""
         with self._lock:
             mode = self._mode
         self._require(mode == "sim", "Reset is a simulator-only convenience - a real "
                       "boat can't be teleported to spawn or have its energy refilled.")
         # A fresh sim link IS the power-cycle: new SimVcu (full energy, spawn
         # position) + SAFE state. connect() takes its own lock, so call it unlocked.
-        self.connect("sim", self._host, self._port, "tcp")
+        self.connect("sim", self._host, self._port, "tcp", spawn=spawn)
         with self._lock:
             self.home = None
             self.behavior = "survey"
             self.completion = "complete"
             self.wp_index = self.wp_total = 0
-            self.note = "Reset - fresh sim boot: energy full, SAFE, no plan or home."
+            self.note = ("Spawned here - fresh sim boot: energy full, SAFE, no plan or home."
+                         if spawn else
+                         "Reset - fresh sim boot: energy full, SAFE, no plan or home.")
         if LOG is not None:
-            LOG.event("reset")
+            LOG.event("spawn" if spawn else "reset", **(spawn or {}))
         self._push_state()
 
     def return_home(self, route=None):
@@ -2981,6 +2991,14 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
+            elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point
+                try:
+                    slat = float(body.get("lat")); slon = float(body.get("lon"))
+                except (TypeError, ValueError):
+                    raise VcuProtocolError("spawn needs a numeric lat/lon")
+                if not (-90.0 <= slat <= 90.0 and -180.0 <= slon <= 180.0):
+                    raise VcuProtocolError("spawn lat/lon out of range")
+                ENGINE.reset(spawn={"lat": slat, "lon": slon})
             elif path == "/api/cmd/energy":            # energy override (report full) on/off, all modes
                 ENGINE.set_energy_override(bool(body.get("unlimited")))
             else:

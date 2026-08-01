@@ -68,6 +68,15 @@ physics under a running boat is refused). Switching in sim respawns the boat wit
 the new vessel's parameters, so you can run the same mission on different hulls
 and compare.
 
+Each profile also carries its own **spawn** position, so a vessel comes up in its own
+work area — `zboat_1800hs` in **Erie** (Presque Isle Bay) and `drix08` at **Lewes**
+(the UDel facility on the Lewes-Rehoboth Canal). To place the boat anywhere else,
+press **Spawn** in the command bar and click the chart: the sim boat comes up there
+instead, with the same clean slate as Reset (full energy, SAFE, no plan or home).
+That override lasts for the current sim boot only — the profile's spawn is untouched
+and is restored on the next start or vessel switch. Sim only; a real boat can't be
+teleported.
+
 Real link (Phase 2+, once the protocol is known), serial-over-IP by default:
 
 ```
