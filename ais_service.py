@@ -264,9 +264,21 @@ class AisstreamSource(Source):
                 self._ok("connected")
                 backoff = 2.0
                 while True:
-                    msg = ws.recv_text()
+                    try:
+                        msg = ws.recv_text()
+                    except (socket.timeout, TimeoutError):
+                        # A QUIET BOX IS NOT AN ERROR. aisstream only pushes when a vessel
+                        # INSIDE the subscribed box reports, and coverage comes from
+                        # volunteer shore receivers - so a sparsely covered area (Delaware
+                        # Bay / Lewes, measured) legitimately goes minutes with no frame.
+                        # Treating that as a failure showed "error" in the UI and tore the
+                        # socket down into an exponential-backoff reconnect, which then
+                        # risked missing the first real report. Hold the connection open.
+                        self._ok("connected; no vessels reporting in this area yet")
+                        continue
                     if msg is None:
                         break
+                    self._ok("connected")
                     self._ingest(msg)
             except Exception as e:
                 self._err(e)
