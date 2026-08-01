@@ -376,8 +376,8 @@
     <select id="c_speed" style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
     </select>
-    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-      <option value="complete" selected>Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
+    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behaviour (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+      <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
     </select>
     <span class="cdiv"></span>
     <button class="cbtn arm" id="b_arm">Arm</button>
@@ -413,7 +413,7 @@
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
       <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
-      <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
+      <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (RTH / Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
       <div class="vrow"><span class="vk">Run time</span><span class="vv" id="v_runtime" title="Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent complete. Ticks from Start, including the approach to the survey.">--</span></div>
       <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
       <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
@@ -454,7 +454,7 @@
         <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (green kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
-        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as the <i>Run mode</i> on the vessel card.</li>
+        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as the <i>Run mode</i> on the vessel card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
         <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviours &mdash; all available once Armed, no survey plan required.</li>
       </ol>
@@ -551,7 +551,7 @@ let track = loadTrack();                      // restore the trail from the last
 let asv = null;                              // {lat,lon,hdg}
 
 // --- mission plan -------------------------------------------------------- //
-let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey", completion: "complete", buffer_m: 3};
+let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey", completion: "rth", buffer_m: 3};
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
 let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
 let mode = "pan", activeLine = -1, saveTimer = null;
@@ -624,13 +624,13 @@ async function loadMission(){
       mission = {waypoints:m.waypoints||[], lines:m.lines||[],
                  arrival_radius_m:m.arrival_radius_m ?? 2,
                  approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
-                 completion:m.completion||"complete", buffer_m:m.buffer_m ?? 3};
+                 completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
       $("#c_approach").value = mission.approach_radius_m ?? 1;
       $("#c_speed").value = mission.speed || "survey";
-      $("#c_completion").value = mission.completion || "complete";
+      $("#c_completion").value = mission.completion || "rth";
       // apply the persisted nogo buffer to both controls + the shared model
       nogo.buffer = mission.buffer_m ?? 10;
       $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer; render(); } }catch(e){}
@@ -961,6 +961,7 @@ function updateLineTip(e){
 //     component {from,to,sec}. Approaches / inter-area transits count as neither.
 // Shown in the LINES table + written to the session log on run end.
 let lineActual=[], lineClock=null, prevRun=null, loggedLines=false;
+let rthChained=false;              // one-shot: End-of-Plan RTH has been chained for this run
 let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
 let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
 function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false;
@@ -4392,7 +4393,7 @@ $("#b_reset").onclick = async ()=>{
     +"returns the sim boat to its spawn point, and reloads the page fresh — as if shut down and restarted. (Simulator only.)")) return;
   // clear the persisted plan + the trail so the reloaded page comes up clean
   mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
-             speed: "survey", completion: "complete", buffer_m: 3};
+             speed: "survey", completion: "rth", buffer_m: 3};
   boundary = []; boundaryClosed = false;
   clearTrack();
   flashNote("Resetting — reloading fresh…");
@@ -4444,12 +4445,22 @@ function applyCmdState(s){
 function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
-  if(prevRun!=="running" && prevRun!=="paused" && s.run==="running"){ resetLineStats(); resetRunTimer(); }  // new run: reset per-line actuals + whole-run timer
+  if(prevRun!=="running" && prevRun!=="paused" && s.run==="running"){ resetLineStats(); resetRunTimer();
+    if(s.behavior!=="rth") rthChained=false; }   // fresh run re-arms the RTH chain (but not the chained RTH itself)
   if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
   prevRun=s.run;
   accumRunTime();                                // accrue whole-run elapsed (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
+  // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
+  // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
+  // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
+  if(s.run==="running" && st.holding && s.completion==="rth" && s.behavior!=="rth"
+     && s.armed && !s.estop && !rthChained){
+    rthChained=true;
+    flashNote("End of plan — chaining Return-to-Home.");
+    doRTH();
+  }
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
   $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
   $("#note").textContent = s.note || "";
@@ -4515,7 +4526,7 @@ function onState(s){
   $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
 
   // run mode: active behaviour + plan completion (+ lap count when repeating)
-  const beh = s.behavior || "survey", comp = s.completion || "complete";
+  const beh = s.behavior || "survey", comp = s.completion || "rth";
   const laps = (st.laps!=null) ? st.laps : 0;
   let mtxt = beh + " · " + comp;
   if(comp==="repeat" && (s.run==="running")) mtxt += " · lap "+(laps+1);

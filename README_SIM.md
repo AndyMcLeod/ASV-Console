@@ -47,7 +47,7 @@ for short surveys in constrained waters — not a large survey vessel.
 |---|---|
 | **Position** | Starts at **≈42.1371 N, −80.0874 W** (Presque Isle Bay, Erie PA — operator-set launch point), heading 090°. Integrates lat/lon along heading at the current speed. |
 | **Waypoint autonomy** | **Line-following** (look-ahead LOS ~3 m): the boat tracks the survey/transit line between waypoints (pulling out cross-track error) rather than steering point-to-point, turn rate ≤ **60°/s** (nimble small boat). It advances onto the next leg when it passes the waypoint along-track or comes within the **approach radius** (GUI "Appr m", default ~1 m) — following the line to ~1 m of each turn; applies live to a running sim. Ends per the plan's **completion** mode (stop / loiter / repeat). |
-| **Completion / behaviours** | Station-keeps (holds) at the end of a Go-To / RTH / Hold / Transit / Loiter run; loops on Repeat. |
+| **Completion / behaviours** | Station-keeps (holds) at the end of a Go-To / RTH / Hold / Transit / Loiter run; loops on Repeat. On **RTH** (the default) the sim HOLDS at the last waypoint and the console chains the real ENC-routed Return-to-Home — so with no console attached the boat stays safely on station instead of running home on an unrouted straight line. |
 | **Speed** | Target set by the plan's speed key — **Low 1.5 kn / Survey 3.0 kn / High 6.0 kn** (manual: survey ≈ 2.8–3.5 kn). Accelerates/decelerates smoothly (≤ 1.5 kn/s). |
 | **Arrival radius** | From the plan, clamped 1–50 m (default **2 m**, ~1 boat length). |
 | **Environment** | **Real wind + sea state push the boat off course** (see §2a) — a steady crab plus a gust-driven wander the line-follower steers out. Pitch/roll are driven by the real sea. |
@@ -115,7 +115,8 @@ link (sim or real) only obeys. Order matters:
    obstacles** (the approach from the boat to the first waypoint, and any transit
    between lines). Requires **armed**, no E-STOP, and ≥ 1 waypoint.
 3. **Start** — begins the survey/search run. Requires **armed**, a **plan uploaded**,
-   no E-STOP. **Completion** (command bar) sets the end behaviour: *Complete* (stop),
+   no E-STOP. **Completion** (command bar) sets the end behaviour: *RTH* (chain the
+   ENC-routed Return-to-Home and station-keep at home — the default), *Complete* (stop),
    *Loiter* (station-keep at the last waypoint), or *Repeat* (loop the route).
 4. **Pause** — holds position, keeps the next waypoint active; **Start** resumes.
 5. **Stop** — aborts the run plan (reverts to the first waypoint; re-upload/Start
@@ -211,7 +212,7 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
    coarse (~3 m) point spacing, so a wide survey keeps only a handful of waypoints per
    turn.
 4. **Set run params:** arrival radius, speed (Low/Survey/High), and **completion**
-   (Complete / Loiter / Repeat) in the command bar.
+   (RTH / Complete / Loiter / Repeat; RTH is the default) in the command bar.
 5. **Arm → Upload → Start.** Upload routes the transit to the survey clear of
    obstacles (green path). Watch the boat drive the survey, the waypoint counter
    advance (`wp x / N`), the track paint, and the battery drain.

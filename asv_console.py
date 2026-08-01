@@ -447,9 +447,10 @@ def load_mission():
                 "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
                 "speed": m.get("speed") or "survey",
                 # plan-run completion semantics (Survey/search as a typed behavior):
-                # complete (stop) | loiter (station-keep at the last wp) | repeat (loop).
+                # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
+                # | rth (chain the ENC-routed Return-to-Home). Default: rth.
                 "completion": m.get("completion") if m.get("completion") in
-                              ("complete", "loiter", "repeat") else "complete",
+                              ("complete", "loiter", "repeat", "rth") else "rth",
                 # keep-clear buffer (m) around every nogo zone - the tightness the
                 # ASV threads between piers; smaller for tight marinas.
                 "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
@@ -461,7 +462,7 @@ def load_mission():
     except (OSError, ValueError):
         pass
     return {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
-            "approach_radius_m": WP_APPROACH_M, "speed": "survey", "completion": "complete",
+            "approach_radius_m": WP_APPROACH_M, "speed": "survey", "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "boundary": [], "boundary_closed": False}
 
 
@@ -473,7 +474,7 @@ def save_mission(m):
         "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
         "speed": m.get("speed") or "survey",
         "completion": m.get("completion") if m.get("completion") in
-                      ("complete", "loiter", "repeat") else "complete",
+                      ("complete", "loiter", "repeat", "rth") else "rth",
         "buffer_m": m.get("buffer_m", 3.0),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
@@ -1815,7 +1816,7 @@ class SimVcu(VcuLink):
         self._speed_key = "survey"
         self._wp_index = 0
         self._seg_start = {"lat": start_lat, "lon": start_lon}   # current leg origin
-        self._completion = "complete"  # complete (stop) | loiter (station-keep) | repeat (loop)
+        self._completion = "rth"       # complete (stop) | loiter (station-keep) | repeat (loop) | rth
         self._holding = False          # currently station-keeping (loiter reached the end)
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
@@ -1840,7 +1841,7 @@ class SimVcu(VcuLink):
         self._speed_key = speed if speed in SPEED_KN else "survey"
         self._wp_index = 0
         # completion semantics at the last waypoint (goto/rth/hold -> loiter)
-        self._completion = completion if completion in ("complete", "loiter", "repeat") else "complete"
+        self._completion = completion if completion in ("complete", "loiter", "repeat", "rth") else "rth"
         self._holding = False
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
@@ -1931,8 +1932,12 @@ class SimVcu(VcuLink):
                 self._seg_start = wp
                 self._wp_index += 1
                 if self._wp_index >= len(self._plan):
-                    if self._completion == "loiter":
-                        self._holding = True       # goto/rth/hold + Survey loiter: station-keep here
+                    if self._completion in ("loiter", "rth"):
+                        # loiter AND rth: hold here. For "rth" the CONSOLE chains the
+                        # real (ENC-routed) Return-to-Home on seeing this hold - so with
+                        # no console connected the boat stays safely on station instead
+                        # of dashing home on an unrouted straight line.
+                        self._holding = True
                     elif self._completion == "repeat":
                         self._wp_index = 0         # loop the route from the present position
                         self._seg_start = {"lat": self.lat, "lon": self.lon}
@@ -2172,7 +2177,7 @@ class Engine:
         self.plan_uploaded = False
         self.run = "idle"          # idle | running | paused | stopped | complete
         self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
-        self.completion = "complete"  # plan-run completion: complete | loiter | repeat
+        self.completion = "rth"       # plan-run completion: complete | loiter | repeat | rth
         self.home = None           # {lat,lon} launch/home point (auto-set on 1st fix)
         self.link = self.LINK_IDLE
         self.note = "Not connected."
@@ -2367,7 +2372,8 @@ class Engine:
             self.behavior = "survey"
             self.note = {"complete": "Survey started.",
                          "loiter": "Survey started (will loiter / station-keep at the end).",
-                         "repeat": "Survey started (will repeat the route)."}.get(
+                         "repeat": "Survey started (will repeat the route).",
+                         "rth": "Survey started (will Return-to-Home at the end)."}.get(
                              self.completion, "Survey started.")
         self._push_state()
 

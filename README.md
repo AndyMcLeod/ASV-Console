@@ -333,7 +333,8 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    forward. Every actuating command is gated behind arming.
 4. **Upload → Start** — push the plan to the boat, then start the run. The transit is
    routed clear of obstacles at Upload; **completion** (command bar) sets what happens
-   at the end — **Complete** (stop), **Loiter** (station-keep at the last waypoint), or
+   at the end — **RTH** (chain the ENC-routed Return-to-Home and station-keep at home;
+   the default), **Complete** (stop), **Loiter** (station-keep at the last waypoint), or
    **Repeat** (loop the route). Watch waypoint progress, track, and battery.
 5. **Pause / Stop / E-STOP** — Pause holds the next waypoint; Stop aborts the
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
