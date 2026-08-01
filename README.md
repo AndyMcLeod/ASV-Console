@@ -129,7 +129,7 @@ optional setup is a **free aisstream.io key for real US / Great Lakes coverage**
 up once (otherwise it falls back to keyless digitraffic, Finnish/Baltic waters):
 
 ```
-echo YOUR_FREE_KEY > ais_key.txt     # one-time; or set $AISSTREAM_KEY. Then just run the console.
+setx AISSTREAM_KEY YOUR_FREE_KEY    # one-time, machine-wide (or: echo KEY > ais_key.txt). Then just run the console.
 ```
 
 `--no-ais-service` disables the auto-start (to use an external one); `--ais URL` points
@@ -146,8 +146,9 @@ Sources (any combination, comma-separated):
   out of the box.
 - **aisstream** — [aisstream.io](https://aisstream.io/) global real-time WebSocket; the
   source for real **US / Great Lakes** coverage (a bundled stdlib WebSocket client — no
-  pip). Needs a **free API key**: set it up once with `echo KEY > ais_key.txt` (or
-  `--aisstream-key` / `$AISSTREAM_KEY`), and `--source auto` uses it. Scope the feed to
+  pip). Needs a **free API key**: set `AISSTREAM_KEY` once
+  (`setx AISSTREAM_KEY KEY` on Windows) and every console on the machine picks it up;
+  a per-project `ais_key.txt` or `--aisstream-key` also work. `--source auto` uses it. Scope the feed to
   your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
   Erie: `--bbox=-83.7,41.2,-78.7,43.05`. **Verified live on Lake Erie** — real lakers,
   tankers, tour and Coast Guard boats; ship types fill in over the ~6 min AIS static cycle.

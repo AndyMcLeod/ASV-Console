@@ -20,7 +20,7 @@ Sources (enable any combination with --source, comma-separated):
                  AIVDM over TCP or UDP — the real onboard VHF path, decoded here.
 
 Run (zero-config): set an aisstream key up ONCE, then just start it:
-  echo YOUR_FREE_KEY > ais_key.txt      # one-time; or set $AISSTREAM_KEY
+  setx AISSTREAM_KEY YOUR_FREE_KEY      # one-time, machine-wide (or: echo KEY > ais_key.txt)
   python ais_service.py                 # --source auto: aisstream if a key exists, else digitraffic
 
 Or pick sources explicitly:
@@ -701,8 +701,9 @@ def make_handler(reg, sources):
 
 
 def resolve_aisstream_key(args):
-    """aisstream key, set once and forgotten: --aisstream-key, then $AISSTREAM_KEY,
-    then an `ais_key.txt` file next to this script (first non-comment line)."""
+    """aisstream key, set once and forgotten: --aisstream-key, then $AISSTREAM_KEY
+    (preferred - one value for every console on the machine), then an `ais_key.txt`
+    file next to this script (first non-comment line)."""
     if args.aisstream_key:
         return args.aisstream_key.strip()
     if os.environ.get("AISSTREAM_KEY"):
@@ -734,7 +735,7 @@ def build_sources(reg, args):
         # zero-config: use the global feed if a key is set up, else the keyless one.
         names = ["aisstream"] if key else ["digitraffic"]
         print("[ais] source 'auto' -> %s%s" % (names[0],
-              "" if key else " (no aisstream key found; set up ais_key.txt for global coverage)"),
+              "" if key else " (no aisstream key found; set $AISSTREAM_KEY for global coverage)"),
               file=sys.stderr)
     out = []
     for n in names:

@@ -24,8 +24,9 @@ table, zero-config `ais_key.txt`/`--source auto`; see the AIS note); and the **G
 distance fixes** (coverage `ensureNogoCovers` + resolution `routeAroundSeg` sectioning;
 see the gotcha note). Most of this session ALSO drove the **backport of these features
 into the Z-Boat** (`D:\Claude\Zboat`) — keep the ASV brand-free; the Z-Boat is branded.
-**Open:** live GUI spot-checks owed (AIS draw/table, Go-To fixes); for real US AIS
-coverage drop an aisstream key in `ais_key.txt` here too (only the Z-Boat dir has one).
+**Open:** live GUI spot-checks owed (AIS draw/table, Go-To fixes). The aisstream key now
+lives in the **`AISSTREAM_KEY` user environment variable** (2026-07-31) — one value for
+every console on the machine, no per-project `ais_key.txt`.
 
 ## LINE-TIMING: sequence-keyed activation (2026-07-27)
 
