@@ -1,0 +1,57 @@
+#!/bin/sh
+# Pre-commit: run the geometry regression tests whenever the source they cover is
+# staged, so a commit can't silently regress the ASV's obstacle-avoidance / Rule 9
+# handedness or its survey turn geometry. Both are fast (~1 s each), stdlib Node.
+#
+#   tests/buoy_lane.js      Rule 9 channel lane - which side of a channel the ASV
+#                           rides, marked and unmarked, both directions.
+#   tests/turn_geometry.js  survey line-to-line turns - shape selection, the minimum
+#                           turn radius held along the WHOLE path, exit alignment,
+#                           outboard excursion, nogo refusal.
+#
+# Ported from the Z-Boat sibling 2026-07-31. Everything lives in ONE file here
+# (static/asv.html - there is no routing.js split), so the path filter is shorter.
+#
+# Activated by  git config core.hooksPath .githooks  (run once per clone; see
+# README / the hook's own note). Bypass in a pinch with:  git commit --no-verify
+
+# Only bother when the geometry source or one of the tests is staged.
+changed=$(git diff --cached --name-only)
+case "$changed" in
+  *static/asv.html*|*tests/buoy_lane.js*|*tests/turn_geometry.js*) ;;
+  *) exit 0 ;;
+esac
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found - skipping geometry tests (install Node to enable them)."
+  exit 0
+fi
+
+# Run BOTH, and report every failure rather than stopping at the first - two broken
+# invariants are worth knowing about in one pass.
+fail=0
+
+echo "pre-commit: buoy-lane handedness regression test..."
+if ! node tests/buoy_lane.js; then
+  echo ""
+  echo "pre-commit: buoy-lane test FAILED."
+  echo "  The route search changed the Rule 9 handedness (centreline no longer to port)."
+  echo "  Fix channelLaneRoute in static/asv.html."
+  fail=1
+fi
+
+echo "pre-commit: survey turn geometry regression test..."
+if ! node tests/turn_geometry.js; then
+  echo ""
+  echo "pre-commit: turn-geometry test FAILED."
+  echo "  A survey reversal no longer ends on the next line aligned, or asks the boat"
+  echo "  to hold a radius tighter than it can (teardropTurn in static/asv.html)."
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "pre-commit: commit blocked. Override with:  git commit --no-verify"
+  exit 1
+fi
+exit 0

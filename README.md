@@ -390,6 +390,40 @@ the cursor — with play/pause, speed, and a scrubber. It's **read-only** (no
 commanding) and works for sim and real sessions alike. See
 [README_PLAYBACK.md](README_PLAYBACK.md).
 
+## Tests & git hooks
+
+Two regression tests guard the geometry that has bitten repeatedly. Both run the real
+page code against synthetic worlds; stdlib Node, no deps, no server:
+
+```
+node tests/buoy_lane.js
+```
+
+The **Rule 9 channel lane** — the ASV riding starboard of the channel centreline, in
+marked *and* unmarked channels, both directions, with a lone buoy correctly *not* treated
+as a wall.
+
+```
+node tests/turn_geometry.js
+```
+
+**Survey line-to-line turns** — that each reversal ends on the next line *aligned*, that no
+part of it asks the boat to hold a radius tighter than it can at the plan speed (checked
+along the whole path, not just at the nominal radius), that the outboard excursion reported
+to the operator is what the path actually does, and that a keep-out over the loop refuses
+the turn. Both a fast-turning small hull and a slow-turning larger one are exercised, since
+the turn shape is chosen from the **active vessel's** minimum turn radius.
+
+A pre-commit hook runs both automatically whenever `static/asv.html` or either test is
+staged, and blocks the commit if an invariant regresses. The hook is versioned in
+`.githooks/`; **enable it once per clone**:
+
+```
+git config core.hooksPath .githooks
+```
+
+Bypass in a pinch with `git commit --no-verify`.
+
 ## Architecture
 
 Forked from the sibling **companion Console**, reusing its proven stdlib

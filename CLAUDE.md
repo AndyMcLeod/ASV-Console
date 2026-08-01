@@ -363,6 +363,10 @@ offset fails 6, reversing the middle sweep fails 4, dropping the nogo sweep fail
   via the `/api/cmd/*` endpoints and read `/api/state` / `/events`.
 - Geometry/routing regressions run offline against `static\asv.html` with plain
   Node (no deps, no server): `node tests/turn_geometry.js`, `node tests/buoy_lane.js`.
+  **A pre-commit hook runs BOTH** when `static\asv.html` or either test is staged
+  (`.githooks/pre-commit`, ported from the sibling 2026-07-31; enable per clone with
+  `git config core.hooksPath .githooks`, bypass with `--no-verify`). `.gitattributes`
+  pins `.githooks/**` to LF — a CRLF shebang breaks the interpreter on checkout.
 - The map page canvas animates continuously — **browser-pane screenshots time
   out**; verify via DOM/`read_page` or the state endpoints instead.
 - Windows/store-Python gotcha: a stray server process can hold the port and serve
