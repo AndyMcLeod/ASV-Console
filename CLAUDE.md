@@ -91,8 +91,9 @@ with them): the channel end extension and the buoy-gate projection.
 directions, opposing transits pass port-to-port, unmarked channel both ways, a lone
 buoy is not a wall, open-water no-op, `systemCenterline` geometry). Verified on the
 real Erie cache: outbound **99 % starboard at 0.50 of half-width**, inbound **98 % at
-0.39** — matching the sibling. `tools/buoy_lane_test.js` is **RETIRED** (it exercises
-the dead colour keep-right and now refuses to run rather than report a false pass).
+0.39** — matching the sibling. The old `tools/buoy_lane_test.js` was **deleted** with
+this port: it exercised the dead colour keep-right and still printed "all checks
+passed", which is worse than no test — it tells you to stop looking.
 
 ## BUOY-LINE KEEP-RIGHT: full backport (2026-07-28) — HISTORY, superseded
 > Superseded by the CHANNEL LANE above (2026-07-31). Everything below describes the
@@ -111,7 +112,8 @@ curvature limit, clear-water envelope), `channelEndExtend` (grid-aware), and
 preserved inside the new `keepRight`/`channelEndExtend` (the sibling hardcodes
 `buf*10`). Banners now report the buoyage reading. Same-day routing fixes carried
 in the same code: escalating-region long-goto fix and stitch/knot pruning were
-already ported (`ea5e92a`, `85dcf55`). Verified by `tools/buoy_lane_test.js`
+already ported (`ea5e92a`, `85dcf55`). Verified at the time by the since-deleted
+`tools/buoy_lane_test.js`
 (ported alongside, cache picker keyed to the Erie transit): all checks green —
 INBOUND/OUTBOUND direction read, 100% right-side in the fairway, no hairpin at
 the buoy gap, no nogo violation, confidence guard holds.
@@ -227,8 +229,8 @@ grid + exact check), a curvature limit keeps the result followable, and
 centre and one gate-width past it. Marks are small keep-outs (don't hit a buoy) and
 drawn green (port-hand) / red (starboard-hand) with their buoy lines; Go-To/RTH/
 Transit banners report the reading ("buoy lane INBOUND (red to starboard)").
-Regression harness: `node tools/buoy_lane_test.js` — **run it after ANY routing
-change** (it exercises the real page functions against a cached Erie Harbor ENC).
+Regression harness: `node tests/buoy_lane.js` — **run it after ANY routing change**
+(it exercises the real page functions against synthetic marked/unmarked channels).
 
 - **Server:** `load_vessel()` reads + `validate_vessel()` checks a profile at
   load (missing/mistyped field → clear, path-pointed error; a bad file never runs
