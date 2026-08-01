@@ -1,4 +1,23 @@
 #!/usr/bin/env node
+// ============================================================================
+// RETIRED (2026-07-31). This harness exercises `keepRight` - the IALA-B COLOUR
+// buoy-line keep-right, which is now DEAD CODE. The console flies the CHANNEL
+// LANE (`channelLaneRoute`) instead, so a green run here says nothing about the
+// routing that actually ships. It refuses to run rather than report a false pass:
+// a test that models the wrong thing is worse than no test, because it tells you
+// to stop looking.
+//
+//   Use instead:  node tests/buoy_lane.js
+//
+// Kept only as a reference for the retired algorithm. To resurrect it you would
+// have to re-enable keepRight first.
+// ============================================================================
+if (!process.env.RUN_RETIRED_BUOY_TEST) {
+  console.error("tools/buoy_lane_test.js is RETIRED - it tests the dead colour keep-right.");
+  console.error("Run the current regression instead:  node tests/buoy_lane.js");
+  console.error("(Set RUN_RETIRED_BUOY_TEST=1 to force it against the dead code.)");
+  process.exit(2);
+}
 // Headless test for the IALA-B buoy-line keep-right (Rule 9) in static/asv.html.
 //
 // The in-app browser is policy-blocked from localhost, so the routing math is

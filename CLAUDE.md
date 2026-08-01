@@ -42,7 +42,62 @@ a twice-shipped bug in the sibling console; if it ever resurfaces, check the
 sequence gate first and do NOT re-add a geometry-only guard. Harness-verified
 (4 cases against the real page functions).
 
-## BUOY-LINE KEEP-RIGHT: full backport (2026-07-28)
+## CHANNEL LANE — the shipping Rule 9 behaviour (ported 2026-07-31)
+
+**This is what runs.** The buoy-line section below is history: that colour design, and
+the geometric quarter-width keep-right that replaced it on the sibling, BOTH rode the
+wrong side of the buoys on the water. Ported here from the Z-Boat with the routing.
+
+**The rule** (operator-specified from a marked-up chart of the Erie Harbor Channel):
+outbound keeps the GREEN buoys to starboard, inbound keeps the RED to starboard, and
+**both keep the channel CENTRELINE TO PORT**. One direction-based geometric rule —
+ride a lane offset to **STARBOARD of the centreline, `LANE_FRAC` (0.5) of the local
+half-width** out (= a quarter of the full width in from the edge). Colour is never an
+input; it falls out of where IALA marks sit.
+
+**Applies to EVERY mode**: Go-To, RTH, the drawn Transit, the survey approach leg, the
+survey inter-line transits, search-pattern transits, and any routed obstacle detour.
+Survey coverage lines and teardrop turns are never offset.
+
+**Pipeline** (`channelLaneRoute` in `static/asv.html`):
+1. `buoyChannelLane` — marked channels. `systemCenterline(sy)` pairs each port-hand
+   buoy with its nearest starboard-hand buoy, takes midpoints ordered by number; each
+   point carries `hw` (half the pair spacing). The system is chosen by the **longest
+   stretch of the ROUTED PATH inside it**.
+2. `narrowChannelLane` — the SAME rule with no buoys (basin exit, canal). Centreline
+   from the water's own edges: `ctr=(RC−LC)/2`, `hw=(RC+LC)/2`. Fires only where BOTH
+   edges answer within `CONFINE`. **This is where the ASV's `channel_reach_m` vessel
+   override now lives** (it used to set `keepRight`/`channelEndExtend`'s wall-search
+   REACH; both are dead): `CONFINE = max(120, channel_reach_m ?? buf*30)`.
+3. `smoothTrack` — resample by ARC LENGTH at `STEP = max(45, buf*13)` (the waypoint
+   count dial) + two light `[0.25,0.5,0.25]` passes to round the bends.
+
+**Non-negotiable invariants — each one is a bug that actually shipped on the sibling:**
+a lone buoy is NOT a wall (the edge march runs against a mark-free keep-out view);
+SPLICE the lane into the routed path, never replace it; never emit an unverified leg
+(abandon the lane instead); the full quarter-width is not always available (take the
+largest offset that stays in clear water, then slew-limit); always SAMPLE a polyline,
+never trust its vertex count; and measure the lane against the pre-shift samples, not
+by marching perpendicular to the final route.
+
+**Now dead here, kept for reference:** `keepRight`, `channelEndExtend`, `gateProject`,
+and the whole colour system (`buoyageDir`, `buoyLaneAt`, `crossToLine`) — all only
+reachable from `keepRight`. **DIVERGENCE FROM THE Z-BOAT:** the sibling deleted its
+colour helpers outright; here they are left in place with the dead function (lower
+risk, behaves identically since nothing calls any of it). **NOT implemented** (retired
+with them): the channel end extension and the buoy-gate projection.
+
+**Test:** `node tests/buoy_lane.js` — 11 assertions (lane side + magnitude both
+directions, opposing transits pass port-to-port, unmarked channel both ways, a lone
+buoy is not a wall, open-water no-op, `systemCenterline` geometry). Verified on the
+real Erie cache: outbound **99 % starboard at 0.50 of half-width**, inbound **98 % at
+0.39** — matching the sibling. `tools/buoy_lane_test.js` is **RETIRED** (it exercises
+the dead colour keep-right and now refuses to run rather than report a false pass).
+
+## BUOY-LINE KEEP-RIGHT: full backport (2026-07-28) — HISTORY, superseded
+> Superseded by the CHANNEL LANE above (2026-07-31). Everything below describes the
+> retired colour design; `keepRight` and its helpers are dead code. Retained for the
+> record and because several of its *mechanisms* encode real failure modes.
 
 The keep-right is now the sibling's current **IALA-B buoy-line generation** (the
 old wall-only version lagged behind while routing work continued on the branded
@@ -146,7 +201,9 @@ fuel %/endurance/range. Validation branches on the type. The DriX is `fuel`.
 planning.under_keel_clearance_m` (a deep-draft boat avoids more shallow water). The
 client reads it via `/api/vessel` and **re-extracts** the nogo model on a switch.
 
-**COLREGS Rule 9 keep-right (IALA-B buoy-line generation, backported 2026-07-28)** —
+**COLREGS Rule 9 keep-right — SUPERSEDED 2026-07-31 by the CHANNEL LANE (see the top
+of this file); the description below is the retired colour design, now dead code.**
+(IALA-B buoy-line generation, backported 2026-07-28) —
 every transit offsets to the starboard side of a channel. The primary channel model
 is the **buoy lines**: lateral marks (ENC `chan_mark` role = buoys + beacons, with
 `CATLAM`) carry their channel identity in OBJNAM — `markId()` strips the designator

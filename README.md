@@ -256,27 +256,54 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    **Keep right in channels (COLREGS Rule 9).** Every *transit* in **every
    behaviour** — Go-To, RTH, the drawn Transit line, the approach leg to a survey,
    the routed transits between survey lines (Punch Out), search-pattern transits,
-   and any obstacle detour inserted at Upload — automatically keeps to the
-   **starboard side of a channel** (relative to the direction of travel). Where the
-   channel is charted with **lateral buoys** the console reads them the way a
-   mariner does: it groups each buoyage system's red and green marks into two
-   **buoy lines**, reads the **direction of travel from the buoy numbering**
-   (numbers rise toward land — rising along the route means inbound, red kept to
-   starboard; falling means outbound, green to starboard), and rides a lane just
-   inside the correct line — even pulling the track back across it if the planned
-   path strayed to the wrong side. The Go-To/RTH/Transit banner reports the
-   reading (e.g. *buoy lane INBOUND (red to starboard)*). Where no buoyage is
-   charted the console falls back to geometry: it finds both channel walls,
-   defines the **centerline**, and tracks a smoothed lane **20 % of the channel
-   width to starboard of center** so opposing traffic passes port-to-port. In
-   open water the track lines up with any buoyed fairway ahead and is otherwise
-   unchanged, and
-   the offset never trades away obstacle clearance — it falls back to the
-   centerline path wherever the channel is too tight. Survey coverage lines and
-   teardrop turns are not offset (they must stay on their planned geometry).
-   A channel is treated as **extending past each end by its own width**: the ASV
-   stands on straight out of a mouth (and lines up before entering one) instead
-   of turning across the opening where opposing traffic appears.
+   and any obstacle detour inserted at Upload — rides a **channel lane**:
+
+   > offset to **starboard of the channel centreline**, half way out to the edge on
+   > that side — a **quarter of the channel width in from the edge**.
+
+   So the **centreline always stays to port**. Outbound that puts the green marks to
+   starboard; inbound it puts the red ones there ("red right returning") — but
+   **colour is never an input to the calculation**. It falls out, because lateral
+   marks sit on fixed sides. Which side is "starboard" comes from the **direction of
+   travel**, so the two directions ride opposite halves of the same channel and
+   opposing traffic passes **port-to-port**.
+
+   **What defines the channel.** Two sources, one rule:
+
+   * **Marked channels** — each port-hand buoy is paired with its nearest
+     starboard-hand buoy; the pair midpoints, in number order, are the centreline,
+     and half the pair spacing is the local half-width. The console picks the
+     channel by the **longest stretch of the routed path that actually runs along
+     it**, so a channel merely passed nearby is ignored.
+   * **Unmarked, channel-like water** — a basin exit, a canal, a cut between banks.
+     The centreline comes from **the water's own edges**: the console looks out both
+     sides and takes the middle of what it finds. This engages **only where both
+     edges answer** within the vessel's channel reach (`planning.channel_reach_m`,
+     120 m on the DriX; otherwise buffer-scaled) — genuinely confined water. Open
+     water and a single bank nearby are left alone, so a plain open-water Go-To is
+     never bent toward a channel that isn't there.
+
+   A **lone buoy is not a wall.** Marks are kept clear (don't hit a buoy) but never
+   bound the channel on their own — you may pass either side of a mark. Only
+   *paired* marks define a fairway.
+
+   **Safety first, every time.** The lane is *spliced into* the ENC-routed path, so
+   the routing that gets the boat out of a basin or around a breakwater is preserved
+   — the lane only replaces the stretch running along the channel. The offset is the
+   largest that keeps the boat in **clear water**, rate-limited so the track eases in
+   and out where one side is shoal. Every leg is clearance-checked; if a leg cannot
+   be routed the lane is **abandoned entirely** and the plain routed path is used.
+   The console never plans a leg it has not verified. Survey coverage lines and
+   teardrop turns are never offset (planned geometry). The track is resampled at a
+   fixed spacing and lightly smoothed, and generated Go-To / RTH / Transit waypoints
+   draw as unlabelled diamonds. The banner reports when a plan rode the lane.
+
+   > **History.** This replaced two earlier designs that both rode the *wrong side of
+   > the buoys* on the water: a colour buoy lane that inferred direction from IALA
+   > numbering, and a geometric keep-right that measured its offset by probing for the
+   > channel edges. Measuring from a **paired-buoy centreline** instead is what made it
+   > hold. Retired with them, and not currently implemented: standing on past a channel
+   > mouth by the channel's own width, and steering through the outermost buoy gate.
 
 2. **Behaviours (no survey plan needed).** Beyond a survey/search plan, the command
    bar drives one-off autonomy behaviours, all available once **Armed**:
