@@ -117,7 +117,11 @@ the **whole lake** when you're on an enclosed lake (e.g. a Great Lake), or **wit
 (cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
 and full details on hover — **and** in an **AIS traffic table** (each vessel by
 range / bearing / speed, sorted nearest-first) that opens with the layer and can be
-closed to a chip / reopened at will. It is **situational awareness only** — subject to
+closed to a chip / reopened at will. The table always carries a **status line naming
+the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
+50 km yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
+you whether the service is down, still warming up, genuinely quiet, or simply on a feed
+that cannot cover where you are. It is **situational awareness only** — subject to
 feed coverage, latency and gaps — not a navigation or collision-avoidance system.
 
 The data comes from a **separate service, `ais_service.py`**, which the console

@@ -600,6 +600,21 @@ let nogoShow = true;                            // nogo overlay wash visibility
 // AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
 const AIS_KEY = "asv_ais_show_v1";
 let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = false;
+// Link status so the table can say WHY it's empty instead of a bare "no vessels":
+//   idle -> not polling * connecting -> toggled on, first reply not back yet *
+//   offline -> console can't reach the AIS service * error -> service reached but the
+//   feed is erroring * empty -> connected, but no vessels in the area yet (sparse) *
+//   ok -> vessels present. `aisSrc` is the service's own health for the ACTIVE source,
+// and `aisSrcName` names it - which matters because the sources differ in COVERAGE:
+// the keyless fallback only carries Finland/Baltic, so a US area legitimately shows
+// nothing while the feed itself reports perfectly healthy. Naming it turns that from a
+// silent blank into an obvious answer.
+let aisState = "idle", aisSrc = null, aisSrcName = null;
+const AIS_SRC_COVER = {aisstream:"global", digitraffic:"Finland/Baltic only",
+                       nmea:"local receiver"};
+function aisSrcLabel(){ if(!aisSrcName) return "";
+  const c = AIS_SRC_COVER[aisSrcName];
+  return aisSrcName + (c ? " ("+c+")" : ""); }
 const AIS_COL = {cargo:"#4a90d9", tanker:"#d9534f", passenger:"#3fbf6b", fishing:"#39c0ff",
   tug:"#e8a13f", sailing:"#9b8cf0", pleasure:"#58c0b0", hsc:"#e05fb0", special:"#f0c14a",
   military:"#b0b0b0", other:"#8fa3b0", unknown:"#8fa3b0"};
@@ -3228,15 +3243,24 @@ async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
     aisArea = (d && d.area) ? d.area : null;
+    // per-source health from the service, plus WHICH source is actually live
+    const srcs = (d && d.sources) || {};
+    aisSrcName = ["aisstream","nmea","digitraffic"].find(n=>srcs[n]) || Object.keys(srcs)[0] || null;
+    aisSrc = aisSrcName ? srcs[aisSrcName] : null;
+    if(d && d.ok===false)                     aisState = "offline";
+    else if(aisVessels.length)                aisState = "ok";
+    else if(aisSrc && aisSrc.state==="error") aisState = "error";
+    else if(aisSrc && aisSrc.state==="ok")    aisState = "empty";   // connected, none in range
+    else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
-            : (aisVessels.length ? "" : "no vessels in "+aisAreaLabel());
-  }catch(e){ aisVessels=[]; aisNote="AIS query failed"; }
+            : (aisSrc && aisSrc.state==="error" ? aisSrc.note : "");
+  }catch(e){ aisVessels=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
   finally{ aisBusy=false; renderAisTable(); render(); }
 }
 function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.toggle("on", on);
   try{ localStorage.setItem(AIS_KEY, on?"1":"0"); }catch(e){}
   clearInterval(aisTimer); aisTimer=null;
-  if(on){ setAisTable(true); pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
+  if(on){ aisState="connecting"; aisSrc=null; aisSrcName=null; setAisTable(true); pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
   else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
 // The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
 // at will). Lists the within-50 km vessels by range, with bearing / SOG.
@@ -3254,7 +3278,20 @@ function renderAisTable(){
   let rows=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
                                   brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null}));
   rows.sort((a,b)=>(a.rng==null?1e12:a.rng)-(b.rng==null?1e12:b.rng));   // area scoped by /api/ais
-  if(!rows.length){ el.innerHTML = `<span style="color:var(--ink-faint)">${aisNote || ("No vessels in "+aisAreaLabel()+".")}</span>`; return; }
+  // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
+  // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
+  // source so a feed that cannot cover this area is obvious at a glance.
+  const dot=(c)=>`<span style="color:${c}">&#9679;</span> `;
+  const srcTxt = aisSrcLabel() ? ` &middot; <span style="color:var(--ink-faint)">${aisSrcLabel()}</span>` : "";
+  const nearest = rows.length && rows[0].rng!=null ? fmtNm(rows[0].rng)+" nm" : null;
+  let status;
+  if(aisState==="offline")         status = dot("#d9534f")+"AIS service offline"+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
+  else if(aisState==="error")      status = dot("#d9534f")+"AIS feed error"+srcTxt+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
+  else if(aisState==="connecting") status = dot("#e8a13f")+`connecting to AIS${srcTxt} &middot; <span style="color:var(--ink-faint)">warming up${aisArea?" over "+aisAreaLabel():""}...</span>`;
+  else if(aisState==="empty" || !rows.length) status = dot("#e8a13f")+`connected${srcTxt} &middot; <span style="color:var(--ink-faint)">no vessels in ${aisAreaLabel()} yet</span>`;
+  else status = dot("#3fbf6b")+`${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}`+srcTxt+(nearest?` &middot; nearest ${nearest}`:"");
+  const hdr = `<div style="color:var(--ink);margin-bottom:3px">${status}</div>`;
+  if(!rows.length){ el.innerHTML = hdr; return; }
   const cell="padding:2px 5px;white-space:nowrap", head="padding:2px 5px;color:var(--ink-faint)";
   const body=rows.slice(0,60).map(r=>{ const v=r.v, col=AIS_COL[v.cat]||AIS_COL.unknown;
     let nm=v.name || ("MMSI "+v.mmsi); if(nm.length>15) nm=nm.slice(0,15);
@@ -3263,7 +3300,7 @@ function renderAisTable(){
       +`<td style="${cell};text-align:right">${r.rng!=null?fmtNm(r.rng):"–"}</td>`
       +`<td style="${cell};text-align:right">${r.brg!=null?r.brg+"°":"–"}</td>`
       +`<td style="${cell};text-align:right">${v.sog!=null?v.sog:"–"}</td></tr>`; }).join("");
-  el.innerHTML=`<div style="color:var(--ink);margin-bottom:3px">${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}</div>`
+  el.innerHTML=hdr
     +`<table style="border-collapse:collapse;width:100%"><tr><td style="${head}">vessel</td>`
     +`<td style="${head};text-align:right">nm</td><td style="${head};text-align:right">brg</td>`
     +`<td style="${head};text-align:right">kn</td></tr>${body}</table>`;
