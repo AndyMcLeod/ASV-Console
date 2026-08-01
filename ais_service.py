@@ -700,6 +700,34 @@ def make_handler(reg, sources):
     return Handler
 
 
+def _win_persisted_env(name):
+    """Windows only: the value `setx` persisted, read straight from the registry.
+
+    A process inherits its environment from its PARENT, so a console launched from a
+    shell (or Explorer session) that predates the `setx` never sees the variable - the
+    value is stored, but invisible, and the feed silently falls back to the keyless
+    source. Windows only refreshes the block for NEW top-level sessions, so without this
+    an env-var setup appears not to work until the terminal, or the machine, is
+    restarted. Reading HKCU/HKLM makes it take effect on the very next launch."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    for root, sub in ((winreg.HKEY_CURRENT_USER, "Environment"),
+                      (winreg.HKEY_LOCAL_MACHINE,
+                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+        try:
+            with winreg.OpenKey(root, sub) as k:
+                val, _ = winreg.QueryValueEx(k, name)
+        except OSError:
+            continue
+        if val and str(val).strip():
+            return str(val).strip()
+    return None
+
+
 def resolve_aisstream_key(args):
     """aisstream key, set once and forgotten: --aisstream-key, then $AISSTREAM_KEY
     (preferred - one value for every console on the machine), then an `ais_key.txt`
@@ -708,6 +736,9 @@ def resolve_aisstream_key(args):
         return args.aisstream_key.strip()
     if os.environ.get("AISSTREAM_KEY"):
         return os.environ["AISSTREAM_KEY"].strip()
+    persisted = _win_persisted_env("AISSTREAM_KEY")     # setx'd but not yet inherited
+    if persisted:
+        return persisted
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ais_key.txt")
     try:
         with open(path, "r", encoding="utf-8") as f:
