@@ -218,13 +218,18 @@ c.push(H1("7  Behaviors, the nogo model and ENC-aware routing"));
 c.push(P("Every behavior is chart-aware and arm-gated. Nothing moves the vessel until the operator arms."));
 c.push(H2("7.1  The nogo model"));
 c.push(P("Chart features are fetched from public electronic navigational chart services and reduced to keep-outs: shoreline, docks and piers, charted hazards, obstructions, and any water shallower than the vessel's derived minimum navigable depth. Charted depths are corrected by the live water level first. The result is a shared model that every behavior plans against, dilated by the vessel's nogo buffer."));
-c.push(H2("7.2  Route search"));
+c.push(H2("7.2  Charted hazards have an extent"));
+c.push(P("A wreck symbol on a chart is a POSITION, not a size. The casualty beneath it can be a hundred metres long, and the electronic chart says nothing about its extent or which way it lies. Treating such a feature as a bare point and relying on the nogo buffer for clearance models a wrecked ship as a buffer-wide dot — a route then only has to miss the charted position by the buffer to validate clear."));
+c.push(P("So hazards whose extent the chart does not give — wrecks, hulks, obstructions and awash rocks — carry an intrinsic radius, defaulting to 50 m and configurable per vessel, and the buffer is added ON TOP of it as the margin it was always meant to be. Objects that genuinely are point-sized, such as piles, buoys and beacons, are unaffected."));
+c.push(P("Where the chart gives a sounding OVER the hazard, and that sounding — corrected to the live water level, exactly as depth areas are — clears the vessel's own navigability floor with margin, the vessel can pass over it and the hazard collapses back to a point. THE ABSENCE OF A SOUNDING MEANS UNKNOWN, and unknown takes the full berth rather than the benefit of the doubt."));
+c.push(P("Both clearance paths honour this, and both must: the exact leg check that validates a planned path, AND the occupancy raster the route search runs over. If only the exact check knew about the extent, the search would plan straight through the hazard and the leg would simply fail — the vessel would get a refusal instead of a detour. A sized hazard also draws the circle the router keeps out of, so the operator can see why a route swings wide instead of reading a bare symbol as the whole danger."));
+c.push(H2("7.3  Route search"));
 c.push(B("Direct: an exact clearance check on the straight leg. If clear, done."));
 c.push(B("`routeAroundSeg` — a fine sectioned search over a rasterized occupancy grid."));
 c.push(B("Escalating swing regions when the detour leaves the search window — the grid coarsens, but the raster OVER-approximates keep-outs, so any coarse solution is genuinely clear and is then refined leg by leg."));
 c.push(B("Fine-escape composition when a tight basin closes over the start or the goal: generate open-water escape candidates around the pinched end, route to one, then escalate from open water."));
 c.push(P("The whole ladder runs under a time budget. An exhausted budget or a genuine absence of any clear path is reported as unroutable and refused, with the obstruction named. The console never plans a leg it has not verified."));
-c.push(H2("7.3  The channel lane (COLREGS Rule 9)"));
+c.push(H2("7.4  The channel lane (COLREGS Rule 9)"));
 c.push(P("In a narrow channel or fairway the vessel keeps to the starboard side. The lane is a purely geometric rule: offset to starboard of the channel centreline, half way out to the edge on that side — a quarter of the full width in from the edge. Buoy COLOUR is never an input; it falls out, because lateral marks sit on fixed sides. Opposing traffic therefore passes port to port."));
 c.push(P("This applies to every mode — go-to, return-to-home, transit, the survey approach leg, inter-line transits, search transits and any routed detour. Survey coverage lines and generated survey turns are NEVER offset: they are planned geometry and must be run as planned."));
 
@@ -319,11 +324,12 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Three headless harnesses guard geometry that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
+c.push(P("Four headless harnesses guard geometry that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
 c.push(TBL(["Harness", "Guards"], [
   ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
   ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
   ["`python tests/roc_tracks.py`", "ROC arrival geometry, the staged/active HOME gate, moving HOME, NMEA validation, and that every vessel-derived default tracks the vessel"],
+  ["`node tests/wreck_clearance.js`", "Charted point-hazard extent: that a wreck keeps a route off it in BOTH the exact check and the search raster, that a charted sounding over it is honoured and tide-corrected, that point-sized marks are unaffected, and that the vessel's buffer floor holds"],
 ], [2700, 6660]));
 c.push(SP());
 c.push(P("Enable the hook once per clone with `git config core.hooksPath .githooks`."));

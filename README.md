@@ -212,7 +212,22 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    dredged/restricted areas, each expanded by the keep-clear **Buffer**. The buffer
    and the enforce toggles are **shared** (edit the buffer from the SURV panel or the
    command bar's *Buf m*); lowering it (to ~1.5–2 m) lets the small boat thread a
-   tight marina. Depth areas that merely *straddle* the minimum are kept (classified
+   tight marina. The buffer can never drop **below the active vessel's own**
+   `planning.nogo_buffer_m` — a plan saved against a small boat must not quietly narrow
+   a bigger one's clearance.
+
+   **Charted hazards have a SIZE, not just a position.** A wreck symbol on a chart is a
+   *position*: the casualty under it can be a 100 m ship, and the ENC says nothing about
+   its extent or which way it lies. So wrecks, hulks, obstructions and awash rocks carry
+   an intrinsic **50 m radius** (vessel-configurable via `planning.wreck_radius_m`), and
+   the buffer is added on top of that as the margin it was always meant to be. Objects
+   that genuinely *are* point-sized — piles, buoys, beacons — are unaffected. A sized
+   hazard draws its circle on the chart, so you can see why a route swings wide.
+
+   Where the chart gives a **sounding over** the hazard (`VALSOU`) that clears the
+   vessel's own navigability floor — tide-corrected, the same as depth areas — the boat
+   can pass over it and the hazard collapses back to a point. **No sounding means
+   unknown**, and unknown takes the full berth rather than the benefit of the doubt. Depth areas that merely *straddle* the minimum are kept (classified
    by the band's deepest edge). `CHRT` / `NOGO` show the chart features / the red nogo
    overlay. (Finger piers are charted as line features that NOAA's server returns
    empty to a naïve query — the console fetches them by object-id so they aren't

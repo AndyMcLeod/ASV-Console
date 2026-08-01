@@ -306,6 +306,50 @@ Public data sources (kept): NOAA ENC / ENCDirect ArcGIS, NOAA CO-OPS water
 levels, NOAA NDBC buoys, NOAA chart tiles. All cached under `charts/`
 (gitignored, regenerated at runtime).
 
+## CHARTED POINT HAZARDS HAVE AN EXTENT (2026-08-01)
+
+**Bug Andy hit:** a live Go-To out of Lewes planned straight over a charted wreck. The
+wreck was fetched (`Wreck_point` → `hazard_point`), classified and enforced (`enf.haz`
+defaults **true**) — the ENC side was fine. The failure was that `blocked()` gave EVERY
+point keep-out a radius of exactly the nogo buffer, so a **wrecked ship, a mooring pile
+and a channel buoy were the same object to the router**. At the 3 m buffer in the
+report, a charted wreck was a 3 m obstacle: a route only had to miss the charted
+position by 3 m to validate clear. **The buffer is a CLEARANCE MARGIN and was being
+asked to double as the OBJECT'S EXTENT.** It cannot do both.
+
+**Fix, three parts:**
+- `hazExtent(f)` gives an intrinsic radius to hazards whose extent the chart does not
+  give — `HAZ_UNKNOWN_EXTENT` = Wreck / Hulk / Obstruction / Underwater-Awash-Rock
+  points. `WRECK_RADIUS_M` defaults **50 m**, vessel-configurable via
+  `planning.wreck_radius_m`. The buffer is then added ON TOP as the margin. Piles,
+  buoys and beacons keep extent 0 — the fix must not inflate every mark on the chart.
+- **VALSOU is now used.** It was fetched in `ENC_KEEP_PROPS` and thrown away. A wreck
+  with a charted sounding that clears `NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M`
+  (tide-corrected by `waterOffset`, same as depth areas) collapses back to a point.
+  **No VALSOU means UNKNOWN, and unknown takes the full berth** — not the reverse.
+- `bufferFloor()`: the vessel's `planning.nogo_buffer_m` is a FLOOR. `loadMission` was
+  doing `nogo.buffer = mission.buffer_m ?? 10`, so a plan saved against a small boat
+  silently gave the DriX 3 m where its own file demands 5. Same vessel-staleness class
+  as the ROC standoff. The operator can still widen it beyond the floor by hand.
+
+**BOTH clearance paths had to learn it.** `blocked`/`blockedInfo` is the exact check;
+`rasterKeepouts` is the A* occupancy grid, and it stamped each point into a SINGLE CELL
+before the uniform buffer dilation. Fixing only the exact check would make the search
+plan through the wreck and the leg then simply fail — no detour. The raster now stamps a
+disc of `pt.r` first. Sized hazards also DRAW their circle (dashed red), so the operator
+can see why a route swings wide instead of reading a bare cross as the whole danger.
+
+**Verified against the REAL cached Lewes ENC** (6,210 features, 38 `Wreck_point`
+records → 7 distinct wrecks): 5 have no VALSOU → 50 m extent → a leg 10 m abeam is now
+REFUSED where it was clear; 2 carry VALSOU 4.5 m and 3.6 m → extent 0 → still passable
+for the DriX's 2.3 m floor, which is correct. 161 of 448 point keep-outs are now sized.
+**NOTE:** the wreck in Andy's screenshot may well be one of the VALSOU pair, which the
+fix deliberately still allows — a wreck with 3.6 m over it is passable for a 2.0 m draft.
+
+**Test:** `node tests/wreck_clearance.js` — 12 assertions, in the pre-commit hook.
+Teeth-verified by mutation: bare-buffer radius → 4,5,6,12 fail; single-cell raster stamp
+→ 9; no VALSOU branch → 2,10; extent on every class → 1,8; no `bufferFloor` → 11.
+
 ## SURVEY TURN GEOMETRY — radius decoupled from line spacing (2026-07-31)
 
 `teardropTurn()` in `static\asv.html` builds every line-to-line reversal. **Two

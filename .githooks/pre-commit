@@ -44,6 +44,15 @@ if ! node tests/buoy_lane.js; then
   fail=1
 fi
 
+echo "pre-commit: charted point-hazard extent regression test..."
+if ! node tests/wreck_clearance.js; then
+  echo ""
+  echo "pre-commit: wreck-clearance test FAILED."
+  echo "  A charted wreck / obstruction is no longer keeping a route off it, or the"
+  echo "  vessel's nogo buffer floor leaked (hazExtent / blocked / rasterKeepouts)."
+  fail=1
+fi
+
 echo "pre-commit: survey turn geometry regression test..."
 if ! node tests/turn_geometry.js; then
   echo ""

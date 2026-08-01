@@ -655,6 +655,24 @@ let NOGO_BUFFER_M = 3;                          // keep-clear buffer default (ve
 let CHANNEL_REACH_M = null;
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
 const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
+// CHARTED POINT HAZARDS HAVE AN EXTENT THE CHART DOES NOT GIVE US. A wreck symbol is a
+// POSITION, not a size: the casualty under it can be a 100 m ship, and the ENC point
+// says nothing about which way it lies. Treating it as a bare point and leaning on the
+// nogo buffer for clearance models a wrecked ship as a 3 m dot - a route then only has
+// to miss the charted position by the buffer to validate "clear".
+//
+// So hazards whose EXTENT IS UNKNOWN get an intrinsic radius, and the buffer is added on
+// top of it as the margin it was always meant to be. Objects that genuinely ARE point
+// sized - piles, buoys, beacons, mooring points - keep the plain buffer (extent 0).
+const HAZ_UNKNOWN_EXTENT = new Set(["Wreck_point", "Hulk_point", "Obstruction_point",
+                                    "Underwater_Awash_Rock_point"]);
+// Vessel-configurable via planning.wreck_radius_m; loadVessel() overwrites this.
+let WRECK_RADIUS_M = 50;
+// A wreck with a CHARTED depth over it (VALSOU) is a known quantity: if the corrected
+// sounding clears the vessel's own navigability floor by this margin, the boat can pass
+// over it and the hazard collapses back to a point. Absent VALSOU means UNKNOWN, which
+// is the conservative case - not the permissive one.
+const WRECK_CLEAR_MARGIN_M = 1.0;
 // The nogo is the SINGLE keep-out model: behaviors and the survey Punch Out both
 // clip against it (shared ref/features/enforce/buffer). Its depth floor is fixed
 // at NOGO_MIN_DEPTH_M (navigability). The survey's Min/Max depth is a survey-only
@@ -711,8 +729,10 @@ async function loadMission(){
       $("#c_approach").value = mission.approach_radius_m ?? 1;
       $("#c_speed").value = mission.speed || "survey";
       $("#c_completion").value = mission.completion || "rth";
-      // apply the persisted nogo buffer to both controls + the shared model
-      nogo.buffer = mission.buffer_m ?? 10;
+      // Apply the persisted nogo buffer to both controls + the shared model, but never
+      // BELOW the active vessel's own planning.nogo_buffer_m - a plan saved against a
+      // small boat must not quietly narrow a big one's clearance.
+      nogo.buffer = bufferFloor(mission.buffer_m);
       $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer; render(); } }catch(e){}
 }
 // --- active vessel: the single source of truth for the boat's parameters ---- //
@@ -726,6 +746,17 @@ function applyVesselToUI(v){
   if(v.propulsion && v.propulsion.speeds_kn) SPEED_KN = {...v.propulsion.speeds_kn};
   if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
   if(v.planning && typeof v.planning.nogo_buffer_m === "number") NOGO_BUFFER_M = v.planning.nogo_buffer_m;
+  if(v.planning && typeof v.planning.wreck_radius_m === "number") WRECK_RADIUS_M = v.planning.wreck_radius_m;
+  // The vessel's buffer is a FLOOR, not a default a stale mission may undercut. A
+  // persisted plan carries whatever buffer it was saved with - often a smaller boat's -
+  // and silently applying that to a bigger, deeper vessel gives it LESS clearance than
+  // its own file demands. The operator can always widen it beyond the floor.
+  if(nogo.buffer < NOGO_BUFFER_M){
+    nogo.buffer = bufferFloor(nogo.buffer);
+    const cb=$("#c_buffer"), sb=$("#sp_buffer");
+    if(cb) cb.value = nogo.buffer;
+    if(sb) sb.value = nogo.buffer;
+  }
   // nogo navigability floor = draft + under-keel clearance (deep-draft vessels
   // avoid more shallow water). Drives the ENC extract + keep-out reclassification.
   if(v.hull && v.planning && typeof v.hull.draft_m==="number" && typeof v.planning.under_keel_clearance_m==="number")
@@ -1618,6 +1649,15 @@ function drawENC(toScreen){
   // points
   for(const f of enc.features){ const g=f.geometry, r=f.role;
     if(r==="hazard_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
+      // A sized hazard (wreck / obstruction of unknown extent) draws the circle the
+      // router actually keeps out of. Without it the operator sees a route swing wide
+      // for no visible reason - and, worse, would read a bare cross as the whole danger.
+      const hr=hazExtent(f);
+      if(hr>0){ const s2=toScreen(c[1]+hr/M_PER_DEG_LAT, c[0]);
+        const rpx=Math.abs(s2.y-s.y);
+        if(rpx>2){ ctx.strokeStyle="rgba(217,83,79,0.55)"; ctx.lineWidth=1.2; ctx.setLineDash([4,3]);
+          ctx.beginPath(); ctx.arc(s.x,s.y,rpx,0,2*Math.PI); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle="rgba(217,83,79,0.10)"; ctx.fill(); } }
       ctx.strokeStyle="#d9534f"; ctx.lineWidth=1.6; ctx.beginPath();
       ctx.moveTo(s.x-4,s.y-4); ctx.lineTo(s.x+4,s.y+4); ctx.moveTo(s.x+4,s.y-4); ctx.lineTo(s.x-4,s.y+4); ctx.stroke(); });
     else if(r==="sounding") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
@@ -1723,6 +1763,26 @@ function crossToLine(s, sb, pts, ext){
   }
   return best;
 }
+// Intrinsic radius (m) of a charted POINT hazard, before the nogo buffer is added.
+// Zero for genuinely point-sized objects. For a wreck/hulk/obstruction/awash rock the
+// chart gives a position but no extent, so we assume the configured radius UNLESS the
+// feature carries a charted sounding over it (VALSOU) proving there is water above:
+// corrected to the live water level and compared against the vessel's own navigability
+// floor, exactly as depth areas are. No VALSOU means UNKNOWN, and unknown is the
+// conservative case - the boat gives it the full berth.
+function hazExtent(f){
+  if(!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
+  const vs = f.props && f.props.VALSOU;
+  if(typeof vs === "number" && (vs + waterOffset) >= NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
+  return WRECK_RADIUS_M;
+}
+// The active vessel's planning.nogo_buffer_m is a FLOOR. A persisted mission carries
+// whatever buffer it was saved with - often a smaller boat's - and silently applying
+// that to a bigger, deeper vessel would give it LESS clearance than its own file
+// demands. The operator can still widen it beyond the floor from the panel.
+function bufferFloor(missionBuf){
+  return Math.max(NOGO_BUFFER_M, (typeof missionBuf === "number") ? missionBuf : NOGO_BUFFER_M);
+}
 function buildKeepouts(ref, enf, dr, feats){
   const polys=[], lines=[], points=[], marks=[];
   for(const f of (feats || enc.features)){ const g=f.geometry, r=f.role;
@@ -1743,7 +1803,8 @@ function buildKeepouts(ref, enf, dr, feats){
     const kind=nogoKind(r, depthbad);
     if(land||depthbad||area) eachRing(g,rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>2) polys.push({ring,bb:bbOf(ring),kind}); });
     else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts),kind}); });
-    else if(haz) eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; points.push(q); });
+    else if(haz){ const r=hazExtent(f);
+      eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; q.r=r; points.push(q); }); }
   }
   return {polys, lines, points, marks, sys:markSystems(marks)};
 }
@@ -1805,8 +1866,12 @@ function blocked(p, ko, buf){
     const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return true; } }
   for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
     for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return true; } }
-  for(const pt of ko.points){ if(Math.abs(p.e-pt.e)>buf||Math.abs(p.n-pt.n)>buf) continue;
-    if(Math.hypot(p.e-pt.e,p.n-pt.n)<buf) return true; }
+  // R = the hazard's OWN extent (0 for a genuinely point-sized object) plus the buffer
+  // as the clearance margin. Before this, every point hazard was buffer-sized, so a
+  // charted wreck was modelled as a 3 m dot and a route could thread past it.
+  for(const pt of ko.points){ const R=buf+(pt.r||0);
+    if(Math.abs(p.e-pt.e)>R||Math.abs(p.n-pt.n)>R) continue;
+    if(Math.hypot(p.e-pt.e,p.n-pt.n)<R) return true; }
   return false;
 }
 // Like blocked(), but returns the OFFENDING keep-out (kind + geometry) so a refusal
@@ -1817,8 +1882,9 @@ function blockedInfo(p, ko, buf){
     const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return {kind:poly.kind, type:"poly", ring:poly.ring}; } }
   for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
     for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return {kind:ln.kind, type:"line", pts:ln.pts}; } }
-  for(const pt of ko.points){ if(Math.abs(p.e-pt.e)>buf||Math.abs(p.n-pt.n)>buf) continue;
-    if(Math.hypot(p.e-pt.e,p.n-pt.n)<buf) return {kind:pt.kind, type:"point", pt:{e:pt.e,n:pt.n}}; }
+  for(const pt of ko.points){ const R=buf+(pt.r||0);
+    if(Math.abs(p.e-pt.e)>R||Math.abs(p.n-pt.n)>R) continue;
+    if(Math.hypot(p.e-pt.e,p.n-pt.n)<R) return {kind:pt.kind, type:"point", pt:{e:pt.e,n:pt.n}, r:pt.r||0}; }
   return null;
 }
 // Walk the DIRECT line from->to and return the first spot that's blocked (+ what by),
@@ -1965,8 +2031,16 @@ function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer){
   for(const ln of ko.lines){ const bb=ln.bb;
     if(bb.x1<x0||bb.x0>X1||bb.y1<y0||bb.y0>Y1) continue;
     for(let i=1;i<ln.pts.length;i++) stampSeg(blk,W,H,x0,y0,cell, ln.pts[i-1], ln.pts[i]); }
+  // Stamp each point hazard as a DISC of its own extent; the uniform buffer dilation
+  // below then adds the margin. A single-cell stamp would let the search plan straight
+  // through a wreck that legClear would later reject, and the leg would just fail.
   for(const pt of ko.points){ const gx=Math.round(gxOf(pt.e)), gy=Math.round(gyOf(pt.n));
-    if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; }
+    const rc=Math.round((pt.r||0)/cell);
+    if(rc<=0){ if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; continue; }
+    for(let dy=-rc; dy<=rc; dy++){ const gyy=gy+dy; if(gyy<0||gyy>=H) continue;
+      const half=Math.floor(Math.sqrt(Math.max(0, rc*rc-dy*dy)));
+      const gxa=Math.max(0,gx-half), gxb=Math.min(W-1,gx+half);
+      for(let gxx=gxa; gxx<=gxb; gxx++) blk[gyy*W+gxx]=1; } }
   dilateGrid(blk, W, H, Math.max(1, Math.round(buffer/cell)));
 }
 function routeAround(A, B, ref, ko, buffer, marginOv, maxDimOv){
