@@ -204,13 +204,19 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
    opposite/diagonal corner (B), and a spacing/direction point (C). Parallel lines
    fill the box automatically (boustrophedon). Drag A/B/C to adjust; **Add to plan**.
    *(Or **WPT** to place individual waypoints.)*
-3. **Punch Out (optional):** trim the lines to ENC-clear water; the turns become
-   smooth **teardrops** (radius-clamped to what the boat can hold at the run speed —
-   tighter spacing/higher speed falls back to a straight hop) and the lines shorten a
-   touch to give the turns room. Turn waypoints (reversals + teardrop arc) draw
-   **unlabeled** — the line's own `L#` label identifies it — and the arc uses a
-   coarse (~3 m) point spacing, so a wide survey keeps only a handful of waypoints per
-   turn.
+3. **Punch Out (optional):** trim the lines to ENC-clear water; each line-to-line
+   reversal becomes a smooth turn, and the lines shorten a touch to give it room.
+   Every turn is built at a radius the boat can **hold** at the run speed: a plain
+   **semicircle** where the spacing is at least twice that radius, otherwise a
+   **teardrop** that loops at the boat's own minimum radius and swings further
+   outboard. If the spacing forces teardrops the readout and banner say by how much it
+   is short, how far the loops reach past the line ends, and what spacing (or speed)
+   would restore a semicircle — a big ASV on tight lines is the usual cause. Where not
+   even the teardrop fits clear of the keep-outs the reversal falls back to a straight
+   hop and the banner flags it as **untrackable**, not merely routed. Turn waypoints
+   (reversals + arc) draw **unlabeled** — the line's own `L#` label identifies it —
+   and arcs use a coarse (~3 m) point spacing, so a wide survey keeps only a handful
+   of waypoints per turn.
 4. **Set run params:** arrival radius, speed (Low/Survey/High), and **completion**
    (RTH / Complete / Loiter / Repeat; RTH is the default) in the command bar.
 5. **Arm → Upload → Start.** Upload routes the transit to the survey clear of

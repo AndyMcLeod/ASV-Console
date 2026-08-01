@@ -218,20 +218,39 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    empty to a naïve query — the console fetches them by object-id so they aren't
    silently missed.)
 
-   **Obstacle-aware order + teardrop turns.** Where a keep-out splits a line, the
+   **Obstacle-aware order + line-to-line turns.** Where a keep-out splits a line, the
    waypoints are re-ordered (Boustrophedon Cellular Decomposition) so the ASV never
    runs a leg straight through the punched-out area — each obstacle-free region is a
-   serpentine. At each line-to-line reversal Punch Out inserts a **teardrop turn** —
-   a smooth semicircular loop that rolls the boat onto the next line *aligned* with
-   its heading instead of pivoting hard — and **shortens the survey lines** slightly
-   to give the turn room within cleared water. A teardrop is only used where its
-   radius is one the boat can actually hold at the run speed; for spacing/speed too
-   tight to hold, the turn stays a straight hop (the readout says so) rather than a
-   loop the boat would overshoot. The turn waypoints — the line reversals and the
-   teardrop's arc points — are drawn **unlabeled** (each line already carries its own
-   `L#` label, so per-point `W#` numbers are just clutter), and the arc is sampled
-   coarsely (~3 m) so a wide-spacing survey doesn't flood the plan with turn
-   waypoints. Turns and any longer transit are
+   serpentine. At each line-to-line reversal Punch Out inserts a **generated turn**
+   that rolls the boat onto the next line *aligned* with its heading instead of
+   pivoting hard, and **shortens the survey lines** slightly to give the turn room.
+   Every turn is built at a radius the boat can actually **hold** at the run speed
+   (from the vessel file's `max_turn_rate_deg_s`), in one of two shapes:
+
+   - **Semicircle** — where the line spacing is at least twice the minimum turn
+     radius. One 180° arc of radius *half the spacing*, reaching no further than that
+     past the line ends. The classic boustrophedon turn, and what a small ASV gets at
+     any realistic spacing (a 4 m USV needs only ~2 m of radius at survey speed).
+   - **Teardrop** — where the spacing is *tighter* than that. A semicircle at half the
+     spacing would be tighter than the boat can hold, so the turn instead loops at the
+     boat's **own minimum radius**: a short arc away from the next line, a >180° loop
+     back over the top, and a short arc onto the line. Decoupling the turn radius from
+     the line spacing is the point — an 8 m USV at 7 kn needs ~14 m of radius, which a
+     15 m line spacing can never supply as a semicircle. The trade is outboard water:
+     a teardrop reaches up to ~2.75× the minimum radius past the line ends, so the
+     readout and banner quote the excursion, the spacing a semicircle *would* need,
+     and the spacing needed at low speed.
+
+   Both shapes are **nogo-validated** before use. If even the teardrop can't fit clear
+   of the keep-outs the reversal falls back to a straight hop, and the banner says so
+   plainly — a straight hop between anti-parallel line ends is a 180° reversal at half
+   the spacing, i.e. the radius that was just rejected, so that case is a warning to
+   act on (widen the lines, slow down, or move the line ends), not a working turn.
+
+   The turn waypoints — the line reversals and the arc points — are drawn
+   **unlabeled** (each line already carries its own `L#` label, so per-point `W#`
+   numbers are just clutter), and arcs are sampled coarsely (~3 m) so a wide-spacing
+   survey doesn't flood the plan with turn waypoints. Turns and any longer transit are
    **nogo-validated**: a transit that would cross a keep-out is **auto-routed around
    it** (grid A\*, drawn amber); only a transit with *no* clear route stays **red**
    and flagged.

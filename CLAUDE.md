@@ -306,10 +306,63 @@ Public data sources (kept): NOAA ENC / ENCDirect ArcGIS, NOAA CO-OPS water
 levels, NOAA NDBC buoys, NOAA chart tiles. All cached under `charts/`
 (gitignored, regenerated at runtime).
 
+## SURVEY TURN GEOMETRY — radius decoupled from line spacing (2026-07-31)
+
+`teardropTurn()` in `static\asv.html` builds every line-to-line reversal. **Two
+shapes, one contract**: end on the next line aligned with its heading, at a radius
+the boat can HOLD at the plan speed (`minTurnRadiusM` = `1.4 × v/ω` from the vessel
+file's `max_turn_rate_deg_s`), nogo-validated before return.
+
+- **Semicircle** — line offset ≥ `2×minR`. One 180° arc at *half the offset*,
+  bulging outboard; reaches exactly `R` past the line ends. Unchanged behaviour.
+- **Teardrop** — line offset < `2×minR`. Three tangent circles **at `minR`**: a short
+  arc away from the next line, a >180° loop over the top, a short arc onto the line.
+  In a frame with the entry at the origin, `+y` = exit heading, `+x` = towards the
+  next line, offset `d`: `C1=(-R,0)`, `C3=(d+R,0)`, `C2=(d/2, √(4R² − ((d+2R)/2)²))`,
+  tangent points at the centre midpoints. Solvable exactly when `d ≤ 2R` — precisely
+  the case the semicircle can't serve — and it degenerates into the semicircle at
+  `d = 2R`, so the two families agree on their shared boundary. Along-track offset
+  between the line ends (clipped lines of unequal length) is absorbed by a straight
+  run collinear with a survey line.
+
+**WHY this exists.** The old code had only the semicircle, so a boat whose minimum
+radius exceeded half the spacing got **no turn at all** and fell back to a "straight"
+hop between anti-parallel line ends — which is a 180° reversal at half the spacing,
+i.e. the exact radius just rejected as unflyable, only now unmodelled. Coupling the
+turn radius to the line spacing meant a big boat on tight lines could never get a
+turn: **the DriX H-8 needs 14.4 m of radius at its 7 kn survey speed (28.9 m of
+spacing) where the 4 m USV needs 2.1 m (4.1 m)**, so ordinary small-boat line spacing
+silently produced no teardrops at all. That symptom is what prompted the rework.
+
+**Cost, and what the operator is told.** A teardrop reaches up to ~`2.75×minR` past
+the line ends (vs `R` for the semicircle), so `punchOut()` reports the actual
+excursion, the spacing a semicircle would need at the plan speed, and the spacing
+needed at low speed. If even the teardrop hits a keep-out the reversal falls back to a
+straight hop and the banner calls it **untrackable**, not merely routed — that is a
+plan defect to act on, not a working turn. `turnMargin` (`spacing/2`) was deliberately
+**left alone**: raising it to suit the teardrop would trade coverage off every line,
+which is the operator's call, not a silent default.
+
+**Known modelling limit (unchanged, but now load-bearing):** the sim caps yaw RATE,
+not radius, so `minR` grows linearly with speed. Real hulls hold a roughly constant
+minimum radius — Exail publishes ~8 m for the DriX H-8 at 14 kn, where the 20°/s cap
+implies 20.6 m. The cap is calibrated at survey speed (10.3 m physical vs the spec's
+~8–10 m), so it is right where surveys are planned and pessimistic at high speed.
+
+**Test:** `node tests/turn_geometry.js` — 21 assertions over the real page functions
+for both shipped vessels (shape selection, radius, curvature floor along the whole
+path, exit alignment, turn-away direction, outboard excursion, the `d = 2R` boundary,
+nogo refusal *and* its clear-water twin, along-track absorption, skew refusal, speed
+as the operator's lever). **Run it after ANY change to the turn geometry.** Verified
+with teeth: restoring the old clamp fails 3 checks, building the teardrop at half the
+offset fails 6, reversing the middle sweep fails 4, dropping the nogo sweep fails 1.
+
 ## Testing notes
 
 - Headless: `python asv_console.py --sim --browser none --port 8791`, then drive
   via the `/api/cmd/*` endpoints and read `/api/state` / `/events`.
+- Geometry/routing regressions run offline against `static\asv.html` with plain
+  Node (no deps, no server): `node tests/turn_geometry.js`, `node tests/buoy_lane.js`.
 - The map page canvas animates continuously — **browser-pane screenshots time
   out**; verify via DOM/`read_page` or the state endpoints instead.
 - Windows/store-Python gotcha: a stray server process can hold the port and serve

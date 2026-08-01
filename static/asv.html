@@ -3453,11 +3453,10 @@ function shortenSeg(a, b, m){
            {lat:a.lat+(b.lat-a.lat)*t1, lon:a.lon+(b.lon-a.lon)*t1} ];
 }
 // Boat minimum turn radius (m) it can actually HOLD at a given speed, with a
-// margin for line-following overshoot. A teardrop tighter than this can't be
-// tracked: the boat overshoots OUTBOARD - into the nogo the arc was hugging -
-// even though the (idealised) arc validates clear. This is the clamp that guards
-// against that: below it, no teardrop is generated (fall back to a straight hop
-// / routed transit, which stay at the box edge, clear).
+// margin for line-following overshoot. A turn tighter than this can't be tracked:
+// the boat overshoots OUTBOARD - into the nogo the arc was hugging - even though
+// the (idealised) arc validates clear. This is the FLOOR every generated turn is
+// built at; it is never the reason a turn is skipped (see teardropTurn).
 // Vessel-derived; populated by loadVessel() from /api/vessel (single source of
 // truth = the active vessel file). The literals are only a fallback if the fetch
 // fails before first paint.
@@ -3468,34 +3467,123 @@ function minTurnRadiusM(speedKey){
   const v = kn*0.514444, w = MAX_TURN_RATE_DEG_S*Math.PI/180;   // m/s, rad/s
   return (v/w) * 1.4;                                    // 1.4× the physical v/ω (tracking margin)
 }
-// Teardrop turn: instead of a hard reversal at the line end, sweep a smooth
-// semicircular loop (bulging OUTBOARD, radius = half the line offset) so the ASV
-// rolls onto the next line ALIGNED with its heading. Returns the arc waypoints
-// (excluding E, F), or null if degenerate, TOO TIGHT to hold (< minR), or the
-// loop would touch a nogo zone.
-function teardropTurn(E, F, hE, ref, ko, buf, minR){
+// Interior points of a circular arc: centre C, radius R, from angle a0 sweeping
+// `sweep` radians (signed, + = CCW), at ~3 m spacing with a `minSeg` floor. EXCLUDES
+// both endpoints. ~3 m is enough to render a smooth arc and let the follower's
+// approach radius round it, at roughly half the waypoint count of a 1.5 m arc.
+// Chords cut INBOARD - away from whatever the arc is hugging - and every chord is
+// legClear-validated by the caller, so a sparse arc stays clear. `map(x,y)` takes
+// frame coords to lat/lon.
+function arcPts(C, R, a0, sweep, minSeg, map){
+  const n=Math.max(minSeg||2, Math.ceil(Math.abs(sweep)*R/3)), out=[];
+  for(let i=1;i<n;i++){ const a=a0+sweep*(i/n);
+    out.push(map(C.x+R*Math.cos(a), C.y+R*Math.sin(a))); }
+  return out;
+}
+// Line-to-line reversal turn. TWO SHAPES, ONE CONTRACT: both roll the ASV onto the
+// next line ALIGNED with its heading, both are built at a radius the boat can
+// actually HOLD at the plan speed, and both are legClear-validated against nogo
+// before they are returned.
+//
+//   SEMICIRCLE - line offset >= 2*minR. One 180° arc, radius = HALF THE LINE
+//     OFFSET, bulging outboard. The classic boustrophedon turn: shortest, and it
+//     never reaches more than R beyond the line ends. Any boat whose minimum radius
+//     fits inside half the spacing gets this (a 4 m USV at survey speed needs 2.1 m
+//     of radius, so in practice: always).
+//
+//   TEARDROP - line offset < 2*minR. The semicircle would be tighter than the boat
+//     can hold, so loop at the boat's OWN minimum radius instead: a short arc AWAY
+//     from the next line, a >180° loop back over the top, and a short arc onto the
+//     line - three tangent circles of radius minR. DECOUPLING THE TURN RADIUS FROM
+//     THE LINE OFFSET is the entire point. An 8 m USV at 7 kn needs ~14 m of radius,
+//     which a 15 m line spacing can never supply as a semicircle; before this
+//     existed such a boat got no turn at all and fell back to a "straight" hop
+//     between anti-parallel line ends - which is a 180° reversal at half the
+//     spacing, i.e. exactly the radius that was just rejected as unflyable. The
+//     teardrop costs outboard water (up to ~2.75*minR past the line ends, vs R for
+//     the semicircle), which is why it is the fallback and not the default, and why
+//     the caller reports the excursion to the operator.
+//
+// Teardrop geometry, in a frame with the turn entry at the origin, +y = the exit
+// heading and +x = towards the next line, offset d = |lateral|, R = minR:
+//     C1 = (-R, 0)        left  circle at the entry   (turn AWAY from the next line)
+//     C3 = (d + R, 0)     left  circle at the exit
+//     C2 = (d/2, +q)      right circle over the top,  q = sqrt(4R² - ((d+2R)/2)²)
+// C2 is tangent to both outer circles (|C1-C2| = |C2-C3| = 2R), which is solvable
+// exactly when d <= 2R - precisely the case the semicircle cannot serve. Tangent
+// points are the circle-centre midpoints. Net heading change is -180° by
+// construction, and at d = 2R it degenerates (q = 0, outer arcs vanish) into the
+// plain semicircle, so the two shapes agree on their shared boundary.
+//
+// Any ALONG-TRACK offset between E and F (clipped lines of unequal length) is
+// absorbed by a straight run collinear with a survey line - before the loop if F is
+// ahead of E, after it if F is behind - so the arcs always see a clean abeam pair
+// and the extra geometry is the safest shape available.
+//
+// Returns {pts, kind:"semicircle"|"teardrop", R, outboard} with `pts` EXCLUDING E
+// and F, or {why:"degenerate"|"skew"|"nogo"} if no turn was produced. `outboard` is
+// how far past the line end the turn reaches, which is what the operator has to
+// have clear water for.
+function teardropTurn(E, F, hE, hF, ref, ko, buf, minR){
   const en2ll=(e,n)=>({lat:ref.lat+n/M_PER_DEG_LAT, lon:ref.lon+e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))});
   const Ee=llEN(E.lat,E.lon,ref), Fe=llEN(F.lat,F.lon,ref);
-  const R=Math.hypot(Ee.e-Fe.e, Ee.n-Fe.n)/2;
-  if(R < Math.max(0.75, minR||0) || R>60) return null;   // too tight to hold (overshoots) / degenerate
-  const C={e:(Ee.e+Fe.e)/2, n:(Ee.n+Fe.n)/2};
-  const a0=Math.atan2(Ee.n-C.n, Ee.e-C.e);
-  const uE={e:Math.sin(hE*Math.PI/180), n:Math.cos(hE*Math.PI/180)};   // exit heading = outboard
-  let dir=1, bestProj=-1e9;                            // pick the 180° sweep that bulges outboard
-  for(const d of [1,-1]){ const am=a0+d*Math.PI/2;
-    const proj=Math.cos(am)*uE.e + Math.sin(am)*uE.n;
-    if(proj>bestProj){ bestProj=proj; dir=d; } }
-  // ~3 m arc spacing (min 4 segments): enough to render a smooth semicircle and let
-  // the follower's approach radius round it, at roughly half the waypoint count of a
-  // 1.5 m arc. Chords cut INBOARD (away from the outboard-hugged nogo) and each is
-  // legClear-validated below, so a sparser arc stays clear. Small-boat turns (small R)
-  // sit on the 4-segment floor and are unchanged.
-  const n=Math.max(4, Math.ceil(Math.PI*R/3));
-  const pts=[];
-  for(let i=1;i<n;i++){ const ang=a0+dir*Math.PI*(i/n);
-    pts.push(en2ll(C.e+R*Math.cos(ang), C.n+R*Math.sin(ang))); }
-  let prev=E; for(const q of [...pts, F]){ if(!legClear(prev,q,ref,ko,buf)) return null; prev=q; }
-  return pts;
+  const half=Math.hypot(Ee.e-Fe.e, Ee.n-Fe.n)/2;
+  if(half>60 || half<0.25) return {why:"degenerate"};    // lines too far apart / coincident
+  const minRc=Math.max(0.75, minR||0);
+  const fwd={e:Math.sin(hE*Math.PI/180), n:Math.cos(hE*Math.PI/180)};   // exit heading = outboard
+  let pts, kind, R, outboard;
+  if(half>=minRc){
+    // ---- SEMICIRCLE: the offset itself supplies a radius the boat can hold ---- //
+    R=half; kind="semicircle"; outboard=R;
+    const C={x:(Ee.e+Fe.e)/2, y:(Ee.n+Fe.n)/2};
+    const a0=Math.atan2(Ee.n-C.y, Ee.e-C.x);
+    let dir=1, bestProj=-1e9;                            // pick the 180° sweep that bulges outboard
+    for(const d of [1,-1]){ const am=a0+d*Math.PI/2;
+      const proj=Math.cos(am)*fwd.e + Math.sin(am)*fwd.n;
+      if(proj>bestProj){ bestProj=proj; dir=d; } }
+    pts=arcPts(C, R, a0, dir*Math.PI, 4, en2ll);
+  } else {
+    // ---- TEARDROP: loop at the boat's own minimum radius --------------------- //
+    // The closed form above assumes a true reversal; the caller's 50° anti-parallel
+    // gate is far looser than that, so re-check here and decline the skew cases
+    // rather than roll out on a heading that misses the next line.
+    if(Math.abs(((hF-hE+360)%360)-180) > 15) return {why:"skew"};
+    R=minRc; kind="teardrop";
+    const rgt={e:fwd.n, n:-fwd.e};                       // starboard of the exit heading
+    const D={e:Fe.e-Ee.e, n:Fe.n-Ee.n};
+    const along=D.e*fwd.e+D.n*fwd.n, lat=D.e*rgt.e+D.n*rgt.n;
+    const s=lat>=0?1:-1, d=Math.abs(lat);
+    if(d<0.5) return {why:"degenerate"};                 // lines on top of each other
+    // Absorb the along-track offset with an on-line straight, then work in the local
+    // frame (origin A, +x towards the next line, +y = exit heading) where F is abeam.
+    const A={e:Ee.e+(along>0?along*fwd.e:0), n:Ee.n+(along>0?along*fwd.n:0)};
+    const B={e:Fe.e-(along<0?along*fwd.e:0), n:Fe.n-(along<0?along*fwd.n:0)};
+    const map=(x,y)=>en2ll(A.e + x*s*rgt.e + y*fwd.e, A.n + x*s*rgt.n + y*fwd.n);
+    const qy2=4*R*R - Math.pow((d+2*R)/2, 2);
+    if(qy2<0) return {why:"degenerate"};                 // unreachable while d <= 2R, but don't NaN
+    const qy=Math.sqrt(qy2);
+    const C1={x:-R, y:0}, C3={x:d+R, y:0}, C2={x:d/2, y:qy};
+    const T1={x:(C1.x+C2.x)/2, y:(C1.y+C2.y)/2};         // equal radii -> tangent point is the
+    const T2={x:(C2.x+C3.x)/2, y:(C2.y+C3.y)/2};         // midpoint of the two centres
+    const n2pi=a=>{ a%=2*Math.PI; return a<0?a+2*Math.PI:a; };
+    const ang=(P,C)=>Math.atan2(P.y-C.y, P.x-C.x);
+    const s1=n2pi(ang(T1,C1));                                  // arc 1: CCW from angle 0 (the entry)
+    const a2=ang(T1,C2), s2=-n2pi(a2-ang(T2,C2));               // arc 2: CW over the top (>180°)
+    const a3=ang(T2,C3), s3=n2pi(Math.PI-a3);                   // arc 3: CCW onto the next line
+    pts=[];
+    if(along>0) pts.push(en2ll(A.e, A.n));                      // run-out to the abeam point
+    pts.push(...arcPts(C1, R, 0, s1, 2, map), map(T1.x,T1.y));
+    pts.push(...arcPts(C2, R, a2, s2, 2, map), map(T2.x,T2.y));
+    pts.push(...arcPts(C3, R, a3, s3, 2, map));
+    if(along<0) pts.push(en2ll(B.e, B.n));                      // roll out early, straight in to F
+    // How far past the line end the loop actually reaches, measured on the exit
+    // heading from E - this is the water the operator has to have clear.
+    outboard=0;
+    for(const p of pts){ const pe=llEN(p.lat,p.lon,ref);
+      outboard=Math.max(outboard, (pe.e-Ee.e)*fwd.e + (pe.n-Ee.n)*fwd.n); }
+  }
+  let prev=E; for(const p of [...pts, F]){ if(!legClear(prev,p,ref,ko,buf)) return {why:"nogo"}; prev=p; }
+  return {pts, kind, R, outboard};
 }
 async function punchOut(){
   if(punchBusy) return;
@@ -3537,27 +3625,40 @@ async function punchOut(){
       return true; };
     const ro=regionOrder(clipped, ref, sp.direction, sp.spacing, legSafe);
     // SHORTEN each survey segment (settle on-line + leave room for the turn to loop
-    // within cleared water) - this is what makes the teardrop fit without hitting nogo.
+    // within cleared water). Sized for the SEMICIRCLE, whose radius is half the
+    // spacing; a teardrop reaches further outboard than this buys, and that is
+    // deliberate - matching the margin to the teardrop would trade coverage off every
+    // line to buy turning room, which is the operator's call (they get the numbers in
+    // the readout), not a silent default. The turn is nogo-validated either way.
     const turnMargin = Math.max(2, sp.spacing*0.5);
-    // teardrop must be a radius the boat can HOLD at the run speed, else it overshoots
-    // outboard into the nogo - clamp to the min turn radius (fall back to a straight hop).
+    // Every generated turn is built at a radius the boat can HOLD at the run speed,
+    // else it overshoots outboard into the nogo. Where half the line offset already
+    // clears that radius the turn is a semicircle; where it doesn't, teardropTurn
+    // loops at minTurnR instead (wider, reaches further outboard) rather than giving up.
     const minTurnR = minTurnRadiusM(mission.speed || "survey");
     patClip = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin)).filter(s=>distTo(s[0],s[1])>1);
-    patTransits=[]; patRoutes=[]; patUnsafe=[]; let nTeardrop=0, nTight=0;
-    // For each line-to-line transit: prefer a TEARDROP turn (smooth, rolls onto the
-    // next line aligned); else keep straight if clear; else route around; else flag.
+    patTransits=[]; patRoutes=[]; patUnsafe=[];
+    let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0;
+    // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
+    // either way the ASV rolls onto the next line aligned); else keep straight if clear;
+    // else route around; else flag.
     for(let k=0;k<patClip.length-1;k++){
       const Ap=patClip[k][1], Bp=patClip[k+1][0];
       const hE=azTo(patClip[k][0], patClip[k][1]), hF=azTo(patClip[k+1][0], patClip[k+1][1]);
       const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)
       let via=null;
       if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
-        via = teardropTurn(Ap, Bp, hE, ref, ko, buffer, minTurnR);  // radius-clamped + nogo-validated
-        if(via){ nTeardrop++; }
-        else if(distTo(Ap,Bp)/2 < minTurnR) nTight++;               // too tight to hold at this speed
+        const t = teardropTurn(Ap, Bp, hE, hF, ref, ko, buffer, minTurnR);  // radius-floored + nogo-validated
+        if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
+                   maxOutboard=Math.max(maxOutboard, t.outboard); }
+        else nNoTurn++;    // a loop exists at ANY spacing now, so this is nogo/skew, not tightness
       }
       if(via){ patTransits.push(via); patRoutes.push([Ap,...via,Bp]); continue; }
-      if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }        // straight turn is clear
+      // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
+      // a real leg and this is the right answer; for a reversal it is the degenerate
+      // fallback the nNoTurn banner warns about - clear of nogo, but a 180 the boat
+      // cannot track. Kept so the plan stays complete and the operator sees the flag.
+      if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
       const around=routeAround(Ap,Bp,ref,ko,buffer);
       if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
         const kr=channelLaneRoute([Ap,...around,Bp], ref, ko, buffer);
@@ -3565,7 +3666,14 @@ async function punchOut(){
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
-    const nRoute=patRoutes.length-nTeardrop, nU=patUnsafe.length;
+    const nRoute=patRoutes.length-nSemi-nTear, nU=patUnsafe.length;
+    // Turn-radius advisory. The spacing a plain semicircle needs is twice the minimum
+    // radius the boat can hold at the plan speed; below that the reversals become
+    // teardrops that swing outboard, and if that water isn't clear they become nothing
+    // at all. Both are the operator's call to make (widen the lines, or slow down), so
+    // quote the actual numbers rather than just reporting the symptom.
+    const spdKey = mission.speed || "survey";
+    const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM("low");
     // Estimated durations at the plan speed, kept SEPARATE:
     //  - SURVEY = the survey run itself (coverage lines + inter-line transits)
     //  - APPROACH = the transit from the boat to the survey start (straight-line
@@ -3584,14 +3692,23 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
-      (nTeardrop?`, ${nTeardrop} teardrop turn(s)`:``)+
-      (nTight?`, ${nTight} turn(s) too tight for ${mission.speed||"survey"} speed (straight)`:``)+
+      (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
+      (nTear?`, ${nTear} teardrop turn(s) @ R ${minTurnR.toFixed(1)} m (reaching ${maxOutboard.toFixed(0)} m past the line ends)`:``)+
+      (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight)`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
-      (!nRoute&&!nU&&!nTeardrop?`, clear of keep-outs`:``)+
+      (!nRoute&&!nU&&!nSemi&&!nTear?`, clear of keep-outs`:``)+
+      (nTear||nNoTurn?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
       `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+`. Add to plan.`;
+    // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
+    const widenTxt = `Widen the spacing to ${Math.ceil(needSpacing)} m`+
+      (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
     if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
+    else if(nNoTurn){ clearViolation();
+      showBanner(`${nNoTurn} reversal(s) have no clear turn — the loop at the ${spdKey}-speed radius (${minTurnR.toFixed(1)} m) would enter a keep-out, so those legs fall back to a straight hop the ASV CANNOT actually track (it needs ${(sp.spacing/2).toFixed(1)} m of radius there and has ${minTurnR.toFixed(1)} m). ${widenTxt}`); }
+    else if(nTear){ clearViolation();
+      showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear. ${widenTxt}`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
     else { clearViolation(); showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan."); }
     updatePatReadout(); render();
