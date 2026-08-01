@@ -1,0 +1,394 @@
+// Build: ASV Simulator - Technical Manual (engineers & programmers)
+//
+// THE MANUAL IS GENERATED - edit THIS script and rebuild; never hand-edit the docx.
+// If the docx is hand-edited in Word anyway: diff that text against the generated
+// version (paragraph extraction), fold the edits INTO this script (mark them as the
+// author's), then rebuild.
+//
+//   cd tools && npm install && node build_tech_manual.js
+//
+// Writes ../docs/asv-simulator-technical-manual.docx (path is script-relative).
+//
+// BRAND-FREE BY RULE. This console is the generic, vendor-neutral sibling: the onboard
+// controller is a VCU, and no vendor or model name appears in the console core or in
+// this manual's description of it. Vessel FILES may name real vessels - that is data,
+// not branding - so a vessel table quoting a real hull is fine and a "the X console"
+// framing is not. Keep it that way when extending this script.
+const {
+  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+  Table, TableRow, TableCell, WidthType, ShadingType,
+  LevelFormat,
+} = require("docx");
+const fs = require("fs");
+const path = require("path");
+
+const MONO = "Consolas";
+const INK = "1a1a1a", ACCENT = "1f4e79";
+
+// ---- helpers ---------------------------------------------------------------
+// P("text with `code` spans") -> Paragraph with Consolas runs for backticked parts
+function runs(text, opts = {}) {
+  const out = [];
+  String(text).split("`").forEach((seg, i) => {
+    if (!seg) return;
+    if (i % 2 === 1) out.push(new TextRun({ text: seg, font: MONO, size: opts.size || 20, color: opts.color || INK }));
+    else out.push(new TextRun({ text: seg, size: opts.size || 21, color: opts.color || INK, bold: opts.bold, italics: opts.italics }));
+  });
+  return out;
+}
+function P(text, opts = {}) {
+  return new Paragraph({ children: runs(text, opts), spacing: { after: opts.after ?? 120 }, alignment: opts.align });
+}
+function H1(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 340, after: 170 } }); }
+function H2(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 260, after: 130 } }); }
+function H3(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 100 } }); }
+function B(text) {
+  return new Paragraph({ children: runs(text), numbering: { reference: "bullets", level: 0 }, spacing: { after: 70 } });
+}
+function B2(text) {
+  return new Paragraph({ children: runs(text), numbering: { reference: "bullets", level: 1 }, spacing: { after: 60 } });
+}
+function CODE(lines) {
+  return lines.map(l => new Paragraph({
+    children: [new TextRun({ text: l === "" ? " " : l, font: MONO, size: 18 })],
+    shading: { type: ShadingType.CLEAR, fill: "F2F4F7" },
+    spacing: { after: 0 }, indent: { left: 240, right: 240 },
+  }));
+}
+const TOTAL = 9360; // usable table width (12240 - 2x1440 margins)
+function TBL(headers, rows, widths) {
+  const w = widths || headers.map(() => Math.floor(TOTAL / headers.length));
+  const mk = (t, head) => new TableCell({
+    width: { size: w[t.i], type: WidthType.DXA },
+    shading: head ? { type: ShadingType.CLEAR, fill: "DDE5EF" } : undefined,
+    margins: { top: 40, bottom: 40, left: 80, right: 80 },
+    children: [new Paragraph({ children: runs(t.s, { size: 19, bold: head }), spacing: { after: 0 } })],
+  });
+  return new Table({
+    width: { size: TOTAL, type: WidthType.DXA }, columnWidths: w,
+    rows: [
+      new TableRow({ children: headers.map((s, i) => mk({ s, i }, true)), tableHeader: true }),
+      ...rows.map(r => new TableRow({ children: r.map((s, i) => mk({ s: String(s), i }, false)) })),
+    ],
+  });
+}
+const SP = () => new Paragraph({ text: "", spacing: { after: 60 } });
+
+// ---- content ---------------------------------------------------------------
+const c = [];
+
+c.push(new Paragraph({ text: "ASV Simulator", heading: HeadingLevel.TITLE, spacing: { after: 80 } }));
+c.push(P("Technical Manual — architecture, subsystems, API and extension guide", { size: 24, color: "2e5f8a" }));
+c.push(P("A browser-based command console and high-fidelity simulator for autonomous surface vessels. Vendor-neutral by design: the console core models no particular hull, and every vessel-specific parameter lives in a per-vessel configuration file.", { italics: true }));
+c.push(SP());
+
+c.push(H1("Contents"));
+[
+  "1  Introduction and document set",
+  "2  System architecture",
+  "3  Repository layout",
+  "4  Vessel configuration — the single source of truth",
+  "5  Server reference (asv_console.py)",
+  "6  Client reference (static/asv.html)",
+  "7  Behaviors, the nogo model and ENC-aware routing",
+  "8  Survey planning and turn geometry",
+  "9  Remote Operations Centers and moving HOME",
+  "10  HTTP API reference",
+  "11  Data formats and persistence",
+  "12  Configuration and constants",
+  "13  Development practice and verification",
+  "14  Known limitations and roadmap",
+  "15  Extension guide",
+].forEach(t => c.push(B(t)));
+
+// 1 -------------------------------------------------------------------------
+c.push(H1("1  Introduction and document set"));
+c.push(P("The ASV Simulator is a single-operator command console for an autonomous surface vessel, plus a simulator faithful enough to rehearse a whole mission against real chart data before any hardware is involved. It plans surveys and search patterns on a live nautical chart, routes every leg clear of charted hazards, drives the vessel through an autopilot model that responds to real wind and sea state, and records the session for replay."));
+c.push(P("The console is deliberately GENERIC. It models no particular manufacturer's vessel: the onboard controller is referred to throughout as a `VCU` (vessel control unit), and every hull, propulsion, maneuvering, power and planning parameter is read from a vessel configuration file rather than compiled in. Adding a new vessel is a data change, not a code change — see chapter 4."));
+c.push(H2("1.1  Document set"));
+c.push(TBL(["Document", "Audience", "Covers"], [
+  ["This manual", "Engineers, programmers", "Architecture, subsystems, API, formats, constants, extension recipes"],
+  ["`README.md`", "Operators, new readers", "What it is, running it, and a walkthrough of every feature"],
+  ["`README_SIM.md`", "Operators", "The simulation model, command flow, endpoints, mission walkthrough"],
+  ["`README_PLAYBACK.md`", "Operators", "Session recording and the read-only playback view"],
+  ["`CLAUDE.md`", "Maintainers", "Design decisions, durable gotchas, and the session log"],
+], [2200, 2200, 4960]));
+c.push(SP());
+c.push(P("Design documents — `PLAN.md`, `ASV_BEHAVIORS_PLAN.md`, `ENC_PUNCHOUT_PLAN.md` — record intent for individual subsystems and are historical rather than normative."));
+
+// 2 -------------------------------------------------------------------------
+c.push(H1("2  System architecture"));
+c.push(P("Three processes, one browser, and no framework. The console is stdlib-only Python serving a single self-contained HTML page; the only child processes are optional services."));
+c.push(CODE([
+  "  browser (static/asv.html)          the whole UI: chart, planning, command bar",
+  "     |  HTTP + SSE (/api/state)",
+  "  asv_console.py                     server: engine, mission store, ENC, water, env",
+  "     |  VcuLink (SimVcu | RealVcu)",
+  "  the vessel                         simulated, or a real VCU over TCP/serial",
+  "",
+  "  ais_service.py    (child)          AIS traffic provider, proxied at /api/ais",
+  "  gps_sim.py        (child)          NMEA-0183 GPS stream for a ROC position feed",
+]));
+c.push(H2("2.1  The honest seam"));
+c.push(P("`VcuLink` is the interface between the console and the vessel. `SimVcu` implements it fully — hull dynamics, autopilot, power model, waypoint following. `RealVcu` implements the same interface and REFUSES every command with a clear error, because the wire protocol for a real controller is not implemented. This is deliberate: an unimplemented real link that silently accepted commands would be far more dangerous than one that says so."));
+c.push(H2("2.2  Where logic lives"));
+c.push(P("Route planning, chart clipping and survey geometry run in the BROWSER, not the server. The client owns the ENC feature set and computes every route against it, then uploads the finished waypoint list. One consequence matters and is easy to trip over: a raw `POST /api/cmd/upload` with no `route` bypasses ENC routing entirely, because the routing code is client-side JavaScript. Scripted headless missions must therefore either supply a pre-routed path or stay in open water."));
+c.push(H2("2.3  Single-file by decision"));
+c.push(P("The server is one Python file and the client is one HTML file. This is a settled decision, not an accident: it keeps deployment to a copy, keeps the whole system greppable, and removes the build step. The sibling console split its routing into a separate `routing.js`; this one deliberately did not, and the regression harnesses extract functions directly out of `static/asv.html` on that assumption."));
+
+// 3 -------------------------------------------------------------------------
+c.push(H1("3  Repository layout"));
+c.push(TBL(["Path", "Purpose"], [
+  ["`asv_console.py`", "The server: HTTP + SSE, Engine, VcuLink/SimVcu/RealVcu, mission store, ENC fetch, water level, environment, vessel configuration, session recorder"],
+  ["`static/asv.html`", "The entire client: chart, planning, routing, behaviors, all cards"],
+  ["`static/playback.html`", "Read-only session playback view"],
+  ["`roc_tracks.py`", "Remote Operations Center tracking, GPS ingest and moving HOME"],
+  ["`gps_sim.py`", "NMEA-0183 GPS data-stream simulator (TCP server or UDP)"],
+  ["`ais_service.py`", "Standalone AIS traffic provider, started as a child process"],
+  ["`vessels/*.json`", "One self-contained configuration per modeled vessel"],
+  ["`tests/`", "Headless regression harnesses (stdlib Node / stdlib Python)"],
+  ["`tools/`", "Documentation generators (this manual)"],
+  ["`charts/`", "Chart tile and ENC caches (generated at runtime, not versioned)"],
+  ["`logs/`", "Session recordings (JSONL) and child-process logs"],
+], [2600, 6760]));
+
+// 4 -------------------------------------------------------------------------
+c.push(H1("4  Vessel configuration — the single source of truth"));
+c.push(P("This chapter describes the architectural feature that most distinguishes this console: it studies ASV behaviour across vessel TYPES, so no vessel parameter may be hardcoded anywhere."));
+c.push(P("Every hull, windage, propulsion, maneuvering, autopilot, power, planning and spawn value for a modeled vessel lives in exactly one place — `vessels/<id>.json`. The server validates it at load, publishes it to module globals, and serves it to the client at `GET /api/vessel`. Server and client therefore agree by construction."));
+c.push(H2("4.1  Lifecycle"));
+c.push(B("`load_vessel(id)` reads `vessels/<id>.json`."));
+c.push(B("`validate_vessel(v)` checks it against a field schema. A missing or mistyped field fails the load with a clear, path-pointed error — a bad file never runs with placeholder physics."));
+c.push(B("`apply_vessel(v)` publishes the values to the module globals that `SimVcu`, the mission store and the planners read."));
+c.push(B("The client's `loadVessel()` fetches `/api/vessel` and mirrors the same values into its own constants (speeds, turn rate, nogo buffer, minimum navigable depth, search-pattern sizes) and the energy gauge."));
+c.push(P("`--vessel <id>` selects the vessel at start. `POST /api/vessel {id}` switches it live; the switch is gated on disarmed and idle, returns 409 otherwise, and respawns the simulated vessel at the new vessel's spawn point."));
+c.push(H2("4.2  The staleness rule"));
+c.push(P("EVERY value derived from the vessel must be re-derived inside `apply_vessel()`. A constant computed once at import goes stale the moment the operator switches vessel in the top-bar picker, and the resulting bug is subtle — the console keeps running, with one subsystem quietly modelling the previous hull. Historic instances: the underwater lateral area used for leeway drag, and the ROC recovery standoff."));
+c.push(H2("4.3  Schema"));
+c.push(TBL(["Block", "Fields", "Drives"], [
+  ["`hull`", "`loa_m`, `beam_m`, `above_water_h_m`, `draft_m`, `wind_cd`, `hull_cd`", "Windage silhouettes, leeway drag, minimum navigable depth, ROC recovery standoff"],
+  ["`propulsion`", "`speeds_kn.{low,survey,high}`", "Plan speeds, ETA estimates, turn radius, moving-HOME closing check"],
+  ["`maneuvering`", "`max_turn_rate_deg_s`, `approach_m`, `lookahead_m`, `arrival_radius_m`", "Minimum turn radius, survey turn geometry, waypoint following"],
+  ["`autopilot`", "`xte_ki_deg`, `xte_i_max_deg`", "Cross-track integral term under a steady sideways push"],
+  ["`power`", "`type` = `battery` (voltage sag) or `fuel` (litres, burn curve)", "Endurance, range, the console's energy gauge"],
+  ["`planning`", "`nogo_buffer_m`, `under_keel_clearance_m`, optional `channel_reach_m`, `roc`, `search`", "Keep-out buffer, depth floor, channel lane reach, ROC defaults, search sizes"],
+  ["`spawn`", "`lat`, `lon`", "Where the simulated vessel comes up"],
+], [1500, 3700, 4160]));
+c.push(SP());
+c.push(P("The minimum navigable depth is DERIVED, not declared: `draft_m + under_keel_clearance_m`. A deep-draft vessel therefore treats more water as nogo automatically, and the client re-extracts the chart on a vessel switch so the keep-out model follows."));
+c.push(H2("4.4  Adding a vessel"));
+c.push(P("Write `vessels/<id>.json` with every required field, start with `--vessel <id>`, and confirm the load message. There is no code to change. If a new subsystem needs a vessel-dependent value, add the field to the schema with a SENSIBLE DERIVED FALLBACK so that vessel files written before the field existed continue to load — see the ROC recovery standoff in chapter 9 for the pattern."));
+
+// 5 -------------------------------------------------------------------------
+c.push(H1("5  Server reference (asv_console.py)"));
+c.push(H2("5.1  Engine"));
+c.push(P("`Engine` owns the link, the armed/e-stop state, the run state machine and the telemetry loop. It ticks the link, absorbs telemetry into a state snapshot, and pushes that snapshot to every SSE subscriber. It also resolves HOME on every tick (chapter 9) and drives the moving-HOME chase."));
+c.push(P("Run states are `idle`, `running`, `paused` and `complete`. Behaviors are `survey`, `goto`, `rth`, `transit` and `hold`. Completion modes are `rth`, `complete`, `loiter` and `repeat`."));
+c.push(H2("5.2  SimVcu"));
+c.push(P("The simulator: waypoint following by look-ahead line-of-sight guidance, a yaw-rate-capped heading response, a speed model, and a power model that is either battery voltage sag or diesel fuel burn depending on the vessel file. Wind and sea state from the environment monitor push it off track, and the guidance answers with a crab feedforward plus a cross-track integral term, the way a real autopilot does."));
+c.push(H2("5.3  Supporting services"));
+c.push(B("`CommsMonitor` — the radio link status readout."));
+c.push(B("`WaterLevel` — real-time water level from public tide stations, ADDED to charted depths so the nogo model reflects the tide now, not the chart datum."));
+c.push(B("`EnvMonitor` — real wind and wave observations near the vessel, feeding the simulator's environmental forcing. Simulation only."));
+c.push(B("`RocTracker` — Remote Operations Centers and HOME selection (chapter 9)."));
+c.push(B("`SessionLogger` — append-only JSONL recording of every command, setting and telemetry sample."));
+
+// 6 -------------------------------------------------------------------------
+c.push(H1("6  Client reference (static/asv.html)"));
+c.push(P("One page, one classic script scope, no build step. It owns the slippy chart, the ENC feature set, all planning geometry, all route search, and every card."));
+c.push(H2("6.1  Cards"));
+c.push(TBL(["Card", "Purpose"], [
+  ["Survey (`SURV`)", "Three-click survey pattern, spacing/direction, Punch Out, Add to plan"],
+  ["Survey area (`BND`)", "Arbitrary boundary polygon that clips the pattern"],
+  ["Search (`SRCH`)", "Canned search patterns: expanding box, sector, parallel track"],
+  ["Transit (`TRAN`)", "Draw and follow a route with no survey plan"],
+  ["Mission", "One readout for every commanded run: type, waypoints, length, time to end, end mode"],
+  ["ROC · HOME", "Remote Operations Centers, recovery offsets, and HOME selection"],
+  ["Environment (`ENV`)", "Wind and sea state, live or overridden"],
+  ["Chart source (`SRC`)", "The ENC cell and zone-of-confidence under the vessel"],
+  ["Survey lines (`LINES`)", "Per-line planned versus actual run times"],
+  ["AIS", "Nearby traffic from the AIS service"],
+], [2200, 7160]));
+c.push(H2("6.2  Multi-monitor split"));
+c.push(P("The console can run as two windows: a chart window and a controls window (`?panel=controls`), talking over a same-origin BroadcastChannel. The chart window is the single source of truth and owns all logic; the controls window renders no application logic, mirrors the control DOM, and forwards gestures back so every existing handler runs exactly once."));
+c.push(P("CONSEQUENCE FOR NEW UI: every interactive element needs a stable, unique `id`. The bridge forwards controls by id, so an id-less control is inert in the controls window. Handlers should key off class or `data-*` attributes so they stay id-agnostic."));
+
+// 7 -------------------------------------------------------------------------
+c.push(H1("7  Behaviors, the nogo model and ENC-aware routing"));
+c.push(P("Every behavior is chart-aware and arm-gated. Nothing moves the vessel until the operator arms."));
+c.push(H2("7.1  The nogo model"));
+c.push(P("Chart features are fetched from public electronic navigational chart services and reduced to keep-outs: shoreline, docks and piers, charted hazards, obstructions, and any water shallower than the vessel's derived minimum navigable depth. Charted depths are corrected by the live water level first. The result is a shared model that every behavior plans against, dilated by the vessel's nogo buffer."));
+c.push(H2("7.2  Route search"));
+c.push(B("Direct: an exact clearance check on the straight leg. If clear, done."));
+c.push(B("`routeAroundSeg` — a fine sectioned search over a rasterized occupancy grid."));
+c.push(B("Escalating swing regions when the detour leaves the search window — the grid coarsens, but the raster OVER-approximates keep-outs, so any coarse solution is genuinely clear and is then refined leg by leg."));
+c.push(B("Fine-escape composition when a tight basin closes over the start or the goal: generate open-water escape candidates around the pinched end, route to one, then escalate from open water."));
+c.push(P("The whole ladder runs under a time budget. An exhausted budget or a genuine absence of any clear path is reported as unroutable and refused, with the obstruction named. The console never plans a leg it has not verified."));
+c.push(H2("7.3  The channel lane (COLREGS Rule 9)"));
+c.push(P("In a narrow channel or fairway the vessel keeps to the starboard side. The lane is a purely geometric rule: offset to starboard of the channel centreline, half way out to the edge on that side — a quarter of the full width in from the edge. Buoy COLOUR is never an input; it falls out, because lateral marks sit on fixed sides. Opposing traffic therefore passes port to port."));
+c.push(P("This applies to every mode — go-to, return-to-home, transit, the survey approach leg, inter-line transits, search transits and any routed detour. Survey coverage lines and generated survey turns are NEVER offset: they are planned geometry and must be run as planned."));
+
+// 8 -------------------------------------------------------------------------
+c.push(H1("8  Survey planning and turn geometry"));
+c.push(H2("8.1  Pipeline"));
+c.push(P("A three-click pattern (start corner, opposite corner, then a spacing and direction point) generates parallel lines filling the box. A centre MOVE GRIP translates every anchor by one delta, so the whole pattern moves with shape, spacing and direction preserved exactly. An optional boundary polygon clips the lines. Punch Out then trims everything to chart-clear water:"));
+c.push(B("Clip every line to nogo-clear water, sampling at buffer resolution."));
+c.push(B("Re-order the result so each obstacle-free region is run as its own serpentine and no leg is numbered through a keep-out."));
+c.push(B("Shorten each segment at both ends to settle on-line and leave turning room."));
+c.push(B("Generate a turn at every line-to-line reversal (below)."));
+c.push(B("Route the remaining transits: straight if clear, else around the obstacle with the channel lane applied, else flag them."));
+c.push(H2("8.2  Turn geometry"));
+c.push(P("Every generated turn is built at a radius the vessel can actually HOLD at the plan speed — derived from the vessel file's maximum turn rate, with a margin for line-following overshoot. There are two shapes, and both are validated against the nogo model before use."));
+c.push(TBL(["Shape", "When", "Geometry"], [
+  ["Semicircle", "Line offset ≥ 2 × minimum radius", "One 180° arc of radius half the offset, bulging outboard; reaches exactly that radius past the line ends"],
+  ["Teardrop", "Line offset < 2 × minimum radius", "Three tangent circles AT the minimum radius: a short arc away from the next line, a >180° loop over the top, a short arc onto the line"],
+], [1500, 2800, 5060]));
+c.push(SP());
+c.push(P("DECOUPLING THE TURN RADIUS FROM THE LINE SPACING is the point of the second shape. A large, slow-turning vessel may need more radius than half the line spacing can ever supply; before the teardrop existed, such a vessel got no turn at all and the plan fell back to a straight hop between anti-parallel line ends — which is a 180° reversal at half the spacing, precisely the radius that had just been rejected as unflyable, only now unmodelled."));
+c.push(P("The teardrop costs outboard water: up to roughly 2.75 times the minimum radius past the line ends, against one radius for the semicircle. Punch Out therefore reports the actual excursion, the spacing a plain semicircle would need at the plan speed, and the spacing needed at low speed, so widening the lines or slowing down stays the operator's decision. Where even the teardrop cannot fit clear of the keep-outs, the reversal falls back to a straight hop and the banner marks it UNTRACKABLE rather than clear."));
+c.push(P("At exactly twice the minimum radius the teardrop's middle circle degenerates and the two shapes are the same semicircle, so the families agree on their shared boundary."));
+
+// 9 -------------------------------------------------------------------------
+c.push(H1("9  Remote Operations Centers and moving HOME"));
+c.push(P("The operational paradigm: humans command the vessel from one or more Remote Operations Centers. A ROC has a position and a telemetry link. Two kinds exist and a mission may use both."));
+c.push(B("SHORE ROC — near the launch harbour, or anywhere. A usually fixed point. The real launch and recovery point is OFFSET from the antenna by an operator-entered range and bearing."));
+c.push(B("SHIP ROC (mothership) — aboard a vessel near the mission area. A MOVING point. Recovery happens at a range and bearing FROM the ship, so the offset bearing is normally taken RELATIVE to the ship's course."));
+c.push(H2("9.1  Arrival point"));
+c.push(P("Each ROC's arrival point is its position walked out along its offset. A `true` offset is a compass bearing; a `relative` offset is measured from the ship's course, so “50 m astern” stays astern as the ship turns. The operator selects one ROC as HOME; the Engine resolves it every telemetry tick, so when HOME is a ship it MOVES and return-to-home chases it."));
+c.push(H2("9.2  Lifecycle"));
+c.push(P("PLACE → EDIT → CONFIRM. A ROC is created by clicking the chart and comes up STAGED: its position, and for a ship its heading and speed, are edited while it sits still. CONFIRM makes it ACTIVE — a shore ROC becomes a usable HOME anchor, a ship starts steaming. HOLD stops a ship and returns it to STAGED. Only an ACTIVE ROC may be selected as HOME; the gate is a safety property, not decoration."));
+c.push(H2("9.3  The chase"));
+c.push(P("While a return-to-home follows a ROC, the run loop re-aims the vessel at the ROC's current arrival point, re-issuing a fresh single-waypoint plan only once the point has drifted past about half the arrival radius. This reuses the link's own waypoint following rather than introducing a separate pursuit controller. Any command that leaves the return-to-home run clears the chase."));
+c.push(P("A ROC home is driven direct rather than by a chart-routed detour, because a detour computed to a moving recovery point would be stale by the time the vessel arrived."));
+c.push(H2("9.4  Vessel-dependent behaviour"));
+c.push(P("Two ROC values are derived from the active vessel and re-derived on a live vessel switch:"));
+c.push(B("RECOVERY STANDOFF — the default astern offset for a new ship ROC scales with the hull (six lengths, with a small-boat floor) and may be overridden outright by `planning.roc.ship_recovery_m`. A fixed distance cannot serve both a two-metre vessel and a twenty-metre one."));
+c.push(B("CLOSING CHECK — a return-to-home against a moving mothership only converges if the vessel can overhaul it. The console subtracts the ship's speed from the vessel's best speed and reports the closing rate; below a small margin the recovery point is marked unreachable and the run note says so. The same mothership speed is routine for a fast vessel and impossible for a slow one, so this cannot be a constant."));
+c.push(H2("9.5  Position sources"));
+c.push(P("A ROC position arrives three ways, all funnelling into one feed path: manually from the card, pushed by any external process to the API, or read from a real NMEA-0183 GPS stream over TCP or UDP. Sentences are checksum-verified and a void fix is rejected — a GPS feed is untrusted input. `gps_sim.py` is a faithful stand-in emitter for use when no hardware is present, and the console can spawn one per ROC automatically."));
+
+// 10 ------------------------------------------------------------------------
+c.push(H1("10  HTTP API reference"));
+c.push(P("JSON in, JSON out. Command endpoints are refused unless the console is armed, and every refusal names its reason."));
+c.push(TBL(["Endpoint", "Method", "Purpose"], [
+  ["`/api/state`", "GET", "Current state snapshot"],
+  ["`/events`", "GET (SSE)", "Live state stream"],
+  ["`/api/vessel`", "GET / POST", "Active vessel configuration; POST switches vessel (gated disarmed + idle)"],
+  ["`/api/vessels`", "GET", "Available vessel configurations"],
+  ["`/api/connect`, `/api/disconnect`", "POST", "Attach or detach the VCU link"],
+  ["`/api/cmd/arm`, `/api/cmd/estop`", "POST", "Arm gate and command e-stop"],
+  ["`/api/cmd/upload`, `/api/cmd/start`, `/api/cmd/pause`, `/api/cmd/stop`", "POST", "Run control"],
+  ["`/api/cmd/goto`, `/api/cmd/rth`, `/api/cmd/transit`, `/api/cmd/hold`", "POST", "Behaviors"],
+  ["`/api/cmd/sethome`, `/api/cmd/spawn`, `/api/cmd/reset`, `/api/cmd/energy`", "POST", "Home, simulator placement, power-cycle, energy"],
+  ["`/api/roc`", "GET / POST", "ROC registry, lifecycle, GPS attachment, HOME selection, position push"],
+  ["`/api/mission`", "GET / POST", "Persisted mission plan"],
+  ["`/api/enc`, `/api/chartinfo`", "GET", "Chart features and the cell / confidence under the vessel"],
+  ["`/api/waterlevel`, `/api/tide`, `/api/env`", "GET / POST", "Water level, tide, environment"],
+  ["`/api/ais`", "GET", "Nearby traffic, proxied from the AIS service"],
+  ["`/api/logs`, `/api/logevent`", "GET / POST", "Session recordings and event injection"],
+], [3400, 1500, 4460]));
+c.push(SP());
+c.push(P("`/api/roc` takes an `op` field: `add`, `update`, `offset`, `motion`, `confirm`, `hold`, `gps_attach`, `gps_detach`, `remove`, `select_home`, `clear_home`, `feed`. Every op returns the fresh snapshot so a client stays in sync without a second request. `feed` is the external position push — any GPS bridge or ship navigation system can post to it."));
+
+// 11 ------------------------------------------------------------------------
+c.push(H1("11  Data formats and persistence"));
+c.push(TBL(["File", "Format", "Contents"], [
+  ["`mission.json`", "JSON", "The committed plan: waypoints, survey lines, speed, arrival radius, completion mode, buffer"],
+  ["`roc_config.json`", "JSON", "ROC definitions, placements and lifecycle state"],
+  ["`vessels/<id>.json`", "JSON", "One vessel's complete configuration (chapter 4)"],
+  ["`logs/*.jsonl`", "JSONL", "Append-only session recording: every command, setting, state transition and telemetry sample"],
+  ["`charts/`", "Tiles + JSON", "Chart tile and ENC feature caches, regenerated at runtime"],
+], [2300, 1400, 5660]));
+c.push(SP());
+c.push(P("Recordings are the input to the playback view, which replays a session read-only on the same chart: the vessel drives its recorded track, plans and commanded routes appear as they were sent, and a timeline lists every command and state transition including the refused ones."));
+
+// 12 ------------------------------------------------------------------------
+c.push(H1("12  Configuration and constants"));
+c.push(P("Vessel-specific values are NOT listed here — they live in the vessel file (chapter 4). What follows is console-level."));
+c.push(TBL(["Constant", "Default", "Meaning"], [
+  ["Web port", "8791", "Console UI"],
+  ["`NOGO_RADIUS_M`", "5000 m", "Operating-area half-extent; re-extract after 0.6 × travel"],
+  ["`NOGO_MIN_DEPTH_M`", "vessel-derived", "Draft + under-keel clearance; water shallower is nogo"],
+  ["`NOGO_BUFFER_M`", "vessel-derived", "Shared keep-clear buffer, operator-adjustable"],
+  ["AIS display radius", "50 km (5–500)", "Also scales the upstream subscription; the two must move together"],
+  ["Telemetry rate", "4 Hz", "Engine tick and SSE push"],
+  ["Turn arc sampling", "~3 m", "Waypoint spacing along a generated survey turn"],
+  ["ROC link thresholds", "5 s / 15 s", "Fresh → stale → lost for a live-fed ROC"],
+], [2600, 1900, 4860]));
+
+// 13 ------------------------------------------------------------------------
+c.push(H1("13  Development practice and verification"));
+c.push(H2("13.1  Regression harnesses"));
+c.push(P("Three headless harnesses guard geometry that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
+c.push(TBL(["Harness", "Guards"], [
+  ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
+  ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
+  ["`python tests/roc_tracks.py`", "ROC arrival geometry, the staged/active HOME gate, moving HOME, NMEA validation, and that every vessel-derived default tracks the vessel"],
+], [2700, 6660]));
+c.push(SP());
+c.push(P("Enable the hook once per clone with `git config core.hooksPath .githooks`."));
+c.push(H2("13.2  How these harnesses work, and how they break"));
+c.push(P("The browser-side harnesses EXTRACT the real functions out of `static/asv.html` by brace matching and run them in Node against synthetic worlds. This tests the shipping code rather than a copy — but it also means the harness ENUMERATES the functions it extracts, so it breaks silently when the code under test gains a new dependency. Treat “harness crashed” exactly as loudly as “check failed”: a suite that cannot run protects nothing, and a suite that prints success while testing dead code is worse than none at all."));
+c.push(H2("13.3  Tests with teeth"));
+c.push(P("A check that cannot fail is not a check. Every harness in this repository has been verified by MUTATION: deliberately breaking the behaviour under test and confirming the specific assertions fail. Where a test asserts that something is refused, it is paired with a case proving the same input is ACCEPTED under valid conditions — otherwise a function that refused everything would pass."));
+c.push(H2("13.4  What static checks cannot catch"));
+c.push(P("A clearance check on a PLANNED path does not catch FOLLOW OVERSHOOT. An idealised arc can validate perfectly clear and still be tighter than the vessel can hold, in which case the vessel overshoots outboard — into the very keep-out the arc was hugging. Turn geometry must therefore be verified with a live simulation run sampling vessel-versus-nogo at zero buffer, not with geometry alone. This is why the minimum turn radius exists."));
+
+// 14 ------------------------------------------------------------------------
+c.push(H1("14  Known limitations and roadmap"));
+c.push(B("`RealVcu` command and telemetry codecs are unimplemented by design. The console is a simulator; the real link refuses honestly rather than pretending."));
+c.push(B("The simulator caps yaw RATE, not radius, so the modelled minimum turn radius grows linearly with speed. Real hulls hold a roughly constant minimum radius. The cap is calibrated at survey speed, which is where surveys are planned, and is pessimistic at high speed."));
+c.push(B("Raw API command and upload calls with no supplied route BYPASS chart-aware routing, because routing is client-side. Rehearse through the interface, or place raw waypoints in open water."));
+c.push(B("Chart scale and currency vary. The console is a planning AID and says so in a banner; it is not hydrographically certified, and the operator remains responsible for the plan."));
+c.push(B("Traffic data comes from a crowd-sourced network with real coverage gaps. A quiet area is reported as “connected, no vessels reporting” rather than as an error, because those are different conditions."));
+
+// 15 ------------------------------------------------------------------------
+c.push(H1("15  Extension guide"));
+c.push(H2("15.1  Adding a vessel"));
+c.push(P("Write `vessels/<id>.json`. No code changes. See chapter 4."));
+c.push(H2("15.2  Adding a behavior"));
+c.push(P("Add the command endpoint to the server, a method on `Engine` that builds a route and calls the shared run-route path, and a client function that plans the route against the nogo model before uploading it. Reuse the existing route search and channel lane rather than adding a parallel mechanism — a behavior that routes its own way will diverge from every other behavior the first time the router improves."));
+c.push(H2("15.3  Adding a vessel-dependent value"));
+c.push(P("Put the field in the vessel schema with a derived fallback so older vessel files still load, read it in `apply_vessel()` so a live switch re-derives it, mirror it to the client through `/api/vessel` if the browser needs it, and add a regression assertion that the value actually CHANGES between two different vessels. That last step is what catches a value that was wired up but never re-derived."));
+c.push(H2("15.4  Adding UI"));
+c.push(P("Give every interactive element a stable unique id (the multi-monitor bridge forwards by id), key handlers off class or `data-*`, register any new pop-out card in the bridged-selector list and the card-title map, and rebuild card rows only when the underlying SET changes — rebuilding on every telemetry frame will clobber a field the operator is typing into."));
+c.push(H2("15.5  House rules"));
+c.push(B("No hardcoded vessel constants. Ever. The vessel file is the single source of truth."));
+c.push(B("Keep the console core vendor-neutral. Vessel files may name real vessels; the console may not."));
+c.push(B("Never weaken the safety model: arm-gating, e-stop, link-loss failsafe and the refusal-with-a-reason contract."));
+c.push(B("Update the relevant README in the same change as the behaviour it documents, and rebuild this manual from its script."));
+
+// ---- document --------------------------------------------------------------
+const doc = new Document({
+  numbering: {
+    config: [{
+      reference: "bullets",
+      levels: [
+        { level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 460, hanging: 230 } } } },
+        { level: 1, format: LevelFormat.BULLET, text: "◦", alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 860, hanging: 230 } } } },
+      ],
+    }],
+  },
+  styles: {
+    default: { document: { run: { size: 21, font: "Calibri", color: INK } } },
+    paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 32, bold: true, color: ACCENT }, paragraph: { spacing: { before: 340, after: 170 } } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 26, bold: true, color: "2e5f8a" }, paragraph: { spacing: { before: 260, after: 130 } } },
+      { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 22, bold: true, color: "3a3a3a" }, paragraph: { spacing: { before: 200, after: 100 } } },
+    ],
+  },
+  sections: [{
+    properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+    children: c,
+  }],
+});
+
+Packer.toBuffer(doc).then(buf => {
+  const out = path.join(__dirname, "..", "docs");
+  fs.mkdirSync(out, { recursive: true });
+  fs.writeFileSync(path.join(out, "asv-simulator-technical-manual.docx"), buf);
+  console.log("written:", buf.length, "bytes");
+});

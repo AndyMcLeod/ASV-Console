@@ -228,6 +228,7 @@
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
+    <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
     <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — cells in use, scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
@@ -344,6 +345,66 @@
       <button class="ctl small" id="tr_clr" title="Discard the transit line" style="flex:1">Clear</button>
     </div>
     <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
+  </div>
+
+  <!-- MISSION card: one readout for every commanded run (survey / search / go-to /
+       RTH / transit). Fed by updateMissionCard() from runRoute + the reported state. -->
+  <div class="panel" id="missionPanel" style="display:none;left:182px;top:96px;width:196px;">
+    <div class="phead" id="missionPanelHead" title="Drag to move">Mission</div>
+    <div class="prow"><label>Type</label><span class="phint" id="mi_type" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>Waypoints</label><span class="phint" id="mi_wpts" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>Length</label><span class="phint" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>To end</label><span class="phint" id="mi_toend" title="Remaining distance and ~time to the end of the plan (live SOG when moving, else the plan speed)" style="color:var(--ink);">--</span></div>
+    <div class="prow"><label>End mode</label><span class="phint" id="mi_endmode" style="color:var(--ink);text-transform:uppercase;">--</span></div>
+    <div class="phint" id="mi_status" style="border-top:1px solid var(--line);padding-top:5px;">--</div>
+  </div>
+
+  <!-- ROC / HOME card: track each Remote Operations Center (shore or ship/Mothership)
+       from its position data stream, set its launch/recovery offset, and choose one as
+       HOME. A ship HOME is a MOVING point and Return-to-Home chases it live. Rows are
+       injected by renderRoc() from S.roc; all controls delegate to POST /api/roc. -->
+  <style>
+    #rocPanel .rocrow{border-top:1px solid var(--line);padding:5px 0 6px;}
+    #rocPanel .rocrow:first-child{border-top:0;}
+    #rocPanel .rocname{display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--sans);font-size:11px;color:var(--ink);}
+    #rocPanel .rocname input{width:auto;}
+    #rocPanel .rocdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--ink-faint);}
+    #rocPanel .rocdot.ok{background:#3fbf6b;} #rocPanel .rocdot.stale{background:#e0a53a;}
+    #rocPanel .rocdot.lost{background:#d9534f;} #rocPanel .rocdot.nofix{background:var(--ink-faint);}
+    #rocPanel .rockind{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.06em;
+      padding:1px 4px;border-radius:2px;border:1px solid var(--line2);color:var(--ink-dim);}
+    #rocPanel .rockind.ship{color:#7fd0ff;border-color:#2b5a74;}
+    #rocPanel .rocmoving{color:#7fd0ff;font-family:var(--mono);font-size:8.5px;letter-spacing:.06em;}
+    #rocPanel .rocmoving.uncatchable{color:#d9534f;}
+    #rocPanel .rocoff input{width:42px;} #rocPanel .rocoff select{width:52px;}
+    #rocPanel .rocoff,#rocPanel .rocpos,#rocPanel .rocmot,#rocPanel .rocact{gap:4px;flex-wrap:wrap;}
+    #rocPanel .rocpos input{width:72px;} #rocPanel .rocmot input{width:46px;}
+    #rocPanel .rocrm{font-size:9px;padding:2px 5px;color:var(--ink-dim);}
+    #rocPanel .roclatlon{font-family:var(--mono);font-size:9px;color:var(--ink-faint);}
+    #rocPanel .rocstatus{font-family:var(--mono);font-size:8px;letter-spacing:.06em;padding:1px 4px;
+      border-radius:2px;border:1px solid var(--line2);margin-left:auto;}
+    #rocPanel .rocstatus.staged{color:#e0a53a;border-color:#5a4520;}
+    #rocPanel .rocstatus.active{color:#3fbf6b;border-color:#245a3a;}
+    #rocPanel .rocrow.staged{border-left:2px solid #e0a53a;padding-left:5px;margin-left:-5px;}
+    #rocPanel .roc-confirm{color:var(--track);}
+    #rocPanel .roc-home:disabled{opacity:.4;}
+    #rocPanel .rocgps{gap:4px;flex-wrap:wrap;align-items:center;}
+    #rocPanel .rocgpson{font-family:var(--mono);font-size:9px;color:#3fbf6b;}
+    #rocPanel .roc-gpsaddr{width:96px;}
+    #rocPanel input:disabled{opacity:.55;}
+  </style>
+  <div class="panel" id="rocPanel" style="display:none;width:252px;">
+    <div class="phead" id="rocPanelHead" title="Drag to move">ROC · HOME</div>
+    <div class="phint">Remote Operations Centers. Click + Shore or + Ship, then click the chart to
+      place it. Edit its position (and a ship's heading/speed) here, then Confirm to start it —
+      a confirmed ship steams, and only a confirmed ROC can be HOME.</div>
+    <div id="roc_list"><div class="phint">No ROC yet — click + Shore or + Ship, then click the chart to place it.</div></div>
+    <div class="prow" style="gap:4px;margin-top:6px;">
+      <button class="ctl small" id="roc_add_shore" title="Place a shore ROC: click here, then click the chart. Position is editable below; Confirm to activate." style="flex:1">+ Shore</button>
+      <button class="ctl small" id="roc_add_ship" title="Place a ship / Mothership ROC: click here, then click the chart. Enter heading + speed below; Confirm to start it steaming." style="flex:1">+ Ship</button>
+    </div>
+    <button class="ctl small" id="roc_home_clear" title="No ROC HOME — revert to the boat's own launch / first-fix home point" style="width:100%;margin-top:4px;">No ROC HOME (use launch point)</button>
+    <div class="phint" id="roc_hint" style="margin-top:5px;">Pick a ROC's HOME radio to anchor Return-to-Home to it.</div>
   </div>
 
   <div class="readout">
@@ -480,7 +541,7 @@ const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : 
 // This console has no Mission card and no operations-centre / moving-HOME card, so
 // there is nothing for them in the list. Everything else it pops out is bridged.
 const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel", "#envPanel",
-                    "#transitPanel", "#lineTablePanel", "#aisTablePanel",
+                    "#transitPanel", "#missionPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
                     "#aisReopen", "#chartPanel", "#vcard"];
 document.body.classList.add("ui-" + UIROLE);
 (function(){ const s = document.createElement("style"); s.textContent =
@@ -516,7 +577,7 @@ document.body.classList.add("ui-" + UIROLE);
   // main again, so the app is never left without its toolbar.
   "body.ui-split #ctlReopen{display:none!important;}"+
   "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,body.ui-split #envPanel,"+
-  "body.ui-split #transitPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
+  "body.ui-split #transitPanel,body.ui-split #missionPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
   "body.ui-split #aisReopen{display:none!important;}";
   document.head.appendChild(s); })();
@@ -557,7 +618,8 @@ let runUnsafe = [];                              // uploaded legs that still cro
 let mode = "pan", activeLine = -1, saveTimer = null;
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
-let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'
+let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
+let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
 let patClip = null;                            // Punch-Out result: clipped survey lines [[p0,p1]..]
 let patUnsafe = [];                            // transits with no clear route (flagged red)
 let patRoutes = [];                            // transits auto-routed around obstacles (amber polylines)
@@ -568,6 +630,9 @@ let patTransits = [];                          // per-gap detour waypoints, inte
 let search = {type:"expbox", datum:null, turn:1};   // in-memory only (like pat)
 let searchDrag = false;                        // datum handle being dragged
 // single/multi-segment transit line (draw + follow behaviour) - [{lat,lon}] vertices
+let planKind = "survey";                         // what the last committed PLAN is (survey | search)
+const fmtLenM = m => m==null ? "--" : (m<1000 ? Math.round(m)+" m" : (m/1000).toFixed(2)+" km");
+let rocPlaceKind = null;          // "shore" | "ship" while arming a click-to-place ROC
 let transit = [];                              // in-memory draft; Follow ENC-routes + drives it
 // CAMP-style arbitrary survey-area boundary: lines are clipped to this polygon
 let boundary = [];                             // [{lat,lon}] vertices
@@ -888,7 +953,8 @@ function render(){
     const isTurn = p.turn || turnKeys.has(p.lat+","+p.lon);
     if(!isTurn){ ctx.fillStyle="#ffb066"; ctx.fillText("W"+(i+1), s.x+8, s.y+4); }
   });
-  if(S.home){                                     // home / launch point
+  drawRoc(toScreen);                              // ROC markers + their arrival points (under H/boat)
+  if(S.home){                                     // home / launch point (active ROC arrival, or first-fix)
     const h = toScreen(S.home.lat, S.home.lon);
     ctx.fillStyle="#3fbf6b"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
@@ -1138,10 +1204,22 @@ function updateRunTime(){
 const HANDLE = {A:{c:"#3fbf6b",t:"A"}, B:{c:"#d9534f",t:"B"}, C:{c:"#39c0ff",t:"C"}};
 function patScreen(k){ if(!pat[k]) return null;
   const p = worldPx(pat[k].lat,pat[k].lon,zoom), o = originPx(); return {x:p.x-o.x, y:p.y-o.y}; }
+// Whole-pattern MOVE grip at the A-B rectangle centre. The pattern is fully
+// derived from the three anchors, so translating A/B/C by one delta moves the
+// whole pattern with shape, spacing and direction preserved exactly (the SRCH
+// datum handle works the same way - this gives the CAMP pattern that affordance).
+function patMoveLL(){ return (pat.A && pat.B)
+  ? {lat:(pat.A.lat+pat.B.lat)/2, lon:(pat.A.lon+pat.B.lon)/2} : null; }
+function patMoveScreen(){ const c = patMoveLL(); if(!c) return null;
+  const p = worldPx(c.lat,c.lon,zoom), o = originPx(); return {x:p.x-o.x, y:p.y-o.y}; }
 function patHandleAt(cx, cy){
   const r = mapEl.getBoundingClientRect();
   for(const k of ["A","B","C"]){ const s = patScreen(k); if(!s) continue;
     if(Math.hypot(s.x-(cx-r.left), s.y-(cy-r.top)) < 11) return k; }
+  // corner handles win ties: on a small pattern the grip sits near the corners,
+  // and reshape must stay reachable - the grip only answers where no corner does
+  const m = patMoveScreen();
+  if(m && Math.hypot(m.x-(cx-r.left), m.y-(cy-r.top)) < 11) return "M";
   return null;
 }
 function currentPattern(){ return surveyPattern(pat.A, pat.B, pat.C, pat.align); }
@@ -1239,6 +1317,16 @@ function drawPattern(toScreen){
     ctx.beginPath(); ctx.arc(s.x,s.y,5,0,2*Math.PI); ctx.fillStyle=HANDLE[k].c; ctx.fill();
     ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
     ctx.fillStyle=HANDLE[k].c; ctx.fillText(HANDLE[k].t, s.x+7, s.y-6); }
+  const m = patMoveScreen();
+  if(m){                                          // whole-pattern move grip (crosshair, not a dot)
+    ctx.beginPath(); ctx.arc(m.x,m.y,6,0,2*Math.PI);
+    ctx.fillStyle="rgba(10,20,28,0.85)"; ctx.fill();
+    ctx.lineWidth=1.5; ctx.strokeStyle="#e8c14a"; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(m.x-4,m.y); ctx.lineTo(m.x+4,m.y);
+    ctx.moveTo(m.x,m.y-4); ctx.lineTo(m.x,m.y+4);
+    ctx.lineWidth=1.2; ctx.strokeStyle="#e8c14a"; ctx.stroke();
+    ctx.fillStyle="#e8c14a"; ctx.fillText("move", m.x+8, m.y-6);
+  }
   ctx.restore();
 }
 function updatePatReadout(){
@@ -1266,6 +1354,7 @@ function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=n
   ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; }); updatePatReadout(); }
 function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
+  planKind = "survey";                        // the committed plan is a survey (Mission card Type)
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
   const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
   lines.forEach((l,k)=>{
@@ -1463,6 +1552,7 @@ function commitSearch(){
   if(nogo.ready) computeSearchNogo();
   const route = (nogo.ready && searchRouted) ? searchRouted.route : searchRoute();
   if(route.length<2){ flashNote("Search pattern lies entirely inside nogo zones — nothing to add."); return; }
+  planKind = "search";                        // the committed plan is a search (Mission card Type)
   route.forEach(p=> mission.waypoints.push({lat:p.lat, lon:p.lon}));
   if(searchRouted && searchRouted.unsafe.length)
     showBanner(searchRouted.unsafe.length+" search transit(s) cross a nogo zone with no detour (RED) — review the committed plan.");
@@ -3088,7 +3178,7 @@ async function doGoTo(target){
   }
   clearViolation();
   cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
-  runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
+  runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
   if(plan.routed || buoyageNote()) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(buoyageNote()?" \u00b7 "+buoyageNote():"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
@@ -3107,12 +3197,54 @@ async function doRTH(){
   }
   clearViolation();
   cmd("/api/cmd/rth", {route:plan.route});
-  runRoute = plan.route; runUnsafe = [];          // draw the transit line + waypoints like a survey
+  runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
   if(plan.routed || buoyageNote()) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(buoyageNote()?" \u00b7 "+buoyageNote():"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
 // --- transit line (draw + follow) ---------------------------------------- //
+// ROC markers + their launch/recovery arrival points. Shore = mauve antenna triangle,
+// ship (Mothership) = a blue hull rotated to its course. Each arrival point gets a small
+// hollow "H"; the active HOME additionally shows the green filled H (drawn from S.home,
+// which the backend keeps live on the selected ROC's arrival point).
+function drawRoc(toScreen){
+  const R = S.roc; if(!R || !R.rocs) return;
+  R.rocs.forEach(r=>{
+    if(r.lat==null || r.lon==null) return;
+    const p = toScreen(r.lat, r.lon), isHome = (R.home_id === r.id);
+    const active = (r.status === "active"), ba = active ? 1 : 0.55;   // staged draws dimmer
+    const col = r.kind==="ship" ? "#7fd0ff" : "#c9a0ff";
+    if(r.arrival){                                // connector ROC -> arrival, + hollow H
+      const a = toScreen(r.arrival.lat, r.arrival.lon);
+      ctx.strokeStyle=col; ctx.globalAlpha=ba*.5; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(a.x,a.y); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=ba;
+      ctx.strokeStyle=col; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(a.x,a.y,4,0,2*Math.PI); ctx.stroke();
+      ctx.fillStyle=col; ctx.font="bold 10px Consolas,monospace"; ctx.fillText("H", a.x+6, a.y-4);
+    }
+    ctx.globalAlpha=ba;
+    ctx.save(); ctx.translate(p.x,p.y);
+    ctx.fillStyle=col; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
+    ctx.setLineDash(active ? [] : [3,2]);         // staged = dashed marker outline
+    if(r.kind==="ship"){
+      const hd = r.cog!=null ? r.cog : (r.heading!=null ? r.heading : 0);   // steam course, else commanded heading
+      ctx.rotate(hd * Math.PI/180);
+      ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(5,7); ctx.lineTo(0,4); ctx.lineTo(-5,7);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(6,6); ctx.lineTo(-6,6);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.setLineDash([]); ctx.restore();
+    if(isHome){ ctx.globalAlpha=1; ctx.strokeStyle="#3fbf6b"; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(p.x,p.y,11,0,2*Math.PI); ctx.stroke(); }
+    ctx.globalAlpha=ba; ctx.fillStyle=col; ctx.font="10px Consolas,monospace";
+    ctx.fillText(r.name + (isHome?" ⌂":"") + (active?"":" ·staged"), p.x+9, p.y+3);
+    ctx.globalAlpha=1;
+  });
+}
+
 function drawTransit(toScreen){                   // the transit DRAFT being drawn (cyan)
   if(!transit.length) return;
   ctx.save();
@@ -3141,7 +3273,7 @@ async function doTransit(){
   if(!asv){ flashNote("No position fix yet."); return; }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   const plan = routePlan({lat:asv.lat,lon:asv.lon}, transit, true);   // pure transit: keep right (Rule 9)
-  runRoute = plan.route; runUnsafe = plan.unroutable || [];   // draw the path either way
+  runRoute = plan.route; runUnsafe = plan.unroutable || []; updateMissionCard();   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
     const reasons=legReasons(plan.unroutable); setViolations(reasons); render();
@@ -3738,7 +3870,10 @@ function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; missio
 let dragging=false, last=null, downAt=null, wpDrag=null;
 mapEl.addEventListener("mousedown", e=>{
   if(mode === "survey"){ const h = patHandleAt(e.clientX, e.clientY);
-    if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY}; return; } }   // grab handle, no pan
+    if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY};
+      if(h==="M"){ const o=originPx(), r=mapEl.getBoundingClientRect();   // seed the move-grip delta
+        patMoveLast = worldToLatLon(o.x+(e.clientX-r.left), o.y+(e.clientY-r.top), zoom); }
+      return; } }                                                        // grab handle, no pan
   if(mode === "bound"){ const i = boundHandleAt(e.clientX, e.clientY);
     if(i>=0){ boundDrag = i; downAt={x:e.clientX,y:e.clientY}; return; } }
   if(mode === "search" && searchHandleAt(e.clientX, e.clientY)){
@@ -3757,13 +3892,13 @@ window.addEventListener("mouseup", e=>{
       const li = surveyLineAtPx(e.clientX-rr.left, e.clientY-rr.top, 8);
       if(li >= 0){
         deleteLineByIndex(li); saveMission(); render();
-        patDrag=null; boundDrag=null; searchDrag=false; wpDrag=null; dragging=false;
+        patDrag=null; patMoveLast=null; boundDrag=null; searchDrag=false; wpDrag=null; dragging=false;
         downAt=null; mapEl.classList.remove("drag");
         return;
       }
     }
   }
-  if(patDrag){ patDrag=null; downAt=null; updatePatReadout(); saveMission(); return; }
+  if(patDrag){ patDrag=null; patMoveLast=null; downAt=null; updatePatReadout(); saveMission(); return; }
   if(boundDrag!=null){ boundDrag=null; downAt=null; patClip=null; updatePatReadout(); saveMission(); render(); return; }
   if(searchDrag){ searchDrag=false; downAt=null; updateSearchPanel(); return; }
   if(wpDrag){ const moved=downAt?Math.hypot(e.clientX-downAt.x,e.clientY-downAt.y):0;
@@ -3800,6 +3935,12 @@ window.addEventListener("mouseup", e=>{
   } else if(mode === "search"){                  // click sets / moves the datum
     search.datum = {lat:ll.lat, lon:ll.lon};
     updateSearchPanel(); render();
+  } else if(mode === "roc-place"){               // click a point -> place a staged ROC there
+    const kind = rocPlaceKind;
+    setMode("pan");                              // (clears rocPlaceKind)
+    if(kind){ rocPost({op:"add", kind, lat:ll.lat, lon:ll.lon}); }
+    const p=$("#rocPanel");                      // make sure the card is up to edit + confirm it
+    if(p && p.style.display==="none"){ p.style.display="block"; $("#rocBtn").classList.add("on"); }
   } else if(mode === "transit"){                 // click drops a transit vertex
     transit.push({lat:ll.lat, lon:ll.lon});
     updateTransitPanel(); render();
@@ -3817,7 +3958,13 @@ window.addEventListener("mousemove", e=>{
   $("#r_cursor").textContent = fmtLL(ll.lat, ll.lon);
   updateLineTip(e);                              // time-to-end-of-line when hovering the active line
   updateAisTip(e);                               // AIS vessel identity/course on hover
-  if(patDrag){ pat[patDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
+  if(patDrag){
+    if(patDrag==="M"){                            // move grip: translate every placed anchor by one delta
+      if(patMoveLast){ const dlat=ll.lat-patMoveLast.lat, dlon=ll.lon-patMoveLast.lon;
+        for(const k of ["A","B","C"]) if(pat[k]) pat[k]={lat:pat[k].lat+dlat, lon:pat[k].lon+dlon}; }
+      patMoveLast = ll;
+    } else pat[patDrag] = ll;
+    patClip=null; updatePatReadout(); render(); return; }
   if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
@@ -3852,6 +3999,7 @@ $("#aisReopen").onclick = ()=> setAisTable(true);
 function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
+  if(mode !== "roc-place") rocPlaceKind = null;   // leaving placement disarms it
   // pattern + boundary persist across mode switches (they compose); use Reset /
   // Clear BND to discard them explicitly.
   $("#wptBtn").classList.toggle("mode-on", mode==="wpt");
@@ -4085,7 +4233,7 @@ function paintUICanvas(sel, png){
 // drag (by the grip) and resize (native corner). The card owns position/size and is NOT
 // part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
 const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
-  "#envPanel":"Environment", "#transitPanel":"Transit",
+  "#envPanel":"Environment", "#transitPanel":"Transit", "#missionPanel":"Mission", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source", "#vcard":"Vessel"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ try{ return JSON.parse(localStorage.getItem(UI_LAYOUT_KEY)) || {}; }catch(e){ return {}; } }
@@ -4535,7 +4683,7 @@ $("#b_spawn").onclick = ()=>{
 };
 async function doSpawn(ll){
   clearTrack();                                   // new boot = new track
-  runRoute = null; runUnsafe = [];
+  runRoute = null; runUnsafe = []; updateMissionCard();
   const r = await cmd("/api/cmd/spawn", {lat: ll.lat, lon: ll.lon});
   if(!r || !r.ok) return;                         // refused (409) or network error - cmd() already said so
   flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
@@ -4725,8 +4873,10 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); accumLineTime(); updateRunTime(); renderLineTable(); render();
+    updateXTE(); accumLineTime(); updateRunTime(); updateMissionCard(); renderLineTable(); render();
   }
+  updateMissionCard();                           // the common per-behavior Mission readout
+  renderRoc();                                   // ROC · HOME card (from s.roc)
 }
 function connect(){
   const es = new EventSource("/events");
@@ -4910,6 +5060,233 @@ $("#env_apply").onclick = ()=>{
   if(!Object.keys(body).length){ showBanner("Enter at least one override value, or use Auto."); return; }
   postEnv(body);
 };
+// --- MISSION card: one readout paradigm for EVERY commanded run ------------ //
+// Survey / Search / Go-To / RTH / Transit all set `runRoute` (the ENC-routed path)
+// and the server reports behavior + holding/drifting, so one derivation covers them
+// all: type, routed length, live to-end, and the end state (loiter / drift / laps).
+function updateMissionCard(){
+  const p=$("#missionPanel"); if(!p) return;
+  const st=(S&&S.status)||{}, run=S&&S.run;
+  // nogo.busy counts as active so the "loading" phase is visible while the chart is
+  // extracted / the route is prepared (the phase before "running").
+  const active = (runRoute&&runRoute.length) || run==="running" || run==="paused"
+              || st.holding || st.drifting || nogo.busy;
+  p.style.display = active ? "flex" : "none";
+  if(!active) return;
+  let kind = S.behavior || "survey";
+  if(kind==="survey" && planKind==="search") kind="search";   // a committed search runs as a survey plan
+  $("#mi_type").textContent = kind.toUpperCase();
+  $("#mi_wpts").textContent = S.wp_total ? (S.wp_index||0)+" / "+S.wp_total
+                                         : (runRoute ? runRoute.length : "--");
+  const rr = routeRemainingM();
+  $("#mi_len").textContent = rr ? fmtLenM(rr.total) : "--";
+  const spdPlan=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
+  const sog=(st.sog_kn||0)*0.514444, spd=(sog>0.15? sog : spdPlan);
+  const ended = st.holding || st.drifting;
+  $("#mi_toend").textContent = ended ? "arrived"
+    : (rr && spd>0 ? fmtLenM(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
+  $("#mi_endmode").textContent = S.completion || mission.completion || "loiter";
+  // plan status -> through to the END state (the common paradigm's last phase)
+  const end=(runRoute&&runRoute.length)?runRoute[runRoute.length-1]
+           :((mission.waypoints||[]).length?mission.waypoints[mission.waypoints.length-1]:null);
+  const dEnd=(end&&asv)? distTo({lat:asv.lat,lon:asv.lon}, end) : null;
+  let s;
+  if(st.drifting){
+    s = "DRIFT — propulsion off, drifting with the environment: "
+      + (st.sog_kn!=null? (st.sog_kn.toFixed? st.sog_kn.toFixed(1):st.sog_kn) : "--")+" kn"
+      + (st.env_set_kn? ", set "+st.env_set_kn+" kn"+(st.env_set_deg!=null?" toward "+Math.round(st.env_set_deg)+"°":"") : "")
+      + (dEnd!=null? " · "+fmtLenM(dEnd)+" from plan end" : "");
+  } else if(st.holding){
+    const atHome = (S.completion==="rth" && S.behavior==="rth");   // chained RTH has arrived
+    s = (atHome ? "RTH — home: station-keeping" : "LOITER — station-keeping at the last waypoint")
+      + (dEnd!=null? ": "+fmtLenM(dEnd)+" off" : "")
+      + " (arrival "+(mission.arrival_radius_m||2)+" m)";
+  } else if(run==="running"){
+    const lap=(st.laps!=null && (S.completion==="repeat")) ? " · lap "+(st.laps+1) : "";
+    s = "running"+lap+((rr&&runTotalM>0)?" · "+Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM)))+"%":"");
+  } else if(run==="paused"){ s = "paused — Resume with Start, or Stop"; }
+  else if(nogo.busy){ s = "loading — extracting the chart and routing clear of the nogo…"; }
+  else if(run==="complete"){ s = "run finished"; }
+  else { s = "planned — "+(kind==="goto"||kind==="rth"||kind==="transit" ? "commanded" : "Arm → Upload → Start"); }
+  $("#mi_status").textContent = s;
+}
+// draggable Mission card (same drag/persist pattern as the other pop-out cards)
+const MISSIONPANEL_KEY = "asv_missionpanel_pos_v1";
+const missionPanelEl = $("#missionPanel"), missionPanelHead = $("#missionPanelHead");
+(function(){ try{ const p = JSON.parse(localStorage.getItem(MISSIONPANEL_KEY));
+  if(p && p.left!=null && p.top!=null){ missionPanelEl.style.left = p.left+"px"; missionPanelEl.style.top = p.top+"px"; }
+}catch(e){} })();
+let missionDrag = null;
+missionPanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
+  const r = missionPanelEl.getBoundingClientRect(); missionDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+window.addEventListener("mousemove", e=>{
+  if(!missionDrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = e.clientX - missionDrag.dx, top = e.clientY - missionDrag.dy;
+  left = Math.max(0, Math.min(mr.width - missionPanelEl.offsetWidth, left));
+  top  = Math.max(0, Math.min(mr.height - missionPanelEl.offsetHeight, top));
+  missionPanelEl.style.left = left+"px"; missionPanelEl.style.top = top+"px";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!missionDrag) return; missionDrag = null;
+  try{ localStorage.setItem(MISSIONPANEL_KEY, JSON.stringify({left: parseFloat(missionPanelEl.style.left), top: parseFloat(missionPanelEl.style.top)})); }catch(e){}
+});
+
+// --- ROC · HOME card ------------------------------------------------------ //
+// Tracks each Remote Operations Center (shore or ship/Mothership), its launch/recovery
+// offset, and which one is HOME. Rows are rebuilt only when the ROC SET changes, so the
+// 4 Hz telemetry never clobbers an offset field the operator is editing; live fields
+// (position, link dot, MOVING, HOME radio) update in place every state.
+const ROCPANEL_KEY = "asv_rocpanel_pos_v1";
+function rocEsc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+async function rocPost(body){                     // POST + apply the returned snapshot at once
+  const j = await cmd("/api/roc", body||{});
+  if(j && j.roc){ S.roc = j.roc; renderRoc(); render(); }
+  return j;
+}
+let rocRowsSig = null;
+function renderRoc(){
+  const list = $("#roc_list"), R = (S.roc || {}), rocs = R.rocs || [];
+  if(!list) return;
+  if(!rocs.length){ list.innerHTML = '<div class="phint">No ROC yet — click + Shore or + Ship, then click the chart to place it.</div>'; rocRowsSig=""; }
+  else {
+    // status is in the signature so a Confirm/Hold (staged↔active) rebuilds the row;
+    // live position of a steaming ship updates in place (below) without a rebuild.
+    const sig = rocs.map(r=>r.id+":"+r.kind+":"+r.status+":"+((r.gps&&r.gps.attached)?"g":"")).join("|");
+    if(sig !== rocRowsSig){
+      rocRowsSig = sig;
+      list.innerHTML = rocs.map(r=>{
+        const home=(R.home_id===r.id), staged=(r.status!=="active"), rid=r.id, ship=(r.kind==="ship");
+        const gpson=!!(r.gps && r.gps.attached), rdisabled=gpson?" disabled":"";  // GPS feed drives position → lock inputs
+        // Every interactive element carries a stable, unique id: the multi-monitor UI
+        // bridge (setupUISplit) forwards controls by id, so id-less rows would be inert
+        // in the separate controls window. Handlers key off class/data-* (id-agnostic).
+        const num=(v,d)=> (v==null?"":(d!=null?(+v).toFixed(d):v));
+        return '<div class="rocrow'+(staged?" staged":"")+'" data-id="'+rid+'">'+
+          '<div class="prow"><label class="rocname"><input type="radio" name="rochome" id="rochome_'+rid+'" class="roc-home" data-id="'+rid+'"'+(home?" checked":"")+(staged?' disabled title="Confirm this ROC before making it HOME"':"")+'>'+
+            '<span class="rockind'+(ship?" ship":"")+'">'+r.kind+'</span> <b>'+rocEsc(r.name)+'</b></label>'+
+            '<span class="rocstatus '+(staged?"staged":"active")+'" data-fld="status">'+(staged?"STAGED":"ACTIVE")+'</span>'+
+            '<span class="rocdot '+r.link+'" title="link status" data-fld="dot"></span></div>'+
+          '<div class="prow rocpos"><label>Lat</label><input class="roc-pos" id="roclat_'+rid+'" data-id="'+rid+'" data-fld="lat" type="number" step="0.0001" value="'+num(r.lat,6)+'"'+rdisabled+'>'+
+            '<label>Lon</label><input class="roc-pos" id="roclon_'+rid+'" data-id="'+rid+'" data-fld="lon" type="number" step="0.0001" value="'+num(r.lon,6)+'"'+rdisabled+'></div>'+
+          (ship ? '<div class="prow rocmot"><label>Hdg°</label><input class="roc-motion" id="rochdg_'+rid+'" data-id="'+rid+'" data-k="heading" type="number" step="5" value="'+Math.round(r.heading)+'"'+rdisabled+'>'+
+            '<label>Spd kn</label><input class="roc-motion" id="rocspd_'+rid+'" data-id="'+rid+'" data-k="speed_kn" type="number" step="0.5" min="0" value="'+num(r.speed_kn,1)+'"'+rdisabled+'></div>' : "")+
+          '<div class="prow rocoff">'+
+            '<label>Off m</label><input class="roc-off" id="rocoff_range_'+rid+'" data-id="'+rid+'" data-k="range_m" type="number" step="1" min="0" value="'+r.offset.range_m+'">'+
+            '<label>Brg°</label><input class="roc-off" id="rocoff_brg_'+rid+'" data-id="'+rid+'" data-k="bearing_deg" type="number" step="5" value="'+r.offset.bearing_deg+'">'+
+            '<select class="roc-off" id="rocoff_ref_'+rid+'" data-id="'+rid+'" data-k="ref"><option value="true"'+(r.offset.ref==="true"?" selected":"")+'>true</option>'+
+              '<option value="relative"'+(r.offset.ref==="relative"?" selected":"")+'>rel</option></select></div>'+
+          '<div class="prow rocgps">'+
+            (gpson
+              ? '<span class="rocgpson" data-fld="gps">GPS ● '+r.gps.host+':'+r.gps.port+(r.gps.spawned?" (sim)":"")+'</span>'+
+                '<button class="ctl small roc-gps-detach" id="rocgpsx_'+rid+'" data-id="'+rid+'" title="Detach the GPS feed (position returns to manual)">Detach</button>'
+              : '<button class="ctl small roc-gps" id="rocgps_'+rid+'" data-id="'+rid+'" title="Attach a simulated GPS feed — spawns gps_sim.py and drives this ROC from its NMEA stream">GPS sim</button>'+
+                '<input class="roc-gpsaddr" id="rocgpsaddr_'+rid+'" data-id="'+rid+'" type="text" placeholder="host:port" title="External real GPS NMEA feed (TCP), e.g. 127.0.0.1:10110">'+
+                '<button class="ctl small roc-gps-connect" id="rocgpsc_'+rid+'" data-id="'+rid+'" title="Connect to the external NMEA feed at host:port">Conn</button>')+
+          '</div>'+
+          '<div class="prow rocact">'+
+            (staged ? '<button class="ctl small roc-confirm" id="rocconfirm_'+rid+'" data-id="'+rid+'" title="Confirm — activate this ROC'+(ship?" and start it steaming":"")+'">Confirm</button>'
+                    : (ship ? '<button class="ctl small roc-hold" id="rochold_'+rid+'" data-id="'+rid+'" title="Hold — stop the ship and reposition/edit it">Hold</button>' : ""))+
+            '<button class="ctl small rocrm roc-rm" id="rocrm_'+rid+'" data-id="'+rid+'" title="Remove this ROC">Remove</button>'+
+            '<span class="rocmoving'+(r.moving&&!r.closable?" uncatchable":"")+'" data-fld="moving">'+rocMovingTag(r)+'</span></div>'+
+        '</div>';
+      }).join("");
+    } else {                                       // same set → refresh live fields only
+      rocs.forEach(r=>{
+        const row = list.querySelector('.rocrow[data-id="'+CSS.escape(r.id)+'"]'); if(!row) return;
+        const dot=row.querySelector('[data-fld=dot]'); if(dot) dot.className="rocdot "+r.link;
+        const mv=row.querySelector('[data-fld=moving]'); if(mv){ mv.textContent=rocMovingTag(r);
+          mv.className="rocmoving"+(r.moving&&!r.closable?" uncatchable":""); }
+        const la=row.querySelector('[data-fld=lat]'); if(la && document.activeElement!==la && r.lat!=null) la.value=r.lat.toFixed(6);
+        const lo=row.querySelector('[data-fld=lon]'); if(lo && document.activeElement!==lo && r.lon!=null) lo.value=r.lon.toFixed(6);
+        const rb=row.querySelector('.roc-home'); if(rb && document.activeElement!==rb) rb.checked=(R.home_id===r.id);
+      });
+    }
+  }
+  const home = rocs.find(r=>r.id===R.home_id);
+  $("#roc_hint").textContent = home
+    ? ("HOME: "+home.name + (home.moving
+        ? (home.closable ? " — MOVING, Return-to-Home chases it"
+                         : " — MOVING FASTER THAN THIS ASV: Return-to-Home cannot overhaul it")
+        : " (fixed)"))
+    : "No ROC HOME — Return-to-Home uses the boat's launch point.";
+}
+// MOVING tag, with the vessel-dependent closing rate. `closable` comes from the server,
+// which compares the ship's speed against the ACTIVE VESSEL's top speed - the same
+// mothership is routine for a fast USV and impossible for a slow one, so the tag has to
+// be read per vessel rather than assumed.
+function rocMovingTag(r){
+  if(!r.moving) return "";
+  return r.closable ? "MOVING" : ("MOVING · closing " + (r.closing_kn||0).toFixed(1) + " kn");
+}
+// delegated controls: position, motion, offset edits, HOME radio, confirm/hold/remove
+$("#roc_list").addEventListener("change", e=>{
+  const t=e.target, id=t.dataset.id; if(!id) return;
+  const row=t.closest(".rocrow"), val=sel=>row.querySelector(sel);
+  if(t.classList.contains("roc-home") && t.checked){ rocPost({op:"select_home", id}); return; }
+  if(t.classList.contains("roc-pos")){
+    const lat=parseFloat(val('[data-fld=lat]').value), lon=parseFloat(val('[data-fld=lon]').value);
+    if(isFinite(lat) && isFinite(lon)) rocPost({op:"update", id, lat, lon});
+    return; }
+  if(t.classList.contains("roc-motion")){
+    rocPost({op:"motion", id, heading: parseFloat(val('[data-k=heading]').value),
+      speed_kn: parseFloat(val('[data-k=speed_kn]').value)});
+    return; }
+  if(t.classList.contains("roc-off")){
+    rocPost({op:"offset", id,
+      range_m: parseFloat(val('[data-k=range_m]').value),
+      bearing_deg: parseFloat(val('[data-k=bearing_deg]').value),
+      ref: val('[data-k=ref]').value});
+  }
+});
+$("#roc_list").addEventListener("click", e=>{
+  const t=e.target, id=t.dataset.id; if(!id) return;
+  if(t.classList.contains("roc-rm")) rocPost({op:"remove", id});
+  else if(t.classList.contains("roc-confirm")) rocPost({op:"confirm", id});
+  else if(t.classList.contains("roc-hold")) rocPost({op:"hold", id});
+  else if(t.classList.contains("roc-gps")) rocPost({op:"gps_attach", id, sim:true});
+  else if(t.classList.contains("roc-gps-detach")) rocPost({op:"gps_detach", id});
+  else if(t.classList.contains("roc-gps-connect")){
+    const a=((t.closest(".rocrow").querySelector(".roc-gpsaddr")||{}).value||"").trim();
+    const m=a.match(/^([^:\s]+):(\d+)$/);
+    if(!m){ flashNote("Enter the GPS feed as host:port, e.g. 127.0.0.1:10110."); return; }
+    rocPost({op:"gps_attach", id, host:m[1], port:parseInt(m[2],10)});
+  }
+});
+function armRocPlace(kind){
+  rocPlaceKind = kind; setMode("roc-place");
+  const p=$("#rocPanel"); if(p && p.style.display==="none"){ p.style.display="block"; $("#rocBtn").classList.add("on"); }
+  flashNote("Click the chart to place the "+(kind==="ship"?"ship (Mothership)":"shore")+" ROC.");
+}
+$("#roc_add_shore").onclick = ()=> armRocPlace("shore");
+$("#roc_add_ship").onclick  = ()=> armRocPlace("ship");
+$("#roc_home_clear").onclick = ()=> rocPost({op:"clear_home"});
+$("#rocBtn").onclick = ()=>{
+  const p=$("#rocPanel"), show = p.style.display==="none";
+  if(show){ setMode("pan"); }                      // hide any mode panel behind it
+  p.style.display = show ? "block" : "none";
+  $("#rocBtn").classList.toggle("on", show);
+  if(show) renderRoc();
+};
+// draggable ROC panel (same pattern as the other pop-out cards)
+const rocPanelEl = $("#rocPanel"), rocPanelHead = $("#rocPanelHead");
+(function(){ try{ const p = JSON.parse(localStorage.getItem(ROCPANEL_KEY));
+  if(p && p.left!=null && p.top!=null){ rocPanelEl.style.left = p.left+"px"; rocPanelEl.style.top = p.top+"px"; }
+}catch(e){} })();
+let rocDrag = null;
+rocPanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
+  const r = rocPanelEl.getBoundingClientRect(); rocDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
+window.addEventListener("mousemove", e=>{
+  if(!rocDrag) return;
+  const mr = mapEl.getBoundingClientRect();
+  let left = Math.max(0, Math.min(mr.width - rocPanelEl.offsetWidth, e.clientX - rocDrag.dx));
+  let top  = Math.max(0, Math.min(mr.height - rocPanelEl.offsetHeight, e.clientY - rocDrag.dy));
+  rocPanelEl.style.left = left+"px"; rocPanelEl.style.top = top+"px";
+});
+window.addEventListener("mouseup", ()=>{
+  if(!rocDrag) return; rocDrag = null;
+  try{ localStorage.setItem(ROCPANEL_KEY, JSON.stringify({left: parseFloat(rocPanelEl.style.left), top: parseFloat(rocPanelEl.style.top)})); }catch(e){}
+});
 $("#sp_water_ref").onclick = ()=>{
   $("#sp_water_note").textContent = "refreshing from nearest tide station…";
   fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},

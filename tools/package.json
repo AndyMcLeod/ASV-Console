@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Doc tooling deps (build_tech_manual.js). Run: npm install, then node build_tech_manual.js",
+  "dependencies": {
+    "docx": "^9.7.1"
+  }
+}

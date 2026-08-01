@@ -390,9 +390,52 @@ the cursor — with play/pause, speed, and a scrubber. It's **read-only** (no
 commanding) and works for sim and real sessions alike. See
 [README_PLAYBACK.md](README_PLAYBACK.md).
 
+**ROC · HOME — Remote Operations Centers and a moving recovery point.** Missions are
+commanded from one or more **Remote Operations Centers**, and the `ROC` card tracks
+them. Click **+ Shore** or **+ Ship**, then click the chart to place one:
+
+- A **shore ROC** is a (usually fixed) antenna position. The real launch/recovery
+  point is **offset** from it by an operator-entered range and bearing — *"the ramp
+  is 40 m at 210° from the antenna"*.
+- A **ship ROC (mothership)** is aboard a vessel near the mission area, so it is a
+  **moving** point. Its offset is normally taken **relative to the ship's course**,
+  so *"50 m astern"* stays astern as the ship turns.
+
+Each ROC comes up **STAGED** — edit its position (and a ship's heading and speed)
+while it sits still, then **Confirm** to make it **ACTIVE**. A confirmed ship starts
+steaming; **Hold** stops it and returns it to staged. Only an active ROC may be
+selected as **HOME**, and when HOME is a ship, **Return-to-Home chases it live**.
+
+Two things scale with the **active vessel**, because a single number cannot serve a
+2 m ASV and a 20 m one:
+
+- The default **astern-recovery standoff** for a new ship ROC scales with the hull
+  (overridable per vessel with `planning.roc.ship_recovery_m`).
+- A **closing check** compares the ship's speed against the ASV's top speed. A
+  mothership a fast ASV overhauls easily is one a slow ASV never catches, so the card
+  and the RTH banner report the closing rate and flag a recovery point that cannot be
+  reached — rather than letting the boat chase it indefinitely.
+
+A ROC's position can be typed in, **pushed** by any external process to `/api/roc`,
+or read from a real **NMEA-0183 GPS feed** over TCP or UDP (checksum-verified; a void
+fix is rejected). `gps_sim.py` is a faithful stand-in emitter for when no hardware is
+present, and the console can spawn one per ROC on request.
+
+## Documentation
+
+The **technical manual** — `docs/asv-simulator-technical-manual.docx` — is the
+engineers' reference: architecture, the vessel-configuration system, subsystems, the
+HTTP API, formats, constants, verification practice and extension recipes. It is
+**generated**; edit `tools/build_tech_manual.js` and rebuild rather than hand-editing
+the document:
+
+```
+cd tools && npm install && node build_tech_manual.js
+```
+
 ## Tests & git hooks
 
-Two regression tests guard the geometry that has bitten repeatedly. Both run the real
+Three regression tests guard the geometry that has bitten repeatedly. All run the real
 page code against synthetic worlds; stdlib Node, no deps, no server:
 
 ```
@@ -414,8 +457,18 @@ to the operator is what the path actually does, and that a keep-out over the loo
 the turn. Both a fast-turning small hull and a slow-turning larger one are exercised, since
 the turn shape is chosen from the **active vessel's** minimum turn radius.
 
-A pre-commit hook runs both automatically whenever `static/asv.html` or either test is
-staged, and blocks the commit if an invariant regresses. The hook is versioned in
+```
+python tests/roc_tracks.py
+```
+
+**ROC arrival geometry and moving HOME** — that a recovery point lands where the offset
+says (including a *relative* offset following the ship round), that only an **active** ROC
+can be HOME, that a steaming ship's HOME actually moves, that corrupt NMEA is rejected
+rather than fed to the boat, and that every vessel-derived default **re-derives on a
+vessel switch** rather than going stale.
+
+A pre-commit hook runs all three automatically whenever a source they cover, or any test
+itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
 `.githooks/`; **enable it once per clone**:
 
 ```

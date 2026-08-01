@@ -62,6 +62,8 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import roc_tracks                          # Remote Operations Center tracking + moving HOME
+
 # --------------------------------------------------------------------------- #
 #  Paths / constants                                                          #
 # --------------------------------------------------------------------------- #
@@ -299,6 +301,10 @@ def apply_vessel(v):
     UNDER_KEEL_CLEARANCE_M = float(pl["under_keel_clearance_m"])
     MIN_NAV_DEPTH_M = BOAT_DRAFT_M + UNDER_KEEL_CLEARANCE_M   # water shallower than this is nogo
     SPAWN_LAT = float(sp["lat"]); SPAWN_LON = float(sp["lon"])
+    # ROC defaults are vessel-dependent too (astern-recovery standoff scales with the
+    # hull; the closing check needs the boat's top speed). Re-derived HERE so a LIVE
+    # vessel switch updates them - the module-global staleness trap that bit HULL_A_LAT.
+    roc_tracks.configure_vessel(v)
     return v
 
 
@@ -1703,6 +1709,19 @@ class EnvMonitor:
 ENV = EnvMonitor()
 
 
+def _opt_float(v):
+    """None/"" -> None; else float(v). For optional numeric fields in JSON bodies."""
+    return None if v in (None, "") else float(v)
+
+
+# Remote Operations Centers. Global like COMMS / WATER / ENV; the Engine pulls
+# ROC.home_intent() every telemetry tick, so a selected ROC owns HOME and - when it
+# is a ship - HOME moves and Return-to-Home chases it. Nothing auto-seeds: the
+# operator places ROCs by clicking the chart. Its vessel-dependent defaults are
+# (re)derived by apply_vessel() -> roc_tracks.configure_vessel().
+ROC = roc_tracks.RocTracker(log_dir=LOG_DIR)
+
+
 # --------------------------------------------------------------------------- #
 #  Geodesy helpers (local ENU around a reference latitude - fine at survey scale)
 # --------------------------------------------------------------------------- #
@@ -2185,6 +2204,14 @@ class Engine:
         self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
         self.completion = "rth"       # plan-run completion: complete | loiter | repeat | rth
         self.home = None           # {lat,lon} launch/home point (auto-set on 1st fix)
+        # A selected ROC OWNS home: its arrival point overrides the first-fix launch
+        # point, and for a ship (Mothership) it moves every tick, so a running RTH
+        # re-targets the boat at it. Injected in main() - see set_home_provider.
+        self.home_provider = None      # callable -> {roc_id,name,kind,moving,point} | None
+        self.home_source = None        # None (first fix / manual) | the active ROC id
+        self._rth_follow = False       # True while RTH is chasing a moving home
+        self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
+        self._rth_params = None        # captured run params (arrival/speed/approach) for the chase
         self.link = self.LINK_IDLE
         self.note = "Not connected."
         self.status = {}           # latest telemetry
@@ -2297,6 +2324,10 @@ class Engine:
     def _require(self, cond, msg):
         if not cond:
             raise VcuProtocolError(msg)
+
+    def set_home_provider(self, fn):
+        """Inject the ROC tracker's home_intent getter (see main())."""
+        self.home_provider = fn
 
     def set_armed(self, on):
         with self._lock:
@@ -2518,16 +2549,42 @@ class Engine:
         self._push_state()
 
     def return_home(self, route=None):
+        # A selected ROC owns HOME? Then RTH targets its LIVE arrival point. For a ship
+        # (Mothership) that point moves, so we drive direct and let the run loop chase it
+        # - an ENC detour to a moving recovery point would be stale on arrival. A static
+        # home keeps the classic behavior (honor the client's ENC-aware route if given).
+        intent = self.home_provider() if self.home_provider else None
+        follow = bool(intent and intent["point"])
         with self._lock:
-            home = self.home
+            home = intent["point"] if follow else self.home
         if not home:
             raise VcuProtocolError("no home set (no GPS fix yet)")
-        # route (if given) is the client's ENC-aware detour path; its last point
-        # should be home. Else drive straight to home.
-        r = self._sanitize_route(route) if route else [{"lat": home["lat"], "lon": home["lon"]}]
-        note = ("Return-to-Home: following the ENC-aware route to home (%d wpts), will station-keep on arrival." % len(r)
-                if route else "Return-to-Home: driving to home, will station-keep on arrival.")
+        if follow:
+            r = [{"lat": home["lat"], "lon": home["lon"]}]
+            # A moving recovery point the boat cannot overhaul is a plan that never
+            # ends - say so rather than let it chase forever. Vessel-dependent: the
+            # same ship speed is a non-issue for a fast USV and impossible for a slow one.
+            chase = ""
+            if intent["moving"]:
+                chase = " (MOVING)" if intent.get("closable", True) else (
+                    " (MOVING - WARNING: closing at only %.1f kn, the ASV may never overhaul it)"
+                    % max(0.0, intent.get("closing_kn", 0.0)))
+            note = "Return-to-Home: %s %s%s," % (
+                "chasing" if intent["moving"] else "returning to",
+                intent["name"] or "the ROC", chase)
+        else:
+            r = self._sanitize_route(route) if route else [{"lat": home["lat"], "lon": home["lon"]}]
+            note = ("Return-to-Home: following the ENC-aware route to home (%d wpts), will station-keep on arrival." % len(r)
+                    if route else "Return-to-Home: driving to home, will station-keep on arrival.")
         self._run_route(r, "rth", note)
+        with self._lock:
+            self._rth_follow = follow
+            if follow:
+                m = load_mission()
+                self._rth_params = {"arrival": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
+                                    "speed": m.get("speed", "survey"),
+                                    "approach": m.get("approach_radius_m", WP_APPROACH_M)}
+                self._rth_last_target = dict(home)
 
     # -- telemetry loop ---------------------------------------------------- #
     def _run(self):
@@ -2548,11 +2605,22 @@ class Engine:
                 telem = {}
                 with self._lock:
                     self.note = "link error: %s" % e
+            # Resolved OUTSIDE the lock: the ROC tracker takes its own, and taking the
+            # two in opposite orders anywhere would deadlock the telemetry loop.
+            intent = self.home_provider() if self.home_provider else None
             with self._lock:
                 if telem:
                     self._misses = 0
                     self.link = self.LINK_OK
                     self.status = telem
+                    # A selected ROC drives HOME: its arrival point overrides the
+                    # first-fix launch point and, for a ship, moves every tick.
+                    if intent is not None:
+                        self.home_source = intent["roc_id"]
+                        if intent["point"] is not None:
+                            self.home = intent["point"]
+                    else:
+                        self.home_source = None
                     # feed the vessel fix to the water-level link (drives station
                     # selection + refetch); computer clock is implicit (date=latest)
                     if telem.get("lat_deg") is not None and telem.get("lon_deg") is not None:
@@ -2561,7 +2629,8 @@ class Engine:
                         # can push it around. Not fed in real mode (real boat, real wx).
                         if self._mode == "sim":
                             ENV.update_position(telem["lat_deg"], telem["lon_deg"])
-                        if self.home is None:       # first fix = launch/home point
+                        # first fix = launch/home point - only when no ROC owns HOME
+                        if self.home is None and self.home_source is None:
                             self.home = {"lat": telem["lat_deg"], "lon": telem["lon_deg"]}
                     self.wp_index = telem.get("wp_index", self.wp_index)
                     self.wp_total = telem.get("wp_total", self.wp_total)
@@ -2574,6 +2643,33 @@ class Engine:
                         self.run = "running"
                     elif self.run == "running":
                         self.run = "complete"     # ran out of waypoints
+                    # MOVING-HOME chase: while an RTH follows a ROC home, keep re-aiming
+                    # the boat at the ROC's current arrival point. Re-issue a fresh
+                    # single-waypoint plan only when the point has drifted past ~half the
+                    # arrival radius - reusing the link's own waypoint-follow, no separate
+                    # pursuit controller. Any command that leaves RTH/running clears it.
+                    if not (self.behavior == "rth" and self.run == "running"):
+                        self._rth_follow = False
+                        self._rth_last_target = None
+                    elif self._rth_follow and intent and intent["point"]:
+                        tgt = intent["point"]
+                        p = self._rth_params or {}
+                        thresh = max(2.0, float(p.get("arrival", ARRIVAL_DEFAULT_M)) * 0.5)
+                        prev = self._rth_last_target
+                        moved = (prev is None or
+                                 range_bearing(prev["lat"], prev["lon"],
+                                               tgt["lat"], tgt["lon"])[0] > thresh)
+                        if moved:
+                            try:
+                                link.upload_plan([{"lat": tgt["lat"], "lon": tgt["lon"]}],
+                                                 p.get("arrival", ARRIVAL_DEFAULT_M),
+                                                 p.get("speed", "survey"),
+                                                 p.get("approach", WP_APPROACH_M),
+                                                 completion="loiter")
+                                link.start()
+                                self._rth_last_target = dict(tgt)
+                            except Exception:
+                                pass
                 else:
                     self._misses += 1
                     if self._misses >= self.MISS_LOST and self.link != self.LINK_LOST:
@@ -2648,6 +2744,9 @@ class Engine:
             "behavior": self.behavior,
             "completion": self.completion,
             "home": self.home,
+            "home_source": self.home_source,      # None (first-fix/manual) | active ROC id
+            "home_following": self._rth_follow,   # True while RTH is chasing a moving ROC
+            "roc": ROC.snapshot(),                # the ROC set + which one is HOME
             "wp_index": self.wp_index,
             "wp_total": self.wp_total,
             "status": st,
@@ -2797,6 +2896,8 @@ class Handler(BaseHTTPRequestHandler):
             with COMMS._lock:
                 cfg = {"mode": COMMS.mode, "host": COMMS.host, "username": COMMS.username}
             self._send(200, json.dumps({"config": cfg, "status": COMMS.snapshot()}))
+        elif self.path == "/api/roc":
+            self._send(200, json.dumps(ROC.snapshot()))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -2975,6 +3076,61 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("refresh"):
                 ENV.refresh_now()
             return 200, {"ok": True, "env": ENV.snapshot()}
+        if path == "/api/roc":
+            # ROC registry + the position DATA-STREAM ingest. `op:"feed"` is the
+            # external HTTP push (any GPS bridge / ship nav PC posts here); the rest
+            # are card actions. Every op returns the fresh snapshot so the UI syncs.
+            op = body.get("op")
+            try:
+                if op == "add":
+                    rid = ROC.add(body.get("kind", "shore"), body.get("name"),
+                                  lat=_opt_float(body.get("lat")),
+                                  lon=_opt_float(body.get("lon")), offset=body.get("offset"))
+                    return 200, {"ok": True, "id": rid, "roc": ROC.snapshot()}
+                if op == "update":
+                    ok = ROC.update(body.get("id"), name=body.get("name"),
+                                    lat=_opt_float(body.get("lat")),
+                                    lon=_opt_float(body.get("lon")))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "offset":
+                    ok = ROC.set_offset(body.get("id"), range_m=_opt_float(body.get("range_m")),
+                                        bearing_deg=_opt_float(body.get("bearing_deg")),
+                                        ref=body.get("ref"))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "motion":                       # ship heading/speed (applies live when active)
+                    ok = ROC.set_motion(body.get("id"), heading=_opt_float(body.get("heading")),
+                                        speed_kn=_opt_float(body.get("speed_kn")))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "confirm":                      # staged -> active (a ship starts steaming)
+                    ok = ROC.confirm(body.get("id"))
+                    return (200 if ok else 409), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "hold":                         # active -> staged (stop a ship)
+                    ok = ROC.hold(body.get("id"))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "gps_attach":                   # drive a ROC from a real GPS NMEA feed
+                    ok = ROC.attach_gps(body.get("id"), host=body.get("host"),
+                                        port=body.get("port"), udp=bool(body.get("udp")),
+                                        sim=bool(body.get("sim")))
+                    return (200 if ok else 409), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "gps_detach":
+                    ok = ROC.detach_gps(body.get("id"))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "remove":
+                    ok = ROC.remove(body.get("id"))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "select_home":
+                    ok = ROC.select_home(body.get("id"))
+                    return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
+                if op == "clear_home":
+                    ROC.clear_home()
+                    return 200, {"ok": True, "roc": ROC.snapshot()}
+                if op == "feed":
+                    ok = ROC.feed(body.get("id"), float(body["lat"]), float(body["lon"]),
+                                  cog=_opt_float(body.get("cog")), sog=_opt_float(body.get("sog")))
+                    return (200 if ok else 404), {"ok": ok}
+                return 400, {"error": "unknown roc op: %r" % op}
+            except (KeyError, TypeError, ValueError) as e:
+                return 400, {"error": "bad roc request: %s" % e}
         try:
             if path == "/api/connect":
                 ENGINE.connect(body.get("mode", "sim"), body.get("host", ""),
@@ -3252,6 +3408,15 @@ def main():
     if not args.no_ais_service:
         _start_ais_service()                      # bundled AIS provider - no separate command
     AIS_SEA_RADIUS_KM = max(5.0, min(500.0, float(args.ais_radius_km)))
+    # A selected ROC owns HOME, resolved by the Engine on every telemetry tick (see
+    # Engine._run). In sim, steam every ACTIVE ship ROC on its own heading/speed so
+    # Return-to-Home against a MOVING recovery point can be exercised with no hardware.
+    # Nothing auto-seeds - the operator places ROCs by clicking the chart and confirms
+    # them. On a real link, ROCs are added/fed from the card or the API.
+    ENGINE.set_home_provider(ROC.home_intent)
+    if args.sim:
+        ROC.start_sim()
+        atexit.register(ROC.stop)
     LOG = SessionLogger(enabled=not args.no_log)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],

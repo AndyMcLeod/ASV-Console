@@ -373,12 +373,68 @@ offset fails 6, reversing the middle sweep fails 4, dropping the nogo sweep fail
   stale code. Check `netstat -ano | grep :<port>` and `taskkill //F //PID <n>`
   before retesting server changes.
 
+## ROC + MOVING HOME (ported from the sibling 2026-08-01)
+
+`roc_tracks.py` — Remote Operations Center tracking, GPS ingest, and a HOME that can
+MOVE. Self-contained: it owns all ROC state and imports NOTHING from the console (the
+console injects the boat-fix getter). Wired in at four points in `asv_console.py`:
+`ROC = roc_tracks.RocTracker(...)` global · `GET/POST /api/roc` · `ENGINE.set_home_provider(
+ROC.home_intent)` in `main()` · the Engine tick, which resolves HOME every telemetry
+frame and runs the moving-HOME chase.
+
+**Shore vs ship.** A shore ROC is a fixed antenna whose ARRIVAL POINT is offset by an
+operator-entered range/bearing (the ramp). A ship (mothership) ROC moves, and its offset
+is normally `relative` — measured from the ship's COURSE, so "50 m astern" stays astern
+as she turns. `PLACE → EDIT → CONFIRM`: staged ROCs are editable and **cannot be HOME**;
+confirming activates (and starts a ship steaming). Hold reverts to staged.
+
+**The chase.** While an RTH follows a ROC, the run loop re-aims the boat at the current
+arrival point, re-issuing a single-waypoint plan only once it has drifted past ~half the
+arrival radius — reusing the link's own waypoint-follow, no separate pursuit controller.
+A ROC home is driven DIRECT, not ENC-routed: a detour to a moving point is stale on
+arrival. Any command leaving RTH/running clears the chase.
+
+**VESSEL-DERIVED — the divergence from the sibling.** The sibling hardcodes a 50 m astern
+standoff and has no closing check. Neither survives contact with this console's vessel
+system, so both are re-derived in `apply_vessel()` via `roc_tracks.configure_vessel(v)`:
+- `SHIP_RECOVERY_M` = `planning.roc.ship_recovery_m` if declared, else `max(20, 6×LOA)`.
+  1.9 m boat → 20 m, 7.71 m → 46.3 m. Existing ROCs keep operator-entered offsets; only
+  the default for NEW ships moves.
+- `ASV_MAX_SPEED_KN` = `propulsion.speeds_kn.high`, backing `Roc.closing_kn()`/`closable()`.
+  RTH to a moving mothership only converges with a real overtake margin; below
+  `CLOSE_MARGIN_KN` the card, `home_intent` and the RTH note all say it is unreachable.
+**This is the `HULL_A_LAT` staleness trap** — an import-time-only derived constant goes
+stale on a live vessel switch. Verified live: DriX→small boat moved the new-ship default
+46.3→20 m and re-based the closing check 14→6 kn.
+
+`gps_sim.py` — NMEA-0183 emitter (RMC/GGA, XOR checksums, TCP server or UDP), the "real
+GPS feed" stand-in. The tracker can spawn one per ROC (`--parent-pid` reaped). Ingest
+verifies the checksum and rejects a void fix: a GPS feed is untrusted input.
+
+**Test:** `python tests/roc_tracks.py` — 17 assertions, teeth-verified (drop the relative
+branch → 4 fails; let a staged ROC be HOME → 6 fails; hardcode the standoff → 9 fails;
+skip `configure_vessel` → 11 fails; skip the checksum → 14 fails). Run by the pre-commit
+hook. Also ported in the same pass: the **Mission card** (`#missionPanel`, one readout for
+every commanded run) and the **SURV whole-pattern MOVE GRIP** (`patDrag==="M"` — crosshair
+at the A-B centre translates all CAMP anchors by one delta; corner handles win hit-test
+ties). **NOT ported, by decision:** the sonar/payload subsystem — it hardcodes a specific
+two-sonar fit and would need a vessel-declared `payloads` block first, and the single-beam
+echosounder console is built from vendor manual citations and proprietary telegrams that
+this console's sanitization rules forbid.
+
 ## Keep docs current
 
 When a change alters **user-facing** behavior, update the relevant README(s) in
 the same change — `README.md` (overview + "Using it"), `README_SIM.md` (sim model
 / command flow / endpoints / walkthrough), `README_PLAYBACK.md`. Don't let them
 drift behind the code.
+
+**The technical manual is GENERATED:** `docs/asv-simulator-technical-manual.docx` comes
+from `tools/build_tech_manual.js` (docx-js; `npm install` in `tools/` first; output path
+is script-relative). **Never hand-edit the docx** — edit the script and rebuild. If it
+does get hand-edited in Word, diff the text against the generated version and fold the
+edits back INTO the script. The manual is brand-free by rule: the console core names no
+vendor; vessel FILES may name real vessels, since that is data rather than branding.
 
 ## Not yet done
 

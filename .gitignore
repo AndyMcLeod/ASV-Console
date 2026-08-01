@@ -19,3 +19,9 @@ Screenshots/
 
 # AIS: local aisstream.io API key (never commit)
 ais_key.txt
+
+# doc tooling deps (reinstall with: cd tools && npm install)
+node_modules/
+
+# ROC placements are per-operator session state, not project config
+roc_config.json

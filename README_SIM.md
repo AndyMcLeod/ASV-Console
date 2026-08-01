@@ -219,6 +219,13 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
    of waypoints per turn.
 4. **Set run params:** arrival radius, speed (Low/Survey/High), and **completion**
    (RTH / Complete / Loiter / Repeat; RTH is the default) in the command bar.
+4b. **(Optional) Set a ROC as HOME:** open **ROC**, click **+ Shore** or **+ Ship**,
+   then click the chart to place it. Set its recovery offset (range + bearing; a ship's
+   is normally *relative* to its course, i.e. astern) and, for a ship, its heading and
+   speed. **Confirm** it, then pick its HOME radio. A confirmed ship steams, so HOME
+   becomes a **moving** point and Return-to-Home chases it — a mothership recovery,
+   exercisable with no hardware. If the ship outruns the ASV the card says so: the
+   closing rate is computed against the **active vessel's** top speed.
 5. **Arm → Upload → Start.** Upload routes the transit to the survey clear of
    obstacles (green path). Watch the boat drive the survey, the waypoint counter
    advance (`wp x / N`), the track paint, and the battery drain.

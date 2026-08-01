@@ -8,17 +8,21 @@
 #   tests/turn_geometry.js  survey line-to-line turns - shape selection, the minimum
 #                           turn radius held along the WHOLE path, exit alignment,
 #                           outboard excursion, nogo refusal.
+#   tests/roc_tracks.py     ROC arrival geometry, the staged/active HOME gate, moving
+#                           HOME, NMEA validation, and the VESSEL-DERIVED defaults.
 #
-# Ported from the Z-Boat sibling 2026-07-31. Everything lives in ONE file here
-# (static/asv.html - there is no routing.js split), so the path filter is shorter.
+# Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
+# file here (static/asv.html - there is no routing.js split), so the path filter is
+# shorter than the sibling's.
 #
 # Activated by  git config core.hooksPath .githooks  (run once per clone; see
 # README / the hook's own note). Bypass in a pinch with:  git commit --no-verify
 
-# Only bother when the geometry source or one of the tests is staged.
+# Only bother when a source the tests cover, or one of the tests, is staged.
 changed=$(git diff --cached --name-only)
 case "$changed" in
-  *static/asv.html*|*tests/buoy_lane.js*|*tests/turn_geometry.js*) ;;
+  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -47,6 +51,20 @@ if ! node tests/turn_geometry.js; then
   echo "  A survey reversal no longer ends on the next line aligned, or asks the boat"
   echo "  to hold a radius tighter than it can (teardropTurn in static/asv.html)."
   fail=1
+fi
+
+if command -v python >/dev/null 2>&1; then
+  echo "pre-commit: ROC / moving-HOME regression test..."
+  if ! python tests/roc_tracks.py; then
+    echo ""
+    echo "pre-commit: ROC test FAILED."
+    echo "  A recovery point no longer lands where the offset says, the staged/active"
+    echo "  HOME gate leaks, or a vessel-derived default stopped tracking the vessel"
+    echo "  (roc_tracks.py)."
+    fail=1
+  fi
+else
+  echo "pre-commit: python not found - skipping the ROC test."
 fi
 
 if [ "$fail" -ne 0 ]; then
