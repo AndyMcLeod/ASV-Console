@@ -90,6 +90,12 @@ DEFAULT_WEB_PORT = 8791
 # Base URL of the standalone AIS provider service (ais_service.py). The console
 # proxies it at /api/ais; override with --ais. The AIS layer is opt-in in the UI.
 AIS_BASE = "http://127.0.0.1:8788"
+# AIS display radius at sea (km). On a Great Lake the whole lake is used instead, so this
+# only applies to open water. Configurable because feed coverage is wildly uneven: the
+# aisstream receivers near the Delaware Bay are inland, so at Lewes a 50 km radius sees
+# ~1 vessel while the traffic sits 60-120 km up-river. Set with --ais-radius-km; it scales
+# BOTH the service subscription and the display query, which have to move together.
+AIS_SEA_RADIUS_KM = 50.0
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
 # address depends on the boat's radio/serial-server config; override on the CLI.
 DEFAULT_VCU_HOST = ""
@@ -2846,11 +2852,12 @@ class Handler(BaseHTTPRequestHandler):
             a, b, c, d = GREAT_LAKES_BOXES[lake]
             bbox = (c, a, d, b)                       # W,S,E,N
             area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
-        else:                                         # open water: 50 km box
-            dlat = 50000.0 / 111320.0
-            dlon = 50000.0 / (111320.0 * max(0.15, math.cos(math.radians(lat))))
+        else:                                         # open water: a radius box
+            rm = AIS_SEA_RADIUS_KM * 1000.0
+            dlat = rm / 111320.0
+            dlon = rm / (111320.0 * max(0.15, math.cos(math.radians(lat))))
             bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
-            area = {"mode": "sea", "name": "50 km"}
+            area = {"mode": "sea", "name": "%g km" % AIS_SEA_RADIUS_KM}
         url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
             AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
         try:
@@ -2937,6 +2944,9 @@ class Handler(BaseHTTPRequestHandler):
             apply_vessel(v)
             if st.get("mode") == "sim":
                 ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
+            # the new profile may spawn in a completely different sea area - re-point the
+            # AIS subscription, or the layer keeps streaming the previous one
+            _rescope_ais_service()
             return 200, {"ok": True, "vessel": VESSEL}
         if path == "/api/comms":
             COMMS.configure(mode=body.get("mode"), host=body.get("host"),
@@ -3111,9 +3121,16 @@ def _start_ais_service():
     if lake:                                      # subscribe to the whole lake
         a, b, c, d = GREAT_LAKES_BOXES[lake]
         bbox = "%.4f,%.4f,%.4f,%.4f" % (c, a, d, b)
-    else:                                         # at sea: a box around spawn
-        bbox = "%.4f,%.4f,%.4f,%.4f" % (SPAWN_LON - 1.5, SPAWN_LAT - 1.5,
-                                        SPAWN_LON + 1.5, SPAWN_LAT + 1.5)
+    else:
+        # At sea: a box around spawn that ALWAYS COVERS the display radius (+20% margin),
+        # with the historical 1.5 deg as a floor. The subscription and the display query
+        # have to move together - widening only the query would filter against vessels the
+        # service never subscribed to, and silently show nothing new.
+        dlat = max(1.5, (AIS_SEA_RADIUS_KM * 1000.0 / 111320.0) * 1.2)
+        dlon = max(1.5, (AIS_SEA_RADIUS_KM * 1000.0 /
+                         (111320.0 * max(0.15, math.cos(math.radians(SPAWN_LAT))))) * 1.2)
+        bbox = "%.4f,%.4f,%.4f,%.4f" % (SPAWN_LON - dlon, SPAWN_LAT - dlat,
+                                        SPAWN_LON + dlon, SPAWN_LAT + dlat)
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
         logf = open(os.path.join(LOG_DIR, "ais_service.log"), "a", encoding="utf-8")
@@ -3145,13 +3162,46 @@ def _stop_ais_service():
     _ais_proc = None
 
 
+def _rescope_ais_service():
+    """Re-point the AIS subscription after the OPERATING AREA moves (a vessel switch).
+
+    The service subscribes ONCE, at start, to a box around the then-current spawn. A
+    live vessel switch can move the boat a continent away - the shipped profiles spawn
+    in Erie and at Lewes - and without this the service happily keeps streaming the OLD
+    area, so the layer sits empty next to the boat no matter how healthy the feed is.
+    (Measured: switching to the Lewes profile left the registry full of Lake Erie
+    traffic and nothing within 150 km of the boat.)
+
+    Only ever restarts a service THIS console started; a remote --ais or one the
+    operator is running themselves is left alone, with a note that its area is stale."""
+    global _ais_proc
+    if _ais_proc is None:
+        hp = _ais_local_port()
+        if hp and _port_alive(*hp):
+            print("[ais] vessel moved the operating area, but the AIS service is not ours "
+                  "to restart - its subscription still covers the previous area")
+        return
+    _stop_ais_service()
+    for _ in range(20):                           # let the port come free before rebinding
+        hp = _ais_local_port()
+        if not hp or not _port_alive(*hp):
+            break
+        time.sleep(0.1)
+    _start_ais_service()
+
+
 def main():
-    global AIS_BASE
+    global AIS_BASE, AIS_SEA_RADIUS_KM
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
     ap.add_argument("--browser", choices=["edge", "chrome", "default", "none"],
                     default="edge", help="which browser to open")
+    ap.add_argument("--ais-radius-km", type=float, default=AIS_SEA_RADIUS_KM,
+                    help="AIS display radius at sea, km (default %d; ignored on a Great "
+                         "Lake, where the whole lake is used). Widen it where the feed is "
+                         "sparse - e.g. the Delaware Bay mouth, whose traffic sits 60-120 km "
+                         "up-river." % AIS_SEA_RADIUS_KM)
     ap.add_argument("--single-window", action="store_true",
                     help="open only the main window (skip the separate controls window)")
     ap.add_argument("--sim", action="store_true", help="auto-connect the simulator at start")
@@ -3201,6 +3251,7 @@ def main():
     AIS_BASE = args.ais
     if not args.no_ais_service:
         _start_ais_service()                      # bundled AIS provider - no separate command
+    AIS_SEA_RADIUS_KM = max(5.0, min(500.0, float(args.ais_radius_km)))
     LOG = SessionLogger(enabled=not args.no_log)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],

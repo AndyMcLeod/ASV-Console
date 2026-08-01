@@ -45,6 +45,7 @@ python asv_console.py --sim            # simulator, opens a browser tab
 python asv_console.py --sim --browser none --port 8791   # headless, no auto-open
 python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
 python asv_console.py --sim --single-window               # one window (no controls window)
+python asv_console.py --sim --ais-radius-km 150           # widen the AIS area (sparse feed coverage)
 ```
 
 **Multi-monitor.** On start the server opens **two** windows: the **main** window
@@ -152,8 +153,13 @@ Sources (any combination, comma-separated):
   source for real **US / Great Lakes** coverage (a bundled stdlib WebSocket client — no
   pip). Needs a **free API key**: set `AISSTREAM_KEY` once
   (`setx AISSTREAM_KEY KEY` on Windows) and every console on the machine picks it up;
-  a per-project `ais_key.txt` or `--aisstream-key` also work. `--source auto` uses it. Scope the feed to
-  your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
+  a per-project `ais_key.txt` or `--aisstream-key` also work. `--source auto` uses it. On a Great Lake the console pulls the
+  **whole lake**; at sea it shows a radius around the boat — **50 km by default,
+  `--ais-radius-km` to change it**. Widen it where receiver coverage is thin: at the
+  Delaware Bay mouth a 50 km radius sees almost nothing because the receivers are
+  inland, while 150 km picks up the Bay and river traffic. The radius scales the
+  service subscription as well as the display, so the two cannot drift apart. Scope a
+  standalone service to your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
   Erie: `--bbox=-83.7,41.2,-78.7,43.05`. **Verified live on Lake Erie** — real lakers,
   tankers, tour and Coast Guard boats; ship types fill in over the ~6 min AIS static cycle.
 - **nmea** — a local **RTL-SDR + [AIS-catcher](https://github.com/jvde-github/AIS-Catcher) / rtl-ais**
