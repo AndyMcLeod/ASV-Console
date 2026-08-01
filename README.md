@@ -44,7 +44,22 @@ override it from the **ENV** panel (sim only; a real boat feels real weather).
 python asv_console.py --sim            # simulator, opens a browser tab
 python asv_console.py --sim --browser none --port 8791   # headless, no auto-open
 python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
+python asv_console.py --sim --single-window               # one window (no controls window)
 ```
+
+**Multi-monitor.** On start the server opens **two** windows: the **main** window
+(chart, status, command bar) and a **controls** window (`?panel=controls`) holding
+*only* the control column and its pop-out panels — drag it to a second screen for a
+clean chart. The tabs name themselves **ASV Chart** and **ASV Controls** so they are
+easy to tell apart. The two are bridged over a same-origin BroadcastChannel: the main
+window runs all the logic and owns the chart, the controls window mirrors its controls
+and forwards your clicks and edits back. You still draw on the main window's chart. In
+the controls window the buttons become a vertical column on the left and each panel or
+table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
+and restored next session. If the controls window is closed the toolbar and panels
+return to the main window automatically, and a **⏏ Controls** pill appears on the top
+bar to reopen it — so the console is never left without its controls. Pass
+`--single-window` to skip the second window.
 
 ### Vessel profiles
 

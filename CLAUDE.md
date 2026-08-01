@@ -95,6 +95,30 @@ real Erie cache: outbound **99 % starboard at 0.50 of half-width**, inbound **98
 this port: it exercised the dead colour keep-right and still printed "all checks
 passed", which is worse than no test — it tells you to stop looking.
 
+## MULTI-MONITOR UI SPLIT (ported 2026-07-31)
+
+Two windows: **main** (chart + status + command bar) and **controls** (`?panel=controls`,
+only the control column + its pop-out panels). Independent pages talking over a same-origin
+**BroadcastChannel** (`asv_ui`). Main is the single source of truth — it owns the chart and
+all logic; the controls window renders no app logic, mirrors main's control DOM, and
+forwards gestures back so every existing handler still runs exactly once, on main.
+
+- `UIROLE` from the query string; tabs self-title **ASV Chart** / **ASV Controls**.
+- `UI_BRIDGED` = `.controls` + every pop-out this console has. **No `#missionPanel` or
+  `#rocPanel`** — the Mission card and the operations-centre/moving-HOME card are
+  sibling-only features. Verified: every bridged selector, every `UI_CARD_TITLES` key and
+  every `#id` named in the injected CSS resolves against this page's DOM.
+- Controls-window CSS hides the chart/status/command bar, drops the vessel card rows the
+  top status bar already shows, pins the buttons as a left column, and wraps each panel in
+  a draggable+resizable `.uicard` (layout persisted to `localStorage`, key
+  `asv_ui_cards_v1`).
+- **Main is only stripped while a controls peer is actually alive** (`body.ui-split`, driven
+  by presence pings). With `--single-window`, or if the controls window closes/crashes,
+  everything returns to main and a **⏏ Controls** pill appears to reopen it — the console is
+  never left without its toolbar.
+- Server opens the second window 1 s after the first (sidesteps the pop-up blocker);
+  `--single-window` skips it.
+
 ## BUOY-LINE KEEP-RIGHT: full backport (2026-07-28) — HISTORY, superseded
 > Superseded by the CHANNEL LANE above (2026-07-31). Everything below describes the
 > retired colour design; `keepRight` and its helpers are dead code. Retained for the
@@ -133,10 +157,12 @@ every routing keep-out cache and force a `features_v3` → `v4` bump, dumping ev
 extract for data no route consults. Caches to `charts/enc/chartinfo_v1_<bbox>.json`;
 soft-fails per layer and honours the ENC circuit breaker.
 
-**Two divergences from the sibling, both deliberate:**
-1. **No multi-window UI split here**, so there is no `UI_BRIDGED` / hide-list /
-   `UI_CARD_TITLES` registration — the card is a plain draggable panel in the one window
-   (same shape as the AIS traffic table).
+**Divergences from the sibling:**
+1. ~~No multi-window UI split here~~ — **RESOLVED 2026-07-31**: the split was ported, and
+   `#chartPanel` is now registered in `UI_BRIDGED`, the `ui-split` hide-list and
+   `UI_CARD_TITLES` like every other pop-out. (It keeps its own `chartPanelHead` drag for
+   the main window; in the controls window the `.uicard` grip moves it — same combination
+   the sibling runs.)
 2. **The nogo floor is VESSEL-DERIVED** (`hull.draft_m + planning.under_keel_clearance_m`),
    so the units tooltip quotes the live `NOGO_MIN_DEPTH_M` instead of the sibling's fixed
    1 m. Keep it dynamic on future ports.

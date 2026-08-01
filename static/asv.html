@@ -198,6 +198,7 @@
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
+    <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
     <div class="spacer"></div>
     <div class="pill"><span class="k">POS</span><b id="p_pos">no fix</b></div>
     <div class="pill"><span class="k">SOG</span><b id="p_sog">--</b></div>
@@ -464,6 +465,61 @@
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
+
+// MULTI-MONITOR UI SPLIT. The server opens this page in two windows:
+//   main      - chart + status + command bar (the right control column is hidden here)
+//   controls  - ONLY the right control column ("toolbar B") + the panels it pops out,
+//               reached at ?panel=controls
+// They are independent pages that talk over a BroadcastChannel. The main window is the
+// single source of truth (owns the chart + all logic); the controls window mirrors
+// main's control DOM and forwards the operator's clicks/edits back to it. Bridge wiring
+// is in setupUISplit() at the end of the script.
+const UIROLE = (new URLSearchParams(location.search).get("panel") === "controls") ? "controls" : "main";
+document.title = UIROLE === "controls" ? "ASV Controls" : "ASV Chart";        // distinct tab names
+const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : null;
+// This console has no Mission card and no operations-centre / moving-HOME card, so
+// there is nothing for them in the list. Everything else it pops out is bridged.
+const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel", "#envPanel",
+                    "#transitPanel", "#lineTablePanel", "#aisTablePanel",
+                    "#aisReopen", "#chartPanel", "#vcard"];
+document.body.classList.add("ui-" + UIROLE);
+(function(){ const s = document.createElement("style"); s.textContent =
+  // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
+  "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
+  "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls #note,"+
+  "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip{display:none!important;}"+
+  // controls-window vessel card: drop its own header (the card grip titles it) and every
+  // row the always-visible top status bar already shows — leave only the non-duplicated rows
+  // (Wind/Sea/Set, Water, Nogo, Run mode/time, Survey/Approach, Comms).
+  "body.ui-controls #vcard .vhead,"+
+  "body.ui-controls #vcard .vrow:has(#v_auto),body.ui-controls #vcard .vrow:has(#v_sog),"+
+  "body.ui-controls #vcard .vrow:has(#v_hdg),body.ui-controls #vcard .vrow:has(#v_cog),"+
+  "body.ui-controls #vcard .vrow:has(#v_home),body.ui-controls #vcard .vrow:has(#v_pitch),"+
+  "body.ui-controls #vcard .vrow:has(#v_roll),body.ui-controls #vcard .vrow:has(#v_batt),"+
+  "body.ui-controls #vcard .vrow:has(#v_wpt){display:none!important;}"+
+  "body.ui-controls{overflow:hidden;}"+
+  // buttons: a fixed vertical column pinned to the left
+  "body.ui-controls .controls{position:fixed!important;left:12px!important;top:12px!important;right:auto!important;"+
+    "flex-direction:column!important;flex-wrap:nowrap!important;gap:8px!important;max-height:calc(100vh - 24px);overflow:auto;z-index:6;}"+
+  // each panel/table becomes a draggable + resizable card (wrapped in .uicard by JS)
+  "body.ui-controls .uicard{position:fixed;z-index:20;min-width:190px;min-height:56px;max-width:96vw;"+
+    "background:rgba(10,20,28,0.97);border:1px solid #24506a;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.5);resize:both;overflow:auto;}"+
+  "body.ui-controls .uicard-grip{position:sticky;top:0;cursor:move;user-select:none;padding:5px 9px;"+
+    "font:600 10px var(--mono,Consolas,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);"+
+    "background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;}"+
+  "body.ui-controls .uicard>.panel,body.ui-controls .uicard>[id]{position:static!important;left:auto!important;right:auto!important;"+
+    "top:auto!important;bottom:auto!important;transform:none!important;margin:0!important;border:0!important;box-shadow:none!important;width:auto!important;}"+
+  "body.ui-controls #aisReopen{position:fixed!important;left:190px!important;top:12px!important;right:auto!important;bottom:auto!important;transform:none!important;margin:0!important;z-index:19;}"+
+  // main window: hide the control column + its panels ONLY while a controls window is
+  // actually alive (body.ui-split, set by the presence pings in setupUISplit). With no
+  // peer — --single-window, or the controls window closed/crashed — everything shows on
+  // main again, so the app is never left without its toolbar.
+  "body.ui-split #ctlReopen{display:none!important;}"+
+  "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,body.ui-split #envPanel,"+
+  "body.ui-split #transitPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
+  "body.ui-split #chartPanel,"+
+  "body.ui-split #aisReopen{display:none!important;}";
+  document.head.appendChild(s); })();
 
 // --- map config ---------------------------------------------------------- //
 const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
@@ -3747,6 +3803,181 @@ $("#c_completion").onchange = ()=>{ mission.completion = $("#c_completion").valu
   flashNote("Plan completion: "+mission.completion+" (applies on the next Upload)."); };
 window.addEventListener("resize", render);
 
+// --- UI SPLIT BRIDGE (multi-monitor: main window <-> controls window) ----- //
+// The controls window is a mirror: it renders the control column + panels but runs no
+// app logic. It forwards the operator's clicks/edits to the main window and blocks its
+// own (chart-less) handlers, and it re-renders its control DOM from what main sends.
+// The main window applies those gestures onto its real (hidden) controls - so every
+// existing handler runs there, once - and mirrors the control DOM + live field values
+// back out. Same origin, so a BroadcastChannel is all it takes.
+function setupUISplit(){
+  if(!uiBus) return;
+  const sel = UI_BRIDGED.join(",");
+  if(UIROLE === "controls"){
+    const fwdVal = e=>{ if(!e.isTrusted) return; const el=e.target;
+      if(!el.id || !el.closest || !el.closest(sel)) return;
+      uiBus.postMessage({t:"ev", kind:"val", id:el.id, value:el.value, checked:el.checked});
+      e.stopImmediatePropagation(); };               // block the local handler; main owns the logic
+    document.addEventListener("input", fwdVal, true);
+    document.addEventListener("change", fwdVal, true);
+    document.addEventListener("click", e=>{ if(!e.isTrusted) return;
+      const el = e.target.closest("[id]");
+      if(!el || !el.closest(sel)) return;
+      if(UI_BRIDGED.includes("#"+el.id) || el.classList.contains("controls")) return;  // a container, not a control
+      if(/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;                          // handled via change/input
+      uiBus.postMessage({t:"ev", kind:"click", id:el.id});
+      e.stopImmediatePropagation(); }, true);
+    wrapUICards();                                   // panels -> draggable/resizable cards (restores saved layout)
+    window.addEventListener("beforeunload", saveUILayout);   // preserve card layout across sessions
+    uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
+      if(m.t==="sync") applyUISync(m);
+      else if(m.t==="canvas") paintUICanvas(m.sel, m.png)      // ENV tide/wind bitmaps from main
+      else if(m.t==="ping?") uiBus.postMessage({t:"ping"}); }; // echo main's poll (event-driven:
+      // message delivery is NOT throttled in a background tab, unlike the timer below —
+      // as a background TAB this page's setInterval slows to ~1/min and the main window
+      // saw the peer "gone" for most of every minute, flapping its toolbar/panels back)
+    // ask main to push current state; retry so boot order (main vs controls) never matters
+    [0, 400, 1200, 3000].forEach(ms=> setTimeout(()=> uiBus.postMessage({t:"hello"}), ms));
+    // presence: main hides its toolbar/panels only while pings arrive, and a bye
+    // (or ping timeout, if we crash) puts everything back on the main window. The
+    // interval still helps when this page is a visible separate window and main is not.
+    setInterval(()=> uiBus.postMessage({t:"ping"}), 2000);
+    window.addEventListener("beforeunload", ()=> uiBus.postMessage({t:"bye"}));
+  } else {                                            // main = single source of truth
+    // controls-window presence: hide the toolbar/panels here only while the peer is
+    // alive. hello/ping set ui-split; bye (close) or a ping timeout (crash) clears it
+    // so the toolbar comes back — --single-window simply never gets a ping.
+    let lastPing = 0;
+    const peerSeen = ()=>{ lastPing = Date.now();
+      if(!document.body.classList.contains("ui-split")){ document.body.classList.add("ui-split"); render(); } };
+    const peerGone = ()=>{ lastPing = 0;
+      if(document.body.classList.contains("ui-split")){ document.body.classList.remove("ui-split"); render(); } };
+    // poll the peer: the controls page echoes ping? instantly even as a throttled
+    // background tab (its own 2 s ping does not survive tab throttling — ~1/min).
+    setInterval(()=> uiBus.postMessage({t:"ping?"}), 2000);
+    // No peerGone verdict while THIS tab is hidden: our own timers are throttled too,
+    // so the 6 s window misjudges — and nobody is looking at a hidden main anyway.
+    setInterval(()=>{ if(document.hidden) return;
+      if(lastPing && Date.now()-lastPing > 6000) peerGone(); }, 3000);
+    uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
+      if(m.t==="hello"){ peerSeen(); pushUISync(); return; }
+      if(m.t==="ping"){ peerSeen(); return; }
+      if(m.t==="bye"){ peerGone(); return; }
+      if(m.t!=="ev") return;
+      const el = document.getElementById(m.id); if(!el) return;
+      if(m.kind==="click"){ el.click(); }
+      else if(m.kind==="val"){
+        if(el.type==="checkbox"||el.type==="radio") el.checked = !!m.checked; else el.value = m.value;
+        el.dispatchEvent(new Event("input",{bubbles:true}));
+        el.dispatchEvent(new Event("change",{bubbles:true}));
+      } };
+    // Debounced mirror push. MUST use setTimeout, NOT requestAnimationFrame: rAF is
+    // paused when the main (chart) window is hidden/occluded (the usual single-monitor
+    // case with the controls window in front), which froze ALL live sync to the controls
+    // window - a toggled ENV card (and every state update) never arrived until a
+    // refresh forced a direct push via the "hello" handler. setTimeout still fires in a
+    // background window (clamped to ~1 s) and never gets stuck.
+    let pending=null;
+    const mo=new MutationObserver(()=>{ if(pending) return;
+      pending=setTimeout(()=>{ pending=null; pushUISync(); }, 100); });
+    for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(el)
+      mo.observe(el,{subtree:true, childList:true, attributes:true, characterData:true}); }
+    pushUISync();
+    // ENV tide/wind are <canvas>, which don't serialize through the outerHTML mirror.
+    // While the ENV card is open, ship the rendered bitmaps to the controls window.
+    setInterval(()=>{ if(!uiBus) return;
+      const env=document.querySelector("#envPanel"); if(!env || env.style.display==="none") return;
+      for(const sel of ["#tideChart","#windRose"]){ const cv=document.querySelector(sel); if(!cv||!cv.width) continue;
+        let png; try{ png=cv.toDataURL("image/png"); }catch(e){ continue; }
+        if(uiCanvasCache[sel]===png) continue; uiCanvasCache[sel]=png;   // only on change
+        uiBus.postMessage({t:"canvas", sel, png}); } }, 400);
+  }
+}
+let uiCanvasCache = {};                               // main: last tide/wind PNGs (see setupUISplit)
+function pushUISync(){
+  if(!uiBus) return;
+  const html={}, vals={};                             // outerHTML for structure; live field values separately
+  for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(!el) continue;
+    html[s]=el.outerHTML;
+    el.querySelectorAll("input,select,textarea").forEach(f=>{ if(f.id) vals[f.id]={value:f.value, checked:f.checked}; }); }
+  uiBus.postMessage({t:"sync", html, vals, canvas:uiCanvasCache});   // canvas: repaint after a panel re-render
+}
+function applyUISync(m){
+  const foc=document.activeElement;
+  for(const s of UI_BRIDGED){ const h=m.html[s]; if(h==null) continue;
+    const el=document.querySelector(s); if(!el) continue;
+    // Skip a rebuild only when an EDITABLE field in this panel has focus (don't clobber
+    // mid-edit). A focused button/label must NOT freeze the panel — that dropped the new
+    // panel row after a button click kept focus inside that panel - the trap applies to
+    // any card that re-renders its own rows while a control in it still holds focus.
+    if(foc && el.contains(foc) && /^(INPUT|SELECT|TEXTAREA)$/.test(foc.tagName)) continue;
+    if(el.outerHTML!==h){ try{ el.outerHTML=h; }catch(e){} } }   // replaces the panel INSIDE its card
+  if(m.vals){ for(const id in m.vals){ const f=document.getElementById(id); if(!f || f===foc) continue;
+    const v=m.vals[id]; if(f.type==="checkbox"||f.type==="radio") f.checked=v.checked; else f.value=v.value; } }
+  syncUICards();                                        // a hidden panel hides its whole card
+  if(m.canvas){ for(const sel in m.canvas) paintUICanvas(sel, m.canvas[sel]); }   // repaint ENV charts (re-render blanked them)
+}
+// Controls window: paint a bitmap pushed from main onto the matching (mirror-blanked) canvas.
+function paintUICanvas(sel, png){
+  if(!png) return; const cv=document.querySelector(sel); if(!cv) return;
+  const img=new Image();
+  img.onload=()=>{ try{ cv.width=img.width; cv.height=img.height;   // CSS sizes it for display
+    const ctx=cv.getContext("2d"); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,0);
+  }catch(e){} };
+  img.src=png;
+}
+// Controls window only: wrap each panel/table in a persistent .uicard the operator can
+// drag (by the grip) and resize (native corner). The card owns position/size and is NOT
+// part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
+const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
+  "#envPanel":"Environment", "#transitPanel":"Transit",
+  "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source", "#vcard":"Vessel"};
+const UI_LAYOUT_KEY = "asv_ui_cards_v1";
+function loadUILayout(){ try{ return JSON.parse(localStorage.getItem(UI_LAYOUT_KEY)) || {}; }catch(e){ return {}; } }
+function saveUILayout(){                                // persist every card's position + size
+  const L={}; document.querySelectorAll(".uicard").forEach(card=>{ const k=card.dataset.for; if(!k) return;
+    L[k]={left:card.style.left, top:card.style.top, width:card.style.width, height:card.style.height}; });
+  try{ localStorage.setItem(UI_LAYOUT_KEY, JSON.stringify(L)); }catch(e){}
+}
+function wrapUICards(){
+  const saved=loadUILayout(); let i=0;
+  for(const sel in UI_CARD_TITLES){ const p=document.querySelector(sel);
+    if(!p || (p.closest && p.closest(".uicard"))){ i++; continue; }
+    const card=document.createElement("div"); card.className="uicard"; card.dataset.for=sel;
+    const s=saved[sel];                                // restore last session's placement, else tile
+    card.style.left = (s&&s.left) || (190+i*26)+"px"; card.style.top = (s&&s.top) || (14+i*26)+"px";
+    if(s&&s.width) card.style.width=s.width; if(s&&s.height) card.style.height=s.height;
+    const grip=document.createElement("div"); grip.className="uicard-grip"; grip.textContent=UI_CARD_TITLES[sel];
+    p.parentNode.insertBefore(card, p); card.appendChild(grip); card.appendChild(p);
+    makeUIDraggable(card, grip);
+    new ResizeObserver(uiSaveSoon).observe(card);      // persist size changes (debounced)
+    i++; }
+  syncUICards();
+}
+let uiSaveTimer=null;
+function uiSaveSoon(){ clearTimeout(uiSaveTimer); uiSaveTimer=setTimeout(saveUILayout, 400); }
+function makeUIDraggable(card, grip){
+  grip.addEventListener("mousedown", e=>{ if(e.button!==0) return; e.preventDefault();
+    const r=card.getBoundingClientRect(), ox=e.clientX-r.left, oy=e.clientY-r.top;
+    card.style.zIndex=30;
+    const mv=ev=>{ card.style.left=Math.max(0,ev.clientX-ox)+"px"; card.style.top=Math.max(0,ev.clientY-oy)+"px"; };
+    const up=()=>{ document.removeEventListener("mousemove",mv); document.removeEventListener("mouseup",up);
+      card.style.zIndex=20; saveUILayout(); };         // persist on drop
+    document.addEventListener("mousemove",mv); document.addEventListener("mouseup",up); });
+}
+function syncUICards(){                                 // show a card only while its panel is visible
+  if(UIROLE!=="controls") return;
+  for(const sel in UI_CARD_TITLES){ const p=document.querySelector(sel); if(!p) continue;
+    const card=p.closest(".uicard"); if(!card) continue;
+    card.style.display = (getComputedStyle(p).display==="none") ? "none" : "block"; }
+}
+
+// Reopen the controls window (pill shows only while the controls peer is gone - the
+// ui-split class hides it. A user CLICK is a gesture, so window.open is allowed here;
+// the named target refocuses an existing controls window instead of stacking).
+$("#ctlReopen").onclick = ()=> window.open(location.origin + location.pathname + "?panel=controls",
+                                           "asv_controls");
+
 // --- vessel-status card drag/persist ------------------------------------- //
 const VCARD_KEY = "asv_vcard_v1";
 const vcard = $("#vcard"), vhead = $("#vcardHead"), vreopen = $("#vReopen");
@@ -4540,7 +4771,10 @@ function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
   const U=p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds());
   const el=$("#p_time"); if(el) el.textContent = L+" · "+U+"Z"; }
 setInterval(tickClock, 1000); tickClock();
-setFollow(); render(); loadVessel().then(loadMission); applyNogoControls(); updateNogoUI(); connect();
+// The controls window is a mirror only - it runs no app logic, no SSE, no chart. Only
+// the main window boots the app; both wire the UI-split bridge.
+if(UIROLE === "main"){ setFollow(); render(); loadVessel().then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
+setupUISplit();
 </script>
 </body>
 </html>

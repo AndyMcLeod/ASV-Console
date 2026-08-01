@@ -3146,6 +3146,8 @@ def main():
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
     ap.add_argument("--browser", choices=["edge", "chrome", "default", "none"],
                     default="edge", help="which browser to open")
+    ap.add_argument("--single-window", action="store_true",
+                    help="open only the main window (skip the separate controls window)")
     ap.add_argument("--sim", action="store_true", help="auto-connect the simulator at start")
     ap.add_argument("--vcu", default=None, help="auto-connect to this VCU host (serial-over-IP)")
     ap.add_argument("--transport", choices=["tcp", "serial"], default="tcp",
@@ -3215,8 +3217,15 @@ def main():
 
     if args.browser != "none":
         b = None if args.browser == "default" else pick_browser(args.browser)
+        opener = b or webbrowser
         try:
-            (b or webbrowser).open(url)
+            opener.open(url)                                  # main window: chart + status + command bar
+            if not args.single_window:
+                # Second window: ONLY the control column + its pop-out panels, for a
+                # multi-monitor setup (drag it to the other screen). The server opening
+                # it sidesteps the browser pop-up blocker. Slight delay so it lands as a
+                # separate window after the first is up.
+                threading.Timer(1.0, lambda: opener.open(url + "?panel=controls", new=1)).start()
         except Exception:
             print("  Could not auto-open a browser; open the URL above manually.")
 
