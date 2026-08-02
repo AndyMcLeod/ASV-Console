@@ -76,8 +76,8 @@ battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey US
 illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.
 
 Selecting a vessel also changes the **nogo model**: the minimum navigable depth is
-that vessel's `draft + under-keel clearance`, so the deep-draft DriX (2.5 m floor)
-avoids shallow water the shallow-draft Z-Boat (1.0 m) can cross.
+that vessel's `draft + under-keel clearance`, so the deep-draft `drix08` (2.5 m floor)
+avoids shallow water the shallow-draft `zboat_1800hs` (1.0 m) can cross.
 
 Pick the active vessel with `--vessel <id>`, or switch live from the **vessel
 selector** in the top bar (allowed only when disarmed and stopped — swapping
@@ -248,7 +248,7 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    - **Semicircle** — where the line spacing is at least twice the minimum turn
      radius. One 180° arc of radius *half the spacing*, reaching no further than that
      past the line ends. The classic boustrophedon turn, and what a small ASV gets at
-     any realistic spacing (a 4 m USV needs only ~2 m of radius at survey speed).
+     any realistic spacing (the 1.9 m survey ASV needs only ~2 m of radius at survey speed).
    - **Teardrop** — where the spacing is *tighter* than that. A semicircle at half the
      spacing would be tighter than the boat can hold, so the turn instead loops at the
      boat's **own minimum radius**: a short arc away from the next line, a >180° loop

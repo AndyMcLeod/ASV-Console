@@ -1,6 +1,6 @@
 // tests/buoy_lane.js - channel-LANE routing regression test (the operator's spec).
 //
-// Ported from the Z-Boat sibling 2026-07-31 along with the routing. Same contract,
+// Ported from the sibling console 2026-07-31 along with the routing. Same contract,
 // adapted to this console's layout: everything lives in ONE file (static/asv.html -
 // there is no routing.js split here), and the per-vessel `channel_reach_m` override is
 // stubbed to null so the test exercises the default channel reach.
@@ -19,16 +19,19 @@
 // buoy-pair CENTRELINE, not the edge ray-march that made the old keepRight ride the
 // wrong side of the buoys twice on the water.
 //
-// Runs the REAL channelLaneRoute / systemCenterline from static/routing.js (geometry
-// helpers pulled from static/zboat.html) against a synthetic buoyed channel.
+// Runs the REAL channelLaneRoute / systemCenterline, and the geometry helpers they need,
+// pulled out of static/asv.html and run against a synthetic buoyed channel. (This header
+// used to name two source files from the SIBLING console's layout - a split it has and
+// this one does not. Ported comments rot: the source a harness names must be the source
+// it actually reads, or the next reader goes looking for a file that was never here.)
 //
 //   node tests/buoy_lane.js      # exit 0 = pass, 1 = fail   (stdlib Node, no deps)
 //
 // TEETH: flip the starboard unit in channelLaneRoute (sbe/sbn), drop LANE_FRAC to 0, or
 // neuter the function, and the side / lane-position assertions below fail.
 //
-// NOTE: no "use strict" - classic browser <script>s (routing.js + the inline script)
-// run sloppy and share one global scope; the eval below reproduces that.
+// NOTE: no "use strict" - the console's classic browser <script> runs sloppy in one
+// global scope; the eval below reproduces that.
 
 const fs = require("fs");
 const path = require("path");

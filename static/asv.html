@@ -2587,7 +2587,7 @@ function buoyLaneAt(s, sb, systems, dir, ext){
 }
 let lastBuoyage = 0;                               // last direction inferred (for the readout)
 // ============================================================================
-// CHANNEL LANE (ported from the Z-Boat sibling, 2026-07-31). COLREGS Rule 9 for
+// CHANNEL LANE (ported from the sibling console, 2026-07-31). COLREGS Rule 9 for
 // every transit: ride a lane offset to STARBOARD of the channel CENTRELINE, half
 // the local half-width out (= a quarter of the full width in from the edge), so the
 // centreline stays to PORT. Colour is never an input - it falls out, because IALA
@@ -2898,7 +2898,7 @@ function channelLaneRoute(pathLL, ref, ko, buf){
 // channelEndExtend, gateProject and the whole colour system (buoyageDir,
 // buoyLaneAt, crossToLine) are dead too - they are only reachable from here.
 // Every mode now uses channelLaneRoute above. Kept intact for reference only.
-// DIVERGENCE FROM THE Z-BOAT: the sibling deleted its colour helpers outright;
+// DIVERGENCE FROM THE SIBLING CONSOLE: it deleted its colour helpers outright;
 // here they are left in place with the function, which is lower risk and behaves
 // identically (nothing calls any of it).
 // ============================================================================
@@ -4899,7 +4899,7 @@ $("#b_estop").onclick = async ()=>{
 // override) rather than teleporting a live boat, so the boat comes up at the clicked
 // point with full energy, SAFE, no plan or home - and a new boot_id, which is what
 // drops the old trail. The per-vessel DEFAULT spawn is unchanged and still lives in
-// vessels/<id>.json (Erie for the Z-Boat, Lewes for the DriX); this only overrides it
+// vessels/<id>.json — each profile carries its own operating area; this only overrides it
 // for the current sim boot. The drawn mission/lines stay in the browser; re-Upload to
 // fly them from the new position.
 $("#b_spawn").onclick = ()=>{

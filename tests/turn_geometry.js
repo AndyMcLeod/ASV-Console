@@ -118,16 +118,20 @@ function check(name, cond, detail) {
 const near = (x, y, tol) => Math.abs(x - y) <= tol;
 const f1 = (x, d) => (typeof x === "number" ? x.toFixed(d === undefined ? 2 : d) : "--");   // survives a refused turn
 
-// The two vessels the console ships, at the values in vessels/*.json.
-const ZBOAT = { name: "4 m USV", speeds: { low: 1.5, survey: 3.0, high: 6.0 }, rate: 60 };
-const DRIX  = { name: "8 m USV", speeds: { low: 4.0, survey: 7.0, high: 14.0 }, rate: 20 };
+// Two of the vessel profiles the console ships, at the values in vessels/*.json.
+// Named by SIZE, not by vendor: the console core carries no brand identity, and these
+// are the two ends of the turn-radius range that make the two turn shapes appear.
+// (The labels used to read "4 m USV" / "8 m USV"; the small one is 1.9 m LOA and these
+// are its numbers - a 4 m profile also exists and has neither of these values.)
+const SMALL = { name: "1.9 m ASV", speeds: { low: 1.5, survey: 3.0, high: 6.0 }, rate: 60 };
+const LARGE = { name: "7.7 m USV", speeds: { low: 4.0, survey: 7.0, high: 14.0 }, rate: 20 };
 
 console.log("Survey turn geometry — every reversal ends on the next line, at a radius the boat can hold:");
 
 // 1-4. SMALL BOAT, ordinary spacing: half the offset already clears the minimum
 // radius, so the turn is the plain semicircle and nothing about it changed.
 {
-  const { t, pts, minR } = turn(ZBOAT, 15);
+  const { t, pts, minR } = turn(SMALL, 15);
   check("1. small boat @ 15 m spacing -> semicircle", t.kind === "semicircle", "kind=" + t.kind);
   check("2. semicircle radius = half the line offset", near(t.R, 7.5, 0.05), "R=" + t.R.toFixed(2));
   check("3. semicircle reaches exactly R past the line ends", near(t.outboard, 7.5, 0.05),
@@ -139,7 +143,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // 5-11. BIG BOAT, THE SAME SPACING - the case the old code could not serve at all.
 // 15 m of spacing offers a 7.5 m semicircle; this boat needs 14.4 m.
 {
-  const { t, pts, minR } = turn(DRIX, 15);
+  const { t, pts, minR } = turn(LARGE, 15);
   check("5. big boat @ 15 m spacing -> a turn EXISTS", !!t.pts, t.pts ? "" : "why=" + t.why);
   check("6. ... and it is a teardrop, not a semicircle", t.kind === "teardrop", "kind=" + t.kind);
   check("7. teardrop radius = the boat's minimum, NOT half the offset",
@@ -160,7 +164,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // water outboard of the line ends. The loop tops out at q+R, between one and ~2.75
 // minimum radii past the end, and it never wanders more than R either side.
 {
-  const { t, pts, minR } = turn(DRIX, 15);
+  const { t, pts, minR } = turn(LARGE, 15);
   const maxN = Math.max(...pts.map((p) => p.n));
   check("12. outboard excursion is reported, and it is what the path does",
         near(t.outboard, maxN, 0.5) && t.outboard > minR && t.outboard < 2.8 * minR,
@@ -173,8 +177,8 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // circle degenerates (q -> 0) and the two shapes are the same semicircle, so the
 // families agree where they meet rather than jumping.
 {
-  const minR = (() => { SPEED_KN = DRIX.speeds; MAX_TURN_RATE_DEG_S = DRIX.rate; return minTurnRadiusM("survey"); })();
-  const below = turn(DRIX, 2 * minR - 0.001), above = turn(DRIX, 2 * minR + 0.001);
+  const minR = (() => { SPEED_KN = LARGE.speeds; MAX_TURN_RATE_DEG_S = LARGE.rate; return minTurnRadiusM("survey"); })();
+  const below = turn(LARGE, 2 * minR - 0.001), above = turn(LARGE, 2 * minR + 0.001);
   check("14. teardrop and semicircle agree at spacing = 2 x minR",
         below.t.kind === "teardrop" && above.t.kind === "semicircle" &&
         near(below.t.R, above.t.R, 0.05) && near(below.t.outboard, above.t.outboard, 0.5),
@@ -186,8 +190,8 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // lying across the water the loop needs. Both halves matter: a turn that is always
 // refused would pass a one-sided test.
 {
-  const clear = turn(DRIX, 15);
-  const blockedRun = turn(DRIX, 15, { ko: box(-80, 25, 80, 90) });
+  const clear = turn(LARGE, 15);
+  const blockedRun = turn(LARGE, 15, { ko: box(-80, 25, 80, 90) });
   check("15. a keep-out over the loop refuses the turn",
         !blockedRun.t.pts && blockedRun.t.why === "nogo",
         blockedRun.t.pts ? "returned a path THROUGH the keep-out" : "why=" + blockedRun.t.why);
@@ -199,7 +203,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // turn absorbs that with a straight run collinear with a survey line and still lands
 // on the next line, aligned.
 {
-  const { t, pts } = turn(DRIX, 15, { ahead: 8 });
+  const { t, pts } = turn(LARGE, 15, { ahead: 8 });
   check("17. along-track offset (F 8 m ahead) still produces a teardrop",
         !!t.pts && t.kind === "teardrop", t.pts ? "" : "why=" + t.why);
   check("18. ... ending on the next line, aligned, still continuous",
@@ -212,7 +216,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // assumes a true reversal. A genuinely skewed pair must be declined, not rolled out
 // onto a heading that misses the line.
 {
-  const skew = turn(DRIX, 15, { hF: 140 });
+  const skew = turn(LARGE, 15, { hF: 140 });
   check("19. a skewed line pair is declined, not fudged",
         !skew.t.pts && skew.t.why === "skew", skew.t.pts ? "produced a turn anyway" : "why=" + skew.t.why);
 }
@@ -221,7 +225,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // same geometry at low speed needs a much smaller radius, so a spacing that forces a
 // teardrop at survey speed can be a plain semicircle at low speed.
 {
-  const surv = turn(DRIX, 20), low = turn(DRIX, 20, { speed: "low" });
+  const surv = turn(LARGE, 20), low = turn(LARGE, 20, { speed: "low" });
   check("20. 20 m spacing @ survey speed -> teardrop", surv.t.kind === "teardrop",
         "minR=" + surv.minR.toFixed(1) + " kind=" + surv.t.kind);
   check("21. ... the same lines @ low speed -> semicircle", low.t.kind === "semicircle",

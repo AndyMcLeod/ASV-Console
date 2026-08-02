@@ -13,6 +13,13 @@ brand names, model numbers, vendor manual citations, or a specific wire-protocol
 format. The onboard controller is the generic **VCU (Vehicle Control Unit)**; the
 shore link is a generic serial-over-IP control link.
 
+**Where the line falls** (settled 2026-08-01, see the sanitization section): the **sibling
+console's identity never appears in code** — it is the thing this derivative is sanitized
+from, so refer to it as "the sibling console". A **modeled vessel's name is DATA** and
+belongs in `vessels/*.json`; the core may name a profile *id* (`DEFAULT_VESSEL_ID`) because
+that is a data key, not branding. Standing check:
+`grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
+
 ## ⇒ START HERE (handoff 2026-08-01, fresh context window)
 
 **Repo:** local git only (no GitHub remote), tree clean, HEAD **`e070350`**. Run:
@@ -103,13 +110,9 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 - **Payloads / sonar NOT ported** (Andy's call). It needs a vessel-declared `payloads`
   block first; the sibling's single-beam console is built from vendor manual citations
   and proprietary telegrams that this console's rules forbid.
-- **FOUR pre-existing `Z-Boat` mentions**, all in comments/docstrings, flagged to Andy and
-  left alone pending his call. Cited by CONTENT, not line number — the old note gave line
-  numbers, they drifted, and the count was wrong: `grep -n "Z-Boat" static/asv.html
-  asv_console.py`. `static/asv.html`: the CHANNEL LANE header ("ported from the Z-Boat
-  sibling") and the spawn-override comment ("Erie for the Z-Boat, Lewes for the DriX").
-  `asv_console.py`: the port note ("never collides with the Z-Boat console") and the same
-  Erie/Lewes phrase in a docstring.
+- ~~Pre-existing `Z-Boat` mentions in the console core~~ — **DONE**, see the sanitization
+  section below. The standing check is one command, and it must return nothing:
+  `grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
 - **The sibling's teardrop branch is undriven** — reachable only at high speed under
   8.3 m line spacing. Low risk, but the 2026-07-20 lesson stands: static `legClear` does
   not catch follow overshoot.
@@ -468,6 +471,38 @@ console: a Go-To under RTH reads `Type GOTO / End mode RTH` from the start, the 
 "END OF PLAN — returning home (RTH)", and a second Go-To commanded mid-run chains its own
 RTH (before the fix it sat holding for 5 min).
 
+## SANITIZATION: THE SIBLING'S IDENTITY IS OUT OF THE CORE (2026-08-01)
+
+Andy's call on the long-standing flag. **The line that was drawn, and the one to keep
+drawing:** the SIBLING CONSOLE's identity must not appear anywhere in this repo's code —
+that is the thing this derivative exists to be sanitized from. **A modeled vessel's name is
+DATA and stays** (`vessels/*.json`), including `DEFAULT_VESSEL_ID = "drix08"`, which is a
+data key the core cannot avoid naming.
+
+Cleared (five in the core, comments/docstrings all): the CHANNEL LANE header and the dead
+`keepRight` divergence note in `static/asv.html` → "the sibling console"; the port-number
+note and the `connect()` docstring in `asv_console.py`; and the spawn-override comments in
+both, which named which vessel spawns where — replaced with "each profile carries its own
+operating area", which is also **more accurate**, since it does not go stale when a
+profile's spawn moves.
+
+**STANDING CHECK — this must return nothing:**
+```
+grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/
+```
+
+**Two things found while sweeping, both fixed:**
+- `tests/buoy_lane.js` cited `static/routing.js` and the sibling's page as the source it
+  reads. **Neither exists here** — it reads `static/asv.html`. A ported comment sending the
+  next reader after a file that was never in this repo. The rule it now states: *the source
+  a harness names must be the source it actually reads.*
+- `tests/turn_geometry.js` had `const ZBOAT` / `const DRIX` labelled `"4 m USV"` / `"8 m
+  USV"`. Renamed to `SMALL` / `LARGE` — but the labels were also **factually wrong**: those
+  are `zboat_1800hs`'s numbers and that vessel is **1.9 m LOA**, not 4 m (the real 4 m
+  profile, `example_usv_4m`, has neither those speeds nor that turn rate). The same
+  mislabel had propagated into CLAUDE.md's turn-geometry section and README.md; both
+  corrected. Data untouched, so the 21 assertions are unchanged and still pass.
+
 ## THE SURVEY MOVE GRIP WAS DRAWN, LIVE, AND INVISIBLE (2026-08-01)
 
 **Andy's report:** the SURV whole-pattern move handle "is not there — find it in zboat and
@@ -692,8 +727,8 @@ radius exceeded half the spacing got **no turn at all** and fell back to a "stra
 hop between anti-parallel line ends — which is a 180° reversal at half the spacing,
 i.e. the exact radius just rejected as unflyable, only now unmodelled. Coupling the
 turn radius to the line spacing meant a big boat on tight lines could never get a
-turn: **the DriX H-8 needs 14.4 m of radius at its 7 kn survey speed (28.9 m of
-spacing) where the 4 m USV needs 2.1 m (4.1 m)**, so ordinary small-boat line spacing
+turn: **the 7.71 m USV needs 14.4 m of radius at its 7 kn survey speed (28.9 m of
+spacing) where the 1.9 m ASV needs 2.1 m (4.1 m)**, so ordinary small-boat line spacing
 silently produced no teardrops at all. That symptom is what prompted the rework.
 
 **Cost, and what the operator is told.** A teardrop reaches up to ~`2.75×minR` past

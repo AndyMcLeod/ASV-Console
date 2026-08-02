@@ -90,8 +90,8 @@ DEFAULT_VESSEL_ID = "drix08"
 # is in the session logs). Changes on every restart.
 BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 
-# 8791 (not 8781) so this simulator never collides with the Z-Boat console it was
-# derived from - both default to their own port and can run side by side.
+# 8791 (not 8781) so this simulator never collides with the branded sibling console it
+# was derived from - both default to their own port and can run side by side.
 DEFAULT_WEB_PORT = 8791
 # Base URL of the standalone AIS provider service (ais_service.py). The console
 # proxies it at /api/ais; override with --ais. The AIS layer is opt-in in the UI.
@@ -2288,8 +2288,8 @@ class Engine:
     def connect(self, mode, host, port, transport, spawn=None):
         """`spawn` = {"lat":..,"lon":..} places a NEW sim boat there instead of at the
         active vessel's configured spawn - the click-to-spawn path. Ignored for a real
-        link. The per-vessel default still lives in vessels/<id>.json (Erie for the
-        Z-Boat, Lewes for the DriX)."""
+        link. The per-vessel default still lives in vessels/<id>.json - each profile
+        carries its own operating area."""
         self.disconnect()
         with self._lock:
             self._mode = mode
