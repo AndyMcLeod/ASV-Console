@@ -13,20 +13,60 @@ brand names, model numbers, vendor manual citations, or a specific wire-protocol
 format. The onboard controller is the generic **VCU (Vehicle Control Unit)**; the
 shore link is a generic serial-over-IP control link.
 
-## ⇒ START HERE (handoff 2026-07-25, fresh context window)
-**Repo:** local git only (no GitHub remote), clean, HEAD **`c350e00`**. Default web
-port **8791** (Z-Boat is 8781 — they can run side by side). Run: `python asv_console.py
---sim`. **This session (2026-07-25)** added, all committed (details below in this file):
-survey-turn declutter; draggable LINES card; **NDBC uppercase station-id fix**; the
-default port 8791; Quick-Start scroll fix; the **AIS layer** (same generic
-`ais_service.py` as the Z-Boat — console auto-starts it, lake-aware area, traffic
-table, zero-config `ais_key.txt`/`--source auto`; see the AIS note); and the **Go-To
-distance fixes** (coverage `ensureNogoCovers` + resolution `routeAroundSeg` sectioning;
-see the gotcha note). Most of this session ALSO drove the **backport of these features
-into the Z-Boat** (`D:\Claude\Zboat`) — keep the ASV brand-free; the Z-Boat is branded.
-**Open:** live GUI spot-checks owed (AIS draw/table, Go-To fixes). The aisstream key now
-lives in the **`AISSTREAM_KEY` user environment variable** (2026-07-31) — one value for
-every console on the machine, no per-project `ais_key.txt`.
+## ⇒ START HERE (handoff 2026-08-01, fresh context window)
+
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`21d7810`**. Run:
+`python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
+`DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
+`D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
+— the sanitization rules below are locked decisions, not preferences.
+
+**SIX REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+enable once per clone with `git config core.hooksPath .githooks`). Run them after any
+change to what they cover, and treat "harness crashed" as loudly as "check failed":
+
+| | guards |
+|---|---|
+| `node tests/buoy_lane.js` | Rule 9 channel lane (11) |
+| `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
+| `node tests/water_trust.js` | water-level trust + depth gating (15) |
+| `node tests/turn_geometry.js` | survey turn geometry (21) |
+| `python tests/roc_tracks.py` | ROC / moving HOME (17) |
+| `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
+
+**This session (2026-08-01), six commits, all with sections below:**
+- `2a28a59` **ROC + moving HOME** ported from the sibling (`roc_tracks.py`, `/api/roc`,
+  ROC card, RTH chases a mothership), plus `gps_sim.py`, the **Mission card**, the
+  **SURV move grip** (old parity gap, now closed), and the **docs set** —
+  `tools/build_tech_manual.js` → `docs/asv-simulator-technical-manual.docx`, 15 chapters,
+  generated, brand-free. ROC was made **vessel-aware** (standoff scales off LOA; a
+  closing check against the vessel's top speed).
+- `494f048` **charted point hazards have an EXTENT** — a wreck was a buffer-sized dot,
+  so a Go-To planned over one off Lewes. Both the exact check and the A* raster fixed.
+- `7151149` **end-of-plan setting vs run completion** — a conflated field meant a Go-To
+  overwrote "End of Plan: RTH" with loiter. Split; no Engine method writes the setting.
+- `2388856` **default vessel → `drix08`**. The default also decides AIS start-up scope
+  and the tide station, so an Erie default pointed both at the wrong water.
+- `055373f` + `21d7810` **water level earns trust by distance** — ghosted when the
+  station is far, and **not applied to charted depths** when it is remote.
+
+**THE RECURRING THEME, worth carrying forward:** every bug this session was one value
+serving two masters, or one value trusted without its provenance. Vessel-derived
+constants going stale on a switch (`apply_vessel` must re-derive — see `HULL_A_LAT`,
+the ROC standoff, the nogo buffer floor); a persistent setting clobbered by a transient
+one; chart data trusted without its extent or its distance. Check for that shape first.
+
+**OPEN / NEXT:**
+- **Payloads / sonar NOT ported** (Andy's call). It needs a vessel-declared `payloads`
+  block first; the sibling's single-beam console is built from vendor manual citations
+  and proprietary telegrams that this console's rules forbid.
+- **Two pre-existing `Z-Boat` mentions** in `static/asv.html` comments (~2388, ~4628)
+  and one in `asv_console.py` (~87), all flagged to Andy and left alone pending his call.
+- **The sibling's teardrop branch is undriven** — reachable only at high speed under
+  8.3 m line spacing. Low risk, but the 2026-07-20 lesson stands: static `legClear` does
+  not catch follow overshoot.
+- Residual, by design: chart datum is the LOW-water reference, so a real tide BELOW datum
+  leaves charted depths optimistic. The manual override is the answer.
 
 ## LINE-TIMING: sequence-keyed activation (2026-07-27)
 
