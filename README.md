@@ -414,6 +414,11 @@ beyond 75 km it is **heavily ghosted with a warning**, because that is simply an
 area's tide. The nearest contributing station decides, so a blend dominated by a close
 station still reads as local. Hover for the station list with distances.
 
+Beyond 75 km the level is also **not applied to charted depths** — routing falls back
+to **chart datum**, the same as when there is no data at all. A tide from another coast
+would otherwise credit the boat with depth nobody has measured here. A *far* reading is
+still applied (indicative), and a **manual override always is** — it is your own number.
+
 **ROC · HOME — Remote Operations Centers and a moving recovery point.** Missions are
 commanded from one or more **Remote Operations Centers**, and the `ROC` card tracks
 them. Click **+ Shore** or **+ Ship**, then click the chart to place one:

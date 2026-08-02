@@ -4940,7 +4940,11 @@ function onState(s){
 
   // real-time water level (corrects charted depths); applied in depthExcluded
   water = s.water || {};
-  waterOffset = (water.ok && water.offset_m!=null) ? water.offset_m : 0;
+  const prevOffset = waterOffset;
+  waterOffset = effectiveWaterOffset(water);
+  // The nogo model is built against this offset, so a change in it (including the gate
+  // flipping when the station changes) must invalidate the punched survey clip.
+  if(waterOffset !== prevOffset) patClip = null;
   // Chart source card: follow the vessel (zone of confidence is position-dependent).
   // Both calls no-op cheaply unless the card is open and something actually changed.
   if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }
@@ -5001,6 +5005,27 @@ function waterTrust(wl){
   if(km === null) return {level:"local", km:null};
   return {level: km > WATER_REMOTE_KM ? "remote" : (km > WATER_FAR_KM ? "far" : "local"), km};
 }
+// THE OFFSET THAT ACTUALLY CORRECTS CHARTED DEPTHS. Displaying a distant station's tide
+// is one thing; APPLYING it to the nogo depth floor is another. A remote reading is not
+// information about local water, and adding it would credit the boat with depth nobody
+// has measured here - an 800 km tide of +1.16 m makes shallow water look 1.16 m deeper
+// than it is, which is the same failure mode as trusting a chart symbol without its size.
+//
+// So a `remote` reading is SHOWN (ghosted, so the operator can see what the distant
+// station says) but NOT APPLIED: routing falls back to chart datum, exactly as it already
+// does when there is no data at all. `far` is still applied - it is indicative rather
+// than irrelevant, and the ghosting says so.
+//
+// RESIDUAL, unchanged by this and shared with the no-data path: chart datum is the
+// LOW-water reference, so if the real local tide is BELOW datum, charted depths are
+// optimistic. The manual override exists for that case.
+function effectiveWaterOffset(wl){
+  if(!wl || !wl.ok || wl.offset_m == null) return 0;
+  // The manual-override exemption lives in waterTrust() and ONLY there - an operator's own
+  // number is never "remote". Repeating the check here looked like defence in depth but was
+  // unreachable, and an unreachable guard is a guard nobody is testing.
+  return waterTrust(wl).level === "remote" ? 0 : wl.offset_m;
+}
 function updateWaterUI(wl){
   const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;
   const val = off!=null ? ((off>=0?"+":"")+off.toFixed(2)+" m") : "--";
@@ -5026,17 +5051,20 @@ function updateWaterUI(wl){
   const farTxt = trust.km==null ? "" :
     (trust.level==="remote" ? `
 
-STATION IS ${Math.round(trust.km)} km AWAY — this is not the local tide. Treat the level as unknown and check the station name.`
+STATION IS ${Math.round(trust.km)} km AWAY — this is not the local tide.
+It is NOT being applied to charted depths: routing uses chart datum.
+Use the manual override if you know the real local level.`
    : trust.level==="far"    ? `
 
 Nearest station is ${Math.round(trust.km)} km away — indicative only.` : "");
-  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+(trust.level==="remote"?" ⚠":"");
+  // "(datum)" spells out that the number on screen is NOT the one correcting depths.
+  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+(trust.level==="remote"?" ⚠ (datum)":"");
     vw.title = tip+farTxt;
     vw.style.color = warnCol ? "var(--warn)" : "";
     vw.style.opacity = ghost;
     vw.style.fontStyle = trust.level==="local" ? "" : "italic"; }
   const swn = $("#sp_water_note"); if(swn){
-    swn.textContent = detail + (trust.level==="remote" ? ` — ${Math.round(trust.km)} km away, NOT the local tide`
+    swn.textContent = detail + (trust.level==="remote" ? ` — ${Math.round(trust.km)} km away, NOT the local tide; NOT applied to depths (using chart datum)`
                               : trust.level==="far" ? ` — ${Math.round(trust.km)} km away, indicative` : "");
     swn.title = tip+farTxt;
     swn.style.color = warnCol ? "var(--warn)" : "";
@@ -5050,7 +5078,7 @@ $("#sp_water").onchange = ()=>{
   fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({manual_offset: v==="" ? null : parseFloat(v)})})
     .then(r=>r.json()).then(j=>{ if(j.water){ water=j.water;
-      waterOffset=(water.ok&&water.offset_m!=null)?water.offset_m:0; updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
+      waterOffset=effectiveWaterOffset(water); updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
 };
 
 // --- environmental simulator UI (SIM ONLY) ------------------------------- //

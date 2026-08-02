@@ -26,7 +26,8 @@
 //
 // TEETH (verified by mutation, not assumed): average the distances instead of taking the
 // minimum and 6 fails. Drop the manual exemption and 4 fails. Swap the two thresholds and
-// 2 and 8 fail.
+// 2 and 8 fail. Apply a remote offset to depths anyway and 12 and 15 fail. Gate `far` as
+// well as `remote` and 11 fails.
 //
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
@@ -51,7 +52,8 @@ function grabDecl(name) {
 }
 
 // eslint-disable-next-line no-eval
-eval(grabDecl("WATER_FAR_KM") + "\n" + grabDecl("WATER_REMOTE_KM") + "\n" + grab("waterTrust"));
+eval(grabDecl("WATER_FAR_KM") + "\n" + grabDecl("WATER_REMOTE_KM") + "\n" +
+     grab("waterTrust") + "\n" + grab("effectiveWaterOffset"));
 
 let fails = 0;
 function check(name, cond, detail) {
@@ -97,6 +99,34 @@ check("9. a payload with no distances degrades safely, it does not throw",
       waterTrust(wl([{ name: "x" }])).level === "local" &&
       waterTrust({ ok: true, offset_m: 1 }).level === "local" &&
       waterTrust(null).level === "local");
+
+// 10-15. GATING THE DEPTH CORRECTION. Showing a distant tide is one thing; APPLYING it to
+// the nogo depth floor is another. A remote reading credits the boat with depth nobody has
+// measured here - an 800 km tide of +1.16 m makes shallow water look 1.16 m deeper than it
+// is, which is the same failure mode as trusting a chart symbol without its size. It is
+// still SHOWN (ghosted), but routing falls back to chart datum, exactly as it already does
+// when there is no data at all.
+check("10. a LOCAL reading is applied to charted depths",
+      effectiveWaterOffset(wl([{ dist_km: 4 }])) === 1.16, "4 km -> +1.16 m applied");
+check("11. a FAR reading is still applied - indicative, not irrelevant",
+      effectiveWaterOffset(wl([{ dist_km: 40 }])) === 1.16, "40 km -> +1.16 m applied");
+check("12. A REMOTE READING IS NOT APPLIED - routing falls back to chart datum",
+      effectiveWaterOffset(wl([{ dist_km: 800 }])) === 0,
+      "800 km -> 0 m (the reading is still shown, ghosted)");
+// 13 is the end-to-end consequence of the rule asserted at 4: the manual exemption lives
+// in waterTrust() and only there, so breaking it fails BOTH. (An extra guard here would be
+// unreachable, and an unreachable guard is one nobody is testing.)
+check("13. a manual override is always applied, whatever the station distance",
+      effectiveWaterOffset(wl([{ dist_km: 800 }], { source: "manual" })) === 1.16);
+check("14. no reading at all is chart datum, as before",
+      effectiveWaterOffset({ ok: false, offset_m: 1.16 }) === 0 &&
+      effectiveWaterOffset(null) === 0);
+// A negative remote offset falls back to datum too. Asserted so the choice is deliberate:
+// an unverified reading is not evidence about local water in EITHER direction, and the
+// card states plainly that it is not being applied.
+check("15. a negative remote offset also falls back to datum",
+      effectiveWaterOffset(wl([{ dist_km: 800 }], { offset_m: -0.8 })) === 0,
+      "-0.8 m at 800 km -> 0 m");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

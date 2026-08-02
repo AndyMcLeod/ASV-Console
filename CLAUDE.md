@@ -324,10 +324,21 @@ one distant station in it, and would let two remote stations either side average
 falsely "local" reading. Test `node tests/water_trust.js` (9 assertions, teeth-verified:
 averaging → 6 fails, no manual exemption → 4, swapped thresholds → 2 and 8).
 
-**STILL OPEN (raised with Andy, deliberately not done):** the offset also corrects charted
-depths for the NOGO model, so a remote-station tide is applied to the depth floor as well
-as displayed. Gating that (fall back to chart datum when `remote`) changes routing
-behaviour, which is his call, not a silent fix.
+**THE OFFSET IS ALSO GATED (Andy's call, done same day).** `effectiveWaterOffset()` is
+what actually corrects charted depths for the NOGO model. A `remote` reading is SHOWN
+(ghosted, so the operator can see what the distant station says) but **NOT APPLIED** —
+routing falls back to chart datum, exactly as it already does with no data at all.
+Otherwise an 800 km tide of +1.16 m makes shallow water look 1.16 m deeper than it is:
+the same failure mode as trusting a chart symbol without its size. `far` IS still applied
+— indicative, not irrelevant, and the ghosting says so. A change in the effective offset
+(including the gate flipping) invalidates `patClip`, since the punched survey was clipped
+against the old one. The card and tooltip state that the level is not being applied, so a
+`+1.16 m` on screen can't be mistaken for a depth correction that happened.
+**RESIDUAL, shared with the pre-existing no-data path:** chart datum is the LOW-water
+reference, so if the real local tide is BELOW datum, charted depths are optimistic. The
+manual override exists for that; the manual exemption lives in `waterTrust()` and ONLY
+there (a duplicate guard in `effectiveWaterOffset` was unreachable and was removed —
+an unreachable guard is one nobody is testing).
 
 ## END-OF-PLAN SETTING vs RUN COMPLETION — one field per concept (2026-08-01)
 
