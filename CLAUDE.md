@@ -20,9 +20,13 @@ belongs in `vessels/*.json`; the core may name a profile *id* (`DEFAULT_VESSEL_I
 that is a data key, not branding. Standing check:
 `grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
 
+**The rule is scoped to CODE.** THIS FILE deliberately names the sibling and its path — a
+maintainer has to be able to find it — which is why the check above filters by source
+extension. Don't "finish the job" by scrubbing the maintainer notes.
+
 ## ⇒ START HERE (handoff 2026-08-01, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`e070350`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`3c8fd9e`**. Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
@@ -44,14 +48,22 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
-**This session (2026-08-01), eight commits, all with sections below:**
+**This session (2026-08-01), nine commits, all with sections below:**
+- `3c8fd9e` **sanitization — the sibling console's identity is out of the core.** Andy's call
+  on the long-standing flag; **the line is now written down** (top of this file) instead of
+  being re-argued. Five core sites cleared, not the four the old note claimed, and it had
+  stale line numbers too — hence the standing `grep`. The sweep also found `buoy_lane.js`
+  naming two source files **that do not exist in this repo**, and `turn_geometry.js`'s
+  `const ZBOAT` labelled `"4 m USV"` when those are `zboat_1800hs`'s numbers and that hull
+  is **1.9 m** — a mislabel that had propagated into this file and README.md. Data
+  untouched; all 21 turn assertions unchanged.
 - `e070350` **the survey move grip was drawn, live, and invisible** — Andy asked for the SURV
   whole-pattern handle to be ported from the sibling. **It already was, byte-identical and
   working**; it was drawn inside `drawPattern()` (early) and the boat marker (late) painted
   over it, and the boat sits at the A-B midpoint whenever you draw the box around it.
   Measured: **0 grip pixels on the boat, 70 off it.** Now drawn last, haloed, and finally
   named in the SURV hint — which was the one thing the port actually missed. New suite
-  `tests/pattern_move_grip.js` (7). **DIVERGENCE FROM THE Z-BOAT — see that section.**
+  `tests/pattern_move_grip.js` (7). **DIVERGENCE FROM THE SIBLING — see that section.**
 - `8669230` **the cards say what the boat is actually going to do** — three readout faults
   Andy reported, all the same shape. (a) **END ACTION**: an end-of-plan RTH now reads `rth`
   on a Go-To / Transit / Survey from the START of the run, and is *not* promised when the
@@ -110,9 +122,6 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 - **Payloads / sonar NOT ported** (Andy's call). It needs a vessel-declared `payloads`
   block first; the sibling's single-beam console is built from vendor manual citations
   and proprietary telegrams that this console's rules forbid.
-- ~~Pre-existing `Z-Boat` mentions in the console core~~ — **DONE**, see the sanitization
-  section below. The standing check is one command, and it must return nothing:
-  `grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
 - **The sibling's teardrop branch is undriven** — reachable only at high speed under
   8.3 m line spacing. Low risk, but the 2026-07-20 lesson stands: static `legClear` does
   not catch follow overshoot.
