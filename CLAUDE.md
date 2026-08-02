@@ -15,7 +15,7 @@ shore link is a generic serial-over-IP control link.
 
 ## ⇒ START HERE (handoff 2026-08-01, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`21d7810`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`8669230`**. Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
@@ -36,11 +36,17 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
-**LATEST (2026-08-01, uncommitted at handoff):** the **END ACTION**, the **Mission card
-merged into the vessel-status card**, and the **Nogo row stuck on "loading…"** — all three
-sections below. New suites `tests/end_action.js` and `tests/nogo_readout.js`.
-
-**This session (2026-08-01), six commits, all with sections below:**
+**This session (2026-08-01), seven commits, all with sections below:**
+- `8669230` **the cards say what the boat is actually going to do** — three readout faults
+  Andy reported, all the same shape. (a) **END ACTION**: an end-of-plan RTH now reads `rth`
+  on a Go-To / Transit / Survey from the START of the run, and is *not* promised when the
+  chain cannot fire. Found while verifying it: **the chain's one-shot never re-armed for a
+  run commanded while already under way**, so it held at its endpoint indefinitely.
+  (b) the **Mission card is now a section of the vessel-status card** (`#missionPanel` gone;
+  the old `Run mode` row deleted as the duplicate it was). (c) the **Nogo row was stuck on
+  "loading…"** — a repaint painted one statement too early, on the one path that ends in a
+  working model; it now names its state. New suites `tests/end_action.js` (16) and
+  `tests/nogo_readout.js` (15). **Live-verified in a real browser, both windows.**
 - `2a28a59` **ROC + moving HOME** ported from the sibling (`roc_tracks.py`, `/api/roc`,
   ROC card, RTH chases a mothership), plus `gps_sim.py`, the **Mission card**, the
   **SURV move grip** (old parity gap, now closed), and the **docs set** —
@@ -62,7 +68,21 @@ constants going stale on a switch (`apply_vessel` must re-derive — see `HULL_A
 the ROC standoff, the nogo buffer floor); a persistent setting clobbered by a transient
 one; chart data trusted without its extent or its distance. Check for that shape first.
 
+**THE READOUT COROLLARY (`8669230`, three instances in one pass):** a card can be
+perfectly accurate about its own field and still be **wrong about the boat**. Ask what
+question the operator is actually reading the row for, then check whether any field
+answers it — "where does this run leave the boat" had no field at all, and "loading…"
+answered "what is the console doing" with a word that fit four different states. Two
+mechanics behind it, both worth checking directly: a **paint taken before the flag it
+reads was cleared** (the Nogo row; the success path was the one that never repainted),
+and an **edge-triggered reset for a condition that is not edge-shaped** (the RTH
+one-shot re-armed on idle→running, but "a new run" does not always cross that edge).
+
 **OPEN / NEXT:**
+- **`rearmRthChain()` is a BEHAVIOUR change, not just a display one** (`8669230`). A run
+  commanded while the boat is already under way now gets its own end-of-plan RTH, where
+  before it silently got none. Correct, and Andy has run it — but if an RTH ever looks
+  more eager than expected, that function is the first place to look.
 - **Payloads / sonar NOT ported** (Andy's call). It needs a vessel-declared `payloads`
   block first; the sibling's single-beam console is built from vendor manual citations
   and proprietary telegrams that this console's rules forbid.
