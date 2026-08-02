@@ -179,7 +179,9 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    start) and **orientation** (its bearing). Parallel lines fill the box
    automatically as a boustrophedon (lawnmower) route — the line *count* is
    derived from width ÷ spacing, not entered by hand. All three control points
-   stay draggable and the pattern regenerates live; an alignment option
+   stay draggable and the pattern regenerates live, and the **crosshair grip at the
+   centre moves the whole pattern** — every anchor by one delta, so shape, spacing and
+   direction are preserved exactly. An alignment option
    (start / center / finish) positions the leftover margin. Both **Spacing** and
    **Direction** are editable fields — type a value to force the spacing or rotate
    the whole pattern to a bearing. `Add to plan` commits the lines + waypoints. Set
@@ -558,6 +560,15 @@ node tests/nogo_readout.js
 landed (it used to be painted one statement too early and stuck there forever, on the one
 path that ends in a working model), and that *"clear water"* and *"no chart at all"* — both
 of which look like zero keep-outs — never read as the same thing.
+
+```
+node tests/pattern_move_grip.js
+```
+
+**Survey move grip** — that the centre handle for moving a whole pattern is both reachable
+(hit test, with corner handles still winning ties so a small pattern stays reshapeable) and
+**visible**: it is drawn last, above the boat marker, because the boat sits at the centre of
+a survey box more often than not and used to cover it completely.
 
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in

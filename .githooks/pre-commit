@@ -14,6 +14,8 @@
 #                           its end - an end-of-plan RTH must show BEFORE it fires.
 #   tests/nogo_readout.js   the Nogo row's state: that it stops reading once the extract
 #                           lands, and that "no chart" never reads as "clear water".
+#   tests/pattern_move_grip.js  the survey whole-move grip: reachable by hit test AND
+#                           drawn above the boat marker that used to bury it.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -26,7 +28,7 @@
 changed=$(git diff --cached --name-only)
 case "$changed" in
   *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*) ;;
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -63,6 +65,16 @@ if ! node tests/water_trust.js; then
   echo "pre-commit: water-trust test FAILED."
   echo "  A tide reading from far away would no longer be flagged as such"
   echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: survey move-grip regression test..."
+if ! node tests/pattern_move_grip.js; then
+  echo ""
+  echo "pre-commit: move-grip test FAILED."
+  echo "  The survey pattern's whole-move grip is unreachable again - drawn inside"
+  echo "  drawPattern() where the boat marker covers it, no longer named in the SURV"
+  echo "  hint, or losing its hit-test tie-break (drawPatMoveGrip / patHandleAt)."
   fail=1
 fi
 

@@ -21,7 +21,7 @@ shore link is a generic serial-over-IP control link.
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**EIGHT REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+**NINE REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -33,6 +33,7 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
+| `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
@@ -446,6 +447,43 @@ console: a Go-To under RTH reads `Type GOTO / End mode RTH` from the start, the 
 "END OF PLAN — returning home (RTH)", and a second Go-To commanded mid-run chains its own
 RTH (before the fix it sat holding for 5 min).
 
+## THE SURVEY MOVE GRIP WAS DRAWN, LIVE, AND INVISIBLE (2026-08-01)
+
+**Andy's report:** the SURV whole-pattern move handle "is not there — find it in zboat and
+apply it here". **It had already been ported, completely.** `patMoveLL` / `patMoveScreen` /
+the `"M"` branch of `patHandleAt` / `patMoveLast` / the translate-every-anchor drag are all
+byte-identical to the sibling, and `drawPattern` diffs identical too. Measured on the
+running page: the hit test returned `"M"` at the midpoint and a drag moved the pattern
+rigidly with spacing/direction/width/count preserved exactly.
+
+**So why "not there"? It was drawn INSIDE `drawPattern()`, which `render()` calls early —
+and `render()` paints the boat marker near the END.** The grip sits at the A-B midpoint, and
+the operator's normal move is to drive to the survey area and draw the box **around the
+boat**. A 6 px grip under a 6 px boat disc plus its 26 px heading line is simply not there.
+Measured: **ZERO grip-coloured pixels when the midpoint landed on the boat, 70 when it did
+not.** Live, draggable, and invisible in the commonest case there is.
+
+- `drawPatMoveGrip()` split out and called **last in `render()`**, just before
+  `drawViolation`. Dark halo ring + outlined "move" label so it reads against the boat and
+  the coverage lines. Worst case (grip exactly on the boat) went 0 → 24 amber px.
+- **The real port gap was the HINT.** The sibling's `#sp_hint` names the grip in both
+  variants; this port's copied the strings without the mention, so nothing on screen ever
+  told the operator the handle existed. Ported verbatim.
+- The hit-test tie-break is unchanged and load-bearing: **corners win**, so reshape stays
+  reachable on a small pattern where the grip sits near a corner.
+
+**The lesson, and it is the READOUT COROLLARY again in a different costume:** "the code is
+ported" and "the operator can use it" are different claims. The diff was clean, the logic
+was right, and the feature was still missing. **Verify a UI port by looking at the pixels,
+not the diff** — the canvas sample is what found this in about a minute.
+
+**Test:** `node tests/pattern_move_grip.js` — 7 assertions. 5 and 6 are deliberately
+**source-order** assertions (canvas z-order is not observable without a full render
+harness): the grip must NOT be drawn inside `drawPattern`, and `render()` must call
+`drawPatMoveGrip()` after the boat marker (anchored on `getCSS("--asv")`). Teeth-verified:
+grip back inside `drawPattern` → 5; no post-boat draw → 6; drop either hint mention → 7;
+wrong anchor pair → 1,2; grip wins a tie → 4; 60 px hit radius → 3.
+
 ## THE NOGO ROW WAS STUCK ON "loading…" (2026-08-01)
 
 **Andy's report:** "the nogo entry in both cards always shows ...loading". It did — and it
@@ -715,7 +753,8 @@ hook. Also ported in the same pass: the **Mission card** (then `#missionPanel`, 
 for every commanded run; **merged into the vessel-status card later the same day** — see
 that section) and the **SURV whole-pattern MOVE GRIP** (`patDrag==="M"` — crosshair
 at the A-B centre translates all CAMP anchors by one delta; corner handles win hit-test
-ties). **NOT ported, by decision:** the sonar/payload subsystem — it hardcodes a specific
+ties — **but it was buried under the boat marker and unmentioned in the hint until
+2026-08-01; see that section**). **NOT ported, by decision:** the sonar/payload subsystem — it hardcodes a specific
 two-sonar fit and would need a vessel-declared `payloads` block first, and the single-beam
 echosounder console is built from vendor manual citations and proprietary telegrams that
 this console's sanitization rules forbid.

@@ -1010,6 +1010,7 @@ function render(){
     ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
     ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
   }
+  drawPatMoveGrip();                                // above the boat — it is a HANDLE, not decoration
   drawViolation(toScreen);                          // refusal highlight (on top)
   $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
   $("#r_wpts").textContent = mission.waypoints.length;
@@ -1358,16 +1359,32 @@ function drawPattern(toScreen){
     ctx.beginPath(); ctx.arc(s.x,s.y,5,0,2*Math.PI); ctx.fillStyle=HANDLE[k].c; ctx.fill();
     ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
     ctx.fillStyle=HANDLE[k].c; ctx.fillText(HANDLE[k].t, s.x+7, s.y-6); }
-  const m = patMoveScreen();
-  if(m){                                          // whole-pattern move grip (crosshair, not a dot)
-    ctx.beginPath(); ctx.arc(m.x,m.y,6,0,2*Math.PI);
-    ctx.fillStyle="rgba(10,20,28,0.85)"; ctx.fill();
-    ctx.lineWidth=1.5; ctx.strokeStyle="#e8c14a"; ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(m.x-4,m.y); ctx.lineTo(m.x+4,m.y);
-    ctx.moveTo(m.x,m.y-4); ctx.lineTo(m.x,m.y+4);
-    ctx.lineWidth=1.2; ctx.strokeStyle="#e8c14a"; ctx.stroke();
-    ctx.fillStyle="#e8c14a"; ctx.fillText("move", m.x+8, m.y-6);
-  }
+  ctx.restore();
+  // (the whole-pattern move grip is NOT drawn here - see drawPatMoveGrip, called last)
+}
+// WHOLE-PATTERN MOVE GRIP (crosshair, not a dot) - drawn at the very END of render(),
+// not inside drawPattern(), and that placement is the whole point. The grip sits at the
+// A-B midpoint, and the operator's normal move is to drive to the survey area and then
+// draw the box AROUND THE BOAT - so the midpoint lands on the boat icon, which render()
+// paints long after the pattern. A 6 px grip under a 6 px boat marker plus its 26 px
+// heading line is simply not there as far as the operator is concerned: the handle was
+// live and draggable the whole time, and invisible in the commonest case there is.
+// Andy reported it as missing; it was drawn, buried, and unmentioned in the hint.
+function drawPatMoveGrip(){
+  const m = patMoveScreen(); if(!m) return;
+  ctx.save(); ctx.font="10px Consolas,monospace";
+  // dark halo first, so the crosshair reads against the boat marker / coverage lines
+  ctx.beginPath(); ctx.arc(m.x,m.y,8,0,2*Math.PI);
+  ctx.fillStyle="rgba(10,20,28,0.92)"; ctx.fill();
+  ctx.lineWidth=2.5; ctx.strokeStyle="rgba(10,20,28,0.92)"; ctx.stroke();
+  ctx.beginPath(); ctx.arc(m.x,m.y,6,0,2*Math.PI);
+  ctx.lineWidth=1.5; ctx.strokeStyle="#e8c14a"; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(m.x-4,m.y); ctx.lineTo(m.x+4,m.y);
+  ctx.moveTo(m.x,m.y-4); ctx.lineTo(m.x,m.y+4);
+  ctx.lineWidth=1.2; ctx.strokeStyle="#e8c14a"; ctx.stroke();
+  ctx.lineWidth=3; ctx.strokeStyle="rgba(10,20,28,0.85)";
+  ctx.strokeText("move", m.x+9, m.y-7);           // outlined, for the same reason
+  ctx.fillStyle="#e8c14a"; ctx.fillText("move", m.x+9, m.y-7);
   ctx.restore();
 }
 function updatePatReadout(){
@@ -1381,8 +1398,8 @@ function updatePatReadout(){
     $("#sp_width").textContent = sp.width.toFixed(0)+" m";
     $("#sp_count").textContent = patClip ? (patClip.length+" clipped")
       : (boundaryActive() ? (patSourceLines().length+" in area") : sp.count);
-    if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, or Punch Out / Add to plan."
-      : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add).";
+    if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out / Add to plan."
+      : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add). Centre grip moves the whole pattern.";
   } else {
     if(!pat.A){ $("#sp_spacing").value = ""; $("#sp_dir").value = ""; }  // keep typed values until A/B exist
     ["#sp_len","#sp_width","#sp_count"].forEach(id=>$(id).textContent="--");
