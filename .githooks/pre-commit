@@ -10,6 +10,10 @@
 #                           outboard excursion, nogo refusal.
 #   tests/roc_tracks.py     ROC arrival geometry, the staged/active HOME gate, moving
 #                           HOME, NMEA validation, and the VESSEL-DERIVED defaults.
+#   tests/end_action.js     what the vessel-status and Mission cards say a run does at
+#                           its end - an end-of-plan RTH must show BEFORE it fires.
+#   tests/nogo_readout.js   the Nogo row's state: that it stops reading once the extract
+#                           lands, and that "no chart" never reads as "clear water".
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -22,7 +26,7 @@
 changed=$(git diff --cached --name-only)
 case "$changed" in
   *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*) ;;
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -59,6 +63,26 @@ if ! node tests/water_trust.js; then
   echo "pre-commit: water-trust test FAILED."
   echo "  A tide reading from far away would no longer be flagged as such"
   echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: nogo readout regression test..."
+if ! node tests/nogo_readout.js; then
+  echo ""
+  echo "pre-commit: nogo-readout test FAILED."
+  echo "  The Nogo row no longer names its state - it is stuck reading after a"
+  echo "  successful extract, or 'no chart' and 'clear water' have been conflated"
+  echo "  (nogoReadout / updateNogoUI / refreshNogo in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: end-action readout regression test..."
+if ! node tests/end_action.js; then
+  echo ""
+  echo "pre-commit: end-action test FAILED."
+  echo "  The cards no longer name where the run leaves the boat - an end-of-plan RTH"
+  echo "  is being hidden behind a 'loiter', or promised where the chain cannot fire"
+  echo "  (rthPending / endAction in static/asv.html)."
   fail=1
 fi
 

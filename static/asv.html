@@ -103,11 +103,16 @@
     justify-content:space-between;font-size:10px;letter-spacing:.08em;color:var(--bronze);text-transform:uppercase;}
   .vcard .vhead .vclose{cursor:pointer;color:var(--ink-faint);padding:0 3px;}
   .vcard .vhead .vclose:hover{color:var(--bad);}
-  .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;}
+  /* The Mission block pushed the card past a laptop viewport when a run is up, so the
+     body scrolls rather than running off the bottom of the chart. */
+  .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;
+    max-height:calc(100vh - 170px);overflow-y:auto;}
   .vcard .vrow{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
   .vcard .vrow .vk{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
   .vcard .vrow .vv{color:var(--ink);font-weight:600;}
   .vcard .vv.warn{color:var(--warn);} .vcard .vv.critical{color:var(--bad);} .vcard .vv.ok{color:var(--ok);}
+  .vcard .vsec{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;display:flex;flex-direction:column;gap:4px;}
+  .vcard .vsechead{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.08em;}
   .vcard .vcomms{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;}
   .vcard .vcommsline{display:flex;align-items:center;justify-content:space-between;font-size:10px;}
   .vcard .vbar{height:5px;border-radius:2px;background:var(--line2);margin:4px 0 3px;overflow:hidden;}
@@ -347,18 +352,6 @@
     <div class="phint" id="tr_hint">Click the chart to drop transit points (1+). Then Follow.</div>
   </div>
 
-  <!-- MISSION card: one readout for every commanded run (survey / search / go-to /
-       RTH / transit). Fed by updateMissionCard() from runRoute + the reported state. -->
-  <div class="panel" id="missionPanel" style="display:none;left:182px;top:96px;width:196px;">
-    <div class="phead" id="missionPanelHead" title="Drag to move">Mission</div>
-    <div class="prow"><label>Type</label><span class="phint" id="mi_type" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>Waypoints</label><span class="phint" id="mi_wpts" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>Length</label><span class="phint" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>To end</label><span class="phint" id="mi_toend" title="Remaining distance and ~time to the end of the plan (live SOG when moving, else the plan speed)" style="color:var(--ink);">--</span></div>
-    <div class="prow"><label>End mode</label><span class="phint" id="mi_endmode" style="color:var(--ink);text-transform:uppercase;">--</span></div>
-    <div class="phint" id="mi_status" style="border-top:1px solid var(--line);padding-top:5px;">--</div>
-  </div>
-
   <!-- ROC / HOME card: track each Remote Operations Center (shore or ship/Mothership)
        from its position data stream, set its launch/recovery offset, and choose one as
        HOME. A ship HOME is a MOVING point and Return-to-Home chases it live. Rows are
@@ -472,12 +465,28 @@
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
       <div class="vrow"><span class="vk" id="v_batt_k">Battery</span><span class="vv" id="v_batt">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
-      <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="ENC nogo zones (shoreline, manmade, <1 m corrected depth) all behaviors avoid">--</span></div>
-      <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt">--</span></div>
-      <div class="vrow"><span class="vk">Run mode</span><span class="vv" id="v_mode" title="Active behaviour + plan completion (RTH / Complete / Loiter / Repeat), with lap count when repeating">--</span></div>
-      <div class="vrow"><span class="vk">Run time</span><span class="vv" id="v_runtime" title="Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent complete. Ticks from Start, including the approach to the survey.">--</span></div>
-      <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
-      <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
+      <!-- Nogo: text + tooltip are both written by updateNogoUI() -> nogoReadout(), which
+           names the STATE (reading / n zones / clear water / no chart) rather than a bare
+           count. This title is only what shows before the first paint. -->
+      <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="The charted keep-out model every commanded motion routes clear of. Not read yet.">--</span></div>
+      <!-- MISSION block: one readout for every commanded run (survey / search / go-to /
+           RTH / transit), fed by updateMissionCard() from runRoute + the reported state.
+           It was a separate pop-out card; the operator was reading the boat on one card
+           and its run on another, so it now lives here as a section that appears only
+           while there is a run to describe. Type + End mode together are what the old
+           "Run mode" row said, so that row is gone rather than repeated. -->
+      <div class="vsec" id="v_mission" style="display:none;">
+        <div class="vsechead">Mission</div>
+        <div class="vrow"><span class="vk">Type</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour running: survey / search / goto / rth / transit">--</span></div>
+        <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt" title="Progress along the uploaded route. Before Upload it shows the planned waypoint count.">--</span></div>
+        <div class="vrow"><span class="vk">Length</span><span class="vv" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)">--</span></div>
+        <div class="vrow"><span class="vk">To end</span><span class="vv" id="mi_toend" title="Remaining distance and ~time to the end of the plan (live SOG when moving, else the plan speed)">--</span></div>
+        <div class="vrow"><span class="vk">End mode</span><span class="vv" id="mi_endmode" style="text-transform:uppercase;" title="Where this run leaves the boat. Reads RTH whenever an end-of-plan Return-to-Home will chain — a Go-To, Transit or Survey under End of Plan = RTH ends at HOME, not at its last waypoint.">--</span></div>
+        <div class="vrow"><span class="vk">Run time</span><span class="vv" id="v_runtime" title="Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent complete. Ticks from Start, including the approach to the survey.">--</span></div>
+        <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
+        <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
+        <div class="vdetail" id="mi_status">--</div>
+      </div>
       <div class="vcomms">
         <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
         <div class="vbar"><i id="v_commsbar"></i></div>
@@ -538,10 +547,10 @@ const $ = s => document.querySelector(s);
 const UIROLE = (new URLSearchParams(location.search).get("panel") === "controls") ? "controls" : "main";
 document.title = UIROLE === "controls" ? "ASV Controls" : "ASV Chart";        // distinct tab names
 const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : null;
-// This console has no Mission card and no operations-centre / moving-HOME card, so
-// there is nothing for them in the list. Everything else it pops out is bridged.
+// Every pop-out this console has. There is no Mission entry: the Mission readout is a
+// section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel", "#envPanel",
-                    "#transitPanel", "#missionPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
+                    "#transitPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
                     "#aisReopen", "#chartPanel", "#vcard"];
 document.body.classList.add("ui-" + UIROLE);
 (function(){ const s = document.createElement("style"); s.textContent =
@@ -577,7 +586,7 @@ document.body.classList.add("ui-" + UIROLE);
   // main again, so the app is never left without its toolbar.
   "body.ui-split #ctlReopen{display:none!important;}"+
   "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,body.ui-split #envPanel,"+
-  "body.ui-split #transitPanel,body.ui-split #missionPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
+  "body.ui-split #transitPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
   "body.ui-split #aisReopen{display:none!important;}";
   document.head.appendChild(s); })();
@@ -1074,6 +1083,7 @@ function updateLineTip(e){
 // Shown in the LINES table + written to the session log on run end.
 let lineActual=[], lineClock=null, prevRun=null, loggedLines=false;
 let rthChained=false;              // one-shot: End-of-Plan RTH has been chained for this run
+let rthChainFailed=false;          // ... and it was REFUSED (no home / nogo) - stop promising an RTH
 let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
 let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
 function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false;
@@ -2200,7 +2210,8 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
   if(nogo.busy) return;
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
   const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
-  nogo.busy=true; updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
+  nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter
+  updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
   try{
     const d = await fetchENCBbox(b, NOGO_MIN_DEPTH_M);
     if(!d || !d.band){
@@ -2211,19 +2222,80 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     }
     nogo.features = (enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
-    rebuildNogo(); nogo.busy=false;
+    // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
+    // painting the row while this was still true left it reading "loading…" forever on
+    // the SUCCESS path - the one path that never repainted afterwards. The model was
+    // built and every behaviour routed off it correctly; only the readout was stuck,
+    // which is the worst kind of stale: it says "not ready" about something that is.
+    nogo.busy=false;
+    rebuildNogo();
     encShow=true; $("#chrtBtn").classList.add("on");
     nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones.");
     render();
-  }catch(e){ nogo.busy=false; nogo.ready=false; updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); }
+  }catch(e){ nogo.busy=false; nogo.ready=false;
+    nogo.note = "chart read failed: "+e;          // say WHY, don't leave the previous note standing
+    updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); }
 }
 function nogoStatus(t){ showBanner(t); }
+// --- what the Nogo row SAYS, and why --------------------------------------- //
+// It used to collapse the whole model into "loading…" or a bare zone count, which told
+// the operator neither what the console was doing nor - when it came up empty - WHY.
+// The same lesson as the AIS table's link status: NAME THE STATE. "no zones" because the
+// water is clear and "no zones" because there is no chart are opposite facts, and only
+// one of them means every route is now unverified.
+//
+// Every state is DERIVED from values that already exist - `busy`, `nogo.band` (set only
+// by a successful extract, so it is the "we have chart data" fact), `nogo.note` (why not,
+// when not) and the keep-out counts. No new state field, so nothing can drift out of step
+// with the model the behaviours actually route against.
+function nogoKindCounts(){                      // tally the keep-outs by their own kind names
+  const c = {}, ko = nogo.ko;
+  if(!ko) return c;
+  for(const grp of [ko.polys, ko.lines, ko.points])
+    for(const k of (grp || [])){
+      const kind = String(k.kind || "keep-out").replace(/^(a|an|the) /, "");
+      c[kind] = (c[kind] || 0) + 1;
+    }
+  return c;
+}
+function nogoReadout(){
+  const floor = (typeof NOGO_MIN_DEPTH_M === "number" ? NOGO_MIN_DEPTH_M.toFixed(1)+" m" : "?");
+  // The shared tail: what a nogo IS. The operator should never have to remember that the
+  // shallow-water part of it is derived from THIS vessel's draft.
+  const why = "\n\nThe keep-out model every commanded motion routes clear of: charted land and "
+    + "shoreline, docks and manmade features, charted hazards, and water shallower than this "
+    + "vessel's own floor (" + floor + " = draft + under-keel clearance), corrected for the live "
+    + "water level. Press NOGO to show the zones on the chart.";
+  if(nogo.busy){
+    const s = nogo.since ? Math.max(0, Math.round((Date.now() - nogo.since)/1000)) : 0;
+    return {text: "reading chart… " + s + " s", cls: "warn",
+      title: "Extracting the ENC for the operating area. Normally a few seconds; longer the "
+           + "first time a new area is fetched. The zone count replaces this when it lands - "
+           + "if the seconds keep climbing, the chart service is not answering." + why};
+  }
+  if(!nogo.band){                               // never fetched, no coverage, or the fetch failed
+    const note = nogo.note || "not loaded";
+    return {text: note.length > 34 ? note.slice(0, 32)+"…" : note, cls: "warn",
+      title: note + "\n\nThere is NO keep-out model, so Go-To / RTH / transit / survey will "
+           + "route DIRECT. Verify the path by eye before committing to it." + why};
+  }
+  const counts = nogoKindCounts(), kinds = Object.keys(counts);
+  const n = kinds.reduce((t, k)=> t + counts[k], 0);
+  const band = String(nogo.band || "?").replace("enc_", "");
+  if(!n) return {text: "clear — none charted", cls: "",
+    title: "The chart was read (ENC band " + band + ") and there is nothing to avoid within "
+         + "the operating area - open water. This is NOT the same as having no chart data." + why};
+  const brk = kinds.sort((a, b)=> counts[b] - counts[a]).map(k=> counts[k] + " × " + k).join(", ");
+  return {text: n + " zones · floor " + floor, cls: "",
+    title: "Chart read (ENC band " + band + "): " + brk + "." + why};
+}
 function updateNogoUI(){
   const btn=$("#nogoBtn");
   if(btn){ btn.classList.toggle("on", nogoShow && nogo.ready); btn.disabled = false; }
-  const el=$("#v_nogo");
-  if(el){ el.textContent = nogo.busy ? "loading…" : (nogo.ready ? nogo.note : (nogo.note||"none"));
-    el.style.color = nogo.busy ? "var(--warn)" : (nogo.ready ? "" : "var(--warn)"); }
+  const el=$("#v_nogo"); if(!el) return;
+  const r = nogoReadout();
+  el.textContent = r.text; el.title = r.title;
+  el.className = "vv " + r.cls;                 // .vv.warn is defined after .vrow .vv, so it wins
 }
 // sampled straight-leg clearance vs a keep-out model
 function legClear(a, b, ref, ko, buf){
@@ -3257,14 +3329,20 @@ async function doGoTo(target){
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
-async function doRTH(){
-  if(!S.home){ flashNote("No home set (no GPS fix yet)."); return; }
+// opts.chained marks the END-OF-PLAN RTH the console fires itself. It is only ever set by
+// that chain (the RTH button hands us a click Event, which has no .chained), and it exists
+// so a REFUSED chain can retract the "rth" the readouts are promising - the boat stays at
+// its endpoint, and the cards must say that rather than keep advertising a return home.
+async function doRTH(opts){
+  const chained = !!(opts && opts.chained === true);
+  if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
   if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
   const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
   if(plan.error){
+    if(chained) rthChainFailed=true;
     setViolation(plan.reason);
     showBanner("RTH refused: "+plan.error+" — highlighted on the chart. Reposition Home to clear water, or relax the nogo (Buf m / enforce toggles).");
     flashNote("RTH refused: "+plan.error); render(); return;
@@ -4184,6 +4262,47 @@ $("#c_speed").onchange = ()=>{ mission.speed = $("#c_speed").value; saveMission(
 // They were one field once, so commanding a Go-To made "End of Plan: RTH" read back as
 // Loiter and silently disarmed the end-of-plan RTH chain.
 function runCompletion(){ return (S && (S.run_completion || S.completion)) || mission.completion || "loiter"; }
+// ... and a THIRD thing the operator actually cares about: what this run will DO when it
+// ends. A Go-To / Transit / Hold run really does station-keep at its own endpoint
+// (run_completion "loiter"), but with End of Plan = RTH the console chains a
+// Return-to-Home the moment it holds - so the boat's end state is HOME, not that endpoint,
+// and every readout that said "loiter" was telling the operator the opposite of what was
+// about to happen. endAction() is the honest answer, and the ONLY thing the readouts show.
+//   * A run that IS the RTH keeps its own completion (it station-keeps at home).
+//   * The chain needs a home, ARM and no E-STOP - without them it cannot fire, so the
+//     readout must NOT promise an RTH.
+//   * Once the chain has been tried and REFUSED (no route home), the boat stays where it
+//     is: fall back to the real completion rather than keep promising a return.
+//   * The link holds at the last waypoint for BOTH "loiter" and "rth" - "rth" only ever
+//     becomes a return home because the console chains one on seeing that hold. A run that
+//     ends any other way (repeat laps forever, complete stops) never holds, so nothing can
+//     chain; and a run whose own completion is "rth" ends as a plain LOITER whenever the
+//     chain cannot fire. The chain, not the field, is what makes an RTH happen.
+function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="rth"; }
+function rthPending(){
+  return !!(S && S.completion==="rth" && S.behavior!=="rth" && S.home && S.armed && !S.estop
+            && !rthChainFailed && runHolds());
+}
+function endAction(){
+  if(rthPending()) return "rth";
+  const rc = runCompletion();
+  return rc==="rth" ? "loiter" : rc;
+}
+// The end-of-plan RTH chain is a ONE-SHOT per commanded run, and THIS is what re-arms it.
+// The test is UNDER WAY, not "a run just started": the console lets you command a second
+// Go-To while the first is still running, so `run` never leaves "running" and the
+// idle -> running edge below never fires. That second run inherited a SPENT chain - it
+// held at its endpoint indefinitely with nothing coming, which was invisible until the
+// cards started naming the end state and one sat there promising a return home for five
+// minutes. Seen live, 2026-08-01.
+// Under way means one of exactly two things, and both want the guard cleared: a newly
+// commanded run, which has earned its own end-of-plan RTH; or the chained RTH itself,
+// which the `behavior !== "rth"` guard already excludes from re-firing. While the boat is
+// HOLDING - including the seconds doRTH spends routing - nothing is cleared, so the
+// one-shot still does its job.
+function rearmRthChain(s, st){
+  if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; }
+}
 // Close the loop: the selector mirrors the SERVER's setting, so the two can never drift
 // apart unnoticed. Skipped while the operator has the control open, so it can't fight a
 // selection mid-change.
@@ -4323,7 +4442,7 @@ function paintUICanvas(sel, png){
 // drag (by the grip) and resize (native corner). The card owns position/size and is NOT
 // part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
 const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
-  "#envPanel":"Environment", "#transitPanel":"Transit", "#missionPanel":"Mission", "#rocPanel":"ROC · HOME",
+  "#envPanel":"Environment", "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source", "#vcard":"Vessel"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ try{ return JSON.parse(localStorage.getItem(UI_LAYOUT_KEY)) || {}; }catch(e){ return {}; } }
@@ -4838,13 +4957,14 @@ function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
   if(prevRun!=="running" && prevRun!=="paused" && s.run==="running"){ resetLineStats(); resetRunTimer();
-    if(s.behavior!=="rth") rthChained=false; }   // fresh run re-arms the RTH chain (but not the chained RTH itself)
+    if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
   if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
   prevRun=s.run;
   accumRunTime();                                // accrue whole-run elapsed (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
   syncCompletionSel(s);                          // the selector mirrors the server setting
+  rearmRthChain(s, st);
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
   // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
@@ -4852,7 +4972,7 @@ function onState(s){
      && s.armed && !s.estop && !rthChained){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");
-    doRTH();
+    doRTH({chained:true});
   }
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
   $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
@@ -4918,15 +5038,8 @@ function onState(s){
   const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");
   $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
 
-  // run mode: active behaviour + plan completion (+ lap count when repeating)
-  // RUN MODE describes the run IN PROGRESS, so it shows run_completion - a Go-To reads
-  // "goto · loiter" because that Go-To really does station-keep. The operator's
-  // end-of-plan SETTING is the command-bar selector, driven from s.completion below.
-  const beh = s.behavior || "survey", comp = s.run_completion || s.completion || "rth";
-  const laps = (st.laps!=null) ? st.laps : 0;
-  let mtxt = beh + " · " + comp;
-  if(comp==="repeat" && (s.run==="running")) mtxt += " · lap "+(laps+1);
-  $("#v_mode").textContent = mtxt;
+  // (Run mode used to live here as "behaviour · completion". It is now the Mission block's
+  // Type + End mode rows, driven by updateMissionCard() - one place, not two.)
 
   // comms
   const cm = s.comms || {};
@@ -5225,12 +5338,16 @@ $("#env_apply").onclick = ()=>{
   if(!Object.keys(body).length){ showBanner("Enter at least one override value, or use Auto."); return; }
   postEnv(body);
 };
-// --- MISSION card: one readout paradigm for EVERY commanded run ------------ //
-// Survey / Search / Go-To / RTH / Transit all set `runRoute` (the ENC-routed path)
-// and the server reports behavior + holding/drifting, so one derivation covers them
-// all: type, routed length, live to-end, and the end state (loiter / drift / laps).
+// --- MISSION block (inside the vessel-status card) ------------------------- //
+// One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit
+// all set `runRoute` (the ENC-routed path) and the server reports behavior +
+// holding/drifting, so one derivation covers them all: type, routed length, live to-end,
+// and the end state (rth / loiter / drift / laps).
+// It used to be its own pop-out card, which split the boat and its run across two places
+// to look. It is now a section of the vessel-status card, shown only while there is a run
+// to describe - so an idle console is not carrying eight "--" rows.
 function updateMissionCard(){
-  const p=$("#missionPanel"); if(!p) return;
+  const p=$("#v_mission"); if(!p) return;
   const st=(S&&S.status)||{}, run=S&&S.run;
   // nogo.busy counts as active so the "loading" phase is visible while the chart is
   // extracted / the route is prepared (the phase before "running").
@@ -5241,8 +5358,9 @@ function updateMissionCard(){
   let kind = S.behavior || "survey";
   if(kind==="survey" && planKind==="search") kind="search";   // a committed search runs as a survey plan
   $("#mi_type").textContent = kind.toUpperCase();
-  $("#mi_wpts").textContent = S.wp_total ? (S.wp_index||0)+" / "+S.wp_total
-                                         : (runRoute ? runRoute.length : "--");
+  // Waypoint progress is the top bar's WPT pill (written in onState) once a plan is
+  // uploaded; before that there is no progress to report, so show what was PLANNED.
+  if(!S.wp_total && runRoute && runRoute.length) $("#v_wpt").textContent = runRoute.length + " planned";
   const rr = routeRemainingM();
   $("#mi_len").textContent = rr ? fmtLenM(rr.total) : "--";
   const spdPlan=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
@@ -5250,7 +5368,7 @@ function updateMissionCard(){
   const ended = st.holding || st.drifting;
   $("#mi_toend").textContent = ended ? "arrived"
     : (rr && spd>0 ? fmtLenM(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
-  $("#mi_endmode").textContent = runCompletion();
+  $("#mi_endmode").textContent = endAction();     // "rth" while an end-of-plan RTH is still to come
   // plan status -> through to the END state (the common paradigm's last phase)
   const end=(runRoute&&runRoute.length)?runRoute[runRoute.length-1]
            :((mission.waypoints||[]).length?mission.waypoints[mission.waypoints.length-1]:null);
@@ -5262,8 +5380,12 @@ function updateMissionCard(){
       + (st.env_set_kn? ", set "+st.env_set_kn+" kn"+(st.env_set_deg!=null?" toward "+Math.round(st.env_set_deg)+"°":"") : "")
       + (dEnd!=null? " · "+fmtLenM(dEnd)+" from plan end" : "");
   } else if(st.holding){
-    const atHome = (S.completion==="rth" && S.behavior==="rth");   // chained RTH has arrived
-    s = (atHome ? "RTH — home: station-keeping" : "LOITER — station-keeping at the last waypoint")
+    const atHome = (S.behavior==="rth");   // an RTH run's endpoint IS home, chained or hand-pressed
+    // Holding at a Go-To/Transit endpoint with an RTH still to chain is a WAYPOINT, not
+    // the end of the run - naming it "LOITER" read as "this is where the boat stays".
+    s = (atHome ? "RTH — home: station-keeping"
+        : rthPending() ? "END OF PLAN — returning home (RTH)"
+        : "LOITER — station-keeping at the last waypoint")
       + (dEnd!=null? ": "+fmtLenM(dEnd)+" off" : "")
       + " (arrival "+(mission.arrival_radius_m||2)+" m)";
   } else if(run==="running"){
@@ -5275,27 +5397,9 @@ function updateMissionCard(){
   else { s = "planned — "+(kind==="goto"||kind==="rth"||kind==="transit" ? "commanded" : "Arm → Upload → Start"); }
   $("#mi_status").textContent = s;
 }
-// draggable Mission card (same drag/persist pattern as the other pop-out cards)
-const MISSIONPANEL_KEY = "asv_missionpanel_pos_v1";
-const missionPanelEl = $("#missionPanel"), missionPanelHead = $("#missionPanelHead");
-(function(){ try{ const p = JSON.parse(localStorage.getItem(MISSIONPANEL_KEY));
-  if(p && p.left!=null && p.top!=null){ missionPanelEl.style.left = p.left+"px"; missionPanelEl.style.top = p.top+"px"; }
-}catch(e){} })();
-let missionDrag = null;
-missionPanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
-  const r = missionPanelEl.getBoundingClientRect(); missionDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-window.addEventListener("mousemove", e=>{
-  if(!missionDrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = e.clientX - missionDrag.dx, top = e.clientY - missionDrag.dy;
-  left = Math.max(0, Math.min(mr.width - missionPanelEl.offsetWidth, left));
-  top  = Math.max(0, Math.min(mr.height - missionPanelEl.offsetHeight, top));
-  missionPanelEl.style.left = left+"px"; missionPanelEl.style.top = top+"px";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!missionDrag) return; missionDrag = null;
-  try{ localStorage.setItem(MISSIONPANEL_KEY, JSON.stringify({left: parseFloat(missionPanelEl.style.left), top: parseFloat(missionPanelEl.style.top)})); }catch(e){}
-});
+// (The Mission card's own drag/persist went with it when it was folded into the
+// vessel-status card - it now moves with that card's header, and its old saved position
+// key "asv_missionpanel_pos_v1" is simply left orphaned in localStorage.)
 
 // --- ROC · HOME card ------------------------------------------------------ //
 // Tracks each Remote Operations Center (shore or ship/Mothership), its launch/recovery
@@ -5476,7 +5580,10 @@ try{ if(localStorage.getItem(AIS_KEY)==="1") setAIS(true); }catch(e){}   // rest
 function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
   const L=p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
   const U=p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds());
-  const el=$("#p_time"); if(el) el.textContent = L+" · "+U+"Z"; }
+  const el=$("#p_time"); if(el) el.textContent = L+" · "+U+"Z";
+  // The Nogo row counts the seconds while an extract is in flight, so a chart service
+  // that has stopped answering looks different from one that is simply slow.
+  if(UIROLE === "main" && nogo.busy) updateNogoUI(); }
 setInterval(tickClock, 1000); tickClock();
 // The controls window is a mirror only - it runs no app logic, no SSE, no chart. Only
 // the main window boots the app; both wire the UI-split bridge.

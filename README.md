@@ -314,6 +314,16 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    drawn green from the boat, shrinking as it goes). If there's no ENC coverage the
    console warns and routes direct — verify the plan.
 
+   The vessel-status card's **Nogo** row names which of four things is true, because they
+   are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
+   service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
+   floor 2.3 m* (the depth floor is **this vessel's** — draft + under-keel clearance — and
+   the tooltip breaks the count down by kind: docks, shoreline, hazards, shallow water,
+   land, buoys), *clear — none charted*, or the reason there is **no model at all**. That
+   last one is the one that matters: "the chart was read and there's nothing to avoid" and
+   "nothing has been checked and every route is direct" both look like zero zones and mean
+   opposite things, so only the second is flagged amber and says so.
+
    **Keep right in channels (COLREGS Rule 9).** Every *transit* in **every
    behaviour** — Go-To, RTH, the drawn Transit line, the approach leg to a survey,
    the routed transits between survey lines (Punch Out), search-pattern transits,
@@ -382,6 +392,22 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    at the end — **RTH** (chain the ENC-routed Return-to-Home and station-keep at home;
    the default), **Complete** (stop), **Loiter** (station-keep at the last waypoint), or
    **Repeat** (loop the route). Watch waypoint progress, track, and battery.
+
+   **The card says where the run leaves the boat.** With End of Plan = **RTH** the
+   console chains a real ENC-routed Return-to-Home at the end of a **Go-To** or
+   **Transit** exactly as it does at the end of a survey — so the vessel-status card's
+   **Mission** block reads *End mode: **RTH*** for all three from the moment the run
+   starts, and its status line calls the last moments *"END OF PLAN — returning home
+   (RTH)"* instead of a loiter. It only says RTH when the return can actually happen:
+   no home set, disarmed, E-STOP latched, a **Repeat** run that never ends, or a return
+   that was routed and refused all read as what the boat will really do instead.
+
+   That **Mission** block — type, waypoint progress, routed length, distance and time to
+   the end, end mode, run time, and a plain-language status line — is the one readout
+   every commanded run shares (survey, search, Go-To, RTH, transit). It used to be its
+   own pop-out card, which put the boat on one card and its run on another; it is now a
+   section of the **vessel-status** card that appears only while there is a run to
+   describe.
 5. **Pause / Stop / E-STOP** — Pause holds the next waypoint; Stop aborts the
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.
@@ -514,7 +540,26 @@ selection, and that a plan run actually *adopts* that selection. This one drives
 console over the API, because the failure it guards was an interaction between a command
 and persisted state.
 
-A pre-commit hook runs all three automatically whenever a source they cover, or any test
+```
+node tests/end_action.js
+```
+
+**End action** — that the card names where the run actually leaves the boat: an
+end-of-plan Return-to-Home shows as **RTH** on a Go-To, a Transit and a survey alike,
+from the start of the run rather than the moment it fires; that it is *not* promised
+when the chain cannot fire (no home, disarmed, E-STOP, a Repeat run, a refused route);
+and that the one-shot re-arms for a run commanded while the boat is already under way.
+
+```
+node tests/nogo_readout.js
+```
+
+**Nogo readout** — that the row stops saying "reading chart" once the extract has actually
+landed (it used to be painted one statement too early and stuck there forever, on the one
+path that ends in a working model), and that *"clear water"* and *"no chart at all"* — both
+of which look like zero keep-outs — never read as the same thing.
+
+A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
 `.githooks/`; **enable it once per clone**:
 

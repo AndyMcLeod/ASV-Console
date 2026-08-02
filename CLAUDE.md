@@ -21,7 +21,7 @@ shore link is a generic serial-over-IP control link.
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIX REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+**EIGHT REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -31,8 +31,14 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
+| `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
+
+**LATEST (2026-08-01, uncommitted at handoff):** the **END ACTION**, the **Mission card
+merged into the vessel-status card**, and the **Nogo row stuck on "loading…"** — all three
+sections below. New suites `tests/end_action.js` and `tests/nogo_readout.js`.
 
 **This session (2026-08-01), six commits, all with sections below:**
 - `2a28a59` **ROC + moving HOME** ported from the sibling (`roc_tracks.py`, `/api/roc`,
@@ -145,10 +151,11 @@ all logic; the controls window renders no app logic, mirrors main's control DOM,
 forwards gestures back so every existing handler still runs exactly once, on main.
 
 - `UIROLE` from the query string; tabs self-title **ASV Chart** / **ASV Controls**.
-- `UI_BRIDGED` = `.controls` + every pop-out this console has. **No `#missionPanel` or
-  `#rocPanel`** — the Mission card and the operations-centre/moving-HOME card are
-  sibling-only features. Verified: every bridged selector, every `UI_CARD_TITLES` key and
-  every `#id` named in the injected CSS resolves against this page's DOM.
+- `UI_BRIDGED` = `.controls` + every pop-out this console has. `#rocPanel` joined it with
+  the ROC port; **there is no `#missionPanel` entry** — since 2026-08-01 the Mission
+  readout is a section of `#vcard` and rides across on that card's mirror. Verified: every
+  bridged selector, every `UI_CARD_TITLES` key and every `#id` named in the injected CSS
+  resolves against this page's DOM.
 - Controls-window CSS hides the chart/status/command bar, drops the vessel card rows the
   top status bar already shows, pins the buttons as a left column, and wraps each panel in
   a draggable+resizable `.uicard` (layout persisted to `localStorage`, key
@@ -380,6 +387,116 @@ manual override exists for that; the manual exemption lives in `waterTrust()` an
 there (a duplicate guard in `effectiveWaterOffset` was unreachable and was removed —
 an unreachable guard is one nobody is testing).
 
+## THE END ACTION — what the card says a run ENDS as (2026-08-01)
+
+**Andy's report:** with End of Plan = RTH the boat *does* come home at the end of a Go-To,
+a Transit or a Survey — the chain works — but until it fired, every readout said the run
+would LOITER. "An RTH triggered at end of mission should SHOW as an RTH."
+
+**Same shape as the completion bug above, one layer up.** `run_completion` is the literal
+completion the LINK was uploaded with, and for a Go-To/Transit/Hold that really is
+`loiter`. What happens NEXT is the client's chain, which the readouts knew nothing about.
+Each field was accurate about itself and **wrong about the boat**.
+
+**`endAction()` is the third value, and the ONLY one the cards show.** The run's own
+completion, upgraded to `rth` when the chain will fire and downgraded `rth`→`loiter` when
+it cannot. `rthPending()` holds the preconditions: a home, ARM, no E-STOP, the **live**
+setting (not the frozen uploaded one), a run that actually HOLDS (`runHolds()` — repeat
+laps forever, complete stops, neither can chain), and `!rthChainFailed` (doRTH refused →
+retract the promise; set only for `doRTH({chained:true})`, since the button hands it a
+click Event). **The link holds for both `loiter` and `rth`; only the chain makes it a
+return home** — so the field never decides on its own.
+
+**Found live while verifying it, and worth more than the display fix:** the chain's
+one-shot `rthChained` was re-armed only on the idle→running edge. The console lets you
+command a second Go-To while the first is still running, so `run` never leaves `running`
+and that edge never fires — the second run inherited a **spent chain** and held at its
+endpoint indefinitely. Invisible before; now the card would advertise a return home for
+five minutes. `rearmRthChain()` re-arms on **UNDER WAY** (`running && !holding`), which is
+either a new commanded run (has earned its own chain) or the chained RTH itself (excluded
+by the `behavior!=="rth"` guard). Holding — including the seconds `doRTH` spends routing —
+never re-arms, so the one-shot still does its job.
+
+**Test:** `node tests/end_action.js` — 16 assertions over the real page functions.
+Teeth-verified: drop `runHolds()` → 10,11; drop the `rth`→`loiter` fallback → 6,12; read
+`run_completion` instead of the live setting → 1,2,12; drop `rthChainFailed` → 9; drop the
+armed/estop guards → 7,8; drop `behavior!=="rth"` → 5; re-arm on every running frame → 15;
+re-arm only on idle→running (the old behaviour) → 14. **Live-verified** on a scratch
+console: a Go-To under RTH reads `Type GOTO / End mode RTH` from the start, the hold reads
+"END OF PLAN — returning home (RTH)", and a second Go-To commanded mid-run chains its own
+RTH (before the fix it sat holding for 5 min).
+
+## THE NOGO ROW WAS STUCK ON "loading…" (2026-08-01)
+
+**Andy's report:** "the nogo entry in both cards always shows ...loading". It did — and it
+was a **repaint bug wearing a vague word**, not a wording problem.
+
+`refreshNogo()`'s success path ended `rebuildNogo(); nogo.busy=false;` — and `rebuildNogo()`
+finishes by calling `updateNogoUI()`. So the row was painted **while `busy` was still true**,
+printed "loading…", and then nothing ever repainted it. **The one path that ends in a working
+model was the one path that never showed it.** Every behaviour routed correctly off a model
+the card insisted was still loading — the worst kind of stale readout: it reports NOT READY
+about something that is. Fix: clear `busy` **before** `rebuildNogo()`.
+
+**Then the wording, which was the real ask.** `nogoReadout()` names the STATE — the same
+lesson the AIS table already learned about its link status. Four states, and the pair that
+matters: **"clear water" and "no chart" both look like zero keep-outs and are opposite
+facts** — one is open water, the other means nothing was checked and every route is direct
+and unverified. `nogo.band` (set only by a SUCCESSFUL extract) is what tells them apart;
+`nogo.ready` cannot, because it is false in both.
+
+- reading → `reading chart… 6 s`, **counting seconds** so a hung chart service does not look
+  like a slow first fetch. Ticked from `tickClock()` while `busy`.
+- read → `334 zones · floor 2.3 m` (the floor is **vessel-derived**, so the operator sees
+  what "shallow" means for the boat they are driving), tooltip broken down by the keep-outs'
+  **own `kind` strings** — it can never invent a category the model does not have.
+- clear water → `clear — none charted`, normal colour.
+- no chart / failed → the reason, truncated in the row and whole in the tooltip, warn colour,
+  and the tooltip says routes will go DIRECT. The `catch` now sets `nogo.note` instead of
+  leaving the previous one standing.
+
+**NO NEW STATE FIELD** — every state derives from `busy` / `nogo.band` / `nogo.note` / the
+counts, so nothing can drift out of step with the model behaviours actually route against.
+(Only `nogo.since`, a timestamp for the elapsed display.)
+
+**Test:** `node tests/nogo_readout.js` — 15 assertions. 10–14 drive the **real**
+`refreshNogo` → `rebuildNogo` → `updateNogoUI` with only the leaves stubbed (chart fetch,
+keep-out builder, banner, DOM) and record every paint, because wording assertions alone
+would never have caught a statement-ordering bug. Teeth-verified: **restore the original
+order → 10,11 fail**; key off `nogo.ready` → 4,6; drop the busy branch → 1,2,12; drop the
+elapsed counter → 2; fold no-chart into clear-water → 5,13,14; drop the article strip → 7;
+untruncated note → 6; no note on the throw path → 14. Live at Lewes: `334 zones · floor
+2.3 m`, tooltip `126 × dock / pier, 93 × shoreline, 57 × charted hazard, 37 × water
+shallower than 2.3 m, 16 × land, 5 × channel buoy`.
+
+**Two harness traps this suite hit, both worth remembering:**
+1. `grab()` matches `"function NAME("` and **silently drops an `async` prefix** — the torn
+   body was a SyntaxError (loud, luckily). It now grabs the modifier too.
+2. A **stray top-level `process.exit()`** after the async IIFE ended the process at exit 0
+   after check 9, silently skipping five checks. The summary now prints the number of
+   checks that RAN.
+
+## MISSION CARD MERGED INTO THE VESSEL-STATUS CARD (2026-08-01)
+
+Andy's call, same pass. The operator was reading the boat on one card and its run on
+another. `#missionPanel` is gone; its rows live in `#vcard` as `#v_mission`, a `.vsec`
+shown only while there is a run to describe (`updateMissionCard()` now targets it).
+
+- **The old `Run mode` row (`#v_mode`) is DELETED, not moved** — it was `behaviour ·
+  completion`, which is exactly the block's `Type` + `End mode`. Merging means removing
+  the duplicate, not carrying it.
+- `#v_wpt` moved INTO the block (so the controls window's "drop what the top bar already
+  shows" rule still hides it) and gained the old `mi_wpts` pre-upload fallback, as
+  "N planned". `#mi_wpts` is gone.
+- Removed with the panel: its drag/persist block (the orphaned `asv_missionpanel_pos_v1`
+  key is left in localStorage), and its entries in `UI_BRIDGED`, `UI_CARD_TITLES` and the
+  `ui-split` hide list. **The stale comment claiming this console has no Mission card is
+  now true again.**
+- `.vbody` gained `max-height:calc(100vh - 170px); overflow-y:auto` — the block pushed the
+  card past a laptop viewport with a run up.
+- Verified live in BOTH windows: main renders the merged card; the controls window shows
+  one `.uicard` "Vessel" carrying the mission rows and no stale Mission card.
+
 ## END-OF-PLAN SETTING vs RUN COMPLETION — one field per concept (2026-08-01)
 
 **Bug Andy hit (and had hit before):** End of Plan **RTH** selected, console acting on
@@ -402,9 +519,11 @@ RTH chain (which gates on that value) was silently disarmed in between.
 - `Engine.run_completion` — what the run in progress does at ITS end. `_run_route` sets
   `loiter` (correct for a Go-To); `start()` sets it from `plan_completion()`.
 - **Both** are published: `completion` (setting) and `run_completion` (this run). Client:
-  the command-bar selector and the RTH chain read `s.completion`; the RUN MODE pill and
-  Mission card read `runCompletion()`. `syncCompletionSel()` mirrors the server's setting
-  back into the selector (skipped while focused), so the two **cannot drift unnoticed**.
+  the command-bar selector and the RTH chain read `s.completion`; the cards read
+  **`endAction()`**, which is built on `runCompletion()` — see the END ACTION section
+  above; the RUN MODE row that read `runCompletion()` directly is gone.
+  `syncCompletionSel()` mirrors the server's setting back into the selector (skipped
+  while focused), so the two **cannot drift unnoticed**.
 
 **Test:** `python tests/completion_modes.py` — 10 assertions, ~5 s, drives a REAL console
 over the API because the failure was an interaction between a command and persisted
@@ -572,8 +691,9 @@ verifies the checksum and rejects a void fix: a GPS feed is untrusted input.
 **Test:** `python tests/roc_tracks.py` — 17 assertions, teeth-verified (drop the relative
 branch → 4 fails; let a staged ROC be HOME → 6 fails; hardcode the standoff → 9 fails;
 skip `configure_vessel` → 11 fails; skip the checksum → 14 fails). Run by the pre-commit
-hook. Also ported in the same pass: the **Mission card** (`#missionPanel`, one readout for
-every commanded run) and the **SURV whole-pattern MOVE GRIP** (`patDrag==="M"` — crosshair
+hook. Also ported in the same pass: the **Mission card** (then `#missionPanel`, one readout
+for every commanded run; **merged into the vessel-status card later the same day** — see
+that section) and the **SURV whole-pattern MOVE GRIP** (`patDrag==="M"` — crosshair
 at the A-B centre translates all CAMP anchors by one delta; corner handles win hit-test
 ties). **NOT ported, by decision:** the sonar/payload subsystem — it hardcodes a specific
 two-sonar fit and would need a vessel-declared `payloads` block first, and the single-beam

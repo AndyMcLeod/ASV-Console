@@ -118,6 +118,11 @@ link (sim or real) only obeys. Order matters:
    no E-STOP. **Completion** (command bar) sets the end behaviour: *RTH* (chain the
    ENC-routed Return-to-Home and station-keep at home — the default), *Complete* (stop),
    *Loiter* (station-keep at the last waypoint), or *Repeat* (loop the route).
+   The chain is not a survey feature: a **Go-To** or **Transit** under *RTH* holds at its
+   endpoint for a moment and then returns home too. The vessel-status card's **Mission**
+   block says so up front — *End mode* reads **RTH** for the whole run, and only reads it
+   when the return can actually happen (a home is set, armed, no E-STOP, the run does end,
+   and the route home was not refused).
 4. **Pause** — holds position, keeps the next waypoint active; **Start** resumes.
 5. **Stop** — aborts the run plan (reverts to the first waypoint; re-upload/Start
    to run again).
