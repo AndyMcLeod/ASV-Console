@@ -15,7 +15,7 @@ shore link is a generic serial-over-IP control link.
 
 ## ⇒ START HERE (handoff 2026-08-01, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`8669230`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`e070350`**. Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
@@ -37,7 +37,14 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
-**This session (2026-08-01), seven commits, all with sections below:**
+**This session (2026-08-01), eight commits, all with sections below:**
+- `e070350` **the survey move grip was drawn, live, and invisible** — Andy asked for the SURV
+  whole-pattern handle to be ported from the sibling. **It already was, byte-identical and
+  working**; it was drawn inside `drawPattern()` (early) and the boat marker (late) painted
+  over it, and the boat sits at the A-B midpoint whenever you draw the box around it.
+  Measured: **0 grip pixels on the boat, 70 off it.** Now drawn last, haloed, and finally
+  named in the SURV hint — which was the one thing the port actually missed. New suite
+  `tests/pattern_move_grip.js` (7). **DIVERGENCE FROM THE Z-BOAT — see that section.**
 - `8669230` **the cards say what the boat is actually going to do** — three readout faults
   Andy reported, all the same shape. (a) **END ACTION**: an end-of-plan RTH now reads `rth`
   on a Go-To / Transit / Survey from the START of the run, and is *not* promised when the
@@ -78,6 +85,15 @@ mechanics behind it, both worth checking directly: a **paint taken before the fl
 reads was cleared** (the Nogo row; the success path was the one that never repainted),
 and an **edge-triggered reset for a condition that is not edge-shaped** (the RTH
 one-shot re-armed on idle→running, but "a new run" does not always cross that edge).
+`e070350` added a third: a **control painted before something that covers it** (the move
+grip under the boat marker). All three were live, correct, and unusable.
+
+**AND THE PORT COROLLARY (`e070350`):** a clean diff is not evidence a UI port works. That
+grip was byte-identical to the sibling's and the feature was still missing. **Verify a UI
+port by looking at the pixels** — `getImageData` at a known screen point costs one tool
+call, works on the animating canvas where screenshots time out, and answered in a minute
+what the diff had already said was fine. Ask "can the operator SEE it and REACH it", not
+"is the code here".
 
 **OPEN / NEXT:**
 - **`rearmRthChain()` is a BEHAVIOUR change, not just a display one** (`8669230`). A run
@@ -87,8 +103,13 @@ one-shot re-armed on idle→running, but "a new run" does not always cross that 
 - **Payloads / sonar NOT ported** (Andy's call). It needs a vessel-declared `payloads`
   block first; the sibling's single-beam console is built from vendor manual citations
   and proprietary telegrams that this console's rules forbid.
-- **Two pre-existing `Z-Boat` mentions** in `static/asv.html` comments (~2388, ~4628)
-  and one in `asv_console.py` (~87), all flagged to Andy and left alone pending his call.
+- **FOUR pre-existing `Z-Boat` mentions**, all in comments/docstrings, flagged to Andy and
+  left alone pending his call. Cited by CONTENT, not line number — the old note gave line
+  numbers, they drifted, and the count was wrong: `grep -n "Z-Boat" static/asv.html
+  asv_console.py`. `static/asv.html`: the CHANNEL LANE header ("ported from the Z-Boat
+  sibling") and the spawn-override comment ("Erie for the Z-Boat, Lewes for the DriX").
+  `asv_console.py`: the port note ("never collides with the Z-Boat console") and the same
+  Erie/Lewes phrase in a docstring.
 - **The sibling's teardrop branch is undriven** — reachable only at high speed under
   8.3 m line spacing. Low risk, but the 2026-07-20 lesson stands: static `legClear` does
   not catch follow overshoot.
@@ -472,6 +493,12 @@ not.** Live, draggable, and invisible in the commonest case there is.
 - The hit-test tie-break is unchanged and load-bearing: **corners win**, so reshape stays
   reachable on a small pattern where the grip sits near a corner.
 
+**DIVERGENCE FROM THE Z-BOAT, and it is now the only one in this feature.** The sibling
+still draws its grip inside `drawPattern()` and has the same burial — it was never noticed
+there. **A future re-port of the survey code from the sibling would silently undo this**;
+`tests/pattern_move_grip.js` check 5 is what will catch that. The hint strings, by contrast,
+now MATCH the sibling — that half was a plain port gap, not a divergence.
+
 **The lesson, and it is the READOUT COROLLARY again in a different costume:** "the code is
 ported" and "the operator can use it" are different claims. The diff was clean, the logic
 was right, and the feature was still missing. **Verify a UI port by looking at the pixels,
@@ -704,6 +731,15 @@ offset fails 6, reversing the middle sweep fails 4, dropping the nogo sweep fail
   pins `.githooks/**` to LF — a CRLF shebang breaks the interpreter on checkout.
 - The map page canvas animates continuously — **browser-pane screenshots time
   out**; verify via DOM/`read_page` or the state endpoints instead.
+- **CANVAS PIXEL SAMPLING is the way to check anything DRAWN** (found 2026-08-01, and it
+  found the buried move grip). `canvas.getContext("2d").getImageData(x, y, w, h)` over a
+  small box at a known screen point, then count pixels matching the feature's own colour —
+  one `javascript_tool` call, no screenshot, immune to the animation. Two traps: the boat
+  is drawn at the same place as several handles, so **place synthetic geometry AWAY from
+  the boat** unless burial is what you are testing (an accidental overlap is what made the
+  grip look broken, then proved it was); and `javascript_tool` caps at ~30 s, so long waits
+  belong in a `setInterval` sampler read back by a later call — but note a **hidden browser
+  pane throttles timers to ~1/min**, so trust the outcome, not the sample density.
 - Windows/store-Python gotcha: a stray server process can hold the port and serve
   stale code. Check `netstat -ano | grep :<port>` and `taskkill //F //PID <n>`
   before retesting server changes.
