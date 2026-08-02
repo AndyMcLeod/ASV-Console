@@ -80,7 +80,11 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # simulator and the UI use, so those values live in ONE place (the vessel file)
 # instead of being hardcoded and duplicated across server and client.
 VESSELS_DIR = os.path.join(APP_DIR, "vessels")
-DEFAULT_VESSEL_ID = "zboat_1800hs"
+# The DriX at Lewes is the working default: it is the vessel actually being operated,
+# and the default decides more than the hull. The AIS service subscribes to a box around
+# the THEN-CURRENT spawn at startup, so a default that spawns elsewhere leaves the
+# traffic layer scoped to the wrong water until a vessel switch re-scopes it.
+DEFAULT_VESSEL_ID = "drix08"
 # Unique per server run. Sent in every state so the browser can tell a page refresh
 # (same run - keep the trail) from a reboot (new run - drop the stale trail; the run
 # is in the session logs). Changes on every restart.

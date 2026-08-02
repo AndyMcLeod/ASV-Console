@@ -545,7 +545,11 @@ the console core; vessel *files* may name real modeled vessels.
 - **Server running** (during dev) on port **8791**, active vessel **drix08**,
   logging ON (`logs/asv_*.jsonl`). Restart pattern: kill stale PIDs on the port
   first (see Testing notes), then `python asv_console.py --sim --vessel drix08`.
-- **Vessels:** `zboat_1800hs` (small battery ASV), `example_usv_4m` (battery),
+- **Vessels:** `drix08` is the **DEFAULT** (`DEFAULT_VESSEL_ID`) — it is the vessel
+  actually operated, and the default also decides the AIS start-up scope (the service
+  subscribes around the then-current spawn, so an Erie default left the traffic layer on
+  the wrong water until a switch re-scoped it). `zboat_1800hs` (small battery ASV),
+  `example_usv_4m` (battery),
   `drix08` = **Exail DriX H-8**, 7.71 m **diesel** (fuel model), operating from the
   **UDel Lewes facility** — spawn `38.789650, -75.160940` (Lewes-Rehoboth Canal
   centerline). DriX tuned params: `nogo_buffer_m 5`, `under_keel_clearance_m 0.3`

@@ -69,7 +69,8 @@ vessel-specific parameter — hull/windage, speeds, turn rate, autopilot gains, 
 **energy model** (battery *or* diesel fuel), planning defaults (incl. under-keel
 clearance), spawn — lives in one self-contained file under `vessels/<id>.json`,
 and that file is the single source of truth (the server and the UI both read it,
-nothing is hardcoded twice). Profiles that ship: `zboat_1800hs` (a small ~1.9 m
+nothing is hardcoded twice). **The default is `drix08`** — the DriX H-8 at Lewes.
+Profiles that ship: `zboat_1800hs` (a small ~1.9 m
 battery survey ASV), `drix08` (the Exail DriX H-8, a 7.71 m **diesel** survey USV
 — shows fuel/endurance/range, not battery), and `example_usv_4m` (a larger
 illustrative USV). Add your own by dropping a new complete `vessels/<id>.json`.

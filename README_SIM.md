@@ -171,8 +171,8 @@ The energy model comes from the **active vessel** (`power.type`), and the sim
 depletes it live so you can watch the gauge band change on a long run.
 
 **Battery vessels** (`power.type: "battery"` — e.g. `zboat_1800hs`, `example_usv_4m`)
-report a voltage that sags with load, banded from `power.battery_v`. For the
-default `zboat_1800hs`:
+report a voltage that sags with load, banded from `power.battery_v`. For
+`zboat_1800hs`:
 
 | | Voltage | Meaning |
 |---|---|---|
@@ -302,7 +302,7 @@ curl -s -X POST localhost:8791/api/vessel -d '{"id":"example_usv_4m"}'  # switch
 | `--host` | `127.0.0.1` | Web UI bind address. |
 | `--port` | `8791` | Web UI port. |
 | `--browser` | `edge` | `edge` / `chrome` / `default` / `none`. |
-| `--vessel ID` | `zboat_1800hs` | Active vessel profile from `vessels/<id>.json` (hull/speeds/turn/battery/…). |
+| `--vessel ID` | `drix08` | Active vessel profile from `vessels/<id>.json` (hull/speeds/turn/battery/…). |
 | `--vcu HOST` | — | Auto-connect to a **real** VCU (serial-over-IP) instead of sim. |
 | `--transport` | `tcp` | `tcp` (serial-over-IP) or `serial` (COM port) for a real VCU. |
 | `--vcu-port` | `4001` | Real-VCU port. |
