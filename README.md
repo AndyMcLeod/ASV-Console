@@ -406,6 +406,14 @@ the cursor — with play/pause, speed, and a scrubber. It's **read-only** (no
 commanding) and works for sim and real sessions alike. See
 [README_PLAYBACK.md](README_PLAYBACK.md).
 
+**Water level you can trust at a glance.** The live level is only the tide near the
+station it came from, and the console interpolates the nearest few. So the readout shows
+its own confidence **graphically**: within 25 km it reads normally; beyond that it is
+**ghosted and italic** (indicative only — tidal range and phase drift over tens of km);
+beyond 75 km it is **heavily ghosted with a warning**, because that is simply another
+area's tide. The nearest contributing station decides, so a blend dominated by a close
+station still reads as local. Hover for the station list with distances.
+
 **ROC · HOME — Remote Operations Centers and a moving recovery point.** Missions are
 commanded from one or more **Remote Operations Centers**, and the `ROC` card tracks
 them. Click **+ Shore** or **+ Ship**, then click the chart to place one:
@@ -451,7 +459,7 @@ cd tools && npm install && node build_tech_manual.js
 
 ## Tests & git hooks
 
-Five regression suites guard the behaviour that has bitten repeatedly. Most run the
+Six regression suites guard the behaviour that has bitten repeatedly. Most run the
 real page code against synthetic worlds with stdlib Node and no server; the last two are
 stdlib Python, and one drives a real console:
 
@@ -483,6 +491,13 @@ says (including a *relative* offset following the ship round), that only an **ac
 can be HOME, that a steaming ship's HOME actually moves, that corrupt NMEA is rejected
 rather than fed to the boat, and that every vessel-derived default **re-derives on a
 vessel switch** rather than going stale.
+
+```
+node tests/water_trust.js
+```
+
+**Water-level trust** — that a tide reading from another coast is flagged rather than
+shown as if it were local, and that the *nearest* contributing station decides.
 
 ```
 python tests/completion_modes.py

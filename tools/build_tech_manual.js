@@ -327,12 +327,13 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Five regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
+c.push(P("Six regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs all three whenever a source they cover is staged."));
 c.push(TBL(["Harness", "Guards"], [
   ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
   ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
   ["`python tests/roc_tracks.py`", "ROC arrival geometry, the staged/active HOME gate, moving HOME, NMEA validation, and that every vessel-derived default tracks the vessel"],
   ["`python tests/completion_modes.py`", "The operator's end-of-plan SETTING versus the completion of the run in progress: that a behaviour can never change the setting, and that a plan run adopts it. Drives a real console over the API."],
+  ["`node tests/water_trust.js`", "That a live water level from a distant tide station is flagged as such rather than shown as if it were local, and that the nearest contributing station decides the banding."],
   ["`node tests/wreck_clearance.js`", "Charted point-hazard extent: that a wreck keeps a route off it in BOTH the exact check and the search raster, that a charted sounding over it is honoured and tide-corrected, that point-sized marks are unaffected, and that the vessel's buffer floor holds"],
 ], [2700, 6660]));
 c.push(SP());

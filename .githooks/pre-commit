@@ -53,6 +53,15 @@ if ! node tests/wreck_clearance.js; then
   fail=1
 fi
 
+echo "pre-commit: water-level trust regression test..."
+if ! node tests/water_trust.js; then
+  echo ""
+  echo "pre-commit: water-trust test FAILED."
+  echo "  A tide reading from far away would no longer be flagged as such"
+  echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
+  fail=1
+fi
+
 echo "pre-commit: survey turn geometry regression test..."
 if ! node tests/turn_geometry.js; then
   echo ""

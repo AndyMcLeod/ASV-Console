@@ -306,6 +306,29 @@ Public data sources (kept): NOAA ENC / ENCDirect ArcGIS, NOAA CO-OPS water
 levels, NOAA NDBC buoys, NOAA chart tiles. All cached under `charts/`
 (gitignored, regenerated at runtime).
 
+## WATER LEVEL EARNS ITS CONFIDENCE BY DISTANCE (2026-08-01)
+
+Andy saw an **Erie water level at Lewes**. Not a fault: the console had started on the
+Erie vessel, the card **named** its station, and `update_position` forces a refetch past a
+3 km move — but CO-OPS polls ~every 6 min, so the previous station's value stands in the
+gap and *looks exactly as authoritative as a local one*. He diagnosed it himself.
+
+`waterTrust(wl)` now bands the reading by the **nearest contributing station**:
+`local` ≤ 25 km · `far` > 25 km (ghosted + italic) · `remote` > 75 km (heavily ghosted,
+warn colour, explicit "not the local tide"). **Graphical, not textual** — translucency
+reads as low confidence at a glance, so the operator never has to inspect a station name
+on a number that is usually fine. Manual overrides are never ghosted (the operator set
+them); `!ok` is not a distance problem and keeps the existing `!` mark.
+**NEAREST decides, not the average** — averaging would ghost a good local blend that has
+one distant station in it, and would let two remote stations either side average into a
+falsely "local" reading. Test `node tests/water_trust.js` (9 assertions, teeth-verified:
+averaging → 6 fails, no manual exemption → 4, swapped thresholds → 2 and 8).
+
+**STILL OPEN (raised with Andy, deliberately not done):** the offset also corrects charted
+depths for the NOGO model, so a remote-station tide is applied to the depth floor as well
+as displayed. Gating that (fall back to chart datum when `remote`) changes routing
+behaviour, which is his call, not a silent fix.
+
 ## END-OF-PLAN SETTING vs RUN COMPLETION — one field per concept (2026-08-01)
 
 **Bug Andy hit (and had hit before):** End of Plan **RTH** selected, console acting on

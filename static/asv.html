@@ -4978,6 +4978,29 @@ function connect(){
   es.onerror = ()=>{ $("#dot").className="dot lost"; };
 }
 // --- real-time water level UI -------------------------------------------- //
+// HOW FAR AWAY IS THE TIDE THAT IS BEING APPLIED? A CO-OPS reading is only the local
+// water level near its own station. The console interpolates the nearest few, but if the
+// nearest is hundreds of km off, the number on screen is another coast's tide - which is
+// exactly what showed an Erie level while the boat sat at Lewes (the console had started
+// on the Erie vessel; the reading was correctly LABELLED Erie, but it looked as
+// authoritative as any other, and the operator has no reason to read the station name on
+// a value that is normally trustworthy).
+//
+// So the readout earns its confidence by distance and says so GRAPHICALLY - a far reading
+// is ghosted, a remote one heavily so. Thresholds are about representativeness, not
+// nicety: tidal range and phase drift materially over tens of km of coast.
+const WATER_FAR_KM = 25;      // beyond here the reading is indicative, not local
+const WATER_REMOTE_KM = 75;   // beyond here it is simply another area's tide
+function waterTrust(wl){
+  if(!wl || !wl.ok || wl.source==="manual") return {level:"local", km:null};
+  const stns = wl.stations || [];
+  // The NEAREST contributing station is what decides it: an interpolation dominated by a
+  // close station is still local even if a distant one is blended in.
+  let km = null;
+  for(const st of stns){ if(typeof st.dist_km === "number" && (km===null || st.dist_km<km)) km = st.dist_km; }
+  if(km === null) return {level:"local", km:null};
+  return {level: km > WATER_REMOTE_KM ? "remote" : (km > WATER_FAR_KM ? "far" : "local"), km};
+}
 function updateWaterUI(wl){
   const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;
   const val = off!=null ? ((off>=0?"+":"")+off.toFixed(2)+" m") : "--";
@@ -4993,12 +5016,32 @@ function updateWaterUI(wl){
   const tip = (wl.ok && stns.length) ? (hdr+"\n" + stns.map(s=>
     `  ${s.name} — ${s.dist_km} km, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
   // caution colour when we fell back off real-time data
-  const warnCol = (!wl.ok || kind==="predicted");
+  const trust = waterTrust(wl);
+  const warnCol = (!wl.ok || kind==="predicted" || trust.level==="remote");
   const mark = wl.source==="manual" ? "*" : (kind==="predicted" ? "~" : (kind==="chart"||!wl.ok ? "!" : ""));
-  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark; vw.title = tip;
-    vw.style.color = warnCol ? "var(--warn)" : ""; }
-  const swn = $("#sp_water_note"); if(swn){ swn.textContent = detail; swn.title = tip;
-    swn.style.color = warnCol ? "var(--warn)" : ""; }
+  // GHOSTED = "this number is not from around here". Translucency reads as low confidence
+  // at a glance, which is the point: the operator should not have to inspect a station
+  // name to notice the tide belongs to another coast.
+  const ghost = trust.level==="remote" ? 0.45 : (trust.level==="far" ? 0.7 : 1);
+  const farTxt = trust.km==null ? "" :
+    (trust.level==="remote" ? `
+
+STATION IS ${Math.round(trust.km)} km AWAY — this is not the local tide. Treat the level as unknown and check the station name.`
+   : trust.level==="far"    ? `
+
+Nearest station is ${Math.round(trust.km)} km away — indicative only.` : "");
+  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+(trust.level==="remote"?" ⚠":"");
+    vw.title = tip+farTxt;
+    vw.style.color = warnCol ? "var(--warn)" : "";
+    vw.style.opacity = ghost;
+    vw.style.fontStyle = trust.level==="local" ? "" : "italic"; }
+  const swn = $("#sp_water_note"); if(swn){
+    swn.textContent = detail + (trust.level==="remote" ? ` — ${Math.round(trust.km)} km away, NOT the local tide`
+                              : trust.level==="far" ? ` — ${Math.round(trust.km)} km away, indicative` : "");
+    swn.title = tip+farTxt;
+    swn.style.color = warnCol ? "var(--warn)" : "";
+    swn.style.opacity = ghost;
+    swn.style.fontStyle = trust.level==="local" ? "" : "italic"; }
   const so = $("#sp_water");
   if(so && wl.source!=="manual" && document.activeElement!==so){ so.value=""; so.placeholder = off!=null ? off.toFixed(2) : "auto"; }
 }
