@@ -16,6 +16,8 @@
 #                           lands, and that "no chart" never reads as "clear water".
 #   tests/pattern_move_grip.js  the survey whole-move grip: reachable by hit test AND
 #                           drawn above the boat marker that used to bury it.
+#   tests/survey_card.js    the survey card keeps describing a COMMITTED plan instead
+#                           of blanking when the pattern anchors are dropped.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -28,7 +30,7 @@
 changed=$(git diff --cached --name-only)
 case "$changed" in
   *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*) ;;
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -65,6 +67,15 @@ if ! node tests/water_trust.js; then
   echo "pre-commit: water-trust test FAILED."
   echo "  A tide reading from far away would no longer be flagged as such"
   echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: survey card regression test..."
+if ! node tests/survey_card.js; then
+  echo ""
+  echo "pre-commit: survey-card test FAILED."
+  echo "  The survey card blanks on a committed plan again, or its derived figures"
+  echo "  disagree with mission.lines (committedPatternInfo in static/asv.html)."
   fail=1
 fi
 

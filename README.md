@@ -579,6 +579,15 @@ node tests/pattern_move_grip.js
 **visible**: it is drawn last, above the boat marker, because the boat sits at the centre of
 a survey box more often than not and used to cover it completely.
 
+```
+node tests/survey_card.js
+```
+
+**Survey card** — that a COMMITTED plan is still described on the survey card instead of
+blanking the moment its pattern anchors are dropped, and that the figures are derived from
+the committed lines rather than remembered (so they cannot drift from the plan, survive a
+refresh, and follow a plan edited in WPT mode).
+
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
 `.githooks/`; **enable it once per clone**:

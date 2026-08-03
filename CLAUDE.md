@@ -32,7 +32,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**NINE REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TEN REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -45,6 +45,7 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/end_action.js` | what the card says a run ends as (16) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
+| `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
@@ -528,6 +529,51 @@ grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . |
   profile, `example_usv_4m`, has neither those speeds nor that turn rate). The same
   mislabel had propagated into CLAUDE.md's turn-geometry section and README.md; both
   corrected. Data untouched, so the 21 assertions are unchanged and still pass.
+
+## THE SURVEY CARD BLANKED ON A COMMITTED PLAN (2026-08-02)
+
+**Andy's report:** the survey card's information goes blank after uploading the plan; keep
+the inputs until the user clears or resets. The blanking is actually at **`Add to plan`**,
+one step earlier — `addPatternToPlan()` ends with `resetPattern()`, which drops the three
+anchors, and **every figure on the card was derived from those anchors alone**. Spacing,
+direction, line length, width and count all went at exactly the moment the operator most
+wanted to check them: immediately before Upload. The plan was still there; the chart still
+drew it. Only the card forgot.
+
+**`committedPatternInfo()` DERIVES the figures from `mission.lines` — it does not remember
+them.** A remembered snapshot is one more value that can drift from the plan, which is the
+bug shape this repo has paid for most often. Deriving cannot disagree with the plan,
+survives a page refresh for free (the mission persists server-side), and correctly follows
+a plan edited in WPT mode — the card then describes what the plan IS, not what was typed.
+
+- **SELF-VALIDATING, not `planKind`-gated.** `planKind` is NOT persisted and resets to
+  `"survey"` on refresh, so gating on it would have described a committed SEARCH as a
+  survey with meaningless spacing. Instead the lines must actually BE parallel (~2°).
+  Expanding-box and sector searches get no figures; parallel-track lanes do, and correctly.
+- **`width` is the measured across-plan extent**, not `spacing × (n−1)`, so an unevenly
+  edited plan is described truthfully. `legLength` is the LONGEST line, not the first — a
+  clipped plan has short end lines.
+- **DIRECTION MUST MATCH THE TYPED CONVENTION.** A boustrophedon alternates end for end, so
+  line 0's raw bearing is only defined modulo 180 — reading it raw returned the RECIPROCAL
+  about half the time (caught live: typed 327, card read 147). `surveyPattern` derives
+  direction as `across-bearing − 90`; this derives it the same way from the across-plan
+  offset. A single-line plan has no across direction and falls back to its own bearing.
+- `loadMission()` now calls `updatePatReadout()` — without it a committed plan read blank
+  after every page refresh, since nothing else repaints the card on load.
+
+**Clearing:** `CLR PLAN` empties `mission.lines`, so the card blanks with it. The SURV
+`Reset` discards only the pattern being DRAWN — the card then reverts to describing the
+committed plan, which is still in the mission and still on the chart. That is deliberate.
+
+**Test:** `node tests/survey_card.js` — 11 assertions. Teeth-verified: restore the blanking
+→ 1 (loudly); drop the parallel test → 8; first line's length instead of the longest → 5;
+width as `spacing × (n−1)` → 7; gate on `planKind` again → 9. **Live-verified** end to end:
+drawn → Add to plan → Upload → page refresh all hold 34.7 m / 029° / 188 m / 21 lines, and
+CLR PLAN blanks it.
+
+**Known cosmetic difference:** the drawn `width` is the pattern's nominal box width and the
+committed one is the measured line-to-line extent, so they differ by the alignment margin
+(seen live: 698 → 693 m). The measured figure is the more truthful of the two.
 
 ## THE SURVEY MOVE GRIP WAS DRAWN, LIVE, AND INVISIBLE (2026-08-01)
 

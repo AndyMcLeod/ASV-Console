@@ -742,7 +742,10 @@ async function loadMission(){
       // BELOW the active vessel's own planning.nogo_buffer_m - a plan saved against a
       // small boat must not quietly narrow a big one's clearance.
       nogo.buffer = bufferFloor(mission.buffer_m);
-      $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer; render(); } }catch(e){}
+      $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer;
+      // The plan just came back from the server, so the survey card can describe it
+      // again - without this, a committed plan reads blank after every page refresh.
+      updatePatReadout(); render(); } }catch(e){}
 }
 // --- active vessel: the single source of truth for the boat's parameters ---- //
 // Fetched from /api/vessel (which the server derives from vessels/<id>.json), so
@@ -1387,6 +1390,63 @@ function drawPatMoveGrip(){
   ctx.fillStyle="#e8c14a"; ctx.fillText("move", m.x+9, m.y-7);
   ctx.restore();
 }
+// What the survey card shows once the pattern has been COMMITTED to the plan.
+//
+// `Add to plan` moves the lines into the mission and calls resetPattern(), which drops
+// the three anchors - and the card was derived from those anchors alone, so committing a
+// plan blanked every figure on it. The operator lost the spacing, direction, line length,
+// width and count of the plan they were about to upload, at exactly the moment they most
+// wanted to check it. Andy reported it as going blank on upload.
+//
+// DERIVED FROM `mission.lines`, NOT REMEMBERED. A remembered snapshot is another value
+// that can drift from the plan - and this repo has paid for that shape more than once.
+// Reading it back off the committed lines cannot disagree with them, survives a page
+// refresh for free (the mission persists), and correctly follows a plan edited in WPT
+// mode: the card then describes what the plan IS, not what was typed.
+//
+// SELF-VALIDATING, so it does not depend on `planKind` - which is not persisted and
+// resets to "survey" on a page refresh, and would then describe a committed SEARCH as a
+// survey with meaningless spacing. Instead: a pattern is only reported if the lines
+// actually ARE parallel. A survey's are by construction; an expanding-box or sector
+// search's are not, and get no figures. Parallel-track search lanes do qualify, and
+// their spacing and direction are real, so reporting them is correct rather than a leak.
+function committedPatternInfo(){
+  const L = (mission.lines || []); if(!L.length) return null;
+  const ref = L[0].a, en = p => llEN(p.lat, p.lon, ref);
+  const a0 = en(L[0].a), b0 = en(L[0].b);
+  const dx = b0.e - a0.e, dy = b0.n - a0.n, len = Math.hypot(dx, dy);
+  if(!(len > 0)) return null;
+  const ux = dx/len, uy = dy/len;                 // along-line unit
+  let legLength = 0, offMin = 0, offMax = 0;
+  for(const l of L){
+    const a = en(l.a), b = en(l.b);
+    const ex = b.e-a.e, ey = b.n-a.n, el = Math.hypot(ex, ey);
+    if(!(el > 0)) return null;
+    // parallel test, direction-agnostic: a boustrophedon alternates end for end
+    if(Math.abs((ex*uy - ey*ux) / el) > 0.035) return null;   // ~2 deg
+    legLength = Math.max(legLength, el);          // longest: a clipped plan has short end lines
+    const off = (a.e-a0.e)*uy - (a.n-a0.n)*ux;    // signed perpendicular offset from line 0
+    offMin = Math.min(offMin, off); offMax = Math.max(offMax, off);
+  }
+  const width = offMax - offMin;                  // the ACTUAL extent, not spacing x (n-1),
+  const spacing = L.length > 1 ? width/(L.length-1) : null;   // so an edited plan stays honest
+  // DIRECTION MUST MATCH THE CONVENTION THE OPERATOR TYPED. A boustrophedon alternates
+  // end for end, so line 0's own bearing is only defined modulo 180 - reading it raw gave
+  // the RECIPROCAL of the value in the Direction field about half the time, and a card
+  // that answers 147 to a typed 327 is worse than one that stayed blank. surveyPattern
+  // derives its direction as (across-bearing - 90), so derive it the same way, from the
+  // across-plan offset. A single-line plan has no across direction; its own bearing is
+  // then the only answer available.
+  let direction;
+  if(L.length > 1){
+    const s = (offMax >= -offMin) ? 1 : -1;       // sense the lines actually extend in
+    const across = Math.atan2(s*uy, s*(-ux)) * 180/Math.PI;
+    direction = (across - 90 + 720) % 360;
+  } else {
+    direction = (Math.atan2(dx, dy) * 180/Math.PI + 360) % 360;
+  }
+  return {spacing, width: L.length > 1 ? width : null, legLength, count: L.length, direction};
+}
 function updatePatReadout(){
   const sp = currentPattern();
   $("#sp_add").disabled = !(pat.A && pat.B);
@@ -1401,10 +1461,25 @@ function updatePatReadout(){
     if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out / Add to plan."
       : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add). Centre grip moves the whole pattern.";
   } else {
-    if(!pat.A){ $("#sp_spacing").value = ""; $("#sp_dir").value = ""; }  // keep typed values until A/B exist
-    ["#sp_len","#sp_width","#sp_count"].forEach(id=>$(id).textContent="--");
-    $("#sp_hint").textContent = pat.A ? "Click the opposite corner of the survey area."
-      : "Click the survey start corner (A).";
+    // No pattern being drawn. If one is COMMITTED, keep describing it rather than
+    // blanking the card - the plan is still there, and so is the operator's need to
+    // check it. It clears when the plan does (CLR PLAN), not when the pattern does.
+    const ci = (!pat.A) ? committedPatternInfo() : null;
+    if(ci){
+      const f1 = (v, u) => (v == null ? "--" : v.toFixed(0) + u);
+      if(document.activeElement !== $("#sp_spacing")) $("#sp_spacing").value = ci.spacing != null ? ci.spacing.toFixed(1) : "";
+      if(document.activeElement !== $("#sp_dir")) $("#sp_dir").value = ci.direction.toFixed(0);
+      $("#sp_len").textContent = f1(ci.legLength, " m");
+      $("#sp_width").textContent = f1(ci.width, " m");
+      $("#sp_count").textContent = ci.count + " in plan";
+      $("#sp_hint").textContent = "Plan committed — " + ci.count + " line(s), still shown on the chart. "
+        + "Draw a new pattern to replace it, or CLR PLAN to clear.";
+    } else {
+      if(!pat.A){ $("#sp_spacing").value = ""; $("#sp_dir").value = ""; }  // keep typed values until A/B exist
+      ["#sp_len","#sp_width","#sp_count"].forEach(id=>$(id).textContent="--");
+      $("#sp_hint").textContent = pat.A ? "Click the opposite corner of the survey area."
+        : "Click the survey start corner (A).";
+    }
   }
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;

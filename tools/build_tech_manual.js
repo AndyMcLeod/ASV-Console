@@ -287,7 +287,7 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Nine regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs every one of them whenever a source they cover is staged."));
+c.push(P("Ten regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs every one of them whenever a source they cover is staged."));
 c.push(TBL(["Harness", "Guards"], [
   ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
   ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
@@ -298,6 +298,7 @@ c.push(TBL(["Harness", "Guards"], [
   ["`node tests/end_action.js`", "That the cards name where the run leaves the vessel: an end-of-plan return-to-home shows on a Go-To, a transit and a survey alike from the START of the run; that it is not promised when the chain cannot fire; and that the one-shot re-arms for a run commanded while the vessel is already under way"],
   ["`node tests/nogo_readout.js`", "The keep-out readout's state: that it stops reporting “reading” once the extract has landed (driven end to end through the real refresh path, because the fault was statement ORDER, not wording), and that “clear water” and “no chart at all” — both of which are zero keep-outs — never read as the same thing"],
   ["`node tests/pattern_move_grip.js`", "That the survey pattern’s whole-move grip is both REACHABLE (hit test, corners still winning ties so a small pattern stays reshapeable) and VISIBLE — it is drawn last, above the vessel marker that used to cover it completely, since the vessel sits at the centre of a survey box more often than not"],
+  ["`node tests/survey_card.js`", "That a committed survey plan is still described on the planning card rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines - self-validating on parallelism, so a non-parallel search pattern is not given a meaningless spacing"],
 ], [2700, 6660]));
 c.push(SP());
 c.push(P("Enable the hook once per clone with `git config core.hooksPath .githooks`."));
