@@ -26,13 +26,15 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff 2026-08-02, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`d832456`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean. `git log --oneline -5` for the tip —
+**this handoff no longer quotes a HEAD hash, because it is now refreshed IN the work commit
+and a commit cannot name itself** (see "Keep docs current"). Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**ELEVEN REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+**ELEVEN REGRESSION SUITES (139 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -54,7 +56,17 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), eleven commits, all with sections below:**
+**This session (2026-08-01 → 08-02), twelve commits, all with sections below:**
+- `f382b85` **plan speed is an INPUT to the plan, not a label on it** — Punch Out already
+  advises "widen the lines or slow down"; acting on that advice recomputed **nothing**.
+  `recalcForSpeed()` re-punches a drawn pattern (live: 7 teardrops → 7 semicircles, routed
+  length 0.63 → 0.44 → 1.27 km across survey → low → high); a COMMITTED plan can't be
+  re-punched, so durations are recomputed and the spacing re-checked against the new turn
+  radius. **Asymmetric on purpose: slowing down is always safe, speeding up can make a
+  committed reversal untrackable while the chart looks identical.** End-of-plan's "applies
+  on the next Upload" was half true in the dangerous direction — the SETTING is live.
+  New suite `tests/speed_recalc.js` (10). **Two gaps the live run found:** durations blanked
+  at `Add to plan`, and the warning never cleared when you slowed back down.
 - `d832456` **the survey card keeps describing a committed plan** — Andy reported it going
   blank "after uploading"; the blanking is actually at **`Add to plan`**, one step earlier,
   because `resetPattern()` drops the anchors every figure was derived from. **Reproduce the
@@ -973,10 +985,22 @@ this console's sanitization rules forbid.
 
 ## Keep docs current
 
-When a change alters **user-facing** behavior, update the relevant README(s) in
-the same change — `README.md` (overview + "Using it"), `README_SIM.md` (sim model
-/ command flow / endpoints / walkthrough), `README_PLAYBACK.md`. Don't let them
-drift behind the code.
+**THE START HERE HANDOFF IS REFRESHED IN THE SAME COMMIT AS THE WORK — Andy's standing
+instruction (2026-08-02). Not as a follow-up commit.** Five separate "refresh the handoff"
+commits were made in one session, and **each one immediately falsified its own `HEAD` line**,
+because the refresh moved the tip it had just named. Folding it in ends that: the handoff
+lands with the change it describes, and there is no trailing docs commit to invalidate it.
+
+**Which is why the "Repo" line no longer quotes a hash.** A self-referential pointer cannot
+be right — a commit cannot name itself. The session list carries hashes, which are
+historical facts that never rot, and the tip is one `git log --oneline -5` away.
+
+**Every commit that changes behaviour updates, in that same commit:** the START HERE session
+list (one line per commit) · any section the change touches · the suite table if a suite was
+added · the relevant README(s) — `README.md` (overview + "Using it"), `README_SIM.md` (sim
+model / command flow / endpoints / walkthrough), `README_PLAYBACK.md` · and
+`node build_docs.js` if a generated document covers it. Internal-only refactors need none of
+it — say so in the commit rather than silently skipping.
 
 **THE WHOLE `docs/` SET IS GENERATED** (docx-js; `npm install` in `tools/` first; output
 paths are script-relative). **Never hand-edit a docx** — edit its script and rebuild. If
