@@ -24,9 +24,9 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff 2026-08-01, fresh context window)
+## ⇒ START HERE (handoff 2026-08-02, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`3c8fd9e`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`3080e6a`**. Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
@@ -48,7 +48,19 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
-**This session (2026-08-01), nine commits, all with sections below:**
+**FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
+`cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
+formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**This session (2026-08-01 → 08-02), ten commits, all with sections below:**
+- `3080e6a` **documentation set** — there was one generated document, for engineers; Andy
+  asked for three more readers to be served. **Quick Start** (976 w, ~20 min to a running
+  survey, deliberately ruthless — don't grow it), **Operations Manual** (5,487 w, 17 ch, the
+  person at the console with a vessel in the water), **Development Guide** (3,523 w, 10 ch,
+  how the project is BUILT AND VERIFIED, since the tech manual covers what it is — including
+  five case studies kept because each is a CLASS). Helpers extracted to `tools/docx_kit.js`;
+  **the tech manual's `word/document.xml` is byte-identical across that extraction**, which
+  is the only reason the refactor was safe — re-verify the same way if you touch the kit.
 - `3c8fd9e` **sanitization — the sibling console's identity is out of the core.** Andy's call
   on the long-standing flag; **the line is now written down** (top of this file) instead of
   being re-argued. Five core sites cleared, not the four the old note claimed, and it had
@@ -115,6 +127,11 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 "is the code here".
 
 **OPEN / NEXT:**
+- **THE DOC BURDEN JUST QUADRUPLED** (`3080e6a`). A user-facing change now has FOUR generated
+  documents plus three READMEs that can go stale, not one. The **operations manual is the
+  operator-facing source of truth** — a new control, a changed refusal, a new readout state
+  or a new safety behaviour belongs in it, and `node build_docs.js` must be run in the same
+  commit. The quick start is deliberately thin: **point into the ops manual, don't grow it.**
 - **`rearmRthChain()` is a BEHAVIOUR change, not just a display one** (`8669230`). A run
   commanded while the boat is already under way now gets its own end-of-plan RTH, where
   before it silently got none. Correct, and Andy has run it — but if an RTH ever looks
