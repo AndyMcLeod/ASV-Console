@@ -38,6 +38,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -132,11 +133,22 @@ stub = HTTPServer(("127.0.0.1", stub_port), Stub)
 threading.Thread(target=stub.serve_forever, daemon=True).start()
 
 port = free_port()
+# CAPTURE THE SERVER'S OUTPUT, do not discard it. This harness sent stdout and stderr to
+# DEVNULL, and that is exactly how /api/ais/radius shipped broken while these checks stayed
+# green: the handler returned self._send(...) instead of the (code, obj) tuple its caller
+# unpacks, so every call raised - but only AFTER _send had already written a correct 200 to
+# the socket. The client saw a healthy response, the traceback went to a discarded stderr,
+# and nothing here could tell the difference. A server that answers correctly and THEN dies
+# is not a passing test. Check 9 reads this file.
+#
+# A file rather than a PIPE on purpose: nothing drains a pipe while the console runs, so a
+# chatty server would block on a full buffer and hang the test.
+srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-log", "--no-ais-service",
                          "--ais", "http://127.0.0.1:%d" % stub_port,
                          "--ais-radius-km", "50", "--ais-collect-km", "150"],
-                        cwd=APP, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                        cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
     for _ in range(80):
@@ -207,6 +219,22 @@ finally:
     except Exception:
         proc.kill()
     stub.shutdown()
+
+# 9. THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the console is stopped, so its
+# output is complete. This is the check that would have caught /api/ais/radius returning
+# self._send(...) instead of its (code, obj) tuple: the response was already correct and on
+# the wire, so 1-8 could not see it - only the traceback afterwards gave it away, and that
+# was going to DEVNULL. Any endpoint that answers and then takes down its handler thread
+# fails here.
+srvlog.seek(0)
+server_out = srvlog.read()
+srvlog.close()
+tb = [ln.strip() for ln in server_out.splitlines()
+      if "Traceback" in ln or "Error" in ln or "Exception occurred" in ln]
+check("9. the console logged NO exception while serving those requests",
+      not tb,
+      ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
+      else "a request that is answered correctly can still kill its handler")
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

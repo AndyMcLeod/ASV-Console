@@ -3287,8 +3287,12 @@ class Handler(BaseHTTPRequestHandler):
                 global AIS_SHOW_RADIUS_KM
                 km = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(body.get("km", AIS_SHOW_RADIUS_KM))))
                 AIS_SHOW_RADIUS_KM = km
-                out = {"ok": True, "show_km": km, "collect_km": AIS_COLLECT_RADIUS_KM}
-                return self._send(200, json.dumps(out), "application/json")
+                # RETURN THE TUPLE, never send from here. _dispatch_post's contract is
+                # (code, obj) and do_POST both sends it AND logs it. Sending directly
+                # returned None into `code, obj = ...`, which raised AFTER the client
+                # already had its 200 - so the endpoint looked perfectly healthy while
+                # every call killed the handler thread and skipped the session log.
+                return 200, {"ok": True, "show_km": km, "collect_km": AIS_COLLECT_RADIUS_KM}
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
             elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point

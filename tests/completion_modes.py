@@ -42,6 +42,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -86,9 +87,14 @@ if os.path.exists(mpath):
     with open(mpath, "r", encoding="utf-8") as f:
         mission_bak = f.read()
 
+# Capture the server's output rather than discarding it - see the last check. A handler that
+# answers correctly and THEN raises is invisible to any client-side assertion, which is how
+# /api/ais/radius shipped broken past a green suite. A file, not a PIPE: nothing drains a
+# pipe while the console runs, so a full buffer would hang the test.
+srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-ais-service", "--no-log"],
-                        cwd=APP, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                        cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
     for _ in range(60):
@@ -199,6 +205,20 @@ finally:
             f.write(mission_bak)
     elif os.path.exists(mpath):
         os.remove(mpath)
+
+# THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the console is stopped, so its output
+# is complete. _send() writes the response BEFORE its caller can raise, so an endpoint can
+# answer a client perfectly and still take down its handler thread - no client-side check
+# can see that. /api/ais/radius did exactly this, past a fully green suite.
+srvlog.seek(0)
+server_out = srvlog.read()
+srvlog.close()
+tb = [ln.strip() for ln in server_out.splitlines()
+      if "Traceback" in ln or "Error" in ln or "Exception occurred" in ln]
+check("11. the console logged NO exception while serving those requests",
+      not tb,
+      ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
+      else "an answered request can still kill its handler")
 
 print("\n" + ("%d CHECK(S) FAILED" % fails if fails else "all checks passed"))
 sys.exit(1 if fails else 0)

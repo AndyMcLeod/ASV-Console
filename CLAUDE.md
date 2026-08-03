@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIXTEEN REGRESSION SUITES (214 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SIXTEEN REGRESSION SUITES (217 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -58,12 +58,12 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
-| `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
-| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
+| `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
+| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (9) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
-| `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
+| `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
@@ -105,6 +105,22 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   New suite `tests/stored_settings.js` (11), **7 mutations verified**.
   **`panel_drag.js` check 10 failed on this change and was right to** — it named the raw
   `localStorage.setItem` shape; re-pointed at `lsSet` and re-mutated to confirm it still bites.
+- **`/api/ais/radius` RAISED ON EVERY CALL** — Andy pasted the traceback from his running
+  console. `_dispatch_post`'s contract is `(code, obj)`; that one handler was written in the
+  `do_POST` style and did `return self._send(...)`, which returns **None** → `code, obj = None`.
+  **`_send` had ALREADY written a correct 200 to the socket**, so the client saw a healthy
+  response and the raise happened after — killing the handler thread and, quietly, skipping
+  `LOG.command()`, so the session recorder has been missing every AIS radius change since
+  `1166068`. Only site: the other ten `return self._send(...)` are in GET handlers, where
+  returning None is right.
+  **WHY THE SUITE WAS GREEN: `tests/ais_range.py` sent the console's stdout AND stderr to
+  `DEVNULL`.** Check 7 asserted the clamp and got a correct answer, from a request that then
+  crashed its thread. All three real-console harnesses did this. They now capture the server's
+  output to a temp file (not a PIPE — nothing drains it, so a full buffer would hang the test)
+  and assert **the console logged no exception**: `ais_range` 9, `live_speed` 10,
+  `completion_modes` 11. Mutation-verified in all three, including restoring the exact
+  shipped bug. **THE RULE: a client-side assertion cannot see a server that answers correctly
+  and then dies. If a test drives a real process, read that process's output.**
 - **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
   `display:block`, fully live, at a position saved when the window was bigger, sitting
   outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so
