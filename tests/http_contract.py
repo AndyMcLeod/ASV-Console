@@ -1,4 +1,19 @@
-"""tests/post_contract.py - every POST handler honours _dispatch_post's contract.
+"""tests/http_contract.py - every HTTP handler answers exactly once and never raises.
+
+TWO OPPOSITE CONTRACTS live in this server, and each has its own way of going wrong:
+
+    POST   _dispatch_post RETURNS (code, obj); do_POST sends it and logs it.
+           Failure: returning anything else - most sharply, sending the response
+           yourself, which returns None into the caller's unpack.
+    GET    do_GET and its _serve_* helpers are VOID. Each commits its OWN response,
+           via _send or - for the PNG tile and the SSE stream - raw send_response +
+           end_headers + wfile.write.
+           Failure: a path that commits NOTHING, leaving the client hanging.
+
+They are mirror images: on the POST side sending is the mistake, on the GET side NOT
+sending is. One suite covers both, because the question is the same - does every request
+get exactly one answer, and does the server survive it - and because both halves share a
+single console, which is the expensive part of the harness.
 
 WHY THIS EXISTS. do_POST does:
 
@@ -17,10 +32,10 @@ LOG.command() - the session recorder silently lost every AIS radius change - and
 symptom was a traceback on a console nobody was reading. A client-side assertion CANNOT see
 this. You have to read the server's output.
 
-    python tests/post_contract.py      # exit 0 = pass, 1 = fail   (stdlib only)
+    python tests/http_contract.py      # exit 0 = pass, 1 = fail   (stdlib only)
 
-THE ENDPOINT LIST IS PARSED OUT OF THE SOURCE, never written down here. A new POST endpoint
-is covered the day it is added rather than the day someone remembers to update this file -
+BOTH ROUTE LISTS ARE PARSED OUT OF THE SOURCE, never written down here. A new endpoint is
+covered the day it is added rather than the day someone remembers to update this file -
 the same reason tests/panel_drag.js derives its panel list from the registrations. Bodies
 are best-effort: the point is to REACH each handler, not to be semantically valid, so a 400
 or a 409 is a perfectly good result. What is not acceptable is no response, or a traceback.
@@ -33,17 +48,32 @@ worth having.
 
 TEETH (verified by mutation, with the check numbers each one actually produced):
 
-    THE SHIPPED BUG - /api/ais/radius returns self._send(...)      -> 2, 3, 10
-    the same thing applied to every /api/cmd/* handler             -> 2, 3, 10
-    an endpoint returns a bare `return` (None)                     -> 2, 7, 10
-    an endpoint returns a 3-tuple                                  -> 2, 7, 10
-    a raise injected into a handler that is actually reached       -> 7, 10
+  POST side
+    THE SHIPPED BUG - /api/ais/radius returns self._send(...)      -> 2, 3, 16
+    the same thing applied to every /api/cmd/* handler             -> 2, 3, 16
+    an endpoint returns a bare `return` (None)                     -> 2, 10, 16
+    an endpoint returns a 3-tuple                                  -> 2, 10, 16
+    a raise injected into a handler that is actually reached       -> 10, 16
     _dispatch_post allowed to fall off the end (except -> pass)    -> 4
+  GET side
+    a branch that commits NOTHING (the mirror bug)                 -> 6, 13
+    the final else removed, so an unknown path answers nothing     -> 6, 7, 13
+    a _serve_ helper loses its 404 path                            -> 6, 13
+    the SSE stream never sends its headers                         -> 6, 15
+    a handler that BLOCKS instead of returning                     -> 14
 
-WHY 7 AND 10 ARE BOTH NEEDED, and it is the whole point of the suite: a raise BEFORE the
-response leaves the client with nothing, and check 7 sees it. A raise AFTER _send has
-already written a correct response - the bug that actually shipped - is invisible to every
-client-side check, and ONLY the server log gives it away. Neither check subsumes the other.
+WHY THE PAIRS ARE ALL NEEDED, which is the point of the suite:
+
+  10 vs 16   A raise BEFORE the response leaves the client with nothing, and 10 sees it.
+             A raise AFTER _send has already written a correct response - the bug that
+             actually shipped - is invisible to every client-side check, and ONLY the
+             server log gives it away.
+  13 vs 14   A GET handler that RETURNS without sending closes the connection, so the
+             client gets no response (13). One that BLOCKS holds the socket open and looks
+             exactly like a slow request (14). Different symptom, different check - the
+             GET mutations above all land on 13, and only a sleep produces 14.
+  6 vs 13    Static and live. 6 reads every path including ones no request here reaches;
+             13 catches what the analysis is too coarse to see.
 
 A NOTE ON WRITING THESE MUTATIONS: the handlers are a chain of `if path == ...: return`, so
 a raise injected before the branch that already handles that path is unreachable and the
@@ -52,9 +82,11 @@ looked like a surviving mutant. Inject into a handler you have confirmed is reac
 """
 
 import ast
+import http.client
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -94,6 +126,19 @@ def free_port():
     return p
 
 
+def getp(port, path, timeout=25):
+    """Return (http_code, bytes). None = no response at all; "TIMEOUT" = it hung."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as r:
+            return r.status, len(r.read())
+    except urllib.error.HTTPError as e:                  # a refusal is a real answer
+        return e.code, len(e.read())
+    except socket.timeout:
+        return "TIMEOUT", 0
+    except Exception as e:
+        return None, str(e)[:60]
+
+
 def post(port, path, body, timeout=8):
     """Return (http_code, text). A code of None means NO response reached us at all."""
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path),
@@ -111,8 +156,8 @@ def post(port, path, body, timeout=8):
 # --- static: the contract, read off the source ----------------------------- #
 source = io.open(SRC, encoding="utf-8").read()
 tree = ast.parse(source)
-DISPATCH = next((n for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.name == "_dispatch_post"), None)
+FNS = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+DISPATCH = FNS.get("_dispatch_post")
 
 
 def own_nodes(fn):
@@ -144,7 +189,7 @@ def completes(body):
     return True
 
 
-print("POST contract — every handler returns (code, obj), and none of them raises:")
+print("HTTP contract — every request gets exactly one answer, and the server survives it:")
 
 check("1. _dispatch_post was found and its endpoints parsed out of the source",
       lambda: DISPATCH is not None,
@@ -181,10 +226,77 @@ check("4. _dispatch_post cannot fall off the end and return None implicitly",
       "an unmatched path would unpack None exactly like the reported bug")
 
 seg = "\n".join(source.splitlines()[DISPATCH.lineno - 1:DISPATCH.end_lineno])
-ENDPOINTS = sorted(set(__import__("re").findall(r'path == "(/api/[^"]+)"', seg)))
+ENDPOINTS = sorted(set(re.findall(r'path == "(/api/[^"]+)"', seg)))
 check("5. the endpoint list came out of the source, not a list in this file",
       lambda: len(ENDPOINTS) >= 20,
       "%d endpoints — a new one is covered the day it is added" % len(ENDPOINTS))
+
+# --- static: the GET contract, which is the exact opposite ----------------- #
+# A GET handler is VOID and must commit its own response on every path. `end_headers` counts
+# alongside `_send`: the PNG tile writes binary and the SSE stream writes an endless body,
+# so neither goes through _send. Leaving end_headers out of this set reports both of them as
+# non-responding, which is what the first version of this analysis did - a false finding,
+# not a bug. The moment headers are ended, the client has an answer.
+GET_FN = FNS.get("do_GET")
+SENDERS = {"_send", "end_headers", "_serve_events", "_serve_tile", "_serve_log",
+           "_serve_enc", "_serve_chartinfo", "_serve_ais"}
+
+
+def is_send_call(n):
+    return (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr in SENDERS)
+
+
+def must_send(stmts):
+    """True if EVERY path through stmts commits a response (or raises)."""
+    for i, st in enumerate(stmts):
+        rest = stmts[i + 1:]
+        if isinstance(st, ast.Raise):
+            return True
+        if isinstance(st, ast.Return):
+            return bool(st.value is not None and is_send_call(st.value))
+        if isinstance(st, ast.Expr) and is_send_call(st.value):
+            return True
+        if isinstance(st, ast.If):
+            then_ok = must_send(st.body + rest)
+            else_ok = must_send(st.orelse + rest) if st.orelse else must_send(rest)
+            return then_ok and else_ok
+        if isinstance(st, ast.Try):
+            body_ok = must_send(st.body + (st.orelse or []) + rest)
+            return body_ok and all(must_send(h.body + rest) for h in st.handlers)
+        if isinstance(st, ast.With):
+            return must_send(st.body + rest)
+        # assignments and loops (which may not run) keep scanning
+    return False
+
+
+HANDLERS = ["do_GET"] + sorted(SENDERS - {"_send", "end_headers"})
+silent = [h for h in HANDLERS if h in FNS and not must_send(FNS[h].body)]
+check("6. every GET handler commits a response on EVERY path",
+      lambda: not silent,
+      lambda: ("no response on some path: %s" % ", ".join(silent)) if silent
+      else "%d handlers: %s" % (len(HANDLERS), ", ".join(HANDLERS)))
+
+# do_GET dispatches on a chain of if/elif. Without a final else an unmatched path would
+# fall out having sent nothing - the GET-side equivalent of falling off _dispatch_post.
+def has_final_else(fn):
+    node = fn.body[-1] if fn.body else None
+    while isinstance(node, ast.If):
+        if node.orelse and not (len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If)):
+            return True
+        node = node.orelse[0] if node.orelse else None
+    return False
+
+check("7. do_GET's dispatch chain ends in an else — an unknown path gets a 404, not silence",
+      lambda: has_final_else(GET_FN),
+      "an unmatched GET would otherwise commit nothing at all")
+
+gseg = "\n".join(source.splitlines()[GET_FN.lineno - 1:GET_FN.end_lineno])
+GET_EQ = sorted(set(re.findall(r'(?:self\.path|root) == "([^"]+)"', gseg)))
+GET_SW = sorted(set(re.findall(r'(?:self\.path|root)\.startswith\("([^"]+)"\)', gseg)))
+check("8. the GET route list came out of the source too",
+      lambda: len(GET_EQ) + len(GET_SW) >= 15,
+      "%d exact + %d prefix routes" % (len(GET_EQ), len(GET_SW)))
 
 # --- live: reach every handler and read the server's own output ------------ #
 # Best-effort bodies. Anything absent is POSTed {} - a 400 or 409 is a fine answer; the
@@ -217,6 +329,7 @@ proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser",
                          "--port", str(port), "--no-ais-service", "--no-log"],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 no_response, not_json, roc_dead = [], [], []
+get_dead, get_hung, sse = [], [], (None, "", b"")
 try:
     up = False
     for _ in range(80):
@@ -226,7 +339,7 @@ try:
             break
         except Exception:
             time.sleep(0.25)
-    check("6. a console comes up to drive", up, "port %d" % port)
+    check("9. a console comes up to drive", up, "port %d" % port)
 
     for p in ENDPOINTS:
         code, txt = post(port, p, BODIES.get(p, {}))
@@ -243,6 +356,37 @@ try:
         if code is None:
             roc_dead.append(op)
 
+    # --- GET, including the branches that exist only to refuse ------------- #
+    # The prefix routes need a concrete URL, and the malformed ones are the POINT: a 400 or
+    # a 404 means the refusing branch answered. Those error branches are where a GET handler
+    # is most likely to fall out having sent nothing.
+    GET_PATHS = ["/", "/index.html", "/?cb=1", "/playback", "/playback?s=x"] + \
+                [p for p in GET_EQ if p.startswith("/api")] + \
+                ["/api/env", "/api/tide", "/api/waterlevel", "/api/ais",
+                 "/api/log?name=does-not-exist",          # 404: no such log
+                 "/api/enc", "/api/enc?bbox=broken",      # 400: missing / unparseable bbox
+                 "/api/chartinfo", "/api/chartinfo?bbox=1,2",
+                 "/tiles/bad/path.png", "/tiles/12/1/1.png",
+                 "/nope", "/api/unknown"]                 # the final else
+    for p in sorted(set(GET_PATHS)):
+        code, _n = getp(port, p)
+        if code is None:
+            get_dead.append(p)
+        elif code == "TIMEOUT":
+            get_hung.append(p)
+
+    # The SSE stream is the one GET that never finishes: it must commit headers and a first
+    # frame straight away, then hold the connection open. "Never finishes" and "never
+    # answers" look identical to a plain urlopen, so it is read explicitly.
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=8)
+        c.request("GET", "/events")
+        r = c.getresponse()
+        sse = (r.status, r.getheader("Content-Type") or "", r.read(48))
+        c.close()
+    except Exception as e:
+        sse = (None, "", repr(e).encode())
+
     # Leave the link connected so shutdown is ordinary.
     post(port, "/api/connect", {})
 finally:
@@ -255,16 +399,16 @@ finally:
         with io.open(mpath, "w", encoding="utf-8") as f:
             f.write(mission_bak)
 
-check("7. EVERY endpoint answered — none left the client with no response",
+check("10. EVERY POST endpoint answered — none left the client with no response",
       lambda: not no_response,
       lambda: ("no response from: %s" % ", ".join(no_response)) if no_response
       else "%d endpoints, all answered" % len(ENDPOINTS))
 
-check("8. ... and every answer was JSON, including the refusals",
+check("11. ... and every POST answer was JSON, including the refusals",
       lambda: not not_json,
       lambda: ("not JSON: %s" % ", ".join(not_json)) if not_json else "400/409 bodies included")
 
-check("9. ... and every ROC operation answered (one dict key routes them all)",
+check("12. ... and every ROC operation answered (one dict key routes them all)",
       lambda: not roc_dead,
       lambda: ("no response for op: %s" % ", ".join(roc_dead)) if roc_dead
       else "%d ops incl. an unknown one" % len(ROC_OPS))
@@ -277,7 +421,21 @@ server_out = srvlog.read()
 srvlog.close()
 tb = [ln.strip() for ln in server_out.splitlines()
       if "Traceback" in ln or "Exception occurred" in ln]
-check("10. the console logged NO exception while serving ANY of them",
+check("13. EVERY GET route answered, including the ones that exist to refuse",
+      lambda: not get_dead,
+      lambda: ("no response from: %s" % ", ".join(get_dead)) if get_dead
+      else "the 400/404 branches answered too — that is where a void handler goes silent")
+
+check("14. ... and none of them HUNG — a GET that never sends looks exactly like a slow one",
+      lambda: not get_hung,
+      lambda: ("hung: %s" % ", ".join(get_hung)) if get_hung
+      else "no route committed nothing at all")
+
+check("15. the SSE stream commits headers and a first frame immediately",
+      lambda: sse[0] == 200 and "text/event-stream" in sse[1] and sse[2].startswith(b"data:"),
+      lambda: "status=%s ctype=%s first=%r" % (sse[0], sse[1], sse[2][:28]))
+
+check("16. the console logged NO exception while serving ANY of them",
       lambda: not tb,
       lambda: ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
       else "a correctly-answered request can still kill its handler thread")

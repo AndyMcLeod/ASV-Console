@@ -30,8 +30,9 @@
 #                           forgetting where the operator put it.
 #   tests/stored_settings.js  the guarded localStorage helpers - blocked storage never
 #                           throws, and toggles saved as legacy "1"/"0" still read.
-#   tests/post_contract.py  every POST handler returns (code, obj) and none of them raises;
-#                           endpoint list parsed from the source, so new ones are covered.
+#   tests/http_contract.py  the two OPPOSITE handler contracts: POST returns (code, obj),
+#                           GET commits its own response. Every request gets exactly one
+#                           answer and the server survives it. Routes parsed from source.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -213,14 +214,15 @@ if command -v python >/dev/null 2>&1; then
     echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
     fail=1
   fi
-  echo "pre-commit: POST contract regression test..."
-  if ! python tests/post_contract.py; then
+  echo "pre-commit: HTTP contract regression test..."
+  if ! python tests/http_contract.py; then
     echo ""
-    echo "pre-commit: post-contract test FAILED."
-    echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, or an"
-    echo "  endpoint raised while serving. Note a handler can answer the client"
-    echo "  CORRECTLY and still take down its thread - _send writes the response"
-    echo "  before the caller unpacks - so read check 10, the server's own log."
+    echo "pre-commit: http-contract test FAILED."
+    echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, a GET"
+    echo "  handler has a path that commits NO response, or something raised while"
+    echo "  serving. Note a handler can answer the client CORRECTLY and still take"
+    echo "  down its thread - _send writes the response before the caller unpacks -"
+    echo "  so check 16 (the server's own log) is the one no client check can see."
     fail=1
   fi
 else

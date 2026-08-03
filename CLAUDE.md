@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SEVENTEEN REGRESSION SUITES (227 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SEVENTEEN REGRESSION SUITES (233 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -64,7 +64,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
-| `python tests/post_contract.py` | EVERY POST handler returns `(code, obj)` and none raises (10) |
+| `python tests/http_contract.py` | POST returns `(code, obj)`, GET commits its own response; nothing raises (16) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
@@ -136,6 +136,24 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   **Mutation-writing gotcha recorded there:** the handlers are an `if path == …: return`
   chain, so a raise injected before the branch that already handles that path is unreachable
   and the mutation silently does nothing — my first attempt looked like a surviving mutant.
+- **AUDITED THE GET HANDLERS TOO** (Andy asked; also clean — no source change). **The GET
+  contract is the MIRROR of the POST one:** `do_GET` and its `_serve_*` helpers are VOID and
+  each must commit its OWN response. On the POST side *sending* is the mistake; on the GET
+  side *not sending* is. Suite renamed `post_contract.py` → **`tests/http_contract.py`** (16),
+  covering both — the question is the same and both halves share one console.
+  Checked: every path of all 7 GET handlers commits a response; the dispatch chain ends in an
+  `else` (an unmatched GET would otherwise commit nothing); all 25 routes incl. the
+  400/404 branches answered live; the SSE stream commits headers + a first frame.
+  **FALSE POSITIVE WORTH NOT RE-DERIVING:** the first analysis flagged `_serve_tile` and
+  `_serve_events` as non-responding. They are fine — a **binary PNG** and an **endless SSE
+  body** cannot go through `_send`, so they use raw `send_response`/`end_headers`/`wfile.write`.
+  **`end_headers` is the moment a response is committed** and must be in the sender set.
+  **Three PAIRS of checks that look redundant and are not** (each half verified by its own
+  mutation): **10 vs 16** — a raise BEFORE the response leaves the client with nothing; a raise
+  AFTER `_send` is invisible to any client check. **13 vs 14** — a handler that RETURNS without
+  sending closes the connection (no response); one that BLOCKS looks like a slow request; only
+  a `sleep` produces 14. **6 vs 13** — static reads paths no request reaches, live catches what
+  the analysis is too coarse to see.
 - **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
   `display:block`, fully live, at a position saved when the window was bigger, sitting
   outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so
