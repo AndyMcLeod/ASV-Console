@@ -138,6 +138,23 @@ def _nmea_deg(v, hemi, deg_len):
     return -x if hemi in ("S", "W") else x
 
 
+def _nmea_float(v):
+    """A numeric NMEA field -> float, or None. NEVER raises.
+
+    The speed and course fields used to go through a bare float(), while the position fields
+    right above them went through _nmea_deg's guard - one function, two standards. A sentence
+    whose CHECKSUM IS VALID can still carry rubbish in a field: the checksum is an 8-bit XOR,
+    so about one corruption in 256 passes it, and a flaky receiver can compute a good checksum
+    over an already-mangled buffer. An EMPTY field is normal here and yields None, so an
+    unparseable one is treated the same way rather than throwing the whole fix away."""
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
 def parse_nmea(line):
     """Parse one $--RMC / $--GGA sentence -> {lat, lon, cog, sog} or None. Verifies
     the XOR checksum; accepts any talker id (GP/GN/GL/...). RMC carries course+speed."""
@@ -158,9 +175,8 @@ def parse_nmea(line):
         lat = _nmea_deg(f[3], f[4], 2); lon = _nmea_deg(f[5], f[6], 3)
         if lat is None or lon is None:
             return None
-        sog = float(f[7]) if f[7] else None
-        cog = float(f[8]) if f[8] else None
-        return {"lat": lat, "lon": lon, "cog": cog, "sog": sog}
+        return {"lat": lat, "lon": lon,
+                "cog": _nmea_float(f[8]), "sog": _nmea_float(f[7])}
     if typ == "GGA":                                 # time,lat,NS,lon,EW,fixq,...
         if len(f) < 7 or f[6] == "0":                # fix quality 0 = no fix
             return None
@@ -189,7 +205,17 @@ class GpsFeed(threading.Thread):
         self._stop.set()
 
     def _emit(self, line):
-        rep = parse_nmea(line)
+        # NOT a second copy of the parser's guard - a BLAST-RADIUS LIMIT at the thread
+        # boundary. parse_nmea's contract is "-> dict or None" and it now honours it, but if
+        # anything in here ever raises, the exception unwinds the read loop, closes the
+        # socket and is swallowed by run()'s catch-all: the LINK DROPS and reconnects three
+        # seconds later. Measured with a checksum-valid sentence carrying a garbage speed -
+        # one line cost the connection and two fixes. A GPS feed can be driving a moving HOME
+        # for a boat coming home to a mothership; one malformed line must cost one line.
+        try:
+            rep = parse_nmea(line)
+        except Exception:
+            return
         if rep:
             self.tracker.feed(self.roc_id, rep["lat"], rep["lon"],
                               cog=rep["cog"], sog=rep["sog"], source="gps")

@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SEVENTEEN REGRESSION SUITES (239 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SEVENTEEN REGRESSION SUITES (245 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -57,7 +57,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
-| `python tests/roc_tracks.py` | ROC / moving HOME (17) |
+| `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (9) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
@@ -172,6 +172,28 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   multi-line anchor written with `\n` matches one and not the other. Two mutations reported
   SKIP; only because the runner scores a missing anchor as SKIP rather than "caught" did that
   surface instead of reading as clean passes.
+- **`roc_tracks.py` + `gps_sim.py` AUDITED — a second real finding, and a worse one.**
+  Not HTTP, so the contract differs: **a background thread must survive bad input.**
+  `gps_sim.py` is CLEAN (`TcpServer` reaps dead clients under its lock, `_accept` handles
+  `OSError`; its fixes round-trip through `parse_nmea` to <4 cm at the poles, the dateline and
+  a negative course). **`parse_nmea` was NOT:** speed and course used a bare `float()` while
+  the position fields beside them used `_nmea_deg`'s guard — **one function, two standards.**
+  A **checksum-VALID** sentence can still carry rubbish (8-bit XOR, ~1 corruption in 256
+  passes; a flaky receiver can checksum an already-mangled buffer), so `float("abc")` raised,
+  unwound `GpsFeed`'s read loop, closed the socket, and was swallowed by `run()`'s catch-all —
+  **THE GPS LINK DROPPED and reconnected 3 s later.** Measured before: **2 TCP connections,
+  6 of 8 fixes**; after: **1, all of them.** Fixed with `_nmea_float` (garbage → `None`,
+  exactly as an empty field already behaved — a bad speed is no reason to bin a good
+  position), plus a `try` in `_emit` as a **blast-radius limit at the thread boundary** (not a
+  duplicate guard: that feed can be driving a moving HOME for a boat recovering to a
+  mothership, so one malformed line must cost one line).
+  **THE TWO LAYERS WERE EARNED SEPARATELY — the technique worth reusing:** revert the parser
+  fix with the `_emit` guard PRESENT and 18/19 fail but **21 still passes** (the guard held the
+  link); remove BOTH and 21 fails too. Removing the guard ALONE survives, and that is correct —
+  with the parser honouring its contract there is nothing left to catch.
+  **A GAP THE ROUND-TRIP COULD NOT SEE:** dropping `%07.4f`'s zero-pad survived every check,
+  because `parse_nmea` splits at a fixed offset and still reads it — malformed on the wire,
+  fine for its sibling. Check 23 asserts NMEA's fixed widths directly. 17 → 23 assertions.
 - **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
   `display:block`, fully live, at a position saved when the window was bigger, sitting
   outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so
