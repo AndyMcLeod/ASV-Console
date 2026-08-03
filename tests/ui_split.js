@@ -150,6 +150,31 @@ check("14. only an operator-CHANGED size is persisted, never the authored defaul
       && /w === \(el\.dataset\.rszDefW \|\| ""\)/.test(H),
       "compared against the authored default, not inferred from gestures");
 
+// --- 15-17. A CARD MAY NOT GROW PAST THE SCREEN --------------------------- //
+// `max-width:96vw` had always said so for width. Height had no cap at all, so a card sized
+// by its CONTENT ran off the bottom: 40 AIS contacts made the traffic card 797 px tall in a
+// 720 px viewport, with the rest of the list unreachable. Measured, before and after.
+check("15. the chart-window card declares a viewport HEIGHT cap, as it always did for width",
+      /\.rsz\{[^}]*max-height:\s*\d+vh/.test(H) && /\.rsz\{[^}]*max-width:\s*96vw/.test(H),
+      (H.match(/\.rsz\{[^}]*\}/) || ["(rule not found)"])[0].slice(0, 92));
+
+// The controls window resizes the .uicard WRAPPER instead, and it was uncapped for the same
+// reason - two rules for one job is how one of them gets forgotten.
+check("16. ... and so does the controls-window wrapper, which is what resizes there",
+      /body\.ui-controls \.uicard\{[^"]*max-height:\s*\d+vh/.test(H),
+      "the .uicard wrapper is the resizable element in that window");
+
+// THE TRAP THIS WOULD OTHERWISE FALL INTO. makeCardsResizable used to write
+// el.style.maxHeight = "none" on restore and on mousedown, to release "the default height
+// cap". No card has ever carried a card-level max-height - those live on the BODIES, which
+// .rszbody already overrides - so it released nothing and was dead. It was harmless only
+// while .rsz had no cap: an inline `none` beats a stylesheet rule, so the first mousedown on
+// any card would have uncapped it permanently. A viewport cap is not the operator's to
+// release, exactly like max-width, so those writes are gone rather than pointed elsewhere.
+check("17. nothing writes an inline maxHeight, which would defeat the cap on first touch",
+      !/style\.maxHeight\s*=/.test(H),
+      "inline beats the stylesheet — one mousedown and the cap would be gone for good");
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

@@ -131,7 +131,15 @@
      CARD is the scroll container and its header sticks, exactly as .uicard-grip does in the
      controls window. A nominated body gives up its OWN scrolling so the card's takes over;
      !important because those caps are inline styles. */
-  .rsz{resize:both;overflow:auto;max-width:96vw;min-width:150px;min-height:96px;}
+  /* A CARD MAY NOT GROW PAST THE SCREEN. `max-width:96vw` has always said so for width;
+     height had no cap at all, so a card sized by its CONTENT ran off the bottom - 40 AIS
+     contacts made the traffic card 797px in a 720px viewport, with the rest of the list
+     unreachable. 82vh leaves room for the ~100px the cards are positioned down from the
+     top, so a card at its normal place is fully visible without clampPanelPos having to
+     haul it upwards. Like the width cap this is NOT releasable by resizing: the operator
+     can already scroll the card (overflow:auto) and its header sticks, so a taller box
+     would buy nothing but a control off the edge of the display. */
+  .rsz{resize:both;overflow:auto;max-width:96vw;max-height:82vh;min-width:150px;min-height:96px;}
   .rsz > :first-child{position:sticky;top:0;z-index:2;}
   .rsz .rszbody{max-height:none!important;overflow:visible!important;}
   body.ui-controls .uicard .rsz{resize:none;overflow:visible;max-width:none;}
@@ -624,7 +632,9 @@ document.body.classList.add("ui-" + UIROLE);
   "body.ui-controls .controls{position:fixed!important;left:12px!important;top:12px!important;right:auto!important;"+
     "flex-direction:column!important;flex-wrap:nowrap!important;gap:8px!important;max-height:calc(100vh - 24px);overflow:auto;z-index:6;}"+
   // each panel/table becomes a draggable + resizable card (wrapped in .uicard by JS)
-  "body.ui-controls .uicard{position:fixed;z-index:20;min-width:190px;min-height:56px;max-width:96vw;"+
+  // max-height for the same reason as .rsz above: the wrapper is what resizes here, and a
+  // card grown by its content had nothing stopping it running off the bottom of the pane.
+  "body.ui-controls .uicard{position:fixed;z-index:20;min-width:190px;min-height:56px;max-width:96vw;max-height:82vh;"+
     "background:rgba(10,20,28,0.97);border:1px solid #24506a;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.5);resize:both;overflow:auto;}"+
   "body.ui-controls .uicard-grip{position:sticky;top:0;cursor:move;user-select:none;padding:5px 9px;"+
     "font:600 10px var(--mono,Consolas,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);"+
@@ -4374,9 +4384,14 @@ function makeCardsResizable(){
     el.dataset.rszDefH = el.style.height || "";
     const sz = saved[c.sel];
     if(sz && sz.width)  el.style.width  = sz.width;
-    if(sz && sz.height){ el.style.height = sz.height; el.style.maxHeight = "none"; }
-    // a card being resized is no longer bound by the default height cap
-    el.addEventListener("mousedown", ()=>{ el.style.maxHeight = "none"; });
+    if(sz && sz.height) el.style.height = sz.height;
+    // BOTH OF THESE USED TO CLEAR el.style.maxHeight, to release "the default height cap"
+    // when the operator resized. No card has ever carried a card-level max-height - those
+    // caps are on the BODIES, and .rszbody already overrides them - so it released nothing
+    // and was dead. It stopped being harmless the moment .rsz gained a viewport cap: an
+    // inline `none` beats a stylesheet rule, so the first mousedown on a card would have
+    // uncapped it for good. The viewport cap is not the operator's to release, exactly like
+    // max-width:96vw, so the writes are gone rather than pointed somewhere else.
     el.addEventListener("mouseup", saveCardSizesSoon);
     if(window.ResizeObserver) new ResizeObserver(saveCardSizesSoon).observe(el);
   }

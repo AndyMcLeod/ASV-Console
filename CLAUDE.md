@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**EIGHTEEN REGRESSION SUITES (260 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**EIGHTEEN REGRESSION SUITES (263 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -60,7 +60,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; reads in nm (15) |
-| `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
+| `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap (17) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
@@ -110,11 +110,21 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   the parts source-shape cannot see (same node across a poll, `scrollTop` held at 90, the
   selection "VESSEL 5" intact, values still updating 1.5 → 6.9 nm, add/drop/re-sort, empty and
   refill). No doc change owed — the manual never described the flashing.
-  **NOTED, NOT FIXED:** `.rsz` has `min-height` but **no max**, so an unsized traffic card grows
-  with its content — 40 synthetic contacts made it 797 px in a 720 px viewport. Once the
-  operator resizes it the size persists and it scrolls, so this only bites a fresh profile with
-  heavy traffic. A `max-height` on `.rsz` would cap it, but that CSS is shared by all ten
-  resizable cards, so it is Andy's call rather than a silent layout change.
+  **AND THE CARD HEIGHT IS NOW CAPPED** (Andy's call, same session). `max-width:96vw` had
+  always said a card may not grow past the screen; **height had no cap at all**, so a card
+  sized by its CONTENT ran off the bottom — those 40 contacts made it **797 px in a 720 px
+  viewport** with the rest of the list unreachable. `max-height:82vh` on `.rsz` AND on the
+  controls window's `.uicard` wrapper (the resizable element there, uncapped for the same
+  reason). 82vh leaves room for the ~100 px cards sit down from the top, so a card at its
+  normal place is fully visible **without `clampPanelPos` having to haul it upwards**.
+  **THE TRAP IT WOULD HAVE FALLEN INTO:** `makeCardsResizable` wrote `el.style.maxHeight =
+  "none"` on restore AND on mousedown, to release "the default height cap". **No card has ever
+  carried a card-level max-height** — those live on the BODIES, which `.rszbody` already
+  overrides — so it released nothing and was DEAD. It was harmless only while `.rsz` had no
+  cap: inline beats a stylesheet rule, so **the first mousedown on any card would have uncapped
+  it for good.** Both writes deleted; check 17 asserts no inline `maxHeight` write returns.
+  Display-only, like the position clamp: a stored 900 px height renders at 590 and **stays
+  900 px in storage**, so a taller monitor still honours it. `ui_split.js` 14 → 17.
 - **THE AIS RANGE CONTROL READS IN NAUTICAL MILES** (Andy's call). The contact list had
   always reported range in nm via `fmtNm`, so a selector in km meant **filtering in one unit
   and reading distances in another**. Converted at the DISPLAY EDGE: `M_PER_NM = 1852` +
