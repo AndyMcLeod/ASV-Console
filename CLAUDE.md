@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**THIRTEEN REGRESSION SUITES (163 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FOURTEEN REGRESSION SUITES (174 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -52,13 +52,18 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
+| `node tests/ui_split.js` | split-window lists resolve; vessel card stays on the chart (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), fourteen commits, all with sections below:**
+**This session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
+- **vessel card off the controls window** — it was bridged, so one card rendered in BOTH
+  windows. Now chart-window only; top bar untouched by request. New suite
+  `tests/ui_split.js` (9), which also turns "every bridged selector resolves" from a
+  sentence into a test.
 - **AIS range control** — a live range control on the AIS card. **Andy's design: collect
   wide (150 km), filter narrow (50 km default), never on a lake.** That DELETES the old
   "subscription and query must move together" invariant instead of working around it. New
@@ -272,13 +277,55 @@ all logic; the controls window renders no app logic, mirrors main's control DOM,
 forwards gestures back so every existing handler still runs exactly once, on main.
 
 - `UIROLE` from the query string; tabs self-title **ASV Chart** / **ASV Controls**.
-- `UI_BRIDGED` = `.controls` + every pop-out this console has. `#rocPanel` joined it with
-  the ROC port; **there is no `#missionPanel` entry** — since 2026-08-01 the Mission
-  readout is a section of `#vcard` and rides across on that card's mirror. Verified: every
-  bridged selector, every `UI_CARD_TITLES` key and every `#id` named in the injected CSS
-  resolves against this page's DOM.
-- Controls-window CSS hides the chart/status/command bar, drops the vessel card rows the
-  top status bar already shows, pins the buttons as a left column, and wraps each panel in
+- `UI_BRIDGED` = `.controls` + every pop-out this console has. No `#missionPanel` (it is a
+  section of `#vcard`) and, since 2026-08-02, **no `#vcard` either** — see below.
+  **`node tests/ui_split.js` now VERIFIES** that every bridged selector, every
+  `UI_CARD_TITLES` key and every `#id` in the injected CSS resolves; that claim used to be a
+  sentence somebody had checked once.
+- **THE VESSEL-STATUS CARD LIVES ON THE CHART WINDOW ONLY (Andy, 2026-08-02).** It used to
+  be bridged, so the SAME card rendered in BOTH windows — "VESSEL STATUS" on the chart and a
+  "Vessel" uicard in the controls window with nine rows trimmed to stop it echoing the top
+  bar. **Two copies of one card is not a second view, it is a second place to look.** Now:
+  not bridged, not titled, and `body.ui-controls #vcard{display:none}` — hidden rather than
+  removed, because the controls window is the same page under `?panel=controls`. It is
+  deliberately NOT in the `ui-split` hide list; that would strip it from the chart too.
+  **THE TOP STATUS BAR IS LEFT ALONE** — Andy likes it, and its nine-row overlap with the
+  card is accepted rather than a defect. The old row-trimming CSS is retired with the mirror.
+
+**RESIZABLE CARDS — ONE MECHANISM (2026-08-02).** Asked to make the vessel-status card
+resizable, I built it a private resize: own CSS, own key, own save path — beside the
+`.uicard` mechanism that already did exactly that in the controls window. **Andy asked
+whether something was fundamentally different about that card. It was: I had made it a
+special case.** Generalised to `.rsz` + `RESIZABLE_CARDS` + ONE key `asv_card_sizes_v1`,
+mirroring `asv_ui_cards_v1`. All ten chart-window cards resize.
+- **DISPLAY-AGNOSTIC ON PURPOSE.** Cards are shown by different paths, some as `block` and
+  some as `flex`. A mechanism needing one of them would silently no-op on half, and the next
+  card added would be a coin toss. So the CARD is the scroll container with a **sticky
+  header** — the same shape as `.uicard-grip`. A nominated `.rszbody` gives up its OWN
+  scrolling (`!important`, the caps are inline).
+- **ONLY AN OPERATOR-CHANGED SIZE IS PERSISTED**, compared against the authored default
+  captured at init. Several cards carry an inline width in the markup, so "has an inline
+  size" stored the DEFAULT the moment a card opened — and a stored default overrides a
+  changed default forever, which is the mission-buffer-vs-vessel-floor shape again. An
+  earlier attempt inferred intent from gestures and marked cards nobody had touched: a
+  mousedown while a card is HIDDEN measures 0×0, so any later reveal looked like a resize.
+- **THE SAVE IS EVENT-DRIVEN, IN BOTH WINDOWS.** `ResizeObserver` is delivered with the
+  rendering steps, and an occluded window has those suspended — **measured: in a hidden pane
+  it does not fire at all, not even on attach.** Same trap that froze the split mirror under
+  `requestAnimationFrame`. `mouseup` + `beforeunload` carry the guarantee; the observer is
+  the extra. **The controls window had the identical gap** and now gets the same trigger.
+- **The card is RESIZABLE** (same pass), and remembers its size next to its position.
+  `resize:both` needs a non-visible overflow, and the card had to become a **flex column** so
+  `.vbody` absorbs the dragged height instead of the rows spilling past the border — which is
+  why `display` now toggles to `"flex"`, never `"block"`.
+  **THE SAVE IS ON `mouseup`, NOT ONLY `ResizeObserver`.** An observer is RENDERING-driven,
+  and an occluded window has its rendering steps suspended — **measured here: in a hidden
+  pane the observer does not fire at all, not even on attach.** That is the same trap that
+  froze the window-split mirror when it used `requestAnimationFrame`; the note in the split
+  section says "use setTimeout, not rAF" and this is the same rule wearing a different name.
+  The observer is kept as the extra that catches a non-mouse resize.
+- Controls-window CSS hides the chart/status/command bar, pins the buttons as a left column,
+  and wraps each panel in
   a draggable+resizable `.uicard` (layout persisted to `localStorage`, key
   `asv_ui_cards_v1`).
 - **Main is only stripped while a controls peer is actually alive** (`body.ui-split`, driven

@@ -341,6 +341,8 @@ c.push(P("Use it for post-mission review, for showing a client what was covered,
 // 15 --------------------------------------------------------------------------
 c.push(H1("15  Working across two screens"));
 c.push(P("By default the console opens a CHART window and a CONTROLS window. Put the chart on one screen and the controls on the other and the chart is left clean. The two stay in step automatically; the chart window remains where you draw. In the controls window each panel becomes a draggable, resizable card and the layout is remembered between sessions."));
+c.push(P("Every card on the chart window can be RESIZED by dragging its bottom-right corner, and each remembers the size you gave it. Widen the vessel-status card to read the keep-out breakdown, or pull the traffic table taller when the sea is busy."));
+c.push(P("The VESSEL-STATUS CARD stays on the chart window and is not duplicated into the controls window — one card, one place to look. The top status bar keeps its own quick read of position, speed, heading, energy and time, so the chart window alone tells you everything about the vessel."));
 c.push(P("If the controls window is closed, everything returns to the chart window automatically and a pill appears to reopen it — the console is never left without its controls. `--single-window` skips the second window entirely."));
 
 // 16 --------------------------------------------------------------------------

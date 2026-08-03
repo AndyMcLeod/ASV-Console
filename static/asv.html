@@ -97,7 +97,8 @@
   .attrib a{color:var(--ink-dim);text-decoration:none;}
 
   .vcard{position:absolute;z-index:7;width:196px;background:rgba(10,17,25,.94);border:1px solid var(--line2);
-    border-radius:4px;box-shadow:0 4px 18px rgba(0,0,0,.45);font-family:var(--mono);user-select:none;}
+    border-radius:4px;box-shadow:0 4px 18px rgba(0,0,0,.45);font-family:var(--mono);user-select:none;
+    max-height:calc(100vh - 96px);}
   .vcard .vhead{cursor:move;padding:6px 9px;background:linear-gradient(180deg,#182636,#101c28);
     border-bottom:1px solid var(--line);border-radius:4px 4px 0 0;display:flex;align-items:center;
     justify-content:space-between;font-size:10px;letter-spacing:.08em;color:var(--bronze);text-transform:uppercase;}
@@ -105,8 +106,7 @@
   .vcard .vhead .vclose:hover{color:var(--bad);}
   /* The Mission block pushed the card past a laptop viewport when a run is up, so the
      body scrolls rather than running off the bottom of the chart. */
-  .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;
-    max-height:calc(100vh - 170px);overflow-y:auto;}
+  .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;}
   .vcard .vrow{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
   .vcard .vrow .vk{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.06em;}
   .vcard .vrow .vv{color:var(--ink);font-weight:600;}
@@ -118,6 +118,24 @@
   .vcard .vbar{height:5px;border-radius:2px;background:var(--line2);margin:4px 0 3px;overflow:hidden;}
   .vcard .vbar i{display:block;height:100%;background:var(--ink-faint);width:0%;}
   .vcard .vdetail{font-family:var(--sans);font-size:9px;color:var(--ink-faint);line-height:1.3;white-space:normal;word-break:break-word;}
+  /* RESIZABLE CARDS - ONE mechanism for the chart window, the same shape the controls
+     window already uses for its .uicard wrappers. `resize` needs a non-visible overflow to
+     take effect; the card becomes a flex COLUMN so a nominated body absorbs the dragged
+     height, and its header sticks so it survives the scroll. Cards without a nominated
+     body simply scroll as a whole. Suppressed inside a .uicard (controls window), which
+     already provides its own resize on the wrapper - two nested resize handles is nobody's
+     idea of a control. */
+  /* DISPLAY-AGNOSTIC ON PURPOSE. Different cards are shown by different code paths, some
+     as `block` and some as `flex`, so a mechanism that required one of them would silently
+     do nothing on half of them - and the next card added would be a coin toss. Instead the
+     CARD is the scroll container and its header sticks, exactly as .uicard-grip does in the
+     controls window. A nominated body gives up its OWN scrolling so the card's takes over;
+     !important because those caps are inline styles. */
+  .rsz{resize:both;overflow:auto;max-width:96vw;min-width:150px;min-height:96px;}
+  .rsz > :first-child{position:sticky;top:0;z-index:2;}
+  .rsz .rszbody{max-height:none!important;overflow:visible!important;}
+  body.ui-controls .uicard .rsz{resize:none;overflow:visible;max-width:none;}
+  body.ui-controls .uicard .rszbody{overflow:auto!important;}
   .vminipill{display:none;position:absolute;z-index:7;font-family:var(--mono);font-size:10px;padding:4px 9px;
     border-radius:2px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink-dim);cursor:pointer;}
   .note{position:absolute;left:50%;transform:translateX(-50%);top:52px;z-index:6;font-family:var(--mono);font-size:10.5px;
@@ -559,22 +577,22 @@ const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : 
 // section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel", "#envPanel",
                     "#transitPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
-                    "#aisReopen", "#chartPanel", "#vcard"];
+                    "#aisReopen", "#chartPanel"];
 document.body.classList.add("ui-" + UIROLE);
 (function(){ const s = document.createElement("style"); s.textContent =
   // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
   "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
   "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls #note,"+
   "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip{display:none!important;}"+
-  // controls-window vessel card: drop its own header (the card grip titles it) and every
-  // row the always-visible top status bar already shows — leave only the non-duplicated rows
-  // (Wind/Sea/Set, Water, Nogo, Run mode/time, Survey/Approach, Comms).
-  "body.ui-controls #vcard .vhead,"+
-  "body.ui-controls #vcard .vrow:has(#v_auto),body.ui-controls #vcard .vrow:has(#v_sog),"+
-  "body.ui-controls #vcard .vrow:has(#v_hdg),body.ui-controls #vcard .vrow:has(#v_cog),"+
-  "body.ui-controls #vcard .vrow:has(#v_home),body.ui-controls #vcard .vrow:has(#v_pitch),"+
-  "body.ui-controls #vcard .vrow:has(#v_roll),body.ui-controls #vcard .vrow:has(#v_batt),"+
-  "body.ui-controls #vcard .vrow:has(#v_wpt){display:none!important;}"+
+  // THE VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02).
+  // It used to be bridged, so the SAME card appeared in BOTH windows - as "VESSEL STATUS"
+  // on the chart and as a "Vessel" uicard here, with nine rows trimmed out to stop it
+  // duplicating the top status bar. Two copies of one card is not a second view, it is a
+  // second place to look; the chart window has the card, the top bar has the quick read,
+  // and this window is the toolbar. Hidden here rather than removed from the DOM, because
+  // this is the same page under ?panel=controls and the card must still exist for the
+  // chart window's own code to write into.
+  "body.ui-controls #vcard{display:none!important;}"+
   "body.ui-controls{overflow:hidden;}"+
   // buttons: a fixed vertical column pinned to the left
   "body.ui-controls .controls{position:fixed!important;left:12px!important;top:12px!important;right:auto!important;"+
@@ -4564,6 +4582,10 @@ function setupUISplit(){
       e.stopImmediatePropagation(); }, true);
     wrapUICards();                                   // panels -> draggable/resizable cards (restores saved layout)
     window.addEventListener("beforeunload", saveUILayout);   // preserve card layout across sessions
+    // Same rendering-driven gap as the chart window's: the ResizeObserver in wrapUICards is
+    // not delivered while this window is occluded, so a resize made and then switched away
+    // from would rely entirely on beforeunload. mouseup is event-driven and always lands.
+    window.addEventListener("mouseup", uiSaveSoon);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
       if(m.t==="sync") applyUISync(m);
       else if(m.t==="canvas") paintUICanvas(m.sel, m.png)      // ENV tide/wind bitmaps from main
@@ -4666,7 +4688,7 @@ function paintUICanvas(sel, png){
 // part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
 const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
   "#envPanel":"Environment", "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
-  "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source", "#vcard":"Vessel"};
+  "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ try{ return JSON.parse(localStorage.getItem(UI_LAYOUT_KEY)) || {}; }catch(e){ return {}; } }
 function saveUILayout(){                                // persist every card's position + size
@@ -4714,6 +4736,76 @@ $("#ctlReopen").onclick = ()=> window.open(location.origin + location.pathname +
                                            "asv_controls");
 
 // --- vessel-status card drag/persist ------------------------------------- //
+// --- RESIZABLE CARDS (chart window) --------------------------------------- //
+// ONE mechanism and ONE storage key for every card on the chart window, deliberately the
+// same shape as the controls window's `asv_ui_cards_v1`. The vessel-status card was very
+// nearly given a private resize with its own key and its own save path, sitting beside an
+// established mechanism that did the same job - exactly the kind of parallel mechanism this
+// repo has watched drift before. Cards differ INSIDE, so which element absorbs the dragged
+// height is a per-card parameter; the mechanism around it is shared.
+const CARD_SIZE_KEY = "asv_card_sizes_v1";
+const RESIZABLE_CARDS = [
+  {sel:"#vcard",          body:".vbody"},          // always visible: the one worth resizing most
+  {sel:"#lineTablePanel", body:"#lineTableBody"},  // per-line table, grows with the plan
+  {sel:"#aisTablePanel",  body:"#aisTableBody"},   // traffic list, grows with the sea
+  {sel:"#chartPanel",     body:"#chartBody"},
+  {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations centre
+  {sel:"#linePanel"}, {sel:"#boundPanel"}, {sel:"#searchPanel"},
+  {sel:"#envPanel"},  {sel:"#transitPanel"},       // forms: no body to nominate, scroll whole
+];
+function loadCardSizes(){ try{ return JSON.parse(localStorage.getItem(CARD_SIZE_KEY)) || {}; }catch(e){ return {}; } }
+// ONLY A SIZE THE OPERATOR SET. Several cards carry an authored inline width in the markup,
+// so "has an inline size" would persist the DEFAULT the moment the card was opened - and a
+// stored default then silently overrides a changed default forever after, which is the same
+// shape as the mission buffer that undercut a vessel's own floor.
+//
+// The test is a COMPARISON AGAINST THE AUTHORED DEFAULT, captured once before any saved size
+// is applied. An earlier version tried to infer intent from the gestures - size changed
+// between a mousedown and its mouseup - and marked cards nobody had touched, because a
+// mousedown taken while a card is hidden measures 0x0 and any later reveal then looks like a
+// resize. Comparing against the default cannot be fooled by that: either the box differs
+// from what the markup asked for, or it does not.
+function saveCardSizes(){
+  const L = loadCardSizes();
+  for(const c of RESIZABLE_CARDS){ const el = $(c.sel); if(!el) continue;
+    if(el.style.display === "none") continue;      // a hidden card measures 0 - never save that
+    const w = el.style.width || "", h = el.style.height || "";
+    if(w === (el.dataset.rszDefW || "") && h === (el.dataset.rszDefH || "")) continue;
+    L[c.sel] = {width: w, height: h};
+  }
+  try{ localStorage.setItem(CARD_SIZE_KEY, JSON.stringify(L)); }catch(e){}
+}
+// THE SAVE MUST NOT DEPEND ON RENDERING. A ResizeObserver is delivered with the rendering
+// steps, and an occluded or background window has those suspended - measured here: in a
+// hidden pane the observer does not fire at all, not even on attach. That is the same trap
+// that froze the window-split mirror when it used requestAnimationFrame (see the split
+// section in the maintainer notes). `mouseup` and `beforeunload` are event-driven and land
+// whatever the window is doing; a drag-resize always ends in a mouseup. The observer stays
+// as the extra that catches a resize made without the mouse.
+let cardSizeTimer = null;
+function saveCardSizesSoon(){ clearTimeout(cardSizeTimer); cardSizeTimer = setTimeout(saveCardSizes, 300); }
+function makeCardsResizable(){
+  const saved = loadCardSizes();
+  for(const c of RESIZABLE_CARDS){
+    const el = $(c.sel); if(!el) continue;
+    el.classList.add("rsz");
+    const body = c.body ? el.querySelector(c.body) : null;
+    if(body) body.classList.add("rszbody");
+    // The authored default, captured BEFORE any saved size is applied - this is what a
+    // later size is compared against to decide whether the operator changed anything.
+    el.dataset.rszDefW = el.style.width || "";
+    el.dataset.rszDefH = el.style.height || "";
+    const sz = saved[c.sel];
+    if(sz && sz.width)  el.style.width  = sz.width;
+    if(sz && sz.height){ el.style.height = sz.height; el.style.maxHeight = "none"; }
+    // a card being resized is no longer bound by the default height cap
+    el.addEventListener("mousedown", ()=>{ el.style.maxHeight = "none"; });
+    el.addEventListener("mouseup", saveCardSizesSoon);
+    if(window.ResizeObserver) new ResizeObserver(saveCardSizesSoon).observe(el);
+  }
+  window.addEventListener("mouseup", saveCardSizesSoon);
+  window.addEventListener("beforeunload", saveCardSizes);
+}
 const VCARD_KEY = "asv_vcard_v1";
 const vcard = $("#vcard"), vhead = $("#vcardHead"), vreopen = $("#vReopen");
 function vcardDefaultPos(){ const r = mapEl.getBoundingClientRect(); return {left: Math.max(14, r.width - 196 - 64), top: 96}; }
@@ -4750,6 +4842,7 @@ $("#vcardClose").addEventListener("click", e=>{ e.stopPropagation();
 vreopen.addEventListener("click", ()=>{
   saveVcardPrefs({...loadVcardPrefs(), hidden:false}); vcard.style.display="block"; vreopen.style.display="none"; });
 placeVcard();
+makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 
 // --- draggable survey settings panel (only the SURV pop-up; other mode panels stay put) ---
 const SURVPANEL_KEY = "asv_survpanel_pos_v1";

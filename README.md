@@ -57,7 +57,12 @@ window runs all the logic and owns the chart, the controls window mirrors its co
 and forwards your clicks and edits back. You still draw on the main window's chart. In
 the controls window the buttons become a vertical column on the left and each panel or
 table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
-and restored next session. If the controls window is closed the toolbar and panels
+and restored next session. The **vessel-status card stays on the chart window** — it is
+not mirrored, because two copies of one card is a second place to look rather than a
+second view; the chart window has the card, the top bar has the quick read, and the
+controls window is the toolbar. **Every card on the chart window is resizable** —
+drag its bottom-right corner; the size is remembered per card, and only a size you
+actually changed is stored, so a card's default can still be improved later. If the controls window is closed the toolbar and panels
 return to the main window automatically, and a **⏏ Controls** pill appears on the top
 bar to reopen it — so the console is never left without its controls. Pass
 `--single-window` to skip the second window.
@@ -618,6 +623,15 @@ python tests/ais_range.py
 (not the collect box), that it is clamped to what was actually collected, and that it is
 **never applied on a lake**, where every contact stands. Runs against a stub provider at
 known ranges, so it tests the console rather than today's real traffic.
+
+```
+node tests/ui_split.js
+```
+
+**UI split** — that every selector the two-window bridge names still resolves against the
+page (a stale one fails silently: a panel just stops mirroring), and that the vessel-status
+card stays on the chart window — not mirrored into the controls window, and not stripped
+from the chart either.
 
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in

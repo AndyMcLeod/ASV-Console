@@ -287,7 +287,7 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Thirteen regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs every one of them whenever a source they cover is staged."));
+c.push(P("Fourteen regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs every one of them whenever a source they cover is staged."));
 c.push(TBL(["Harness", "Guards"], [
   ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
   ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
@@ -302,6 +302,7 @@ c.push(TBL(["Harness", "Guards"], [
   ["`node tests/speed_recalc.js`", "That the plan speed is treated as an INPUT: changing it recalculates the turn geometry, durations and per-line times, and a plan already committed - whose turn waypoints cannot be rebuilt - is re-checked against the minimum turn radius the new speed implies"],
   ["`python tests/live_speed.py`", "That a commanded speed change REACHES the vessel rather than only the readout: with the vessel under way, speed over ground follows the command in both directions. Drives a real console and lets the vessel accelerate, because accepting the command proves nothing"],
   ["`python tests/ais_range.py`", "That the traffic display range filters a wider collected subscription as a true range circle rather than a bounding box, is clamped to what was collected, and is never applied on an enclosed lake where the whole lake is shown. Runs against a stub provider at known ranges"],
+  ["`node tests/ui_split.js`", "That every selector the two-window bridge names still resolves against the page - a stale one fails silently, with a panel simply ceasing to mirror - and that the vessel-status card renders on the chart window only, neither mirrored into the controls window nor stripped from the chart"],
 ], [2700, 6660]));
 c.push(SP());
 c.push(P("Enable the hook once per clone with `git config core.hooksPath .githooks`."));

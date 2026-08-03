@@ -1,0 +1,155 @@
+// tests/ui_split.js - the two-window split: what is bridged, and what belongs where.
+//
+// Two things this guards, one of them an operator decision.
+//
+// 1. THE REGISTRATION LISTS MUST RESOLVE. The split works by naming selectors in three
+//    places - UI_BRIDGED (mirrored to the controls window), UI_CARD_TITLES (wrapped as a
+//    draggable card there), and the injected controls-window CSS. A selector that no longer
+//    matches anything fails SILENTLY: the panel simply stops mirroring, or stops being
+//    hidden, and nothing anywhere says so. The maintainer notes have claimed "every bridged
+//    selector resolves" since the port - as a sentence somebody checked once. This makes it
+//    a test.
+//
+// 2. THE VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW (Andy, 2026-08-02). It used to be
+//    bridged, so the SAME card appeared in BOTH windows - "VESSEL STATUS" on the chart, and
+//    a "Vessel" card in the controls window with nine rows trimmed out to stop it echoing
+//    the top status bar. Two copies of one card is not a second view, it is a second place
+//    to look. The chart window has the card, the top bar has the quick read, the controls
+//    window is the toolbar. THE TOP STATUS BAR IS DELIBERATELY UNTOUCHED - it is liked as
+//    it is, and the nine-row overlap with the card is accepted, not a defect to fix.
+//
+//   node tests/ui_split.js      # exit 0 = pass, 1 = fail   (stdlib Node)
+//
+// These are SOURCE-SHAPE assertions, like the move-grip draw order: which window a card
+// renders in is not observable without standing up two real browser windows, and the
+// regression this guards is precisely an entry in a list. A future port from the sibling
+// console - which arranges its own windows differently - is exactly how #vcard would get
+// re-added without anyone noticing.
+//
+// TEETH (verified by mutation, not assumed): put "#vcard" back in UI_BRIDGED and 5 fails;
+// back in UI_CARD_TITLES and 6 fails; drop the controls-window hide rule and 7 fails; add
+// "#vcard" to the ui-split hide list, which would strip it from the CHART window too, and 8
+// fails. Break any bridged selector and 2 fails; any card title and 3; any id in the
+// injected CSS and 4. Give .rsz a fixed `display` and 11 fails. Drop the vessel card from
+// the registry and 12 fails. Save only through the ResizeObserver, with no mouseup, and 13
+// fails. Persist any inline size rather than only a changed one and 14 fails.
+//
+// NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
+
+const fs = require("fs");
+const path = require("path");
+
+const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+
+let fails = 0, ran = 0;
+function check(name, cond, detail) {
+  ran++;
+  console.log((cond ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
+  if (!cond) fails++;
+}
+
+// Everything the document actually defines.
+const IDS = new Set(H.match(/\bid="[^"]+"/g).map(s => s.slice(4, -1)));
+const CLASSES = new Set();
+(H.match(/\bclass="[^"]+"/g) || []).forEach(c => c.slice(7, -1).split(/\s+/).forEach(w => w && CLASSES.add(w)));
+const resolves = sel => sel[0] === "#" ? IDS.has(sel.slice(1))
+                 : sel[0] === "." ? CLASSES.has(sel.slice(1)) : false;
+
+function block(name) {
+  const i = H.indexOf("const " + name);
+  if (i < 0) throw new Error("test setup: " + name + " not found (renamed?)");
+  return H.slice(i, H.indexOf(";", i));
+}
+const bridged = (block("UI_BRIDGED").match(/"([.#][A-Za-z0-9_-]+)"/g) || []).map(s => s.slice(1, -1));
+const titles  = (block("UI_CARD_TITLES").match(/"([.#][A-Za-z0-9_-]+)"\s*:/g) || []).map(s => s.match(/"([^"]+)"/)[1]);
+
+// The injected controls-window stylesheet, as one string.
+const cssStart = H.indexOf('const s = document.createElement("style"); s.textContent =');
+const cssEnd = H.indexOf("document.head.appendChild(s);", cssStart);
+const CSS = H.slice(cssStart, cssEnd);
+const cssIds = [...new Set((CSS.match(/#[A-Za-z][A-Za-z0-9_-]*/g) || [])
+  .filter(x => !/^#[0-9a-fA-F]{3,8}$/.test(x)))];        // drop colour literals
+
+console.log("UI split — the registration lists must resolve, and the card belongs on the chart:");
+
+check("1. all three registration surfaces were found",
+      bridged.length > 5 && titles.length > 5 && cssIds.length > 5,
+      bridged.length + " bridged, " + titles.length + " titled, " + cssIds.length + " ids in CSS");
+
+const badB = bridged.filter(s => !resolves(s));
+check("2. every UI_BRIDGED selector resolves in the DOM",
+      badB.length === 0, badB.length ? badB.join(", ") : bridged.length + " checked");
+const badT = titles.filter(s => !resolves(s));
+check("3. every UI_CARD_TITLES key resolves in the DOM",
+      badT.length === 0, badT.length ? badT.join(", ") : titles.length + " checked");
+const badC = cssIds.filter(s => !resolves(s));
+check("4. every #id in the injected controls-window CSS resolves",
+      badC.length === 0, badC.length ? badC.join(", ") : cssIds.length + " checked");
+
+// 5-8. THE OPERATOR'S DECISION. The card is not mirrored, not wrapped, hidden in the
+// controls window - and NOT in the ui-split hide list, which is what keeps it on the chart.
+check("5. the vessel-status card is NOT bridged to the controls window",
+      !bridged.includes("#vcard"), "one card, one place to look");
+check("6. ... and is NOT wrapped as a controls-window card",
+      !titles.includes("#vcard"));
+check("7. ... and IS hidden there outright",
+      /body\.ui-controls #vcard\{display:none!important;\}/.test(CSS.replace(/\s+/g, " ")),
+      "same page under ?panel=controls, so it is hidden rather than removed");
+
+// 8. The other half, and the easy mistake: hiding it on the CHART window instead. The
+// ui-split list strips the toolbar and panels from the chart window while the controls
+// window is alive - the vessel card must never join it.
+const splitLine = (CSS.match(/body\.ui-split [^"]*/g) || []).join(" ");
+check("8. ... and never added to the ui-split list, which would strip it from the CHART",
+      !/body\.ui-split #vcard\b/.test(splitLine),
+      "the chart window is where it lives");
+
+// 9. The top status bar is deliberately left alone, overlap and all. If someone ever
+// "tidies" the duplication away, this says it was a decision.
+check("9. the top status bar still carries its own quick-read pills",
+      (H.match(/<b id="p_[a-z_0-9]+"/g) || []).length >= 9,
+      (H.match(/<b id="p_[a-z_0-9]+"/g) || []).length + " pills — the overlap with the card is accepted");
+
+// 10-13. RESIZABLE CARDS - ONE MECHANISM, not a special case per card.
+// The vessel-status card was very nearly given a private resize with its own storage key
+// and its own save path, sitting beside the .uicard mechanism that already did the same job
+// in the controls window. Two mechanisms for one behaviour is how they drift. These lock
+// the shared one in place.
+const RSZ = H.slice(H.indexOf(".rsz{"), H.indexOf(".vminipill{"));
+check("10. there is a SHARED resizable-card class, not per-card CSS",
+      /resize:both/.test(RSZ) && /overflow:auto/.test(RSZ)
+      && /\.rsz > :first-child\{position:sticky/.test(RSZ),
+      "resize + scroll container + sticky header, once");
+check("11. ... and it is DISPLAY-AGNOSTIC — cards are shown as block AND as flex",
+      !/\.rsz\{[^}]*display:flex/.test(RSZ),
+      "requiring one display value would no-op on half the cards");
+
+const reg = H.slice(H.indexOf("const RESIZABLE_CARDS"), H.indexOf("function loadCardSizes"));
+const regCards = (reg.match(/sel:"#([A-Za-z0-9_]+)"/g) || []).map(x => x.slice(6, -1));
+check("12. every chart-window card is in the registry, the vessel card included",
+      regCards.includes("vcard") && regCards.length >= 10,
+      regCards.length + " cards: " + regCards.join(", "));
+
+// 13. THE SAVE MUST NOT DEPEND ON RENDERING. A ResizeObserver is delivered with the
+// rendering steps, and an occluded window has those suspended - measured in a hidden pane:
+// it does not fire at all, not even on attach. Same trap that froze the window-split mirror
+// when it used requestAnimationFrame. mouseup and beforeunload are event-driven and land
+// whatever the window is doing. BOTH windows are checked: the controls window's own layout
+// save had the identical gap.
+check("13. the size save is event-driven in BOTH windows, not only observer-driven",
+      H.indexOf('window.addEventListener("mouseup", saveCardSizesSoon)') >= 0
+      && H.indexOf('window.addEventListener("beforeunload", saveCardSizes)') >= 0
+      && H.indexOf('window.addEventListener("mouseup", uiSaveSoon)') >= 0,
+      "chart window + controls window both get a mouseup trigger");
+
+// 14. A stored DEFAULT would override a changed default forever - the same shape as the
+// mission buffer that undercut a vessel's own floor. Only a size that differs from what the
+// markup authored is persisted.
+check("14. only an operator-CHANGED size is persisted, never the authored default",
+      H.indexOf("rszDefW") >= 0 && H.indexOf("rszDefH") >= 0
+      && /w === \(el\.dataset\.rszDefW \|\| ""\)/.test(H),
+      "compared against the authored default, not inferred from gestures");
+
+console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
+                  : "\nall checks passed (" + ran + ")");
+process.exit(fails ? 1 : 0);

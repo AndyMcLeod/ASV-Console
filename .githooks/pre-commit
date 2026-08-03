@@ -24,6 +24,8 @@
 #                           follows a live change. Drives a real console.
 #   tests/ais_range.py      the AIS display range FILTERS a wide subscription, is a true
 #                           range circle, and is never applied on a lake.
+#   tests/ui_split.js       the two-window registration lists resolve, and the vessel
+#                           card stays on the CHART window only.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -36,7 +38,7 @@
 changed=$(git diff --cached --name-only)
 case "$changed" in
   *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*|*tests/speed_recalc.js*) ;;
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*|*tests/speed_recalc.js*|*tests/ui_split.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -83,6 +85,16 @@ if ! node tests/speed_recalc.js; then
   echo "  Changing the plan speed no longer recalculates, or a committed plan is not"
   echo "  re-checked against the turn radius the new speed implies"
   echo "  (recalcForSpeed / recalcCommittedForSpeed in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: UI split regression test..."
+if ! node tests/ui_split.js; then
+  echo ""
+  echo "pre-commit: ui-split test FAILED."
+  echo "  A window-split registration selector no longer resolves, or the vessel-status"
+  echo "  card has been mirrored back into the controls window / stripped from the chart"
+  echo "  window (UI_BRIDGED / UI_CARD_TITLES / the injected CSS in static/asv.html)."
   fail=1
 fi
 
