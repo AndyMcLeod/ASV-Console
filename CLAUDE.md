@@ -67,7 +67,21 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
+**THIS SESSION ("ASV console refinement", 2026-08-02) — a POLISH pass, Andy's choice of
+scope: no new features; tighten, delete special cases, verify by pixels, refresh docs.**
+- **the retired keep-right is deleted** — 595 lines, 10 % of `static/asv.html`.
+  `keepRight`, `channelEndExtend`, `gateProject`, the colour system (`buoyageDir`,
+  `buoyLaneAt`, `crossToLine`) and the write-only `lastBuoyage` had been left in place
+  after the 2026-07-31 lane port as a recorded "lower risk" divergence; that divergence is
+  now CLOSED and this matches the sibling. **No behaviour change** — nothing referenced
+  them but each other, so no doc rebuild was owed. See "CHANNEL LANE".
+  **Two things the cut exposed that the dead code had been hiding:** `planNogoRoute`'s
+  descriptive comment had drifted 46 lines up onto `pairGates` (the gate-projection
+  paragraph in between was what separated them), and `pairGates` — which is LIVE, for
+  `channelSpanKeepouts` — had no comment of its own describing what it actually does.
+  **Deleting dead code is not only tidying: it re-joins things the corpse was holding apart.**
+
+**Previous session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
 - **vessel card off the controls window** — it was bridged, so one card rendered in BOTH
   windows. Now chart-window only; top bar untouched by request. New suite
   `tests/ui_split.js` (9), which also turns "every bridged selector resolves" from a
@@ -249,7 +263,7 @@ Survey coverage lines and teardrop turns are never offset.
    from the water's own edges: `ctr=(RC−LC)/2`, `hw=(RC+LC)/2`. Fires only where BOTH
    edges answer within `CONFINE`. **This is where the ASV's `channel_reach_m` vessel
    override now lives** (it used to set `keepRight`/`channelEndExtend`'s wall-search
-   REACH; both are dead): `CONFINE = max(120, channel_reach_m ?? buf*30)`.
+   REACH; both DELETED 2026-08-02): `CONFINE = max(120, channel_reach_m ?? buf*30)`.
 3. `smoothTrack` — resample by ARC LENGTH at `STEP = max(45, buf*13)` (the waypoint
    count dial) + two light `[0.25,0.5,0.25]` passes to round the bends.
 
@@ -261,12 +275,22 @@ largest offset that stays in clear water, then slew-limit); always SAMPLE a poly
 never trust its vertex count; and measure the lane against the pre-shift samples, not
 by marching perpendicular to the final route.
 
-**Now dead here, kept for reference:** `keepRight`, `channelEndExtend`, `gateProject`,
-and the whole colour system (`buoyageDir`, `buoyLaneAt`, `crossToLine`) — all only
-reachable from `keepRight`. **DIVERGENCE FROM THE Z-BOAT:** the sibling deleted its
-colour helpers outright; here they are left in place with the dead function (lower
-risk, behaves identically since nothing calls any of it). **NOT implemented** (retired
-with them): the channel end extension and the buoy-gate projection.
+**DELETED 2026-08-02 — the divergence is closed.** `keepRight`, `channelEndExtend`,
+`gateProject`, the colour system (`buoyageDir`, `buoyLaneAt`, `crossToLine`) and the
+write-only `lastBuoyage` are **gone** (595 lines, 10 % of the page). They had been left
+in place as a deliberate "lower risk" divergence after the port; the sibling deleted its
+colour helpers outright and this now matches. Nothing referenced them but each other —
+verified by a reference scan before and after, which also confirmed **no function was
+newly orphaned** by the cut. `pairGates` SURVIVES: it is live for `channelSpanKeepouts`
+(the buoy-gate fairway corridor), which is a different job from the retired gate
+projection. **NOT implemented** (retired with them, unchanged): the channel end
+extension and the buoy-gate projection.
+
+Dead code is not free: it was still being read, still being maintained in comments, and
+`tools/buoy_lane_test.js` had already been deleted for *testing* it and passing. The cut
+was verified three ways — all 14 suites (177 assertions) green, both pages parse, and the
+real page driven in a browser: `planNogoRoute` along the Lewes canal returned 26
+waypoints with the lane engaged and no console errors.
 
 **Test:** `node tests/buoy_lane.js` — 11 assertions (lane side + magnitude both
 directions, opposing transits pass port-to-port, unmarked channel both ways, a lone
@@ -1237,10 +1261,16 @@ the console core; vessel *files* may name real modeled vessels.
 8. **Server:** suppress benign client-disconnect tracebacks; `boot_id` +
    `/api/logevent` + `/api/vessel(s)` endpoints; energy model (battery|fuel).
 
-### NEEDS LIVE VERIFICATION (couldn't drive in the sandbox — localhost is blocked
-in the in-app browser, and canvas screenshots time out). All were unit/harness-
-tested where possible, but the click/drag/hover UX itself is unverified in a real
-browser:
+### NEEDS LIVE VERIFICATION (historical list — see the correction below). All were
+unit/harness-tested where possible, but the click/drag/hover UX itself was unverified
+in a real browser at the time:
+
+> **The stated reason was WRONG and cost real coverage.** "localhost is blocked in the
+> in-app browser" was never true — disproved 2026-08-02 by simply doing it
+> (`preview_start` on `http://127.0.0.1:<port>/`, then `javascript_tool` to drive the
+> page). Canvas screenshots do still time out, but `getImageData` reads the pixels
+> instead. **A believed-blocked tool is worse than a missing one: nobody retries it.**
+> Start a scratch console on a SPARE port so Andy's 8791 is untouched.
 - WPT-mode waypoint **drag** feel + hit radius (10 px); **Shift**-click line delete.
 - **Hover** time-to-end tooltip on the active line during a run.
 - **LINES** panel live actuals + the auto-log on run end.
@@ -1253,8 +1283,9 @@ browser:
 - Could add a playback-viewer table view of the logged `survey_lines` events.
 
 ### Key gotchas learned (don't relearn these)
-- **Client-side routing:** `routeAround`/`keepRight`/`planNogoRoute`/`gateProject`
-  are ALL browser JS. Driving via raw `/api/cmd/*` + `upload` with no `route`
+- **Client-side routing:** `routeAround`/`planNogoRoute`/`channelLaneRoute`
+  are ALL browser JS (this list named `keepRight`/`gateProject` until they were
+  deleted 2026-08-02). Driving via raw `/api/cmd/*` + `upload` with no `route`
   BYPASSES ENC routing → the boat crosses nogo. The GUI Punch-Out+Upload flow
   routes clear.
 - **Go-To distance (2026-07-25):** two effects made distant Go-To inconsistent —

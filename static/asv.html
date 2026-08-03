@@ -1873,27 +1873,6 @@ function markSystems(marks){
   }
   return out;
 }
-// Signed cross-track offset from sample `s` to a buoy line, measured along the
-// sample's STARBOARD unit vector `sb` (+ve = the line lies to starboard). The two
-// terminal segments are extended by `ext` so the fairway projects past the outer
-// buoys (a mariner steers on toward the last gate, they don't stop at it); `exc`
-// reports how far beyond the real end the nearest point fell, so the caller can
-// fade the line out instead of dragging a distant route onto it.
-function crossToLine(s, sb, pts, ext){
-  if(!pts || pts.length<1) return null;
-  if(pts.length===1){ const dx=pts[0].e-s.e, dy=pts[0].n-s.n;
-    return {cross:dx*sb[0]+dy*sb[1], d:Math.hypot(dx,dy), exc:0}; }
-  let best=null;
-  for(let i=1;i<pts.length;i++){
-    const a=pts[i-1], b=pts[i]; let dx=b.e-a.e, dy=b.n-a.n; const l=Math.hypot(dx,dy)||1; dx/=l; dy/=l;
-    const t0 = (i===1? -ext : 0), t1 = (i===pts.length-1? l+ext : l);
-    let t=(s.e-a.e)*dx+(s.n-a.n)*dy; t=Math.max(t0,Math.min(t1,t));
-    const qe=a.e+dx*t, qn=a.n+dy*t, d=Math.hypot(qe-s.e,qn-s.n);
-    const exc = t<0 ? -t : (t>l ? t-l : 0);
-    if(!best || d<best.d) best={cross:(qe-s.e)*sb[0]+(qn-s.n)*sb[1], d, exc};
-  }
-  return best;
-}
 // Intrinsic radius (m) of a charted POINT hazard, before the nogo buffer is added.
 // Zero for genuinely point-sized objects. For a wreck/hulk/obstruction/awash rock the
 // chart gives a position but no extent, so we assume the configured radius UNLESS the
@@ -1920,8 +1899,9 @@ function buildKeepouts(ref, enf, dr, feats){
     const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
     const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
     // LATERAL channel marks (buoys/beacons): collected as channel-defining marks
-    // (used as Rule 9 channel walls in keepRight) AND kept clear as small point
-    // keep-outs (don't hit a buoy). CATLAM: 1/3 = port-hand, 2/4 = starboard-hand.
+    // (paired into the Rule 9 channel centreline by systemCenterline) AND kept clear
+    // as small point keep-outs (don't hit a buoy).
+    // CATLAM: 1/3 = port-hand, 2/4 = starboard-hand.
     if(r==="chan_mark"){ const cat=f.props&&f.props.CATLAM, id=markId(f.props);
       eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref);
         marks.push({e:q.e, n:q.n, side:(cat==2||cat==4)?1:(cat==1||cat==3)?-1:0, num:id.num, sys:id.sys});
@@ -2493,203 +2473,6 @@ function legPath(A, B, ref, ko, buf){
   }
   return null;
 }
-// COLREGS Rule 9 (narrow channels): when TRANSITING a channel, keep to the
-// STARBOARD side (relative to the direction of travel) so opposing traffic passes
-// port-to-port. Given a clear path `pts` [start … end], offset it toward the
-// starboard wall wherever a wall exists on the right within range (a channel /
-// shore-to-starboard); no wall on the right (open water) => no offset. Endpoints
-// are fixed and the offset tapers to 0 near them. Falls back to the original path
-// if the offset can't be kept clear. Sim + real behave the same (client-planned).
-//
-// Channel END EXTENSION (operator's rule): a channel effectively extends past
-// its physical ends by a distance equal to its own (minimum) width. Without it
-// the route turns the instant the walls end - cutting diagonally across the
-// mouth right where opposing traffic enters/exits. This pre-pass finds channel
-// exit / entry transitions along the sampled path and splices in a straight
-// STAND-ON leg along the channel axis (length = channel width) before the turn
-// (exit), or an aligned approach before the mouth (entry). Skipped when the
-// path already runs straight there, when the target/start sits inside the
-// extension, or when the extension can't be kept clear.
-function channelEndExtend(samp, ref, ko, buf, gb){
-  const STEP=Math.max(3,buf), REACH=Math.max(35, CHANNEL_REACH_M!=null?CHANNEL_REACH_M:buf*10), MS=Math.max(1,buf/2);
-  const hit = gb || ((e,n)=>blocked({e,n},ko,buf));
-  const march=(s,de,dn)=>{ for(let d=STEP; d<=REACH; d+=MS){
-    if(hit(s.e+de*d, s.n+dn*d)) return d; } return Infinity; };
-  const clearEN=(A,B)=>{ const L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
-    for(let k=0;k<=n;k++){ const t=k/n; if(hit(A.e+(B.e-A.e)*t, A.n+(B.n-A.n)*t)) return false; } return true; };
-  const resamp=(A,B)=>{ const out=[], L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/STEP));
-    for(let k=1;k<=n;k++){ const t=k/n; out.push({e:A.e+(B.e-A.e)*t, n:A.n+(B.n-A.n)*t}); } return out; };
-  const width=(s,i)=>{ const a=s[Math.max(0,i-1)], b=s[Math.min(s.length-1,i+1)];
-    let te=b.e-a.e, tn=b.n-a.n; const L=Math.hypot(te,tn)||1; te/=L; tn/=L;
-    const rc=march(s[i],tn,-te), lc=march(s[i],-tn,te);
-    return (rc<Infinity && lc<Infinity) ? rc+lc : 0; };    // 0 = not wall-to-wall channel
-  let s=samp;
-  const handled=[];            // mouths already extended - see ALIGN/dedupe notes below
-  const ALIGN_COS=0.82;        // ~35 deg: already lined up with the channel => no extension
-  for(let guard=0; guard<6; guard++){
-    const cum=[0]; for(let i=1;i<s.length;i++) cum.push(cum[i-1]+Math.hypot(s[i].e-s[i-1].e, s[i].n-s[i-1].n));
-    const w=s.map((_,i)=>width(s,i));
-    let spliced=false;
-    for(let i=2;i<s.length-2 && !spliced;i++){
-      const exit = w[i]>0 && !w[i+1], entry = !w[i] && w[i+1]>0;
-      if(!exit && !entry) continue;
-      // channel width = min over the adjacent in-channel stretch (~5 samples)
-      let W=1e9;
-      for(let k=0;k<5;k++){ const j=exit? i-k : i+1+k; if(j>=0&&j<s.length&&w[j]>0) W=Math.min(W,w[j]); }
-      if(W>=1e9) continue;
-      W=Math.max(12, Math.min(2*REACH, W));
-      const anchor = exit ? s[i] : s[i+1];
-      // DEDUPE: extend a given mouth ONCE. The outer loop rescans after each
-      // splice and would re-detect the same transition, stacking extension on
-      // extension (observed live: 4 splices at one canal mouth, compounding an
-      // 18 m out-and-back). One stand-on leg per mouth is the whole intent.
-      if(handled.some(h=>Math.hypot(h.e-anchor.e,h.n-anchor.n) < Math.max(25,W))) continue;
-      // channel axis direction AT the mouth (pointing out of it, both cases)
-      const back = exit ? s[Math.max(0,i-3)] : s[Math.min(s.length-1,i+4)];
-      let te=anchor.e-back.e, tn=anchor.n-back.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
-      // room: don't stand on past the target / before the start
-      if(exit  && (cum[cum.length-1]-cum[i]) < W*0.8) continue;
-      if(entry && cum[i+1] < W*0.8) continue;
-      // ALREADY LINED UP? Compare the path's own direction at the mouth with the
-      // channel axis. Within ~35 deg there is nothing to line up, and forcing a
-      // stand-on point one width along the axis only drags the route out and back
-      // (observed live: axis 333 deg while approaching from the west => a jog
-      // north, then back southeast into the mouth).
-      let ae,an;
-      if(exit){ const f=s[Math.min(s.length-1,i+4)]; ae=f.e-anchor.e; an=f.n-anchor.n; }
-      else    { const g=s[Math.max(0,i-3)];          ae=anchor.e-g.e; an=anchor.n-g.n; }
-      const al=Math.hypot(ae,an)||1;
-      if((ae*te+an*tn)/al >= ALIGN_COS) continue;
-      // still turning off-axis? (max lateral dev through the extension zone)
-      let turns=false;
-      if(exit){ for(let j=i+1;j<s.length && cum[j]-cum[i]<=W;j++){
-          if(Math.abs((s[j].e-anchor.e)*tn-(s[j].n-anchor.n)*te) > Math.max(6,W*0.25)){ turns=true; break; } } }
-      else { for(let j=i;j>=0 && cum[i+1]-cum[j]<=W;j--){
-          if(Math.abs((s[j].e-anchor.e)*tn-(s[j].n-anchor.n)*te) > Math.max(6,W*0.25)){ turns=true; break; } } }
-      if(!turns) continue;
-      // Extend along the outward axis - but NEVER splice a HAIRPIN: the rejoin
-      // leg must turn <= ~110 deg at the extension point (cos >= -0.34), else the
-      // boat would drive out past the mouth and double straight back (seen live:
-      // an out-and-back waypoint knot). Shrink the extension and retry; skip the
-      // extension entirely if no sane rejoin exists.
-      // The maneuver is spliced as a QUADRATIC BEZIER (control point = the
-      // extension point): the curve leaves the mouth tangent ALONG the channel
-      // axis (the stand-on) and sweeps smoothly onto the rejoin leg, instead of
-      // the sharp two-leg dogleg the boat had to corner through (seen live: an
-      // odd swing-out at the mouth). Falls back to the straight dogleg when the
-      // curve can't be kept clear.
-      const bezier=(A2,C2,B2)=>{ const out=[], L=Math.hypot(C2.e-A2.e,C2.n-A2.n)+Math.hypot(B2.e-C2.e,B2.n-C2.n);
-        const n=Math.max(6, Math.ceil(L/STEP));
-        for(let k=1;k<=n;k++){ const t2=k/n, u=1-t2;
-          out.push({e:u*u*A2.e+2*u*t2*C2.e+t2*t2*B2.e, n:u*u*A2.n+2*u*t2*C2.n+t2*t2*B2.n}); }
-        return out; };
-      const polyClear=(from,arr)=>{ let prev=from;
-        for(const q of arr){ if(!clearEN(prev,q)) return false; prev=q; } return true; };
-      let We=W, done=false;
-      while(We>=10 && !done){
-        const P={e:anchor.e+te*We, n:anchor.n+tn*We};
-        if(hit(P.e,P.n) || !clearEN(anchor,P)){ We*=0.75; continue; }
-        let r=-1;
-        if(exit){
-          for(let j=i+1;j<s.length;j++){ if(cum[j]-cum[i]>3*W) break;
-            if(cum[j]-cum[i]<We*0.9 || !clearEN(P,s[j])) continue;
-            const ve=s[j].e-P.e, vn=s[j].n-P.n, vl=Math.hypot(ve,vn)||1;
-            if((ve*te+vn*tn)/vl >= -0.34){ r=j; break; } }
-          if(r>=0){
-            const bez=bezier(anchor,P,s[r]);
-            const mid=polyClear(anchor,bez) ? bez : [...resamp(anchor,P), ...resamp(P,s[r])];
-            s=[...s.slice(0,i+1), ...mid, ...s.slice(r+1)]; done=true;
-          }
-        } else {
-          for(let j=i;j>=0;j--){ if(cum[i+1]-cum[j]>3*W) break;
-            if(cum[i+1]-cum[j]<We*0.9 || !clearEN(s[j],P)) continue;
-            const ve=P.e-s[j].e, vn=P.n-s[j].n, vl=Math.hypot(ve,vn)||1;
-            if((ve*(-te)+vn*(-tn))/vl >= -0.34){ r=j; break; } }
-          if(r>=0){
-            const bez=bezier(s[r],P,s[i+1]);
-            const mid=polyClear(s[r],bez) ? bez : [...resamp(s[r],P), ...resamp(P,s[i+1])];
-            s=[...s.slice(0,r+1), ...mid, ...s.slice(i+2)]; done=true;
-          }
-        }
-        if(!done) We*=0.75;
-      }
-      if(!done) continue;
-      handled.push({e:anchor.e, n:anchor.n});         // this mouth is now extended
-      spliced=true;
-    }
-    if(!spliced) break;                               // no more transitions to fix
-  }
-  return s;
-}
-// Which way are we going along the buoyage? IALA numbers increase in the
-// conventional direction of buoyage - toward land. Project every numbered mark of
-// a system onto the SAMPLED PATH (arc length, so a winding channel is handled
-// correctly) and correlate number against along-track distance: numbers rising
-// with travel = INBOUND ("returning"), falling = OUTBOUND. Each system votes with
-// the number of its marks the path actually runs past, so a transit down Erie
-// Harbor isn't out-voted by a two-light marina entrance it passes 300 m off.
-//   +1 INBOUND  -> RED (starboard-hand, CATLAM 2/4, even) kept to STARBOARD
-//   -1 OUTBOUND -> GREEN (port-hand, CATLAM 1/3, odd) kept to STARBOARD
-//    0 unknown  -> no buoy lane at all; the geometric wall tiers below take over.
-function buoyageDir(samp, cum, systems, maxD){
-  const near=(m)=>{ let bd=1e18, bs=0;
-    for(let i=1;i<samp.length;i++){ const a=samp[i-1], b=samp[i];
-      const dx=b.e-a.e, dy=b.n-a.n, l2=dx*dx+dy*dy||1;
-      const t=Math.max(0,Math.min(1,((m.e-a.e)*dx+(m.n-a.n)*dy)/l2));
-      const d=Math.hypot(m.e-(a.e+t*dx), m.n-(a.n+t*dy));
-      if(d<bd){ bd=d; bs=cum[i-1]+t*Math.hypot(dx,dy); } }
-    return {d:bd, s:bs}; };
-  // A system only gets to vote on real evidence. Two marks bunched at one end of
-  // the route (or one of them half a kilometre off to the side) will always
-  // produce a covariance with SOME sign, and acting on it flips which colour is
-  // kept to starboard - the exact mistake this is meant to prevent. Measured on a
-  // 600 m marina hop: buoys 11 and 13, 26 m apart along-track and 552 m off the
-  // path, were deciding the whole transit's handedness. So require several marks,
-  // spread over a real fraction of the route, spanning more than one number pair.
-  const totL = cum[cum.length-1] || 1;
-  let vote=0;
-  for(const sy of systems){
-    const rows=[];
-    for(const m of [...sy.port, ...sy.stbd]){ const q=near(m); if(q.d<=maxD) rows.push([m.num, q.s]); }
-    if(rows.length<3) continue;
-    let n0=Infinity,n1=-Infinity,s0=Infinity,s1=-Infinity;
-    for(const r of rows){ n0=Math.min(n0,r[0]); n1=Math.max(n1,r[0]); s0=Math.min(s0,r[1]); s1=Math.max(s1,r[1]); }
-    if(n1-n0 < 2) continue;                                    // one number pair proves nothing
-    if(s1-s0 < Math.max(150, totL*0.25)) continue;             // ... nor a cluster at one end
-    let mn=0, ms=0; for(const r of rows){ mn+=r[0]; ms+=r[1]; } mn/=rows.length; ms/=rows.length;
-    let cov=0; for(const r of rows) cov+=(r[0]-mn)*(r[1]-ms);
-    if(Math.abs(cov)>1e-9) vote += (cov>0?1:-1)*rows.length;
-  }
-  return vote>0?1:(vote<0?-1:0);
-}
-// The fairway the BUOY LINES define at one sample, in that sample's own frame:
-// `cross` = offset to the line that must be kept to STARBOARD for this direction
-// of travel, `pcross` = offset to the line kept to PORT (normally negative), `w` =
-// the width between them, `wt` = how much this fairway applies here (1 anywhere
-// inside it, fading to 0 a full width outside, or past the end of the buoys).
-// Because both offsets are SIGNED, a boat that has strayed to the wrong side of
-// the starboard-hand line gets a negative `cross` and is pulled back across into
-// the fairway - the case the purely geometric wall search could never see.
-function buoyLaneAt(s, sb, systems, dir, ext){
-  let best=null;
-  for(const sy of systems){
-    const S = dir>0 ? sy.stbd : sy.port;           // keep THIS line to starboard
-    const P = dir>0 ? sy.port : sy.stbd;           // ... and this one to port
-    const cs=crossToLine(s,sb,S,ext), cp=crossToLine(s,sb,P,ext);
-    if(!cs||!cp) continue;
-    const w=cs.cross-cp.cross;
-    if(!(w>10 && w<900)) continue;                 // not a sane fairway at this sample
-    const u=-cp.cross/w;                           // 0 at the port line, 1 at the starboard line
-    let wt = (u>=-0.15 && u<=1.15) ? 1 : 1-((u<0 ? -u : u-1)-0.15)/0.85;
-    wt *= Math.max(0, 1-Math.max(cs.exc,cp.exc)/ext);
-    if(wt<=0) continue;
-    if(!best || wt>best.wt)
-      best={cross:cs.cross, pcross:cp.cross, w, wt:Math.min(1,wt), sys:sy.sys,
-            exc:Math.max(cs.exc,cp.exc)};
-  }
-  return best;
-}
-let lastBuoyage = 0;                               // last direction inferred (for the readout)
 // ============================================================================
 // CHANNEL LANE (ported from the sibling console, 2026-07-31). COLREGS Rule 9 for
 // every transit: ride a lane offset to STARBOARD of the channel CENTRELINE, half
@@ -2698,9 +2481,10 @@ let lastBuoyage = 0;                               // last direction inferred (f
 // lateral marks sit on fixed sides. Direction of travel picks the side, so inbound
 // and outbound ride opposite halves and opposing traffic passes port-to-port.
 // Marked channels take the centreline from PAIRED buoy midpoints; unmarked but
-// confined water takes it from the water's own edges. This REPLACED the colour
-// buoy-line keepRight below, which rode the wrong side of the buoys on the water
-// twice because it derived its offset from a fragile edge ray-march.
+// confined water takes it from the water's own edges. This REPLACED an earlier
+// colour-driven buoy-line rule that rode the wrong side of the buoys on the water
+// twice, because it derived its offset from a fragile edge ray-march instead of
+// from the centreline. That rule and its colour helpers were deleted 2026-08-02.
 // ============================================================================
 // Smooth + densify a coarse waypoint list into a followable track. The channel
 // centreline has only ONE point per buoy pair, so a bare boat->midpoints->target path
@@ -2772,7 +2556,7 @@ function systemCenterline(sy){
 // Colour never enters the computation - it falls out, because IALA lateral marks sit on
 // fixed sides. Critically the offset is measured from the buoy-pair CENTRELINE (robust:
 // midpoints of paired marks) and scaled by the local half-width, NOT by the edge
-// ray-march that made the old keepRight ride the wrong side twice.
+// ray-march that made the old colour-driven rule ride the wrong side twice.
 //
 // Build each buoy system's centreline (systemCenterline), pick the system that best
 // BRIDGES boat->target (real span, aligned, acceptable detour), walk it in travel order,
@@ -2925,9 +2709,9 @@ function narrowChannelLane(pathLL, ref, ko, buf){
   // channel is measured at, and a winding basin cut has short confined stretches that a
   // coarse sampling would step straight over. smoothTrack thins to the output spacing after.
   const STEP = Math.max(25, buf*7);
-  // ASV: the per-vessel channel_reach_m override applies HERE now. It used to set
-  // keepRight/channelEndExtend's wall-search REACH; both are dead, and this is the
-  // equivalent knob - how far out an edge still counts as a channel wall.
+  // ASV: the per-vessel channel_reach_m override applies HERE. It used to set the
+  // wall-search REACH of the old edge-march keep-right (deleted 2026-08-02); this is
+  // the equivalent knob - how far out an edge still counts as a channel wall.
   const CONFINE = Math.max(120, CHANNEL_REACH_M!=null ? CHANNEL_REACH_M : buf*30);
   const STANDOFF = Math.max(buf+2, 6);
   const MS = Math.max(2, buf/2);                    // march step
@@ -2997,357 +2781,10 @@ function channelLaneRoute(pathLL, ref, ko, buf){
   out = narrowChannelLane(out, ref, ko, buf);        // unmarked / channel-like confined water
   return smoothTrack(out, ref, ko, buf);             // round the bends, set the waypoint count
 }
-// ============================================================================
-// DISABLED (2026-07-31): keepRight is NO LONGER CALLED by anything, and with it
-// channelEndExtend, gateProject and the whole colour system (buoyageDir,
-// buoyLaneAt, crossToLine) are dead too - they are only reachable from here.
-// Every mode now uses channelLaneRoute above. Kept intact for reference only.
-// DIVERGENCE FROM THE SIBLING CONSOLE: it deleted its colour helpers outright;
-// here they are left in place with the function, which is lower risk and behaves
-// identically (nothing calls any of it).
-// ============================================================================
-function keepRight(pts, ref, ko, buf){
-  if(!pts || pts.length < 2 || !ko) return pts;
-  // Lane sample spacing. DO NOT coarsen this to save planning time without also
-  // raising KEEP_TOL below: they are coupled. At 4.5 m spacing the discretization
-  // alone exceeds the 3 m hug tolerance, every chord fails the hug test, the
-  // thinning reverts each point to its un-offset base sample, and the keep-right
-  // silently collapses (measured: 100% -> 11% right-of-center, 178 waypoints).
-  const STEP = Math.max(3, buf);
-  const en = pts.map(p=>llEN(p.lat,p.lon,ref));
-  let samp = [];
-  for(let i=0;i<en.length-1;i++){ const a=en[i], b=en[i+1];
-    const L=Math.hypot(b.e-a.e,b.n-a.n), ns=Math.max(1,Math.round(L/STEP));
-    for(let k=0;k<ns;k++){ const t=k/ns; samp.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); } }
-  samp.push(en[en.length-1]);
-  if(samp.length < 3) return pts;                 // too short to offset
-  const REACH = Math.max(35, CHANNEL_REACH_M!=null?CHANNEL_REACH_M:buf*10);  // wall-search reach either side (m; vessel override)
-  const NEAR = REACH + 20;                         // a wall/mark this close = a channel edge
-  // Shore-awareness reach. This doubles as the DISTANCE THE LANE MAY BE TRUSTED:
-  // an offset is only ever taken out as far as this ray search actually verified
-  // as clear water. A buoyed fairway can be 200 m+ wide, so the reach is opened up
-  // when lateral marks are present - otherwise a lane on the far side of a wide
-  // channel would be requested beyond anything we checked, land on an obstruction,
-  // and get shrunk back to the base path, tearing a hole in the lane.
-  const hasMarks = !!(ko.sys && ko.sys.length);
-  const FAR = Math.max(hasMarks?300:120, buf*35);
-  const STANDOFF = buf + 2;                        // hard floor off either wall
-  const MAXOFF = Math.max(10, buf*8);             // cap on any single lane correction (m)
-  const TAPER = Math.max(8, buf*3);               // fade the offset to 0 near the endpoints
-  const LANE = 0.20;                               // ride right of CENTER by 20% of width
-  const SHORE_KEEP = Math.max(STANDOFF, buf*7);   // comfortable standoff when hugging a bank
-  const OPEN_BIAS = Math.max(8, buf*4);           // keep-right bias in genuinely open water
-  const BUOY_EXT = Math.max(150, buf*50);         // how far a buoy line projects past its end (m)
-  const APPROACH_EXT = Math.max(1600, buf*300);   // align with an upcoming fairway from this far out
-  const BUOY_KEEP = Math.max(12, buf*4);          // ride THIS far inside the starboard-hand buoy line
-  const SLEW = 0.25;                               // max lane change per metre run (~14 deg of crab)
-  // FAST OCCUPANCY GRID. The lane search probes the keep-out model tens of
-  // thousands of times (a ray each side of every sample, plus the clearance walk
-  // that bounds the lane). An exact blocked() is ~28 us against 177 polygons and
-  // 464 shorelines, which put a single harbour transit at 6 s. Rasterize the
-  // keep-outs ONCE over the path's own bbox (the same scanline+dilate the
-  // routeAround grid uses) and the probe becomes an array lookup. The grid is
-  // DILATED by the buffer, so a set cell means the same thing blocked() does -
-  // and it is conservative (a cell can be set slightly early, never late), so a
-  // grid-clear point is always genuinely clear. Every point actually emitted is
-  // still verified with the exact test below.
-  const GC = Math.max(2, buf);                     // grid cell (m)
-  let gx0=0, gy0=0, GW=0, GH=0, GB=null;
-  { let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
-    for(const s of samp){ if(s.e<x0)x0=s.e; if(s.e>x1)x1=s.e; if(s.n<y0)y0=s.n; if(s.n>y1)y1=s.n; }
-    const M=FAR+buf+3*GC;
-    GW=Math.ceil((x1-x0+2*M)/GC)+1; GH=Math.ceil((y1-y0+2*M)/GC)+1;
-    if(GW*GH <= 4e6){ gx0=x0-M; gy0=y0-M; GB=new Uint8Array(GW*GH);
-      rasterKeepouts(GB, GW, GH, gx0, gy0, GC, ko, buf); } else GB=null; }
-  const gBlocked = GB
-    ? (e,n)=>{ const gx=Math.round((e-gx0)/GC), gy=Math.round((n-gy0)/GC);
-        return (gx<0||gy<0||gx>=GW||gy>=GH) ? blocked({e,n},ko,buf) : GB[gy*GW+gx]===1; }
-    : (e,n)=>blocked({e,n},ko,buf);
-  // Probe out along a side for the first obstruction. One distance answers both
-  // "is there a channel edge within NEAR?" and "how far is the bank?". Only the
-  // STARBOARD side needs the long look (it sets the keep-right reference); the
-  // port side is only used for channel detection and a clamp, so it stops short.
-  // The step is uniform at HALF a grid cell - the old coarse 8 m outer tier could
-  // STEP CLEAN OVER a pier or shoreline (a keep-out band is only 2*buf = 6 m
-  // wide), reporting open water where the lane would later run aground; and a
-  // full-cell step on a diagonal ray skips cells the same way a Bresenham line
-  // does, which let single-cell obstructions through.
-  const GS = Math.max(1, GC/2);
-  const march=(s,de,dn,far)=>{
-    const lim = far ? FAR : REACH;
-    for(let d=STEP; d<=lim; d+=GS){ if(gBlocked(s.e+de*d, s.n+dn*d)) return d; }
-    return Infinity; };
-  // operator's rule: a channel extends past its ends by its own width - stand on
-  // straight out of a mouth (and line up into one) instead of turning across it.
-  // It probes the keep-outs as heavily as the lane search does, so it gets the
-  // grid too (68k exact blocked() calls -> 2.0 s of the old 2.6 s runtime).
-  samp = channelEndExtend(samp, ref, ko, buf, gBlocked);
-  const cum=[0]; for(let i=1;i<samp.length;i++) cum.push(cum[i-1]+Math.hypot(samp[i].e-samp[i-1].e, samp[i].n-samp[i-1].n));
-  const totL = cum[cum.length-1] || 1;
-  // IALA-B BUOY LANE. Which colour goes to starboard depends on the direction of
-  // travel, so infer it once for the whole transit from the buoy numbering.
-  const systems = (ko.sys && ko.sys.length) ? ko.sys : [];
-  const bdir = systems.length ? buoyageDir(samp, cum, systems, Math.max(250, FAR)) : 0;
-  lastBuoyage = bdir;
-  // LATERAL CHANNEL MARKS as walls: a buoy/beacon abeam on a side is the channel
-  // edge there, even where no shallow/land wall is charted - this is what lets the
-  // fairway (and keep-right) extend OUT to the seaward buoy gate and hold right
-  // between the marks. Side is geometric (per current travel), so it's correct
-  // whether transiting in or out. `de,dn` = the side unit; `te,tn` = travel unit.
-  const marks = ko.marks || [];
-  const markWall=(s,de,dn,te,tn)=>{ let best=Infinity;
-    for(const m of marks){ const dx=m.e-s.e, dy=m.n-s.n;
-      if(Math.abs(dx*te+dy*tn) > Math.max(22, buf*4)) continue;      // must be ~abeam
-      const cross=dx*de+dy*dn; if(cross>STANDOFF*0.5 && cross<=REACH+20) best=Math.min(best,cross); }
-    return best; };
-  // TIERED KEEP-RIGHT (operator's spec: "as a vessel travels through ANY area, if
-  // the opportunity exists, keep the right ... but away from shore"). Rule 9's
-  // spirit is not confined to narrow channels, so the offset is chosen per sample
-  // from whichever reference the boat actually has:
-  //   1. CHANNEL  (an edge within NEAR on BOTH sides - bank, shoal or lateral mark)
-  //      -> ride the lane 20% of the width to starboard of the CENTER.
-  //   2. BANK TO STARBOARD (something within FAR on the right only)
-  //      -> ease right toward it but never inside SHORE_KEEP; capped at MAXOFF, so
-  //         a distant shore gives a modest bias, never a run at the beach.
-  //   3. OPEN WATER (or a bank only to PORT)
-  //      -> a small constant OPEN_BIAS to starboard, so reciprocal traffic passes
-  //         port-to-port instead of head-on. Costs almost no distance (parallel).
-  // Wall distances are MEDIAN-filtered and the offsets MEAN-smoothed, so tier
-  // changes blend over ~30 m of travel instead of stepping.
-  const N=samp.length;
-  const SB=[], RC=new Float64Array(N).fill(Infinity), LC=new Float64Array(N).fill(Infinity);
-  // RW/LW are the PHYSICAL clearances (marks excluded - a buoy is a point you may
-  // pass either side of, not a wall). They bound the lane's clear-water envelope
-  // below; RC/LC add the mark walls and feed the geometric tier choice.
-  const RW=new Float64Array(N).fill(Infinity), LW=new Float64Array(N).fill(Infinity);
-  for(let i=0;i<N;i++){
-    const a=samp[Math.max(0,i-1)], b=samp[Math.min(N-1,i+1)];
-    let te=b.e-a.e, tn=b.n-a.n; const tl=Math.hypot(te,tn)||1; te/=tl; tn/=tl;
-    SB.push([tn,-te]);                             // starboard unit vector
-    if(i>0 && i<N-1){
-      // markWall is the COLOUR-AGNOSTIC fallback: once the buoyage direction is
-      // known the buoy LINES define the fairway properly (and a lone buoy abeam is
-      // not a wall - you may pass either side of it), so it is dropped there.
-      const mwR = bdir ? Infinity : markWall(samp[i], tn,-te, te,tn);
-      const mwL = bdir ? Infinity : markWall(samp[i],-tn, te, te,tn);
-      RW[i]=march(samp[i], tn,-te, true);                    // stbd: long look
-      LW[i]=march(samp[i],-tn, te, true);                    // port: long look too
-      RC[i]=Math.min(RW[i], mwR);
-      LC[i]=Math.min(LW[i], mwL);
-    }
-  }
-  const med=(arr,i)=>{ const v=[];                 // ±2-sample median: kills pier-gap spikes
-    for(let k=-2;k<=2;k++){ const j=i+k; if(j>=1&&j<N-1) v.push(arr[j]); }
-    v.sort((x,y)=>x-y); return v[Math.floor(v.length/2)]; };
-  const off=new Float64Array(N);                   // signed lane correction (+ = starboard)
-  const LIM=new Float64Array(N).fill(MAXOFF);      // per-sample cap on that correction
-  for(let i=1;i<N-1;i++){
-    const rc=med(RC,i), lc=med(LC,i);
-    let d;
-    if(rc<=NEAR && lc<=NEAR){                      // 1. CHANNEL: lane 20% right of center
-      const w=rc+lc;
-      d=(rc-lc)/2 + LANE*w;                        // to the lane line: 0.3w off stbd wall
-      d=Math.min(d, rc-STANDOFF);                  // never scrape the starboard wall
-      d=Math.max(d, -(lc-STANDOFF));               // never get pushed into the port wall
-    } else if(rc<Infinity){                        // 2. BANK TO STARBOARD: settle at
-      d=rc-SHORE_KEEP;                             //    SHORE_KEEP off it - easing IN when
-      d=Math.max(-MAXOFF, Math.min(MAXOFF, d));    //    far off, and OUT when hugging it
-      if(lc<Infinity) d=Math.max(d, -(lc-STANDOFF));    // but never into a port-side bank
-    } else {                                       // 3. OPEN WATER / bank only to port:
-      d=OPEN_BIAS;                                 //    modest keep-right (port-to-port)
-      // APPROACH ALIGNMENT. If a buoyed fairway lies ahead (or astern) within
-      // APPROACH_EXT, set up on the correct side of its line EXTENSION now,
-      // instead of the blind starboard bias - a mariner enters a channel already
-      // aligned, and stands on straight out of one. The bias was parking the
-      // inbound approach ~10 m on the WRONG side of the red line for over a km
-      // (found by the revived buoy-lane regression, 2026-07-28). Weight fades
-      // with distance past the line end, so far-field open water is untouched.
-      if(bdir){
-        const ap = buoyLaneAt(samp[i], SB[i], systems, bdir, APPROACH_EXT);
-        if(ap){
-          const keep=Math.min(BUOY_KEEP, 0.35*ap.w);
-          const da=Math.max(ap.cross-keep, ap.pcross+keep);
-          d = ap.wt*da + (1-ap.wt)*d;
-        }
-      }
-    }
-    // 0. BUOY LANE - highest precedence wherever lateral marks define the fairway.
-    // Rule 9 says keep "as near to the outer limit of the channel which lies on
-    // her starboard side as is safe and practicable", so the lane is a fixed
-    // BUOY_KEEP standoff INSIDE the starboard-hand buoy line rather than a
-    // fraction of the width: in a 200 m commercial fairway a 2 m survey boat
-    // belongs a boat-length or two off the buoys, well out of the way of vessels
-    // constrained to the channel - not out at 20% off the centreline. Capped at
-    // 35% of the width so a narrow channel still gets a sane mid-right lane.
-    let lim = MAXOFF;
-    const bl = bdir ? buoyLaneAt(samp[i], SB[i], systems, bdir, BUOY_EXT) : null;
-    if(bl){
-      const keep=Math.min(BUOY_KEEP, 0.35*bl.w);
-      let db=Math.max(bl.cross-keep, bl.pcross+keep);         // inside both buoy lines
-      if(rc<Infinity) db=Math.min(db, rc-STANDOFF);           // ... and off any charted wall
-      if(lc<Infinity) db=Math.max(db, -(lc-STANDOFF));
-      d = bl.wt*db + (1-bl.wt)*d;                             // blend out where the fairway fades
-      lim = Math.min(Math.max(MAXOFF, bl.w*0.6), FAR-STANDOFF);
-    }
-    // CURVATURE LIMIT. A large lane offset (hugging a buoy line ~80 m off in a wide
-    // channel) is fine on a straight or gently-curving run, but where the ROUTED path
-    // bends sharply the offset polyline self-intersects on the inside of the turn
-    // (offset > turn radius) and the corner-arc/thinning then bulges it into a
-    // hairpin (Erie entrance/harbour transition: a 46 deg routed bend + an ~84 m
-    // offset -> a 175 deg spike, measured). Cap the offset by the local turn radius
-    // so the boat eases toward centre through a bend and back out - never below
-    // MAXOFF, so basic keep-right survives. Straight runs (R = inf) are unaffected,
-    // so the buoy-line hug is preserved everywhere it matters.
-    { const wq=6, ia=Math.max(1,i-wq), ib=Math.min(N-2,i+wq);
-      const Ta=[-SB[ia][1],SB[ia][0]], Tb=[-SB[ib][1],SB[ib][0]];
-      const dpsi=Math.abs(Math.atan2(Ta[0]*Tb[1]-Ta[1]*Tb[0], Ta[0]*Tb[0]+Ta[1]*Tb[1]));
-      if(dpsi>0.05){ const R=Math.max(1, cum[ib]-cum[ia])/dpsi;
-        lim=Math.min(lim, Math.max(MAXOFF, 0.6*R)); } }
-    off[i]=Math.max(-lim, Math.min(lim, d));
-    LIM[i]=lim;
-    const dEnd=Math.min(cum[i], totL-cum[i]); if(dEnd<TAPER) off[i]*=dEnd/TAPER;
-  }
-  const offS=new Float64Array(N);                  // low-pass the lane (~±5 samples ≈ 30 m)
-  for(let i=0;i<N;i++){ let s2=0,n2=0;
-    for(let k=-5;k<=5;k++){ const j=i+k; if(j>=0&&j<N){ s2+=off[j]; n2++; } }
-    offS[i]=s2/n2; }
-  // CLEAR-WATER ENVELOPE + SLEW LIMIT.
-  //
-  // Two things have to hold at once: every lane point must sit in clear water, and
-  // the lane must not move sideways faster than the boat can comfortably crab. The
-  // obvious "clamp, then smooth, then re-clamp" does NOT work - the final clamp
-  // re-introduces exactly the cliffs the smoothing removed. That was the old
-  // failure mode: a single sample whose ray was blocked got walked back to zero
-  // while its neighbours stayed 60-100 m out on the lane, the resulting 40 m step
-  // failed the hug test in the thinning below, that point reverted to the base
-  // path, so the next chord started from the base path and reverted too...
-  // (measured on one Erie Harbor transit: 1168 cascading reverts; on another, a
-  // hard bail that silently threw the entire keep-right away).
-  //
-  // So bound the ENVELOPE rather than the value. [lo,hi] is the interval of
-  // offsets that is clear at each sample (0 is always in it - the base path is
-  // clear), pinned to 0 at both ends so the path leaves the start and reaches the
-  // target exactly. ERODING that envelope by SLEW makes it self-consistent:
-  // adjacent intervals then always overlap within one slew step, which guarantees
-  // a slew-limited lane can stay inside it for the whole transit. Clamping the
-  // smoothed lane into the eroded envelope and then rate-limiting it therefore
-  // needs no second clamp - the result is continuous AND clear by construction,
-  // and the endpoint ramp falls out of the same erosion.
-  const hi=new Float64Array(N), lo=new Float64Array(N);
-  for(let i=1;i<N-1;i++){
-    const L=LIM[i];
-    hi[i] = Math.min(L, RW[i]===Infinity ? L : Math.max(0, RW[i]-STANDOFF));
-    lo[i] = -Math.min(L, LW[i]===Infinity ? L : Math.max(0, LW[i]-STANDOFF));
-  }
-  hi[0]=lo[0]=0; hi[N-1]=lo[N-1]=0;
-  for(let i=1;i<N;i++){ const g=SLEW*(cum[i]-cum[i-1]);
-    hi[i]=Math.min(hi[i], hi[i-1]+g); lo[i]=Math.max(lo[i], lo[i-1]-g); }
-  for(let i=N-2;i>=0;i--){ const g=SLEW*(cum[i+1]-cum[i]);
-    hi[i]=Math.min(hi[i], hi[i+1]+g); lo[i]=Math.max(lo[i], lo[i+1]-g); }
-  for(let i=0;i<N;i++) offS[i]=Math.max(lo[i], Math.min(hi[i], offS[i]));
-  for(let pass=0; pass<2; pass++){                   // rate-limit, forward then back
-    for(let i=1;i<N;i++){ const g=SLEW*(cum[i]-cum[i-1]);
-      offS[i]=Math.max(offS[i-1]-g, Math.min(offS[i-1]+g, offS[i])); }
-    for(let i=N-2;i>=0;i--){ const g=SLEW*(cum[i+1]-cum[i]);
-      offS[i]=Math.max(offS[i+1]-g, Math.min(offS[i+1]+g, offS[i])); }
-  }
-  const lane=[];
-  for(let i=0;i<N;i++){
-    const s=samp[i];
-    if(i===0 || i===N-1){ lane.push({e:s.e,n:s.n}); continue; }
-    const [re,rn]=SB[i]; let d=offS[i];
-    let pe=s.e+re*d, pn=s.n+rn*d, tries=0;      // exact-test backstop (grid is coarse by a cell)
-    while(Math.abs(d)>0.1 && blocked({e:pe,n:pn},ko,buf) && tries<12){ d*=0.6; pe=s.e+re*d; pn=s.n+rn*d; tries++; }
-    if(blocked({e:pe,n:pn},ko,buf)){ pe=s.e; pn=s.n; }
-    lane.push({e:pe,n:pn});
-  }
-  // ROUND THE CORNERS of the offset polyline. Offsetting a path that turns sharply
-  // opens a gap on the OUTSIDE of the corner - the classic polygon-offset corner.
-  // Measured on an Erie Harbor transit: a 40 deg turn in the routed base path, at a
-  // 74 m lane, put a 28 m STEP between two consecutive lane points 3 m apart. The
-  // thinning below reads that step as the lane having torn, reverts to the base
-  // path, and cascades from there (207 reverts). The lane offset can't be
-  // slew-limited out of existence either - the step comes from the base path's own
-  // corner, not from the lane. So bridge it with an ARC about the base vertex,
-  // which is what the boat physically flies anyway. Every arc point is
-  // clearance-checked; if any isn't clear the gap is left alone rather than
-  // cutting the corner.
-  const outEN=[], bsEN=[];
-  for(let i=0;i<lane.length;i++){
-    outEN.push(lane[i]); bsEN.push(samp[i]);
-    if(i+1>=lane.length) continue;
-    const A=lane[i], B=lane[i+1], gap=Math.hypot(B.e-A.e, B.n-A.n);
-    if(gap <= STEP*1.5) continue;
-    const C=samp[i+1];                             // vertex the lane swings around
-    const r0=Math.hypot(A.e-C.e,A.n-C.n), r1=Math.hypot(B.e-C.e,B.n-C.n);
-    if(r0<1 || r1<1) continue;
-    let a0=Math.atan2(A.n-C.n,A.e-C.e), a1=Math.atan2(B.n-C.n,B.e-C.e), da=a1-a0;
-    while(da>Math.PI) da-=2*Math.PI; while(da<-Math.PI) da+=2*Math.PI;
-    const ns=Math.ceil(gap/STEP), arc=[]; let ok=true;
-    for(let k=1;k<ns;k++){ const t=k/ns, a=a0+da*t, r=r0+(r1-r0)*t;
-      const p={e:C.e+Math.cos(a)*r, n:C.n+Math.sin(a)*r};
-      if(blocked(p,ko,buf)){ ok=false; break; }
-      arc.push(p); }
-    if(ok) for(const p of arc){ outEN.push(p); bsEN.push(C); }
-  }
-  // DEVIATION-CONSTRAINED line-of-sight thinning: emit the farthest offset point
-  // whose chord is (a) exact-legClear AND (b) stays laterally within KEEP_TOL of
-  // the offset polyline. Plain shortest-chord string-pull UNDID the offset - in a
-  // dogleg channel the longest merely-clear chord legally cuts back across the
-  // middle (seen live: the Go-To crossed to port mid-canal). Hugging the offset
-  // polyline preserves the starboard track for the WHOLE channel length. If an
-  // offset point can't be linked, revert it to its (clear) base sample and
-  // continue; give up to the un-offset path only if even that fails.
-  const KEEP_TOL = Math.max(3, buf);              // max lateral sag off the offset path (m)
-  const hugs=(i0,i1)=>{                            // chord outEN[i0]->outEN[i1] hugs the polyline?
-    const A=outEN[i0], B=outEN[i1];
-    const L=Math.hypot(B.e-A.e,B.n-A.n), n=Math.max(1,Math.ceil(L/STEP));
-    for(let k=1;k<n;k++){ const t=k/n, pe=A.e+(B.e-A.e)*t, pn=A.n+(B.n-A.n)*t;
-      let best=1e18;                               // distance to the nearest offset vertex in-window
-      for(let m=i0;m<=i1;m++){ const d=(outEN[m].e-pe)**2+(outEN[m].n-pn)**2; if(d<best)best=d; }
-      if(best > KEEP_TOL*KEEP_TOL) return false; }
-    return true; };
-  const ll = outEN.map(p=>fromEN(p.e,p.n,ref));
-  const base = bsEN.map(p=>fromEN(p.e,p.n,ref));
-  const kr=[ll[0]]; let ci=0;
-  while(ci < ll.length-1){
-    let nx=-1;
-    for(let j=Math.min(ll.length-1, ci+40); j>ci; j--){
-      if(hugs(ci,j) && legClear(kr[kr.length-1], ll[j], ref, ko, buf)){ nx=j; break; } }
-    if(nx<0){                                     // offset next point unreachable:
-      // Fall back to the base sample. Look FORWARD for one that links rather than
-      // insisting on the very next: a single unreachable sample used to abort the
-      // whole keep-right (return pts) and throw the lane away silently.
-      for(let j=ci+1; j<=Math.min(ll.length-1, ci+40) && nx<0; j++){
-        if(legClear(kr[kr.length-1], base[j], ref, ko, buf)){ ll[j]=base[j]; outEN[j]=bsEN[j]; nx=j; } }
-      if(nx<0) return pts;                        // genuinely stuck - keep the routed path
-    }
-    kr.push(ll[nx]); ci=nx;
-  }
-  // Enforce a MINIMUM waypoint spacing: bends/splices retained ~STEP-spaced
-  // vertices which became waypoint KNOTS in the uploaded plan (diamond blobs the
-  // follower weaves through at its 1 m approach radius). Drop a vertex closer
-  // than MINSP to the last kept one when the direct chord to its successor is
-  // exact-clear; clearance always wins over spacing.
-  const MINSP = Math.max(6, buf*2);
-  const thin=[kr[0]];
-  for(let i2=1;i2<kr.length-1;i2++){
-    const prev=thin[thin.length-1];
-    if(distTo(prev, kr[i2]) < MINSP && legClear(prev, kr[i2+1], ref, ko, buf)) continue;
-    thin.push(kr[i2]);
-  }
-  thin.push(kr[kr.length-1]);
-  return thin;
-}
-// Plan an ENC-aware path from -> to ending at `to`. {route} on success, {error}
-// when the target sits in a nogo zone or no clear route exists (refuse + warn).
-// Keeps to the starboard side of channels (Rule 9).
-// GATE-PAIRING: pair the lateral marks into channel GATES (a port-hand + a
-// starboard-hand mark straddling the channel), and where a route exits through the
-// OUTERMOST gate, steer it through the gate CENTRE and STAND ON past it (by the gate
-// width) along the channel axis before it turns - so the fairway projects past the
-// seaward buoys instead of cutting the mouth. No-op when there are no gates, the
-// route doesn't use one, or the projected legs aren't clear (falls back to the input).
+// Pair the lateral marks into channel GATES: each port-hand mark with its nearest
+// starboard-hand mark across the channel (15-400 m apart), giving the gate centre, its
+// width, and the channel axis through it. Used by channelSpanKeepouts to sweep a marked
+// fairway into a corridor polygon where no dredged area is charted.
 function pairGates(marks){
   const ports=(marks||[]).filter(m=>m.side<0), stbds=(marks||[]).filter(m=>m.side>0), gates=[];
   for(const p of ports){ let best=null, bd=1e9;
@@ -3356,35 +2793,9 @@ function pairGates(marks){
       gates.push({C, width:bd, axis:[-gy, gx]}); } }   // axis = perpendicular to the gate line
   return gates;
 }
-function gateProject(pathLL, ref, ko, buf){
-  const gates = pairGates(ko && ko.marks); if(pathLL.length<2 || !gates.length) return pathLL;
-  const en = pathLL.map(p=>llEN(p.lat,p.lon,ref));
-  const A=en[0], B=en[en.length-1];
-  let rte=B.e-A.e, rtn=B.n-A.n; const rl=Math.hypot(rte,rtn)||1; rte/=rl; rtn/=rl;   // overall outbound
-  const clearEN=(P,Q)=>{ const L=Math.hypot(Q.e-P.e,Q.n-P.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
-    for(let k=0;k<=n;k++){ const t=k/n; if(blocked({e:P.e+(Q.e-P.e)*t,n:P.n+(Q.n-P.n)*t},ko,buf)) return false; } return true; };
-  const distToPath=(C)=>{ let d=1e9; for(let i=1;i<en.length;i++){ const a=en[i-1],b=en[i],dx=b.e-a.e,dy=b.n-a.n,l2=dx*dx+dy*dy||1;
-    const t=Math.max(0,Math.min(1,((C.e-a.e)*dx+(C.n-a.n)*dy)/l2)); d=Math.min(d,Math.hypot(C.e-(a.e+t*dx),C.n-(a.n+t*dy))); } return d; };
-  // pick the OUTERMOST gate the route actually uses (centre near the path, ordered by
-  // along-route distance) and the outbound axis direction (aligned with the route).
-  let pick=null;
-  for(const g of gates){ if(distToPath(g.C) > g.width*1.2) continue;
-    let ax=g.axis[0], ay=g.axis[1]; if(ax*rte+ay*rtn < 0){ ax=-ax; ay=-ay; }
-    const along=(g.C.e-A.e)*rte+(g.C.n-A.n)*rtn;
-    if(!pick || along>pick.along) pick={g,ax,ay,along}; }
-  if(!pick) return pathLL;
-  const g=pick.g, ax=pick.ax, ay=pick.ay;
-  const outPt={e:g.C.e+ax*g.width, n:g.C.n+ay*g.width};    // stand on ~one gate-width past the centre
-  const proj=p=>(p.e-A.e)*rte+(p.n-A.n)*rtn;
-  const cAlong=proj(g.C), outAlong=proj(outPt);
-  if(proj(B) <= outAlong) return pathLL;                    // target isn't past the gate -> don't project (no backtrack)
-  const pre=en.filter(p=>proj(p) < cAlong - g.width*0.3);   // keep the run up to the gate
-  const post=en.filter(p=>proj(p) > outAlong);              // ... and after the stand-on
-  if(!pre.length) pre.push(A); if(!post.length) post.push(B);
-  const seq=[...pre, g.C, outPt, ...post];                  // through the gate, stand on, then on
-  for(let i=1;i<seq.length;i++){ if(!clearEN(seq[i-1], seq[i])) return pathLL; }   // any obstruction -> keep original
-  return seq.map(p=>fromEN(p.e,p.n,ref));
-}
+// Plan an ENC-aware path from -> to ending at `to`. {route} on success, {error}
+// when the target sits in a nogo zone or no clear route exists (refuse + warn).
+// Keeps to the starboard side of channels (Rule 9).
 function planNogoRoute(from, to){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
@@ -3395,11 +2806,11 @@ function planNogoRoute(from, to){
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
   const routed = leg.length > 1;
-  // gateProject is retired with keepRight; the lane's centreline already runs out to
-  // the last buoy pair. Kept in the file for reference only.
+  // No buoy-gate projection here: the lane's own centreline already runs out to the
+  // last buoy pair, so the fairway projects past the mouth without a separate pass.
   const path = [{lat:from.lat,lon:from.lon}, ...leg];
   const kr = channelLaneRoute(path, ref, ko, buf);
-  // knot prune: the keep-right offset can fold a sharp (but legitimate) corner
+  // knot prune: the lane offset can fold a sharp (but legitimate) corner
   // into a small reversal knot; drop knot waypoints whose neighbours connect clear
   const clean = pruneStitch(kr, ref, ko, buf);
   return {route: clean.slice(1), direct: !routed, routed};
