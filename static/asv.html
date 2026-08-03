@@ -185,6 +185,13 @@
   </div>
   <div id="aisTablePanel" style="position:absolute;z-index:41;display:none;right:14px;top:120px;width:264px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
+    <div id="aisRangeRow" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #24506a;">
+      <span style="font-size:9px;letter-spacing:.06em;color:var(--ink-faint);text-transform:uppercase;">Range</span>
+      <input type="number" id="aisRange" min="1" step="5" value="50" title="How far out to SHOW traffic, in km. The service collects a wider area than this, so widening is instant — it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
+        style="width:58px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:3px 4px;border-radius:2px;"/>
+      <span style="font-size:10px;color:var(--ink-faint);">km</span>
+      <span id="aisRangeNote" style="margin-left:auto;font-size:9px;color:var(--ink-faint);text-align:right;"></span>
+    </div>
     <div id="aisTableBody" style="max-height:46vh;overflow:auto;padding:6px 8px;"></div>
   </div>
   <!-- CHART SOURCE: the ENC equivalent of a paper chart's title block. Cells and
@@ -3637,6 +3644,10 @@ async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
   }catch(e){ aisVessels=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
   finally{ aisBusy=false; renderAisTable(); render(); }
 }
+(function(){ const el=$("#aisRange"); if(!el) return;
+  el.onchange = ()=> setAisRange(el.value);
+  el.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); setAisRange(el.value); } });
+})();
 function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.toggle("on", on);
   try{ localStorage.setItem(AIS_KEY, on?"1":"0"); }catch(e){}
   clearInterval(aisTimer); aisTimer=null;
@@ -3651,8 +3662,38 @@ function setAisTable(show){ aisTableShown=show;
   if(p) p.style.display = show ? "block" : "none";
   if(chip) chip.style.display = (aisShow && !show) ? "block" : "none";
   if(show) renderAisTable(); }
+// AIS DISPLAY RANGE. The service SUBSCRIBES to a wide area (the collect radius) and this
+// filters what is shown out of it - so widening is instant and can never out-run the
+// subscription. Changing it is a filter change, not a re-subscription: no service restart,
+// no gap in the feed. Clamped server-side to what was actually collected, because asking to
+// see further than that would show nothing extra and imply the sea beyond is empty.
+// ON A GREAT LAKE IT DOES NOT APPLY - the area is the whole lake and every contact stands.
+// The row says so rather than sitting there looking broken, which is the failure this
+// console keeps re-learning: a control that silently does nothing is worse than no control.
+async function setAisRange(km){
+  const el=$("#aisRange"); const v=Math.max(1, Math.round(parseFloat(km)||50));
+  try{
+    const r=await fetch("/api/ais/radius", {method:"POST", headers:{"Content-Type":"application/json"},
+                                            body: JSON.stringify({km:v})});
+    const d=await r.json();
+    if(el && d && d.show_km!=null) el.value = d.show_km;   // reflect the server's clamp
+  }catch(e){ /* leave the field; the note line reports the area actually in force */ }
+  pollAIS();                                   // refresh now rather than on the next tick
+}
+function updateAisRangeRow(){
+  const el=$("#aisRange"), note=$("#aisRangeNote"); if(!note) return;
+  const lake = aisArea && aisArea.mode === "lake";
+  if(el) el.disabled = !!lake;
+  if(el && el.style) el.style.opacity = lake ? 0.45 : 1;
+  if(lake){ note.textContent = "whole lake — all contacts"; return; }
+  const col = aisArea && aisArea.collect_km, got = aisArea && aisArea.collected,
+        shown = aisArea && aisArea.shown;
+  note.textContent = (got!=null && shown!=null && col!=null)
+    ? shown + " of " + got + " in " + col + " km" : (col!=null ? "collected " + col + " km" : "");
+}
 function renderAisTable(){
   const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
+  updateAisRangeRow();
   const el=$("#aisTableBody"); if(!el) return;
   const c=aisCenter();
   let rows=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,

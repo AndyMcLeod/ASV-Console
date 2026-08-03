@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWELVE REGRESSION SUITES (149 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTEEN REGRESSION SUITES (163 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -51,13 +51,18 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
+| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), thirteen commits, all with sections below:**
+**This session (2026-08-01 → 08-02), fourteen commits, all with sections below:**
+- **AIS range control** — a live range control on the AIS card. **Andy's design: collect
+  wide (150 km), filter narrow (50 km default), never on a lake.** That DELETES the old
+  "subscription and query must move together" invariant instead of working around it. New
+  suite `tests/ais_range.py` (8).
 - **live speed** — SOG did not follow a speed change because the commanded speed reached the
   boat ONLY via `upload_plan`. There was no speed command AT ALL: no seam method, no Engine
   method, no endpoint. Added `set_speed` through the whole seam (+ honest `RealVcu` refusal),
@@ -574,6 +579,45 @@ grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . |
   profile, `example_usv_4m`, has neither those speeds nor that turn rate). The same
   mislabel had propagated into CLAUDE.md's turn-geometry section and README.md; both
   corrected. Data untouched, so the 21 assertions are unchanged and still pass.
+
+## AIS RANGE: COLLECT WIDE, FILTER NARROW (2026-08-02)
+
+**Andy asked for a range control on the AIS card, and specified the design:** subscribe at
+**150 km**, default the control to **50 km**, filter to the operator's selection inside the
+app, and **do not apply it to lakes — all contacts in a lake are still displayed.**
+
+**That is better than what I was about to build, and worth understanding why.** One radius
+used to drive BOTH the service subscription and the display query, which is where the
+documented invariant "they must move together" came from: widening only the query filtered
+against vessels the service had never subscribed to, and silently showed nothing new. My
+instinct was to honour the invariant by re-scoping the subscription on every change — which
+means restarting the child process while the operator drags a number. **Collecting wide and
+filtering narrow DELETES the invariant.** Every radius up to the collect width is already in
+hand, so a change is instant, needs no restart, and cannot out-run the subscription.
+
+- `AIS_COLLECT_RADIUS_KM` (150, boot-only, `--ais-collect-km`) — what the service SUBSCRIBES
+  to. `AIS_SHOW_RADIUS_KM` (50, live, `--ais-radius-km`) — what the operator looks at.
+  `AIS_SEA_RADIUS_KM` is **retired**; the old flag now means the display radius.
+- **Filtered SERVER-SIDE in the `/api/ais` proxy**, so the chart overlay, the table and the
+  count cannot disagree — one decision about what is displayed. Verified live: rows and
+  overlay matched at 50 / 150 / 10 km.
+- **A true great-circle CIRCLE, not the collect box** — a contact in the box corner is ~1.4×
+  the radius out and must not sneak in.
+- **`POST /api/ais/radius` clamps to the collected width.** Asking to see 900 km would show
+  nothing extra while implying the sea beyond is empty. The control snaps back to 150.
+- **NOT APPLIED ON A LAKE.** The area is the whole lake and every contact stands. The card
+  disables the input and says *"whole lake — all contacts"* rather than sitting there looking
+  broken — a control that silently does nothing is the failure this console keeps re-learning.
+- The row reports **"3 of 6 in 150 km"**, so *nothing out there* is distinguishable from
+  *I narrowed it down myself*.
+
+**Test:** `python tests/ais_range.py` — 8 assertions against a STUB provider at known ranges,
+because the subject is what the console does with an answer, not whether a real feed has
+traffic near the test machine today. Teeth-verified: drop the filter → 3,4,5,8; filter a lake
+→ 6; filter by box → 3,4,5,8; unclamped radius → 7. **A flake fixed in the stub itself:** it
+first routed queries by substring-matching the path and mis-served the lake case, failing
+check 6 for a reason unrelated to the console. It filters by BBOX now, like a real provider —
+a different filter from the console's range circle, so it cannot mask what is under test.
 
 ## SPEED IS A LIVE COMMAND, NOT A PROPERTY OF THE LAST UPLOAD (2026-08-02)
 

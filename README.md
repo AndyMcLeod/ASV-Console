@@ -45,7 +45,7 @@ python asv_console.py --sim            # simulator, opens a browser tab
 python asv_console.py --sim --browser none --port 8791   # headless, no auto-open
 python asv_console.py --sim --vessel example_usv_4m      # start on a different vessel profile
 python asv_console.py --sim --single-window               # one window (no controls window)
-python asv_console.py --sim --ais-radius-km 150           # widen the AIS area (sparse feed coverage)
+python asv_console.py --sim --ais-collect-km 250          # collect a wider AIS area (sparse feed coverage)
 ```
 
 **Multi-monitor.** On start the server opens **two** windows: the **main** window
@@ -155,11 +155,15 @@ Sources (any combination, comma-separated):
   pip). Needs a **free API key**: set `AISSTREAM_KEY` once
   (`setx AISSTREAM_KEY KEY` on Windows) and every console on the machine picks it up;
   a per-project `ais_key.txt` or `--aisstream-key` also work. `--source auto` uses it. On a Great Lake the console pulls the
-  **whole lake**; at sea it shows a radius around the boat — **50 km by default,
-  `--ais-radius-km` to change it**. Widen it where receiver coverage is thin: at the
-  Delaware Bay mouth a 50 km radius sees almost nothing because the receivers are
-  inland, while 150 km picks up the Bay and river traffic. The radius scales the
-  service subscription as well as the display, so the two cannot drift apart. Scope a
+  **whole lake and shows every contact in it**; at sea it **collects a wide area (150 km)
+  and shows a narrower radius out of it — 50 km by default, changed LIVE from the range
+  control on the AIS traffic card**. Because the wide area is already collected, widening
+  the view is instant and never re-subscribes; the control clamps to the collected width,
+  and the card reports *"3 of 6 in 150 km"* so *nothing out there* is distinguishable from
+  *I narrowed it down myself*. `--ais-radius-km` sets the control's starting value and
+  `--ais-collect-km` the collected width — raise the latter where receiver coverage is
+  thin: at the Delaware Bay mouth 50 km sees almost nothing because the receivers are
+  inland, while 150 km picks up the Bay and river traffic. Scope a
   standalone service to your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
   Erie: `--bbox=-83.7,41.2,-78.7,43.05`. **Verified live on Lake Erie** — real lakers,
   tankers, tour and Coast Guard boats; ship types fill in over the ~6 min AIS static cycle.
@@ -605,6 +609,15 @@ python tests/live_speed.py
 speed over ground follows the commanded speed both up and down. It drives a real console and
 lets the boat accelerate, because accepting the command proves nothing — the bug it guards
 accepted it too and never told the boat.
+
+```
+python tests/ais_range.py
+```
+
+**AIS range** — that the display range filters the collected area as a true range circle
+(not the collect box), that it is clamped to what was actually collected, and that it is
+**never applied on a lake**, where every contact stands. Runs against a stub provider at
+known ranges, so it tests the console rather than today's real traffic.
 
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in

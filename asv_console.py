@@ -101,7 +101,18 @@ AIS_BASE = "http://127.0.0.1:8788"
 # aisstream receivers near the Delaware Bay are inland, so at Lewes a 50 km radius sees
 # ~1 vessel while the traffic sits 60-120 km up-river. Set with --ais-radius-km; it scales
 # BOTH the service subscription and the display query, which have to move together.
-AIS_SEA_RADIUS_KM = 50.0
+# TWO RADII, deliberately decoupled (2026-08-02, Andy's call).
+#   COLLECT is what the AIS service SUBSCRIBES to. Wide and fixed, set once at boot.
+#   SHOW    is what the operator wants to look at. Narrow, and changed live from the card.
+# They used to be one value, so widening the view meant restarting the child process to
+# re-subscribe - and the invariant "they must move together" existed only because of that
+# coupling. Collecting wide and filtering narrow removes the invariant entirely: the data
+# for any radius up to COLLECT is already in hand, so a range change is instant and cannot
+# out-run the subscription.
+# NOT APPLIED ON A GREAT LAKE. There the area is the whole lake and EVERY contact is shown,
+# because "50 km of Lake Erie" is not a useful thing to ask for.
+AIS_COLLECT_RADIUS_KM = 150.0
+AIS_SHOW_RADIUS_KM = 50.0
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
 # address depends on the boat's radio/serial-server config; override on the CLI.
 DEFAULT_VCU_HOST = ""
@@ -3034,18 +3045,41 @@ class Handler(BaseHTTPRequestHandler):
             a, b, c, d = GREAT_LAKES_BOXES[lake]
             bbox = (c, a, d, b)                       # W,S,E,N
             area = {"mode": "lake", "name": "Lake " + lake.capitalize()}
-        else:                                         # open water: a radius box
-            rm = AIS_SEA_RADIUS_KM * 1000.0
+        else:                                         # open water: the COLLECT box
+            rm = AIS_COLLECT_RADIUS_KM * 1000.0
             dlat = rm / 111320.0
             dlon = rm / (111320.0 * max(0.15, math.cos(math.radians(lat))))
             bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
-            area = {"mode": "sea", "name": "%g km" % AIS_SEA_RADIUS_KM}
+            area = {"mode": "sea", "name": "%g km" % AIS_SHOW_RADIUS_KM,
+                    "show_km": AIS_SHOW_RADIUS_KM, "collect_km": AIS_COLLECT_RADIUS_KM}
         url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
             AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "asv-console/ais-proxy"})
             with urllib.request.urlopen(req, timeout=6) as r:
                 data = json.loads(r.read().decode("utf-8", "replace"))
+            # FILTER TO THE OPERATOR'S RADIUS - at sea only. A true great-circle range
+            # from the boat, not the collect BOX, so "50 km" means a 50 km circle and the
+            # corners of the box are not quietly included. Filtering here rather than in
+            # the browser keeps ONE decision about what is displayed, so the chart overlay,
+            # the table and the count cannot disagree with each other.
+            # On a lake there is no filter: the area IS the lake and every contact stands.
+            vs = data.get("vessels") or []
+            area["collected"] = len(vs)
+            if area.get("mode") == "sea" and AIS_SHOW_RADIUS_KM > 0:
+                kept = []
+                for v in vs:
+                    try:
+                        d_km = _haversine_km(lat, lon, float(v["lat"]), float(v["lon"]))
+                    except (KeyError, TypeError, ValueError):
+                        continue                  # no usable position: not placeable, not shown
+                    if d_km <= AIS_SHOW_RADIUS_KM:
+                        v["range_m"] = round(d_km * 1000.0)
+                        kept.append(v)
+                vs = kept
+                data["vessels"] = vs
+                data["count"] = len(vs)
+            area["shown"] = len(vs)
             data["area"] = area
             self._send(200, json.dumps(data), "application/json")
         except Exception as e:
@@ -3244,6 +3278,17 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
             elif path == "/api/cmd/speed":             # live speed change (low|survey|high)
                 ENGINE.set_speed(str(body.get("speed", "survey")))
+            elif path == "/api/ais/radius":            # live AIS DISPLAY radius (km)
+                # Display only. It never restarts the service: the subscription already
+                # collects AIS_COLLECT_RADIUS_KM, so every radius up to that is in hand
+                # and a change is instant. Clamped to the collected area, because asking
+                # to see further than was collected would show nothing extra and quietly
+                # imply the sea beyond is empty.
+                global AIS_SHOW_RADIUS_KM
+                km = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(body.get("km", AIS_SHOW_RADIUS_KM))))
+                AIS_SHOW_RADIUS_KM = km
+                out = {"ok": True, "show_km": km, "collect_km": AIS_COLLECT_RADIUS_KM}
+                return self._send(200, json.dumps(out), "application/json")
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
             elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point
@@ -3361,12 +3406,11 @@ def _start_ais_service():
         a, b, c, d = GREAT_LAKES_BOXES[lake]
         bbox = "%.4f,%.4f,%.4f,%.4f" % (c, a, d, b)
     else:
-        # At sea: a box around spawn that ALWAYS COVERS the display radius (+20% margin),
-        # with the historical 1.5 deg as a floor. The subscription and the display query
-        # have to move together - widening only the query would filter against vessels the
-        # service never subscribed to, and silently show nothing new.
-        dlat = max(1.5, (AIS_SEA_RADIUS_KM * 1000.0 / 111320.0) * 1.2)
-        dlon = max(1.5, (AIS_SEA_RADIUS_KM * 1000.0 /
+        # At sea: a box around spawn covering the COLLECT radius (+20% margin), with the
+        # historical 1.5 deg as a floor. This is the wide net; the operator's display radius
+        # is filtered out of it later and never needs the subscription to change.
+        dlat = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 / 111320.0) * 1.2)
+        dlon = max(1.5, (AIS_COLLECT_RADIUS_KM * 1000.0 /
                          (111320.0 * max(0.15, math.cos(math.radians(SPAWN_LAT))))) * 1.2)
         bbox = "%.4f,%.4f,%.4f,%.4f" % (SPAWN_LON - dlon, SPAWN_LAT - dlat,
                                         SPAWN_LON + dlon, SPAWN_LAT + dlat)
@@ -3430,17 +3474,24 @@ def _rescope_ais_service():
 
 
 def main():
-    global AIS_BASE, AIS_SEA_RADIUS_KM
+    global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
     ap.add_argument("--browser", choices=["edge", "chrome", "default", "none"],
                     default="edge", help="which browser to open")
-    ap.add_argument("--ais-radius-km", type=float, default=AIS_SEA_RADIUS_KM,
-                    help="AIS display radius at sea, km (default %d; ignored on a Great "
-                         "Lake, where the whole lake is used). Widen it where the feed is "
-                         "sparse - e.g. the Delaware Bay mouth, whose traffic sits 60-120 km "
-                         "up-river." % AIS_SEA_RADIUS_KM)
+    ap.add_argument("--ais-radius-km", type=float, default=AIS_SHOW_RADIUS_KM,
+                    help="AIS DISPLAY radius at sea, km (default %d) - the starting value of "
+                         "the range control on the AIS card, changeable live from there. "
+                         "Ignored on a Great Lake, where the whole lake is shown."
+                         % AIS_SHOW_RADIUS_KM)
+    ap.add_argument("--ais-collect-km", type=float, default=AIS_COLLECT_RADIUS_KM,
+                    help="AIS COLLECT radius at sea, km (default %d) - what the service "
+                         "SUBSCRIBES to, and the most the display control can be widened to. "
+                         "Raise it where the feed is sparse and the traffic sits far off - "
+                         "e.g. the Delaware Bay mouth, whose traffic is 60-120 km up-river. "
+                         "Costs a wider subscription, so it is set at boot, not live."
+                         % AIS_COLLECT_RADIUS_KM)
     ap.add_argument("--single-window", action="store_true",
                     help="open only the main window (skip the separate controls window)")
     ap.add_argument("--sim", action="store_true", help="auto-connect the simulator at start")
@@ -3490,7 +3541,9 @@ def main():
     AIS_BASE = args.ais
     if not args.no_ais_service:
         _start_ais_service()                      # bundled AIS provider - no separate command
-    AIS_SEA_RADIUS_KM = max(5.0, min(500.0, float(args.ais_radius_km)))
+    AIS_COLLECT_RADIUS_KM = max(5.0, min(500.0, float(args.ais_collect_km)))
+    # The display radius can never exceed what is collected - see the endpoint.
+    AIS_SHOW_RADIUS_KM = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(args.ais_radius_km)))
     # A selected ROC owns HOME, resolved by the Engine on every telemetry tick (see
     # Engine._run). In sim, steam every ACTIVE ship ROC on its own heading/speed so
     # Return-to-Home against a MOVING recovery point can be exercised with no hardware.
