@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIXTEEN REGRESSION SUITES (211 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SIXTEEN REGRESSION SUITES (214 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -61,7 +61,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
-| `node tests/panel_drag.js` | ONE drag mechanism; no pop-out forgets its position OR goes off-screen (20) |
+| `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
@@ -122,9 +122,20 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   measuring in the browser, and check 20 now guards the ordering.
   `tests/panel_drag.js` 11 → 20, **8 mutations verified**. Ops manual updated + rebuilt (the
   other three docs' `word/document.xml` are byte-identical, so only that one is committed).
-  **RESIDUAL:** the five pop-outs that start hidden are shown from five separate sites with
-  no choke point, so a revealed panel is clamped by the 0×0 sliver rule rather than its real
-  size — header on the chart and draggable, but not the full fix the vessel card got.
+- **`showPanel()` — ONE way to show a floating panel** (closes the residual above, Andy's
+  call). The pop-outs were shown from **SEVEN** bare `style.display = …` sites — I found five
+  on the first sweep and the grep caught two more ROC auto-opens — so a panel restored while
+  hidden kept the 0×0 sliver clamp and revealed with only a corner on the chart. `showPanel`
+  shows AND re-clamps, **in that order**. It does **not** persist: a reveal only tightens what
+  is on screen now, so the operator's stored position still governs the next restore.
+  `clampPanelPos` + `PANEL_MIN_VIS` **moved up beside `mapEl`** — `showPanel` is called from
+  `setMode` and toolbar handlers that can run before the pop-out section executes, and a
+  `const` read before its declaration is a **ReferenceError, not `undefined`**. Note
+  `#v_mission` is a SECTION of the vessel card, not a pop-out — it keeps its own
+  `style.display`. `tests/panel_drag.js` 20 → 23, **5 more mutations verified**; check 21
+  derives the panel list from the registrations, so a seventh pop-out is covered the day it
+  is registered. Live: every keyed pop-out seeded at `{4000,3000}` while hidden now reveals
+  FULLY inside the chart.
 - **the lane fact travels WITH its route** — `channelLaneRoute` now returns `{route, lane}`
   and `buoyageNote(lane)` takes it as an argument; the module flag `lastChannelLane` is gone.
   I raised the stale flag as *inert* (a refusal returns before any reader) — **it was not.**
@@ -170,7 +181,10 @@ Two rules fall out, both cheap:
   Same family as the `completion_modes` lesson: preserving a value and honouring it are two
   assertions. **And prefer naming the paths to counting them** — check 9 counted
   "`>= 2` unanchor call sites" and stayed green when the restore path lost its one, because
-  a third site elsewhere covered the count.
+  a third site elsewhere covered the count. **An ORDERING check has the same failure mode:**
+  comparing `indexOf("style.display")` against the clamp passed a mutation that moved the
+  real write after it, because an earlier write in a guard clause satisfied the first index.
+  Compare the **LAST** occurrence.
 
 **Previous session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
 - **vessel card off the controls window** — it was bridged, so one card rendered in BOTH

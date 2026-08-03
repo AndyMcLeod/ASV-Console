@@ -28,10 +28,12 @@
 // with it and there was no way home. 12-20 cover the clamp; the clamp is DISPLAY-ONLY, so a
 // card parked at the edge of a big monitor still returns there when the window is big again.
 //
-// RESIDUAL, deliberate: the five pop-outs that start hidden are shown from five separate
-// sites with no single choke point, so a revealed panel is clamped by the 0x0 sliver rule
-// rather than its real size. Its header stays on the chart and it can be dragged back -
-// strictly better than vanishing - but it is not the full fix the vessel card got.
+// THAT RESIDUAL IS NOW CLOSED. The pop-outs that start hidden were shown from SEVEN bare
+// `style.display = ...` sites, so a panel restored while hidden kept the 0x0 sliver clamp
+// and appeared with only a corner on the chart. showPanel(el, show, display) shows and
+// re-clamps in one step, in that order. 21-23 keep it that way. Verified live: every keyed
+// pop-out seeded at {4000,3000} while hidden now reveals FULLY inside the chart, with the
+// stored position untouched.
 //
 // Most of these are SOURCE-SHAPE assertions, in the house style of tests/ui_split.js: which
 // listener a browser calls is not observable from Node, and the regression this guards is
@@ -53,6 +55,11 @@
 // fails; widen the assumed panel size and 12 fails; measure before showing in placeVcard and
 // 20 fails. NOTE 12-17 exercise clampPanelPos DIRECTLY, so they stayed green when the clamp
 // was ripped out of its caller - 18 and 19 exist because of that miss.
+// showPanel, same way: restore a bare style.display show at any of the seven sites and 21
+// fails; clamp before showing and 22 fails; persist on reveal and 23 fails; drop the
+// re-clamp entirely and 22 fails. 20 and 22 compare the LAST display write against the
+// clamp, not the first - checking indexOf alone let a mutation through that moved the real
+// write after the clamp while an earlier one in a guard clause still satisfied it.
 //
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
@@ -325,9 +332,46 @@ check("19. ... from the STORED position, not the element's current on-screen pos
 // same family as the move-grip paint-order check, and invisible to every other assertion.
 const VC = grab("placeVcard");
 check("20. placeVcard sets visibility BEFORE it measures for the clamp",
-      () => VC.indexOf("vcard.style.display") >= 0 &&
-            VC.indexOf("vcard.style.display") < VC.indexOf("clampPanelPos("),
-      () => "display@" + VC.indexOf("vcard.style.display") + " clamp@" + VC.indexOf("clampPanelPos("));
+      () => writesBeforeClamp(VC).ok, () => writesBeforeClamp(VC).note);
+
+// --- 21-23. ONE WAY TO SHOW A PANEL. -------------------------------------- //
+// The residual left by the clamp work: six pop-outs were shown from SEVEN separate bare
+// `style.display = ...` sites (two of them auto-opens I missed on the first sweep), so a
+// panel restored while hidden kept the 0x0 sliver clamp and appeared with only a corner on
+// the chart. showPanel() shows and re-clamps in one step. This check is the thing that
+// stops the seven growing back to eight.
+const SHOW = grab("showPanel");
+const rawShows = H.split("\n")
+  .map((l, i) => ({ line: i + 1, text: l }))
+  // ASSIGNMENT only. `=(?!=)` because reading `style.display === "none"` to decide whether
+  // to toggle is fine and common - it is the WRITE that has to go through showPanel.
+  .filter(o => /\.style\.display\s*=(?!=)/.test(o.text))
+  .filter(o => !/^\s*(\/\/|\*)/.test(o.text.trim()))
+  // Derived from the registrations themselves, so a seventh panel is covered the day it is
+  // registered rather than the day someone remembers to add it to a list here.
+  .filter(o => REG.map(r => r.el).filter(Boolean).some(sel => o.text.includes('"' + sel + '"')));
+check("21. no registered pop-out is shown by a bare style.display any more",
+      () => rawShows.length === 0,
+      () => rawShows.length ? rawShows.map(o => "line " + o.line + ": " + o.text.trim().slice(0, 50)).join(" | ")
+                            : "every show goes through showPanel()");
+
+// EVERY display write must precede the measure, not merely the first one. Checking
+// `indexOf` alone let a mutation through that moved the real write after the clamp while an
+// earlier write in an early-return branch still satisfied it.
+function writesBeforeClamp(src) {
+  const clampAt = src.indexOf("clampPanelPos(");
+  const writes = [...src.matchAll(/\.style\.display\s*=(?!=)/g)].map(m => m.index);
+  return { ok: clampAt > 0 && writes.length > 0 && Math.max(...writes) < clampAt,
+           note: "last display write @" + (writes.length ? Math.max(...writes) : "none") + ", clamp @" + clampAt };
+}
+check("22. showPanel sets display BEFORE it re-clamps",
+      () => writesBeforeClamp(SHOW).ok, () => writesBeforeClamp(SHOW).note);
+
+// The re-clamp must not write storage: it only tightens what is on screen now, so the next
+// restore or resize still re-derives the operator's own position from lsGet.
+check("23. ... and does NOT persist, so a reveal cannot overwrite the stored position",
+      () => !/lsSet\(/.test(SHOW) && !/saveVcardPrefs\(/.test(SHOW),
+      "showing a panel is not the operator moving it");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

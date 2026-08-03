@@ -927,6 +927,47 @@ function surveyPattern(A, B, C, align){
 }
 
 const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
+
+// --- keeping floating panels reachable ------------------------------------ //
+// KEEP A PANEL REACHABLE. The DRAG has always clamped to the chart; RESTORE never did, and
+// that is how a card goes missing: a position saved on a large window - or a second monitor,
+// or before the window was resized - is re-applied verbatim to a smaller one, putting the
+// panel outside the viewport. It is still display:block and fully live, just nowhere the
+// operator can see or reach it. The VESSEL card was the cruel case, because placeVcard()
+// puts its VESSEL reopen pill at the SAME coordinates, so the one control that brings the
+// card back went off-screen with it and there was no way home.
+//
+// This lives up here, beside mapEl, because showPanel() below is called from mode changes
+// and toolbar handlers that can run before the pop-out section further down has executed -
+// a `const` read before its declaration is a ReferenceError, not an undefined.
+//
+// A hidden panel measures 0x0, so assume a sliver rather than trusting that: clamping
+// against a width of zero would happily park a panel at the far edge, and it would be
+// missing again the moment it was shown.
+const PANEL_MIN_VIS = 120;                       // keep at least this much of a panel on the chart
+function clampPanelPos(el, left, top){
+  const mr = mapEl.getBoundingClientRect();
+  const w = el.offsetWidth  || PANEL_MIN_VIS;
+  const h = el.offsetHeight || PANEL_MIN_VIS;
+  return {left: Math.max(0, Math.min(mr.width  - w, left)),
+          top:  Math.max(0, Math.min(mr.height - h, top))};
+}
+// THE ONE WAY TO SHOW OR HIDE A FLOATING PANEL. Six pop-outs were shown from five separate
+// sites, each a bare `style.display = ...`, so a panel restored while hidden kept the 0x0
+// sliver clamp instead of being re-clamped at its real size once it could be measured - it
+// would appear with only a corner on the chart. Showing and re-clamping are one step here,
+// in that order, because an element still display:none measures 0x0 and clamping it first
+// is what produced the half-off-screen reveal in the first place.
+//
+// The stored position is NOT rewritten, so this never ratchets: it only tightens what is
+// on screen now, and the next restore or resize re-derives from storage as before.
+function showPanel(el, show, display){
+  if(!el) return;                                // panel absent in this window
+  el.style.display = show ? (display || "block") : "none";
+  if(!show || !el.style.left) return;            // hidden, or never positioned by left/top
+  const c = clampPanelPos(el, parseFloat(el.style.left), parseFloat(el.style.top));
+  el.style.left = c.left+"px"; el.style.top = c.top+"px";
+}
 function worldPx(lat, lon, z){
   const s = TILE * Math.pow(2, z);
   const x = (lon + 180) / 360 * s;
@@ -3141,7 +3182,7 @@ let aisTableShown=false;
 function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round(nm); }
 function setAisTable(show){ aisTableShown=show;
   const p=$("#aisTablePanel"), chip=$("#aisReopen");
-  if(p) p.style.display = show ? "block" : "none";
+  showPanel(p, show);
   if(chip) chip.style.display = (aisShow && !show) ? "block" : "none";
   if(show) renderAisTable(); }
 // AIS DISPLAY RANGE. The service SUBSCRIBES to a wide area (the collect radius) and this
@@ -3711,7 +3752,7 @@ window.addEventListener("mouseup", e=>{
     setMode("pan");                              // (clears rocPlaceKind)
     if(kind){ rocPost({op:"add", kind, lat:ll.lat, lon:ll.lon}); }
     const p=$("#rocPanel");                      // make sure the card is up to edit + confirm it
-    if(p && p.style.display==="none"){ p.style.display="block"; $("#rocBtn").classList.add("on"); }
+    if(p && p.style.display==="none"){ showPanel(p, true); $("#rocBtn").classList.add("on"); }
   } else if(mode === "transit"){                 // click drops a transit vertex
     transit.push({lat:ll.lat, lon:ll.lon});
     updateTransitPanel(); render();
@@ -3763,7 +3804,7 @@ $("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClie
 $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
 $("#clear").onclick = ()=>{ clearTrack(); render(); };
 $("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
-  el.style.display=show?"block":"none"; $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
+  showPanel(el, show); $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
 $("#aisBtn").onclick = ()=> setAIS(!aisShow);
 $("#aisTableClose").onclick = ()=> setAisTable(false);   // close to the reopen chip
 $("#aisReopen").onclick = ()=> setAisTable(true);
@@ -3779,7 +3820,7 @@ function setMode(m){
   $("#srchBtn").classList.toggle("mode-on", mode==="search");
   $("#tranBtn").classList.toggle("mode-on", mode==="transit");
   $("#b_spawn").classList.toggle("mode-on", mode==="spawn");
-  $("#linePanel").style.display = mode==="survey" ? "flex" : "none";
+  showPanel($("#linePanel"), mode==="survey", "flex");   // draggable: re-clamp when shown
   $("#boundPanel").style.display = mode==="bound" ? "flex" : "none";
   $("#searchPanel").style.display = mode==="search" ? "flex" : "none";
   $("#transitPanel").style.display = mode==="transit" ? "flex" : "none";
@@ -4283,26 +4324,6 @@ function makeCardsResizable(){
 // `unanchor` matters: a card authored bottom- or right-anchored (LINES sits at
 // bottom:44px, AIS at a right offset) must have that anchor released the moment it is
 // positioned by left/top, or the two fight and the card stretches instead of moving.
-//
-// KEEP A PANEL REACHABLE. The DRAG has always clamped to the chart; RESTORE never did, and
-// that is how a card goes missing: a position saved on a large window - or a second monitor,
-// or before the window was resized - is re-applied verbatim to a smaller one, putting the
-// panel outside the viewport. It is still display:block and fully live, just nowhere the
-// operator can see or reach it. The VESSEL card was the cruel case, because placeVcard()
-// puts its VESSEL reopen pill at the SAME coordinates, so the one control that brings the
-// card back went off-screen with it and there was no way home.
-//
-// A hidden panel measures 0x0, so assume a sliver rather than trusting that: clamping
-// against a width of zero would happily park a panel at the far edge, and it would be
-// missing again the moment it was shown.
-const PANEL_MIN_VIS = 120;                       // keep at least this much of a panel on the chart
-function clampPanelPos(el, left, top){
-  const mr = mapEl.getBoundingClientRect();
-  const w = el.offsetWidth  || PANEL_MIN_VIS;
-  const h = el.offsetHeight || PANEL_MIN_VIS;
-  return {left: Math.max(0, Math.min(mr.width  - w, left)),
-          top:  Math.max(0, Math.min(mr.height - h, top))};
-}
 // Re-apply a panel's STORED position, clamped. Always from storage, never from the DOM:
 // re-clamping the already-clamped on-screen value would RATCHET, so shrinking the window
 // and growing it back would strand the card at the smaller window's edge for good. The
@@ -4578,7 +4599,7 @@ function updateChartCard(){
 }
 function setChartCard(show){
   const el = $("#chartPanel"); if(!el) return;
-  el.style.display = show ? "block" : "none";
+  showPanel(el, show);
   $("#srcBtn").classList.toggle("on", show);
   if(show){ chartLastHtml = null; ensureChartInfo(); updateChartCard(); }   // card was empty: force a first paint
 }
@@ -5343,7 +5364,7 @@ $("#roc_list").addEventListener("click", e=>{
 });
 function armRocPlace(kind){
   rocPlaceKind = kind; setMode("roc-place");
-  const p=$("#rocPanel"); if(p && p.style.display==="none"){ p.style.display="block"; $("#rocBtn").classList.add("on"); }
+  const p=$("#rocPanel"); if(p && p.style.display==="none"){ showPanel(p, true); $("#rocBtn").classList.add("on"); }
   flashNote("Click the chart to place the "+(kind==="ship"?"ship (Mothership)":"shore")+" ROC.");
 }
 $("#roc_add_shore").onclick = ()=> armRocPlace("shore");
@@ -5352,7 +5373,7 @@ $("#roc_home_clear").onclick = ()=> rocPost({op:"clear_home"});
 $("#rocBtn").onclick = ()=>{
   const p=$("#rocPanel"), show = p.style.display==="none";
   if(show){ setMode("pan"); }                      // hide any mode panel behind it
-  p.style.display = show ? "block" : "none";
+  showPanel(p, show);
   $("#rocBtn").classList.toggle("on", show);
   if(show) renderRoc();
 };
