@@ -1,6 +1,9 @@
 """tests/http_contract.py - every HTTP handler answers exactly once and never raises.
 
-TWO OPPOSITE CONTRACTS live in this server, and each has its own way of going wrong:
+Covers BOTH servers in the project: the console (asv_console.py, GET + POST) and the
+standalone AIS service (ais_service.py, GET only, its own process and port).
+
+TWO OPPOSITE CONTRACTS live in the console, and each has its own way of going wrong:
 
     POST   _dispatch_post RETURNS (code, obj); do_POST sends it and logs it.
            Failure: returning anything else - most sharply, sending the response
@@ -11,9 +14,9 @@ TWO OPPOSITE CONTRACTS live in this server, and each has its own way of going wr
            Failure: a path that commits NOTHING, leaving the client hanging.
 
 They are mirror images: on the POST side sending is the mistake, on the GET side NOT
-sending is. One suite covers both, because the question is the same - does every request
-get exactly one answer, and does the server survive it - and because both halves share a
-single console, which is the expensive part of the harness.
+sending is. The AIS service follows the GET rule with a much smaller surface: two routes and
+an unconditional 404 fall-through. One suite covers all three, because the question is the
+same throughout - does every request get exactly one answer, and does the server survive it.
 
 WHY THIS EXISTS. do_POST does:
 
@@ -61,6 +64,12 @@ TEETH (verified by mutation, with the check numbers each one actually produced):
     a _serve_ helper loses its 404 path                            -> 6, 13
     the SSE stream never sends its headers                         -> 6, 15
     a handler that BLOCKS instead of returning                     -> 14
+  ais_service.py (the second HTTP surface, its own process)
+    THE FINDING - urllib.parse.unquote removed from the query parse -> 20
+    the fall-through 404 made conditional                          -> 17, 18, 19
+    /vessels returns without sending                               -> 17, 19
+    the bbox ValueError guard removed (nan / broken raise)         -> 19, 22
+    the max int guard removed (max=notanumber raises)              -> 19, 22
 
 WHY THE PAIRS ARE ALL NEEDED, which is the point of the suite:
 
@@ -75,10 +84,21 @@ WHY THE PAIRS ARE ALL NEEDED, which is the point of the suite:
   6 vs 13    Static and live. 6 reads every path including ones no request here reaches;
              13 catches what the analysis is too coarse to see.
 
-A NOTE ON WRITING THESE MUTATIONS: the handlers are a chain of `if path == ...: return`, so
-a raise injected before the branch that already handles that path is unreachable and the
-mutation silently does nothing. The first attempt at the raise mutation did exactly that and
-looked like a surviving mutant. Inject into a handler you have confirmed is reached.
+  20 alone   The percent-encoded bbox CANNOT be tested over the wire: with no AIS source the
+             registry is empty, so a dropped box and an honoured one both return zero
+             vessels and the responses are byte-identical. The first version of check 20
+             compared exactly those two responses and PASSED with the fix reverted. It now
+             runs the real parsing code on both spellings instead.
+
+TWO NOTES ON WRITING MUTATIONS AGAINST THIS CODE, both of which cost me a false result:
+
+  * The console's handlers are a chain of `if path == ...: return`, so a raise injected
+    BEFORE the branch that already handles that path is unreachable and the mutation
+    silently does nothing. Inject into a handler you have confirmed is reached.
+  * asv_console.py is LF and ais_service.py is CRLF. A multi-line anchor written with "\\n"
+    matches one file and not the other. A runner that reports a missing anchor as SKIP
+    rather than as "caught" is the only reason this surfaced instead of reading as five
+    clean passes.
 """
 
 import ast
@@ -91,8 +111,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -413,9 +435,6 @@ check("12. ... and every ROC operation answered (one dict key routes them all)",
       lambda: ("no response for op: %s" % ", ".join(roc_dead)) if roc_dead
       else "%d ops incl. an unknown one" % len(ROC_OPS))
 
-# THE CHECK THE ORIGINAL BUG NEEDED. Runs after the console is stopped, so its output is
-# complete. Everything above can pass while the server is dying on every request, because
-# _send has already written a correct response by the time the handler raises.
 srvlog.seek(0)
 server_out = srvlog.read()
 srvlog.close()
@@ -435,10 +454,129 @@ check("15. the SSE stream commits headers and a first frame immediately",
       lambda: sse[0] == 200 and "text/event-stream" in sse[1] and sse[2].startswith(b"data:"),
       lambda: "status=%s ctype=%s first=%r" % (sse[0], sse[1], sse[2][:28]))
 
+# THE CHECK THE ORIGINAL BUG NEEDED. Everything above can pass while the server is dying on
+# every request, because _send has already written a correct response by the time the handler
+# raises. Read after the console is stopped, so its output is complete.
 check("16. the console logged NO exception while serving ANY of them",
       lambda: not tb,
       lambda: ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
       else "a correctly-answered request can still kill its handler thread")
+
+# --- the SECOND HTTP surface: ais_service.py ------------------------------- #
+# It is a separate process on its own port with its own handler, so the console's checks say
+# nothing about it. Same contract as the console's GET side - a void handler that must commit
+# its own response - but a much smaller surface: GET only, two routes, an unconditional 404
+# fall-through. Driven with --source nmea at a dead port so nothing here touches the network.
+AIS_SRC = os.path.join(APP, "ais_service.py")
+ais_source = io.open(AIS_SRC, encoding="utf-8").read()
+ais_tree = ast.parse(ais_source)
+AIS_FNS = [n for n in ast.walk(ais_tree) if isinstance(n, ast.FunctionDef)]
+AIS_GET = next((n for n in AIS_FNS if n.name == "do_GET"), None)
+AIS_VERBS = sorted({n.name for n in AIS_FNS if n.name.startswith("do_")})
+
+check("17. the AIS service's do_GET commits a response on EVERY path",
+      lambda: must_send(AIS_GET.body),
+      lambda: "lines %d-%d" % (AIS_GET.lineno, AIS_GET.end_lineno))
+
+# No if/else chain here - it is `if path == ...: send; return` and then a bare send. That
+# last statement IS the fall-through, so it must be an unconditional send, not another if.
+check("18. ... and its last statement is an UNCONDITIONAL send, so an unknown path 404s",
+      lambda: isinstance(AIS_GET.body[-1], ast.Expr) and is_send_call(AIS_GET.body[-1].value),
+      lambda: "GET-only service; verbs implemented: %s" % ", ".join(AIS_VERBS))
+
+ais_port, dead_port = free_port(), free_port()
+aislog = tempfile.TemporaryFile(mode="w+")
+ais_proc = subprocess.Popen([sys.executable, "ais_service.py", "--source", "nmea",
+                             "--nmea-host", "127.0.0.1", "--nmea-port", str(dead_port),
+                             "--port", str(ais_port)],
+                            cwd=APP, stdout=aislog, stderr=subprocess.STDOUT)
+ais_dead, verb_codes = [], {}
+try:
+    for _ in range(60):
+        if getp(ais_port, "/health", timeout=2)[0] == 200:
+            break
+        time.sleep(0.25)
+
+    # Malformed queries are the point: every one of these must be answered, not thrown on.
+    AIS_PATHS = ["/health", "/vessels",
+                 "/vessels?bbox=-80.3,42.0,-79.9,42.3",
+                 "/vessels?bbox=broken", "/vessels?bbox=1,2,3", "/vessels?bbox=1,2,3,4,5",
+                 "/vessels?bbox=nan,nan,nan,nan", "/vessels?bbox=1e400,2,3,4",
+                 "/vessels?max=notanumber", "/vessels?max=-5", "/vessels?max=99999",
+                 "/vessels?", "/vessels?novalue", "/vessels?=x",
+                 "/nope", "/", "/health/extra"]
+    for p in AIS_PATHS:
+        code, _n = getp(ais_port, p, timeout=10)
+        if code is None or code == "TIMEOUT":
+            ais_dead.append(p)
+
+    # Both spellings of the bbox must at least be ANSWERED; whether the encoded one is
+    # actually decoded is check 20, which cannot be tested from out here (see below).
+    tiny = "0.0,0.0,0.0001,0.0001"
+    for spelling in (tiny, tiny.replace(",", "%2C")):
+        if getp(ais_port, "/vessels?bbox=" + spelling, timeout=10)[0] != 200:
+            ais_dead.append("bbox=" + spelling)
+
+    for m in ("POST", "PUT", "DELETE"):
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", ais_port, timeout=8)
+            c.request(m, "/vessels")
+            verb_codes[m] = c.getresponse().status
+            c.close()
+        except Exception as e:
+            verb_codes[m] = "no response: %s" % e
+finally:
+    ais_proc.terminate()
+    try:
+        ais_proc.wait(timeout=10)
+    except Exception:
+        ais_proc.kill()
+
+check("19. the AIS service answered every route, malformed queries included",
+      lambda: not ais_dead,
+      lambda: ("no response from: %s" % ", ".join(ais_dead)) if ais_dead
+      else "%d routes incl. nan / inf / bad arity / missing values" % len(AIS_PATHS))
+
+# THE FINDING THIS AUDIT PRODUCED, tested at the parser rather than over the wire.
+# Percent-encoded commas are a legal way to write the bbox. The query parser never decoded
+# them, so the box was silently dropped and the caller got the WHOLE registry instead -
+# asking for a box and getting everything is the wrong way to fail.
+#
+# WHY NOT END-TO-END: with no AIS source the registry is EMPTY, so a dropped bbox and an
+# honoured one both return zero vessels and the responses are byte-identical. The first
+# version of this check compared those two responses and PASSED with the fix reverted -
+# measured, not guessed. A test that cannot distinguish the bug from the fix is worse than
+# none, so this runs the real parsing code on both spellings instead.
+parse_src = textwrap.dedent("\n".join(
+    ais_source.splitlines()[AIS_GET.lineno:AIS_GET.lineno + 12]).split("if path ==")[0])
+
+
+def parse_query(path):
+    ns = {"self": type("FakeRequest", (), {"path": path})(), "urllib": urllib}
+    exec(parse_src, ns)
+    return ns.get("q", {})
+
+
+check("20. a PERCENT-ENCODED bbox is DECODED, not silently dropped",
+      lambda: parse_query("/vessels?bbox=1%2C2%2C3%2C4").get("bbox") == "1,2,3,4"
+      and parse_query("/vessels?bbox=1,2,3,4").get("bbox") == "1,2,3,4",
+      lambda: "encoded -> %r, plain -> %r"
+      % (parse_query("/vessels?bbox=1%2C2%2C3%2C4").get("bbox"),
+         parse_query("/vessels?bbox=1,2,3,4").get("bbox")))
+
+check("21. an unimplemented verb is REFUSED, not left hanging",
+      lambda: all(isinstance(v, int) for v in verb_codes.values()),
+      lambda: ", ".join("%s=%s" % kv for kv in sorted(verb_codes.items())))
+
+aislog.seek(0)
+ais_out = aislog.read()
+aislog.close()
+ais_tb = [ln.strip() for ln in ais_out.splitlines()
+          if "Traceback" in ln or "Exception occurred" in ln]
+check("22. the AIS service logged NO exception either",
+      lambda: not ais_tb,
+      lambda: ("%d line(s), first: %s" % (len(ais_tb), ais_tb[0][:90])) if ais_tb
+      else "a second process, so the console's log says nothing about this one")
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

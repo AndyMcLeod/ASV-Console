@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SEVENTEEN REGRESSION SUITES (233 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SEVENTEEN REGRESSION SUITES (239 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -64,7 +64,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
-| `python tests/http_contract.py` | POST returns `(code, obj)`, GET commits its own response; nothing raises (16) |
+| `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
@@ -154,6 +154,24 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   sending closes the connection (no response); one that BLOCKS looks like a slow request; only
   a `sleep` produces 14. **6 vs 13** — static reads paths no request reaches, live catches what
   the analysis is too coarse to see.
+- **`ais_service.py` AUDITED TOO — and it produced the one real FINDING of the three audits.**
+  A SECOND HTTP server, own process, own port, so nothing in the console's checks covered it.
+  Structurally clean (GET-only, every path sends, unconditional 404 fall-through; `bbox`/`max`
+  guards hold against nan/inf/bad arity). **But its query parser never percent-decoded**, so
+  `?bbox=1%2C2%2C3%2C4` — a legal spelling — was silently dropped and the caller got the
+  **WHOLE registry instead of the box**. Not a live bug (the console sends plain commas) but
+  the wrong way to fail. Fixed with `urllib.parse.unquote`, strictly more permissive; the
+  explicit `import urllib.parse` matters because it was only arriving via `urllib.request`.
+  Suite 16 → 22, now covering both servers.
+  **THE TEST LESSON, the sharpest of the session:** my first check 20 compared the two
+  responses over the wire and **PASSED with the fix reverted** — with no AIS source the
+  registry is EMPTY, so a dropped box and an honoured one both return zero vessels,
+  byte-identical. It now runs the real parsing code on both spellings. **When a fix changes a
+  FILTER, a test with nothing to filter cannot see it.**
+  **AND A MUTATION TRAP:** `asv_console.py` is **LF**, `ais_service.py` is **CRLF** — a
+  multi-line anchor written with `\n` matches one and not the other. Two mutations reported
+  SKIP; only because the runner scores a missing anchor as SKIP rather than "caught" did that
+  surface instead of reading as clean passes.
 - **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
   `display:block`, fully live, at a position saved when the window was bigger, sitting
   outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so

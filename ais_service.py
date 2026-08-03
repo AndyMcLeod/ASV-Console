@@ -48,6 +48,7 @@ import struct
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -668,11 +669,17 @@ def make_handler(reg, sources):
 
         def do_GET(self):
             path, _, qs = self.path.partition("?")
+            # PERCENT-DECODE THE VALUES. Without this a caller that encodes the commas -
+            # bbox=1%2C2%2C3%2C4, which is a perfectly legal way to write it - had its box
+            # silently ignored and got the WHOLE registry back rather than an error. The
+            # console sends plain commas so nothing was broken in practice, but "you asked
+            # for a box and got everything" is the wrong way for this to fail. Strictly more
+            # permissive: a plain value decodes to itself.
             q = {}
             for kv in qs.split("&"):
                 if "=" in kv:
                     k, v = kv.split("=", 1)
-                    q[k] = v
+                    q[k] = urllib.parse.unquote(v)
             if path == "/health":
                 self._send(200, {"ok": True, "count": reg.count(),
                                  "sources": self._src_status()})
