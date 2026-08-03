@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIXTEEN REGRESSION SUITES (217 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SEVENTEEN REGRESSION SUITES (227 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -64,6 +64,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
+| `python tests/post_contract.py` | EVERY POST handler returns `(code, obj)` and none raises (10) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
@@ -121,6 +122,20 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   `completion_modes` 11. Mutation-verified in all three, including restoring the exact
   shipped bug. **THE RULE: a client-side assertion cannot see a server that answers correctly
   and then dies. If a test drives a real process, read that process's output.**
+- **AUDITED THE OTHER POST HANDLERS** (Andy asked; the answer is that `/api/ais/radius` was
+  the only one). Done three ways, because a grep only finds the shape you already know:
+  **AST** — all 29 returns in `_dispatch_post` are 2-tuples, it is the only function whose
+  result is unpacked into two names, and no GET handler returns a tuple nobody sends (the
+  mirror bug); **reachability** — the function cannot fall off the end and return `None`
+  implicitly; **live** — all 26 endpoints plus 11 ROC ops POSTed against a real console, all
+  answered, server log clean. Kept as `tests/post_contract.py` (10), which **parses the
+  endpoint list out of the source**, so a new POST route is covered the day it is added.
+  **Checks 7 and 10 do not subsume each other:** a raise BEFORE the response leaves the
+  client with nothing (7 sees it); a raise AFTER `_send` has already answered — the bug that
+  shipped — is invisible to every client-side check and only the server log shows it (10).
+  **Mutation-writing gotcha recorded there:** the handlers are an `if path == …: return`
+  chain, so a raise injected before the branch that already handles that path is unreachable
+  and the mutation silently does nothing — my first attempt looked like a surviving mutant.
 - **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
   `display:block`, fully live, at a position saved when the window was bigger, sitting
   outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so

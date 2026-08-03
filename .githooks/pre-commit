@@ -30,6 +30,8 @@
 #                           forgetting where the operator put it.
 #   tests/stored_settings.js  the guarded localStorage helpers - blocked storage never
 #                           throws, and toggles saved as legacy "1"/"0" still read.
+#   tests/post_contract.py  every POST handler returns (code, obj) and none of them raises;
+#                           endpoint list parsed from the source, so new ones are covered.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -209,6 +211,16 @@ if command -v python >/dev/null 2>&1; then
     echo "  The operator's END-OF-PLAN SETTING and the completion of the run IN"
     echo "  PROGRESS have been conflated again - a behaviour is writing the setting,"
     echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
+    fail=1
+  fi
+  echo "pre-commit: POST contract regression test..."
+  if ! python tests/post_contract.py; then
+    echo ""
+    echo "pre-commit: post-contract test FAILED."
+    echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, or an"
+    echo "  endpoint raised while serving. Note a handler can answer the client"
+    echo "  CORRECTLY and still take down its thread - _send writes the response"
+    echo "  before the caller unpacks - so read check 10, the server's own log."
     fail=1
   fi
 else
