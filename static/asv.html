@@ -3256,21 +3256,71 @@ function renderAisTable(){
   else if(aisState==="connecting") status = dot("#e8a13f")+`connecting to AIS${srcTxt} &middot; <span style="color:var(--ink-faint)">warming up${aisArea?" over "+aisAreaLabel():""}...</span>`;
   else if(aisState==="empty" || !rows.length) status = dot("#e8a13f")+`connected${srcTxt} &middot; <span style="color:var(--ink-faint)">no vessels in ${aisAreaLabel()} yet</span>`;
   else status = dot("#3fbf6b")+`${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}`+srcTxt+(nearest?` &middot; nearest ${nearest}`:"");
-  const hdr = `<div style="color:var(--ink);margin-bottom:3px">${status}</div>`;
-  if(!rows.length){ el.innerHTML = hdr; return; }
-  const cell="padding:2px 5px;white-space:nowrap", head="padding:2px 5px;color:var(--ink-faint)";
-  const body=rows.slice(0,60).map(r=>{ const v=r.v, col=AIS_COL[v.cat]||AIS_COL.unknown;
-    let nm=v.name || ("MMSI "+v.mmsi); if(nm.length>15) nm=nm.slice(0,15);
-    return `<tr title="${aisTypeLabel(v)} · COG ${v.cog!=null?Math.round(v.cog)+"°":"–"} · ${Math.round(v.age)}s ago">`
-      +`<td style="${cell}"><span style="color:${col}">&#9650;</span> ${nm}</td>`
-      +`<td style="${cell};text-align:right">${r.rng!=null?fmtNm(r.rng):"–"}</td>`
-      +`<td style="${cell};text-align:right">${r.brg!=null?r.brg+"°":"–"}</td>`
-      +`<td style="${cell};text-align:right">${v.sog!=null?v.sog:"–"}</td></tr>`; }).join("");
-  el.innerHTML=hdr
-    +`<table style="border-collapse:collapse;width:100%"><tr><td style="${head}">vessel</td>`
-    +`<td style="${head};text-align:right">nm</td><td style="${head};text-align:right">brg</td>`
-    +`<td style="${head};text-align:right">kn</td></tr>${body}</table>`;
+  // PATCHED IN PLACE, NOT REBUILT. This used to assign el.innerHTML every poll, so every
+  // 8 s the entire body was destroyed and re-created. The list SCROLLS (max-height:46vh),
+  // so that reset the scroll position while you were reading it, dropped any text selection
+  // mid-copy, and flashed. Rows are keyed by MMSI and reused: only cells whose text actually
+  // changed are written, re-sorting MOVES the existing node rather than making a new one,
+  // and contacts that drop out are removed. Nothing the operator is interacting with is
+  // destroyed, so scroll position and selection simply survive.
+  ensureAisSkeleton(el);
+  const statusEl = el.querySelector("#aisStatusLine");
+  if(statusEl.innerHTML !== status) statusEl.innerHTML = status;      // only when it changed
+  const table = el.querySelector("#aisRowsTable"), body = el.querySelector("#aisRowsBody");
+  table.style.display = rows.length ? "" : "none";
+  if(!rows.length){ body.textContent = ""; return; }
+
+  // The live rows, DERIVED from the DOM rather than remembered in a parallel map - a map
+  // would go stale the moment the card is closed and reopened, or the body cleared above.
+  const existing = new Map();
+  for(const tr of body.children) existing.set(tr.dataset.mmsi, tr);
+
+  rows.slice(0, 60).forEach((r, i) => {
+    const v = r.v, key = String(v.mmsi);
+    let tr = existing.get(key);
+    if(tr) existing.delete(key); else { tr = aisMakeRow(); tr.dataset.mmsi = key; }
+    const col = AIS_COL[v.cat] || AIS_COL.unknown;
+    if(tr.dataset.cat !== String(v.cat)){                             // category rarely moves
+      tr.dataset.cat = String(v.cat);
+      tr.querySelector(".aisMk").style.color = col;
+    }
+    let nm = v.name || ("MMSI " + v.mmsi); if(nm.length > 15) nm = nm.slice(0, 15);
+    setCellText(tr.querySelector(".aisNm"), nm);
+    setCellText(tr.cells[1], r.rng!=null ? fmtNm(r.rng) : "–");
+    setCellText(tr.cells[2], r.brg!=null ? r.brg + "°" : "–");
+    setCellText(tr.cells[3], v.sog!=null ? String(v.sog) : "–");
+    const title = aisTypeLabel(v) + " · COG "
+      + (v.cog!=null ? Math.round(v.cog) + "°" : "–")
+      + " · " + Math.round(v.age) + "s ago";
+    if(tr.title !== title) tr.title = title;
+    if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
+  });
+  for(const tr of existing.values()) tr.remove();       // contacts that left the range
 }
+// The card's fixed furniture, built once. Everything below it is patched, never replaced.
+function ensureAisSkeleton(el){
+  if(el.querySelector("#aisRowsBody")) return;
+  const head = "padding:2px 5px;color:var(--ink-faint)";
+  el.innerHTML =
+     `<div id="aisStatusLine" style="color:var(--ink);margin-bottom:3px"></div>`
+    +`<table id="aisRowsTable" style="border-collapse:collapse;width:100%">`
+    +`<thead><tr><td style="${head}">vessel</td>`
+    +`<td style="${head};text-align:right">nm</td>`
+    +`<td style="${head};text-align:right">brg</td>`
+    +`<td style="${head};text-align:right">kn</td></tr></thead>`
+    +`<tbody id="aisRowsBody"></tbody></table>`;
+}
+function aisMakeRow(){
+  const cell = "padding:2px 5px;white-space:nowrap";
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td style="${cell}"><span class="aisMk">&#9650;</span> <span class="aisNm"></span></td>`
+    +`<td style="${cell};text-align:right"></td>`
+    +`<td style="${cell};text-align:right"></td>`
+    +`<td style="${cell};text-align:right"></td>`;
+  return tr;
+}
+// Writing an identical string still collapses a selection inside that node, so check first.
+function setCellText(node, s){ if(node && node.textContent !== s) node.textContent = s; }
 function aisAt(clientX, clientY){ if(!aisShow || !aisVessels.length) return null;
   const o=originPx(), r=mapEl.getBoundingClientRect(), cx=clientX-r.left, cy=clientY-r.top;
   let best=null, bd=11;

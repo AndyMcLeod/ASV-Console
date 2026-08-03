@@ -30,6 +30,8 @@
 #                           forgetting where the operator put it.
 #   tests/stored_settings.js  the guarded localStorage helpers - blocked storage never
 #                           throws, and toggles saved as legacy "1"/"0" still read.
+#   tests/ais_table.js      the AIS traffic list is PATCHED, never rebuilt - so a poll
+#                           cannot reset the scroll position or drop a selection.
 #   tests/http_contract.py  the two OPPOSITE handler contracts: POST returns (code, obj),
 #                           GET commits its own response. Every request gets exactly one
 #                           answer and the server survives it. Routes parsed from source.
@@ -116,6 +118,16 @@ if ! node tests/stored_settings.js; then
   echo "  A stored setting no longer survives blocked or full storage, a toggle saved by"
   echo "  an older build as \"1\"/\"0\" no longer reads, or a bare localStorage call has"
   echo "  crept back in beside the helpers (lsGet / lsSet / lsDel / lsBool)."
+  fail=1
+fi
+
+echo "pre-commit: AIS traffic list regression test..."
+if ! node tests/ais_table.js; then
+  echo ""
+  echo "pre-commit: ais-table test FAILED."
+  echo "  The traffic list is being REBUILT rather than patched again - that resets"
+  echo "  the card's scroll position mid-read and drops a text selection every poll"
+  echo "  (renderAisTable / ensureAisSkeleton / setCellText in static/asv.html)."
   fail=1
 fi
 

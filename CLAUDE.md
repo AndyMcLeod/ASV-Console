@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SEVENTEEN REGRESSION SUITES (251 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**EIGHTEEN REGRESSION SUITES (260 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -62,6 +62,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; reads in nm (15) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
+| `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -94,6 +95,26 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **THE AIS TRAFFIC LIST IS PATCHED, NOT REBUILT** (Andy: "blanks and rewrites every
+  cycle"). `renderAisTable()` assigned `el.innerHTML` on every poll, so **every 8 s the whole
+  body was destroyed and re-created**. Three costs at once, and the first is the one that
+  actually hurts: the card is `.rsz` (`resize:both; overflow:auto`) so the list SCROLLS —
+  rebuilding **reset the scroll position while you were reading it**; it **dropped any text
+  selection** mid-copy of an MMSI; and it flashed. Rows are now keyed by **MMSI** and reused,
+  only cells whose text CHANGED are written, re-sorting **moves** the node with `insertBefore`,
+  and contacts that leave are removed. The row map is **derived from the DOM each cycle**, not
+  kept alongside it — a parallel map would go stale the moment the card is closed and reopened.
+  **`setCellText`'s guard is not an optimisation:** writing an identical string still collapses
+  a selection inside that node, which is why a selection survives a poll where nothing changed.
+  New suite `tests/ais_table.js` (9), **8 mutations verified**; live-verified in a browser for
+  the parts source-shape cannot see (same node across a poll, `scrollTop` held at 90, the
+  selection "VESSEL 5" intact, values still updating 1.5 → 6.9 nm, add/drop/re-sort, empty and
+  refill). No doc change owed — the manual never described the flashing.
+  **NOTED, NOT FIXED:** `.rsz` has `min-height` but **no max**, so an unsized traffic card grows
+  with its content — 40 synthetic contacts made it 797 px in a 720 px viewport. Once the
+  operator resizes it the size persists and it scrolls, so this only bites a fresh profile with
+  heavy traffic. A `max-height` on `.rsz` would cap it, but that CSS is shared by all ten
+  resizable cards, so it is Andy's call rather than a silent layout change.
 - **THE AIS RANGE CONTROL READS IN NAUTICAL MILES** (Andy's call). The contact list had
   always reported range in nm via `fmtNm`, so a selector in km meant **filtering in one unit
   and reading distances in another**. Converted at the DISPLAY EDGE: `M_PER_NM = 1852` +
