@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIXTEEN REGRESSION SUITES (199 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SIXTEEN REGRESSION SUITES (202 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -48,7 +48,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 
 | | guards |
 |---|---|
-| `node tests/buoy_lane.js` | Rule 9 channel lane (11) |
+| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route (14) |
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
@@ -105,6 +105,26 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   New suite `tests/stored_settings.js` (11), **7 mutations verified**.
   **`panel_drag.js` check 10 failed on this change and was right to** — it named the raw
   `localStorage.setItem` shape; re-pointed at `lsSet` and re-mutated to confirm it still bites.
+- **the lane fact travels WITH its route** — `channelLaneRoute` now returns `{route, lane}`
+  and `buoyageNote(lane)` takes it as an argument; the module flag `lastChannelLane` is gone.
+  I raised the stale flag as *inert* (a refusal returns before any reader) — **it was not.**
+  Looking properly found a SECOND, live fault in the same flag: `routePlan` calls
+  `channelLaneRoute` ONCE PER LEG, and the reset at the top of that function meant only the
+  **last leg counted**. Proven at Lewes on the real ENC — a transit out of the canal into
+  Delaware Bay rides the lane on leg 0 and open water on legs 1–2; the plan now reports
+  `true`, **the old flag would have said `false`** and dropped the Rule 9 note from a
+  transit that genuinely rode the lane. `routePlan` accumulates (`lane ||= kr.lane`) and
+  returns it; the two search/survey call sites that only ever wanted the array take
+  `.route`. `laneUsed` remains as scratch that `channelLaneRoute` resets and consumes on the
+  same tick — **nothing outside it may read that variable**, which is what makes the
+  staleness structurally impossible. `tests/buoy_lane.js` +3 (14): the lane is reported,
+  is not reported in open water, and **a lane plan followed by an open-water plan does not
+  inherit the lane** — mutation-verified by restoring the old no-reset design, which fails
+  exactly that check. The ops manual already promised the banner reports "whether it rode a
+  channel lane", so **again the doc was right and the code was wrong** — no rebuild owed.
+  **Lesson: "inert today" is a claim about every reader, present and future. Check it by
+  looking at the producer, not the reader** — the producer had a second bug the reader
+  audit would never have found.
 - **the pre-commit path filter named its suites individually and had drifted** — five
   (`wreck_clearance`, `water_trust`, `ais_range`, `live_speed`, `completion_modes`) were
   never listed, so editing one of them ALONE ran nothing. Replaced with `*tests/*`. Same

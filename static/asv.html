@@ -1673,7 +1673,7 @@ function computeSearchNogo(){
         if(!legClear(A,B,ref,ko,buf)){
           const via=routeAround(A,B,ref,ko,buf);
           if(via && via.length){                    // routed search TRANSIT: Rule 9 keep-right
-            const kr=channelLaneRoute([A,...via,B], ref, ko, buf);
+            const kr=channelLaneRoute([A,...via,B], ref, ko, buf).route;   // route only: no banner here
             kr.slice(1,-1).forEach(p=>out.push({lat:p.lat,lon:p.lon})); routes.push(kr);
           }
           else unsafe.push([A,B]);
@@ -2588,9 +2588,13 @@ function systemCenterline(sy){
 // offset each point to starboard, then thread boat -> lane -> target. Every lane point
 // is clearance-checked (shrink the offset, else fall back to the centreline point) and
 // any blocked leg is re-routed via legPath, so obstacle avoidance is preserved. No-op
-// when no buoy system bridges the transit. `lastChannelLane` feeds the banner.
+// when no buoy system bridges the transit.
 const LANE_FRAC = 0.5;            // how far from centreline toward the stbd edge (0.5 = ¼ width in from the edge)
-let lastChannelLane = false;
+// SCRATCH ONLY. The two lane stages set this; channelLaneRoute resets it on entry and
+// consumes it on the same tick, returning the value with the route. NOTHING outside
+// channelLaneRoute may read it - the moment a banner reads it directly it is a remembered
+// flag again, able to outlive the plan that set it. See channelLaneRoute.
+let laneUsed = false;
 function buoyChannelLane(pathLL, ref, ko, buf){
   if(!pathLL || pathLL.length<2 || !ko || !ko.sys || !ko.sys.length) return pathLL;
   const en = pathLL.map(p=>llEN(p.lat,p.lon,ref));
@@ -2712,7 +2716,7 @@ function buoyChannelLane(pathLL, ref, ko, buf){
     if(!(sub && sub.length)) return pathLL;                            // unroutable -> keep the routed path
     for(const p of sub) out.push({lat:p.lat, lon:p.lon});
   }
-  lastChannelLane = true;
+  laneUsed = true;
   return out;
 }
 // THE SAME LANE RULE IN UNMARKED WATER. A channel does not stop being a channel because
@@ -2795,16 +2799,27 @@ function narrowChannelLane(pathLL, ref, ko, buf){
     while(Math.abs(d)>0.5 && blocked(p,ko,buf) && k<8){ d*=0.6; p={e:samp[i].e+SB[i][0]*d, n:samp[i].n+SB[i][1]*d}; k++; }
     out.push(blocked(p,ko,buf) ? samp[i] : p);
   }
-  if(out.some((p,i)=>Math.abs(sm[i])>0.5)) lastChannelLane = true;
+  if(out.some((p,i)=>Math.abs(sm[i])>0.5)) laneUsed = true;
   return out.map(p=>fromEN(p.e,p.n,ref));
 }
 // One entry point, applied to EVERY mode: lane off the buoys where a channel is marked,
 // off the water's own edges where it isn't, then smooth + set the waypoint spacing.
+//
+// RETURNS {route, lane} - the fact that a lane was ridden comes back WITH the route it
+// describes, rather than being left in a module flag for a banner to read later. The flag
+// version had two faults, and neither was visible from the routing code:
+//   * a REFUSED plan never reached this function, so the flag still held the PREVIOUS
+//     plan's answer and any reader would have described the wrong route;
+//   * routePlan calls this once PER LEG, and the reset at the top meant only the LAST leg
+//     counted - a transit that rode a lane on leg 1 and open water on leg 3 reported none.
+// A value returned with its subject cannot drift from it, and cannot be read by an
+// operation that did not produce it.
 function channelLaneRoute(pathLL, ref, ko, buf){
-  lastChannelLane = false;
+  laneUsed = false;                                  // scratch: consumed on the next line
   let out = buoyChannelLane(pathLL, ref, ko, buf);   // marked channels (buoy-pair centreline)
   out = narrowChannelLane(out, ref, ko, buf);        // unmarked / channel-like confined water
-  return smoothTrack(out, ref, ko, buf);             // round the bends, set the waypoint count
+  return {route: smoothTrack(out, ref, ko, buf),     // round the bends, set the waypoint count
+          lane: laneUsed};
 }
 // Pair the lateral marks into channel GATES: each port-hand mark with its nearest
 // starboard-hand mark across the channel (15-400 m apart), giving the gate centre, its
@@ -2837,8 +2852,10 @@ function planNogoRoute(from, to){
   const kr = channelLaneRoute(path, ref, ko, buf);
   // knot prune: the lane offset can fold a sharp (but legitimate) corner
   // into a small reversal knot; drop knot waypoints whose neighbours connect clear
-  const clean = pruneStitch(kr, ref, ko, buf);
-  return {route: clean.slice(1), direct: !routed, routed};
+  const clean = pruneStitch(kr.route, ref, ko, buf);
+  // `lane` travels WITH the plan. A refusal above returns before this point and so carries
+  // no lane at all, which is the honest answer: there is no route to describe.
+  return {route: clean.slice(1), direct: !routed, routed, lane: kr.lane};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -2850,6 +2867,10 @@ function routePlan(start, wps, keepRightAll){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
   const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
+  // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
+  // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
+  // report only whichever leg happened to be last.
+  let lane = false;
   wps.forEach((wp, i)=>{
     const leg = legPath(prev, wp, ref, ko, buf);
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
@@ -2859,11 +2880,14 @@ function routePlan(start, wps, keepRightAll){
     // routeAround inserted a transit around obstacles). A straight mission leg in
     // between is left alone - at Upload we can't tell a survey coverage line from
     // a plain hop, and coverage lines must stay on their planned track.
-    if(keepRightAll || i===0 || leg.length>1) seg = channelLaneRoute(seg, ref, ko, buf);
+    if(keepRightAll || i===0 || leg.length>1){
+      const kr = channelLaneRoute(seg, ref, ko, buf);
+      seg = kr.route; if(kr.lane) lane = true;
+    }
     for(let k=1;k<seg.length;k++) out.push({lat:seg[k].lat, lon:seg[k].lon});
     prev = wp;
   });
-  return {route: out, unroutable};
+  return {route: out, unroutable, lane};
 }
 async function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
@@ -2882,7 +2906,8 @@ async function doGoTo(target){
   clearViolation();
   cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
   runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
-  if(plan.routed || buoyageNote()) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(buoyageNote()?" \u00b7 "+buoyageNote():"")+".");
+  const note = buoyageNote(plan.lane);             // this plan's lane, not the last plan's
+  if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -2907,7 +2932,8 @@ async function doRTH(opts){
   clearViolation();
   cmd("/api/cmd/rth", {route:plan.route});
   runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
-  if(plan.routed || buoyageNote()) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(buoyageNote()?" \u00b7 "+buoyageNote():"")+".");
+  const note = buoyageNote(plan.lane);             // this plan's lane, not the last plan's
+  if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -2993,7 +3019,8 @@ async function doTransit(){
   clearViolation();
   cmd("/api/cmd/transit", {route: plan.route});
   const added = plan.route.length - transit.length;
-  if(added>0 || buoyageNote()) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(buoyageNote()?" \u00b7 "+buoyageNote():"")+".");
+  const note = buoyageNote(plan.lane);             // accumulated over every leg of THIS plan
+  if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }
 // nogo overlay: a red wash on the keep-out zones so they read at a glance
@@ -3058,12 +3085,13 @@ function drawMarks(toScreen){
         ctx.strokeText(id.num, s.x+7, s.y); ctx.fillText(id.num, s.x+7, s.y); } }); }
   ctx.restore();
 }
-// How the console read the buoyage on the last route it planned.
-function buoyageNote(){
+// How the console read the buoyage on THE ROUTE PASSED IN - `lane` comes off that plan's
+// own result, not off a flag describing whichever route was planned most recently.
+function buoyageNote(lane){
   // Go-To / RTH / Transit ride the CHANNEL LANE: offset to starboard of the buoy-pair
   // centreline, so the centreline stays to port and the starboard-hand marks to
   // starboard - either direction of travel.
-  return lastChannelLane ? "Rule 9: channel lane, centreline to port" : "";
+  return lane ? "Rule 9: channel lane, centreline to port" : "";
 }
 
 // --- AIS layer: nearby vessels from the standalone AIS service (/api/ais) ------
@@ -3536,7 +3564,7 @@ async function punchOut(){
       if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
       const around=routeAround(Ap,Bp,ref,ko,buffer);
       if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
-        const kr=channelLaneRoute([Ap,...around,Bp], ref, ko, buffer);
+        const kr=channelLaneRoute([Ap,...around,Bp], ref, ko, buffer).route;  // route only: no banner here
         patTransits.push(kr.slice(1,-1)); patRoutes.push(kr);
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }

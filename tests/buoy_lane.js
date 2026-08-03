@@ -72,7 +72,7 @@ const M_PER_DEG_LAT = 111320.0;
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      "const SEG_LEN_M=2200;\nlet CHANNEL_REACH_M=null;\n" +          // vessel override: default reach
-     grabDecl("LANE_FRAC") + "\n" + grabDecl("lastChannelLane") + "\n" +
+     grabDecl("LANE_FRAC") + "\n" + grabDecl("laneUsed") + "\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
@@ -102,10 +102,16 @@ function channel() {
 }
 
 // Run channelLaneRoute over a base path (list of {e,n}) and return the route in E/N.
+// channelLaneRoute returns {route, lane} - the lane fact travels WITH the route it
+// describes rather than being left in a module flag (see laneRun below, which asserts it).
 function runLane(world, base) {
   const pts = base.map((p) => enLL(p.e, p.n));
-  const out = channelLaneRoute(pts, ref, world, 3);
+  const out = channelLaneRoute(pts, ref, world, 3).route;
   return [pts[0], ...out].map((p) => ({ e: toE(p), n: toN(p) }));   // include the start
+}
+// The same call, kept whole, for the assertions about what it REPORTS.
+function laneRun(world, base) {
+  return channelLaneRoute(base.map((p) => enLL(p.e, p.n)), ref, world, 3);
 }
 // The east offset where the route crosses n = nq. The channel is centred on e=0, so e IS
 // the cross-channel offset: 0 = on the centreline, +e = east, -e = west.
@@ -235,6 +241,33 @@ for (const [tag, dir, base] of [
         cl.length === 5 && cl.every((p) => Math.abs(p.e) < 1 && Math.abs(p.hw - HALF) < 1) &&
         cl.every((p, i) => i === 0 || p.n > cl[i - 1].n),
         "n=" + cl.map((p) => p.n.toFixed(0)).join(",") + " hw=" + cl.map((p) => p.hw.toFixed(0)).join(","));
+}
+
+// 8-10. THE LANE FACT TRAVELS WITH THE ROUTE, and is not remembered between plans.
+// channelLaneRoute used to set a module flag that a banner read afterwards. Two faults
+// followed, neither visible from the routing code: a REFUSED plan never called the
+// function, so the flag still described the PREVIOUS route; and routePlan calls this once
+// per leg, so a per-call flag reported only the last leg. Returning {route, lane} makes
+// both impossible - there is no flag to outlive anything.
+{
+  const straight = [{ e: 0, n: 0 }, { e: 0, n: 1000 }];
+  const bare = { polys: [], lines: [], points: [], marks: [], sys: [] };
+
+  check("a transit that rides the channel lane REPORTS that it did",
+        laneRun(channel(), straight).lane === true,
+        "the banner's claim comes off the plan it describes");
+
+  check("... and one in open water reports that it did NOT",
+        laneRun(bare, [{ e: 30, n: 0 }, { e: 30, n: 1000 }]).lane === false,
+        "no channel, no Rule 9 note");
+
+  // THE STALENESS CASE, directly: plan a lane, then plan open water. The second answer
+  // must be the second route's, not a leftover from the first.
+  const first = laneRun(channel(), straight);
+  const second = laneRun(bare, [{ e: 30, n: 0 }, { e: 30, n: 1000 }]);
+  check("A LANE PLAN FOLLOWED BY AN OPEN-WATER PLAN DOES NOT INHERIT THE LANE",
+        first.lane === true && second.lane === false,
+        "first=" + first.lane + " second=" + second.lane + " (a remembered flag would say true,true)");
 }
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");
