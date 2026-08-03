@@ -267,6 +267,7 @@ c.push(TBL(["Field", "Sets"], [
   ["Speed", "Low / Survey / High, from the vessel's own profile"],
   ["End of plan", "What happens when the plan finishes — see 11.5"],
 ], [1400, 7960]));
+c.push(NOTE("CHANGING SPEED RE-PLANS THE TURNS", "Speed is an input to the plan, not a label on it: the minimum radius the vessel can hold scales with it, and so does the shape of every line-to-line reversal. Change it and the console recalculates — turns, durations, per-line times. If the plan is already COMMITTED it cannot rebuild the turn waypoints, so it re-checks the spacing against the new speed and tells you when speeding up has put a reversal beyond what the vessel can hold. Slowing down is always safe."));
 c.push(NOTE("THE BUFFER HAS A FLOOR", "The vessel's own profile sets a minimum buffer. A plan saved against a smaller vessel cannot quietly give this one less standoff than its profile demands. You can always widen it by hand."));
 c.push(H2("11.2  The sequence"));
 c.push(B("`Arm` — enables commanding. Confirm the transmitter's autonomy switch is forward."));
@@ -294,6 +295,7 @@ c.push(TBL(["Setting", "At the end of the plan"], [
   ["Repeat", "Loop the route until you Stop"],
 ], [1400, 7960]));
 c.push(P("With RTH selected, THE RETURN ALSO HAPPENS AT THE END OF A GO-TO OR A TRANSIT, not only at the end of a survey. The MISSION block's End mode says so for the whole run rather than only once the return begins, so you can confirm before the run ends where the vessel is going to finish."));
+c.push(P("The setting is LIVE from the moment you change it — the end-of-plan return gates on it continuously, so switching to RTH part-way through a run arms a return, and switching away from it disarms one. What waits for the next Upload is the behaviour the vessel itself falls back on at its last waypoint with no console attached."));
 c.push(NOTE("WHEN IT WILL NOT SAY RTH", "End mode only promises a return the vessel can actually make. With no HOME set, disarmed, E-STOP latched, on a Repeat run that never ends, or after a return that was routed and refused, it reads what the vessel will really do instead. Believe it."));
 
 // 12 --------------------------------------------------------------------------

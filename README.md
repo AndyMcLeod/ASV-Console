@@ -588,6 +588,15 @@ blanking the moment its pattern anchors are dropped, and that the figures are de
 the committed lines rather than remembered (so they cannot drift from the plan, survive a
 refresh, and follow a plan edited in WPT mode).
 
+```
+node tests/speed_recalc.js
+```
+
+**Speed recalculation** — that changing the plan speed actually recalculates (the console
+advises on speed, so acting on that advice has to change something), and that a plan already
+committed is re-checked against the turn radius the new speed implies: slowing down is always
+safe, speeding up can make a committed reversal untrackable while the plan looks identical.
+
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
 `.githooks/`; **enable it once per clone**:

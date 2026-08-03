@@ -32,7 +32,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TEN REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
+**ELEVEN REGRESSION SUITES, all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -46,6 +46,7 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
+| `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
@@ -553,6 +554,50 @@ grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . |
   profile, `example_usv_4m`, has neither those speeds nor that turn rate). The same
   mislabel had propagated into CLAUDE.md's turn-geometry section and README.md; both
   corrected. Data untouched, so the 21 assertions are unchanged and still pass.
+
+## PLAN SPEED IS AN INPUT, NOT A LABEL (2026-08-02)
+
+**Andy's report:** the speed selection is not monitored when a change of speed for a given
+plan is suggested; speed and end-of-plan settings should initiate recalculation on user
+input.
+
+**The "suggested" part is what makes it sharp.** Punch Out ALREADY advises on speed — when
+the spacing is inside `2 × minTurnRadiusM(speed)` it quotes the spacing a plain reversal
+needs at the plan speed AND at low speed, precisely so the operator can choose between
+widening the lines and slowing down. Acting on that advice changed **nothing**: `#c_speed`
+saved the value and recomputed nothing at all. **Advice the console then ignores is worse
+than no advice.**
+
+- `recalcForSpeed()` — if a punched pattern is still drawn, re-run `punchOut()`: it OWNS
+  the whole recalculation and its chart extract is cached, so it is cheap. Live proof it is
+  real work: the same plan went **7 teardrops → 7 semicircles** and the routed length
+  **0.63 → 0.44 → 1.27 km** across survey → low → high.
+- `recalcCommittedForSpeed()` — a COMMITTED plan cannot be re-punched (anchors gone), so
+  durations are recomputed from `mission.waypoints`, and the reversal feasibility is
+  re-checked using `committedPatternInfo().spacing`. **Slowing down is always safe** (the
+  radius shrinks); **speeding up can make a committed reversal untrackable and the plan
+  looks identical on the chart** — so that case, and only that case, is reported.
+- **Also called from `commitPattern()`**: `resetPattern()` blanked the duration rows at the
+  moment the plan became real — the same fault as the survey card, one row over.
+- **End of plan**: the note said "applies on the next Upload", which was **half true in the
+  dangerous direction**. The SETTING is live the moment it is saved — the RTH chain gates on
+  `s.completion` every frame — so switching to RTH mid-run arms a return the operator may
+  not expect. What waits for Upload is the completion the LINK is given.
+
+**TWO GAPS THE LIVE RUN FOUND, both fixed:** the durations blanked at `Add to plan` (above),
+and **the warning did not clear** — slowing back down left it on screen claiming the plan
+could not be flown at a speed it was no longer set to. `speedWarnShown` clears it, and only
+if OUR banner is still the one showing, so an unrelated banner is not wiped.
+
+**Test:** `node tests/speed_recalc.js` — 10 assertions. Teeth-verified: radius instead of
+DIAMETER → 2,3,5b; warn on every change (cry-wolf) → 1,4,5,5b; never clear → 5b; fixed speed
+for durations → 7; no recompute → 6,7,7b. **Live-verified:** committed at low → sped up to
+high (duration recomputed, warning raised quoting 24.9 m vs 57.8 m) → slowed back (recomputed,
+warning cleared).
+
+**NOTE for anything using `flashNote()`:** `onState` overwrites `#note` with the vessel's own
+note every frame, so a flashNote is visible for well under a second. Anything the operator
+must actually read belongs in `showBanner()` or a panel hint.
 
 ## THE SURVEY CARD BLANKED ON A COMMITTED PLAN (2026-08-02)
 

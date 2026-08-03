@@ -1496,7 +1496,10 @@ function commitPattern(){
     if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
       transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
   });
-  resetPattern(); updateXTE(); saveMission(); render();
+  // resetPattern() blanks the duration rows along with the pattern; recompute them from
+  // the plan that was just committed, so they describe it instead of going to "--" at the
+  // moment it becomes real. Same fault the survey card had, one row over.
+  resetPattern(); recalcCommittedForSpeed(); updateXTE(); saveMission(); render();
 }
 
 // --- arbitrary survey-area boundary (CAMP SurveyArea) -------------------- //
@@ -4345,7 +4348,74 @@ $("#c_approach").onchange = ()=>{
   mission.approach_radius_m = v; $("#c_approach").value = v; saveMission();
   cmd("/api/cmd/approach", {m:v});               // apply live to the running sim
 };
-$("#c_speed").onchange = ()=>{ mission.speed = $("#c_speed").value; saveMission(); };
+// PLAN SPEED IS AN INPUT TO THE PLAN, NOT A LABEL ON IT. Everything below depends on it:
+// the minimum turn radius the boat can hold, and therefore whether each line-to-line
+// reversal is a semicircle, a teardrop or untrackable; the survey and approach durations;
+// the per-line planned times; and the to-end estimate. Changing it used to save the value
+// and recompute NOTHING - so the console would advise "widen the lines or slow down",
+// the operator would slow down, and every figure on screen still described the old speed.
+// Advice the console then ignores is worse than no advice.
+function recalcForSpeed(){
+  if(currentPattern()){
+    // A pattern is still drawn. punchOut() OWNS the whole recalculation - turns rebuilt at
+    // the new radius, durations, and the advisory reprinted - and the chart extract it
+    // needs is already cached, so re-running is cheap. Only worth it if it was punched
+    // before: an unpunched pattern has nothing stale to correct.
+    if(patClip){ punchOut(); return; }
+    updatePatReadout(); renderLineTable(); updateMissionCard();
+    return;
+  }
+  // A COMMITTED plan cannot be re-punched - its anchors are gone (see the survey-card
+  // section). Recompute what the committed plan itself supports, and re-check the one
+  // thing a speed change can genuinely break.
+  recalcCommittedForSpeed();
+  updatePatReadout(); renderLineTable(); updateMissionCard();
+}
+let speedWarnShown = false;   // is the committed-plan speed warning currently ours to clear?
+// Durations + reversal feasibility for a plan that is already committed, derived from
+// mission.waypoints / mission.lines rather than from a pattern that no longer exists.
+function recalcCommittedForSpeed(){
+  const wps = mission.waypoints || [];
+  const spd = (SPEED_KN[mission.speed] || SPEED_KN.survey) * 0.514444;
+  if(!wps.length || !(spd > 0)){
+    ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; });
+    return;
+  }
+  let runLen = 0;
+  for(let i=1;i<wps.length;i++) runLen += distTo(wps[i-1], wps[i]);
+  const approachLen = asv ? distTo({lat:asv.lat,lon:asv.lon}, wps[0]) : 0;
+  $("#v_surveydur").textContent = fmtDur(runLen/spd) + " @ " + (mission.speed||"survey")
+    + " (" + (runLen/1000).toFixed(2) + " km)";
+  $("#v_approach").textContent = approachLen > 0
+    ? fmtDur(approachLen/spd) + " (" + (approachLen/1000).toFixed(2) + " km)" : "--";
+  // THE CHECK THAT MATTERS. The committed turn waypoints were generated at whatever speed
+  // was set when the plan was punched. SLOWING DOWN only ever makes them easier - the
+  // minimum radius shrinks. SPEEDING UP can make a reversal the boat can no longer hold,
+  // and the plan looks exactly the same on the chart. The line spacing is derivable, so
+  // say so rather than letting it be discovered on the water.
+  const ci = committedPatternInfo();
+  const need = 2 * minTurnRadiusM(mission.speed || "survey");
+  if(ci && ci.spacing != null && ci.spacing < need){
+    showBanner("Speed " + (mission.speed||"survey") + ": the committed plan's " + ci.spacing.toFixed(1)
+      + " m spacing is inside the " + need.toFixed(1) + " m a plain reversal needs at this speed. "
+      + "Its turn waypoints were generated for the SPEED IT WAS PUNCHED AT — re-draw and Punch Out "
+      + "again to rebuild them, or drop the speed.");
+    speedWarnShown = true;
+  } else if(speedWarnShown){
+    // A WARNING THAT DOES NOT CLEAR IS A WRONG READOUT. Slowing back down makes the same
+    // plan flyable again, and the banner said otherwise until something else replaced it -
+    // caught live. Cleared only if OUR warning is still the one on screen, so an unrelated
+    // banner posted in between is not wiped by this.
+    const b = $("#encbanner");
+    if(b && b.textContent.indexOf("Speed ") === 0) b.style.display = "none";
+    speedWarnShown = false;
+  }
+}
+$("#c_speed").onchange = ()=>{
+  mission.speed = $("#c_speed").value; saveMission();
+  flashNote("Plan speed: " + mission.speed + " — recalculating.");
+  recalcForSpeed();
+};
 // TWO DIFFERENT THINGS, and keeping them apart is the whole point:
 //   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,
 //                     so this reads "loiter" during a Go-To, correctly.
@@ -4403,8 +4473,23 @@ function syncCompletionSel(s){
   if(document.activeElement===el) return;
   if(el.value !== s.completion){ el.value = s.completion; mission.completion = s.completion; }
 }
-$("#c_completion").onchange = ()=>{ mission.completion = $("#c_completion").value; saveMission();
-  flashNote("Plan completion: "+mission.completion+" (applies on the next Upload)."); };
+$("#c_completion").onchange = ()=>{
+  mission.completion = $("#c_completion").value; saveMission();
+  // "Applies on the next Upload" was only half true and misled in the dangerous
+  // direction. The SETTING is live the moment it is saved - the end-of-plan RTH chain
+  // gates on `s.completion` every telemetry frame, so switching to RTH mid-run arms a
+  // return the operator may not expect, and switching away from it disarms one they may
+  // be relying on. What waits for Upload is the completion the LINK is given, i.e. what
+  // the boat does at the last waypoint with no console attached.
+  flashNote(mission.completion === "rth"
+    ? "End of plan: RTH — live now; the boat will be returned home when the plan ends."
+    : "End of plan: " + mission.completion + " — live now. The uploaded route keeps its own "
+      + "end behaviour until the next Upload.");
+  // Recompute what depends on it. The authoritative value is the server's, which arrives
+  // on the next state frame and drives End mode via endAction(); this refreshes the rest
+  // immediately rather than leaving a card a quarter-second stale.
+  updateMissionCard(); renderLineTable();
+};
 window.addEventListener("resize", render);
 
 // --- UI SPLIT BRIDGE (multi-monitor: main window <-> controls window) ----- //

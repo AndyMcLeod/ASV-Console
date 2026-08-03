@@ -18,6 +18,8 @@
 #                           drawn above the boat marker that used to bury it.
 #   tests/survey_card.js    the survey card keeps describing a COMMITTED plan instead
 #                           of blanking when the pattern anchors are dropped.
+#   tests/speed_recalc.js   the plan speed is an INPUT: changing it recalculates, and a
+#                           committed plan is re-checked against the new turn radius.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -30,7 +32,7 @@
 changed=$(git diff --cached --name-only)
 case "$changed" in
   *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*) ;;
+  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*|*tests/speed_recalc.js*) ;;
   *) exit 0 ;;
 esac
 
@@ -67,6 +69,16 @@ if ! node tests/water_trust.js; then
   echo "pre-commit: water-trust test FAILED."
   echo "  A tide reading from far away would no longer be flagged as such"
   echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: speed recalculation regression test..."
+if ! node tests/speed_recalc.js; then
+  echo ""
+  echo "pre-commit: speed-recalc test FAILED."
+  echo "  Changing the plan speed no longer recalculates, or a committed plan is not"
+  echo "  re-checked against the turn radius the new speed implies"
+  echo "  (recalcForSpeed / recalcCommittedForSpeed in static/asv.html)."
   fail=1
 fi
 
