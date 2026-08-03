@@ -32,9 +32,11 @@ requested radius exceed what was collected and 7 fails, which would show nothing
 implying the sea beyond is empty.
 """
 
+import io
 import json
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -198,6 +200,20 @@ try:
           "shown=%s collected=%s at a 5 km setting"
           % (dl["area"].get("shown"), dl["area"].get("collected")))
 
+    # 6b-6c. THE SERVER DOES NOT CHOOSE A DISPLAY UNIT. `name` used to be a real place name
+    # on a lake and the string "%g km" at sea - one field meaning two things, and the second
+    # meaning put the CLIENT's unit in the server. The client reads in nautical miles and
+    # formats its own label from show_km; the lake name it genuinely cannot derive.
+    check("6b. a LAKE still reports its real name, which the client cannot derive",
+          isinstance(dl["area"].get("name"), str) and "erie" in dl["area"]["name"].lower(),
+          "area name = %r" % dl["area"].get("name"))
+
+    api(port, "/api/ais/radius", {"km": 50})
+    dsea = api(port, sea)
+    check("6c. ... but the SEA area carries no display string at all",
+          "name" not in dsea["area"] and dsea["area"].get("show_km") is not None,
+          "sea area keys: %s" % sorted(dsea["area"].keys()))
+
     # 7. Clamped to what was actually collected. Asking to see 900 km would show nothing
     # beyond 150 and imply the sea past it is empty.
     r = api(port, "/api/ais/radius", {"km": 900})
@@ -231,6 +247,45 @@ server_out = srvlog.read()
 srvlog.close()
 tb = [ln.strip() for ln in server_out.splitlines()
       if "Traceback" in ln or "Error" in ln or "Exception occurred" in ln]
+# --- 8b-8d. THE CONTROL READS IN NAUTICAL MILES, THE WIRE STAYS IN KILOMETRES --------- #
+# The contact list has always reported range in nm, so a selector in km meant filtering in
+# one unit and reading distances in another. The conversion happens at the display edge; a
+# wrong factor here would silently show the wrong range rather than fail, so it is checked
+# against the definition (1 nm = 1852 m exactly) rather than a copied constant.
+HTML = io.open(os.path.join(APP, "static", "asv.html"), encoding="utf-8").read()
+
+m_per_nm = re.search(r"const M_PER_NM = (\d+)", HTML)
+check("8b. the client converts with the DEFINED nautical mile, 1852 m exactly",
+      m_per_nm is not None and int(m_per_nm.group(1)) == 1852,
+      "M_PER_NM = %s" % (m_per_nm.group(1) if m_per_nm else "not found"))
+
+# 50 km is the shipped default and must present as 27 nm, which is the value the markup
+# opens with - if those two disagree the field jumps the first time the poll lands.
+markup = re.search(r'id="aisRange"[^>]*?value="(\d+)"', HTML)
+check("8c. the field's authored default matches what 50 km converts to (27 nm)",
+      markup is not None and int(markup.group(1)) == round(50 * 1000 / 1852),
+      "markup value=%s, 50 km = %.2f nm"
+      % (markup.group(1) if markup else "?", 50 * 1000 / 1852))
+
+# The unit shown beside the box, and the wire it posts on, must not drift apart: the label
+# says nm and the request body must still be keyed "km".
+unit_label = re.search(r'id="aisRange"[\s\S]*?/>\s*<span[^>]*>(\w+)</span>', HTML)
+check("8d. the label beside the field reads nm",
+      unit_label is not None and unit_label.group(1) == "nm",
+      "label=%s" % (unit_label.group(1) if unit_label else "?"))
+
+# BOTH DIRECTIONS OR NEITHER. Asserting only that the body is KEYED "km" is not enough - a
+# body of {km: v} with v in nm still matches that, and is the worst failure available here:
+# type 27, the server stores 27 km, the field redraws as 15 nm. Silently wrong by 1.852,
+# with a plausible number on screen. Mutation-checked in both directions.
+posts_converted = re.search(r'"/api/ais/radius"[\s\S]*?body:\s*JSON\.stringify\(\{km:\s*kmFromNm\(',
+                            HTML)
+echo_converted = re.search(r'el\.value\s*=\s*nmRound\(d\.show_km\)', HTML)
+check("8e. the value is CONVERTED on the way out, and back again on the way in",
+      posts_converted is not None and echo_converted is not None,
+      "posts kmFromNm(...)=%s, echoes nmRound(show_km)=%s"
+      % (bool(posts_converted), bool(echo_converted)))
+
 check("9. the console logged NO exception while serving those requests",
       not tb,
       ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb

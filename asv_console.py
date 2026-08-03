@@ -3050,7 +3050,11 @@ class Handler(BaseHTTPRequestHandler):
             dlat = rm / 111320.0
             dlon = rm / (111320.0 * max(0.15, math.cos(math.radians(lat))))
             bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
-            area = {"mode": "sea", "name": "%g km" % AIS_SHOW_RADIUS_KM,
+            # NO display string here. The lake branch's "name" is a real place name the
+            # client cannot derive; this one used to be "%g km", which put the CLIENT's
+            # choice of unit in the server and made one field mean two different things.
+            # The client formats its own label from show_km (it reads in nautical miles).
+            area = {"mode": "sea",
                     "show_km": AIS_SHOW_RADIUS_KM, "collect_km": AIS_COLLECT_RADIUS_KM}
         url = "%s/vessels?bbox=%.4f,%.4f,%.4f,%.4f&max=2000" % (
             AIS_BASE.rstrip("/"), bbox[0], bbox[1], bbox[2], bbox[3])

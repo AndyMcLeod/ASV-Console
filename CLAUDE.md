@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SEVENTEEN REGRESSION SUITES (245 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SEVENTEEN REGRESSION SUITES (251 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -59,7 +59,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
-| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (9) |
+| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; reads in nm (15) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
@@ -94,6 +94,24 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **THE AIS RANGE CONTROL READS IN NAUTICAL MILES** (Andy's call). The contact list had
+  always reported range in nm via `fmtNm`, so a selector in km meant **filtering in one unit
+  and reading distances in another**. Converted at the DISPLAY EDGE: `M_PER_NM = 1852` +
+  `nmFromKm`/`kmFromNm`/`nmRound`; **the wire is untouched** — `/api/ais/radius` still takes
+  `km`, `AIS_SHOW_RADIUS_KM` and the `--ais-radius-km` / `--ais-collect-km` flags are
+  unchanged, and every wire field is still named `_km`. That is this console's standing units
+  rule (chart tiles print feet, all data and maths are metric), and it is why the flags keep
+  their names. Default is unchanged behaviour: 50 km opens the control at **27 nm**.
+  **A SECOND FIELD SERVING TWO MASTERS, found on the way:** `area.name` was a real place name
+  on a lake (`"Lake Erie"`) and the string `"%g km"` at sea — so the SERVER was choosing the
+  client's display unit. The sea branch no longer sends `name` at all; `aisAreaLabel()`
+  derives it from `show_km`, and the lake keeps the one name the client cannot derive.
+  `tests/ais_range.py` 9 → 15, **6 mutations verified**. **The one that nearly got through:
+  asserting only that the request body is KEYED `km` still passes when the raw nm value is
+  posted** — type 27, the server stores 27 km, the field redraws as 15 nm. Silently wrong by
+  1.852 with a plausible number on screen. Check 8e now asserts the conversion in BOTH
+  directions. Ops manual updated + rebuilt (the only docx that changed); it also now records
+  that the CLI flags stay in km.
 - **one guarded way into `localStorage`** — sixteen hand-written `try`/`catch` blocks around
   `JSON.parse`/`stringify` across eight keys, now `lsGet`/`lsSet`/`lsDel`/`lsBool`. **The
   guard is not decoration:** `localStorage` throws on ACCESS where site data is blocked and

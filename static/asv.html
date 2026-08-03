@@ -205,9 +205,9 @@
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
     <div id="aisRangeRow" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #24506a;">
       <span style="font-size:9px;letter-spacing:.06em;color:var(--ink-faint);text-transform:uppercase;">Range</span>
-      <input type="number" id="aisRange" min="1" step="5" value="50" title="How far out to SHOW traffic, in km. The service collects a wider area than this, so widening is instant — it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
+      <input type="number" id="aisRange" min="1" step="5" value="27" title="How far out to SHOW traffic, in NAUTICAL MILES — the same unit the contact list reports range in. The service collects a wider area than this, so widening is instant: it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
         style="width:58px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:3px 4px;border-radius:2px;"/>
-      <span style="font-size:10px;color:var(--ink-faint);">km</span>
+      <span style="font-size:10px;color:var(--ink-faint);">nm</span>
       <span id="aisRangeNote" style="margin-left:auto;font-size:9px;color:var(--ink-faint);text-align:right;"></span>
     </div>
     <div id="aisTableBody" style="max-height:46vh;overflow:auto;padding:6px 8px;"></div>
@@ -3146,7 +3146,15 @@ function buoyageNote(lane){
 // range/bearing columns.
 let aisArea = null;
 function aisCenter(){ return asv ? {lat:asv.lat, lon:asv.lon} : center; }
-function aisAreaLabel(){ return (aisArea && aisArea.name) ? aisArea.name : "area"; }
+// A LAKE has a real name the client cannot derive ("Lake Erie"); at sea the label is just
+// the show radius, which the client formats itself. The server used to build that string as
+// "%g km", which made one field carry a place name in one mode and a unit-formatted number
+// in the other - and put the display unit in the server, where it cannot know it.
+function aisAreaLabel(){
+  if(aisArea && aisArea.mode === "lake" && aisArea.name) return aisArea.name;
+  if(aisArea && aisArea.show_km != null) return nmRound(aisArea.show_km) + " nm";
+  return "area";
+}
 async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
   try{ const c=aisCenter();
     const r=await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}`);
@@ -3177,9 +3185,20 @@ function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.t
   if(on){ aisState="connecting"; aisSrc=null; aisSrcName=null; setAisTable(true); pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
   else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
 // The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
-// at will). Lists the within-50 km vessels by range, with bearing / SOG.
+// at will). Lists the in-range vessels by range, with bearing / SOG.
 let aisTableShown=false;
 function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round(nm); }
+// THE RANGE CONTROL READS IN NAUTICAL MILES; THE WIRE STAYS IN KILOMETRES. The contact
+// list has always reported range in nm (fmtNm above), so a selector in km meant filtering
+// in one unit and reading distances in another. Converting at the display edge keeps the
+// canonical value metric, which is this console's standing rule - chart tiles print feet,
+// all data and maths are metric - and leaves /api/ais/radius, AIS_SHOW_RADIUS_KM and the
+// --ais-radius-km / --ais-collect-km flags exactly as they were. Every field on the wire
+// is named _km, so nothing downstream has to guess.
+const M_PER_NM = 1852;
+function nmFromKm(km){ return km * 1000 / M_PER_NM; }
+function kmFromNm(nm){ return nm * M_PER_NM / 1000; }
+function nmRound(km){ return Math.round(nmFromKm(km)); }   // whole nm, for a display field
 function setAisTable(show){ aisTableShown=show;
   const p=$("#aisTablePanel"), chip=$("#aisReopen");
   showPanel(p, show);
@@ -3193,13 +3212,15 @@ function setAisTable(show){ aisTableShown=show;
 // ON A GREAT LAKE IT DOES NOT APPLY - the area is the whole lake and every contact stands.
 // The row says so rather than sitting there looking broken, which is the failure this
 // console keeps re-learning: a control that silently does nothing is worse than no control.
-async function setAisRange(km){
-  const el=$("#aisRange"); const v=Math.max(1, Math.round(parseFloat(km)||50));
+async function setAisRange(nm){
+  const el=$("#aisRange"); const v=Math.max(1, Math.round(parseFloat(nm)||27));
   try{
     const r=await fetch("/api/ais/radius", {method:"POST", headers:{"Content-Type":"application/json"},
-                                            body: JSON.stringify({km:v})});
+                                            body: JSON.stringify({km: kmFromNm(v)})});
     const d=await r.json();
-    if(el && d && d.show_km!=null) el.value = d.show_km;   // reflect the server's clamp
+    // Reflect the server's clamp, back in nm. Round-trips stably: 27 nm -> 50.004 km ->
+    // 26.9999 nm -> 27, so a value the operator did not change never drifts under them.
+    if(el && d && d.show_km!=null) el.value = nmRound(d.show_km);
   }catch(e){ /* leave the field; the note line reports the area actually in force */ }
   pollAIS();                                   // refresh now rather than on the next tick
 }
@@ -3211,8 +3232,9 @@ function updateAisRangeRow(){
   if(lake){ note.textContent = "whole lake — all contacts"; return; }
   const col = aisArea && aisArea.collect_km, got = aisArea && aisArea.collected,
         shown = aisArea && aisArea.shown;
-  note.textContent = (got!=null && shown!=null && col!=null)
-    ? shown + " of " + got + " in " + col + " km" : (col!=null ? "collected " + col + " km" : "");
+  const colNm = col!=null ? nmRound(col) : null;          // the collected area, in nm too
+  note.textContent = (got!=null && shown!=null && colNm!=null)
+    ? shown + " of " + got + " in " + colNm + " nm" : (colNm!=null ? "collected " + colNm + " nm" : "");
 }
 function renderAisTable(){
   const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
