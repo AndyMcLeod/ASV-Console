@@ -14,70 +14,14 @@
 // this manual's description of it. Vessel FILES may name real vessels - that is data,
 // not branding - so a vessel table quoting a real hull is fine and a "the X console"
 // framing is not. Keep it that way when extending this script.
-const {
-  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
-  Table, TableRow, TableCell, WidthType, ShadingType,
-  LevelFormat,
-} = require("docx");
-const fs = require("fs");
-const path = require("path");
-
-const MONO = "Consolas";
-const INK = "1a1a1a", ACCENT = "1f4e79";
-
-// ---- helpers ---------------------------------------------------------------
-// P("text with `code` spans") -> Paragraph with Consolas runs for backticked parts
-function runs(text, opts = {}) {
-  const out = [];
-  String(text).split("`").forEach((seg, i) => {
-    if (!seg) return;
-    if (i % 2 === 1) out.push(new TextRun({ text: seg, font: MONO, size: opts.size || 20, color: opts.color || INK }));
-    else out.push(new TextRun({ text: seg, size: opts.size || 21, color: opts.color || INK, bold: opts.bold, italics: opts.italics }));
-  });
-  return out;
-}
-function P(text, opts = {}) {
-  return new Paragraph({ children: runs(text, opts), spacing: { after: opts.after ?? 120 }, alignment: opts.align });
-}
-function H1(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_1, spacing: { before: 340, after: 170 } }); }
-function H2(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 260, after: 130 } }); }
-function H3(text) { return new Paragraph({ text, heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 100 } }); }
-function B(text) {
-  return new Paragraph({ children: runs(text), numbering: { reference: "bullets", level: 0 }, spacing: { after: 70 } });
-}
-function B2(text) {
-  return new Paragraph({ children: runs(text), numbering: { reference: "bullets", level: 1 }, spacing: { after: 60 } });
-}
-function CODE(lines) {
-  return lines.map(l => new Paragraph({
-    children: [new TextRun({ text: l === "" ? " " : l, font: MONO, size: 18 })],
-    shading: { type: ShadingType.CLEAR, fill: "F2F4F7" },
-    spacing: { after: 0 }, indent: { left: 240, right: 240 },
-  }));
-}
-const TOTAL = 9360; // usable table width (12240 - 2x1440 margins)
-function TBL(headers, rows, widths) {
-  const w = widths || headers.map(() => Math.floor(TOTAL / headers.length));
-  const mk = (t, head) => new TableCell({
-    width: { size: w[t.i], type: WidthType.DXA },
-    shading: head ? { type: ShadingType.CLEAR, fill: "DDE5EF" } : undefined,
-    margins: { top: 40, bottom: 40, left: 80, right: 80 },
-    children: [new Paragraph({ children: runs(t.s, { size: 19, bold: head }), spacing: { after: 0 } })],
-  });
-  return new Table({
-    width: { size: TOTAL, type: WidthType.DXA }, columnWidths: w,
-    rows: [
-      new TableRow({ children: headers.map((s, i) => mk({ s, i }, true)), tableHeader: true }),
-      ...rows.map(r => new TableRow({ children: r.map((s, i) => mk({ s: String(s), i }, false)) })),
-    ],
-  });
-}
-const SP = () => new Paragraph({ text: "", spacing: { after: 60 } });
+// Shared building blocks. Extracted 2026-08-02 when the document set grew to four
+// generators; this manual's output is byte-identical across that extraction.
+const { P, H1, H2, H3, B, B2, CODE, TBL, SP, TITLE, write } = require("./docx_kit");
 
 // ---- content ---------------------------------------------------------------
 const c = [];
 
-c.push(new Paragraph({ text: "ASV Simulator", heading: HeadingLevel.TITLE, spacing: { after: 80 } }));
+c.push(TITLE("ASV Simulator"));
 c.push(P("Technical Manual — architecture, subsystems, API and extension guide", { size: 24, color: "2e5f8a" }));
 c.push(P("A browser-based command console and high-fidelity simulator for autonomous surface vessels. Vendor-neutral by design: the console core models no particular hull, and every vessel-specific parameter lives in a per-vessel configuration file.", { italics: true }));
 c.push(SP());
@@ -106,14 +50,19 @@ c.push(H1("1  Introduction and document set"));
 c.push(P("The ASV Simulator is a single-operator command console for an autonomous surface vessel, plus a simulator faithful enough to rehearse a whole mission against real chart data before any hardware is involved. It plans surveys and search patterns on a live nautical chart, routes every leg clear of charted hazards, drives the vessel through an autopilot model that responds to real wind and sea state, and records the session for replay."));
 c.push(P("The console is deliberately GENERIC. It models no particular manufacturer's vessel: the onboard controller is referred to throughout as a `VCU` (vessel control unit), and every hull, propulsion, maneuvering, power and planning parameter is read from a vessel configuration file rather than compiled in. Adding a new vessel is a data change, not a code change — see chapter 4."));
 c.push(H2("1.1  Document set"));
+c.push(P("Four GENERATED documents plus the repository's own notes. The generated set shares one formatting module and is rebuilt with a single command; never hand-edit a generated document."));
 c.push(TBL(["Document", "Audience", "Covers"], [
-  ["This manual", "Engineers, programmers", "Architecture, subsystems, API, formats, constants, extension recipes"],
+  ["Quick Start (generated)", "First-time users", "Running it, a first commanded behaviour, a first survey, in about twenty minutes"],
+  ["Operations Manual (generated)", "Operators", "Safety model, display, chart awareness, every behaviour, planning depth, contingencies, checklists"],
+  ["This manual (generated)", "Engineers, programmers", "Architecture, subsystems, API, formats, constants, extension recipes"],
+  ["Development Guide (generated)", "Contributors, maintainers", "How the project is built and verified: testing philosophy, defect shapes, case studies, extension recipes"],
   ["`README.md`", "Operators, new readers", "What it is, running it, and a walkthrough of every feature"],
   ["`README_SIM.md`", "Operators", "The simulation model, command flow, endpoints, mission walkthrough"],
   ["`README_PLAYBACK.md`", "Operators", "Session recording and the read-only playback view"],
   ["`CLAUDE.md`", "Maintainers", "Design decisions, durable gotchas, and the session log"],
-], [2200, 2200, 4960]));
+], [2400, 2100, 4860]));
 c.push(SP());
+c.push(P("Rebuild the whole generated set with `cd tools && node build_docs.js`. Each generator is standalone and can be run on its own; the shared formatting lives in `tools/docx_kit.js`."));
 c.push(P("Design documents — `PLAN.md`, `ASV_BEHAVIORS_PLAN.md`, `ENC_PUNCHOUT_PLAN.md` — record intent for individual subsystems and are historical rather than normative."));
 
 // 2 -------------------------------------------------------------------------
@@ -384,36 +333,4 @@ c.push(B("Never weaken the safety model: arm-gating, e-stop, link-loss failsafe 
 c.push(B("Update the relevant README in the same change as the behaviour it documents, and rebuild this manual from its script."));
 
 // ---- document --------------------------------------------------------------
-const doc = new Document({
-  numbering: {
-    config: [{
-      reference: "bullets",
-      levels: [
-        { level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 460, hanging: 230 } } } },
-        { level: 1, format: LevelFormat.BULLET, text: "◦", alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 860, hanging: 230 } } } },
-      ],
-    }],
-  },
-  styles: {
-    default: { document: { run: { size: 21, font: "Calibri", color: INK } } },
-    paragraphStyles: [
-      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: 32, bold: true, color: ACCENT }, paragraph: { spacing: { before: 340, after: 170 } } },
-      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: 26, bold: true, color: "2e5f8a" }, paragraph: { spacing: { before: 260, after: 130 } } },
-      { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: 22, bold: true, color: "3a3a3a" }, paragraph: { spacing: { before: 200, after: 100 } } },
-    ],
-  },
-  sections: [{
-    properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
-    children: c,
-  }],
-});
-
-Packer.toBuffer(doc).then(buf => {
-  const out = path.join(__dirname, "..", "docs");
-  fs.mkdirSync(out, { recursive: true });
-  fs.writeFileSync(path.join(out, "asv-simulator-technical-manual.docx"), buf);
-  console.log("written:", buf.length, "bytes");
-});
+write("asv-simulator-technical-manual.docx", c);

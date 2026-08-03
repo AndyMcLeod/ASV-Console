@@ -480,15 +480,24 @@ present, and the console can spawn one per ROC on request.
 
 ## Documentation
 
-The **technical manual** — `docs/asv-simulator-technical-manual.docx` — is the
-engineers' reference: architecture, the vessel-configuration system, subsystems, the
-HTTP API, formats, constants, verification practice and extension recipes. It is
-**generated**; edit `tools/build_tech_manual.js` and rebuild rather than hand-editing
-the document:
+Four documents in `docs/`, each aimed at a different reader:
+
+| Document | For | Covers |
+|---|---|---|
+| **Quick Start** | first-time users | Running it, a first commanded behaviour, a first survey — about twenty minutes |
+| **Operations Manual** | operators | Safety model, the display, chart awareness, every behaviour, planning depth, contingencies, checklists, glossary |
+| **Technical Manual** | engineers | Architecture, the vessel-configuration system, subsystems, the HTTP API, formats, constants, extension recipes |
+| **Development Guide** | contributors | How the project is built and verified: testing philosophy and its failure modes, recurring defect shapes, worked case studies, extension recipes |
+
+All four are **generated** from scripts in `tools/`, sharing one formatting module
+(`tools/docx_kit.js`). **Never hand-edit a document** — edit its script and rebuild:
 
 ```
-cd tools && npm install && node build_tech_manual.js
+cd tools && npm install && node build_docs.js
 ```
+
+Each generator is standalone (`build_quickstart.js`, `build_ops_manual.js`,
+`build_tech_manual.js`, `build_dev_guide.js`) if you only want to rebuild one.
 
 ## Tests & git hooks
 

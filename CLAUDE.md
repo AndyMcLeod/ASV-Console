@@ -846,12 +846,28 @@ the same change — `README.md` (overview + "Using it"), `README_SIM.md` (sim mo
 / command flow / endpoints / walkthrough), `README_PLAYBACK.md`. Don't let them
 drift behind the code.
 
-**The technical manual is GENERATED:** `docs/asv-simulator-technical-manual.docx` comes
-from `tools/build_tech_manual.js` (docx-js; `npm install` in `tools/` first; output path
-is script-relative). **Never hand-edit the docx** — edit the script and rebuild. If it
-does get hand-edited in Word, diff the text against the generated version and fold the
-edits back INTO the script. The manual is brand-free by rule: the console core names no
+**THE WHOLE `docs/` SET IS GENERATED** (docx-js; `npm install` in `tools/` first; output
+paths are script-relative). **Never hand-edit a docx** — edit its script and rebuild. If
+one does get hand-edited in Word, diff the text against the generated version and fold the
+edits back INTO the script. All four are brand-free by rule: the console core names no
 vendor; vessel FILES may name real vessels, since that is data rather than branding.
+
+```
+cd tools && node build_docs.js     # rebuilds all four
+```
+
+| script | → `docs/` | for |
+|---|---|---|
+| `build_quickstart.js` | `asv-simulator-quick-start.docx` | first-time users, ~20 min to a running survey |
+| `build_ops_manual.js` | `asv-simulator-operations-manual.docx` | operators: safety, display, every behaviour, contingencies, checklists (17 ch) |
+| `build_tech_manual.js` | `asv-simulator-technical-manual.docx` | engineers: architecture, API, formats, extension (15 ch) |
+| `build_dev_guide.js` | `asv-simulator-development-guide.docx` | contributors: testing philosophy, defect shapes, case studies (10 ch) |
+
+**`tools/docx_kit.js` holds the shared formatting** — extracted 2026-08-02 when the set
+grew to four, and the tech manual's `word/document.xml` is **byte-identical across that
+extraction**, which is the only reason the refactor was safe. Add a document by writing
+`build_<name>.js` against the kit, listing it in `build_docs.js`, and adding it to the
+document-set table in the tech manual AND `README.md`.
 
 ## Not yet done
 

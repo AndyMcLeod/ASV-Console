@@ -1,6 +1,6 @@
 {
   "private": true,
-  "description": "Doc tooling deps (build_tech_manual.js). Run: npm install, then node build_tech_manual.js",
+  "description": "Doc tooling deps for the generated document set. Run: npm install, then node build_docs.js",
   "dependencies": {
     "docx": "^9.7.1"
   }
