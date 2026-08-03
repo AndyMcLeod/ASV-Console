@@ -28,6 +28,8 @@
 #                           card stays on the CHART window only.
 #   tests/panel_drag.js     ONE drag mechanism for every floating pop-out, and no panel
 #                           forgetting where the operator put it.
+#   tests/stored_settings.js  the guarded localStorage helpers - blocked storage never
+#                           throws, and toggles saved as legacy "1"/"0" still read.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -101,6 +103,16 @@ if ! node tests/ui_split.js; then
   echo "  A window-split registration selector no longer resolves, or the vessel-status"
   echo "  card has been mirrored back into the controls window / stripped from the chart"
   echo "  window (UI_BRIDGED / UI_CARD_TITLES / the injected CSS in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: stored settings regression test..."
+if ! node tests/stored_settings.js; then
+  echo ""
+  echo "pre-commit: stored-settings test FAILED."
+  echo "  A stored setting no longer survives blocked or full storage, a toggle saved by"
+  echo "  an older build as \"1\"/\"0\" no longer reads, or a bare localStorage call has"
+  echo "  crept back in beside the helpers (lsGet / lsSet / lsDel / lsBool)."
   fail=1
 fi
 

@@ -186,8 +186,10 @@ check("9. the anchor is released on RESTORE as well as during the drag",
 
 // 10. Event-driven persistence, the lesson from the resize save: a ResizeObserver or a
 // rAF is delivered with the rendering steps and an occluded window has those suspended.
+// Matches the STORE HELPER rather than a raw localStorage call - the storage guards were
+// consolidated into lsGet/lsSet/lsDel afterwards, and this check named the old shape.
 check("10. the position is persisted on mouseup, not on a rendering-driven callback",
-      /window\.addEventListener\("mouseup"[\s\S]{0,400}?localStorage\.setItem/.test(H),
+      /window\.addEventListener\("mouseup"[\s\S]{0,400}?\blsSet\(/.test(H),
       "mouseup lands whatever the window is doing");
 
 // 11. The controls window renders a subset of the page, so a panel can legitimately be

@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**FIFTEEN REGRESSION SUITES (188 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SIXTEEN REGRESSION SUITES (199 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -62,6 +62,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
 | `node tests/panel_drag.js` | ONE drag mechanism; no pop-out forgets its position (11) |
+| `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
@@ -92,11 +93,37 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **one guarded way into `localStorage`** — sixteen hand-written `try`/`catch` blocks around
+  `JSON.parse`/`stringify` across eight keys, now `lsGet`/`lsSet`/`lsDel`/`lsBool`. **The
+  guard is not decoration:** `localStorage` throws on ACCESS where site data is blocked and
+  `setItem` throws on quota, so one bare call takes out start-up — sixteen copies is sixteen
+  chances to omit it. **The migration is the risk, and it is tested:** the three display
+  toggles were stored as raw `"1"`/`"0"` predating the JSON store, so `lsBool` reads both
+  (`JSON.parse` turns `"1"` into `1`). Nobody's saved toggles reset; verified in a browser
+  seeded with legacy values, all three non-default. `lsGet` tests `== null`, NOT falsiness —
+  the old `JSON.parse(...) || {}` could not tell a stored `false` from a missing key.
+  New suite `tests/stored_settings.js` (11), **7 mutations verified**.
+  **`panel_drag.js` check 10 failed on this change and was right to** — it named the raw
+  `localStorage.setItem` shape; re-pointed at `lsSet` and re-mutated to confirm it still bites.
 - **the pre-commit path filter named its suites individually and had drifted** — five
   (`wreck_clearance`, `water_trust`, `ais_range`, `live_speed`, `completion_modes`) were
   never listed, so editing one of them ALONE ran nothing. Replaced with `*tests/*`. Same
   shape as the panels and the suite counts: **a hand-maintained list beside a directory
   that already answers the question.**
+
+**A TEST-DESIGN LESSON FROM THIS SESSION, and it applies to all sixteen suites.** The first
+`stored_settings.js` called the helpers directly. Stripping `lsGet`'s `try`/`catch` — the
+exact fault check 4 exists for — made check **3** throw and killed the process before check 4
+ran, so **no `FAIL` line was printed at all and the mutation runner scored it as SURVIVED**.
+The suite now evaluates every condition as a thunk and reports a throw as a failed check.
+Two rules fall out, both cheap:
+- **A HARNESS THAT CANNOT SURVIVE THE FAULT IT TESTS FOR CANNOT REPORT IT.** If a check
+  proves a function does not throw, calling that function unguarded elsewhere in the same
+  file makes the proof unreachable.
+- **A MUTATION RUNNER MUST SCORE A CRASH SEPARATELY FROM A PASS.** "No FAIL lines" and "the
+  process died" look identical if you only parse stdout. This is the same rule the hook
+  already states for suites — treat a crash as loudly as a failure — applied to the thing
+  that grades the suites.
 
 **Previous session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
 - **vessel card off the controls window** — it was bridged, so one card rendered in BOTH

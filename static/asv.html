@@ -562,6 +562,32 @@
 "use strict";
 const $ = s => document.querySelector(s);
 
+// --- stored operator settings --------------------------------------------- //
+// ONE way to touch localStorage. Every store was a hand-written try/catch around
+// JSON.parse / JSON.stringify - sixteen of them across eight keys - and the try/catch is
+// NOT decoration: localStorage throws on ACCESS where site data is blocked (a locked-down
+// browser, some private modes), and setItem throws on quota. A single bare call is enough
+// to take out start-up, so the guard has to be on every one of them. Written once, sixteen
+// call sites cannot each forget it.
+//
+// A read that fails returns the caller's fallback, which deliberately treats "storage
+// unavailable" and "nothing stored yet" the same: both mean the operator has no saved
+// preference here, and the fallback is what that means.
+function lsGet(key, fallback){
+  try{ const v = JSON.parse(localStorage.getItem(key)); return v == null ? fallback : v; }
+  catch(e){ return fallback; }
+}
+function lsSet(key, value){ try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){} }
+function lsDel(key){ try{ localStorage.removeItem(key); }catch(e){} }
+// The display toggles were stored as the RAW strings "1"/"0", which predate the JSON
+// store. A preference written by an older build has to keep working, so this accepts
+// both: JSON.parse reads "1"/"0" back as 1/0, and a value written now comes back as a
+// real boolean. Nothing needs migrating and nobody's saved toggles are reset.
+function lsBool(key, dflt){
+  const v = lsGet(key, null);
+  return v == null ? dflt : (v === true || v === 1);
+}
+
 // MULTI-MONITOR UI SPLIT. The server opens this page in two windows:
 //   main      - chart + status + command bar (the right control column is hidden here)
 //   controls  - ONLY the right control column ("toolbar B") + the panels it pops out,
@@ -630,15 +656,14 @@ let haveFix = false, follow = true;
 // (the run is in the session logs, recoverable from there).
 const TRACK_KEY = "asv_track_v1";
 let savedBootId = null, sessionBootId = null, bootChecked = false;
-function loadTrack(){ try{ const raw=JSON.parse(localStorage.getItem(TRACK_KEY));
+function loadTrack(){ const raw = lsGet(TRACK_KEY, null);
   if(Array.isArray(raw)) return raw.slice(-MAX_TRACK);                 // legacy (untagged)
   if(raw && Array.isArray(raw.track)){ savedBootId=raw.bootId||null; return raw.track.slice(-MAX_TRACK); }
-}catch(e){} return []; }
+  return []; }
 let trackSaveTimer=null;
 function saveTrack(){ clearTimeout(trackSaveTimer);      // throttle writes (trail grows fast)
-  trackSaveTimer=setTimeout(()=>{ try{ localStorage.setItem(TRACK_KEY, JSON.stringify({bootId:sessionBootId, track})); }catch(e){} }, 800); }
-function clearTrack(){ track=[]; clearTimeout(trackSaveTimer);
-  try{ localStorage.removeItem(TRACK_KEY); }catch(e){} }
+  trackSaveTimer=setTimeout(()=>lsSet(TRACK_KEY, {bootId:sessionBootId, track}), 800); }
+function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); lsDel(TRACK_KEY); }
 // On the first state after load, drop the restored trail if the server rebooted.
 function checkBoot(id){ sessionBootId = id || null;
   if(bootChecked) return; bootChecked = true;
@@ -1557,7 +1582,7 @@ const BND_VIS_KEY = "asv_bnd_show_v1";
 function setBoundaryShow(v){
   boundaryShow = v;
   $("#areaBtn").classList.toggle("on", boundaryShow);
-  try{ localStorage.setItem(BND_VIS_KEY, boundaryShow ? "1" : "0"); }catch(e){}
+  lsSet(BND_VIS_KEY, boundaryShow);
   render();
 }
 
@@ -3078,7 +3103,7 @@ async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
   el.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); setAisRange(el.value); } });
 })();
 function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.toggle("on", on);
-  try{ localStorage.setItem(AIS_KEY, on?"1":"0"); }catch(e){}
+  lsSet(AIS_KEY, on);
   clearInterval(aisTimer); aisTimer=null;
   if(on){ aisState="connecting"; aisSrc=null; aisSrcName=null; setAisTable(true); pollAIS(); aisTimer=setInterval(pollAIS, 8000); }
   else { aisVessels=[]; aisNote=""; $("#aisTip").style.display="none"; setAisTable(false); render(); } }
@@ -4101,11 +4126,11 @@ const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#se
   "#envPanel":"Environment", "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
-function loadUILayout(){ try{ return JSON.parse(localStorage.getItem(UI_LAYOUT_KEY)) || {}; }catch(e){ return {}; } }
+function loadUILayout(){ return lsGet(UI_LAYOUT_KEY, {}); }
 function saveUILayout(){                                // persist every card's position + size
   const L={}; document.querySelectorAll(".uicard").forEach(card=>{ const k=card.dataset.for; if(!k) return;
     L[k]={left:card.style.left, top:card.style.top, width:card.style.width, height:card.style.height}; });
-  try{ localStorage.setItem(UI_LAYOUT_KEY, JSON.stringify(L)); }catch(e){}
+  lsSet(UI_LAYOUT_KEY, L);
 }
 function wrapUICards(){
   const saved=loadUILayout(); let i=0;
@@ -4164,7 +4189,7 @@ const RESIZABLE_CARDS = [
   {sel:"#linePanel"}, {sel:"#boundPanel"}, {sel:"#searchPanel"},
   {sel:"#envPanel"},  {sel:"#transitPanel"},       // forms: no body to nominate, scroll whole
 ];
-function loadCardSizes(){ try{ return JSON.parse(localStorage.getItem(CARD_SIZE_KEY)) || {}; }catch(e){ return {}; } }
+function loadCardSizes(){ return lsGet(CARD_SIZE_KEY, {}); }
 // ONLY A SIZE THE OPERATOR SET. Several cards carry an authored inline width in the markup,
 // so "has an inline size" would persist the DEFAULT the moment the card was opened - and a
 // stored default then silently overrides a changed default forever after, which is the same
@@ -4184,7 +4209,7 @@ function saveCardSizes(){
     if(w === (el.dataset.rszDefW || "") && h === (el.dataset.rszDefH || "")) continue;
     L[c.sel] = {width: w, height: h};
   }
-  try{ localStorage.setItem(CARD_SIZE_KEY, JSON.stringify(L)); }catch(e){}
+  lsSet(CARD_SIZE_KEY, L);
 }
 // THE SAVE MUST NOT DEPEND ON RENDERING. A ResizeObserver is delivered with the rendering
 // steps, and an occluded or background window has those suspended - measured here: in a
@@ -4236,9 +4261,8 @@ function makeDraggablePanel(el, head, opts){
   if(!el || !head) return;                       // panel absent in this window - nothing to bind
   const release = ()=>{ if(o.unanchor) el.style[o.unanchor] = "auto"; };
   if(o.key && o.restore !== false){              // last session's placement, if the operator moved it
-    try{ const p = JSON.parse(localStorage.getItem(o.key));
-      if(p && p.left!=null && p.top!=null){ el.style.left = p.left+"px"; el.style.top = p.top+"px"; release(); }
-    }catch(e){}
+    const p = lsGet(o.key, null);
+    if(p && p.left!=null && p.top!=null){ el.style.left = p.left+"px"; el.style.top = p.top+"px"; release(); }
   }
   head.addEventListener("mousedown", e=>{
     if(e.button!==0) return;
@@ -4259,13 +4283,13 @@ window.addEventListener("mouseup", ()=>{
   const d = panelDrag; if(!d) return; panelDrag = null;
   const pos = {left: parseFloat(d.el.style.left), top: parseFloat(d.el.style.top)};
   if(d.o.persist) d.o.persist(pos);              // the vessel card folds position into its own prefs
-  else if(d.o.key){ try{ localStorage.setItem(d.o.key, JSON.stringify(pos)); }catch(e){} }
+  else if(d.o.key) lsSet(d.o.key, pos);
 });
 const VCARD_KEY = "asv_vcard_v1";
 const vcard = $("#vcard"), vhead = $("#vcardHead"), vreopen = $("#vReopen");
 function vcardDefaultPos(){ const r = mapEl.getBoundingClientRect(); return {left: Math.max(14, r.width - 196 - 64), top: 96}; }
-function loadVcardPrefs(){ try{ return JSON.parse(localStorage.getItem(VCARD_KEY)) || {}; }catch(e){ return {}; } }
-function saveVcardPrefs(p){ try{ localStorage.setItem(VCARD_KEY, JSON.stringify(p)); }catch(e){} }
+function loadVcardPrefs(){ return lsGet(VCARD_KEY, {}); }
+function saveVcardPrefs(p){ lsSet(VCARD_KEY, p); }
 function placeVcard(){
   const prefs = loadVcardPrefs();
   const pos = (prefs.left!=null && prefs.top!=null) ? prefs : vcardDefaultPos();
@@ -5271,12 +5295,15 @@ function showQS(v){
   $("#qsBack").style.display = v ? "block" : "none";
 }
 $("#helpBtn").onclick = ()=>showQS(true);
-$("#qsClose").onclick = ()=>{ showQS(false); try{ localStorage.setItem(QS_KEY,"1"); }catch(e){} };
-$("#qsBack").onclick = ()=>{ showQS(false); try{ localStorage.setItem(QS_KEY,"1"); }catch(e){} };
-try{ if(!localStorage.getItem(QS_KEY)) showQS(true); }catch(e){ showQS(true); }
-try{ boundaryShow = localStorage.getItem(BND_VIS_KEY) !== "0"; }catch(e){}
+$("#qsClose").onclick = ()=>{ showQS(false); lsSet(QS_KEY, true); };
+$("#qsBack").onclick = ()=>{ showQS(false); lsSet(QS_KEY, true); };
+// Quick Start shows until it has been DISMISSED, so this asks whether anything is stored
+// at all rather than what. Unreadable storage therefore shows it, as it always did - the
+// first-run card is the safe answer when the console cannot tell whether you have seen it.
+if(lsGet(QS_KEY, null) == null) showQS(true);
+boundaryShow = lsBool(BND_VIS_KEY, true);       // shown unless explicitly turned off
 $("#areaBtn").classList.toggle("on", boundaryShow);
-try{ if(localStorage.getItem(AIS_KEY)==="1") setAIS(true); }catch(e){}   // restore AIS layer toggle
+if(lsBool(AIS_KEY, false)) setAIS(true);        // restore AIS layer toggle
 
 // TIME pill: local + UTC, ticking every second (independent of state updates).
 function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
