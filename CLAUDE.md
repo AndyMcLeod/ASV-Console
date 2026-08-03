@@ -26,7 +26,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff 2026-08-02, fresh context window)
 
-**Repo:** local git only (no GitHub remote), tree clean, HEAD **`3080e6a`**. Run:
+**Repo:** local git only (no GitHub remote), tree clean, HEAD **`d832456`**. Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
@@ -53,7 +53,14 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), ten commits, all with sections below:**
+**This session (2026-08-01 → 08-02), eleven commits, all with sections below:**
+- `d832456` **the survey card keeps describing a committed plan** — Andy reported it going
+  blank "after uploading"; the blanking is actually at **`Add to plan`**, one step earlier,
+  because `resetPattern()` drops the anchors every figure was derived from. **Reproduce the
+  operator's CASE, not their diagnosis.** `committedPatternInfo()` now DERIVES the figures
+  from `mission.lines` instead of snapshotting them — which forced out two bugs a snapshot
+  would have hidden: `planKind` is unreliable after a refresh, and the line direction came
+  back as the RECIPROCAL (typed 327, card read 147). New suite `tests/survey_card.js` (11).
 - `3080e6a` **documentation set** — there was one generated document, for engineers; Andy
   asked for three more readers to be served. **Quick Start** (976 w, ~20 min to a running
   survey, deliberately ruthless — don't grow it), **Operations Manual** (5,487 w, 17 ch, the
@@ -108,6 +115,16 @@ constants going stale on a switch (`apply_vessel` must re-derive — see `HULL_A
 the ROC standoff, the nogo buffer floor); a persistent setting clobbered by a transient
 one; chart data trusted without its extent or its distance. Check for that shape first.
 
+**THE ANTIDOTE, and it is cheap (`d832456`): DERIVE, DON'T REMEMBER.** A value read back
+off the thing it describes cannot drift from it, survives a reload for free, and follows
+later edits. The survey card's obvious fix was to snapshot the pattern figures on commit;
+deriving them from `mission.lines` instead **forced out two bugs the snapshot would have
+hidden** — `planKind` is unreliable after a refresh, and the derived direction came back
+as the RECIPROCAL, which only showed up because it had to agree with the typed value.
+Prefer derivation wherever the source of truth is already in hand, and make the derivation
+**self-validating** (the card checks the lines really ARE parallel) rather than trusting a
+flag alongside it.
+
 **THE READOUT COROLLARY (`8669230`, three instances in one pass):** a card can be
 perfectly accurate about its own field and still be **wrong about the boat**. Ask what
 question the operator is actually reading the row for, then check whether any field
@@ -118,7 +135,14 @@ reads was cleared** (the Nogo row; the success path was the one that never repai
 and an **edge-triggered reset for a condition that is not edge-shaped** (the RTH
 one-shot re-armed on idle→running, but "a new run" does not always cross that edge).
 `e070350` added a third: a **control painted before something that covers it** (the move
-grip under the boat marker). All three were live, correct, and unusable.
+grip under the boat marker). `d832456` a fourth: a **readout whose only source was thrown
+away by a normal step in the workflow** (the survey card, blanked by the `resetPattern()`
+inside `Add to plan`). All four were live, correct, and unusable.
+
+**AND A DIAGNOSTIC HABIT WORTH THE SAME WEIGHT:** Andy reported the survey card blanking
+"after uploading". It blanks at `Add to plan`, one step earlier — upload was simply when he
+noticed. **Reproduce the operator's CASE, not their diagnosis.** Their account of *when*
+is a clue about where to look, never the answer.
 
 **AND THE PORT COROLLARY (`e070350`):** a clean diff is not evidence a UI port works. That
 grip was byte-identical to the sibling's and the feature was still missing. **Verify a UI
