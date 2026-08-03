@@ -4283,30 +4283,69 @@ function makeCardsResizable(){
 // `unanchor` matters: a card authored bottom- or right-anchored (LINES sits at
 // bottom:44px, AIS at a right offset) must have that anchor released the moment it is
 // positioned by left/top, or the two fight and the card stretches instead of moving.
+//
+// KEEP A PANEL REACHABLE. The DRAG has always clamped to the chart; RESTORE never did, and
+// that is how a card goes missing: a position saved on a large window - or a second monitor,
+// or before the window was resized - is re-applied verbatim to a smaller one, putting the
+// panel outside the viewport. It is still display:block and fully live, just nowhere the
+// operator can see or reach it. The VESSEL card was the cruel case, because placeVcard()
+// puts its VESSEL reopen pill at the SAME coordinates, so the one control that brings the
+// card back went off-screen with it and there was no way home.
+//
+// A hidden panel measures 0x0, so assume a sliver rather than trusting that: clamping
+// against a width of zero would happily park a panel at the far edge, and it would be
+// missing again the moment it was shown.
+const PANEL_MIN_VIS = 120;                       // keep at least this much of a panel on the chart
+function clampPanelPos(el, left, top){
+  const mr = mapEl.getBoundingClientRect();
+  const w = el.offsetWidth  || PANEL_MIN_VIS;
+  const h = el.offsetHeight || PANEL_MIN_VIS;
+  return {left: Math.max(0, Math.min(mr.width  - w, left)),
+          top:  Math.max(0, Math.min(mr.height - h, top))};
+}
+// Re-apply a panel's STORED position, clamped. Always from storage, never from the DOM:
+// re-clamping the already-clamped on-screen value would RATCHET, so shrinking the window
+// and growing it back would strand the card at the smaller window's edge for good. The
+// stored position is never rewritten by a clamp - park a card at the right edge of a big
+// monitor and it goes back there when the window is big again.
+const dragPanels = [];
+// A card authored bottom- or right-anchored must have that anchor released the moment it is
+// positioned by left/top, or the two fight and it stretches instead of moving. Needed on
+// RESTORE as much as during a drag, so it lives in one function both call.
+function unanchorPanel(el, o){ if(o.unanchor) el.style[o.unanchor] = "auto"; }
+function placePanel(rec){
+  const {el, o} = rec;
+  const p = o.key ? lsGet(o.key, null) : null;
+  if(!p || p.left==null || p.top==null) return;  // never moved: leave the authored anchor alone
+  const c = clampPanelPos(el, p.left, p.top);
+  el.style.left = c.left+"px"; el.style.top = c.top+"px";
+  unanchorPanel(el, o);
+}
 let panelDrag = null;
 function makeDraggablePanel(el, head, opts){
   const o = opts || {};
   if(!el || !head) return;                       // panel absent in this window - nothing to bind
-  const release = ()=>{ if(o.unanchor) el.style[o.unanchor] = "auto"; };
-  if(o.key && o.restore !== false){              // last session's placement, if the operator moved it
-    const p = lsGet(o.key, null);
-    if(p && p.left!=null && p.top!=null){ el.style.left = p.left+"px"; el.style.top = p.top+"px"; release(); }
-  }
+  const rec = {el, o};
+  dragPanels.push(rec);                          // registered for the window-resize re-clamp
+  if(o.key && o.restore !== false) placePanel(rec);   // last session's placement, if the operator moved it
   head.addEventListener("mousedown", e=>{
     if(e.button!==0) return;
     if(o.ignore && e.target.closest(o.ignore)) return;   // the close button is not a drag grip
     e.stopPropagation();
     const r = el.getBoundingClientRect();
-    panelDrag = {el, head, o, release, dx: e.clientX-r.left, dy: e.clientY-r.top};
+    panelDrag = {el, head, o, dx: e.clientX-r.left, dy: e.clientY-r.top};
   });
 }
 window.addEventListener("mousemove", e=>{
   const d = panelDrag; if(!d) return;
-  const mr = mapEl.getBoundingClientRect();      // keep the panel inside the chart, as before
-  const left = Math.max(0, Math.min(mr.width  - d.el.offsetWidth,  e.clientX - d.dx));
-  const top  = Math.max(0, Math.min(mr.height - d.el.offsetHeight, e.clientY - d.dy));
-  d.el.style.left = left+"px"; d.el.style.top = top+"px"; d.release();
+  const c = clampPanelPos(d.el, e.clientX - d.dx, e.clientY - d.dy);   // same rule as restore
+  d.el.style.left = c.left+"px"; d.el.style.top = c.top+"px"; unanchorPanel(d.el, d.o);
 });
+// A window that SHRINKS strands whatever was near the far edge, so re-clamp on resize -
+// a real event, unlike the rendering-driven observers, so it still fires for a window the
+// operator is actively resizing. Positions are re-derived from storage, so this is
+// reversible: grow the window back and every card returns to where it was put.
+window.addEventListener("resize", ()=>{ dragPanels.forEach(placePanel); placeVcard(); });
 window.addEventListener("mouseup", ()=>{
   const d = panelDrag; if(!d) return; panelDrag = null;
   const pos = {left: parseFloat(d.el.style.left), top: parseFloat(d.el.style.top)};
@@ -4320,20 +4359,30 @@ function loadVcardPrefs(){ return lsGet(VCARD_KEY, {}); }
 function saveVcardPrefs(p){ lsSet(VCARD_KEY, p); }
 function placeVcard(){
   const prefs = loadVcardPrefs();
-  const pos = (prefs.left!=null && prefs.top!=null) ? prefs : vcardDefaultPos();
+  const hidden = !!prefs.hidden;
+  // VISIBILITY FIRST, THEN MEASURE. A display:none element measures 0x0, so clamping before
+  // this line would fall back to the sliver rule and leave the card half off the chart on
+  // the very reveal that was supposed to fix it - measured doing exactly that.
+  vcard.style.display = hidden ? "none" : "block";
+  vreopen.style.display = hidden ? "block" : "none";
+  // Clamp against whichever of the two is actually showing: they share a position, so an
+  // off-screen card used to take its own reopen control with it and there was no way back.
+  const want = (prefs.left!=null && prefs.top!=null) ? prefs : vcardDefaultPos();
+  const pos = clampPanelPos(hidden ? vreopen : vcard, want.left, want.top);
   vcard.style.left = pos.left+"px"; vcard.style.top = pos.top+"px";
   vreopen.style.left = pos.left+"px"; vreopen.style.top = pos.top+"px";
-  const hidden = !!prefs.hidden;
-  vcard.style.display = hidden ? "none" : "block"; vreopen.style.display = hidden ? "block" : "none";
 }
 // placeVcard() already restores this one (it also carries the hidden/reopen state), so
 // the shared helper only drags it, and folds the position into those same prefs.
 makeDraggablePanel(vcard, vhead, {restore:false, ignore:"#vcardClose",
   persist: pos => saveVcardPrefs({...loadVcardPrefs(), left:pos.left, top:pos.top})});
+// Both go through placeVcard() so ONE function decides where the card sits and which of the
+// card / pill is showing. Re-placing on reveal also re-clamps it at its real size: a hidden
+// card measures 0x0, so the position it was hidden at was only ever clamped against a sliver.
 $("#vcardClose").addEventListener("click", e=>{ e.stopPropagation();
-  saveVcardPrefs({...loadVcardPrefs(), hidden:true}); vcard.style.display="none"; vreopen.style.display="block"; });
+  saveVcardPrefs({...loadVcardPrefs(), hidden:true}); placeVcard(); });
 vreopen.addEventListener("click", ()=>{
-  saveVcardPrefs({...loadVcardPrefs(), hidden:false}); vcard.style.display="block"; vreopen.style.display="none"; });
+  saveVcardPrefs({...loadVcardPrefs(), hidden:false}); placeVcard(); });
 placeVcard();
 makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 

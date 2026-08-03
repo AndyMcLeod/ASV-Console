@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**SIXTEEN REGRESSION SUITES (202 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**SIXTEEN REGRESSION SUITES (211 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -61,7 +61,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
-| `node tests/panel_drag.js` | ONE drag mechanism; no pop-out forgets its position (11) |
+| `node tests/panel_drag.js` | ONE drag mechanism; no pop-out forgets its position OR goes off-screen (20) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
@@ -105,6 +105,26 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   New suite `tests/stored_settings.js` (11), **7 mutations verified**.
   **`panel_drag.js` check 10 failed on this change and was right to** — it named the raw
   `localStorage.setItem` shape; re-pointed at `lsSet` and re-mutated to confirm it still bites.
+- **THE VESSEL CARD WAS ABSENT FROM THE CHART** (Andy, live). **Not hidden and not broken —
+  `display:block`, fully live, at a position saved when the window was bigger, sitting
+  outside the viewport.** The DRAG had always clamped to the chart; **RESTORE never did**, so
+  a position from a larger window or a second monitor came back verbatim. Pre-existing, not
+  from the drag consolidation — `git show e0e3e8c^` has the same unclamped restore — but the
+  consolidation is why there was one place to fix it for all six pop-outs. **The vessel card
+  was the cruel case: `placeVcard()` puts its VESSEL reopen pill at the SAME coordinates, so
+  the one control that brings the card back went off-screen with it.** Now `clampPanelPos` +
+  `placePanel`, shared by restore, drag and a new `resize` listener.
+  **Three properties worth keeping:** the clamp is **DISPLAY-ONLY** (a card parked at a big
+  monitor's edge returns there when the window is big again); the resize re-clamp re-derives
+  from **STORAGE, not the DOM**, or it would RATCHET; and `placeVcard` **sets visibility
+  BEFORE measuring**, because a `display:none` card measures 0×0 and would be clamped by the
+  sliver rule on the very reveal meant to rescue it — I shipped that bug and caught it by
+  measuring in the browser, and check 20 now guards the ordering.
+  `tests/panel_drag.js` 11 → 20, **8 mutations verified**. Ops manual updated + rebuilt (the
+  other three docs' `word/document.xml` are byte-identical, so only that one is committed).
+  **RESIDUAL:** the five pop-outs that start hidden are shown from five separate sites with
+  no choke point, so a revealed panel is clamped by the 0×0 sliver rule rather than its real
+  size — header on the chart and draggable, but not the full fix the vessel card got.
 - **the lane fact travels WITH its route** — `channelLaneRoute` now returns `{route, lane}`
   and `buoyageNote(lane)` takes it as an argument; the module flag `lastChannelLane` is gone.
   I raised the stale flag as *inert* (a refusal returns before any reader) — **it was not.**
@@ -144,6 +164,13 @@ Two rules fall out, both cheap:
   process died" look identical if you only parse stdout. This is the same rule the hook
   already states for suites — treat a crash as loudly as a failure — applied to the thing
   that grades the suites.
+- **TESTING A PURE HELPER DOES NOT TEST THAT ANYTHING CALLS IT.** Six assertions exercised
+  `clampPanelPos` directly and all six stayed green when the clamp was ripped out of
+  `placePanel` — the reported fault restored, undetected. Checks 18–19 assert the CALLER.
+  Same family as the `completion_modes` lesson: preserving a value and honouring it are two
+  assertions. **And prefer naming the paths to counting them** — check 9 counted
+  "`>= 2` unanchor call sites" and stayed green when the restore path lost its one, because
+  a third site elsewhere covered the count.
 
 **Previous session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
 - **vessel card off the controls window** — it was bridged, so one card rendered in BOTH

@@ -19,7 +19,21 @@
 //
 //   node tests/panel_drag.js      # exit 0 = pass, 1 = fail   (stdlib Node, no deps)
 //
-// These are SOURCE-SHAPE assertions, in the house style of tests/ui_split.js: which
+// THE SECOND FAULT, reported live by Andy: THE VESSEL STATUS CARD WAS ABSENT FROM THE
+// CHART. Not hidden, not broken - display:block and fully live, at a position saved when
+// the window was bigger, sitting outside the viewport. The DRAG had always clamped to the
+// chart; RESTORE never did, so a position from a larger window (or a second monitor) came
+// back verbatim. The vessel card was the cruel case: placeVcard() puts its VESSEL reopen
+// pill at the SAME coordinates, so the one control that brings the card back went off-screen
+// with it and there was no way home. 12-20 cover the clamp; the clamp is DISPLAY-ONLY, so a
+// card parked at the edge of a big monitor still returns there when the window is big again.
+//
+// RESIDUAL, deliberate: the five pop-outs that start hidden are shown from five separate
+// sites with no single choke point, so a revealed panel is clamped by the 0x0 sliver rule
+// rather than its real size. Its header stays on the chart and it can be dragged back -
+// strictly better than vanishing - but it is not the full fix the vessel card got.
+//
+// Most of these are SOURCE-SHAPE assertions, in the house style of tests/ui_split.js: which
 // listener a browser calls is not observable from Node, and the regression this guards is
 // precisely a registration going missing or losing an option. The live behaviour WAS
 // verified separately in a real browser - all six panels dragged, landed, persisted,
@@ -33,6 +47,12 @@
 // variable behind and 3 fails. Make the helper restore a position without releasing the
 // anchor, or stop releasing it during the drag, and 9 fails. Persist on something other
 // than mouseup and 10 fails. Remove the missing-element guard and 11 fails.
+// The clamp, same way: strip it from the restore path and 18 fails (the reported fault
+// restored); feed placePanel the element's on-screen position instead of the stored one and
+// 19 fails (the ratchet); clamp only negatives and 13 fails; drop the 0x0 sliver rule and 15
+// fails; widen the assumed panel size and 12 fails; measure before showing in placeVcard and
+// 20 fails. NOTE 12-17 exercise clampPanelPos DIRECTLY, so they stayed green when the clamp
+// was ripped out of its caller - 18 and 19 exist because of that miss.
 //
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
@@ -42,13 +62,37 @@ const path = require("path");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
+// `cond` may be a value (the source-shape checks) or a THUNK (the clamp checks below, which
+// call real code). A throw is reported as a failed check rather than killing the run - see
+// the note in tests/stored_settings.js: a harness that cannot survive the fault it tests for
+// cannot report it, and a mutation that crashes the process prints no FAIL line at all.
 function check(name, cond, detail) {
   ran++;
-  console.log((cond ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
-  if (!cond) fails++;
+  let ok, note;
+  try {
+    ok = !!(typeof cond === "function" ? cond() : cond);
+    note = typeof detail === "function" ? detail() : detail;
+  } catch (e) { ok = false; note = "THREW: " + e.message; }
+  console.log((ok ? "  ok   " : "  FAIL ") + name + (note ? "   [" + note + "]" : ""));
+  if (!ok) fails++;
 }
 
 const IDS = new Set((H.match(/\bid="[^"]+"/g) || []).map(s => s.slice(4, -1)));
+
+function grab(name) {                            // a whole `function NAME(...){...}`
+  const start = H.indexOf("function " + name + "(");
+  if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
+  let k = H.indexOf("{", start), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return H.slice(start, k + 1);
+}
+function grabDecl(name) {                        // `const NAME = ...;` on one line
+  const m = H.match(new RegExp("^\\s*(?:const|let|var)\\s+" + name + "\\s*=.*?;", "m"));
+  if (!m) throw new Error("test setup: declaration " + name + " not found (renamed?)");
+  return m[0];
+}
+const PLACE = grab("placePanel");                              // the restore path
+const MOVE = (H.match(/window\.addEventListener\("mousemove"[\s\S]{0,500}?\n\}\);/) || [""])[0];
 
 // --- parse the registrations ---------------------------------------------- //
 // Each call is makeDraggablePanel(<el>, <head>, {<opts>}); possibly wrapped over lines.
@@ -180,9 +224,15 @@ check("8. every header carrying a close button excludes it from the grip",
 // 9. The anchor must be released on BOTH paths. Releasing only while dragging leaves a
 // restored panel fighting its own anchor on the next page load, which is the stretch bug
 // arriving one session later - exactly the kind of gap a hand-copied block leaves.
+// Counts the SHARED unanchor helper. It was an inline `release()` closure until the clamp
+// work split restore out into placePanel, which left two copies of the same two-line rule -
+// so it became a function, and this now checks both paths call THAT.
+// Names the two paths explicitly rather than counting call sites: a count of ">= 2" stayed
+// green when the restore path lost its unanchor, because a third site elsewhere covered for
+// it. Which paths, not how many.
 check("9. the anchor is released on RESTORE as well as during the drag",
-      (HELPER.match(/release\(\)/g) || []).length >= 2 && /const release\s*=/.test(HELPER),
-      (HELPER.match(/release\(\)/g) || []).length + " release() calls in the helper");
+      () => /function unanchorPanel\(/.test(H) && /unanchorPanel\(/.test(PLACE) && /unanchorPanel\(/.test(MOVE),
+      () => "restore:" + /unanchorPanel\(/.test(PLACE) + " drag:" + /unanchorPanel\(/.test(MOVE));
 
 // 10. Event-driven persistence, the lesson from the resize save: a ResizeObserver or a
 // rAF is delivered with the rendering steps and an occluded window has those suspended.
@@ -197,6 +247,87 @@ check("10. the position is persisted on mouseup, not on a rendering-driven callb
 check("11. a panel absent from this window is skipped, not thrown on",
       /if\(!el \|\| !head\) return;/.test(HELPER),
       "the controls window renders a subset of these panels");
+
+// --- 12-17. THE CLAMP. Behavioural, not source-shape: clampPanelPos is pure geometry. --- //
+// THE REPORTED FAULT (Andy, live): the vessel status card was absent from the chart. It was
+// not hidden and not broken - it was display:block, fully live, at a position saved when the
+// window was bigger, sitting outside the viewport. The drag had always clamped; RESTORE
+// never did. The vessel card was the cruel case because placeVcard() puts its VESSEL reopen
+// pill at the SAME coordinates, so the one control that brings the card back went with it.
+let MAP = { width: 1280, height: 720 };
+globalThis.mapEl = { getBoundingClientRect: () => MAP };
+eval(grabDecl("PANEL_MIN_VIS") + "\n" + grab("clampPanelPos"));
+const panel = (w, h) => ({ offsetWidth: w, offsetHeight: h });
+
+check("12. a position that already fits is left exactly where it is",
+      () => { const c = clampPanelPos(panel(196, 354), 900, 96);
+              return c.left === 900 && c.top === 96; },
+      "clamping must not move a card the operator placed legitimately");
+
+check("13. THE REPORTED FAULT: a position saved on a bigger window is pulled back on screen",
+      () => { const c = clampPanelPos(panel(196, 354), 2400, 1300);
+              return c.left === 1280 - 196 && c.top === 720 - 354; },
+      () => { const c = clampPanelPos(panel(196, 354), 2400, 1300);
+              return "2400,1300 -> " + c.left + "," + c.top + " in a 1280x720 chart"; });
+
+check("14. a negative position is pulled back too (dragged off the top or left)",
+      () => { const c = clampPanelPos(panel(196, 354), -500, -80);
+              return c.left === 0 && c.top === 0; },
+      "0,0 is the near corner");
+
+// A hidden panel measures 0x0. Clamping against a width of zero would allow left = full
+// chart width, parking it exactly at the edge - missing again the moment it is shown.
+check("15. a HIDDEN panel (0x0) is still kept reachable, not parked at the far edge",
+      () => { const c = clampPanelPos(panel(0, 0), 5000, 5000);
+              return c.left <= 1280 - 120 && c.top <= 720 - 120; },
+      () => { const c = clampPanelPos(panel(0, 0), 5000, 5000);
+              return "0x0 panel -> " + c.left + "," + c.top + " (a sliver is assumed)"; });
+
+check("16. a panel larger than the chart lands at the near corner, not at a negative offset",
+      () => { const c = clampPanelPos(panel(2000, 1200), 300, 300);
+              return c.left === 0 && c.top === 0; },
+      "an oversized card must still show its header");
+
+// NO RATCHET. The clamp is display-only and re-derived from the STORED position, so
+// shrinking the window and growing it back returns the card to where the operator put it.
+// Clamping the already-clamped DOM value instead would strand it at the smaller size.
+check("17. shrinking the window and growing it back RESTORES the stored position",
+      () => {
+        const stored = { left: 1050, top: 300 }, p = panel(196, 354);   // fits the big chart
+        MAP = { width: 700, height: 500 };
+        const small = clampPanelPos(p, stored.left, stored.top);      // squeezed
+        MAP = { width: 1280, height: 720 };
+        const back = clampPanelPos(p, stored.left, stored.top);       // re-derived from STORAGE
+        const ratchet = clampPanelPos(p, small.left, small.top);      // what re-clamping the DOM would give
+        return back.left === 1050 && back.top === 300 && ratchet.left !== 1050;
+      },
+      "re-clamping the on-screen value instead would leave it at the small window's edge");
+
+// --- 18-19. THE CALLER MUST USE IT. ---------------------------------------- //
+// 12-17 prove the geometry. They do NOT prove the restore path calls it: mutation showed
+// that ripping clampPanelPos out of placePanel left all six green, because they exercise
+// the pure function directly. Having a correct helper and honouring it are two assertions.
+check("18. the RESTORE path actually clamps — a correct helper nothing calls is no help",
+      () => /clampPanelPos\(/.test(PLACE),
+      "this is the exact line whose absence was the reported fault");
+
+// Re-clamping the element's CURRENT position ratchets: shrink the window and grow it back
+// and the card stays at the small window's edge for good. 17 proves the maths is reversible;
+// this proves placePanel feeds it the stored value rather than the on-screen one.
+check("19. ... from the STORED position, not the element's current on-screen position",
+      () => /lsGet\(/.test(PLACE) && !/parseFloat\(\s*el\.style/.test(PLACE),
+      "reads storage: " + /lsGet\(/.test(PLACE) + ", reads the DOM: " + /parseFloat\(\s*el\.style/.test(PLACE));
+
+// --- 20. ORDER OF OPERATIONS in placeVcard. -------------------------------- //
+// A display:none element measures 0x0, so clamping before the card is shown falls back to
+// the sliver rule and leaves it half off the chart on the very reveal meant to rescue it.
+// Measured doing exactly that in a browser (card revealed at 1160,600 in a 1280x720 chart);
+// same family as the move-grip paint-order check, and invisible to every other assertion.
+const VC = grab("placeVcard");
+check("20. placeVcard sets visibility BEFORE it measures for the clamp",
+      () => VC.indexOf("vcard.style.display") >= 0 &&
+            VC.indexOf("vcard.style.display") < VC.indexOf("clampPanelPos("),
+      () => "display@" + VC.indexOf("vcard.style.display") + " clamp@" + VC.indexOf("clampPanelPos("));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
