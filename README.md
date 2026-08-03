@@ -597,6 +597,15 @@ advises on speed, so acting on that advice has to change something), and that a 
 committed is re-checked against the turn radius the new speed implies: slowing down is always
 safe, speeding up can make a committed reversal untrackable while the plan looks identical.
 
+```
+python tests/live_speed.py
+```
+
+**Live speed** — that a speed change actually reaches the boat: with the boat under way,
+speed over ground follows the commanded speed both up and down. It drives a real console and
+lets the boat accelerate, because accepting the command proves nothing — the bug it guards
+accepted it too and never told the boat.
+
 A pre-commit hook runs all of them automatically whenever a source they cover, or any test
 itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
 `.githooks/`; **enable it once per clone**:

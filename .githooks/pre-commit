@@ -20,6 +20,8 @@
 #                           of blanking when the pattern anchors are dropped.
 #   tests/speed_recalc.js   the plan speed is an INPUT: changing it recalculates, and a
 #                           committed plan is re-checked against the new turn radius.
+#   tests/live_speed.py     the commanded speed REACHES the vessel: speed over ground
+#                           follows a live change. Drives a real console.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -138,6 +140,15 @@ if command -v python >/dev/null 2>&1; then
     echo "  A recovery point no longer lands where the offset says, the staged/active"
     echo "  HOME gate leaks, or a vessel-derived default stopped tracking the vessel"
     echo "  (roc_tracks.py)."
+    fail=1
+  fi
+  echo "pre-commit: live speed regression test..."
+  if ! python tests/live_speed.py; then
+    echo ""
+    echo "pre-commit: live-speed test FAILED."
+    echo "  A speed change is not reaching the vessel - speed over ground no longer"
+    echo "  follows the commanded speed (SimVcu.set_speed / Engine.set_speed /"
+    echo "  /api/cmd/speed in asv_console.py)."
     fail=1
   fi
   echo "pre-commit: end-of-plan completion regression test..."

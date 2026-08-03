@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**ELEVEN REGRESSION SUITES (139 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWELVE REGRESSION SUITES (149 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed":
 
@@ -50,13 +50,20 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
+| `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**This session (2026-08-01 → 08-02), twelve commits, all with sections below:**
+**This session (2026-08-01 → 08-02), thirteen commits, all with sections below:**
+- **live speed** — SOG did not follow a speed change because the commanded speed reached the
+  boat ONLY via `upload_plan`. There was no speed command AT ALL: no seam method, no Engine
+  method, no endpoint. Added `set_speed` through the whole seam (+ honest `RealVcu` refusal),
+  `/api/cmd/speed`, and `speed_key`/`speed_target_kn` on the state. New suite
+  `tests/live_speed.py` (10, drives a real console). **First commit under the folded-handoff
+  rule.**
 - `f382b85` **plan speed is an INPUT to the plan, not a label on it** — Punch Out already
   advises "widen the lines or slow down"; acting on that advice recomputed **nothing**.
   `recalcForSpeed()` re-punches a drawn pattern (live: 7 teardrops → 7 semicircles, routed
@@ -348,7 +355,8 @@ python asv_console.py --sim --vessel example_usv_4m             # study a differ
 ```
 
 - Web UI at `http://localhost:<port>/`; playback at `/playback`.
-- Commands: `POST /api/cmd/{arm,upload,start,pause,stop,estop,rth,goto,hold,sethome,transit}`.
+- Commands: `POST /api/cmd/{arm,upload,start,pause,stop,estop,rth,goto,hold,sethome,transit,speed,approach,energy,reset,spawn}`.
+  `speed` and `approach` are LIVE tuning — they apply to a run in progress.
 - Vessels: `GET /api/vessel` (active + params + available list), `GET /api/vessels` (list), `POST /api/vessel {id}` (switch — only when disarmed & idle).
 - State + telemetry stream over SSE at `/events`; snapshot at `/api/state` (live telemetry is nested under `status`).
 - Session recorder writes `logs/*.jsonl` (disable with `--no-log`); playback reads them via `/api/logs`, `/api/log?file=`.
@@ -566,6 +574,49 @@ grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . |
   profile, `example_usv_4m`, has neither those speeds nor that turn rate). The same
   mislabel had propagated into CLAUDE.md's turn-geometry section and README.md; both
   corrected. Data untouched, so the 21 assertions are unchanged and still pass.
+
+## SPEED IS A LIVE COMMAND, NOT A PROPERTY OF THE LAST UPLOAD (2026-08-02)
+
+**Andy's report:** speed over ground is not changing with user speed changes; these must be
+real time, with application-wide awareness of the ASV state and how it affects the sim.
+
+**He was right, and the previous commit had made it worse-looking.** `f382b85` made a speed
+change recompute every planning figure on screen — turn geometry, durations, per-line times.
+It did not make the boat go faster, because **`SimVcu._speed_key` was set in exactly one
+place: `upload_plan()`.** There was no speed command anywhere in the stack — no seam method,
+no Engine method, no endpoint. The selector recorded an intention nothing acted on.
+
+**The tell was sitting next to it in the command bar:** `Appr m` has been a live command all
+along (`/api/cmd/approach` → `set_approach`). Speed had the same shape and none of the
+plumbing.
+
+- `VcuLink.set_speed` on the seam; `SimVcu.set_speed` applies it live; **`RealVcu.set_speed`
+  refuses honestly** like every other actuating call.
+- `Engine.set_speed` validates against **the active vessel's own `SPEED_KN`** (so a profile
+  with different speeds validates against its own), commands the link, **persists to the
+  mission store** so a later Upload re-sends the operator's choice instead of reverting, and
+  sets `note` — which is a SALIENT field, so the session recorder snapshots it for free.
+- `/api/cmd/speed`.
+- **State publishes `speed_key` + `speed_target_kn`**, and `speed_key` rides `TELEM_FIELDS`
+  so a playback can put commanded speed beside speed made good. The MISSION block's new
+  **Speed** row shows the BOAT's value and turns warn if it disagrees with the selector —
+  because these are two values that were silently disagreeing for as long as the command
+  went nowhere.
+
+**Live-verified:** under way, SOG **4.11 → 13.94 → 7.06 → 4.08 kn** as the selector moved
+low → high → survey → low. (Slightly over target is the environmental set — correct.)
+
+**Test:** `python tests/live_speed.py` — 10 assertions, drives a REAL console, because the
+failure spans a command, the link's internal state and the persisted mission. **It has to
+let the boat ACCELERATE**: asserting the command was accepted proves nothing, since the old
+code accepted the selector change too and dropped it. Teeth-verified: restore the bug → 6,7;
+stop publishing `speed_key` → 1 (at the readiness gate); no validation → 4; skip the persist
+→ 8.
+
+**A FLAKE CAUGHT AND FIXED IN THE TEST ITSELF:** the first version waited only for the
+console to ANSWER, then asserted on a status that had no telemetry in it yet — checks 3 and
+4b failed once and passed on re-run. **A test that fails for the wrong reason discredits
+every assertion around it.** Readiness now means answering AND the link reporting a frame.
 
 ## PLAN SPEED IS AN INPUT, NOT A LABEL (2026-08-02)
 

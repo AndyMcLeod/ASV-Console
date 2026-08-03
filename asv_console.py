@@ -353,7 +353,11 @@ class SessionLogger:
                "autonomy", "behavior", "completion", "wp_index", "wp_total",
                "note", "home")
     STATE_MIN_INTERVAL = 1.0        # s: cap the between-transition motion trace
-    TELEM_FIELDS = ("lat_deg", "lon_deg", "heading_deg", "cog_deg", "sog_kn",
+    # `speed_key` rides the motion trace, not just the salient snapshots, so a playback
+    # can put COMMANDED speed alongside the speed actually made good. (A live speed change
+    # is salient anyway - it sets `note`, which is in SALIENT above - but the trace is what
+    # lets you see the boat accelerating onto the new command.)
+    TELEM_FIELDS = ("lat_deg", "lon_deg", "heading_deg", "cog_deg", "sog_kn", "speed_key",
                     "battery_v", "battery_pct", "battery_state", "holding", "laps")
 
     def __init__(self, enabled=True, log_dir=LOG_DIR):
@@ -1804,6 +1808,7 @@ class VcuLink:
     def estop(self, on): ...
     def set_neutral(self): ...
     def set_approach(self, m): ...          # live-tune the waypoint approach radius
+    def set_speed(self, key): ...        # live-tune the commanded speed (low|survey|high)
     def set_unlimited_energy(self, on): ... # sim testing aid (no-op on real hardware)
 
 
@@ -1894,6 +1899,18 @@ class SimVcu(VcuLink):
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
+
+    def set_speed(self, key):
+        """Live speed change. The commanded speed used to arrive ONLY through
+        upload_plan(), so changing it mid-run did nothing at all - the operator moved the
+        selector, every planning figure recomputed, and the boat carried on at the speed it
+        was uploaded with. Speed is a live command, not a property of the last upload."""
+        if key in SPEED_KN:
+            self._speed_key = key
+
+    @property
+    def speed_key(self):                   # what the boat is ACTUALLY doing, for the state
+        return self._speed_key
 
     def set_unlimited_energy(self, on):    # testing aid: full energy, no drain/burn (any time)
         self._unlimited_energy = bool(on)
@@ -2108,6 +2125,12 @@ class SimVcu(VcuLink):
             "heading_deg": round(self.heading, 1),
             "cog_deg": round(cog, 1) if cog is not None else None,
             "sog_kn": round(sog_ground, 2),        # true speed over ground (incl. drift)
+            # The COMMANDED speed the boat is running to, and its value in knots. Published
+            # so the console can show the operator's selector against what the boat is
+            # actually doing rather than assuming they agree - they did not, for as long as
+            # a live speed change went nowhere.
+            "speed_key": self._speed_key,
+            "speed_target_kn": round(SPEED_KN.get(self._speed_key, 0.0), 2),
             "pitch_deg": self.pitch,
             "roll_deg": self.roll,
             "energy_type": POWER_TYPE,
@@ -2190,6 +2213,7 @@ class RealVcu(VcuLink):
     def pause(self): self._blocked()
     def stop(self): self._blocked()
     def estop(self, on): self._blocked()
+    def set_speed(self, key): self._blocked()
     def set_neutral(self): pass
 
 
@@ -2402,6 +2426,28 @@ class Engine:
                     self._link.set_approach(m)
                 except Exception:
                     pass
+
+    def set_speed(self, key):
+        """Live speed change: command the link AND persist the operator's selection, so the
+        two cannot drift. The plan speed is one concept - what the operator wants the boat to
+        do - unlike completion, where the SETTING and the RUN genuinely differ (see
+        plan_completion). Persisting here means an Upload later re-sends the same value
+        rather than reverting the boat to whatever the mission file last held."""
+        if key not in SPEED_KN:
+            raise VcuProtocolError("unknown speed %r (want one of %s)" % (key, ", ".join(sorted(SPEED_KN))))
+        m = load_mission()
+        m["speed"] = key
+        save_mission(m)
+        with self._lock:
+            if self._link is not None:
+                try:
+                    self._link.set_speed(key)
+                except VcuProtocolError:
+                    raise
+                except Exception:
+                    pass
+            self.note = "Speed: %s (%.1f kn) - applied live." % (key, SPEED_KN[key])
+        self._push_state()
 
     def set_energy_override(self, on):
         """Energy override (testing aid): report the pack/tank as full regardless of
@@ -3196,6 +3242,8 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.set_home()
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
                 ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
+            elif path == "/api/cmd/speed":             # live speed change (low|survey|high)
+                ENGINE.set_speed(str(body.get("speed", "survey")))
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
             elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point

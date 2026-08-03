@@ -478,6 +478,7 @@
       <div class="vsec" id="v_mission" style="display:none;">
         <div class="vsechead">Mission</div>
         <div class="vrow"><span class="vk">Type</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour running: survey / search / goto / rth / transit">--</span></div>
+        <div class="vrow"><span class="vk">Speed</span><span class="vv" id="mi_speed" title="The speed the VESSEL is running to, as it reports it — not merely what the selector says. They should agree; if they do not, this is the one that is moving the boat.">--</span></div>
         <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt" title="Progress along the uploaded route. Before Upload it shows the planned waypoint count.">--</span></div>
         <div class="vrow"><span class="vk">Length</span><span class="vv" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)">--</span></div>
         <div class="vrow"><span class="vk">To end</span><span class="vv" id="mi_toend" title="Remaining distance and ~time to the end of the plan (live SOG when moving, else the plan speed)">--</span></div>
@@ -4413,7 +4414,11 @@ function recalcCommittedForSpeed(){
 }
 $("#c_speed").onchange = ()=>{
   mission.speed = $("#c_speed").value; saveMission();
-  flashNote("Plan speed: " + mission.speed + " — recalculating.");
+  // COMMAND IT, don't just record it. The commanded speed reached the boat ONLY through
+  // upload_plan, so changing the selector mid-run recomputed every planning figure on
+  // screen while the boat carried on at the speed it was uploaded with - speed over ground
+  // never moved. Speed is a LIVE command, exactly like the approach radius beside it.
+  cmd("/api/cmd/speed", {speed: mission.speed});
   recalcForSpeed();
 };
 // TWO DIFFERENT THINGS, and keeping them apart is the whole point:
@@ -5535,6 +5540,25 @@ function updateMissionCard(){
   let kind = S.behavior || "survey";
   if(kind==="survey" && planKind==="search") kind="search";   // a committed search runs as a survey plan
   $("#mi_type").textContent = kind.toUpperCase();
+  // THE SPEED THE BOAT REPORTS, not the one the selector holds. These are two values and
+  // for a long time they could silently disagree - a live speed change never reached the
+  // link at all, so the console showed one speed and the boat made good another. Publishing
+  // the boat's own commanded speed is what makes that visible instead of assumed.
+  const msp = $("#mi_speed");
+  if(msp){
+    const k = st.speed_key, kn = st.speed_target_kn;
+    if(!k){ msp.textContent = "--"; msp.className = "vv"; }
+    else {
+      msp.textContent = k + (kn != null ? " · " + kn.toFixed(1) + " kn" : "");
+      const agrees = (k === (mission.speed || "survey"));
+      msp.className = "vv" + (agrees ? "" : " warn");
+      msp.title = agrees
+        ? "The vessel is running to " + k + " (" + (kn != null ? kn.toFixed(1) + " kn" : "?")
+          + "), which is what the command bar has selected."
+        : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
+          + (mission.speed || "survey") + ". The vessel's value is the one moving it.";
+    }
+  }
   // Waypoint progress is the top bar's WPT pill (written in onState) once a plan is
   // uploaded; before that there is no progress to report, so show what was PLANNED.
   if(!S.wp_total && runRoute && runRoute.length) $("#v_wpt").textContent = runRoute.length + " planned";

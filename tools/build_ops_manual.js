@@ -267,6 +267,7 @@ c.push(TBL(["Field", "Sets"], [
   ["Speed", "Low / Survey / High, from the vessel's own profile"],
   ["End of plan", "What happens when the plan finishes — see 11.5"],
 ], [1400, 7960]));
+c.push(NOTE("SPEED APPLIES IMMEDIATELY", "Changing the speed selector commands the vessel THERE AND THEN, mid-run included — it does not wait for the next Upload. Speed over ground will follow within a few seconds. The MISSION block's Speed row shows the speed the VESSEL reports it is running to, so you can confirm the command landed rather than assuming it; if that row ever disagrees with the selector, the row is the one moving the vessel."));
 c.push(NOTE("CHANGING SPEED RE-PLANS THE TURNS", "Speed is an input to the plan, not a label on it: the minimum radius the vessel can hold scales with it, and so does the shape of every line-to-line reversal. Change it and the console recalculates — turns, durations, per-line times. If the plan is already COMMITTED it cannot rebuild the turn waypoints, so it re-checks the spacing against the new speed and tells you when speeding up has put a reversal beyond what the vessel can hold. Slowing down is always safe."));
 c.push(NOTE("THE BUFFER HAS A FLOOR", "The vessel's own profile sets a minimum buffer. A plan saved against a smaller vessel cannot quietly give this one less standoff than its profile demands. You can always widen it by hand."));
 c.push(H2("11.2  The sequence"));
