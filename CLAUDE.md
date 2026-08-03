@@ -34,9 +34,17 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**FOURTEEN REGRESSION SUITES (174 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FOURTEEN REGRESSION SUITES (177 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
-change to what they cover, and treat "harness crashed" as loudly as "check failed":
+change to what they cover, and treat "harness crashed" as loudly as "check failed".
+**The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
+number that had already changed, leaving the total wrong. Re-derive rather than trust:
+
+```
+for f in tests/*.js; do printf "%-24s " $(basename $f); node  $f | grep -cE '^ *(ok|FAIL) '; done
+for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ *(ok|FAIL) '; done
+```
+
 
 | | guards |
 |---|---|
@@ -52,7 +60,7 @@ change to what they cover, and treat "harness crashed" as loudly as "check faile
 | `python tests/roc_tracks.py` | ROC / moving HOME (17) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
-| `node tests/ui_split.js` | split-window lists resolve; vessel card stays on the chart (11) |
+| `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
