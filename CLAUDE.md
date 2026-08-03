@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**FOURTEEN REGRESSION SUITES (177 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FIFTEEN REGRESSION SUITES (188 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -61,6 +61,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (10, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake (8) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement + shared resize (14) |
+| `node tests/panel_drag.js` | ONE drag mechanism; no pop-out forgets its position (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (10, drives a real console) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
@@ -80,6 +81,22 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   paragraph in between was what separated them), and `pairGates` — which is LIVE, for
   `channelSpanKeepouts` — had no comment of its own describing what it actually does.
   **Deleting dead code is not only tidying: it re-joins things the corpse was holding apart.**
+- **one drag mechanism for the pop-out panels** — SIX panels (vessel card, SURV, LINES, AIS
+  table, SRC, ROC) each carried a hand-copied drag: restore block, mousedown, a window
+  mousemove and a window mouseup. Six copies meant **six handlers ran on every pointer
+  move** so five could discover they were not dragging. Now one
+  `makeDraggablePanel(el, head, {key, unanchor, ignore, persist})` + one `panelDrag` +
+  ONE pair of window listeners. **The drift the copies had already produced: the SRC card
+  never persisted its position** — its mouseup cleared the drag and saved nothing, so it
+  was the one pop-out that forgot where you put it, while the ops manual had been
+  promising since `3080e6a` that the console "remembers your card positions". Fixing the
+  mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
+  Ops manual updated + rebuilt (the only docx that changed).
+- **the pre-commit path filter named its suites individually and had drifted** — five
+  (`wreck_clearance`, `water_trust`, `ais_range`, `live_speed`, `completion_modes`) were
+  never listed, so editing one of them ALONE ran nothing. Replaced with `*tests/*`. Same
+  shape as the panels and the suite counts: **a hand-maintained list beside a directory
+  that already answers the question.**
 
 **Previous session (2026-08-01 → 08-02), fifteen commits, all with sections below:**
 - **vessel card off the controls window** — it was bridged, so one card rendered in BOTH

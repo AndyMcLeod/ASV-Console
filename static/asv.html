@@ -4217,6 +4217,50 @@ function makeCardsResizable(){
   window.addEventListener("mouseup", saveCardSizesSoon);
   window.addEventListener("beforeunload", saveCardSizes);
 }
+// ONE DRAG MECHANISM for every floating chart-window panel, beside the ONE resize
+// mechanism above. Each panel used to carry its own near-identical copy - restore
+// block, mousedown, a window mousemove and a window mouseup - five times over, which
+// meant FIVE handlers ran on every pointer move anywhere in the window merely to
+// discover that four of them were not dragging. The differences between the copies
+// were only ever the storage key, an anchor to release, and whether a close button
+// had to be excluded, so they are parameters here rather than five bodies to keep in
+// step. One `panelDrag` holds whichever panel is live, and one pair of window
+// listeners serves all of them.
+//
+// `unanchor` matters: a card authored bottom- or right-anchored (LINES sits at
+// bottom:44px, AIS at a right offset) must have that anchor released the moment it is
+// positioned by left/top, or the two fight and the card stretches instead of moving.
+let panelDrag = null;
+function makeDraggablePanel(el, head, opts){
+  const o = opts || {};
+  if(!el || !head) return;                       // panel absent in this window - nothing to bind
+  const release = ()=>{ if(o.unanchor) el.style[o.unanchor] = "auto"; };
+  if(o.key && o.restore !== false){              // last session's placement, if the operator moved it
+    try{ const p = JSON.parse(localStorage.getItem(o.key));
+      if(p && p.left!=null && p.top!=null){ el.style.left = p.left+"px"; el.style.top = p.top+"px"; release(); }
+    }catch(e){}
+  }
+  head.addEventListener("mousedown", e=>{
+    if(e.button!==0) return;
+    if(o.ignore && e.target.closest(o.ignore)) return;   // the close button is not a drag grip
+    e.stopPropagation();
+    const r = el.getBoundingClientRect();
+    panelDrag = {el, head, o, release, dx: e.clientX-r.left, dy: e.clientY-r.top};
+  });
+}
+window.addEventListener("mousemove", e=>{
+  const d = panelDrag; if(!d) return;
+  const mr = mapEl.getBoundingClientRect();      // keep the panel inside the chart, as before
+  const left = Math.max(0, Math.min(mr.width  - d.el.offsetWidth,  e.clientX - d.dx));
+  const top  = Math.max(0, Math.min(mr.height - d.el.offsetHeight, e.clientY - d.dy));
+  d.el.style.left = left+"px"; d.el.style.top = top+"px"; d.release();
+});
+window.addEventListener("mouseup", ()=>{
+  const d = panelDrag; if(!d) return; panelDrag = null;
+  const pos = {left: parseFloat(d.el.style.left), top: parseFloat(d.el.style.top)};
+  if(d.o.persist) d.o.persist(pos);              // the vessel card folds position into its own prefs
+  else if(d.o.key){ try{ localStorage.setItem(d.o.key, JSON.stringify(pos)); }catch(e){} }
+});
 const VCARD_KEY = "asv_vcard_v1";
 const vcard = $("#vcard"), vhead = $("#vcardHead"), vreopen = $("#vReopen");
 function vcardDefaultPos(){ const r = mapEl.getBoundingClientRect(); return {left: Math.max(14, r.width - 196 - 64), top: 96}; }
@@ -4230,24 +4274,10 @@ function placeVcard(){
   const hidden = !!prefs.hidden;
   vcard.style.display = hidden ? "none" : "block"; vreopen.style.display = hidden ? "block" : "none";
 }
-let vdrag = null;
-vhead.addEventListener("mousedown", e=>{
-  if(e.target===$("#vcardClose")) return;
-  e.stopPropagation(); const r = vcard.getBoundingClientRect();
-  vdrag = {dx: e.clientX-r.left, dy: e.clientY-r.top};
-});
-window.addEventListener("mousemove", e=>{
-  if(!vdrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = e.clientX - vdrag.dx, top = e.clientY - vdrag.dy;
-  left = Math.max(0, Math.min(mr.width - vcard.offsetWidth, left));
-  top  = Math.max(0, Math.min(mr.height - vcard.offsetHeight, top));
-  vcard.style.left = left+"px"; vcard.style.top = top+"px";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!vdrag) return; vdrag = null;
-  saveVcardPrefs({...loadVcardPrefs(), left: parseFloat(vcard.style.left), top: parseFloat(vcard.style.top)});
-});
+// placeVcard() already restores this one (it also carries the hidden/reopen state), so
+// the shared helper only drags it, and folds the position into those same prefs.
+makeDraggablePanel(vcard, vhead, {restore:false, ignore:"#vcardClose",
+  persist: pos => saveVcardPrefs({...loadVcardPrefs(), left:pos.left, top:pos.top})});
 $("#vcardClose").addEventListener("click", e=>{ e.stopPropagation();
   saveVcardPrefs({...loadVcardPrefs(), hidden:true}); vcard.style.display="none"; vreopen.style.display="block"; });
 vreopen.addEventListener("click", ()=>{
@@ -4255,73 +4285,21 @@ vreopen.addEventListener("click", ()=>{
 placeVcard();
 makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 
-// --- draggable survey settings panel (only the SURV pop-up; other mode panels stay put) ---
-const SURVPANEL_KEY = "asv_survpanel_pos_v1";
-const linePanelEl = $("#linePanel"), linePanelHead = $("#linePanelHead");
-(function(){ try{ const p = JSON.parse(localStorage.getItem(SURVPANEL_KEY));
-  if(p && p.left!=null && p.top!=null){ linePanelEl.style.left = p.left+"px"; linePanelEl.style.top = p.top+"px"; }
-}catch(e){} })();
-let survDrag = null;
-linePanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
-  const r = linePanelEl.getBoundingClientRect(); survDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-window.addEventListener("mousemove", e=>{
-  if(!survDrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = e.clientX - survDrag.dx, top = e.clientY - survDrag.dy;
-  left = Math.max(0, Math.min(mr.width - linePanelEl.offsetWidth, left));
-  top  = Math.max(0, Math.min(mr.height - linePanelEl.offsetHeight, top));
-  linePanelEl.style.left = left+"px"; linePanelEl.style.top = top+"px";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!survDrag) return; survDrag = null;
-  try{ localStorage.setItem(SURVPANEL_KEY, JSON.stringify({left: parseFloat(linePanelEl.style.left), top: parseFloat(linePanelEl.style.top)})); }catch(e){}
-});
-
-// --- draggable survey-lines (LINES) card --------------------------------- //
-// Same drag/persist pattern as the SURV panel. The card starts bottom-anchored
-// (bottom:44px); dragging switches it to left/top (bottom -> auto) so it can go
-// anywhere over the chart. Only the header grabs — the body scrolls freely.
+// --- draggable pop-out panels: one mechanism, one registration each ------- //
+// SURV is the only mode panel that drags; the others stay put. LINES starts
+// bottom-anchored (bottom:44px) and AIS right-anchored, so both name the anchor the
+// helper must release once they are placed by left/top. Only the header grabs — the
+// bodies scroll freely.
+const SURVPANEL_KEY  = "asv_survpanel_pos_v1";
 const LINESPANEL_KEY = "asv_linespanel_pos_v1";
+const AISPANEL_KEY   = "asv_aispanel_pos_v1";
+const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
-(function(){ try{ const p = JSON.parse(localStorage.getItem(LINESPANEL_KEY));
-  if(p && p.left!=null && p.top!=null){ lineTableEl.style.left = p.left+"px"; lineTableEl.style.top = p.top+"px"; lineTableEl.style.bottom = "auto"; }
-}catch(e){} })();
-let lineTableDrag = null;
-lineTableHead.addEventListener("mousedown", e=>{ e.stopPropagation();
-  const r = lineTableEl.getBoundingClientRect(); lineTableDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-window.addEventListener("mousemove", e=>{
-  if(!lineTableDrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = e.clientX - lineTableDrag.dx, top = e.clientY - lineTableDrag.dy;
-  left = Math.max(0, Math.min(mr.width - lineTableEl.offsetWidth, left));
-  top  = Math.max(0, Math.min(mr.height - lineTableEl.offsetHeight, top));
-  lineTableEl.style.left = left+"px"; lineTableEl.style.top = top+"px"; lineTableEl.style.bottom = "auto";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!lineTableDrag) return; lineTableDrag = null;
-  try{ localStorage.setItem(LINESPANEL_KEY, JSON.stringify({left: parseFloat(lineTableEl.style.left), top: parseFloat(lineTableEl.style.top)})); }catch(e){}
-});
-// --- draggable AIS traffic table ---------------------------------------- //
-const AISPANEL_KEY = "asv_aispanel_pos_v1";
-const aisTableEl = $("#aisTablePanel"), aisTableHead = $("#aisTablePanelHead");
-(function(){ try{ const p = JSON.parse(localStorage.getItem(AISPANEL_KEY));
-  if(p && p.left!=null && p.top!=null){ aisTableEl.style.left = p.left+"px"; aisTableEl.style.top = p.top+"px"; aisTableEl.style.right = "auto"; }
-}catch(e){} })();
-let aisTableDrag = null;
-aisTableHead.addEventListener("mousedown", e=>{ if(e.target.id==="aisTableClose") return; e.stopPropagation();
-  const r = aisTableEl.getBoundingClientRect(); aisTableDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-window.addEventListener("mousemove", e=>{
-  if(!aisTableDrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = e.clientX - aisTableDrag.dx, top = e.clientY - aisTableDrag.dy;
-  left = Math.max(0, Math.min(mr.width - aisTableEl.offsetWidth, left));
-  top  = Math.max(0, Math.min(mr.height - aisTableEl.offsetHeight, top));
-  aisTableEl.style.left = left+"px"; aisTableEl.style.top = top+"px"; aisTableEl.style.right = "auto";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!aisTableDrag) return; aisTableDrag = null;
-  try{ localStorage.setItem(AISPANEL_KEY, JSON.stringify({left: parseFloat(aisTableEl.style.left), top: parseFloat(aisTableEl.style.top)})); }catch(e){}
-});
+const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
+makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
+makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
+makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
+                                                ignore: "#aisTableClose"});
 
 function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 1 m)
   const f=(v,pos,neg)=> `${Math.abs(v).toFixed(5)}° ${v>=0?pos:neg}`;
@@ -4505,18 +4483,12 @@ function setChartCard(show){
 }
 $("#srcBtn").onclick = ()=> setChartCard($("#chartPanel").style.display === "none");
 $("#chartClose").onclick = ()=> setChartCard(false);
-(function(){                                        // drag the card
-  const el = $("#chartPanel"), head = $("#chartPanelHead"); if(!el || !head) return;
-  let d = null;
-  head.addEventListener("mousedown", e=>{ if(e.target.id === "chartClose") return; e.stopPropagation();
-    const r = el.getBoundingClientRect(); d = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-  window.addEventListener("mousemove", e=>{ if(!d) return;
-    const mr = mapEl.getBoundingClientRect();
-    el.style.left = Math.max(0, Math.min(mr.width - el.offsetWidth, e.clientX-d.dx)) + "px";
-    el.style.top  = Math.max(0, Math.min(mr.height - el.offsetHeight, e.clientY-d.dy)) + "px";
-    el.style.right = "auto"; });
-  window.addEventListener("mouseup", ()=>{ d = null; });
-})();
+// The SRC card on the shared mechanism. Its own copy of the drag never persisted the
+// position - it was the one pop-out that forgot where the operator put it, and the
+// forgetting was an omission in a hand-copied block rather than a decision.
+const CHARTPANEL_KEY = "asv_chartpanel_pos_v1";
+makeDraggablePanel($("#chartPanel"), $("#chartPanelHead"),
+                   {key: CHARTPANEL_KEY, unanchor: "right", ignore: "#chartClose"});
 
 // --- command surface ----------------------------------------------------- //
 async function cmd(path, body){
@@ -5283,25 +5255,9 @@ $("#rocBtn").onclick = ()=>{
   $("#rocBtn").classList.toggle("on", show);
   if(show) renderRoc();
 };
-// draggable ROC panel (same pattern as the other pop-out cards)
+// draggable ROC panel (the shared pop-out mechanism, same as the others)
 const rocPanelEl = $("#rocPanel"), rocPanelHead = $("#rocPanelHead");
-(function(){ try{ const p = JSON.parse(localStorage.getItem(ROCPANEL_KEY));
-  if(p && p.left!=null && p.top!=null){ rocPanelEl.style.left = p.left+"px"; rocPanelEl.style.top = p.top+"px"; }
-}catch(e){} })();
-let rocDrag = null;
-rocPanelHead.addEventListener("mousedown", e=>{ e.stopPropagation();
-  const r = rocPanelEl.getBoundingClientRect(); rocDrag = {dx: e.clientX-r.left, dy: e.clientY-r.top}; });
-window.addEventListener("mousemove", e=>{
-  if(!rocDrag) return;
-  const mr = mapEl.getBoundingClientRect();
-  let left = Math.max(0, Math.min(mr.width - rocPanelEl.offsetWidth, e.clientX - rocDrag.dx));
-  let top  = Math.max(0, Math.min(mr.height - rocPanelEl.offsetHeight, e.clientY - rocDrag.dy));
-  rocPanelEl.style.left = left+"px"; rocPanelEl.style.top = top+"px";
-});
-window.addEventListener("mouseup", ()=>{
-  if(!rocDrag) return; rocDrag = null;
-  try{ localStorage.setItem(ROCPANEL_KEY, JSON.stringify({left: parseFloat(rocPanelEl.style.left), top: parseFloat(rocPanelEl.style.top)})); }catch(e){}
-});
+makeDraggablePanel(rocPanelEl, rocPanelHead, {key: ROCPANEL_KEY});
 $("#sp_water_ref").onclick = ()=>{
   $("#sp_water_note").textContent = "refreshing from nearest tide station…";
   fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},

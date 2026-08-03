@@ -26,6 +26,8 @@
 #                           range circle, and is never applied on a lake.
 #   tests/ui_split.js       the two-window registration lists resolve, and the vessel
 #                           card stays on the CHART window only.
+#   tests/panel_drag.js     ONE drag mechanism for every floating pop-out, and no panel
+#                           forgetting where the operator put it.
 #
 # Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
 # file here (static/asv.html - there is no routing.js split), so the path filter is
@@ -34,11 +36,15 @@
 # Activated by  git config core.hooksPath .githooks  (run once per clone; see
 # README / the hook's own note). Bypass in a pinch with:  git commit --no-verify
 
-# Only bother when a source the tests cover, or one of the tests, is staged.
+# Only bother when a source the tests cover, or ANY test, is staged.
+# The test half of this filter used to name each suite individually and had drifted:
+# five suites (wreck_clearance, water_trust, ais_range, live_speed, completion_modes)
+# were never listed, so editing one of them ALONE ran nothing. A hand-maintained list
+# beside a directory that already answers the question is the same "one mechanism, not
+# two" trap as the panels - `tests/` covers every suite, including ones not yet written.
 changed=$(git diff --cached --name-only)
 case "$changed" in
-  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|\
-  *tests/buoy_lane.js*|*tests/turn_geometry.js*|*tests/end_action.js*|*tests/nogo_readout.js*|*tests/pattern_move_grip.js*|*tests/survey_card.js*|*tests/speed_recalc.js*|*tests/ui_split.js*) ;;
+  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*tests/*) ;;
   *) exit 0 ;;
 esac
 
@@ -95,6 +101,16 @@ if ! node tests/ui_split.js; then
   echo "  A window-split registration selector no longer resolves, or the vessel-status"
   echo "  card has been mirrored back into the controls window / stripped from the chart"
   echo "  window (UI_BRIDGED / UI_CARD_TITLES / the injected CSS in static/asv.html)."
+  fail=1
+fi
+
+echo "pre-commit: panel drag regression test..."
+if ! node tests/panel_drag.js; then
+  echo ""
+  echo "pre-commit: panel-drag test FAILED."
+  echo "  A floating pop-out has grown its own private drag again beside the shared"
+  echo "  mechanism, lost the key that remembers where it was put, or stopped releasing"
+  echo "  its bottom/right anchor (makeDraggablePanel in static/asv.html)."
   fail=1
 fi
 
