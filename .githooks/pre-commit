@@ -34,6 +34,9 @@
 #                           cannot reset the scroll position or drop a selection.
 #   tests/tide_note.py      the tide card names ONE cause ONCE - two calls to the same
 #                           upstream must not print the same failure twice.
+#   tests/docs_valid.py     the generated documents are packages a reader will OPEN, and
+#                           their code blocks reached the page. Nobody opened one for three
+#                           days and all four were malformed the whole time.
 #   tests/http_contract.py  the two OPPOSITE handler contracts: POST returns (code, obj),
 #                           GET commits its own response. Every request gets exactly one
 #                           answer and the server survives it. Routes parsed from source.
@@ -53,7 +56,7 @@
 # two" trap as the panels - `tests/` covers every suite, including ones not yet written.
 changed=$(git diff --cached --name-only)
 case "$changed" in
-  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*tests/*) ;;
+  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*tests/*|*tools/*|*docs/*) ;;
   *) exit 0 ;;
 esac
 
@@ -228,6 +231,16 @@ if command -v python >/dev/null 2>&1; then
     echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
     fail=1
   fi
+  echo "pre-commit: generated document validity test..."
+  if ! python tests/docs_valid.py; then
+    echo ""
+    echo "pre-commit: docs-valid test FAILED."
+    echo "  A generated document is not a package a reader will open, or a code block"
+    echo "  did not reach the page. Rebuild with: cd tools \&\& node build_docs.js"
+    echo "  A helper that returns a LIST must be flattened - see write() in docx_kit.js."
+    fail=1
+  fi
+
   echo "pre-commit: tide note regression test..."
   if ! python tests/tide_note.py; then
     echo ""

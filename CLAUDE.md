@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**NINETEEN REGRESSION SUITES (276 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY REGRESSION SUITES (283 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -66,6 +66,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
+| `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
@@ -96,6 +97,41 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **NONE OF THE FOUR WORD DOCUMENTS HAD EVER OPENED** (Andy tried to; Word refused all four).
+  **Not a regression — broken since `2a28a59`, the day the first one was generated,** across
+  eighteen commits. `CODE()` returns an ARRAY of paragraphs while every other helper returns
+  one object, and every builder wrote `c.push(CODE([...]))`, pushing the array as ONE child.
+  The serializer emitted it as the literal element **`<0/>`** — an element name cannot start
+  with a digit — so `word/document.xml` was **not well-formed** and Word refused the file.
+  **Worse than the validity error: the array's CONTENTS were dropped**, so every code block in
+  every document was missing — the Quick Start did not contain `python asv_console.py --sim`,
+  which is most of why it exists. Fixed by **flattening in `write()`** (`children.flat(Infinity)`),
+  which repairs all six call sites at once and makes the next list-returning helper safe.
+  **HOW IT SURVIVED, and this is mine to own:** the build printed `written: <name> N bytes`
+  for every file; rebuilds never errored (a malformed child is still a valid ZIP entry); and
+  **I repeatedly checked `word/document.xml` was BYTE-IDENTICAL across rebuilds and reported
+  that as safety.** It was byte-identical. It was identically broken. **A hash proves
+  STABILITY, never CORRECTNESS — compare against a READER, something entitled to refuse it.**
+  New suite **`tests/docs_valid.py`** (7): every part well-formed, every part declared in
+  `[Content_Types].xml`, every relationship target present, every `r:id` resolvable, **plus a
+  CONTENT check** — filtering the arrays away instead of flattening yields four VALID
+  documents with every code block still missing, and only the content check separates those.
+  The expected code lines are **parsed out of the builders**, so a new block is covered the
+  day it is written. **2 mutations verified.** Confirmed against real Word at both ends: the
+  committed files were refused with "Word experienced an error trying to open the file"; the
+  rebuilt ones open at 16 / 15 / 10 / 3 pages. **The hook's path filter did not cover `tools/`
+  or `docs/`** — editing a builder ran nothing — now widened.
+- **DOCUMENT CONTENT BROUGHT CURRENT** in the same pass (Andy's request). Ops manual: card
+  height cap + lists patched in place (scroll and selection survive) + a new **7.3 on the two
+  kinds of tide failure**, with 7.3 renumbered to 7.4. Technical manual: the **stale
+  `AIS display radius` row claiming the display radius "also scales the upstream subscription;
+  the two must move together"** — an invariant DELETED in `1166068` — replaced with the real
+  `AIS_SHOW_RADIUS_KM` / `AIS_COLLECT_RADIUS_KM` pair; and **13.1's harness table is now
+  DERIVED from `tests/`** (it said "Fourteen" when there were twenty — same list-beside-a-
+  directory drift as the hook). Development guide: case study **8.6 "the deliverable nobody
+  opened"**, and a fourth recurring defect shape, **6.4 "a check that cannot tell the bug from
+  the fix"**, which this session hit three times (hash-vs-correctness, a filter test with
+  nothing to filter, asserting a field's NAME instead of its VALUE).
 - **AIS AT LEWES: "many vessels west, none in Delaware Bay" — THE CONFIG WAS FINE.** Andy
   asked for the aisstream configuration to be checked. **It is correct**, verified end to
   end: the subscription box is built as `[[lat_min,lon_min],[lat_max,lon_max]]` (what

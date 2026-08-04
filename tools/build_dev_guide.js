@@ -115,7 +115,7 @@ c.push(P("A clearance check on a PLANNED path does not catch FOLLOW OVERSHOOT. A
 
 // 6 ---------------------------------------------------------------------------
 c.push(H1("6  Recurring defect shapes"));
-c.push(P("Nearly every defect found in this system has fallen into one of three shapes. Check for them before doing anything cleverer."));
+c.push(P("Nearly every defect found in this system has fallen into one of four shapes. Check for them before doing anything cleverer."));
 c.push(H2("6.1  One value serving two masters"));
 c.push(P("A single field doing two unrelated jobs, so writing it for one purpose silently destroys the other. Or a value trusted without its provenance — chart data used without its extent or its distance, a derived constant used after the thing it was derived from changed."));
 c.push(P("THE FIX IS STRUCTURAL: one field per concept, plus an invariant about who may write it. Splitting the field is not enough on its own; the durable part is the rule that kills the whole class, such as “no method on this object writes that value”."));
@@ -128,6 +128,12 @@ c.push(B("A control painted before something that covers it. Live, draggable, in
 c.push(H2("6.3  A clean diff is not evidence a port works"));
 c.push(P("Feature work flows between this console and its sibling in both directions. A ported feature can be byte-identical to its source and still be missing from the operator's point of view — because the two consoles draw in a different order, or because the strings that make it discoverable did not come across with the code."));
 c.push(P("“The code is ported” and “the operator can use it” are different claims. Verify a user-facing port by looking at the interface, not the diff."));
+c.push(H2("6.4  A check that cannot tell the bug from the fix"));
+c.push(P("The most expensive shape, because it does not merely fail to help — it actively tells you to stop looking. Three instances, all found by deliberately breaking the code and watching the check stay green:"));
+c.push(B("COMPARING OUTPUT AGAINST ITSELF. A generated document was verified by confirming it came out byte-identical to the previous build. It did. It had also never been openable. A hash proves stability, not correctness."));
+c.push(B("TESTING A FILTER WITH NOTHING TO FILTER. A check that a range parameter was honoured compared two responses from a registry that happened to be empty, so “filtered” and “unfiltered” were the same bytes. It passed with the fix reverted."));
+c.push(B("ASSERTING THE SHAPE INSTEAD OF THE VALUE. A check that a request carried a field named for kilometres passed just as happily when the field held nautical miles — a factor of 1.852 wrong, with a plausible number on screen."));
+c.push(P("The common root: the check was written against what the code DOES rather than against what would be different if it were wrong. The discipline that catches all three is the same one described in chapter 4 — break the behaviour on purpose, confirm the SPECIFIC assertion fails, and record which. A check that has never been seen to fail is not yet evidence of anything."));
 
 // 7 ---------------------------------------------------------------------------
 c.push(H1("7  Documentation discipline"));
@@ -172,6 +178,19 @@ c.push(P("SYMPTOM: an operator reported a control as missing and asked for it to
 c.push(P("CAUSE: it had already been ported, completely and byte-identically, and it worked — the hit test answered and a drag did the right thing. It was drawn EARLY, and the vessel marker is drawn LATE and lands exactly where that control sits in the commonest case there is. Measured on the running page: zero control-coloured pixels when it coincided with the vessel, seventy when it did not."));
 c.push(P("FIX: draw it last, with a halo. And the actual gap in the port was the HINT TEXT — the sibling's string names the control and this one's did not, so nothing on screen ever said it existed."));
 c.push(P("LESSON: a control the operator cannot see is a control they do not have. The diff was clean, the logic was right, the feature was missing."));
+
+c.push(H2("8.6  The deliverable nobody opened"));
+c.push(P("SYMPTOM: an operator tried to open the generated Word documents. None of the four would open. Not one of them ever had."));
+c.push(P("CAUSE: the formatting module's code-block helper returns an ARRAY of paragraphs, one per line, while every other helper returns a single object. Every generator wrote `c.push(CODE([...]))`, pushing the array itself as ONE child. The document serialiser emitted it as the literal element `<0/>` — an element name cannot begin with a digit — so the main document part was not well-formed XML and Word refused the file outright. The array's CONTENTS went with it, so every code block in every document was missing: the Quick Start, whose whole job is to tell a new operator which commands to type, did not contain them."));
+c.push(P("It shipped that way from the day the first document was generated until an operator tried to read one — eighteen commits and four documents later."));
+c.push(P("WHY IT SURVIVED is the part worth keeping. Three separate signals all said “fine”:"));
+c.push(B("The build printed “written: <name>, N bytes” for every document. A file appeared, and its size was plausible."));
+c.push(B("The set was rebuilt many times and the process never errored — a malformed child element is still a perfectly valid ZIP entry."));
+c.push(B("A refactor of the shared module was checked by confirming the main document part came out BYTE-IDENTICAL before and after, and that was reported as evidence the refactor was safe. It was byte-identical. It was also identically broken."));
+c.push(NOTE("THE LESSON", "A hash proves STABILITY, never CORRECTNESS. Comparing output against previous output can only tell you that nothing changed; it cannot tell you the output was ever right. Compare against a READER instead — something that has to consume the artefact and is entitled to refuse it."));
+c.push(P("FIX: flatten in the writer rather than spreading at each of the six call sites, which repairs them all at once and makes the next list-returning helper safe by construction. Then a suite that does what nothing did before: checks each document is a package a reader will accept — every part well-formed, every part declared, every relationship target present, every internal reference resolvable."));
+c.push(P("And a CONTENT check beside the validity ones, because validity alone is not enough here. Filtering the arrays away instead of flattening them yields four perfectly valid documents with every code block still missing — the same silent loss, now wearing a clean bill of health. That check compares against the code lines PARSED OUT OF THE GENERATORS, so a block added tomorrow is covered without anyone remembering to list it."));
+c.push(P("Confirmed against real Word at both ends: the committed documents were refused with “Word experienced an error trying to open the file”; the rebuilt ones open at 15, 14, 8 and 3 pages. The suite is the cheap stand-in, since Word cannot run in a commit hook."));
 
 // 9 ---------------------------------------------------------------------------
 c.push(H1("9  Extension recipes"));

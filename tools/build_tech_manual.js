@@ -15,8 +15,68 @@
 // not branding - so a vessel table quoting a real hull is fine and a "the X console"
 // framing is not. Keep it that way when extending this script.
 // Shared building blocks. Extracted 2026-08-02 when the document set grew to four
-// generators; this manual's output is byte-identical across that extraction.
+// generators; this manual's output was byte-identical across that extraction - which was
+// TRUE and proved nothing, because it was identically broken at the time (see 13.1).
 const { P, H1, H2, H3, B, B2, CODE, TBL, SP, TITLE, write } = require("./docx_kit");
+const fs = require("fs");
+const path = require("path");
+
+// THE HARNESS TABLE IN 13.1 IS DERIVED FROM tests/, not written out by hand. It used to be a
+// hand-maintained table introduced by the word "Fourteen", and by the time anyone counted
+// there were twenty - the same list-beside-a-directory drift already fixed in the pre-commit
+// hook and in the maintainer notes. The DESCRIPTIONS stay hand-written, because "what this
+// guards" is prose no parser can invent; the LIST and the COUNT come from the filesystem, and
+// a suite nobody has described is called out in the document rather than quietly omitted.
+const GUARDS = {
+  "buoy_lane.js":
+    "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, that a lone buoy is not treated as a wall, and that the lane fact travels WITH the route it describes",
+  "turn_geometry.js":
+    "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin",
+  "roc_tracks.py":
+    "ROC arrival geometry, the staged/active HOME gate, moving HOME, every vessel-derived default, and NMEA ingest robustness - a malformed sentence must cost one sentence, not the whole GPS link",
+  "completion_modes.py":
+    "The operator's end-of-plan SETTING versus the completion of the run in progress: that a behaviour can never change the setting, and that a plan run adopts it. Drives a real console over the API",
+  "water_trust.js":
+    "That a live water level from a distant tide station is flagged as such rather than shown as if it were local, and that the nearest contributing station decides the banding",
+  "wreck_clearance.js":
+    "Charted point-hazard extent: that a wreck keeps a route off it in BOTH the exact check and the search raster, that a charted sounding over it is honoured and tide-corrected, and that the vessel's buffer floor holds",
+  "end_action.js":
+    "That the cards name where the run leaves the vessel: an end-of-plan return-to-home shows from the START of a Go-To, transit or survey; is not promised when the chain cannot fire; and re-arms for a run commanded while already under way",
+  "nogo_readout.js":
+    "The keep-out readout's state: that it stops reporting reading once the extract has landed, and that clear water and no chart at all - both zero keep-outs - never read as the same thing",
+  "pattern_move_grip.js":
+    "That the survey pattern's whole-move grip is both REACHABLE by hit test and VISIBLE - drawn above the vessel marker that used to cover it completely",
+  "survey_card.js":
+    "That a committed survey plan is still described rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines and self-validating on parallelism",
+  "speed_recalc.js":
+    "That the plan speed is an INPUT: changing it recalculates turn geometry, durations and per-line times, and a plan already committed is re-checked against the radius the new speed implies",
+  "live_speed.py":
+    "That a commanded speed change REACHES the vessel rather than only the readout: under way, speed over ground follows the command in both directions. Drives a real console, because accepting the command proves nothing",
+  "ais_range.py":
+    "That the traffic range filters a wider collected subscription as a true range circle, is clamped to what was collected, is never applied on an enclosed lake, reads in nautical miles, and that an empty card distinguishes nothing-tracked from nothing-in-range",
+  "ui_split.js":
+    "That every selector the two-window bridge names still resolves, that the vessel-status card renders on the chart window only, and that a card cannot grow past the screen in either direction",
+  "stored_settings.js":
+    "That every stored operator setting goes through ONE guarded pair of storage helpers, so a browser with site data blocked cannot take out start-up, and that toggles saved by an older build still read",
+  "panel_drag.js":
+    "That ONE drag mechanism serves every floating pop-out, that none forgets where it was put, and that a restored position is CLAMPED into the chart - a position saved on a larger window used to put a card, and its own reopen control, off the screen entirely",
+  "ais_table.js":
+    "That the traffic list is PATCHED in place rather than rebuilt each poll, so an update cannot reset the card's scroll position while it is being read, nor drop a text selection part way through a copy",
+  "http_contract.py":
+    "The two OPPOSITE handler contracts - a POST handler RETURNS (code, obj) while a GET handler commits its own response - across both servers, plus the check no client-side assertion can make: that the server logged no exception while serving them",
+  "tide_note.py":
+    "That the tide card reports ONE cause ONCE: two failed requests to the same upstream must not print the same failure twice, and must still say BOTH series were lost rather than only the observed one",
+  "docs_valid.py":
+    "That the generated documents are valid packages a reader will actually open, and that their code blocks reached the page - validity alone would not notice content silently dropped",
+};
+
+function harnessRows() {
+  const dir = path.join(__dirname, "..", "tests");
+  return fs.readdirSync(dir).filter(f => /\.(js|py)$/.test(f)).sort().map(f => [
+    "`" + (f.endsWith(".js") ? "node" : "python") + " tests/" + f + "`",
+    GUARDS[f] || "(undocumented — add an entry to GUARDS in tools/build_tech_manual.js)",
+  ]);
+}
 
 // ---- content ---------------------------------------------------------------
 const c = [];
@@ -278,7 +338,8 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
   ["`NOGO_RADIUS_M`", "5000 m", "Operating-area half-extent; re-extract after 0.6 × travel"],
   ["`NOGO_MIN_DEPTH_M`", "vessel-derived", "Draft + under-keel clearance; water shallower is nogo"],
   ["`NOGO_BUFFER_M`", "vessel-derived", "Shared keep-clear buffer, operator-adjustable"],
-  ["AIS display radius", "50 km (5–500)", "Also scales the upstream subscription; the two must move together"],
+  ["`AIS_SHOW_RADIUS_KM`", "50 km", "DISPLAY filter only — a true range circle from the vessel, clamped to the collect radius. The card reads and sets it in NAUTICAL MILES; the wire and the command-line flags stay metric"],
+  ["`AIS_COLLECT_RADIUS_KM`", "150 km", "What the upstream subscription actually covers. Collect WIDE, filter NARROW — the display radius moves freely inside this and never re-subscribes"],
   ["Telemetry rate", "4 Hz", "Engine tick and SSE push"],
   ["Turn arc sampling", "~3 m", "Waypoint spacing along a generated survey turn"],
   ["ROC link thresholds", "5 s / 15 s", "Fresh → stale → lost for a live-fed ROC"],
@@ -287,23 +348,9 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
 // 13 ------------------------------------------------------------------------
 c.push(H1("13  Development practice and verification"));
 c.push(H2("13.1  Regression harnesses"));
-c.push(P("Fourteen regression suites guard behaviour that has bitten repeatedly. All run with no server and no third-party dependencies, and the pre-commit hook runs every one of them whenever a source they cover is staged."));
-c.push(TBL(["Harness", "Guards"], [
-  ["`node tests/buoy_lane.js`", "The Rule 9 channel lane: which side of a channel the vessel rides, marked and unmarked, both directions, and that a lone buoy is not treated as a wall"],
-  ["`node tests/turn_geometry.js`", "Survey turns: shape selection, the minimum radius held along the WHOLE path, exit alignment, outboard excursion, and nogo refusal paired with its clear-water twin"],
-  ["`python tests/roc_tracks.py`", "ROC arrival geometry, the staged/active HOME gate, moving HOME, NMEA validation, and that every vessel-derived default tracks the vessel"],
-  ["`python tests/completion_modes.py`", "The operator's end-of-plan SETTING versus the completion of the run in progress: that a behaviour can never change the setting, and that a plan run adopts it. Drives a real console over the API."],
-  ["`node tests/water_trust.js`", "That a live water level from a distant tide station is flagged as such rather than shown as if it were local, and that the nearest contributing station decides the banding."],
-  ["`node tests/wreck_clearance.js`", "Charted point-hazard extent: that a wreck keeps a route off it in BOTH the exact check and the search raster, that a charted sounding over it is honoured and tide-corrected, that point-sized marks are unaffected, and that the vessel's buffer floor holds"],
-  ["`node tests/end_action.js`", "That the cards name where the run leaves the vessel: an end-of-plan return-to-home shows on a Go-To, a transit and a survey alike from the START of the run; that it is not promised when the chain cannot fire; and that the one-shot re-arms for a run commanded while the vessel is already under way"],
-  ["`node tests/nogo_readout.js`", "The keep-out readout's state: that it stops reporting “reading” once the extract has landed (driven end to end through the real refresh path, because the fault was statement ORDER, not wording), and that “clear water” and “no chart at all” — both of which are zero keep-outs — never read as the same thing"],
-  ["`node tests/pattern_move_grip.js`", "That the survey pattern’s whole-move grip is both REACHABLE (hit test, corners still winning ties so a small pattern stays reshapeable) and VISIBLE — it is drawn last, above the vessel marker that used to cover it completely, since the vessel sits at the centre of a survey box more often than not"],
-  ["`node tests/survey_card.js`", "That a committed survey plan is still described on the planning card rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines - self-validating on parallelism, so a non-parallel search pattern is not given a meaningless spacing"],
-  ["`node tests/speed_recalc.js`", "That the plan speed is treated as an INPUT: changing it recalculates the turn geometry, durations and per-line times, and a plan already committed - whose turn waypoints cannot be rebuilt - is re-checked against the minimum turn radius the new speed implies"],
-  ["`python tests/live_speed.py`", "That a commanded speed change REACHES the vessel rather than only the readout: with the vessel under way, speed over ground follows the command in both directions. Drives a real console and lets the vessel accelerate, because accepting the command proves nothing"],
-  ["`python tests/ais_range.py`", "That the traffic display range filters a wider collected subscription as a true range circle rather than a bounding box, is clamped to what was collected, and is never applied on an enclosed lake where the whole lake is shown. Runs against a stub provider at known ranges"],
-  ["`node tests/ui_split.js`", "That every selector the two-window bridge names still resolves against the page - a stale one fails silently, with a panel simply ceasing to mirror - and that the vessel-status card renders on the chart window only, neither mirrored into the controls window nor stripped from the chart"],
-], [2700, 6660]));
+c.push(P("The regression suites guard behaviour that has bitten repeatedly. None needs a third-party dependency; several stand up a REAL console and drive it over the API, because accepting a command proves nothing about whether it reached the vessel. The pre-commit hook runs every one of them whenever a source they cover is staged."));
+c.push(P("THE LIST BELOW IS READ FROM `tests/` AT BUILD TIME. It used to be a hand-written table introduced by the word “Fourteen”, and by the time anyone counted there were twenty. The descriptions are still written by hand — “what this guards” is prose no parser can invent — but the list and the count come from the filesystem, so a suite added tomorrow appears here without anyone remembering to add it."));
+c.push(TBL(["Harness", "Guards"], harnessRows(), [2700, 6660]));
 c.push(SP());
 c.push(P("Enable the hook once per clone with `git config core.hooksPath .githooks`."));
 c.push(H2("13.2  How these harnesses work, and how they break"));

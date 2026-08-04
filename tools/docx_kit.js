@@ -91,6 +91,19 @@ const TITLE = (t) => new Paragraph({ text: t, heading: HeadingLevel.TITLE, spaci
 // Assemble + write. `name` is the docx basename; the path is script-relative so the
 // generators can be run from anywhere.
 function write(name, children) {
+  // FLATTEN FIRST. CODE() returns an ARRAY of paragraphs (one per line) while every other
+  // helper returns a single object, so `c.push(CODE([...]))` pushed the array itself as ONE
+  // child. The docx serializer emitted it as the literal element `<0/>` - an element name
+  // cannot begin with a digit, so word/document.xml was NOT WELL-FORMED and Word refused to
+  // open the file at all. Worse than the validity error: the array's CONTENTS were dropped,
+  // so every code block in every document was missing - including the Quick Start's "how to
+  // run it" commands, which are most of the reason that document exists.
+  //
+  // EVERY GENERATED DOCUMENT CARRIED THIS FROM THE DAY THE FIRST ONE WAS BUILT (2a28a59,
+  // 2026-08-01) until 2026-08-04, across eighteen commits. Nobody opened one until Andy
+  // tried to. Flattening HERE rather than spreading at the six call sites fixes them all at
+  // once and makes the next helper that returns a list safe by construction.
+  children = children.flat(Infinity).filter(x => x != null);
   const doc = new Document({
     numbering: {
       config: [{
