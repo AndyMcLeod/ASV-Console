@@ -200,6 +200,34 @@ try:
           "shown=%s collected=%s at a 5 km setting"
           % (dl["area"].get("shown"), dl["area"].get("collected")))
 
+    # 5b-5d. AN EMPTY CARD MUST SAY WHICH KIND OF EMPTY. Squeeze the radius below every
+    # contact: nothing is shown, but the area still knows how far off the nearest one is.
+    # THE REPORTED CASE (Andy, at Lewes): aisstream was healthy and tracking 94 vessels, the
+    # closest 44 nm away, and the card said "no vessels in 27 nm yet" - which reads like a
+    # dead feed when the honest answer is "widen the range". The client CANNOT work this out:
+    # the range filter runs here, so the browser never sees what was excluded.
+    api(port, "/api/ais/radius", {"km": 1})
+    d0 = api(port, sea)
+    check("5b. with every contact filtered out, the area still reports the NEAREST",
+          d0["area"]["shown"] == 0 and d0["area"]["collected"] > 0
+          and abs(d0["area"].get("nearest_km", -1) - 5.0) < 0.5,
+          json.dumps(d0["area"]))
+
+    # It is the nearest COLLECTED, not the nearest SHOWN - those differ precisely when the
+    # card is empty, which is the only time this field is read.
+    api(port, "/api/ais/radius", {"km": 30})
+    d1 = api(port, sea)
+    check("5c. ... and it stays the nearest COLLECTED once some are shown again",
+          d1["area"]["shown"] > 0 and abs(d1["area"].get("nearest_km", -1) - 5.0) < 0.5,
+          "shown=%s nearest_km=%s" % (d1["area"]["shown"], d1["area"].get("nearest_km")))
+
+    # On a lake nothing is filtered, so there is no "excluded" set to describe. Claiming a
+    # nearest there would invite the card to offer a range change that does nothing.
+    dlake = api(port, "/api/ais?center=%.5f,%.5f" % ERIE)
+    check("5d. a lake reports no nearest — there is no filter to widen",
+          "nearest_km" not in dlake["area"],
+          "lake area keys: %s" % sorted(dlake["area"].keys()))
+
     # 6b-6c. THE SERVER DOES NOT CHOOSE A DISPLAY UNIT. `name` used to be a real place name
     # on a lake and the string "%g km" at sea - one field meaning two things, and the second
     # meaning put the CLIENT's unit in the server. The client reads in nautical miles and
@@ -285,6 +313,22 @@ check("8e. the value is CONVERTED on the way out, and back again on the way in",
       posts_converted is not None and echo_converted is not None,
       "posts kmFromNm(...)=%s, echoes nmRound(show_km)=%s"
       % (bool(posts_converted), bool(echo_converted)))
+
+# 8f-8g. The client half of the same idea: an empty card must distinguish "the feed has
+# nothing anywhere" from "there is traffic, just further out than your range". Verified live
+# in a browser, where the four states read:
+#   none within 27 nm · nearest 44 nm of 94 tracked      (the Lewes case)
+#   no vessels in 27 nm yet                              (nothing tracked at all)
+#   no vessels in Lake Erie yet                          (a lake: no filter to widen)
+#   1 vessel · 27 nm · nearest 3.0 nm                    (unchanged with traffic in range)
+check("8f. the EMPTY card names the nearest tracked contact when there is one",
+      re.search(r'none within \$\{aisAreaLabel\(\)\}[^`]*nearest \$\{nmRound\(near\)\} nm', HTML)
+      is not None,
+      "'none within 27 nm' alone reads like a dead feed")
+
+check("8g. ... and still says plainly when NOTHING is tracked, which is a different fault",
+      re.search(r'no vessels in \$\{aisAreaLabel\(\)\} yet', HTML) is not None,
+      "a quiet feed and a narrow range are not the same problem")
 
 check("9. the console logged NO exception while serving those requests",
       not tb,

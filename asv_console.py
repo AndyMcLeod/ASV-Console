@@ -3094,17 +3094,27 @@ class Handler(BaseHTTPRequestHandler):
             area["collected"] = len(vs)
             if area.get("mode") == "sea" and AIS_SHOW_RADIUS_KM > 0:
                 kept = []
+                nearest = None
                 for v in vs:
                     try:
                         d_km = _haversine_km(lat, lon, float(v["lat"]), float(v["lon"]))
                     except (KeyError, TypeError, ValueError):
                         continue                  # no usable position: not placeable, not shown
+                    # The nearest of everything COLLECTED, not of what survives the filter.
+                    # It is what makes an empty card actionable: "none within 27 nm" reads
+                    # like a dead feed, while "nearest 44 nm" says widen the range. Measured
+                    # at Lewes, where aisstream has no receiver inside 44 nm - the feed was
+                    # healthy and the card still looked broken.
+                    if nearest is None or d_km < nearest:
+                        nearest = d_km
                     if d_km <= AIS_SHOW_RADIUS_KM:
                         v["range_m"] = round(d_km * 1000.0)
                         kept.append(v)
                 vs = kept
                 data["vessels"] = vs
                 data["count"] = len(vs)
+                if nearest is not None:
+                    area["nearest_km"] = round(nearest, 1)
             area["shown"] = len(vs)
             data["area"] = area
             self._send(200, json.dumps(data), "application/json")

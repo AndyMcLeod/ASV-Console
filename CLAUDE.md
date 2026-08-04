@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**NINETEEN REGRESSION SUITES (271 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**NINETEEN REGRESSION SUITES (276 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -59,7 +59,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
-| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; reads in nm (15) |
+| `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap (17) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
@@ -96,6 +96,27 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **AIS AT LEWES: "many vessels west, none in Delaware Bay" — THE CONFIG WAS FINE.** Andy
+  asked for the aisstream configuration to be checked. **It is correct**, verified end to
+  end: the subscription box is built as `[[lat_min,lon_min],[lat_max,lon_max]]` (what
+  aisstream wants) and computes to `-77.24,37.17,-73.09,40.41` — covering the bay AND the
+  Chesapeake; `_ingest` reads MetaData lat/lon with a body fallback, no swap or sign error;
+  `Registry.snapshot`'s bbox test is right. **Then measured with his key against that exact
+  box: 94 vessels, 101 reports in 90 s, no errors — and the NEAREST of all 94 was 81.6 km
+  (44 nm).** Sector split W 59 / N 15 / NW 14 / NE 4 / SW 2, matching his report exactly;
+  only 3 in the bay at all, 90–102 km up near the C&D canal. **aisstream simply has no
+  receiver inside ~44 nm of Lewes** — not even the Cape May–Lewes ferry. Volunteer network,
+  so coverage is where the volunteers are. **`--source` takes a COMMA-SEPARATED list and
+  `nmea` already exists**, so `--source aisstream,nmea` + a local receiver is the answer if
+  local traffic ever matters.
+  **WHAT THAT EXPOSED, and what was fixed:** the card said `no vessels in 27 nm yet`, which
+  **reads like a dead feed when the feed is healthy**. The client CANNOT tell the difference —
+  the range filter runs on the SERVER, so the browser never sees what was excluded. The area
+  block now carries **`nearest_km`** (nearest COLLECTED, from the loop that already measures
+  every vessel — free), and the empty card reads `none within 27 nm · nearest 44 nm of 94
+  tracked`. Still says `no vessels in … yet` when nothing is tracked anywhere, and a LAKE
+  reports no nearest at all — there is no filter to widen, so offering one would be a lie.
+  `ais_range.py` 15 → 20, **3 mutations verified**. Ops manual updated + rebuilt.
 - **THE TIDE NOTE SAID ONE CAUSE TWICE** (Andy, live, on the ENV card): `no observed data
   (fetch failed: HTTP Error 502: Bad Gateway) · fetch failed: HTTP Error 502: Bad Gateway`.
   **The 502 was NOT ours** — every request shape the console sends was replayed against NOAA

@@ -3264,7 +3264,19 @@ function renderAisTable(){
   if(aisState==="offline")         status = dot("#d9534f")+"AIS service offline"+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
   else if(aisState==="error")      status = dot("#d9534f")+"AIS feed error"+srcTxt+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
   else if(aisState==="connecting") status = dot("#e8a13f")+`connecting to AIS${srcTxt} &middot; <span style="color:var(--ink-faint)">warming up${aisArea?" over "+aisAreaLabel():""}...</span>`;
-  else if(aisState==="empty" || !rows.length) status = dot("#e8a13f")+`connected${srcTxt} &middot; <span style="color:var(--ink-faint)">no vessels in ${aisAreaLabel()} yet</span>`;
+  // AN EMPTY CARD MUST SAY WHICH KIND OF EMPTY. "no vessels in 27 nm yet" reads like a dead
+  // feed, and at Lewes it was wrong in the way that matters: aisstream was healthy and
+  // tracking 94 contacts, the closest of them 44 nm off, so the honest answer was "widen the
+  // range" rather than "nothing is working". `nearest_km` is the nearest COLLECTED contact,
+  // which the client cannot work out for itself - the range filter runs on the server, so
+  // the browser never sees the vessels that were excluded.
+  else if(aisState==="empty" || !rows.length){
+    const col = aisArea && aisArea.collected, near = aisArea && aisArea.nearest_km;
+    const inner = (col > 0 && near != null)
+      ? `none within ${aisAreaLabel()} &middot; nearest ${nmRound(near)} nm of ${col} tracked`
+      : `no vessels in ${aisAreaLabel()} yet`;
+    status = dot("#e8a13f")+`connected${srcTxt} &middot; <span style="color:var(--ink-faint)">${inner}</span>`;
+  }
   else status = dot("#3fbf6b")+`${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}`+srcTxt+(nearest?` &middot; nearest ${nearest}`:"");
   // PATCHED IN PLACE, NOT REBUILT. This used to assign el.innerHTML every poll, so every
   // 8 s the entire body was destroyed and re-created. The list SCROLLS (max-height:46vh),
