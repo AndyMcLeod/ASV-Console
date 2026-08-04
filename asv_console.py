@@ -1268,14 +1268,36 @@ def fetch_tide_series(lat, lon, timeout=15.0):
            "now": time.strftime("%Y-%m-%d %H:%M", time.gmtime(now)), "now_epoch": int(now),
            "past_h": TIDE_PAST_H, "pred_h": TIDE_PRED_H,
            "observed": past.get("series", []), "predicted": pred.get("series", [])}
+    note = tide_note(past, pred)
+    if note:
+        res["note"] = note
+    return res
+
+
+def tide_note(past, pred):
+    """What the tide card should say about two series that may have failed, or None.
+
+    ONE CAUSE, SAID ONCE. The observed and predicted series are two independent calls to the
+    SAME upstream, so an outage there fails both with an identical message. Joining them
+    printed the sentence twice:
+
+        no observed data (fetch failed: HTTP Error 502: Bad Gateway) · fetch failed: HTTP
+        Error 502: Bad Gateway
+
+    The repetition tells the operator nothing extra, and it HIDES the part that matters -
+    that BOTH series are gone, not just the observed one. Reported live (Andy, 2026-08-04);
+    the cause was a transient NOAA CO-OPS 502, with every request shape verified good.
+
+    Split out of fetch_tide so it can be exercised without the network."""
+    pnote, dnote = past.get("note"), pred.get("note")
+    if not past.get("ok") and not pred.get("ok") and pnote and pnote == dnote:
+        return "no observed data and no predictions (%s)" % pnote
     notes = []
     if not past.get("ok"):
-        notes.append("no observed data (%s)" % (past.get("note") or "?"))
+        notes.append("no observed data (%s)" % (pnote or "?"))
     if not pred.get("ok"):
-        notes.append(pred.get("note") or "no predictions")
-    if notes:
-        res["note"] = " · ".join(notes)
-    return res
+        notes.append(dnote or "no predictions")
+    return " · ".join(notes) if notes else None
 
 
 def _fetch_station_level(station_id, datum, timeout=15.0):

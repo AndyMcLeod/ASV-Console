@@ -32,6 +32,8 @@
 #                           throws, and toggles saved as legacy "1"/"0" still read.
 #   tests/ais_table.js      the AIS traffic list is PATCHED, never rebuilt - so a poll
 #                           cannot reset the scroll position or drop a selection.
+#   tests/tide_note.py      the tide card names ONE cause ONCE - two calls to the same
+#                           upstream must not print the same failure twice.
 #   tests/http_contract.py  the two OPPOSITE handler contracts: POST returns (code, obj),
 #                           GET commits its own response. Every request gets exactly one
 #                           answer and the server survives it. Routes parsed from source.
@@ -226,6 +228,15 @@ if command -v python >/dev/null 2>&1; then
     echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
     fail=1
   fi
+  echo "pre-commit: tide note regression test..."
+  if ! python tests/tide_note.py; then
+    echo ""
+    echo "pre-commit: tide-note test FAILED."
+    echo "  The tide card is repeating one upstream failure as two sentences again,"
+    echo "  or has stopped naming which series were lost (tide_note in asv_console.py)."
+    fail=1
+  fi
+
   echo "pre-commit: HTTP contract regression test..."
   if ! python tests/http_contract.py; then
     echo ""

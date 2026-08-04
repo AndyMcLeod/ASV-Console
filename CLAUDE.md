@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**EIGHTEEN REGRESSION SUITES (263 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**NINETEEN REGRESSION SUITES (271 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). Run them after any
 change to what they cover, and treat "harness crashed" as loudly as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
@@ -65,6 +65,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
+| `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
@@ -95,6 +96,29 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   promising since `3080e6a` that the console "remembers your card positions". Fixing the
   mechanism fixed the claim. New suite `tests/panel_drag.js` (11), **9 mutations verified**.
   Ops manual updated + rebuilt (the only docx that changed).
+- **THE TIDE NOTE SAID ONE CAUSE TWICE** (Andy, live, on the ENV card): `no observed data
+  (fetch failed: HTTP Error 502: Bad Gateway) · fetch failed: HTTP Error 502: Bad Gateway`.
+  **The 502 was NOT ours** — every request shape the console sends was replayed against NOAA
+  CO-OPS by hand and all four answered **200**, including the exact Lewes calls; a transient
+  outage at their end. The console already degraded correctly (never raises, shows a note,
+  and `drawTide()`'s success path resets both the text AND the colour, so it self-clears on
+  the next good fetch — checked). **What was wrong was only what the operator had to read.**
+  Observed and predicted are two independent calls to the SAME upstream, so one outage fails
+  both identically and the note joined them verbatim. The repetition added nothing and
+  **HID the fact that BOTH series were gone**, not just the observed one. Now
+  `no observed data and no predictions (…)` — one sentence naming both losses and the single
+  cause; two DIFFERENT failures are still reported separately. Split out as a pure
+  `tide_note(past, pred)` so it runs with no network. New suite `tests/tide_note.py` (8),
+  **5 mutations verified**.
+  **A MUTATION-TESTING TRAP LEARNT HERE, and it applies to every Python suite:
+  `__pycache__` can serve a STALE `.pyc`.** Rewriting `asv_console.py` repeatedly in a loop
+  puts several versions inside the mtime granularity Python uses to validate its cache, so a
+  run imports the PREVIOUS mutation's bytecode. Nothing crashes and nothing looks wrong —
+  one mutation was graded against the wrong code and reported check 2 instead of check 1,
+  and the same mechanism could report a live mutation as CAUGHT when the test never ran
+  against it. **Set `PYTHONDONTWRITEBYTECODE=1` (or delete `__pycache__`) when mutating a
+  Python source.** Confirmed by re-running with the cache disabled: the numbers then matched
+  the isolated runs exactly. The JS suites are immune — Node has no equivalent on-disk cache.
 - **THE AIS TRAFFIC LIST IS PATCHED, NOT REBUILT** (Andy: "blanks and rewrites every
   cycle"). `renderAisTable()` assigned `el.innerHTML` on every poll, so **every 8 s the whole
   body was destroyed and re-created**. Three costs at once, and the first is the one that
