@@ -24,7 +24,7 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff 2026-08-02, fresh context window)
+## ⇒ START HERE (handoff 2026-08-04 — written for "ASV console refinement 1")
 
 **Repo:** local git only (no GitHub remote), tree clean. `git log --oneline -5` for the tip —
 **this handoff no longer quotes a HEAD hash, because it is now refreshed IN the work commit
@@ -73,8 +73,18 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**THIS SESSION ("ASV console refinement", 2026-08-02) — a POLISH pass, Andy's choice of
-scope: no new features; tighten, delete special cases, verify by pixels, refresh docs.**
+**THE SESSION JUST FINISHED ("ASV console refinement", 2026-08-02 → 08-04) — SEVENTEEN
+commits.** Andy's scope was a POLISH pass: no new features; tighten, delete special cases,
+verify by pixels, refresh docs. It ran well past that, because five faults he reported live
+and four audits he asked for turned up real defects. **Read the first six entries below
+before touching anything** — they are the ones a fresh context is most likely to undo.
+
+**IF YOU READ ONLY ONE THING:** four of this session's bugs were things that LOOKED verified.
+A green suite hid a server crashing on every request; a byte-identical hash hid four Word
+documents that had never opened; a passing check compared two responses that were identical
+because the registry was empty; another asserted a field was NAMED for km while it held nm.
+**Verify against something entitled to refuse you** — a reader, a real Word, the server's own
+stderr — not against the previous output.
 - **the retired keep-right is deleted** — 595 lines, 10 % of `static/asv.html`.
   `keepRight`, `channelEndExtend`, `gateProject`, the colour system (`buoyageDir`,
   `buoyLaneAt`, `crossToLine`) and the write-only `lastBuoyage` had been left in place
@@ -258,8 +268,10 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   result is unpacked into two names, and no GET handler returns a tuple nobody sends (the
   mirror bug); **reachability** — the function cannot fall off the end and return `None`
   implicitly; **live** — all 26 endpoints plus 11 ROC ops POSTed against a real console, all
-  answered, server log clean. Kept as `tests/post_contract.py` (10), which **parses the
-  endpoint list out of the source**, so a new POST route is covered the day it is added.
+  answered, server log clean. Kept as `tests/post_contract.py` (10) — **renamed to
+  `tests/http_contract.py` in the very next commit** when the GET side joined it, so that is
+  the file on disk — which **parses the endpoint list out of the source**, so a new POST
+  route is covered the day it is added.
   **Checks 7 and 10 do not subsume each other:** a raise BEFORE the response leaves the
   client with nothing (7 sees it); a raise AFTER `_send` has already answered — the bug that
   shipped — is invisible to every client-side check and only the server log shows it (10).
@@ -381,7 +393,7 @@ scope: no new features; tighten, delete special cases, verify by pixels, refresh
   shape as the panels and the suite counts: **a hand-maintained list beside a directory
   that already answers the question.**
 
-**A TEST-DESIGN LESSON FROM THIS SESSION, and it applies to all sixteen suites.** The first
+**A TEST-DESIGN LESSON FROM THIS SESSION, and it applies to all twenty suites.** The first
 `stored_settings.js` called the helpers directly. Stripping `lsGet`'s `try`/`catch` — the
 exact fault check 4 exists for — made check **3** throw and killed the process before check 4
 ran, so **no `FAIL` line was printed at all and the mutation runner scored it as SURVIVED**.
@@ -528,11 +540,42 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 "is the code here".
 
 **OPEN / NEXT:**
-- **THE DOC BURDEN JUST QUADRUPLED** (`3080e6a`). A user-facing change now has FOUR generated
-  documents plus three READMEs that can go stale, not one. The **operations manual is the
-  operator-facing source of truth** — a new control, a changed refusal, a new readout state
-  or a new safety behaviour belongs in it, and `node build_docs.js` must be run in the same
-  commit. The quick start is deliberately thin: **point into the ops manual, don't grow it.**
+- **BLOCKED, WAITING ON ANDY — MARINETRAFFIC AIS.** He is negotiating API access under
+  `andy.mcleod@unh.edu` and said **"hold this for now"**. Nothing has been built. When it
+  lands, two things are needed before a line is written: **(1) which service is enabled** on
+  the account, and **(2) one sample response with the key REDACTED** — the response shape
+  differs per service and a wrong guess costs real metered credits to discover.
+  **There is no password**: MarineTraffic authenticates with an API KEY in the URL. Supply it
+  as `$MARINETRAFFIC_KEY` (the `$AISSTREAM_KEY` pattern) or a gitignored key file — never in
+  chat. **Design note already settled:** aisstream PUSHES over a websocket and costs nothing
+  per message; MarineTraffic is PULL and metered, so the source must poll on a minutes-scale
+  interval. The architecture already allows that — the service holds a registry and the
+  console reads *that*, so the upstream poll rate is independent of the card's 8 s refresh.
+  `--source` is comma-separated, so it can run **alongside** aisstream.
+- **WHY he is switching, measured, don't re-litigate:** aisstream has **no receiver within
+  44 nm of Lewes**. Ran 90 s against the real subscription box with his key: 94 vessels, 101
+  reports, no errors — and the nearest of all 94 was 81.6 km. Sector split W 59 / N 15 /
+  NW 14. Not even the Cape May–Lewes ferry is in the feed. **The configuration is correct**;
+  it is a volunteer-receiver coverage hole. A local receiver via `--source aisstream,nmea` is
+  the only thing that will show local traffic.
+- **ABORTED BY ANDY, with his decisions recorded — a GLOBAL km↔nm units selector.** He asked
+  whether one was possible, chose the scope, then said **"abort this change"**. Do not start
+  it again unasked. If it returns: ~33 `km` + ~33 `m` display sites, 11 already nm, 31 speeds
+  already kn, and **no shared distance formatter exists** (only `fmtNm`, AIS-only). His two
+  decisions were **long distances only** — spacing, buffer, draft and DEPTHS stay metric,
+  because 25 m spacing is 0.0135 nm and unusable — and **one global toggle on the top status
+  bar**. Canonical stays METRES everywhere; it is a display layer, like the feet on chart tiles.
+- **THE DOC BURDEN QUADRUPLED** (`3080e6a`) **AND THE DOCS WERE BROKEN THE WHOLE TIME**
+  (`15cf36a`). A user-facing change has FOUR generated documents plus three READMEs, and the
+  **operations manual is the operator-facing source of truth** — a new control, a changed
+  refusal, a new readout state or a new safety behaviour belongs in it, and
+  `cd tools && node build_docs.js` must run in the SAME commit. The quick start is
+  deliberately thin: **point into the ops manual, don't grow it.**
+  **`tests/docs_valid.py` now proves the output is openable** — it did not exist while all
+  four documents were malformed for three days. When you rebuild, only commit a docx whose
+  `word/document.xml` actually CHANGED; the others differ by zip timestamp alone and are
+  noise in the diff. Compare with:
+  `python -c "import zipfile,hashlib;print(hashlib.sha256(zipfile.ZipFile(P).read('word/document.xml')).hexdigest())"`
 - **`rearmRthChain()` is a BEHAVIOUR change, not just a display one** (`8669230`). A run
   commanded while the boat is already under way now gets its own end-of-plan RTH, where
   before it silently got none. Correct, and Andy has run it — but if an RTH ever looks
@@ -545,6 +588,18 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not catch follow overshoot.
 - Residual, by design: chart datum is the LOW-water reference, so a real tide BELOW datum
   leaves charted depths optimistic. The manual override is the answer.
+- **RESIDUAL, DELIBERATE** (`2aef779`): the five pop-outs that start HIDDEN are clamped by the
+  0×0 sliver rule on reveal rather than their real size, because a hidden element measures
+  nothing. Header stays on the chart and the card is draggable, so it is recoverable — but it
+  is not the full fix the vessel card got. Closing it properly means a reveal hook the six
+  show sites all pass through.
+- **MUTATION-TESTING GOTCHAS, all three cost a false result this session.** Set
+  **`PYTHONDONTWRITEBYTECODE=1`** when mutating a Python source — rapid rewrites fall inside
+  the mtime granularity and a run imports the PREVIOUS mutation's `.pyc`. **`asv_console.py`
+  is LF, `ais_service.py` is CRLF** — a multi-line anchor written with `\n` matches one and
+  not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
+  outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
+  only parse stdout.
 
 ## LINE-TIMING: sequence-keyed activation (2026-07-27)
 
