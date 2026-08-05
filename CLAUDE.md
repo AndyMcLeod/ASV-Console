@@ -663,6 +663,11 @@ live defects found and fixed on the way: the AIS-radius tuple break's three
 dropped-connection cousins, Set-Home's dead-boat fix, and the enc/chartinfo twin's
 weak-check findings). The thread that began with "does anything prove E-STOP stops the
 boat" ends with 29 suites / 405 assertions and no route whose failure mode is untested.
+**The development guide now carries the campaign** (added 2026-08-05, after the
+closing commit): defect shapes **6.5 "the unguarded branch before the safety net"**
+(the dropped-connection family + its placement rule) and **6.6 "the masked branch"**
+(--no-log; a masked branch is untested no matter how many suites run past it), and case
+study **8.7 "the coverage campaign"** with the four mutation rules the thread earned.
 
 ## /api/logevent + /api/logs + /api/log UNDER TEST — THE FAMILY'S THIRD MEMBER (2026-08-05)
 
