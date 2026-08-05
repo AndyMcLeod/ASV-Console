@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-EIGHT REGRESSION SUITES (390 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-NINE REGRESSION SUITES (405 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -76,6 +76,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
 | `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
 | `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
+| `python tests/data_routes.py` | vessel switch SAFE gate + energy-gauge flip; the comms password's THREE never-leak paths; tide answers; ROC HTTP error mapping (15, real console, logging ON) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -559,7 +560,8 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   DEDUPLICATED the chartinfo twin: `_bbox_key` + `_bbox_from_query` now serve both
   endpoints, and shared-helper mutations are run against BOTH suites). Still open, all
   lower-consequence data/plumbing routes: `logevent`, `logs`, `vessels`, `comms`,
-  `tide`, `roc` (partially covered via `roc_tracks.py`'s unit tests) — `logevent` +
+  ~~`tide`, `roc`~~ — ALL FOUR remaining surfaces covered in `data_routes.py`
+  2026-08-05; THE COVERAGE THREAD IS COMPLETE (see the section above) — `logevent` +
   `logs` + `log` covered in `log_routes.py` 2026-08-05 (logging ON — the --no-log mask
   was the coverage hole), which also fixed the kwargs-collision defect — `env` +
   `waterlevel` covered in `env_water.py` 2026-08-05, which also fixed the
@@ -627,6 +629,40 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE ROUTE-COVERAGE THREAD IS COMPLETE — vessels/comms/tide/roc (2026-08-05)
+
+The last four surfaces, and with them **every route the estop_chain audit flagged now
+has a behavioural suite watching it**. `tests/data_routes.py` (15 assertions, real
+console, logging ON, 8/8 mutations caught after one weak check was exposed and
+strengthened — table in its docstring).
+
+**What it pins:**
+- **The vessel switch's SAFE gate** (409 while armed — read in code the day the audit
+  began, exercised now for the first time) and the switch itself — where the mutation
+  pass caught ME: the energy-gauge flip alone SURVIVED the respawn-dropped mutation,
+  because `energy_type` reads the module global `POWER_TYPE` at snapshot time and the
+  OLD boat starts reporting "battery" the moment `apply_vessel` runs. The check now
+  demands the boat come up at the NEW vessel's OWN spawn — the one observable a
+  respawn uniquely produces. **Pick the observable only the mechanism under test can
+  produce** — the estop seam lesson, hit again from a new angle.
+- **The comms password's THREE never-leak paths, separately mutated:** not persisted
+  (comms_config.json), not echoed (the GET's config dict), not logged (`_redact` →
+  `***` in the session recording — needs logging ON, the --no-log mask again). Plus
+  the mode whitelist ignoring garbage.
+- **/api/tide answers** whatever CO-OPS' mood — degradation lives in the body, never
+  the response.
+- **The ROC HTTP face's error mapping**, which roc_tracks.py's unit tests never see:
+  unknown op → 400 naming it, malformed args → 400 "bad roc request", feed for a
+  missing id → 404 ok:false, and an add echoes the fresh snapshot.
+
+**COVERAGE ARITHMETIC, FINAL:** the audit found 20 of 33 routes untested on 2026-08-04.
+Every consequential route got its suite (estop_chain, run_link_control, home_spawn,
+energy_chartinfo, enc_extract, env_water, log_routes, data_routes — eight suites, five
+live defects found and fixed on the way: the AIS-radius tuple break's three
+dropped-connection cousins, Set-Home's dead-boat fix, and the enc/chartinfo twin's
+weak-check findings). The thread that began with "does anything prove E-STOP stops the
+boat" ends with 29 suites / 405 assertions and no route whose failure mode is untested.
 
 ## /api/logevent + /api/logs + /api/log UNDER TEST — THE FAMILY'S THIRD MEMBER (2026-08-05)
 
