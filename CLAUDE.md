@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-TWO REGRESSION SUITES (312 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-THREE REGRESSION SUITES (333 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -70,6 +70,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/units_toggle.js` | the km↔nm DIST pill: value converts BOTH ways, short stays metric, one formatter (12) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
+| `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -545,6 +546,13 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 "is the code here".
 
 **OPEN / NEXT:**
+- **ROUTE COVERAGE, remainder.** The estop_chain audit found 20 of 33 routes untested;
+  E-STOP plus the five in `run_link_control.py` (transit/pause/reset/connect/disconnect)
+  are now covered. Still open, all lower-consequence: `sethome`, `spawn`, `energy`,
+  `chartinfo`, `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`, `waterlevel`,
+  `roc` (partially covered via `roc_tracks.py`'s unit tests), `rth` (partially via the
+  end-action chain tests). If continuing, keep the estop_chain rule: pick by CONSEQUENCE,
+  and drive a real console for anything whose failure is an interaction.
 - **BLOCKED, WAITING ON ANDY — MARINETRAFFIC AIS.** He is negotiating API access under
   `andy.mcleod@unh.edu` and said **"hold this for now"**. Nothing has been built. When it
   lands, two things are needed before a line is written: **(1) which service is enabled** on
@@ -605,6 +613,50 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## RUN + LINK CONTROL: FIVE MORE ROUTES UNDER TEST (2026-08-04)
+
+Andy's follow-on to the estop_chain audit: cover transit, pause, reset, connect and
+disconnect — the five most consequential of the routes the audit had measured as
+untested. **`tests/run_link_control.py` (21 assertions, drives a real console, 9/9
+mutations caught, table in its docstring).** ONE console, ONE arc in mission order
+(a boot is the expensive part and the routes genuinely interleave): transit under way →
+pause mid-leg → resume → reset → disconnect → a REAL link to a dead host → sim reconnect.
+
+**The contracts it pins down (read from the code, not assumed):**
+- **PAUSE IS NOT STOP.** SOG to a standstill, `run="paused"`, and the plan AND
+  `wp_index` preserved so start() resumes the SAME leg. The transit's first leg is
+  deliberately ~245 m at high speed with a 30 m approach radius so the boat is on
+  wp_index 1 BEFORE the pause — "resume did not restart the route" asserted at index 0
+  proves nothing, and the injected restart bug was caught only because the index was real.
+- **Reset is the sim power-cycle, and its identity change is load-bearing:** back at the
+  vessel's spawn, SAFE/idle/no plan, energy refilled, home dropped then re-armed on the
+  next fix, and a **NEW `boot_id`** — that is what tells the browser to drop the previous
+  trail, so losing it would splice two boats' lives into one track. On a REAL link reset
+  REFUSES with the honest simulator-only message.
+- **The link lifecycle is a circle with honest edges:** disconnect leaves no zombie
+  (commands refuse "not connected"); a fresh connect ALWAYS comes up SAFE with a new
+  boot_id; a real link to a dead host reports unreachable and refuses commands with the
+  Phase-0 message rather than hanging or faking.
+
+**TWO HARNESS TRAPS, both now written into the suite and both general:**
+- **A bodyless "POST" is a GET.** `urllib.request` with `data=None` sends GET, the
+  command routes only dispatch on POST, and the response still LOOKS healthy — the
+  suite's first run watched a "paused" boat sail on at 13.8 kn. Every command now goes
+  through a `cmd()` wrapper that forces `{}`. If a harness commands a console and the
+  command seems to change nothing, check the VERB before anything else.
+- **After reset, the state carries the DEAD boat's last telemetry** until the fresh
+  SimVcu's first frame lands — sampling straight after the POST read the old boat's
+  position (248 m off spawn) and fuel (249.9 L) and attributed them to the new one.
+  Same family as estop_chain's telemetry lag: wait for the new boot's first fix.
+
+**The best catch was unplanned:** cutting `Engine.pause`'s `link.pause()` call broke the
+pause checks AND check 11 — the real link's honest refusal travels through the same seam
+(`link.pause()` is what reaches `RealVcu._blocked()`), so one cut loses two contracts.
+
+Coverage arithmetic after this suite: of the audit's 20 untested routes, the five most
+consequential are now covered; the remainder (`sethome`, `spawn`, `energy`, `chartinfo`,
+the GET-side data routes…) are lower-consequence and still open — see OPEN / NEXT.
 
 ## THE km↔nm DISTANCE DISPLAY (2026-08-04)
 
