@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-THREE REGRESSION SUITES (333 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-FOUR REGRESSION SUITES (347 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -71,6 +71,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
 | `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
+| `python tests/home_spawn.py` | sethome trusts only the LIVE fix (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point (14, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -547,12 +548,13 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 
 **OPEN / NEXT:**
 - **ROUTE COVERAGE, remainder.** The estop_chain audit found 20 of 33 routes untested;
-  E-STOP plus the five in `run_link_control.py` (transit/pause/reset/connect/disconnect)
-  are now covered. Still open, all lower-consequence: `sethome`, `spawn`, `energy`,
-  `chartinfo`, `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`, `waterlevel`,
-  `roc` (partially covered via `roc_tracks.py`'s unit tests), `rth` (partially via the
-  end-action chain tests). If continuing, keep the estop_chain rule: pick by CONSEQUENCE,
-  and drive a real console for anything whose failure is an interaction.
+  covered since: E-STOP, the five in `run_link_control.py` (transit/pause/reset/connect/
+  disconnect), and `sethome` + `spawn` in `home_spawn.py` — which also drives `rth`'s
+  happy path (closes on home) for the first time. Still open, all lower-consequence:
+  `energy`, `chartinfo`, `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`,
+  `waterlevel`, `roc` (partially covered via `roc_tracks.py`'s unit tests). If
+  continuing, keep the estop_chain rule: pick by CONSEQUENCE, and drive a real console
+  for anything whose failure is an interaction.
 - **BLOCKED, WAITING ON ANDY — MARINETRAFFIC AIS.** He is negotiating API access under
   `andy.mcleod@unh.edu` and said **"hold this for now"**. Nothing has been built. When it
   lands, two things are needed before a line is written: **(1) which service is enabled** on
@@ -613,6 +615,48 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## SET-HOME COULD CAPTURE A DEAD BOAT'S FIX — FOUND COVERING sethome/spawn (2026-08-04)
+
+Andy's next two routes. Grounding the contracts before writing a single check found a
+REAL defect of the project's recurring shape (one value trusted without its provenance):
+**`Engine.status` was only ever ASSIGNED when a telemetry frame arrived** (`if telem:` in
+the run loop), so it retained the previous link's last fix forever — and **`set_home` had
+no not-connected guard**. Two live consequences: Set-Home after `/api/disconnect`
+"succeeded" and captured the DEAD boat's position, announcing "Home set to present
+position"; and connecting a REAL link (Phase 0 produces no telemetry at all) after a sim
+session did the same — a home for a real boat, taken from a simulation. **RTH drives to
+home, so a stale home is a destination, not a display blemish.**
+
+**THE FIX, two halves, deliberately both:**
+- `set_home` gains `_require(self._link is not None, "not connected")` — the guard every
+  other command already had. The no-fix guard STAYS behind it for a link that is up but
+  has not fixed yet.
+- `connect()` clears `self.status = {}` — a new link's life starts with NO telemetry.
+  This is the server-side twin of the boot_id rule (the browser drops the old trail; the
+  server now drops the old boat's last frame). Every consumer of `status` benefits, not
+  just Set-Home.
+The halves are INDEPENDENT: the guard catches the disconnected case, the clear catches
+the connected-but-fixless case, and the mutation pass proved neither check covers the
+other's fault (`home_spawn` 9 and 10, each caught alone).
+
+**`tests/home_spawn.py` (14 assertions, real console, 8/8 mutations caught — table in
+its docstring).** The other contracts it pins: **sethome captures the boat's own fix and
+IGNORES the request body** (a decoy posted 0.5° off must be discarded — a home the client
+can plant is a home a stale form field can plant); **HOME IS THE RTH TARGET** — sail out
+~600 m, Return-to-Home closes to <120 m on exactly the home sethome captured, which puts
+`rth`'s happy path under test for the first time; **spawn is reset-with-a-position** —
+numeric + range-validated (a REFUSED spawn power-cycles NOTHING: same boot_id, the
+running RTH hold undisturbed), and an accepted one is a full fresh boot AT the point with
+home re-arming THERE, not at the old home a kilometre away. Spawn on a real link refuses
+with reset's simulator-only message — the same guard covers both doors into the
+power-cycle. Best unplanned catch: planting client coordinates as home failed check 5
+too — the RTH closed on the planted point, so the consequence check sees the lie from
+the other end.
+
+Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No client
+change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
+the server ignores them if anything ever does.
 
 ## RUN + LINK CONTROL: FIVE MORE ROUTES UNDER TEST (2026-08-04)
 

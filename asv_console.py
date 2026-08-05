@@ -2369,6 +2369,13 @@ class Engine:
             self.run = "idle"
             self.wp_index = self.wp_total = 0
             self._misses = 0
+            # ... and with NO telemetry: status was only ever ASSIGNED on a frame, so
+            # the previous link's last fix survived into the new link's life - and a
+            # link that never produces telemetry (RealVcu in Phase 0) served the DEAD
+            # boat's position to anything that read status, Set-Home included. The new
+            # boot_id already tells the browser to drop the old trail; this is the same
+            # rule server-side.
+            self.status = {}
             # new link session = new identity (a Reset reconnects, so the browser
             # sees the id change and drops the previous trail)
             self.boot_id = "%d-%d" % (os.getpid(), int(time.time() * 1000))
@@ -2585,6 +2592,14 @@ class Engine:
 
     def set_home(self):
         with self._lock:
+            # Both guards are load-bearing and they catch DIFFERENT lies. Without the
+            # link check, Set-Home after a disconnect "succeeded" - reading the DEAD
+            # boat's last fix out of self.status and reporting "Home set to present
+            # position" about a boat that no longer existed; RTH would then aim at it.
+            # The fix guard stays for a link that is up but has not fixed yet (a real
+            # link in Phase 0 produces no telemetry at all; see connect(), which now
+            # clears self.status so the previous boat's fix cannot stand in).
+            self._require(self._link is not None, "not connected")
             st = self.status
             if st.get("lat_deg") is None:
                 raise VcuProtocolError("no position fix to set home")

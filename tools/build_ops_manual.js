@@ -207,7 +207,7 @@ c.push(P("Station-keeps at the present position. The immediate answer to “stop
 c.push(H2("8.4  Return-to-Home"));
 c.push(P("Drives to HOME on a routed path and station-keeps there. HOME is set automatically at the first fix, moved by `Set Home`, or taken from a Remote Operations Center (section 12) — in which case it can be MOVING, and the return chases it."));
 c.push(H2("8.5  Set Home"));
-c.push(P("Makes the present position HOME. Do this at the launch point, before arming, unless HOME is coming from a Remote Operations Center."));
+c.push(P("Makes the present position HOME. Do this at the launch point, before arming, unless HOME is coming from a Remote Operations Center. The position captured is always the vessel's own reported fix, never a value supplied from the screen — and the command refuses when no link is up or the link has not produced a fix yet, because a HOME taken from anything but live telemetry is a place the boat is not: Return-to-Home drives to HOME, so a stale one is not a display blemish but a destination."));
 c.push(H2("8.6  Simulator-only controls"));
 c.push(TBL(["Control", "Does"], [
   ["`Spawn`", "Click the chart to place the vessel there — a clean slate at a point you choose"],
