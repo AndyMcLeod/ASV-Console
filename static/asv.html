@@ -247,6 +247,7 @@
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
     <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
+    <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometres or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in metres, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
 
@@ -701,7 +702,25 @@ let search = {type:"expbox", datum:null, turn:1};   // in-memory only (like pat)
 let searchDrag = false;                        // datum handle being dragged
 // single/multi-segment transit line (draw + follow behaviour) - [{lat,lon}] vertices
 let planKind = "survey";                         // what the last committed PLAN is (survey | search)
-const fmtLenM = m => m==null ? "--" : (m<1000 ? Math.round(m)+" m" : (m/1000).toFixed(2)+" km");
+// THE DISTANCE DISPLAY UNIT - one operator preference, LONG distances only (the DIST pill
+// on the top bar). Canonical is METRES everywhere - vessel files, mission store, wire,
+// every calculation - and the choice is applied at the DISPLAY EDGE, exactly like the feet
+// on chart tiles and the nm on the AIS card. The scope decisions are deliberate and
+// settled, don't widen them: SHORT distances (line spacing, buffers, draft, depths, the
+// LINES table) always read in METRES - 25 m of spacing is 0.0135 nm, unusable - and the
+// AIS card reads nm ALWAYS, because its contact list has never been anything else.
+// fmtDist() is THE formatter for a long distance; a new readout that hand-rolls its own
+// divide-by-1000 kilometre string beside it will not follow the pill
+// (tests/units_toggle.js checks none has crept back in).
+const M_PER_NM = 1852;            // one definition, shared with the AIS card's nm helpers
+const UNITS_KEY = "asv_units_v1";
+let distUnit = (lsGet(UNITS_KEY, {u:"km"}).u === "nm") ? "nm" : "km";
+function fmtDist(m, dp){
+  if(m==null) return "--";
+  if(m < 1000) return Math.round(m)+" m";        // short stays METRIC in both modes
+  const d = dp==null ? 2 : dp;
+  return distUnit==="nm" ? (m/M_PER_NM).toFixed(d)+" nm" : (m/1000).toFixed(d)+" km";
+}
 let rocPlaceKind = null;          // "shore" | "ship" while arming a click-to-place ROC
 let transit = [];                              // in-memory draft; Follow ENC-routes + drives it
 // CAMP-style arbitrary survey-area boundary: lines are clipped to this polygon
@@ -3205,7 +3224,7 @@ function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round
 // all data and maths are metric - and leaves /api/ais/radius, AIS_SHOW_RADIUS_KM and the
 // --ais-radius-km / --ais-collect-km flags exactly as they were. Every field on the wire
 // is named _km, so nothing downstream has to guess.
-const M_PER_NM = 1852;
+// (M_PER_NM is declared up beside fmtDist - one definition serves both display edges.)
 function nmFromKm(km){ return km * 1000 / M_PER_NM; }
 function kmFromNm(nm){ return nm * M_PER_NM / 1000; }
 function nmRound(km){ return Math.round(nmFromKm(km)); }   // whole nm, for a display field
@@ -3723,8 +3742,8 @@ async function punchOut(){
       for(let i=1;i<pts.length;i++) surveyLen += distTo(pts[i-1], pts[i]); }
     const approachLen = (asv && patClip.length) ? distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]) : 0;
     const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;               // m/s
-    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${mission.speed||"survey"} (${(surveyLen/1000).toFixed(2)} km)` : "--";
-    const approachTxt = spd>0 && approachLen>0 ? `${fmtDur(approachLen/spd)} (${(approachLen/1000).toFixed(2)} km)` : "--";
+    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${mission.speed||"survey"} (${fmtDist(surveyLen)})` : "--";
+    const approachTxt = spd>0 && approachLen>0 ? `${fmtDur(approachLen/spd)} (${fmtDist(approachLen)})` : "--";
     $("#v_surveydur").textContent = surveyTxt;                                   // vessel-card readouts
     $("#v_approach").textContent = approachTxt;
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
@@ -4044,9 +4063,9 @@ function recalcCommittedForSpeed(){
   for(let i=1;i<wps.length;i++) runLen += distTo(wps[i-1], wps[i]);
   const approachLen = asv ? distTo({lat:asv.lat,lon:asv.lon}, wps[0]) : 0;
   $("#v_surveydur").textContent = fmtDur(runLen/spd) + " @ " + (mission.speed||"survey")
-    + " (" + (runLen/1000).toFixed(2) + " km)";
+    + " (" + fmtDist(runLen) + ")";
   $("#v_approach").textContent = approachLen > 0
-    ? fmtDur(approachLen/spd) + " (" + (approachLen/1000).toFixed(2) + " km)" : "--";
+    ? fmtDur(approachLen/spd) + " (" + fmtDist(approachLen) + ")" : "--";
   // THE CHECK THAT MATTERS. The committed turn waypoints were generated at whatever speed
   // was set when the plan was punched. SLOWING DOWN only ever makes them easier - the
   // minimum radius shrinks. SPEEDING UP can make a reversal the boat can no longer hold,
@@ -4847,6 +4866,31 @@ $("#battPill").onclick = ()=>{
                : "Energy override OFF — actual energy reported.");
 };
 
+// DIST pill: the km<->nm display toggle (see fmtDist, where the scope decisions live).
+// One function whether the change came from a click HERE or from the OTHER window of the
+// UI split: localStorage is shared per-origin and `storage` fires in every window that
+// did not make the change, so both stay in step without a second mechanism. Repaint is
+// mostly free - the mission card, HOME range and water note redraw on every state frame -
+// and the survey/committed figures are owned by recalcForSpeed(), the SAME path a plan
+// speed change takes; a units change is just another display input to the plan readouts.
+function applyDistUnit(u, save){
+  distUnit = (u === "nm") ? "nm" : "km";
+  const el = $("#p_units"); if(el) el.textContent = distUnit.toUpperCase();
+  if(save) lsSet(UNITS_KEY, {u: distUnit});
+  recalcForSpeed();
+}
+if($("#unitsPill")) $("#unitsPill").onclick = ()=> applyDistUnit(distUnit==="km" ? "nm" : "km", true);
+window.addEventListener("storage", e=>{
+  if(e.key === UNITS_KEY) applyDistUnit(lsGet(UNITS_KEY, {u:"km"}).u, false);
+});
+// Startup adopts the stored preference for the PILL only - deliberately not
+// applyDistUnit(), whose recalcForSpeed() walks plan state that later script top-level
+// code may not have initialized yet (a `let` read before its declaration is a
+// ReferenceError that takes out the whole script - the showPanel lesson). Nothing
+// unit-dependent has painted yet, so there is nothing to repaint: every readout that
+// follows reads distUnit when it first draws.
+{ const el = $("#p_units"); if(el) el.textContent = distUnit.toUpperCase(); }
+
 function applyCmdState(s){
   const connected = s.link && s.link !== "idle" || s.mode;
   const armed = !!s.armed, estop = !!s.estop, run = s.run;
@@ -4922,8 +4966,7 @@ function onState(s){
   if(S.home && st.lat_deg!=null && st.lon_deg!=null){
     const brg = azTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
     const rng = distTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
-    const rtxt = rng>=1000 ? (rng/1000).toFixed(2)+" km" : Math.round(rng)+" m";
-    homeTxt = String(Math.round(brg)%360).padStart(3,"0")+"° · "+rtxt;
+    homeTxt = String(Math.round(brg)%360).padStart(3,"0")+"° · "+fmtDist(rng);
   }
   $("#p_home").textContent = homeTxt; $("#v_home").textContent = homeTxt;
 
@@ -5084,12 +5127,12 @@ function updateWaterUI(wl){
   const farTxt = trust.km==null ? "" :
     (trust.level==="remote" ? `
 
-STATION IS ${Math.round(trust.km)} km AWAY — this is not the local tide.
+STATION IS ${fmtDist(trust.km*1000, 0)} AWAY — this is not the local tide.
 It is NOT being applied to charted depths: routing uses chart datum.
 Use the manual override if you know the real local level.`
    : trust.level==="far"    ? `
 
-Nearest station is ${Math.round(trust.km)} km away — indicative only.` : "");
+Nearest station is ${fmtDist(trust.km*1000, 0)} away — indicative only.` : "");
   // "(datum)" spells out that the number on screen is NOT the one correcting depths.
   const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+(trust.level==="remote"?" ⚠ (datum)":"");
     vw.title = tip+farTxt;
@@ -5097,8 +5140,8 @@ Nearest station is ${Math.round(trust.km)} km away — indicative only.` : "");
     vw.style.opacity = ghost;
     vw.style.fontStyle = trust.level==="local" ? "" : "italic"; }
   const swn = $("#sp_water_note"); if(swn){
-    swn.textContent = detail + (trust.level==="remote" ? ` — ${Math.round(trust.km)} km away, NOT the local tide; NOT applied to depths (using chart datum)`
-                              : trust.level==="far" ? ` — ${Math.round(trust.km)} km away, indicative` : "");
+    swn.textContent = detail + (trust.level==="remote" ? ` — ${fmtDist(trust.km*1000, 0)} away, NOT the local tide; NOT applied to depths (using chart datum)`
+                              : trust.level==="far" ? ` — ${fmtDist(trust.km*1000, 0)} away, indicative` : "");
     swn.title = tip+farTxt;
     swn.style.color = warnCol ? "var(--warn)" : "";
     swn.style.opacity = ghost;
@@ -5301,12 +5344,12 @@ function updateMissionCard(){
   // uploaded; before that there is no progress to report, so show what was PLANNED.
   if(!S.wp_total && runRoute && runRoute.length) $("#v_wpt").textContent = runRoute.length + " planned";
   const rr = routeRemainingM();
-  $("#mi_len").textContent = rr ? fmtLenM(rr.total) : "--";
+  $("#mi_len").textContent = rr ? fmtDist(rr.total) : "--";
   const spdPlan=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
   const sog=(st.sog_kn||0)*0.514444, spd=(sog>0.15? sog : spdPlan);
   const ended = st.holding || st.drifting;
   $("#mi_toend").textContent = ended ? "arrived"
-    : (rr && spd>0 ? fmtLenM(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
+    : (rr && spd>0 ? fmtDist(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
   $("#mi_endmode").textContent = endAction();     // "rth" while an end-of-plan RTH is still to come
   // plan status -> through to the END state (the common paradigm's last phase)
   const end=(runRoute&&runRoute.length)?runRoute[runRoute.length-1]
@@ -5317,7 +5360,7 @@ function updateMissionCard(){
     s = "DRIFT — propulsion off, drifting with the environment: "
       + (st.sog_kn!=null? (st.sog_kn.toFixed? st.sog_kn.toFixed(1):st.sog_kn) : "--")+" kn"
       + (st.env_set_kn? ", set "+st.env_set_kn+" kn"+(st.env_set_deg!=null?" toward "+Math.round(st.env_set_deg)+"°":"") : "")
-      + (dEnd!=null? " · "+fmtLenM(dEnd)+" from plan end" : "");
+      + (dEnd!=null? " · "+fmtDist(dEnd)+" from plan end" : "");
   } else if(st.holding){
     const atHome = (S.behavior==="rth");   // an RTH run's endpoint IS home, chained or hand-pressed
     // Holding at a Go-To/Transit endpoint with an RTH still to chain is a WAYPOINT, not
@@ -5325,7 +5368,7 @@ function updateMissionCard(){
     s = (atHome ? "RTH — home: station-keeping"
         : rthPending() ? "END OF PLAN — returning home (RTH)"
         : "LOITER — station-keeping at the last waypoint")
-      + (dEnd!=null? ": "+fmtLenM(dEnd)+" off" : "")
+      + (dEnd!=null? ": "+fmtDist(dEnd)+" off" : "")
       + " (arrival "+(mission.arrival_radius_m||2)+" m)";
   } else if(run==="running"){
     const lap=(st.laps!=null && runCompletion()==="repeat") ? " · lap "+(st.laps+1) : "";

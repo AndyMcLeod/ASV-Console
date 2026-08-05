@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-ONE REGRESSION SUITES (300 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-TWO REGRESSION SUITES (312 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -67,6 +67,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
+| `node tests/units_toggle.js` | the km↔nm DIST pill: value converts BOTH ways, short stays metric, one formatter (12) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
@@ -562,13 +563,11 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   NW 14. Not even the Cape May–Lewes ferry is in the feed. **The configuration is correct**;
   it is a volunteer-receiver coverage hole. A local receiver via `--source aisstream,nmea` is
   the only thing that will show local traffic.
-- **ABORTED BY ANDY, with his decisions recorded — a GLOBAL km↔nm units selector.** He asked
-  whether one was possible, chose the scope, then said **"abort this change"**. Do not start
-  it again unasked. If it returns: ~33 `km` + ~33 `m` display sites, 11 already nm, 31 speeds
-  already kn, and **no shared distance formatter exists** (only `fmtNm`, AIS-only). His two
-  decisions were **long distances only** — spacing, buffer, draft and DEPTHS stay metric,
-  because 25 m spacing is 0.0135 nm and unusable — and **one global toggle on the top status
-  bar**. Canonical stays METRES everywhere; it is a display layer, like the feet on chart tiles.
+- ~~ABORTED: the GLOBAL km↔nm units selector~~ — **BUILT 2026-08-04, Andy's choice for the
+  "ASV console refinement 1" session** (he picked it from the offered options, which
+  supersedes the earlier abort). Shipped to his two recorded decisions exactly: LONG
+  distances only, one DIST pill on the top status bar. See "THE km↔nm DISTANCE DISPLAY"
+  section for what must not regress.
 - **THE DOC BURDEN QUADRUPLED** (`3080e6a`) **AND THE DOCS WERE BROKEN THE WHOLE TIME**
   (`15cf36a`). A user-facing change has FOUR generated documents plus three READMEs, and the
   **operations manual is the operator-facing source of truth** — a new control, a changed
@@ -606,6 +605,56 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE km↔nm DISTANCE DISPLAY (2026-08-04)
+
+The units selector Andy scoped and aborted on 2026-08-02 came back at his choice for this
+session, and was built to the two decisions he had already recorded — nothing was
+re-litigated: **LONG distances only** (line spacing, buffers, draft, DEPTHS and the LINES
+table stay metric — 25 m of spacing is 0.0135 nm, unusable) and **one global toggle on the
+top status bar** (the DIST pill — Andy's standing rule: global toggles live on the
+persistent top bar, not on a card). Canonical is METRES
+everywhere; the unit is applied at the DISPLAY EDGE like the feet on chart tiles and the
+nm on the AIS card.
+
+**The shape (static/asv.html):**
+- `fmtDist(m, dp)` beside the state block near the top — **THE formatter for a long
+  distance**. Under 1000 m prints metres IN BOTH MODES (that is the scope decision, not an
+  accident); above, km with `dp` decimals or nm via `M_PER_NM`, whose single declaration
+  MOVED here from the AIS section (one definition serves both display edges;
+  `ais_range.py`'s regex still finds it). `fmtLenM` is GONE — fmtDist replaced it, and the
+  old hand-rolled `(x/1000).toFixed(2)+" km"` sites (punchOut survey/approach,
+  recalcCommittedForSpeed, the HOME→ pill, the tide-station distances) all call fmtDist
+  now. `tests/units_toggle.js` check 9 fails if a hand-rolled km site creeps back.
+- `applyDistUnit(u, save)` beside the battPill handler + a `storage` listener: ONE function
+  whether the change is a click here or arrived from the OTHER window of the UI split
+  (localStorage is shared; `storage` fires in the windows that didn't write). The listener
+  passes `save=false` — adoption must not write back. Repaint rides EXISTING paths: the
+  mission card / HOME range / water note redraw every state frame, and the survey/committed
+  figures are owned by `recalcForSpeed()` — the SAME path a plan-speed change takes.
+- **Startup sets the PILL TEXT ONLY, deliberately not applyDistUnit()** — its
+  recalcForSpeed() walks plan state that later top-level script may not have initialized,
+  and a `let` read before its declaration is a ReferenceError that kills the whole script
+  (the showPanel lesson). Nothing unit-dependent has painted yet, so there is nothing to
+  repaint.
+- Preference: `lsGet/lsSet` under `asv_units_v1`; **default km** — an operator who never
+  touches the pill sees exactly what they saw before.
+
+**What deliberately does NOT follow the pill** (each asserted in the suite): short/metric
+sites (check 11), chart-tile feet, and the AIS card, which reads nm ALWAYS by its own
+earlier decision (check 12) — two display edges, deliberately independent.
+
+**`tests/units_toggle.js` (12 checks, 7/7 mutations caught).** The check that matters most
+is 3, straight from the AIS-range lesson: assert the nm VALUE both ways (1852 m = "1.00
+nm"), because a field can be labelled nm while holding the km number — wrong by 1.852 with
+a plausible number on screen. Check 10 runs the REAL `recalcCommittedForSpeed` under both
+units. Live-verified in the browser on a moving boat: HOME→ read `996 m` at 13.76 kn
+(short metric), then `0.54 nm` (= 1000 m exactly — the value converts), then `1.02 km`;
+choice survives a reload; console clean.
+
+**Suite-harness note:** `speed_recalc.js` now greps `fmtDist` and declares
+`M_PER_NM`/`distUnit` beside its other page globals — a harness that extracts page
+functions must track their new collaborators.
 
 ## THE E-STOP CHAIN HAS A TEST, AND THE HOOK DERIVES ITS SUITE LIST (2026-08-04)
 

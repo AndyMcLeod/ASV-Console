@@ -114,8 +114,10 @@ c.push(TBL(["Field", "Meaning"], [
   ["`PITCH` / `ROLL`", "Attitude"],
   ["`BATT` or `FUEL`", "Energy remaining. Which one appears depends on the vessel."],
   ["`WPT`", "Waypoint progress through the uploaded route"],
+  ["`DIST`", "The distance display unit — click to switch every LONG distance between kilometres and nautical miles (persisted). See the note below for what deliberately does not follow it."],
   ["`TIME`", "Local · UTC"],
 ], [1900, 7460]));
+c.push(NOTE("DISTANCE UNITS", "The DIST pill changes DISPLAY only — every stored and transmitted value stays metric, so nothing about the mission, the vessel files or the wire changes with it. It applies to LONG distances: route lengths, distance remaining, HOME range, off-track distance and tide-station distances. Three families deliberately do NOT follow it: SHORT distances (line spacing, buffers, draft, depths and the LINES table) always read in metres, because 25 m of spacing is an unusable 0.0135 nm; chart-tile soundings stay in feet, as charted; and the AIS card always reads nautical miles, whatever the pill says. In the two-window layout the choice applies to both windows at once."));
 c.push(H2("4.3  The vessel-status card"));
 c.push(P("The detailed read, in one card: autonomy, speed, heading, course, bearing and range from home, attitude, wind, sea state, environmental set and crab, energy, water level, the keep-out model state, and a communications signal bar. Drag its header to move it; close it with the `×` and bring it back with the VESSEL pill."));
 c.push(H3("4.3.1  The MISSION block"));

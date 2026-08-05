@@ -62,6 +62,7 @@ var M_PER_DEG_LAT = 111320;
 var SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 }, MAX_TURN_RATE_DEG_S = 20;
 var mission = { speed: "survey", lines: [], waypoints: [] };
 var speedWarnShown = false;   // the page declares this beside the function; the harness must too
+var M_PER_NM = 1852, distUnit = "km";   // fmtDist's globals - km keeps the legacy km shape here
 var asv = null;
 var banners = [], notes = [];
 function showBanner(t) { banners.push(t); const b = $("#encbanner"); b.textContent = t; b.style.display = "block"; }
@@ -70,7 +71,7 @@ function flashNote(t) { notes.push(t); }
 var EL = {};
 function $(sel) { return (EL[sel] = EL[sel] || { textContent: "", style: {} }); }
 // eslint-disable-next-line no-eval
-eval(grab("llEN") + "\n" + grab("distTo") + "\n" + grab("fmtDur") + "\n" +
+eval(grab("llEN") + "\n" + grab("distTo") + "\n" + grab("fmtDur") + "\n" + grab("fmtDist") + "\n" +
      grab("minTurnRadiusM") + "\n" + grab("committedPatternInfo") + "\n" +
      grab("recalcCommittedForSpeed"));
 

@@ -210,6 +210,13 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    operating area at Lewes returns a mix of ZOC B and **ZOC D** (the lowest
    confidence class), and the card flags the poor ones in amber as you enter them.
 
+   **Distance units (`DIST`).** A pill on the top bar switches every **long**
+   distance — route lengths, distance remaining, HOME range, station distances —
+   between **kilometres and nautical miles** (persisted, both windows). Display
+   only: every stored and transmitted value stays metric. Deliberately outside it:
+   short distances (spacing, buffers, depths, the LINES table) always read metres,
+   chart tiles print feet as charted, and the AIS card always reads nm.
+
    **Search patterns.** `SRCH` generates a canned search route (à la CCOM's
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
    creeping-line**. Click a datum, tune the params (leg / radius / spacing /

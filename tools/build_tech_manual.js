@@ -343,6 +343,7 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
   ["Telemetry rate", "4 Hz", "Engine tick and SSE push"],
   ["Turn arc sampling", "~3 m", "Waypoint spacing along a generated survey turn"],
   ["ROC link thresholds", "5 s / 15 s", "Fresh → stale → lost for a live-fed ROC"],
+  ["Distance display unit", "km", "The DIST pill: LONG distances read km or nm, operator's stored choice, applied at the display edge by one formatter (`fmtDist`). Canonical values are metres everywhere; short distances, depths and the LINES table stay metric, chart tiles stay in feet, the AIS card stays in nm"],
 ], [2600, 1900, 4860]));
 
 // 13 ------------------------------------------------------------------------
