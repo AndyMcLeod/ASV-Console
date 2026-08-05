@@ -943,13 +943,22 @@ def _enc_pick_band(bbox):
     return None
 
 
+def _bbox_key(bbox):
+    """The cache key for a bbox, %.4f per edge. ONE function on purpose: the features
+    cache and the chartinfo cache used to carry byte-identical copies of this format
+    string, which is how a mutation runner once matched its anchor TWICE and skipped -
+    the duplication was invisible until something tried to hold one copy still. A key
+    format change now moves both caches together, and both suites' cache checks watch it."""
+    return "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
+
+
 def fetch_enc_features(bbox, min_depth=0.0):
     """Fetch + role-tag ENC vector features for a bbox, from the finest band with
     coverage. Returns {'band', 'features':[{role,cls,props,geometry}], 'counts'}.
     The assembled geometry caches to charts/enc/features_<key>.json; the min-depth
     'shallow' tag is applied per request so one fetch serves any depth limit."""
     global _enc_down_until
-    key = "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
+    key = _bbox_key(bbox)
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
     # query silently dropped) + the expanded structure classes; v3 splits lateral
     # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR. Bumping
@@ -1045,7 +1054,7 @@ def fetch_chart_info(bbox):
     zone-of-confidence polygons within it. Cached on disk like the feature
     extract, and it never raises - an empty answer degrades the card, not the run."""
     global _enc_down_until
-    key = "%.4f_%.4f_%.4f_%.4f" % tuple(bbox)
+    key = _bbox_key(bbox)
     cache = os.path.join(ENC_DIR, "chartinfo_v1_%s.json" % key)
     try:
         with open(cache, "r", encoding="utf-8") as f:
@@ -3138,13 +3147,24 @@ class Handler(BaseHTTPRequestHandler):
                                         "note": "AIS service unreachable at %s (%s)"
                                         % (AIS_BASE, type(e).__name__)}))
 
+    def _bbox_from_query(self):
+        """Parse ?bbox=W,S,E,N off self.path - plain commas or %2C, parse_qs decodes
+        both. Returns (bbox, query_dict) so a caller can read its own extra params from
+        the SAME parse. Raises KeyError/ValueError/IndexError on anything malformed;
+        each caller owns its own usage message. ONE function on purpose - _serve_enc and
+        _serve_chartinfo carried byte-identical copies of this block (the anchor-x2
+        lesson), and a parser fixed in one and not the other is exactly how the
+        ais_service percent-decoding bug got to ship."""
+        q = urllib.parse.parse_qs(self.path.split("?", 1)[1])
+        bbox = [float(v) for v in q["bbox"][0].split(",")]
+        if len(bbox) != 4:
+            raise ValueError("bbox wants four edges")
+        return bbox, q
+
     def _serve_enc(self):
         # /api/enc?bbox=W,S,E,N&min_depth=X -> role-tagged ENC vector features.
         try:
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1])
-            bbox = [float(v) for v in q["bbox"][0].split(",")]
-            if len(bbox) != 4:
-                raise ValueError
+            bbox, q = self._bbox_from_query()
             min_depth = float(q.get("min_depth", ["0"])[0])
         except (KeyError, ValueError, IndexError):
             return self._send(400, json.dumps({"error": "usage: /api/enc?bbox=W,S,E,N&min_depth=X"}))
@@ -3159,10 +3179,7 @@ class Handler(BaseHTTPRequestHandler):
         # for the Chart source card. Separate from /api/enc by design (see
         # fetch_chart_info): no routing cache is touched.
         try:
-            q = urllib.parse.parse_qs(self.path.split("?", 1)[1])
-            bbox = [float(v) for v in q["bbox"][0].split(",")]
-            if len(bbox) != 4:
-                raise ValueError
+            bbox, _ = self._bbox_from_query()
         except (KeyError, ValueError, IndexError):
             return self._send(400, json.dumps({"error": "usage: /api/chartinfo?bbox=W,S,E,N"}))
         try:

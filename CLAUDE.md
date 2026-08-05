@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-FIVE REGRESSION SUITES (360 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-SIX REGRESSION SUITES (370 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -73,6 +73,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
 | `python tests/home_spawn.py` | sethome trusts only the LIVE fix (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point (14, real console) |
 | `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
+| `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -552,11 +553,15 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   covered since: E-STOP, the five in `run_link_control.py` (transit/pause/reset/connect/
   disconnect), `sethome` + `spawn` in `home_spawn.py` — which also drives `rth`'s
   happy path (closes on home) for the first time — and `energy` + `chartinfo` in
-  `energy_chartinfo.py`. Still open, all lower-consequence data/plumbing routes:
-  `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`, `waterlevel`, `roc`
-  (partially covered via `roc_tracks.py`'s unit tests). If continuing, keep the
-  estop_chain rule: pick by CONSEQUENCE, and drive a real console for anything whose
-  failure is an interaction.
+  `energy_chartinfo.py`, and `enc` in `enc_extract.py` (2026-08-05, which also
+  DEDUPLICATED the chartinfo twin: `_bbox_key` + `_bbox_from_query` now serve both
+  endpoints, and shared-helper mutations are run against BOTH suites). Still open, all
+  lower-consequence data/plumbing routes: `logevent`, `logs`, `vessels`, `comms`,
+  `env`, `tide`, `waterlevel`, `roc` (partially covered via `roc_tracks.py`'s unit
+  tests). NOTE `/api/enc` and `/api/chartinfo` are GETs — an earlier arithmetic here
+  counted them among POST routes off a grep of the string literal. If continuing, keep
+  the estop_chain rule: pick by CONSEQUENCE, and drive a real console for anything
+  whose failure is an interaction.
 - **BLOCKED, WAITING ON ANDY — MARINETRAFFIC AIS.** He is negotiating API access under
   `andy.mcleod@unh.edu` and said **"hold this for now"**. Nothing has been built. When it
   lands, two things are needed before a line is written: **(1) which service is enabled** on
@@ -617,6 +622,40 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## /api/enc UNDER TEST + THE CHARTINFO TWIN DEDUPLICATED (2026-08-05)
+
+Andy's instruction: cover `/api/enc` and collapse the duplication the previous pass had
+surfaced (the anchor-×2 SKIP). Both done in one commit — `tests/enc_extract.py`
+(10 assertions, real console, 6/6 mutations fully caught) plus two shared helpers.
+
+**THE DEDUPE:** `_bbox_key(bbox)` — one cache-key format for the features cache AND the
+chartinfo cache; `_bbox_from_query()` — one query parse for both GET handlers, each
+keeping its OWN usage message. Behaviour-preserving (energy_chartinfo passed untouched
+against it before the new suite existed). **The mutation rule that makes the dedupe pay:
+shared-code mutations run BOTH suites and must be caught from BOTH sides** — the key
+break was caught by six checks across the two suites on its first run.
+
+**THE ENDPOINT'S CONTRACTS:** malformed bbox (five spellings incl. no query at all) is a
+400 naming the ENC usage, never a 502; the extract is SERVED FROM `features_v3_<key>`
+cache (proven by a sentinel at a mid-ocean bbox upstream would refuse — only the cache
+can answer); **the shallow retag is PER-REQUEST and the cache is READ-ONLY under it** —
+`shallow = DRVAL1 < min_depth` computed fresh every request, `min_depth` echoed, the
+boundary EXCLUSIVE (DRVAL1 exactly at the limit is not shallow), the cache byte-identical
+across three different depth limits. That read-only property is what makes one fetch
+safe for every depth limit; a baked-in tag would answer only the first limit ever asked.
+The retag touches ONLY depth_area features. `%2C` and plain commas are the same bbox.
+
+**THE PASS'S BEST FINDING WAS A WEAK CHECK IN THE NEIGHBOUR SUITE:** cross-wiring
+chartinfo's usage message to the ENC one was caught by enc_extract's cross-check and
+SURVIVED energy_chartinfo — whose 2b accepted ANY message containing "usage". The suite
+that OWNS an endpoint could not see its own usage line replaced; the guard lived only in
+a bystander a refactor could delete. 2b now demands `usage: /api/chartinfo?` and the
+re-run is caught from BOTH. **Rule worth keeping: a mutation that survives the owner and
+is caught by a bystander is a weak-check finding, not a covered property.**
+
+Also corrected in OPEN/NEXT: `/api/enc` and `/api/chartinfo` are GETs — the earlier
+route arithmetic counted them among POSTs off a grep of the string literal.
 
 ## ENERGY OVERRIDE + CHARTINFO UNDER TEST (2026-08-05)
 

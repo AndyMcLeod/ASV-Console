@@ -188,8 +188,9 @@ try:
           lambda: c == 400 and "usage" in str(o.get("error", "")),
           "%s %s" % (c, str(o.get("error"))[:44]))
     c2, o2 = get_raw(port, "/api/chartinfo?bbox=1,2,3")
-    check("2b. ... and so is a bbox with the wrong arity - never a 500 from downstream",
-          lambda: c2 == 400 and "usage" in str(o2.get("error", "")),
+    check("2b. ... and so is a bbox with the wrong arity - never a 500 from downstream, "
+          "and it is THIS endpoint's usage line, not a neighbour's",
+          lambda: c2 == 400 and "usage: /api/chartinfo?" in str(o2.get("error", "")),
           "%s %s" % (c2, str(o2.get("error"))[:44]))
 
     plain = get_raw(port, "/api/chartinfo?bbox=10.0,10.0,10.1,10.1")
