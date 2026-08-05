@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-SIX REGRESSION SUITES (370 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-SEVEN REGRESSION SUITES (381 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -74,6 +74,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/home_spawn.py` | sethome trusts only the LIVE fix (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point (14, real console) |
 | `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
 | `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
+| `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -557,8 +558,9 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   DEDUPLICATED the chartinfo twin: `_bbox_key` + `_bbox_from_query` now serve both
   endpoints, and shared-helper mutations are run against BOTH suites). Still open, all
   lower-consequence data/plumbing routes: `logevent`, `logs`, `vessels`, `comms`,
-  `env`, `tide`, `waterlevel`, `roc` (partially covered via `roc_tracks.py`'s unit
-  tests). NOTE `/api/enc` and `/api/chartinfo` are GETs — an earlier arithmetic here
+  `tide`, `roc` (partially covered via `roc_tracks.py`'s unit tests) — `env` +
+  `waterlevel` covered in `env_water.py` 2026-08-05, which also fixed the
+  dropped-connection defect on bad manual_offset input. NOTE `/api/enc` and `/api/chartinfo` are GETs — an earlier arithmetic here
   counted them among POST routes off a grep of the string literal. If continuing, keep
   the estop_chain rule: pick by CONSEQUENCE, and drive a real console for anything
   whose failure is an interaction.
@@ -622,6 +624,38 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## /api/env + /api/waterlevel UNDER TEST — AND A DROPPED-CONNECTION DEFECT (2026-08-05)
+
+Andy's next two routes. Grounding found a live defect BEFORE any check was written, in
+the recurring family but a new subspecies: **`/api/waterlevel`'s `manual_offset` cast
+was a bare `float()` in a branch that sits BEFORE `_dispatch_post`'s try/except** — the
+only unguarded numeric cast outside the guarded region (swept: env guards locally, ROC
+has its own 400-returning try). POST `{"manual_offset": "abc"}` unwound the dispatcher:
+**the client's connection DROPPED with no response at all and the handler thread died
+with a ValueError traceback** — reproduced live before fixing. A cousin of the
+ais/radius shape, but worse for the client: ais/radius at least answered before dying.
+Fixed with a local guard in env's style → 400 naming the rule. **Placement note for
+future routes: a branch added before the dispatch try gets NO safety net — its guards
+must be local.**
+
+**`tests/env_water.py` (11 assertions, real console, 6/6 mutations caught — table in
+its docstring).** What it pins:
+- **THE PHYSICS SEAM:** a manual 25 kn wind + enabled monitor on a RUNNING boat must
+  publish a nonzero `env_set_kn` — the override REACHES the boat, not just the
+  snapshot; idle stays zero (env applies only to a running boat); **DISABLING returns
+  the set to zero** — `field()` yielding None on disabled is what makes calm reproduce
+  clean tracking, and every other suite that assumes calm water stands on it.
+- **Merge semantics:** field-by-field merge across posts; `""` clears ONE field;
+  `auto` drops the whole override and the source reverts to the live buoys. **The
+  mutation lesson: a check that catches a merge bug must SPAN posts** — fields sent in
+  one body look identical under merge and replace; only a two-post sequence tells them
+  apart (the merge mutation survived the one-body check and was caught by the
+  two-post one).
+- **Waterlevel server half** (the client trust chain is `water_trust.js`'s): manual
+  set echoes source/value/note; `""` CLEARS rather than becoming a 0.0 override — a
+  cleared box and a zero-metre override are different states with the same rendered
+  number, and `source` is what says which.
 
 ## /api/enc UNDER TEST + THE CHARTINFO TWIN DEDUPLICATED (2026-08-05)
 

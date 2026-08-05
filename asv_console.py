@@ -3239,7 +3239,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/waterlevel":
             if "manual_offset" in body:
                 mo = body.get("manual_offset")
-                WATER.set_manual(None if mo in (None, "") else float(mo))
+                # Guarded like /api/env's floats. This branch sits BEFORE the dispatch's
+                # try/except, so a bare float("abc") here did not become a 4xx - it
+                # unwound _dispatch_post, dropped the connection with NO response and
+                # killed the handler thread with a traceback (reproduced live before
+                # fixing). The client saw nothing at all - worse than the ais/radius
+                # shape, which at least answered before dying.
+                try:
+                    WATER.set_manual(None if mo in (None, "") else float(mo))
+                except (TypeError, ValueError):
+                    return 400, {"error": "manual_offset must be numeric (metres), or empty to clear"}
             if body.get("refresh"):
                 WATER.refresh_now()
             return 200, {"ok": True, "water": WATER.snapshot()}
