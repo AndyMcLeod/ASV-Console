@@ -3208,6 +3208,14 @@ class Handler(BaseHTTPRequestHandler):
             # per-survey-line plan-vs-actual table). Recorded as a clean event.
             kind = str(body.get("kind") or "client_event")[:64]
             data = body.get("data") if isinstance(body.get("data"), dict) else {"value": body.get("data")}
+            # `data` is CLIENT-supplied and reaches event() as **kwargs, where the keys
+            # "kind" and "self" collide with the signature - a legal JSON body was a
+            # TypeError that dropped the connection with no response and killed the
+            # handler thread (this branch sits before the dispatch try, so nothing
+            # caught it; reproduced live before fixing). RENAME rather than refuse: a
+            # session log should swallow an odd field name, not reject the operator's
+            # event over it - and the flat record shape stays intact for playback.
+            data = {(k + "_" if k in ("kind", "self") else k): v for k, v in data.items()}
             if LOG is not None:
                 LOG.event("client:" + kind, **data)
             return 200, {"ok": True}

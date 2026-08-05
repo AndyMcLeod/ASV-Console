@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-SEVEN REGRESSION SUITES (381 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-EIGHT REGRESSION SUITES (390 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -75,6 +75,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
 | `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
 | `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
+| `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -558,7 +559,9 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   DEDUPLICATED the chartinfo twin: `_bbox_key` + `_bbox_from_query` now serve both
   endpoints, and shared-helper mutations are run against BOTH suites). Still open, all
   lower-consequence data/plumbing routes: `logevent`, `logs`, `vessels`, `comms`,
-  `tide`, `roc` (partially covered via `roc_tracks.py`'s unit tests) — `env` +
+  `tide`, `roc` (partially covered via `roc_tracks.py`'s unit tests) — `logevent` +
+  `logs` + `log` covered in `log_routes.py` 2026-08-05 (logging ON — the --no-log mask
+  was the coverage hole), which also fixed the kwargs-collision defect — `env` +
   `waterlevel` covered in `env_water.py` 2026-08-05, which also fixed the
   dropped-connection defect on bad manual_offset input. NOTE `/api/enc` and `/api/chartinfo` are GETs — an earlier arithmetic here
   counted them among POST routes off a grep of the string literal. If continuing, keep
@@ -624,6 +627,35 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## /api/logevent + /api/logs + /api/log UNDER TEST — THE FAMILY'S THIRD MEMBER (2026-08-05)
+
+Andy's next two routes (plus /api/log, their sibling). Grounding found the THIRD
+dropped-connection defect in three rounds, and the sharpest: **/api/logevent unpacked the
+CLIENT-supplied `data` dict as kwargs — `LOG.event("client:"+kind, **data)` against
+`event(self, kind, **payload)` — so a legal JSON body with a data key named `kind` or
+`self` was a TypeError** ("got multiple values for argument"), a dropped connection and a
+dead thread, in a branch before the dispatch try. Reproduced live, both spellings.
+**WHY 28 SUITES NEVER SAW IT: every real-console harness passes `--no-log`, which sets
+`LOG = None` and skips the branch entirely** — a masked branch is an untested branch no
+matter how many suites drive the console. `tests/log_routes.py` boots WITH logging on.
+
+**THE FIX: RENAME, don't refuse** — colliding keys become `kind_`/`self_`; a session log
+should swallow an odd field name, not reject the operator's event over it. The record
+shape stays FLAT (playback reads it — a nesting fix would have been a silent format
+change, and check 2 pins the flat shape as a contract).
+
+**`tests/log_routes.py` (9 assertions, real console, logging ON; 6 mutations caught + 1
+survival predicted-then-earned — table in its docstring).** Beyond the fix: the logevent
+round-trip is read back OUT OF THE JSONL (kind prefixing, default kind, non-dict data
+wrapped, 64-char truncation, a non-identifier key recorded); `/api/logs` lists the live
+session with name/size/mtime; and **`safe_log_path`'s traversal guard is exercised for
+the first time since it was written** — seven refusal spellings including two SEEDED
+targets that isolate each layer: a shape-perfect `asv_*.jsonl` OUTSIDE the dir (only the
+bare-basename rule refuses it) and a wrong-shape file INSIDE it (only the shape rule
+does). **The seeding is the lesson: a layered guard cannot be tested by spellings one
+layer happens to stop** — and the lone bare-basename drop SURVIVES by design (the join
+is on the basename), predicted before the run this time, earned by the pair.
 
 ## /api/env + /api/waterlevel UNDER TEST — AND A DROPPED-CONNECTION DEFECT (2026-08-05)
 
