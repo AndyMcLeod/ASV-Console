@@ -112,7 +112,7 @@ c.push(TBL(["Field", "Meaning"], [
   ["`HDG` / `COG`", "Heading, and course actually made good. They differ by the crab angle when wind or sea sets the vessel off its bow line."],
   ["`HOME→`", "Bearing and range from HOME to the vessel"],
   ["`PITCH` / `ROLL`", "Attitude"],
-  ["`BATT` or `FUEL`", "Energy remaining. Which one appears depends on the vessel."],
+  ["`BATT` or `FUEL`", "Energy remaining. Which one appears depends on the vessel. Clicking the pill toggles the energy OVERRIDE — the gauge reports full and, in the simulator, the drain/burn stops; the pill shows magenta while it is on. A testing aid, applied in every mode, running or not, connected or not."],
   ["`WPT`", "Waypoint progress through the uploaded route"],
   ["`DIST`", "The distance display unit — click to switch every LONG distance between kilometres and nautical miles (persisted). See the note below for what deliberately does not follow it."],
   ["`TIME`", "Local · UTC"],

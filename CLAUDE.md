@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-FOUR REGRESSION SUITES (347 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**TWENTY-FIVE REGRESSION SUITES (360 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -72,6 +72,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
 | `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
 | `python tests/home_spawn.py` | sethome trusts only the LIVE fix (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point (14, real console) |
+| `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -549,12 +550,13 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 **OPEN / NEXT:**
 - **ROUTE COVERAGE, remainder.** The estop_chain audit found 20 of 33 routes untested;
   covered since: E-STOP, the five in `run_link_control.py` (transit/pause/reset/connect/
-  disconnect), and `sethome` + `spawn` in `home_spawn.py` — which also drives `rth`'s
-  happy path (closes on home) for the first time. Still open, all lower-consequence:
-  `energy`, `chartinfo`, `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`,
-  `waterlevel`, `roc` (partially covered via `roc_tracks.py`'s unit tests). If
-  continuing, keep the estop_chain rule: pick by CONSEQUENCE, and drive a real console
-  for anything whose failure is an interaction.
+  disconnect), `sethome` + `spawn` in `home_spawn.py` — which also drives `rth`'s
+  happy path (closes on home) for the first time — and `energy` + `chartinfo` in
+  `energy_chartinfo.py`. Still open, all lower-consequence data/plumbing routes:
+  `logevent`, `logs`, `vessels`, `comms`, `enc`, `env`, `tide`, `waterlevel`, `roc`
+  (partially covered via `roc_tracks.py`'s unit tests). If continuing, keep the
+  estop_chain rule: pick by CONSEQUENCE, and drive a real console for anything whose
+  failure is an interaction.
 - **BLOCKED, WAITING ON ANDY — MARINETRAFFIC AIS.** He is negotiating API access under
   `andy.mcleod@unh.edu` and said **"hold this for now"**. Nothing has been built. When it
   lands, two things are needed before a line is written: **(1) which service is enabled** on
@@ -615,6 +617,45 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## ENERGY OVERRIDE + CHARTINFO UNDER TEST (2026-08-05)
+
+Andy's next two routes. No defect this time — but the pass pinned two shapes that were
+one refactor away from silent loss, and recorded a twin worth knowing about.
+
+**`tests/energy_chartinfo.py` (13 assertions, real console, 6 mutations caught + 1
+survival EARNED by its pair — table in its docstring).**
+
+**ENERGY IS TWO LAYERS, and the suite had to be designed around the mask.** The sim link
+stops the burn and holds the tank (`SimVcu.set_unlimited_energy` + the tick's
+`_unlimited_energy` branch, which RE-FILLS every frame); the engine SEPARATELY force-fills
+the published gauge at `state()` time. While the override is ON, the engine force masks
+whatever the sim tank does — so check 8 holds the override ON through ~45 s of hard
+running and reads the tank ON THE FRAME AFTER lifting it: only then can a silently-dead
+sim layer show (a missing ~0.13 L at the 1-decimal gauge). Asserting during the ON window
+cannot see this. The engine layer's own proof is check 10: override ON while
+DISCONNECTED — no sim to snap, stale status carrying the burned reading — and the gauge
+must still publish full; the force-fill mutation was caught by that check ALONE.
+The enable-time snap mutation SURVIVED alone (the tick hold re-fills every frame) and the
+pair-removal was caught — earned layered defence, same as the estop tick gate.
+
+**CHARTINFO IS HERMETICALLY TESTABLE via its exact-key cache** (`chartinfo_v1_W_S_E_N
+.json`, %.4f each, under `charts/enc`): the suite SEEDS a sentinel entry at a mid-ocean
+bbox and the endpoint must serve it byte-for-byte, in BOTH spellings — plain commas and
+`%2C` (the ais_service percent-decoding bug made that a class). Malformed or wrong-arity
+bbox is a 400 with the usage string, never a 502 from downstream. The REAL Lewes cache is
+checked opportunistically when present (gitignored, so a fresh clone reports the reduced
+scope explicitly rather than failing).
+
+**THE TWIN, recorded for whoever covers `/api/enc`:** the first mutation runner SKIPPED
+both chartinfo mutations — anchor matched TWICE, because `/api/enc` carries a
+byte-identical parse-and-key block. The SKIP rule surfaced it instead of silently
+mutating the wrong function. `/api/enc` is still uncovered, and that duplication is a
+refactor candidate the day it gets a suite.
+
+Ops manual: the BATT/FUEL pill row now documents the click-to-override the pill has
+always carried (it only said "energy remaining"). Tech manual 13.1 picks up the suite
+(derived).
 
 ## SET-HOME COULD CAPTURE A DEAD BOAT'S FIX — FOUND COVERING sethome/spawn (2026-08-04)
 
