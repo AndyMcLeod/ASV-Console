@@ -34,9 +34,12 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY REGRESSION SUITES (283 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
-enable once per clone with `git config core.hooksPath .githooks`). Run them after any
-change to what they cover, and treat "harness crashed" as loudly as "check failed".
+**TWENTY-ONE REGRESSION SUITES (300 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
+run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
+failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
+hole). Run them after any change to what they cover, and treat "harness crashed" as loudly
+as "check failed".
 **The counts below are hand-maintained and DO drift** — twice now an edit has targeted a
 number that had already changed, leaving the total wrong. Re-derive rather than trust:
 
@@ -65,6 +68,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
+| `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -588,11 +592,13 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not catch follow overshoot.
 - Residual, by design: chart datum is the LOW-water reference, so a real tide BELOW datum
   leaves charted depths optimistic. The manual override is the answer.
-- **RESIDUAL, DELIBERATE** (`2aef779`): the five pop-outs that start HIDDEN are clamped by the
-  0×0 sliver rule on reveal rather than their real size, because a hidden element measures
-  nothing. Header stays on the chart and the card is draggable, so it is recoverable — but it
-  is not the full fix the vessel card got. Closing it properly means a reveal hook the six
-  show sites all pass through.
+- ~~RESIDUAL: hidden pop-outs clamped by the 0×0 sliver rule on reveal~~ — **STALE, DO NOT
+  REBUILD IT** (caught 2026-08-04): this entry described the state at `ae4eceb`, one commit
+  before `2aef779` **closed it** — `showPanel()` IS the "reveal hook the six show sites all
+  pass through", and it shows-then-re-clamps in that order precisely so the panel measures
+  its real size. The only true residual is narrower and invisible to the operator:
+  `placePanel()` at registration still clamps a hidden panel against the 120 px fallback,
+  and `showPanel` corrects it on reveal.
 - **MUTATION-TESTING GOTCHAS, all three cost a false result this session.** Set
   **`PYTHONDONTWRITEBYTECODE=1`** when mutating a Python source — rapid rewrites fall inside
   the mtime granularity and a run imports the PREVIOUS mutation's `.pyc`. **`asv_console.py`
@@ -600,6 +606,59 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE E-STOP CHAIN HAS A TEST, AND THE HOOK DERIVES ITS SUITE LIST (2026-08-04)
+
+Session "ASV console refinement 1", Andy's scope: expand usability AND make working
+components stay stable version to version while adding capability. The stability half
+started with a question none of the twenty suites had ever been asked: **what does the net
+FAIL to cover?** Cross-referencing every `/api/*` route against `tests/` (excluding
+`http_contract.py`, which names every route but only proves the handler contract) showed
+20 of 33 routes with NO behavioural test — and among them `/api/cmd/estop`. The only two
+mentions of `estop` in the whole test tree were a display prediction (`end_action.js` 8)
+and a contract POST of `{"on": false}`. **The most safety-critical control in the console
+had no test because it had never broken** — a net shaped by history, not by consequence.
+
+**`tests/estop_chain.py` (17 assertions, drives a real console, in the hook).** Structure
+and the reasons for it:
+- **The vessel must be genuinely UNDER WAY first** (checks 3–4). Everything else asserts
+  that motion stops; without real motion, a console that never moved at all passes.
+- **The seam is asserted separately from the engine's flags** (5b vs 6/7/8). `/api/state`
+  carries TWO `estop` fields — the engine's commanded latch at top level and the LINK's own
+  reported one inside `status` — and they are different facts: what the console commanded
+  vs what the vessel heard. Cutting `link.estop()` out of `Engine.set_estop` leaves every
+  console-side flag looking right; only the telemetry shows the boat was never told.
+- **Latch, refusals, release, re-arm** (9–12): release must leave the boat SAFE — clearing
+  the latch must NOT re-arm or resume — and a deliberate re-arm must run again, because an
+  E-STOP that cannot be cleared is a different bug from one that does not latch.
+- **Telemetry lags the POST**: the engine's field updates synchronously, the link's lands
+  on the next frame — sample-once assertions on `status.estop` flake; `wait_link_estop()`
+  waits, same reasoning as `wait_stopped`.
+
+**Mutations: 8 run, 6 caught alone, and the 2 survivors were then EARNED as layered
+defence** (the roc_tracks technique — remove the pair together and the suite must fail):
+the tick gate's `not self._estop` survives because `SimVcu.estop` also halts directly
+(pair caught by 5/5b/10b/11); `Engine.set_estop`'s `run="idle"` survives because the
+telemetry path re-derives it at line ~2745 (pair caught by 7). Full table in the suite's
+docstring.
+
+**AN UNREACHABLE-GUARD FINDING** (recorded in the docstring, don't re-derive): the
+`_require(not self.estop, ...)` guards in `upload`, `start` and `_run_route` can NEVER
+fire through the API — latching always force-disarms and `_require(self.armed, ...)` runs
+first, so the operator always sees "ARM before …". They are defence in depth behind the
+disarm; deliberately kept (they back a safety chain), but no test can provoke their
+message, which is why check 10 asserts the refusal and not the wording.
+
+**THE HOOK NO LONGER CARRIES A HAND-MAINTAINED SUITE LIST.** Fourth instance of the
+"list beside a directory" drift, found while adding the suite: the hook's HEADER comment
+documented seventeen suites while the run block ran twenty, and the run block itself
+needed a hand edit per suite — so a suite written and not registered would never run in
+anger. Both replaced: the loop globs `tests/*.js tests/*.py`, so **a new suite is run the
+day it is written**; `gps_sim.py` added to the staged-path filter (it was missing).
+README's test section had the same disease ("Six regression suites" heading thirteen
+descriptions with eight suites absent) — rewritten to name the directory as the authority
+and describe a sample. What stays hand-kept, deliberately: the per-suite failure ADVICE
+in `advice_for()` — a missing advice line is cosmetic, a missing run was a hole.
 
 ## LINE-TIMING: sequence-keyed activation (2026-07-27)
 

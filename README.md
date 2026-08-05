@@ -510,9 +510,31 @@ Each generator is standalone (`build_quickstart.js`, `build_ops_manual.js`,
 
 ## Tests & git hooks
 
-Six regression suites guard the behaviour that has bitten repeatedly. Most run the
-real page code against synthetic worlds with stdlib Node and no server; the last two are
-stdlib Python, and one drives a real console:
+The regression suites in `tests/` guard behaviour that has bitten — and, since the
+E-STOP suite, behaviour whose failure would be worst, whether or not it has failed yet.
+**The directory is the authority**: the pre-commit hook derives its run list from
+`tests/` itself, so a new suite runs from the day it is written, and each suite's own
+docstring says what it guards and how its teeth were verified. This section describes a
+representative sample, not the full set. Most suites run the real page code against
+synthetic worlds with stdlib Node and no server; the Python ones include several that
+drive a **real console** over the API. Run everything at once with:
+
+```
+for f in tests/*.js; do node $f || break; done
+for f in tests/*.py; do python $f || break; done
+```
+
+```
+python tests/estop_chain.py
+```
+
+**E-STOP chain** — the most safety-critical control in the console, and the first suite
+written for *consequence* rather than in reaction to a bug. With the boat genuinely under
+way it proves the latch reaches the vessel (speed over ground falls to a standstill **and
+the vessel itself reports the stop** — the console's own flags agreeing with each other is
+not evidence the seam carried it), force-disarms, refuses arming and commands while held,
+and releases cleanly: clearing the latch leaves the boat SAFE and disarmed, never silently
+re-armed, while a deliberate re-arm runs again — E-STOP is not a one-way trip.
 
 ```
 node tests/buoy_lane.js

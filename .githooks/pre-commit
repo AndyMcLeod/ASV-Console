@@ -1,269 +1,94 @@
 #!/bin/sh
-# Pre-commit: run the geometry regression tests whenever the source they cover is
-# staged, so a commit can't silently regress the ASV's obstacle-avoidance / Rule 9
-# handedness or its survey turn geometry. Both are fast (~1 s each), stdlib Node.
+# Pre-commit: run the regression suites whenever a source they cover, or any suite
+# itself, is staged - so a commit can't silently regress the ASV's obstacle avoidance,
+# its Rule 9 handedness, its survey turn geometry, its safety chain or its readouts.
 #
-#   tests/buoy_lane.js      Rule 9 channel lane - which side of a channel the ASV
-#                           rides, marked and unmarked, both directions.
-#   tests/turn_geometry.js  survey line-to-line turns - shape selection, the minimum
-#                           turn radius held along the WHOLE path, exit alignment,
-#                           outboard excursion, nogo refusal.
-#   tests/roc_tracks.py     ROC arrival geometry, the staged/active HOME gate, moving
-#                           HOME, NMEA validation, and the VESSEL-DERIVED defaults.
-#   tests/end_action.js     what the vessel-status and Mission cards say a run does at
-#                           its end - an end-of-plan RTH must show BEFORE it fires.
-#   tests/nogo_readout.js   the Nogo row's state: that it stops reading once the extract
-#                           lands, and that "no chart" never reads as "clear water".
-#   tests/pattern_move_grip.js  the survey whole-move grip: reachable by hit test AND
-#                           drawn above the boat marker that used to bury it.
-#   tests/survey_card.js    the survey card keeps describing a COMMITTED plan instead
-#                           of blanking when the pattern anchors are dropped.
-#   tests/speed_recalc.js   the plan speed is an INPUT: changing it recalculates, and a
-#                           committed plan is re-checked against the new turn radius.
-#   tests/live_speed.py     the commanded speed REACHES the vessel: speed over ground
-#                           follows a live change. Drives a real console.
-#   tests/ais_range.py      the AIS display range FILTERS a wide subscription, is a true
-#                           range circle, and is never applied on a lake.
-#   tests/ui_split.js       the two-window registration lists resolve, and the vessel
-#                           card stays on the CHART window only.
-#   tests/panel_drag.js     ONE drag mechanism for every floating pop-out, and no panel
-#                           forgetting where the operator put it.
-#   tests/stored_settings.js  the guarded localStorage helpers - blocked storage never
-#                           throws, and toggles saved as legacy "1"/"0" still read.
-#   tests/ais_table.js      the AIS traffic list is PATCHED, never rebuilt - so a poll
-#                           cannot reset the scroll position or drop a selection.
-#   tests/tide_note.py      the tide card names ONE cause ONCE - two calls to the same
-#                           upstream must not print the same failure twice.
-#   tests/docs_valid.py     the generated documents are packages a reader will OPEN, and
-#                           their code blocks reached the page. Nobody opened one for three
-#                           days and all four were malformed the whole time.
-#   tests/http_contract.py  the two OPPOSITE handler contracts: POST returns (code, obj),
-#                           GET commits its own response. Every request gets exactly one
-#                           answer and the server survives it. Routes parsed from source.
+# THE SUITE LIST IS DERIVED FROM tests/, NEVER WRITTEN DOWN HERE. This file used to
+# carry the names in three places - a header comment, the staged-path filter and the
+# run block - and ALL THREE drifted:
+#   * the path filter named suites individually and had never listed five of them
+#     (wreck_clearance, water_trust, ais_range, live_speed, completion_modes), so
+#     editing one of those ALONE ran nothing. Replaced with `tests/`.
+#   * the header comment documented seventeen suites while the hook ran twenty.
+#   * the run block had to be edited by hand for every new suite, so a suite written
+#     and not registered here would never run in anger.
+# All three are gone: the loop below globs tests/ and a NEW SUITE IS RUN THE DAY IT IS
+# WRITTEN. This is the same "a hand-maintained list beside a directory that already
+# answers the question will drift" trap as the pop-out panel copies and the suite
+# counts in CLAUDE.md. Read each suite's own docstring for what it guards.
 #
-# Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE
-# file here (static/asv.html - there is no routing.js split), so the path filter is
-# shorter than the sibling's.
+# What is NOT derived is the failure ADVICE: each suite gets a line naming the code to
+# look at, because "panel_drag failed" is worth much less than "a pop-out grew its own
+# private drag again". Those live in advice_for() and are looked up by basename; a suite
+# with no entry still RUNS and reports, it just gets the generic message. Missing advice
+# is a cosmetic gap - a missing RUN is a hole, which is why only the advice is manual.
+#
+# Ported from the sibling console 2026-07-31. Everything browser-side lives in ONE file
+# here (static/asv.html - there is no routing.js split).
 #
 # Activated by  git config core.hooksPath .githooks  (run once per clone; see
 # README / the hook's own note). Bypass in a pinch with:  git commit --no-verify
 
 # Only bother when a source the tests cover, or ANY test, is staged.
-# The test half of this filter used to name each suite individually and had drifted:
-# five suites (wreck_clearance, water_trust, ais_range, live_speed, completion_modes)
-# were never listed, so editing one of them ALONE ran nothing. A hand-maintained list
-# beside a directory that already answers the question is the same "one mechanism, not
-# two" trap as the panels - `tests/` covers every suite, including ones not yet written.
 changed=$(git diff --cached --name-only)
 case "$changed" in
-  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*tests/*|*tools/*|*docs/*) ;;
+  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*gps_sim.py*|*tests/*|*tools/*|*docs/*) ;;
   *) exit 0 ;;
 esac
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "pre-commit: node not found - skipping geometry tests (install Node to enable them)."
-  exit 0
-fi
+# Per-suite advice. A suite absent from this list still runs - it just gets the default.
+advice_for() {
+  case "$1" in
+    buoy_lane.js)      echo "  The route search changed the Rule 9 handedness (centreline no longer to port). Fix channelLaneRoute in static/asv.html." ;;
+    wreck_clearance.js) echo "  A charted wreck / obstruction no longer keeps a route off it, or the vessel's nogo buffer floor leaked (hazExtent / blocked / rasterKeepouts)." ;;
+    water_trust.js)    echo "  A tide reading from far away would no longer be flagged as such (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)." ;;
+    speed_recalc.js)   echo "  Changing the plan speed no longer recalculates, or a committed plan is not re-checked against the turn radius the new speed implies (recalcForSpeed)." ;;
+    ui_split.js)       echo "  A window-split registration selector no longer resolves, or the vessel-status card has been mirrored back into the controls window (UI_BRIDGED / UI_CARD_TITLES)." ;;
+    stored_settings.js) echo "  A stored setting no longer survives blocked or full storage, a toggle saved by an older build as \"1\"/\"0\" no longer reads, or a bare localStorage call crept back in (lsGet / lsSet / lsDel / lsBool)." ;;
+    ais_table.js)      echo "  The traffic list is being REBUILT rather than patched - that resets the card's scroll position mid-read and drops a text selection every poll (renderAisTable / setCellText)." ;;
+    panel_drag.js)     echo "  A floating pop-out grew its own private drag again beside the shared mechanism, lost the key that remembers where it was put, or stopped releasing its bottom/right anchor (makeDraggablePanel / showPanel / clampPanelPos)." ;;
+    survey_card.js)    echo "  The survey card blanks on a committed plan again, or its derived figures disagree with mission.lines (committedPatternInfo in static/asv.html)." ;;
+    pattern_move_grip.js) echo "  The survey pattern's whole-move grip is unreachable again - drawn where the boat marker covers it, or losing its hit-test tie-break (drawPatMoveGrip / patHandleAt)." ;;
+    nogo_readout.js)   echo "  The Nogo row no longer names its state - stuck reading after a successful extract, or 'no chart' conflated with 'clear water' (nogoReadout / updateNogoUI)." ;;
+    end_action.js)     echo "  The cards no longer name where the run leaves the boat - an end-of-plan RTH hidden behind a 'loiter', or promised where the chain cannot fire (rthPending / endAction)." ;;
+    turn_geometry.js)  echo "  A survey reversal no longer ends on the next line aligned, or asks the boat to hold a radius tighter than it can (teardropTurn in static/asv.html)." ;;
+    roc_tracks.py)     echo "  A recovery point no longer lands where the offset says, the staged/active HOME gate leaks, a vessel-derived default stopped tracking the vessel, or one malformed NMEA sentence is dropping the whole GPS link (roc_tracks.py)." ;;
+    ais_range.py)      echo "  The display range no longer filters the collected area correctly - filtering by box rather than range circle, filtering a LAKE, or exceeding what was collected (/api/ais + /api/ais/radius)." ;;
+    live_speed.py)     echo "  A speed change is not reaching the vessel - speed over ground no longer follows the commanded speed (SimVcu.set_speed / Engine.set_speed / /api/cmd/speed)." ;;
+    estop_chain.py)    echo "  THE SAFETY CHAIN. E-STOP is no longer reaching the vessel, no longer latching, or no longer letting go cleanly (Engine.set_estop / SimVcu.estop / the _require guards / /api/cmd/estop). Check 5b is the seam itself: the console's own flags can all look right while the boat is never told." ;;
+    completion_modes.py) echo "  The operator's END-OF-PLAN SETTING and the completion of the run IN PROGRESS have been conflated again - a behaviour is writing the setting, or a plan run is ignoring it (plan_completion / Engine.run_completion)." ;;
+    docs_valid.py)     echo "  A generated document is not a package a reader will open, or a code block did not reach the page. Rebuild with: cd tools && node build_docs.js  - a helper that returns a LIST must be flattened (write() in docx_kit.js)." ;;
+    tide_note.py)      echo "  The tide card is repeating one upstream failure as two sentences again, or has stopped naming which series were lost (tide_note in asv_console.py)." ;;
+    http_contract.py)  echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, a GET handler has a path that commits NO response, or something raised while serving. A handler can answer the client CORRECTLY and still take down its thread, so the check on the server's own log is the one no client check can see." ;;
+    *)                 echo "  See the suite's own docstring for what it guards and how to fix it." ;;
+  esac
+}
 
-# Run BOTH, and report every failure rather than stopping at the first - two broken
-# invariants are worth knowing about in one pass.
 fail=0
+have_node=0; command -v node   >/dev/null 2>&1 && have_node=1
+have_py=0;   command -v python >/dev/null 2>&1 && have_py=1
+[ "$have_node" -eq 1 ] || echo "pre-commit: node not found - skipping the JavaScript suites (install Node to enable them)."
+[ "$have_py"   -eq 1 ] || echo "pre-commit: python not found - skipping the Python suites."
 
-echo "pre-commit: buoy-lane handedness regression test..."
-if ! node tests/buoy_lane.js; then
-  echo ""
-  echo "pre-commit: buoy-lane test FAILED."
-  echo "  The route search changed the Rule 9 handedness (centreline no longer to port)."
-  echo "  Fix channelLaneRoute in static/asv.html."
-  fail=1
-fi
-
-echo "pre-commit: charted point-hazard extent regression test..."
-if ! node tests/wreck_clearance.js; then
-  echo ""
-  echo "pre-commit: wreck-clearance test FAILED."
-  echo "  A charted wreck / obstruction is no longer keeping a route off it, or the"
-  echo "  vessel's nogo buffer floor leaked (hazExtent / blocked / rasterKeepouts)."
-  fail=1
-fi
-
-echo "pre-commit: water-level trust regression test..."
-if ! node tests/water_trust.js; then
-  echo ""
-  echo "pre-commit: water-trust test FAILED."
-  echo "  A tide reading from far away would no longer be flagged as such"
-  echo "  (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: speed recalculation regression test..."
-if ! node tests/speed_recalc.js; then
-  echo ""
-  echo "pre-commit: speed-recalc test FAILED."
-  echo "  Changing the plan speed no longer recalculates, or a committed plan is not"
-  echo "  re-checked against the turn radius the new speed implies"
-  echo "  (recalcForSpeed / recalcCommittedForSpeed in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: UI split regression test..."
-if ! node tests/ui_split.js; then
-  echo ""
-  echo "pre-commit: ui-split test FAILED."
-  echo "  A window-split registration selector no longer resolves, or the vessel-status"
-  echo "  card has been mirrored back into the controls window / stripped from the chart"
-  echo "  window (UI_BRIDGED / UI_CARD_TITLES / the injected CSS in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: stored settings regression test..."
-if ! node tests/stored_settings.js; then
-  echo ""
-  echo "pre-commit: stored-settings test FAILED."
-  echo "  A stored setting no longer survives blocked or full storage, a toggle saved by"
-  echo "  an older build as \"1\"/\"0\" no longer reads, or a bare localStorage call has"
-  echo "  crept back in beside the helpers (lsGet / lsSet / lsDel / lsBool)."
-  fail=1
-fi
-
-echo "pre-commit: AIS traffic list regression test..."
-if ! node tests/ais_table.js; then
-  echo ""
-  echo "pre-commit: ais-table test FAILED."
-  echo "  The traffic list is being REBUILT rather than patched again - that resets"
-  echo "  the card's scroll position mid-read and drops a text selection every poll"
-  echo "  (renderAisTable / ensureAisSkeleton / setCellText in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: panel drag regression test..."
-if ! node tests/panel_drag.js; then
-  echo ""
-  echo "pre-commit: panel-drag test FAILED."
-  echo "  A floating pop-out has grown its own private drag again beside the shared"
-  echo "  mechanism, lost the key that remembers where it was put, or stopped releasing"
-  echo "  its bottom/right anchor (makeDraggablePanel in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: survey card regression test..."
-if ! node tests/survey_card.js; then
-  echo ""
-  echo "pre-commit: survey-card test FAILED."
-  echo "  The survey card blanks on a committed plan again, or its derived figures"
-  echo "  disagree with mission.lines (committedPatternInfo in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: survey move-grip regression test..."
-if ! node tests/pattern_move_grip.js; then
-  echo ""
-  echo "pre-commit: move-grip test FAILED."
-  echo "  The survey pattern's whole-move grip is unreachable again - drawn inside"
-  echo "  drawPattern() where the boat marker covers it, no longer named in the SURV"
-  echo "  hint, or losing its hit-test tie-break (drawPatMoveGrip / patHandleAt)."
-  fail=1
-fi
-
-echo "pre-commit: nogo readout regression test..."
-if ! node tests/nogo_readout.js; then
-  echo ""
-  echo "pre-commit: nogo-readout test FAILED."
-  echo "  The Nogo row no longer names its state - it is stuck reading after a"
-  echo "  successful extract, or 'no chart' and 'clear water' have been conflated"
-  echo "  (nogoReadout / updateNogoUI / refreshNogo in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: end-action readout regression test..."
-if ! node tests/end_action.js; then
-  echo ""
-  echo "pre-commit: end-action test FAILED."
-  echo "  The cards no longer name where the run leaves the boat - an end-of-plan RTH"
-  echo "  is being hidden behind a 'loiter', or promised where the chain cannot fire"
-  echo "  (rthPending / endAction in static/asv.html)."
-  fail=1
-fi
-
-echo "pre-commit: survey turn geometry regression test..."
-if ! node tests/turn_geometry.js; then
-  echo ""
-  echo "pre-commit: turn-geometry test FAILED."
-  echo "  A survey reversal no longer ends on the next line aligned, or asks the boat"
-  echo "  to hold a radius tighter than it can (teardropTurn in static/asv.html)."
-  fail=1
-fi
-
-if command -v python >/dev/null 2>&1; then
-  echo "pre-commit: ROC / moving-HOME regression test..."
-  if ! python tests/roc_tracks.py; then
+# Run EVERY suite and report every failure rather than stopping at the first - two broken
+# invariants are worth knowing about in one pass. A suite that CRASHES is treated exactly
+# as loudly as one that fails a check: a non-zero exit is a non-zero exit, and "printed no
+# FAIL line" must never read as "passed".
+for suite in tests/*.js tests/*.py; do
+  [ -e "$suite" ] || continue
+  name=$(basename "$suite")
+  case "$suite" in
+    *.js) [ "$have_node" -eq 1 ] || continue; runner=node   ;;
+    *.py) [ "$have_py"   -eq 1 ] || continue; runner=python ;;
+  esac
+  echo "pre-commit: $name ..."
+  if ! $runner "$suite"; then
     echo ""
-    echo "pre-commit: ROC test FAILED."
-    echo "  A recovery point no longer lands where the offset says, the staged/active"
-    echo "  HOME gate leaks, or a vessel-derived default stopped tracking the vessel"
-    echo "  (roc_tracks.py)."
+    echo "pre-commit: $name FAILED."
+    advice_for "$name"
     fail=1
   fi
-  echo "pre-commit: AIS range regression test..."
-  if ! python tests/ais_range.py; then
-    echo ""
-    echo "pre-commit: AIS-range test FAILED."
-    echo "  The display range no longer filters the collected area correctly - filtering"
-    echo "  by box rather than range circle, filtering a LAKE, or letting the radius"
-    echo "  exceed what was collected (/api/ais + /api/ais/radius in asv_console.py)."
-    fail=1
-  fi
-  echo "pre-commit: live speed regression test..."
-  if ! python tests/live_speed.py; then
-    echo ""
-    echo "pre-commit: live-speed test FAILED."
-    echo "  A speed change is not reaching the vessel - speed over ground no longer"
-    echo "  follows the commanded speed (SimVcu.set_speed / Engine.set_speed /"
-    echo "  /api/cmd/speed in asv_console.py)."
-    fail=1
-  fi
-  echo "pre-commit: end-of-plan completion regression test..."
-  if ! python tests/completion_modes.py; then
-    echo ""
-    echo "pre-commit: completion-modes test FAILED."
-    echo "  The operator's END-OF-PLAN SETTING and the completion of the run IN"
-    echo "  PROGRESS have been conflated again - a behaviour is writing the setting,"
-    echo "  or a plan run is ignoring it (plan_completion / Engine.run_completion)."
-    fail=1
-  fi
-  echo "pre-commit: generated document validity test..."
-  if ! python tests/docs_valid.py; then
-    echo ""
-    echo "pre-commit: docs-valid test FAILED."
-    echo "  A generated document is not a package a reader will open, or a code block"
-    echo "  did not reach the page. Rebuild with: cd tools \&\& node build_docs.js"
-    echo "  A helper that returns a LIST must be flattened - see write() in docx_kit.js."
-    fail=1
-  fi
-
-  echo "pre-commit: tide note regression test..."
-  if ! python tests/tide_note.py; then
-    echo ""
-    echo "pre-commit: tide-note test FAILED."
-    echo "  The tide card is repeating one upstream failure as two sentences again,"
-    echo "  or has stopped naming which series were lost (tide_note in asv_console.py)."
-    fail=1
-  fi
-
-  echo "pre-commit: HTTP contract regression test..."
-  if ! python tests/http_contract.py; then
-    echo ""
-    echo "pre-commit: http-contract test FAILED."
-    echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, a GET"
-    echo "  handler has a path that commits NO response, or something raised while"
-    echo "  serving. Note a handler can answer the client CORRECTLY and still take"
-    echo "  down its thread - _send writes the response before the caller unpacks -"
-    echo "  so check 16 (the server's own log) is the one no client check can see."
-    fail=1
-  fi
-else
-  echo "pre-commit: python not found - skipping the ROC and completion tests."
-fi
+done
 
 if [ "$fail" -ne 0 ]; then
   echo ""
