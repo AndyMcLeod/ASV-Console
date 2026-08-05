@@ -34,7 +34,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
 
-**TWENTY-NINE REGRESSION SUITES (405 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY REGRESSION SUITES (415 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -77,6 +77,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
 | `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
 | `python tests/data_routes.py` | vessel switch SAFE gate + energy-gauge flip; the comms password's THREE never-leak paths; tide answers; ROC HTTP error mapping (15, real console, logging ON) |
+| `python tests/ais_error_frames.py` | an aisstream error frame SURFACES (state error, note names it), survives the quiet-box re-stamp, clears on real data (10, hermetic, scripted fake websocket) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -629,6 +630,39 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE EMPTY AISSTREAM FEED, AND THE ERROR-FRAME SWALLOW (2026-08-05)
+
+Andy: “check aisstream. no vessels to 81nm seems strange.” He was right — the baseline
+measured 2026-08-04 was 94 vessels / nearest 44 nm on this exact geography, and 81 nm is
+just the 150 km collect radius in nm: the display was maxed over an EMPTY registry.
+
+**THE DIAGNOSIS CHAIN, each link verified live (keep the technique):** console healthy at
+Lewes → service child running with the CORRECT key (`auto → aisstream`) and the CORRECT
+box (byte-identical to the proven-good subscription) → fresh service instance: connected,
+zero reports → the proven-instant NY/NJ box: zero → a RAW-SOCKET probe printing every
+frame verbatim: handshake accepted, subscription accepted, then pure silence — no data,
+no error frame, no close → **whole-world, filterless: zero frames in 60 s**, which rules
+out geography, box format and message filter in one stroke. **VERDICT: upstream —
+aisstream delivering nothing on this key that day.** Discriminator if it recurs: mint a
+second free key; silence on a fresh key = their outage, traffic on it = this key flagged.
+**ALSO MEASURED: aisstream rate-limits connections PER KEY** — a fourth simultaneous
+connection got `429 Too Many Requests` on the handshake. `$AISSTREAM_KEY` is
+machine-wide, so the ASV and Z-Boat consoles CONTEND if both run AIS at once.
+
+**THE FIX THE INVESTIGATION FORCED OUT (Andy's call): the error-frame swallow.**
+aisstream reports faults — “Api Key Is Not Valid”, connection limits — as a TEXT frame
+`{"error": ...}` on the SAME channel as vessel data. The read loop stamped “ok /
+connected” on ANY frame and passed it to `_ingest`, whose no-MMSI discard dropped it
+silently; and the quiet-box timeout path re-stamps its note every 30 s, so even a
+surfaced error would have been overwritten moments later. **A dead key read as a quiet
+sea, forever.** Now: `_frame_error()` classifies (MetaData = vessel data whatever other
+keys it carries), the loop surfaces `aisstream: <message>` as state “error”, the timeout
+path HOLDS a remembered error instead of erasing it, and real data flowing clears it.
+`tests/ais_error_frames.py` (10 assertions, hermetic — the REAL run() loop driven
+through a scripted fake websocket, no network, no console; 4/4 mutations caught incl.
+the swallow restored). Ops manual: the empty-card taxonomy gains its third kind — an
+upstream-named fault is never displayed as a quiet sea.
 
 ## THE ROUTE-COVERAGE THREAD IS COMPLETE — vessels/comms/tide/roc (2026-08-05)
 

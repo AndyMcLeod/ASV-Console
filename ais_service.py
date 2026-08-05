@@ -239,6 +239,26 @@ class DigitrafficSource(Source):
 # --------------------------------------------------------------------------- #
 #  Source: aisstream.io — global WebSocket (needs a free API key)             #
 # --------------------------------------------------------------------------- #
+def _frame_error(raw):
+    """The upstream's own error message, or None for a data frame.
+
+    aisstream reports faults ("Api Key Is Not Valid", connection limits, ...) as a
+    TEXT frame shaped {"error": "..."} - the SAME channel as vessel data. Before this
+    existed, such a frame took the read-loop path that stamps state "ok" and then hit
+    _ingest, which discards anything without an MMSI: the upstream was TELLING us what
+    was wrong and the card showed "connected". Anything carrying MetaData is vessel
+    data, whatever other keys it has; a non-dict or unparseable frame is not an error
+    REPORT (let _ingest ignore it as before)."""
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or d.get("MetaData"):
+        return None
+    err = d.get("error") or d.get("Error")
+    return str(err)[:160] if err else None
+
+
 class AisstreamSource(Source):
     name = "aisstream"
     URL = "wss://stream.aisstream.io/v0/stream"
@@ -254,6 +274,7 @@ class AisstreamSource(Source):
 
     def run(self):
         backoff = 2.0
+        frame_err = None                # the upstream's LAST error frame, until data flows
         while True:
             try:
                 ws = WSClient(self.URL)
@@ -264,6 +285,7 @@ class AisstreamSource(Source):
                 ws.send_text(json.dumps(sub))
                 self._ok("connected")
                 backoff = 2.0
+                frame_err = None        # a fresh subscription starts clean; a real fault re-reports
                 while True:
                     try:
                         msg = ws.recv_text()
@@ -275,10 +297,26 @@ class AisstreamSource(Source):
                         # Treating that as a failure showed "error" in the UI and tore the
                         # socket down into an exponential-backoff reconnect, which then
                         # risked missing the first real report. Hold the connection open.
-                        self._ok("connected; no vessels reporting in this area yet")
+                        # BUT hold a reported upstream ERROR too: this path re-stamps every
+                        # read timeout, and the quiet-box note overwriting "Api Key Is Not
+                        # Valid" is how a dead key would read as a quiet sea forever.
+                        if frame_err:
+                            self._err("aisstream: " + frame_err)
+                        else:
+                            self._ok("connected; no vessels reporting in this area yet")
                         continue
                     if msg is None:
                         break
+                    err = _frame_error(msg)
+                    if err is not None:
+                        # The upstream said WHAT IS WRONG, on the data channel. Surface it
+                        # instead of feeding it to _ingest, whose no-MMSI discard swallowed
+                        # it silently - "connected", zero reports, forever (measured live
+                        # during the 2026-08-05 empty-feed investigation).
+                        frame_err = err
+                        self._err("aisstream: " + err)
+                        continue
+                    frame_err = None    # real data flowing again - the fault has passed
                     self._ok("connected")
                     self._ingest(msg)
             except Exception as e:
