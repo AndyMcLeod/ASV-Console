@@ -94,14 +94,19 @@ touched; the suites owe nothing here.**
   Documentation section updated in the same commit.
 - `8370618` — `.gitignore` gains `~$*` (Office drops a lock file beside an open deck; with a
   pptx in `docs/` those would recur as untracked noise).
-- (this commit) — **the deck gains an ASV effort-economics estimate** (now 14 slides):
+- `548d1eb` — **the deck gains an ASV effort-economics estimate** (now 14 slides):
   unaided professional ≈200 person-hours by the papers' own PERT method (10 components,
   tabled on its own slide; UI and test infrastructure dominate, not discovery) vs ≈30 h
   measured from the repo itself — 109 commits clustered into 27 bursts at a ≤60-min gap.
   ≈7×, smaller than the small tools' 10–16×, exactly the series' scaling caveat. The slide
   names the new bias plainly: the estimate was produced by the development agent grading
-  its own work. **The pptx generator lives in the session scratchpad, not this repo** — the
-  deck is the artifact; edit it in PowerPoint, or ask for a regeneration.
+  its own work.
+- (this commit) — **the deck generator moved INTO the repo: `tools/build_deck.js`**
+  (Andy's call, reversing the scratchpad note `548d1eb` carried). `npm install` in
+  `tools/` now covers it (pptxgenjs added); icons pre-rendered in `tools/deck_icons.json`
+  with `build_deck_icons.js` to regenerate them. **Rebuild verified byte-identical** on
+  `ppt/slides/*.xml` against the committed deck, so the rebuilt pptx was NOT committed —
+  zip-timestamp noise, the same rule as the docx set. Full notes in "Keep docs current".
 
 **THE SESSION JUST FINISHED ("ASV console refinement", 2026-08-02 → 08-04) — SEVENTEEN
 commits.** Andy's scope was a POLISH pass: no new features; tighten, delete special cases,
@@ -2002,14 +2007,18 @@ paths are script-relative). **Never hand-edit a docx** — edit its script and r
 one does get hand-edited in Word, diff the text against the generated version and fold the
 edits back INTO the script. All four are brand-free by rule: the console core names no
 vendor; vessel FILES may name real vessels, since that is data rather than branding.
-**One deliberate exception sits beside them:** `ASV-Console-Programming-by-Conversation.pptx`
+**A fifth generated artifact sits beside them:** `ASV-Console-Programming-by-Conversation.pptx`
 (added 2026-08-05, Andy's request) — a presentation on this project + the DES schema for a
-graduate audience. It is NOT generated: no builder in `tools/`, not covered by
-`docs_valid.py` (which globs `*.docx` and asserts exactly four), and it names real outside
-projects and vendors by design (the Starlink / Q-Hub / DeltaT case-study series; NOT the
-sibling) — presentation content is Andy's authored material, like the maintainer notes in
-this file, and the sanitization rule is scoped to CODE, so it does not apply here.
-Edit it in PowerPoint directly; don't try to rebuild it from `tools/`.
+graduate audience. **Its generator is `tools/build_deck.js`** (`npm install` covers it —
+pptxgenjs is in `tools/package.json`); a rebuild was verified to reproduce the committed
+deck's slide XML byte-for-byte. Same never-hand-edit + only-commit-on-change rules as the
+docx set, with the hash check on `ppt/slides/*.xml` instead of `word/document.xml`. Its
+icons are pre-rendered into `tools/deck_icons.json` — regenerate ONLY when changing them
+(`tools/build_deck_icons.js`; its heavy deps are deliberately not in `package.json`).
+It is NOT covered by `docs_valid.py` (which globs `*.docx` and asserts exactly four), and it
+names real outside projects and vendors by design (the Starlink / Q-Hub / DeltaT case-study
+series; NOT the sibling) — presentation content is Andy's authored material, like the
+maintainer notes in this file, and the sanitization rule is scoped to CODE.
 
 ```
 cd tools && node build_docs.js     # rebuilds all four

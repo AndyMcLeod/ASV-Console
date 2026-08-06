@@ -515,11 +515,18 @@ cd tools && npm install && node build_docs.js
 Each generator is standalone (`build_quickstart.js`, `build_ops_manual.js`,
 `build_tech_manual.js`, `build_dev_guide.js`) if you only want to rebuild one.
 
-`docs/` also holds one artifact **outside** the generated set:
-`ASV-Console-Programming-by-Conversation.pptx`, a presentation on this project
-and the Domain-Expert Specification (DES) schema for a graduate audience. It is
-not produced by `build_docs.js` and `tests/docs_valid.py` does not cover it —
-edit it in PowerPoint directly.
+`docs/` also holds `ASV-Console-Programming-by-Conversation.pptx`, a
+presentation on this project and the Domain-Expert Specification (DES) schema
+for a graduate audience. It has its **own generator**, separate from
+`build_docs.js` and not covered by `tests/docs_valid.py`:
+
+```
+cd tools && npm install && node build_deck.js
+```
+
+Its icon set is pre-rendered in `tools/deck_icons.json`; regenerate that only
+when changing icons (`tools/build_deck_icons.js`, which documents its own
+extra dependencies).
 
 ## Tests & git hooks
 
