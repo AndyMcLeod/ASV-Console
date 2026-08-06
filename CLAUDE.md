@@ -37,6 +37,33 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 resides HERE. Do not port fixes back to the Z-Boat console or touch its repo until he
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
+**⚠ A FEATURE WAS BUILT AND REVERTED THE SAME DAY (2026-08-06) — READ BEFORE TOUCHING
+THE RECORDER OR PLAYBACK.** `d473b5b` shipped full-picture recording (a `LOG.aux`
+change-only/throttled mechanism feeding env/water/ais/vessel/mission streams) + a
+CHART|CONTROLS two-tab playback. Hours later, live mid-mission, Andy called it back —
+"too many things that worked are now broken" — and `1a1e8dc` reverts it whole; the tree
+is PROVEN byte-identical to `734ec90` (`git diff 734ec90 1a1e8dc` is empty). **Do not
+rebuild it unasked.** The design, both suites (13 mutations earned) and the docs live
+intact in `d473b5b` if he ever asks. Four things survive the event:
+- **The fault that triggered the call was NEVER root-caused**: his LINES card froze in
+  the controls window. The controls window is a DOM MIRROR of the chart window's hidden
+  panels over a **BroadcastChannel — which is ORIGIN-SCOPED: a chart window on
+  `localhost:8791` and a controls window on `127.0.0.1:8791` can never sync, silently,
+  while commanding still works.** Works-after-revert carries a restart confound (the
+  restart is also the cure for both mirror suspects), so the feature stands unconvicted.
+  If the card freezes again on THIS code: F5 the controls window, compare the two
+  address bars, then F12 on the chart window.
+- **A real gap found during diagnosis, parked**: a SECOND full client (a laptop beside
+  the console) never learns of plan edits — each window loads `mission` once at boot.
+  The built-and-tested-live fix is 4 lines of design: server bumps `MISSION_REV` in
+  `save_mission` + publishes it on the state + the POST returns it; client adopts its
+  own echo, guards in-flight edits with `savePending`, refetches on a foreign rev.
+- Sessions recorded during the feature window carry extra record kinds (`env`, `water`,
+  `ais`, `vessel`, `mission`); this playback ignores unknown kinds — they replay fine.
+- The revert-day conversation also closed: aisstream's empty feed was THEIR outage
+  (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
+  upstream error frame now SHOWS instead of reading as a quiet sea.
+
 **THIRTY-ONE REGRESSION SUITES (441 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
