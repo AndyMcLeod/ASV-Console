@@ -64,7 +64,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-ONE REGRESSION SUITES (441 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-ONE REGRESSION SUITES (446 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1002,6 +1002,32 @@ the other end.
 Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No client
 change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
 the server ignores them if anything ever does.
+
+## THE SURV CARD'S RIGHT-EDGE LOCK — THE UICARD CLAMP (2026-08-06)
+
+Andy: the survey card "does not properly resize and occasionally locks to the right side
+of the browser window." **ONE bug, both symptoms, and it lived in the CONTROLS window:**
+`wrapUICards` restored a saved layout VERBATIM — a position saved on a bigger window put
+the card past the right edge, where the RESIZE HANDLE (far corner) leaves the screen
+first and the grip follows. Reproduced live: seeded `left:2400px` in a 1280px window
+restored at 2400, unreachable. **The chart pop-outs got exactly this fix in `2aef779`;
+the controls window's parallel mechanism never did — the standing cost of a parallel
+mechanism.** The chart window itself was verified healthy end to end (resize, persist,
+restore, clamp) before touching anything.
+
+**THE FIX is the chart treatment applied to uicards, all three properties kept:**
+`clampUICard`/`placeUICard` (against the WINDOW — uicards are position:fixed) at
+RESTORE, during DRAG (every move), and on window RESIZE re-derived from the STORED
+layout (never the DOM — re-clamping the clamped ratchets). **Display-only via
+`dataset.storedLeft/Top`: `saveUILayout` prefers the stored value while it stands, so a
+beforeunload after a silent clamp cannot bake 1160 over a parked 2400; a DRAG deletes
+the dataset — the operator's placement becomes the truth.** Verified live at every step:
+restore 2400→1160 reachable; save still writes 2400; drag to 5000 holds at 1160 and
+saves 1160; card resizes both axes with the panel following (300→283, 200→183 — the
+delta is padding). `tests/ui_split.js` 17→22 (+ its first grab() extractor), **5/5
+mutations caught, each by exactly the check written for it.**
+**NOTE FOR ANCHOR-WRITERS: `static/asv.html` is CRLF** — the fourth file this trap has
+bitten; `cat -A` under Git Bash masked it, `python newline=''` told the truth.
 
 ## RUN + LINK CONTROL: FIVE MORE ROUTES UNDER TEST (2026-08-04)
 

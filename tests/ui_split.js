@@ -175,6 +175,50 @@ check("17. nothing writes an inline maxHeight, which would defeat the cap on fir
       !/style\.maxHeight\s*=/.test(H),
       "inline beats the stylesheet — one mousedown and the cap would be gone for good");
 
+// --- 18-22. A UICARD MUST STAY REACHABLE ---------------------------------- //
+// The SURV card "did not properly resize and occasionally locked to the right side"
+// - ONE bug: wrapUICards restored a saved position VERBATIM, so a layout saved on a
+// bigger window put the card past the right edge, where its resize handle (far
+// corner) leaves the screen first and its grip follows. The chart pop-outs got this
+// fix in 2aef779; the controls window's parallel mechanism never did - the standing
+// cost of a parallel mechanism. These checks pin the SAME three properties the
+// chart's clamp keeps: clamp on restore, clamp during drag, stored layout never
+// rewritten by a clamp (display-only). Five mutations RUN, 5/5 caught, each by
+// exactly the check written for it (18-22; the shipped bug restored is U1/19).
+// the grab() extractor, as in ais_table.js - brace-matched function source from H
+function grab(name){
+  const start = H.indexOf("function " + name + "(");
+  if(start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
+  let k = H.indexOf("{", start), depth = 0;
+  for(;;){ const c = H[k]; if(c === "{") depth++; else if(c === "}"){ depth--; if(!depth) break; } k++; }
+  return H.slice(start, k + 1);
+}
+const CLAMP = grab("clampUICard");
+const WRAP = grab("wrapUICards"), UISAVE = grab("saveUILayout"), UIDRAG = grab("makeUIDraggable");
+const MINVIS = (H.match(/const UICARD_MIN_VIS = (\d+);/) || [0, "0"])[1];   // the real constant, not a copy
+const cl = new Function("innerWidth", "innerHeight", "const UICARD_MIN_VIS=" + MINVIS + ";" + CLAMP + "; return clampUICard;")(1280, 720);
+check("18. clampUICard: far-right restores land reachable, never off-screen",
+      cl(2400, 40).left === 1280 - 120 && cl(2400, 40).top === 40
+      && cl(-50, -50).left === 0 && cl(-50, -50).top === 0
+      && cl(100, 5000).top === 720 - 28,
+      "seeded 2400px in a 1280px window restored at 1160 - measured live");
+check("19. the restore path places THROUGH the clamp and remembers the stored layout",
+      /placeUICard\(card, parseFloat\(rl\), parseFloat\(rt\)\)/.test(WRAP)
+      && /dataset\.storedLeft=rl/.test(WRAP) && /dataset\.storedTop=rt/.test(WRAP),
+      "a stale big-monitor position must stay reachable AND stay stored");
+check("20. the clamp is DISPLAY-ONLY: a save prefers the STORED value while it stands",
+      /dataset\.storedLeft \|\| card\.style\.left/.test(UISAVE)
+      && /dataset\.storedTop\s+\|\| card\.style\.top/.test(UISAVE),
+      "a beforeunload after a silent clamp must not bake 1160 over the parked 2400");
+check("21. a DRAG clamps every move and makes the operator's placement the truth",
+      /const mv=ev=>\{ placeUICard\(card/.test(UIDRAG)
+      && /delete card\.dataset\.storedLeft/.test(UIDRAG),
+      "the grip can never be dragged off-screen; a re-place clears the stored value");
+check("22. a window RESIZE re-derives from the STORED layout, never the DOM",
+      /addEventListener\("resize"/.test(WRAP)
+      && /dataset\.storedLeft\|\|card\.style\.left/.test(WRAP),
+      "re-clamping the clamped would RATCHET: shrink then grow strands the card");
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

@@ -4326,8 +4326,30 @@ const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ return lsGet(UI_LAYOUT_KEY, {}); }
 function saveUILayout(){                                // persist every card's position + size
   const L={}; document.querySelectorAll(".uicard").forEach(card=>{ const k=card.dataset.for; if(!k) return;
-    L[k]={left:card.style.left, top:card.style.top, width:card.style.width, height:card.style.height}; });
+    // Prefer the STORED position while it stands - a restore-time clamp is display-only
+    // and must never be baked into the layout by a beforeunload or resize-observer
+    // save. A drag deletes the dataset: from then on the operator's placement rules.
+    L[k]={left:card.dataset.storedLeft || card.style.left,
+          top: card.dataset.storedTop  || card.style.top,
+          width:card.style.width, height:card.style.height}; });
   lsSet(UI_LAYOUT_KEY, L);
+}
+// Keep a uicard REACHABLE: its grip must stay on screen, or the card can neither be
+// dragged back nor resized (the resize handle sits at its far corner and leaves the
+// viewport first - which is how "does not properly resize" and "locks to the right
+// side" were ONE bug). Same rule as the chart window's clampPanelPos, against the
+// WINDOW because uicards are position:fixed. Display-only, like the chart's: the
+// STORED layout is never rewritten by a clamp - park a card at a big monitor's edge
+// and it returns there when the window is big again (dataset carries the stored
+// value; saveUILayout prefers it unless the operator has re-placed the card).
+const UICARD_MIN_VIS = 120;
+function clampUICard(left, top){
+  return {left: Math.max(0, Math.min(innerWidth - UICARD_MIN_VIS, left)),
+          top:  Math.max(0, Math.min(innerHeight - 28, top))};
+}
+function placeUICard(card, left, top){
+  const c = clampUICard(left, top);
+  card.style.left = c.left + "px"; card.style.top = c.top + "px";
 }
 function wrapUICards(){
   const saved=loadUILayout(); let i=0;
@@ -4335,13 +4357,20 @@ function wrapUICards(){
     if(!p || (p.closest && p.closest(".uicard"))){ i++; continue; }
     const card=document.createElement("div"); card.className="uicard"; card.dataset.for=sel;
     const s=saved[sel];                                // restore last session's placement, else tile
-    card.style.left = (s&&s.left) || (190+i*26)+"px"; card.style.top = (s&&s.top) || (14+i*26)+"px";
+    const rl=(s&&s.left)||(190+i*26)+"px", rt=(s&&s.top)||(14+i*26)+"px";
+    card.dataset.storedLeft=rl; card.dataset.storedTop=rt;   // the layout as SAVED, pre-clamp
+    placeUICard(card, parseFloat(rl), parseFloat(rt));       // restored CLAMPED: a stale big-monitor position must stay reachable
     if(s&&s.width) card.style.width=s.width; if(s&&s.height) card.style.height=s.height;
     const grip=document.createElement("div"); grip.className="uicard-grip"; grip.textContent=UI_CARD_TITLES[sel];
     p.parentNode.insertBefore(card, p); card.appendChild(grip); card.appendChild(p);
     makeUIDraggable(card, grip);
     new ResizeObserver(uiSaveSoon).observe(card);      // persist size changes (debounced)
     i++; }
+  // A window that SHRINKS strands whatever was near its far edge. Re-derive from the
+  // STORED layout, then clamp - never from the DOM, or shrink-then-grow would ratchet.
+  window.addEventListener("resize", ()=>{ document.querySelectorAll(".uicard").forEach(card=>{
+    placeUICard(card, parseFloat(card.dataset.storedLeft||card.style.left),
+                      parseFloat(card.dataset.storedTop ||card.style.top)); }); });
   syncUICards();
 }
 let uiSaveTimer=null;
@@ -4350,7 +4379,8 @@ function makeUIDraggable(card, grip){
   grip.addEventListener("mousedown", e=>{ if(e.button!==0) return; e.preventDefault();
     const r=card.getBoundingClientRect(), ox=e.clientX-r.left, oy=e.clientY-r.top;
     card.style.zIndex=30;
-    const mv=ev=>{ card.style.left=Math.max(0,ev.clientX-ox)+"px"; card.style.top=Math.max(0,ev.clientY-oy)+"px"; };
+    delete card.dataset.storedLeft; delete card.dataset.storedTop;   // operator re-places it: inline is now the truth
+    const mv=ev=>{ placeUICard(card, ev.clientX-ox, ev.clientY-oy); };   // same clamp as restore
     const up=()=>{ document.removeEventListener("mousemove",mv); document.removeEventListener("mouseup",up);
       card.style.zIndex=20; saveUILayout(); };         // persist on drop
     document.addEventListener("mousemove",mv); document.addEventListener("mouseup",up); });
