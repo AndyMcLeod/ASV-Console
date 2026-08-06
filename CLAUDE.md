@@ -37,7 +37,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 resides HERE. Do not port fixes back to the Z-Boat console or touch its repo until he
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
-**THIRTY-ONE REGRESSION SUITES (441 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-THREE REGRESSION SUITES (464 assertions - derived from the 2026-08-06 hook run, not hand-added), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -81,6 +81,8 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
 | `python tests/data_routes.py` | vessel switch SAFE gate + energy-gauge flip; the comms password's THREE never-leak paths; tide answers; ROC HTTP error mapping (15, real console, logging ON) |
 | `python tests/ais_error_frames.py` | an aisstream error frame SURFACES (state error, note names it), survives the quiet-box re-stamp, clears on real data (10, hermetic, scripted fake websocket) |
+| `python tests/record_playback.py` | the recording carries the WHOLE picture: env/water/ais/vessel/mission, change-only + throttled, burst-end never lost (11, real console, fake AIS) |
+| `node tests/playback_tabs.js` | playback replays it: streams parse, cursor resolves (never the future), recorded mission feeds the chart, two tabs one scrubber, old files read 'not recorded' (12) |
 | `python tests/ais_sources.py` | many AIS feeds, ONE merged picture: per-vessel provenance, the stale-position guard, AISHub fault-as-data + per-response format detection, endpoint specs, a real AIVDM sentence over TCP and UDP (26, hermetic) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
@@ -727,6 +729,49 @@ AIVDM sentence at Lewes → `/api/ais` returned the vessel (decode exact, `src`
 All AIS-adjacent suites green (`ais_range`, `ais_error_frames`, `ais_table`,
 `http_contract`, `data_routes`). Ops + tech manuals updated and rebuilt (the only two
 docx that changed); README AIS section rewritten for the merge model.
+
+## THE RECORDING CARRIES THE WHOLE PICTURE; PLAYBACK REPLAYS IT IN TWO TABS (2026-08-06)
+
+Andy's ask: recording + playback should cover everything - environment, lines, traffic -
+so a replay emulates the ENTIRE mission. Before this the recorder wrote commands, salient
+state and a motion trace; the wind the operator planned around, the tide, the traffic on
+the card and the lines drawn in a PREVIOUS session existed nowhere in the file. A replay
+opened onto a bare chart in dead calm.
+
+**RECORDER - one mechanism, five feeders.** `LOG.aux(kind, snap, min_interval)` writes
+only when the snapshot CHANGED and the per-kind throttle has elapsed; `last` advances
+only on a WRITE, so a change inside the window re-offers and its END is never lost
+(burst 18→21→23 kn records 21 then 23 - measured). Feeders: `env` + `water` ride
+Engine._push_state (no thread of their own); `ais` rides the BROWSER'S OWN 8 s poll in
+_serve_ais (traffic is recorded exactly while an operator is watching); `vessel` +
+`mission` at session start (the picture as the session OPENS - the pre-session lines
+fix), on every live switch, and on every save_mission. `tests/record_playback.py`
+(11 assertions, real console, --ais pointed at a FAKE service the suite runs itself;
+7/7 mutations caught - one on a RE-RUN after a SHAM CATCH: deleting a line left an empty
+`if` block, an IndentationError, a console that never booted and a "caught by check 1"
+that proved nothing. **A MUTATION MUST COMPILE** - an unrunnable mutant fails every
+suite at check 1 and validates none of them.)
+
+**PLAYBACK - CHART | CONTROLS tabs over ONE scrubber** (`static/playback.html`). Chart
+adds the recorded AIS traffic (faded triangles at the cursor) and a wind widget; the
+recorded mission feeds `planAt` chronologically alongside command bodies, which is how
+previous-session lines reach the chart. Controls reconstructs the cards - environment,
+water, mission, traffic, session/vessel - each value the last thing RECORDED before the
+cursor via one `lastBefore` helper; an older recording reads "not recorded", NEVER a
+guess, and never a value borrowed from the future. `tests/playback_tabs.js`
+(12 assertions, grab() harness; 6/6 mutations caught - one re-anchored after a SKIP ×2:
+render and renderControls resolve AIS through the same line).
+
+**THE LIVE EYEBALL FOUND A REAL BUG THE SUITES HADN'T** (browser verification, canvas
+pixels + DOM): the manual water override replayed as "not recorded" - `{t, ...payload}`
+let the water snapshot's OWN `t` key (null during the NOAA outage) CLOBBER the record
+time, and `lastBefore` never matched NaN. **SPREAD FIRST, TIMESTAMP LAST** in all five
+streams; check 3c pins it with a payload carrying `t: null`, and the restored spread
+order is caught by it. One-name-two-masters, in a place only a live replay could show.
+Verified end-to-end in the browser: 75 px of AIS triangles, 95 px of wind arrow,
+1469 px of mission lines on the chart tab; every controls card correct at the cursor,
+including "calm / none" BEFORE the env override was set - time resolution, not just
+presence. Old recordings (back to 08-01) open under the new tabs with placeholders.
 
 ## THE EMPTY AISSTREAM FEED, AND THE ERROR-FRAME SWALLOW (2026-08-05)
 
