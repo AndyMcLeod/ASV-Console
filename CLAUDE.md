@@ -1980,11 +1980,19 @@ model / command flow / endpoints / walkthrough), `README_PLAYBACK.md` · and
 `node build_docs.js` if a generated document covers it. Internal-only refactors need none of
 it — say so in the commit rather than silently skipping.
 
-**THE WHOLE `docs/` SET IS GENERATED** (docx-js; `npm install` in `tools/` first; output
+**THE WHOLE `docs/` DOCX SET IS GENERATED** (docx-js; `npm install` in `tools/` first; output
 paths are script-relative). **Never hand-edit a docx** — edit its script and rebuild. If
 one does get hand-edited in Word, diff the text against the generated version and fold the
 edits back INTO the script. All four are brand-free by rule: the console core names no
 vendor; vessel FILES may name real vessels, since that is data rather than branding.
+**One deliberate exception sits beside them:** `ASV-Console-Programming-by-Conversation.pptx`
+(added 2026-08-05, Andy's request) — a presentation on this project + the DES schema for a
+graduate audience. It is NOT generated: no builder in `tools/`, not covered by
+`docs_valid.py` (which globs `*.docx` and asserts exactly four), and it names real outside
+projects and vendors by design (the Starlink / Q-Hub / DeltaT case-study series; NOT the
+sibling) — presentation content is Andy's authored material, like the maintainer notes in
+this file, and the sanitization rule is scoped to CODE, so it does not apply here.
+Edit it in PowerPoint directly; don't try to rebuild it from `tools/`.
 
 ```
 cd tools && node build_docs.js     # rebuilds all four
