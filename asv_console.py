@@ -96,6 +96,13 @@ DEFAULT_WEB_PORT = 8791
 # Base URL of the standalone AIS provider service (ais_service.py). The console
 # proxies it at /api/ais; override with --ais. The AIS layer is opt-in in the UI.
 AIS_BASE = "http://127.0.0.1:8788"
+# What the auto-started service is told to run (--ais-source / --ais-nmea /
+# --ais-opencpn pass-throughs). Module globals, not locals of main(), because
+# _rescope_ais_service() rebuilds the child after a vessel switch and must
+# reproduce the SAME source configuration, not fall back to a default.
+AIS_SOURCE_ARG = "auto"
+AIS_NMEA_SPECS = []            # e.g. ["udp:10110", "tcp:127.0.0.1:2000"]
+AIS_OPENCPN = ""               # "[HOST:]PORT" for --source ...,opencpn
 # AIS display radius at sea (km). On a Great Lake the whole lake is used instead, so this
 # only applies to open water. Configurable because feed coverage is wildly uneven: the
 # aisstream receivers near the Delaware Bay are inland, so at Lewes a 50 km radius sees
@@ -3508,14 +3515,22 @@ def _start_ais_service():
         logf = open(os.path.join(LOG_DIR, "ais_service.log"), "a", encoding="utf-8")
     except OSError:
         logf = subprocess.DEVNULL
+    cmd = [sys.executable, script, "--source", AIS_SOURCE_ARG, "--host", host,
+           "--port", str(port), "--bbox=" + bbox, "--parent-pid", str(os.getpid())]
+    for spec in AIS_NMEA_SPECS:
+        cmd += ["--nmea", spec]
+    if AIS_OPENCPN:
+        # "[HOST:]PORT" - a bare port keeps the service's 127.0.0.1 default
+        h, _, p = AIS_OPENCPN.rpartition(":")
+        if h:
+            cmd += ["--opencpn-host", h]
+        cmd += ["--opencpn-port", p]
     try:
-        _ais_proc = subprocess.Popen(
-            [sys.executable, script, "--source", "auto", "--host", host,
-             "--port", str(port), "--bbox=" + bbox, "--parent-pid", str(os.getpid())],
-            cwd=APP_DIR, stdout=logf, stderr=subprocess.STDOUT)
+        _ais_proc = subprocess.Popen(cmd, cwd=APP_DIR, stdout=logf,
+                                     stderr=subprocess.STDOUT)
         atexit.register(_stop_ais_service)
-        print("[ais] auto-started ais_service.py on %s:%d (source auto, bbox %s)"
-              % (host, port, bbox))
+        print("[ais] auto-started ais_service.py on %s:%d (source %s, bbox %s)"
+              % (host, port, AIS_SOURCE_ARG, bbox))
     except Exception as e:
         print("[ais] could not auto-start ais_service.py: %s" % e)
 
@@ -3564,6 +3579,7 @@ def _rescope_ais_service():
 
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
+    global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
@@ -3594,6 +3610,16 @@ def main():
                     help="AIS provider service base URL (ais_service.py; default %(default)s)")
     ap.add_argument("--no-ais-service", action="store_true",
                     help="don't auto-start the bundled ais_service.py (use an external one)")
+    ap.add_argument("--ais-source", default=AIS_SOURCE_ARG, metavar="LIST",
+                    help="sources for the bundled AIS service (its --source): auto, or a "
+                         "comma list of aisstream,digitraffic,aishub,nmea,opencpn - every "
+                         "enabled source merges into the one displayed picture")
+    ap.add_argument("--ais-nmea", action="append", default=None, metavar="PROTO[:HOST]:PORT",
+                    help="local NMEA AIVDM endpoint for --ais-source ...,nmea; repeatable "
+                         "(udp:10110 binds for AIS-catcher / rtl-ais, tcp:host:port connects)")
+    ap.add_argument("--ais-opencpn", default="", metavar="[HOST:]PORT",
+                    help="OpenCPN TCP NMEA server to read with --ais-source ...,opencpn "
+                         "(default 127.0.0.1:10110 if the source is named without this)")
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
@@ -3628,11 +3654,24 @@ def main():
     # --fetch-charts never spawn a log file. Best-effort; never fatal.
     global LOG
     AIS_BASE = args.ais
-    if not args.no_ais_service:
-        _start_ais_service()                      # bundled AIS provider - no separate command
+    # The service's runtime shape must be FINAL before the child starts: the collect
+    # radius scales the subscription bbox and the source flags are its command line.
+    # (The radii used to be applied AFTER _start_ais_service, so a --ais-collect-km
+    # wider than the default never widened the FIRST subscription - only the one
+    # rebuilt after a vessel switch. Ordering defect, fixed 2026-08-05.)
     AIS_COLLECT_RADIUS_KM = max(5.0, min(500.0, float(args.ais_collect_km)))
     # The display radius can never exceed what is collected - see the endpoint.
     AIS_SHOW_RADIUS_KM = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(args.ais_radius_km)))
+    AIS_SOURCE_ARG = (args.ais_source or "auto").strip() or "auto"
+    AIS_NMEA_SPECS = list(args.ais_nmea or [])
+    AIS_OPENCPN = (args.ais_opencpn or "").strip()
+    # Naming an endpoint IS asking for its source - don't make the operator say it twice.
+    if AIS_NMEA_SPECS and "nmea" not in AIS_SOURCE_ARG:
+        AIS_SOURCE_ARG += ",nmea"
+    if AIS_OPENCPN and "opencpn" not in AIS_SOURCE_ARG:
+        AIS_SOURCE_ARG += ",opencpn"
+    if not args.no_ais_service:
+        _start_ais_service()                      # bundled AIS provider - no separate command
     # A selected ROC owns HOME, resolved by the Engine on every telemetry tick (see
     # Engine._run). In sim, steam every ACTIVE ship ROC on its own heading/speed so
     # Return-to-Home against a MOVING recovery point can be exercised with no hardware.

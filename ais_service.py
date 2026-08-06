@@ -10,23 +10,33 @@ It is a SEPARATE process from the console (the console proxies it at /api/ais), 
 the data feeds, any API key, and the network I/O stay out of the console and the
 browser. Python 3 standard library only — no pip, no build step.
 
-Sources (enable any combination with --source, comma-separated):
+Sources (enable any combination with --source, comma-separated — every enabled
+source merges into ONE vessel registry, so the console always reads a single
+combined picture with per-vessel provenance):
 
   * digitraffic  Finland/Fintraffic open REST feed (meri.digitraffic.fi) — keyless,
                  real live vessels in Finnish/Baltic waters. CC BY 4.0.
   * aisstream    aisstream.io global real-time WebSocket feed — needs a FREE API key
                  (--aisstream-key or $AISSTREAM_KEY). Covers US waters (Erie, Lewes).
-  * nmea         a local AIS receiver (RTL-SDR + AIS-catcher / rtl-ais) emitting NMEA
-                 AIVDM over TCP or UDP — the real onboard VHF path, decoded here.
+  * aishub       AISHub member pool (data.aishub.net) — HTTP poll, ≥65 s interval
+                 (their hard limit is one request/minute). Needs a MEMBER username
+                 (--aishub-user or $AISHUB_USER); membership is earned by
+                 CONTRIBUTING a feed, so this stays skipped until one exists.
+  * nmea         local AIS receiver(s) (RTL-SDR + AIS-catcher / rtl-ais) emitting
+                 NMEA AIVDM — repeat --nmea udp:PORT / tcp:HOST:PORT to merge
+                 several endpoints, each with its own health in `sources`.
+  * opencpn      OpenCPN relaying its aggregated inputs as a TCP NMEA stream
+                 (Options > Connections > add Network/TCP connection, Output
+                 enabled, port 10110) — we connect and decode what it serves.
 
 Run (zero-config): set an aisstream key up ONCE, then just start it:
   setx AISSTREAM_KEY YOUR_FREE_KEY      # one-time, machine-wide (or: echo KEY > ais_key.txt)
   python ais_service.py                 # --source auto: aisstream if a key exists, else digitraffic
 
-Or pick sources explicitly:
-  python ais_service.py --source digitraffic --port 8788
-  python ais_service.py --source aisstream --aisstream-key KEY --bbox -80.3,42.0,-79.9,42.3
-  python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110
+Or pick sources explicitly (all of these merge):
+  python ais_service.py --source aisstream,nmea --nmea udp:10110 --nmea udp:10111
+  python ais_service.py --source aisstream,opencpn --opencpn-port 10110
+  python ais_service.py --source aishub --aishub-user AH_USER --bbox -75.6,38.4,-74.6,39.2
 
 Query (what the console does):
   GET /vessels?bbox=W,S,E,N[&max=N]   -> {"ok":true,"count":..,"vessels":[..],"sources":{..}}
@@ -38,6 +48,7 @@ it is situational awareness, subject to feed coverage, latency and gaps.
 
 import argparse
 import base64
+import calendar
 import gzip
 import json
 import math
@@ -100,9 +111,22 @@ class Registry:
         self._v = {}                       # mmsi -> dict
         self.ttl = ttl
 
-    def update(self, mmsi, src, **fields):
+    # the fields that describe WHERE the vessel is (dropped together when a stale
+    # polled report loses to a fresher one already held)
+    POS_KEYS = ("lat", "lon", "sog", "cog", "heading", "nav")
+
+    def update(self, mmsi, src, pos_time=None, **fields):
         """Merge a report into the registry. Only overwrites keys that are present
-        (so a static-data update keeps the last position and vice-versa)."""
+        (so a static-data update keeps the last position and vice-versa).
+
+        MULTI-SOURCE MERGE: every enabled source lands in this ONE registry, keyed
+        by MMSI, so the console sees a single merged picture however many feeds run.
+        `srcs` records every feed that has reported the vessel; `src` names the feed
+        whose POSITION is the one on display. A source that knows when its report
+        was actually made (a polled feed - aishub hands out minute-old snapshots)
+        passes `pos_time`, and a position OLDER than the one already held is dropped
+        rather than walking a fresh live track backwards; its static fields (name,
+        type) still merge. Push/receiver feeds pass no pos_time and count as now."""
         if not mmsi:
             return
         mmsi = int(mmsi)
@@ -110,15 +134,22 @@ class Registry:
         with self._lock:
             v = self._v.get(mmsi)
             if v is None:
-                v = {"mmsi": mmsi}
+                v = {"mmsi": mmsi, "src": src}
                 self._v[mmsi] = v
+            v.setdefault("srcs", {})[src] = now
+            if fields.get("lat") is not None and fields.get("lon") is not None:
+                t = pos_time if pos_time is not None else now
+                if t < v.get("pos_time", -1e18) - 2.0:
+                    # stale position from a slower feed: keep the fresher one
+                    fields = {k: val for k, val in fields.items()
+                              if k not in self.POS_KEYS}
+                else:
+                    v["pos_time"] = t
+                    v["pos_ts"] = now      # freshness clock: when WE heard it
+                    v["src"] = src         # position provenance follows the winner
             for k, val in fields.items():
                 if val is not None:
                     v[k] = val
-            v["src"] = src
-            # a position update refreshes the freshness clock; static-only doesn't
-            if "lat" in fields and "lon" in fields and fields.get("lat") is not None:
-                v["pos_ts"] = now
             v["last_ts"] = now
 
     def snapshot(self, bbox=None, limit=0):
@@ -143,6 +174,7 @@ class Registry:
                     "cat": ship_category(v.get("type")), "nav": v.get("nav"),
                     "age": round(now - v.get("pos_ts", v.get("last_ts", now)), 0),
                     "src": v.get("src"),
+                    "srcs": sorted(v.get("srcs", {})),
                 })
         out.sort(key=lambda r: r["age"])
         if limit and len(out) > limit:
@@ -505,8 +537,12 @@ class NmeaAivdmDecoder:
 class NmeaSource(Source):
     name = "nmea"
 
-    def __init__(self, reg, host="127.0.0.1", port=10110, udp=False):
+    def __init__(self, reg, host="127.0.0.1", port=10110, udp=False, label=None):
         super().__init__(reg)
+        # a LABEL distinguishes several endpoints running at once (AIS-catcher on
+        # one UDP port, rtl-ais on another): each shows separately in `sources`
+        if label:
+            self.name = label
         self.host, self.port, self.udp = host, int(port), udp
         self.dec = NmeaAivdmDecoder()
 
@@ -557,6 +593,141 @@ class NmeaSource(Source):
             except Exception as e:
                 self._err(e)
             time.sleep(3)
+
+
+def _parse_nmea_spec(spec):
+    """'udp[:HOST]:PORT' / 'tcp[:HOST]:PORT' -> (proto, host, port).
+
+    udp BINDS (default 0.0.0.0 - AIS-catcher / rtl-ais send datagrams TO us);
+    tcp CONNECTS (default 127.0.0.1 - OpenCPN and AIS-catcher can both serve a
+    TCP NMEA stream). Raises ValueError on anything else - a mis-typed endpoint
+    must refuse loudly, not bind the wrong thing."""
+    parts = [p.strip() for p in str(spec).split(":")]
+    proto = parts[0].lower()
+    if proto not in ("udp", "tcp"):
+        raise ValueError("nmea spec wants udp[:host]:port or tcp[:host]:port, got %r" % (spec,))
+    if len(parts) == 2:
+        host, port_s = "", parts[1]
+    elif len(parts) == 3:
+        host, port_s = parts[1], parts[2]
+    else:
+        raise ValueError("nmea spec wants udp[:host]:port or tcp[:host]:port, got %r" % (spec,))
+    port = int(port_s)                       # ValueError propagates, message is the spec's
+    if not 0 < port < 65536:
+        raise ValueError("nmea spec port out of range: %r" % (spec,))
+    return proto, host or ("0.0.0.0" if proto == "udp" else "127.0.0.1"), port
+
+
+class OpencpnSource(NmeaSource):
+    """OpenCPN as a feed: OpenCPN aggregates its own inputs (a receiver, other
+    networks) and can re-serve them as an NMEA stream - Options > Connections >
+    Add Connection > Network / TCP, Output on, default port 10110. We connect to
+    that as a TCP client and decode the AIVDM it relays. Nothing OpenCPN-specific
+    is on the wire; this class exists so the source is NAMED for what it is in
+    the console's per-source health."""
+    def __init__(self, reg, host="127.0.0.1", port=10110):
+        super().__init__(reg, host=host, port=port, udp=False, label="opencpn")
+
+
+# --------------------------------------------------------------------------- #
+#  Source: AISHub — member data-sharing pool (HTTP poll)                       #
+# --------------------------------------------------------------------------- #
+def _aishub_normalize(recs):
+    """AISHub records -> normalized report dicts, whichever format the account is
+    served in. AISHub can answer in HUMAN units (decimal degrees, knots) or RAW AIS
+    units (1/600000-degree integers, tenths of knots/degrees). The format is uniform
+    across a response, so it is detected ONCE, from the coordinates - a raw latitude
+    is off Earth as degrees. Field-by-field guessing cannot work: a raw SOG of 74
+    (7.4 kn) is indistinguishable from 74 kn on its own."""
+    dicts = [r for r in recs if isinstance(r, dict)]
+    raw = any(abs(_num(r.get("LATITUDE"), None) or 0) > 90.0
+              or abs(_num(r.get("LONGITUDE"), None) or 0) > 180.0 for r in dicts)
+    out = []
+    for rec in dicts:
+        m = rec.get("MMSI")
+        if not m:
+            continue
+        lat = _num(rec.get("LATITUDE"), None)
+        lon = _num(rec.get("LONGITUDE"), None)
+        sog = _num(rec.get("SOG"), None)
+        cog = _num(rec.get("COG"), None)
+        if raw:
+            lat = lat / 600000.0 if lat is not None else None
+            lon = lon / 600000.0 if lon is not None else None
+            sog = sog / 10.0 if sog is not None else None
+            cog = cog / 10.0 if cog is not None else None
+        if lat is not None and abs(lat) > 90.0:
+            lat = None
+        if lon is not None and abs(lon) > 180.0:
+            lon = None
+        if sog is not None and abs(sog - 102.3) < 1e-6:      # AIS n/a sentinel
+            sog = None
+        if cog is not None and abs(cog - 360.0) < 1e-6:      # AIS n/a sentinel
+            cog = None
+        out.append({
+            "mmsi": m, "pos_time": _aishub_time(rec.get("TIME")),
+            "lat": lat, "lon": lon, "sog": sog, "cog": cog,
+            "heading": _num(rec.get("HEADING"), 511), "nav": rec.get("NAVSTAT"),
+            "name": (str(rec.get("NAME") or "").strip() or None),
+            "type": rec.get("TYPE"),
+        })
+    return out
+
+
+def _aishub_time(s):
+    """AISHub record TIME ('YYYY-MM-DD HH:MM:SS GMT') -> epoch seconds or None."""
+    try:
+        return calendar.timegm(time.strptime(str(s).replace(" GMT", "").strip(),
+                                             "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, TypeError):
+        return None
+
+
+class AishubSource(Source):
+    name = "aishub"
+    URL = "https://data.aishub.net/ws.php"
+    POLL_S = 65.0            # AISHub's hard limit is one request per minute per account
+    DENIED_S = 900.0         # an auth refusal will not heal by asking again sooner
+
+    def __init__(self, reg, user, bbox=None):
+        super().__init__(reg)
+        self.user = user
+        self.bbox = bbox                     # W,S,E,N, or None for everything shared
+
+    def _fetch(self):
+        q = {"username": self.user, "format": "1", "output": "json", "compress": "0"}
+        if self.bbox:
+            q.update(lonmin=self.bbox[0], latmin=self.bbox[1],
+                     lonmax=self.bbox[2], latmax=self.bbox[3])
+        req = urllib.request.Request(self.URL + "?" + urllib.parse.urlencode(q), headers=UA)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+
+    def run(self):
+        while True:
+            wait = self.POLL_S
+            try:
+                d = self._fetch()
+                head = d[0] if isinstance(d, list) and d and isinstance(d[0], dict) else {}
+                if head.get("ERROR"):
+                    # AISHub reports faults as DATA - [{"ERROR":true,...}] - the same
+                    # shape-trap as aisstream's error frames: surface the upstream's
+                    # own words, never ingest them as an empty sea. Measured live:
+                    # a bad username answers {"ERROR_MESSAGE":"Invalid username or
+                    # password!"} on HTTP 200.
+                    self._err("aishub: " + str(head.get("ERROR_MESSAGE") or "error")[:160])
+                    wait = self.DENIED_S
+                else:
+                    recs = d[1] if (isinstance(d, list) and len(d) > 1
+                                    and isinstance(d[1], list)) else []
+                    n = 0
+                    for rep in _aishub_normalize(recs):
+                        self._report(**rep)
+                        n += 1
+                    self._ok("%d vessels" % n)
+            except Exception as e:
+                self._err(e)
+            time.sleep(wait)
 
 
 # --------------------------------------------------------------------------- #
@@ -796,6 +967,18 @@ def resolve_aisstream_key(args):
     return None
 
 
+def resolve_aishub_user(args):
+    """AISHub member username: --aishub-user, then $AISHUB_USER (setx'd value read
+    from the registry too, same as the aisstream key). AISHub is a data-sharing
+    POOL - API access is granted to accounts that CONTRIBUTE a feed (aishub.net),
+    and the credential is a username, not a password."""
+    if args.aishub_user:
+        return args.aishub_user.strip()
+    if os.environ.get("AISHUB_USER"):
+        return os.environ["AISHUB_USER"].strip()
+    return _win_persisted_env("AISHUB_USER")
+
+
 def build_sources(reg, args):
     bbox = None
     if args.bbox:
@@ -806,11 +989,21 @@ def build_sources(reg, args):
         except ValueError:
             bbox = None
     key = resolve_aisstream_key(args)
+    hub_user = resolve_aishub_user(args)
     names = [s.strip() for s in args.source.split(",") if s.strip()]
-    if names == ["auto"]:
-        # zero-config: use the global feed if a key is set up, else the keyless one.
-        names = ["aisstream"] if key else ["digitraffic"]
-        print("[ais] source 'auto' -> %s%s" % (names[0],
+    if "auto" in names:
+        # zero-config: the global push feed if a key is set up, else the keyless one -
+        # plus aishub alongside if ITS credential is set up (it is poll-and-merge, so
+        # it only ever adds coverage). Local receivers are never auto-enabled: an
+        # endpoint nobody is feeding would sit in the card as a permanent error.
+        # Expanded IN PLACE so "auto,opencpn" means auto's picks PLUS OpenCPN.
+        expanded = ["aisstream"] if key else ["digitraffic"]
+        if hub_user:
+            expanded.append("aishub")
+        names = [x for n in names for x in (expanded if n == "auto" else [n])]
+        seen = set()
+        names = [n for n in names if not (n in seen or seen.add(n))]
+        print("[ais] source 'auto' -> %s%s" % (",".join(names),
               "" if key else " (no aisstream key found; set $AISSTREAM_KEY for global coverage)"),
               file=sys.stderr)
     out = []
@@ -823,11 +1016,31 @@ def build_sources(reg, args):
                       file=sys.stderr)
                 continue
             out.append(AisstreamSource(reg, key, bbox=bbox))
+        elif n == "aishub":
+            if not hub_user:
+                print("[ais] aishub needs a member username (--aishub-user or $AISHUB_USER; "
+                      "membership requires contributing a feed - aishub.net); skipping",
+                      file=sys.stderr)
+                continue
+            out.append(AishubSource(reg, hub_user, bbox=bbox))
         elif n == "nmea":
-            out.append(NmeaSource(reg, host=args.nmea_host, port=args.nmea_port,
-                                  udp=args.nmea_udp))
+            specs = args.nmea or []
+            if specs:
+                for spec in specs:
+                    try:
+                        proto, host, port = _parse_nmea_spec(spec)
+                    except ValueError as e:
+                        print("[ais] %s; skipping" % e, file=sys.stderr)
+                        continue
+                    out.append(NmeaSource(reg, host=host, port=port, udp=(proto == "udp"),
+                                          label="nmea-%s-%d" % (proto, port)))
+            else:
+                out.append(NmeaSource(reg, host=args.nmea_host, port=args.nmea_port,
+                                      udp=args.nmea_udp))
+        elif n == "opencpn":
+            out.append(OpencpnSource(reg, host=args.opencpn_host, port=args.opencpn_port))
         else:
-            print("[ais] unknown source '%s' (want auto|digitraffic|aisstream|nmea)" % n,
+            print("[ais] unknown source '%s' (want auto|digitraffic|aisstream|aishub|nmea|opencpn)" % n,
                   file=sys.stderr)
     return out
 
@@ -868,17 +1081,29 @@ def main():
     ap.add_argument("--parent-pid", type=int, default=0,
                     help="exit automatically when this process (the console) exits")
     ap.add_argument("--source", default="auto",
-                    help="auto (default: aisstream if a key is set up, else digitraffic), "
-                         "or a comma list of digitraffic,aisstream,nmea")
+                    help="auto (default: aisstream if a key is set up, else digitraffic; "
+                         "+aishub if $AISHUB_USER is set), or a comma list of "
+                         "digitraffic,aisstream,aishub,nmea,opencpn - all enabled sources "
+                         "merge into one vessel registry")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP query port")
     ap.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     ap.add_argument("--ttl", type=float, default=DEFAULT_TTL,
                     help="drop a vessel unheard this many seconds")
     ap.add_argument("--bbox", default="", help="W,S,E,N area for aisstream subscribe")
     ap.add_argument("--aisstream-key", default="", help="aisstream.io API key (or $AISSTREAM_KEY)")
-    ap.add_argument("--nmea-host", default="127.0.0.1", help="NMEA AIVDM source host")
-    ap.add_argument("--nmea-port", type=int, default=10110, help="NMEA AIVDM source port")
-    ap.add_argument("--nmea-udp", action="store_true", help="bind UDP instead of TCP-connect")
+    ap.add_argument("--aishub-user", default="",
+                    help="AISHub member username (or $AISHUB_USER) for --source aishub")
+    ap.add_argument("--nmea", action="append", default=None, metavar="PROTO[:HOST]:PORT",
+                    help="an NMEA AIVDM endpoint for --source nmea; repeatable, so several "
+                         "receivers merge (udp:10110 binds for AIS-catcher / rtl-ais, "
+                         "tcp:host:port connects to a served stream)")
+    ap.add_argument("--nmea-host", default="127.0.0.1", help="NMEA AIVDM source host (legacy single endpoint)")
+    ap.add_argument("--nmea-port", type=int, default=10110, help="NMEA AIVDM source port (legacy single endpoint)")
+    ap.add_argument("--nmea-udp", action="store_true", help="bind UDP instead of TCP-connect (legacy single endpoint)")
+    ap.add_argument("--opencpn-host", default="127.0.0.1",
+                    help="OpenCPN NMEA server host for --source opencpn")
+    ap.add_argument("--opencpn-port", type=int, default=10110,
+                    help="OpenCPN NMEA server port for --source opencpn (its TCP default)")
     args = ap.parse_args()
 
     if args.parent_pid:

@@ -340,6 +340,7 @@ c.push(TBL(["Constant", "Default", "Meaning"], [
   ["`NOGO_BUFFER_M`", "vessel-derived", "Shared keep-clear buffer, operator-adjustable"],
   ["`AIS_SHOW_RADIUS_KM`", "50 km", "DISPLAY filter only — a true range circle from the vessel, clamped to the collect radius. The card reads and sets it in NAUTICAL MILES; the wire and the command-line flags stay metric"],
   ["`AIS_COLLECT_RADIUS_KM`", "150 km", "What the upstream subscription actually covers. Collect WIDE, filter NARROW — the display radius moves freely inside this and never re-subscribes"],
+  ["AIS sources", "`auto`", "`--ais-source`, passed to the service's `--source`: any comma list of aisstream / digitraffic / aishub / nmea / opencpn. ALL enabled sources merge into ONE MMSI-keyed registry — per-vessel `srcs` records every reporting feed, `src` names the feed whose position is displayed, and a polled report older than the held position is dropped (static fields still merge). `--ais-nmea udp:PORT|tcp:HOST:PORT` (repeatable) adds local AIVDM endpoints, each with its own named health; `--ais-opencpn [HOST:]PORT` reads OpenCPN's TCP relay; aishub polls at its 1/min limit and needs `$AISHUB_USER` (membership = contributing a feed). Naming an endpoint enables its source"],
   ["Telemetry rate", "4 Hz", "Engine tick and SSE push"],
   ["Turn arc sampling", "~3 m", "Waypoint spacing along a generated survey turn"],
   ["ROC link thresholds", "5 s / 15 s", "Fresh → stale → lost for a live-fed ROC"],

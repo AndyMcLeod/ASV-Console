@@ -144,13 +144,31 @@ setx AISSTREAM_KEY YOUR_FREE_KEY    # one-time, machine-wide (or: echo KEY > ais
 ```
 
 `--no-ais-service` disables the auto-start (to use an external one); `--ais URL` points
-at it. Running `ais_service.py` by hand is only for advanced/standalone use:
+at it.
+
+**Multiple sources merge into ONE picture.** Every enabled feed lands in a single
+vessel registry keyed by MMSI, so the chart and table always show one combined
+layer: each vessel carries `srcs` (every feed that has reported it) and `src` (the
+feed whose *position* is displayed), a stale polled report can never walk a live
+track backwards (static fields like the name still merge), and each source has its
+own health entry — one dead feed beside a live one is a note, not an outage. Pick
+sources for the auto-started service straight from the console:
 
 ```
-python ais_service.py --source nmea --nmea-host 127.0.0.1 --nmea-port 10110   # a local RTL-SDR receiver
+python asv_console.py --sim --ais-nmea udp:10110                                # + AIS-catcher / rtl-ais receiver
+python asv_console.py --sim --ais-opencpn 10110                                 # + OpenCPN relaying its inputs
+python asv_console.py --sim --ais-source aisstream,nmea --ais-nmea udp:10110 --ais-nmea udp:10111
 ```
 
-Sources (any combination, comma-separated):
+(Naming an endpoint is asking for its source — `--ais-nmea`/`--ais-opencpn` enable
+`nmea`/`opencpn` by themselves.) Running `ais_service.py` by hand is only for
+advanced/standalone use:
+
+```
+python ais_service.py --source aisstream,nmea --nmea udp:10110 --nmea tcp:127.0.0.1:2000
+```
+
+Sources (any combination, comma-separated — all merge):
 
 - **digitraffic** — Finland/Fintraffic open REST feed ([meri.digitraffic.fi](https://www.digitraffic.fi/en/marine-traffic/)),
   keyless, CC BY 4.0. Real live vessels in Finnish/Baltic waters — proves the pipeline
@@ -172,9 +190,25 @@ Sources (any combination, comma-separated):
   standalone service to your area with `--bbox W,S,E,N` — note the leading-minus form needs an `=`, e.g. Lake
   Erie: `--bbox=-83.7,41.2,-78.7,43.05`. **Verified live on Lake Erie** — real lakers,
   tankers, tour and Coast Guard boats; ship types fill in over the ~6 min AIS static cycle.
-- **nmea** — a local **RTL-SDR + [AIS-catcher](https://github.com/jvde-github/AIS-Catcher) / rtl-ais**
-  receiver emitting NMEA **AIVDM** (VHF 161.975 / 162.025 MHz) over TCP or UDP — the real
-  onboard receiver path, decoded by the service (a bundled stdlib AIVDM decoder; no pip).
+- **aishub** — the [AISHub](https://www.aishub.net/) member data-sharing pool, HTTP-polled
+  at their one-request-per-minute limit. Access needs a **member username**
+  (`setx AISHUB_USER AH_XXXX` or `--aishub-user`), and membership is earned by
+  **contributing a feed** — so this source stays skipped until a receiver is feeding
+  AISHub. An upstream refusal (measured: `Invalid username or password!` on HTTP 200)
+  surfaces on the card in the upstream's own words, never as an empty sea.
+- **nmea** — local **RTL-SDR + [AIS-catcher](https://github.com/jvde-github/AIS-Catcher) / rtl-ais**
+  receiver(s) emitting NMEA **AIVDM** (VHF 161.975 / 162.025 MHz) — the real onboard
+  receiver path, decoded by the service (a bundled stdlib AIVDM decoder; no pip).
+  Repeat `--nmea udp:PORT` / `--nmea tcp:HOST:PORT` (`--ais-nmea` on the console) to
+  merge **several endpoints at once** — say AIS-catcher on one UDP port and rtl-ais on
+  another — each with its own named health entry (`nmea-udp-10110`, …). `udp` binds and
+  listens (what both decoders send by default); `tcp` connects to a served stream.
+- **opencpn** — **[OpenCPN](https://opencpn.org/)** relaying everything it aggregates
+  (its own receivers, other networks) as an NMEA stream. In OpenCPN: *Options →
+  Connections → Add Connection → Network, TCP*, port 10110, **Output** enabled; then
+  `--ais-opencpn 10110` (console) or `--source opencpn` (service) connects and decodes
+  what it serves. Nothing OpenCPN-specific is on the wire — the source is named so the
+  card says where the picture is coming from.
 
 Point the console at a non-default service with `--ais http://host:port` (default
 `http://127.0.0.1:8788`). If the service isn't running, the layer simply shows

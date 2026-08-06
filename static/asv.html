@@ -783,9 +783,15 @@ let aisShow = false, aisVessels = [], aisTimer = null, aisNote = "", aisBusy = f
 // silent blank into an obvious answer.
 let aisState = "idle", aisSrc = null, aisSrcName = null;
 const AIS_SRC_COVER = {aisstream:"global", digitraffic:"Finland/Baltic only",
+                       aishub:"member pool", opencpn:"OpenCPN relay",
                        nmea:"local receiver"};
+// Prefix-matched: a multi-endpoint receiver source is named nmea-udp-10110 etc.,
+// and every endpoint of it is still "local receiver" coverage.
+function aisSrcCover(n){ const k = Object.keys(AIS_SRC_COVER)
+    .find(k => n === k || n.indexOf(k + "-") === 0);
+  return k ? AIS_SRC_COVER[k] : null; }
 function aisSrcLabel(){ if(!aisSrcName) return "";
-  const c = AIS_SRC_COVER[aisSrcName];
+  const c = aisSrcCover(aisSrcName);
   return aisSrcName + (c ? " ("+c+")" : ""); }
 const AIS_COL = {cargo:"#4a90d9", tanker:"#d9534f", passenger:"#3fbf6b", fishing:"#39c0ff",
   tug:"#e8a13f", sailing:"#9b8cf0", pleasure:"#58c0b0", hsc:"#e05fb0", special:"#f0c14a",
@@ -3190,17 +3196,26 @@ async function pollAIS(){ if(!aisShow || aisBusy) return; aisBusy=true;
     const d=await r.json();
     aisVessels = (d && Array.isArray(d.vessels)) ? d.vessels : [];
     aisArea = (d && d.area) ? d.area : null;
-    // per-source health from the service, plus WHICH source is actually live
+    // Per-source health from the service. Sources MERGE into one registry, so the
+    // named source is the healthiest one (preferring the wide feeds), and the layer
+    // only reads "error" when EVERY source is erroring - one dead feed beside a
+    // live one is a note, not an outage.
     const srcs = (d && d.sources) || {};
-    aisSrcName = ["aisstream","nmea","digitraffic"].find(n=>srcs[n]) || Object.keys(srcs)[0] || null;
+    const srcNames = Object.keys(srcs);
+    const pref = ["aisstream","aishub","opencpn","nmea","digitraffic"];
+    const srcRank = n => { const i = pref.findIndex(p => n === p || n.indexOf(p + "-") === 0);
+                           return i < 0 ? pref.length : i; };
+    const live = srcNames.filter(n => srcs[n].state === "ok").sort((a,b)=>srcRank(a)-srcRank(b));
+    aisSrcName = live[0] || srcNames.slice().sort((a,b)=>srcRank(a)-srcRank(b))[0] || null;
     aisSrc = aisSrcName ? srcs[aisSrcName] : null;
+    const allErr = srcNames.length > 0 && srcNames.every(n => srcs[n].state === "error");
     if(d && d.ok===false)                     aisState = "offline";
     else if(aisVessels.length)                aisState = "ok";
-    else if(aisSrc && aisSrc.state==="error") aisState = "error";
+    else if(allErr)                           aisState = "error";
     else if(aisSrc && aisSrc.state==="ok")    aisState = "empty";   // connected, none in range
     else                                      aisState = "connecting";
     aisNote = (d && d.ok===false) ? (d.note || "AIS service offline")
-            : (aisSrc && aisSrc.state==="error" ? aisSrc.note : "");
+            : (allErr ? ((aisSrc && aisSrc.note) || "all sources erroring") : "");
   }catch(e){ aisVessels=[]; aisState="offline"; aisSrc=null; aisSrcName=null; aisNote="AIS query failed"; }
   finally{ aisBusy=false; renderAisTable(); render(); }
 }

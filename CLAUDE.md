@@ -37,7 +37,7 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 resides HERE. Do not port fixes back to the Z-Boat console or touch its repo until he
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
-**THIRTY REGRESSION SUITES (415 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-ONE REGRESSION SUITES (441 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -81,6 +81,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
 | `python tests/data_routes.py` | vessel switch SAFE gate + energy-gauge flip; the comms password's THREE never-leak paths; tide answers; ROC HTTP error mapping (15, real console, logging ON) |
 | `python tests/ais_error_frames.py` | an aisstream error frame SURFACES (state error, note names it), survives the quiet-box re-stamp, clears on real data (10, hermetic, scripted fake websocket) |
+| `python tests/ais_sources.py` | many AIS feeds, ONE merged picture: per-vessel provenance, the stale-position guard, AISHub fault-as-data + per-response format detection, endpoint specs, a real AIVDM sentence over TCP and UDP (26, hermetic) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
@@ -88,6 +89,12 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**THE LATEST WORK (this commit, 2026-08-05): MULTI-SOURCE AIS — many feeds, one merged
+picture** (aishub + multi-endpoint nmea + opencpn sources, merge provenance, the
+stale-position guard, and the collect-radius ordering fix). New suite
+`tests/ais_sources.py` (26, 6/6 mutations). **See "MULTI-SOURCE AIS" below before
+touching the AIS layer.** One new parked credential: AISHub membership (OPEN/NEXT).
 
 **DOCS-ONLY COMMITS, 2026-08-05 (after the coverage thread) — THE PRESENTATION. No code
 touched; the suites owe nothing here.**
@@ -607,6 +614,11 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   interval. The architecture already allows that — the service holds a registry and the
   console reads *that*, so the upstream poll rate is independent of the card's 8 s refresh.
   `--source` is comma-separated, so it can run **alongside** aisstream.
+- **PARKED — AISHUB MEMBERSHIP (2026-08-05).** The `aishub` source is built, tested and
+  skipped-with-a-note until a member username exists (`setx AISHUB_USER ...` or
+  `--aishub-user`). Membership is earned by CONTRIBUTING a feed to aishub.net — i.e. it
+  needs a local receiver actually feeding them first. Do not poll their API on guessed
+  credentials; the refusal is measured and surfaced already.
 - **WHY he is switching, measured, don't re-litigate:** aisstream has **no receiver within
   44 nm of Lewes**. Ran 90 s against the real subscription box with his key: 94 vessels, 101
   reports, no errors — and the nearest of all 94 was 81.6 km. Sector split W 59 / N 15 /
@@ -655,6 +667,66 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## MULTI-SOURCE AIS — MANY FEEDS, ONE MERGED PICTURE (2026-08-05)
+
+Andy's ask: "multiple source feeds merged into a single display source", naming AISHub,
+AIS-catcher, rtl-ais and OpenCPN. The service already had the right shape — every source
+writes one MMSI-keyed `Registry` — so this build-out added SOURCES and made the merge honest.
+
+**What was built (`ais_service.py` + console pass-throughs + card logic):**
+- **`aishub`** — HTTP poll at AISHub's hard 1-req/min limit (65 s; 15 min after an auth
+  refusal). **Faults arrive AS DATA on HTTP 200** (`[{"ERROR":true,...}]` — measured live:
+  `Invalid username or password!`) and are surfaced in the upstream's words, never ingested
+  as an empty sea — the aisstream error-frame lesson, third instance. **Response format
+  (human units vs raw AIS units) is detected ONCE PER RESPONSE from the coordinates**, then
+  scales every field — field-by-field guessing cannot work, a raw SOG of 74 (7.4 kn) is
+  indistinguishable from 74 kn on its own.
+- **multi-endpoint `nmea`** — repeat `--nmea udp:PORT | tcp:HOST:PORT` (console:
+  `--ais-nmea`); one source per endpoint, each named (`nmea-udp-10110`) with its own health.
+  AIS-catcher and rtl-ais both emit AIVDM over UDP — `udp` BINDS; `tcp` CONNECTS to a
+  served stream. A bad spec REFUSES loudly (`_parse_nmea_spec`), never binds the wrong thing.
+- **`opencpn`** — a NAMED TCP client source (subclass of NmeaSource) for OpenCPN's relay:
+  Options → Connections → Add → Network/TCP, port 10110, Output enabled. Console:
+  `--ais-opencpn [HOST:]PORT`. Nothing OpenCPN-specific on the wire; the name is provenance.
+- **Merge provenance + the stale-position guard** (`Registry.update`): per-vessel `srcs` =
+  every feed that reported it; `src` = the feed whose POSITION is displayed; a polled report
+  with `pos_time` OLDER than the held position drops its position fields (statics still
+  merge) — a 1-min AISHub poll can never walk a live receiver track backwards.
+- **`auto` expands IN PLACE** in a comma list (`auto,opencpn` keeps both) and appends
+  `aishub` when `$AISHUB_USER` exists. **Naming an endpoint enables its source** — the
+  console appends `nmea`/`opencpn` to `--ais-source` when `--ais-nmea`/`--ais-opencpn` given.
+- **Card logic** (`asv.html`): the named source is the healthiest by preference order
+  (prefix-matched so `nmea-udp-*` reads as a local receiver); the layer reads "error" ONLY
+  when EVERY source errors — one dead feed beside a live one is a note, not an outage.
+
+**A LIVE ORDERING DEFECT FIXED ON THE WAY:** `main()` applied `--ais-collect-km` AFTER
+`_start_ais_service()`, so a widened collect radius never widened the FIRST subscription —
+only the one rebuilt after a vessel switch. The radii and source flags now settle before
+the child starts (and `_rescope_ais_service` reproduces the same config from module globals).
+
+**Machine recon (2026-08-05):** OpenCPN 5.10.2 IS installed (`C:\Program Files\OpenCPN`)
+but has never been configured — no connections in its config, so its Output relay needs the
+4 clicks above before `--ais-opencpn` has anything to read. AIS-catcher / rtl-ais are NOT
+installed (no RTL-SDR path exercised); their UDP path is verified synthetically. AISHub API
+probed live: answers, and refuses without a member username — **membership requires
+CONTRIBUTING a feed**, so like MarineTraffic this is PARKED until Andy has an account
+(`setx AISHUB_USER ...`; it is a username, not a secret, but still never hardcoded).
+
+**Verification:** `tests/ais_sources.py` (26 assertions, hermetic — fake AISHub HTTP
+server, loopback TCP/UDP, the canonical GPSd AIVDM sentence: MMSI exact, position range
+checked, and my remembered "Vancouver" coordinates were WRONG — it decodes to 47.58 N
+Seattle; the fixture originally mixed human+raw units in one response, contradicting the
+uniform-format premise the detector rests on — both fixture bugs, not code bugs).
+**6/6 mutations caught** (stale guard, error-head swallow, format detection, proto
+honoured, provenance, opencpn label), source restored byte-for-byte, runner table in the
+docstring. **Live end-to-end:** a real console with `--ais-nmea udp:31399` + a crafted
+AIVDM sentence at Lewes → `/api/ais` returned the vessel (decode exact, `src`
+`nmea-udp-31399`, range 2.5 km); browser-driven check on a scratch console: card reads
+`● 2 vessels · 27 nm · nmea-udp-31388`, label "(local receiver)" via the prefix match.
+All AIS-adjacent suites green (`ais_range`, `ais_error_frames`, `ais_table`,
+`http_contract`, `data_routes`). Ops + tech manuals updated and rebuilt (the only two
+docx that changed); README AIS section rewritten for the merge model.
 
 ## THE EMPTY AISSTREAM FEED, AND THE ERROR-FRAME SWALLOW (2026-08-05)
 
