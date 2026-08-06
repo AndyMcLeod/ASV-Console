@@ -26,7 +26,9 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff 2026-08-04 — written for "ASV console refinement 1")
 
-**Repo:** local git only (no GitHub remote), tree clean. `git log --oneline -5` for the tip —
+**Repo:** PRIVATE GitHub remote `AndyMcLeod/ASV-Console` (created 2026-08-06 at Andy's
+instruction — push after committing; before this it was local-only and every note below
+saying "never push" predates it). Tree clean. `git log --oneline -5` for the tip —
 **this handoff no longer quotes a HEAD hash, because it is now refreshed IN the work commit
 and a commit cannot name itself** (see "Keep docs current"). Run:
 `python asv_console.py --sim` — **it now comes up as the DriX at Lewes** (`drix08` is
