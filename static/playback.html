@@ -89,23 +89,6 @@
   .tclock .k{color:var(--ink-faint);}
   .tmeta{font-family:var(--mono);font-size:10px;color:var(--ink-faint);white-space:nowrap;text-transform:uppercase;letter-spacing:.05em;}
 
-  /* view tabs: CHART replays the sea, CONTROLS replays the cards. One scrubber under both. */
-  .tabs{display:flex;gap:4px;margin-left:10px;}
-  .tab{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;
-    border:1px solid var(--line2);background:#0e1a24;color:var(--ink-dim);border-radius:3px;padding:5px 12px;}
-  .tab:hover{border-color:var(--bronze);color:var(--bronze);}
-  .tab.on{background:var(--bronze);color:#160d02;border-color:var(--bronze);font-weight:700;}
-  #controlsView{position:absolute;left:576px;right:14px;top:110px;bottom:96px;z-index:5;display:none;
-    overflow-y:auto;align-content:start;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
-  body.controls #controlsView{display:grid;}
-  body.controls #map{visibility:hidden;}
-  body.controls .controls{display:none;}            /* zoom/follow are chart furniture */
-  .ccard{background:rgba(10,17,25,.94);border:1px solid var(--line2);border-radius:5px;padding:10px 12px;
-    box-shadow:0 4px 18px rgba(0,0,0,.5);align-self:start;}
-  .ccard h3{margin:0 0 8px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
-    color:var(--bronze);font-weight:600;}
-  .ccard .na{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);font-style:italic;}
-
   .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:7;flex-direction:column;gap:8px;
     font-family:var(--mono);color:var(--ink-dim);text-align:center;pointer-events:none;}
   .empty b{color:var(--bronze);letter-spacing:.1em;}
@@ -119,10 +102,6 @@
 
   <div class="topbar">
     <span class="brand">ASV Playback<span class="sub">session review — read-only</span></span>
-    <span class="tabs">
-      <button class="tab on" id="tab_chart" title="Replay the sea: track, lines, traffic, weather">Chart</button>
-      <button class="tab" id="tab_controls" title="Replay the cards: environment, mission, traffic, session">Controls</button>
-    </span>
     <select id="logpick" title="Recorded session to replay"></select>
     <span class="pill"><span class="k">Mode</span><b id="p_mode">—</b></span>
     <span class="pill"><span class="k">Dur</span><b id="p_dur">—</b></span>
@@ -175,39 +154,6 @@
     <span class="tmeta" id="t_wall">—</span>
   </div>
 
-  <div id="controlsView">
-    <div class="ccard" id="c_env">
-      <h3>Environment</h3>
-      <div class="vrow"><span class="l">Wind</span><span class="v" id="ce_wind">—</span></div>
-      <div class="vrow"><span class="l">Sea</span><span class="v" id="ce_sea">—</span></div>
-      <div class="vrow"><span class="l">Source</span><span class="v" id="ce_src">—</span></div>
-      <div class="vrow"><span class="l">Water level</span><span class="v" id="ce_water">—</span></div>
-      <div class="vnote" id="ce_note"></div>
-    </div>
-    <div class="ccard" id="c_mission">
-      <h3>Mission</h3>
-      <div class="vrow"><span class="l">Lines</span><span class="v" id="cm_lines">—</span></div>
-      <div class="vrow"><span class="l">Boundary</span><span class="v" id="cm_bnd">—</span></div>
-      <div class="vrow"><span class="l">Speed</span><span class="v" id="cm_speed">—</span></div>
-      <div class="vrow"><span class="l">End of plan</span><span class="v" id="cm_end">—</span></div>
-      <div class="vrow"><span class="l">Nogo buffer</span><span class="v" id="cm_buf">—</span></div>
-      <div class="vnote" id="cm_note"></div>
-    </div>
-    <div class="ccard" id="c_traffic">
-      <h3>Traffic</h3>
-      <div class="vrow"><span class="l">Contacts</span><span class="v" id="ct_n">—</span></div>
-      <div class="vnote" id="ct_list"></div>
-    </div>
-    <div class="ccard" id="c_session">
-      <h3>Session</h3>
-      <div class="vrow"><span class="l">Vessel</span><span class="v" id="cs_vessel">—</span></div>
-      <div class="vrow"><span class="l">LOA</span><span class="v" id="cs_loa">—</span></div>
-      <div class="vrow"><span class="l">Energy</span><span class="v" id="cs_pow">—</span></div>
-      <div class="vrow"><span class="l">Mode</span><span class="v" id="cs_mode">—</span></div>
-      <div class="vnote" id="cs_note"></div>
-    </div>
-  </div>
-
   <div class="empty" id="empty"><b>ASV PLAYBACK</b><span>Loading recordings…</span></div>
   <div class="toast" id="toast"></div>
 
@@ -250,12 +196,6 @@ let EVENTS = [];      // every log record, in order
 let FIXES = [];       // {t,lat,lon,hdg,sog,batt,batt_pct,batt_state} - the track
 let STATES = [];      // full state snapshots {t, ...}
 let MARKS = [];       // timeline rows (commands + state transitions) {t,cls,lab,det,tag,ev}
-let ENVS = [];        // the weather the operator SAW {t, wind, sea, source, ...}
-let WATERS = [];      // water level under the depths {t, offset_m, source, ...}
-let AISES = [];       // the traffic on the card {t, n, vessels:[...]}
-let VSLS = [];        // vessel identity, start + every live switch {t, id, name, loa_m, power}
-let MISS = [];        // the mission store as recorded {t, mission} - incl. PRE-SESSION lines
-let VIEW = "chart";   // "chart" | "controls" - one scrubber under both
 let T0 = 0, T1 = 0, DUR = 0;
 let pt = 0;           // playback cursor (seconds since T0)
 let playing = false, speed = 1, lastRAF = 0;
@@ -308,26 +248,9 @@ async function loadLog(name){
 
 function parseSession(){
   FIXES = []; STATES = []; MARKS = [];
-  ENVS = []; WATERS = []; AISES = []; VSLS = []; MISS = [];
   let mode = "—";
   for(const e of EVENTS){
     const t = e.t || 0;
-    // The picture streams (recorded 2026-08-05 on; an older recording simply has
-    // none of these, and every consumer degrades to "not recorded").
-    // SPREAD FIRST, timestamp LAST: a payload is free to carry its own "t" (the water
-    // snapshot does - null during an upstream outage) and it must never clobber the
-    // RECORD's time. Found live: the manual water override replayed as "not recorded"
-    // because its record time had been overwritten with the payload's null.
-    if(e.kind === "env" && e.env){ ENVS.push({...e.env, t}); continue; }
-    if(e.kind === "water" && e.water){ WATERS.push({...e.water, t}); continue; }
-    if(e.kind === "ais" && e.ais){ AISES.push({...e.ais, t}); continue; }
-    if(e.kind === "mission" && e.mission){ MISS.push({t, mission: e.mission}); continue; }
-    if(e.kind === "vessel" && e.vessel){
-      VSLS.push({...e.vessel, t});
-      if(VSLS.length > 1) MARKS.push({t, cls:"state", lab:"VESSEL",
-                                      det:(e.vessel.name||e.vessel.id||""), ev:e});
-      continue;
-    }
     if(e.kind === "state"){
       const s = e.state || {}; STATES.push({t, ...s});
       const st = s.status || {};
@@ -367,7 +290,6 @@ function parseSession(){
     }
   }
   FIXES.sort((a,b)=>a.t-b.t); STATES.sort((a,b)=>a.t-b.t); MARKS.sort((a,b)=>a.t-b.t);
-  for(const arr of [ENVS, WATERS, AISES, VSLS, MISS]) arr.sort((a,b)=>a.t-b.t);
   const ts = EVENTS.map(e=>e.t||0).filter(Boolean);
   T0 = ts.length? Math.min(...ts) : 0; T1 = ts.length? Math.max(...ts) : 0; DUR = Math.max(0.001, T1-T0);
   window._mode = mode;
@@ -416,26 +338,14 @@ function fixAt(absT){
 function lastStateAt(absT){
   let s=null; for(const st of STATES){ if(st.t<=absT) s=st; else break; } return s;
 }
-// The latest record at-or-before the cursor, for any of the picture streams. One
-// helper for all five: what the operator saw at that moment is the last thing
-// recorded before it, and before the first record the honest answer is null -
-// "not recorded", never a value borrowed from the future.
-function lastBefore(arr, absT){
-  let out=null; for(const r of arr){ if(r.t<=absT) out=r; else break; } return out;
-}
 function trackTo(absT){
   const out=[]; for(const f of FIXES){ if(f.t<=absT) out.push(f); else break; } return out;
 }
-// Planned overlays up to the cursor. TWO feeds, walked in ONE chronological pass:
-// kind:"mission" records (the store as recorded - which is how lines drawn in a
-// PREVIOUS session reach this one's chart; before those records existed a replay
-// opened onto a bare chart) and /api/mission command bodies (the edits made during
-// the session). Latest-before-the-cursor wins, whichever feed it came from.
+// planned overlays reconstructed from command bodies up to the cursor
 function planAt(absT){
   let mission=null, route=null;
   for(const e of EVENTS){
     if((e.t||0) > absT) break;
-    if(e.kind==="mission" && e.mission){ mission = e.mission; continue; }
     if(e.kind!=="command" || (e.code&&e.code>=400)) continue;
     const b = e.body||{};
     if(e.path==="/api/mission") mission = b;
@@ -504,23 +414,6 @@ function render(){
     ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
     ctx.fillStyle="#3fbf6b"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText("H", h.x+7, h.y-5); }
 
-  // recorded traffic at the cursor (the card's contacts, as the operator saw them;
-  // drawn faded - a recorded position can be up to the record interval stale)
-  const ais = lastBefore(AISES, absT);
-  if(ais && ais.vessels && ais.vessels.length){
-    ctx.font="9px Consolas,monospace"; ctx.globalAlpha=.75;
-    for(const v of ais.vessels){
-      if(v.lat==null || v.lon==null) continue;
-      const s=toScreen(v.lat,v.lon), a=((v.cog!=null?v.cog:0)-90)*Math.PI/180;
-      ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(a+Math.PI/2);
-      ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(5,6); ctx.lineTo(-5,6); ctx.closePath();
-      ctx.fillStyle="rgba(120,200,160,0.8)"; ctx.fill();
-      ctx.lineWidth=1; ctx.strokeStyle="#0a141c"; ctx.stroke(); ctx.restore();
-      if(zoom>=13 && v.name) ctx.fillStyle="rgba(139,160,173,0.9)", ctx.fillText(v.name, s.x+8, s.y+3);
-    }
-    ctx.globalAlpha=1;
-  }
-
   // boat marker (interpolated)
   const boat = fixAt(absT);
   if(boat){ const s=toScreen(boat.lat,boat.lon);
@@ -530,21 +423,6 @@ function render(){
     ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
     ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
     if(follow) { center={lat:boat.lat,lon:boat.lon}; }
-  }
-
-  // the weather the operator saw, top-right: an arrow pointing WHERE THE WIND GOES
-  // (from + 180) with the numbers beside it. Only when the recording carries env.
-  const env = lastBefore(ENVS, absT);
-  if(env && env.wind){
-    const wx=w-96, wy=76, wd=((env.wind.dir_from_deg||0)+180-90)*Math.PI/180;
-    ctx.save(); ctx.translate(wx,wy); ctx.rotate(wd);
-    ctx.beginPath(); ctx.moveTo(-12,0); ctx.lineTo(8,0); ctx.moveTo(8,0);
-    ctx.lineTo(3,-4); ctx.moveTo(8,0); ctx.lineTo(3,4);
-    ctx.strokeStyle="rgba(217,154,43,0.95)"; ctx.lineWidth=2; ctx.stroke(); ctx.restore();
-    ctx.font="10px Consolas,monospace"; ctx.fillStyle="rgba(215,227,234,0.9)"; ctx.textAlign="center";
-    ctx.fillText((env.wind.speed_kn!=null? env.wind.speed_kn.toFixed(0):"–")+" kn", wx, wy+18);
-    if(env.sea && env.sea.hs_m!=null) ctx.fillText("Hs "+env.sea.hs_m.toFixed(1)+" m", wx, wy+30);
-    ctx.textAlign="start";
   }
 }
 
@@ -580,69 +458,7 @@ function applyAt(ptv){
   $("#t_wall").textContent = wall? wall.toLocaleTimeString() : "—";
   if(!draggingScrub) $("#scrub").value = Math.round(pt*10);
 
-  if(VIEW === "controls") renderControls(absT);
   highlightEvents(absT);
-}
-
-// ---- the CONTROLS tab: the cards, reconstructed at the cursor -------------- //
-// Every value is the last thing RECORDED before the cursor; an older recording
-// without the picture streams reads "not recorded", never a guess.
-const NA = '<span class="na">not recorded</span>';
-function setNA(id){ const el=$(id); el.innerHTML=NA; }
-function renderControls(absT){
-  const env = lastBefore(ENVS, absT), water = lastBefore(WATERS, absT);
-  if(env){
-    $("#ce_wind").textContent = env.wind?
-      (env.wind.speed_kn!=null? env.wind.speed_kn.toFixed(1)+" kn":"—")+
-      (env.wind.dir_from_deg!=null? " from "+Math.round(env.wind.dir_from_deg)+"°":"") : "calm / none";
-    $("#ce_sea").textContent = env.sea?
-      "Hs "+(env.sea.hs_m!=null? env.sea.hs_m.toFixed(2)+" m":"—")+
-      (env.sea.tp_s!=null? " · Tp "+env.sea.tp_s.toFixed(1)+" s":"") : "—";
-    $("#ce_src").textContent = env.source || "—";
-    $("#ce_note").textContent = env.note || "";
-  } else { setNA("#ce_wind"); setNA("#ce_sea"); setNA("#ce_src"); $("#ce_note").textContent=""; }
-  if(water){
-    $("#ce_water").textContent = (water.offset_m!=null? water.offset_m.toFixed(2)+" m":"—")+
-      (water.source? " ("+water.source+")":"");
-  } else setNA("#ce_water");
-
-  const {mission} = planAt(absT);
-  if(mission){
-    $("#cm_lines").textContent = (mission.lines||[]).length;
-    $("#cm_bnd").textContent = (mission.boundary||[]).length?
-      (mission.boundary.length+" pts"+(mission.boundary_closed?" · closed":"")) : "none";
-    $("#cm_speed").textContent = (mission.speed||"—").toUpperCase();
-    $("#cm_end").textContent = (mission.completion||"—").toUpperCase();
-    $("#cm_buf").textContent = mission.buffer_m!=null? mission.buffer_m+" m" : "—";
-    $("#cm_note").textContent = "as of the last edit before the cursor";
-  } else { ["#cm_lines","#cm_bnd","#cm_speed","#cm_end","#cm_buf"].forEach(setNA);
-           $("#cm_note").textContent=""; }
-
-  const ais = lastBefore(AISES, absT);
-  if(ais){
-    $("#ct_n").textContent = ais.n!=null? ais.n : (ais.vessels||[]).length;
-    $("#ct_list").innerHTML = (ais.vessels||[]).slice(0,12).map(v=>
-      escapeHtml((v.name||v.mmsi||"?")+((v.sog!=null)? " · "+v.sog.toFixed(1)+" kn":""))
-    ).join("<br>") || '<span class="na">none shown</span>';
-  } else { setNA("#ct_n"); $("#ct_list").innerHTML=NA; }
-
-  const vsl = lastBefore(VSLS, absT);
-  if(vsl){
-    $("#cs_vessel").textContent = vsl.name || vsl.id || "—";
-    $("#cs_loa").textContent = vsl.loa_m!=null? vsl.loa_m+" m" : "—";
-    $("#cs_pow").textContent = (vsl.power||"—").toUpperCase();
-  } else { setNA("#cs_vessel"); setNA("#cs_loa"); setNA("#cs_pow"); }
-  $("#cs_mode").textContent = (window._mode||"—").toUpperCase();
-  $("#cs_note").textContent = VSLS.length>1? "vessel switched during this session":"";
-}
-
-function setView(v){
-  VIEW = v;
-  document.body.classList.toggle("controls", v==="controls");
-  $("#tab_chart").classList.toggle("on", v==="chart");
-  $("#tab_controls").classList.toggle("on", v==="controls");
-  applyAt(pt);                       // repaint whichever view just appeared
-  if(v==="chart") render();
 }
 
 // ---- event timeline ------------------------------------------------------- //
@@ -713,8 +529,6 @@ function zoomAt(dz, sx, sy){
   center=worldToLatLon(p.x-((sx-r.left)-viewSize().w/2), p.y-((sy-r.top)-viewSize().h/2), zoom);
   render();
 }
-$("#tab_chart").onclick=()=>setView("chart");
-$("#tab_controls").onclick=()=>setView("controls");
 $("#zin").onclick=()=>zoomAt(1, mapEl.getBoundingClientRect().left+viewSize().w/2, mapEl.getBoundingClientRect().top+viewSize().h/2);
 $("#zout").onclick=()=>zoomAt(-1, mapEl.getBoundingClientRect().left+viewSize().w/2, mapEl.getBoundingClientRect().top+viewSize().h/2);
 $("#follow").onclick=()=>{ follow=!follow; $("#follow").classList.toggle("on",follow); const b=fixAt(T0+pt); if(follow&&b){center={lat:b.lat,lon:b.lon};} render(); };

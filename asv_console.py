@@ -386,7 +386,6 @@ class SessionLogger:
         self.enabled = bool(enabled)
         self._last_salient = None
         self._last_state_t = 0.0
-        self._aux = {}                  # kind -> (last WRITTEN snapshot, when)
         if self.enabled:
             try:
                 os.makedirs(log_dir, exist_ok=True)
@@ -425,31 +424,6 @@ class SessionLogger:
         if error:
             p["error"] = error
         self._write("command", p)
-
-    def aux(self, kind, snap, min_interval=5.0):
-        """Record an auxiliary picture snapshot (env / water / ais / ...) - but only
-        when it CHANGED, and at most every `min_interval` seconds per kind. One
-        mechanism for every layer of the operating picture: the callers just hand over
-        their current snapshot on whatever cadence they already run (the state publish,
-        the browser's own AIS poll), and this decides whether it is worth a line. A
-        playback needs the picture the operator SAW - wind, tide, traffic - not just
-        what the boat did; before these records existed a replay showed a track with
-        no weather over an empty sea.
-
-        Callers hand a FRESH dict (every snapshot() here builds one) - a LIVE dict
-        mutated in place would compare equal to itself forever and never re-record.
-        A change landing inside the throttle window is not lost: `last` only advances
-        on a WRITE, so the still-changed snapshot re-offers on the next call."""
-        if not self.enabled or self._f is None or snap is None:
-            return
-        with self._lock:
-            last, last_t = self._aux.get(kind, (None, 0.0))
-        now = time.time()
-        if snap == last or (now - last_t) < min_interval:
-            return
-        with self._lock:
-            self._aux[kind] = (snap, now)
-        self._write(kind, {kind: snap})
 
     def state(self, event):
         """Record a state snapshot: full on any salient transition, else a
@@ -565,22 +539,6 @@ def save_mission(m):
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(data)
         os.replace(tmp, MISSION_PATH)
-    if LOG is not None:
-        # Every save re-offers the WHOLE mission to the recording (lines, boundary,
-        # buffer, speed - the plan as it stood); aux's change-check keeps it to one
-        # line per real edit. Together with the session-start offer in main() this is
-        # what lets a playback draw lines that existed BEFORE the session began -
-        # command records only ever carried the changes made during it.
-        LOG.aux("mission", json.loads(data), min_interval=1.0)
-
-
-def _vessel_record():
-    """The slim vessel identity a playback needs to label and draw the boat -
-    recorded at session start and again on every live switch (aux change-check
-    makes the re-offer free)."""
-    return {"id": VESSEL.get("id"), "name": VESSEL.get("name"),
-            "loa_m": (VESSEL.get("hull") or {}).get("loa_m"),
-            "power": (VESSEL.get("power") or {}).get("type")}
 
 
 # --------------------------------------------------------------------------- #
@@ -2398,11 +2356,6 @@ class Engine:
         self._publish(ev)
         if LOG is not None:
             LOG.state(ev)
-            # The environmental picture rides the SAME publish stream (no thread of its
-            # own): aux() only writes on change + throttle, so the ~4 Hz telemetry
-            # cadence costs one line every few minutes in practice.
-            LOG.aux("env", ENV.snapshot())
-            LOG.aux("water", WATER.snapshot())
 
     # -- connection -------------------------------------------------------- #
     def connect(self, mode, host, port, transport, spawn=None):
@@ -3195,15 +3148,6 @@ class Handler(BaseHTTPRequestHandler):
                     area["nearest_km"] = round(nearest, 1)
             area["shown"] = len(vs)
             data["area"] = area
-            if LOG is not None:
-                # The traffic picture rides the BROWSER'S OWN 8 s poll - no recorder
-                # thread, and contacts are recorded exactly while an operator is
-                # watching, which is when a mission is being flown. A slim fresh dict
-                # (aux compares by value): position/course/name per contact is what a
-                # playback needs to redraw the sea, not the whole table row.
-                LOG.aux("ais", {"n": len(vs), "vessels": [
-                    {k: v.get(k) for k in ("mmsi", "name", "lat", "lon", "cog", "sog")}
-                    for v in vs[:60]]}, min_interval=15.0)
             self._send(200, json.dumps(data), "application/json")
         except Exception as e:
             self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0, "area": area,
@@ -3297,8 +3241,6 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as e:
                 return 400, {"error": "vessel '%s': %s" % (vid, e)}
             apply_vessel(v)
-            if LOG is not None:
-                LOG.aux("vessel", _vessel_record(), min_interval=1.0)
             if st.get("mode") == "sim":
                 ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")
             # the new profile may spawn in a completely different sea area - re-point the
@@ -3743,11 +3685,6 @@ def main():
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)
-        # The picture as the session OPENS: the active vessel and the mission store as
-        # loaded - lines drawn in a previous session exist nowhere in this session's
-        # command stream, and a playback without this record opened onto a bare chart.
-        LOG.aux("vessel", _vessel_record(), min_interval=1.0)
-        LOG.aux("mission", load_mission(), min_interval=1.0)
 
     srv = Server((args.host, args.port), Handler)
     url = "http://%s:%d/" % ("localhost" if args.host in ("0.0.0.0", "127.0.0.1") else args.host, args.port)

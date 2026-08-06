@@ -38,7 +38,6 @@ python asv_console.py --sim            # (or a real --vcu session)
 | **Vessel card** (left) | State at the cursor: position, heading, SOG, battery, autonomy, behaviour, waypoint x/N, and the console note. |
 | **Event timeline** (centre-left) | Every **command / setting / action** (ARM, UPLOAD, START, STOP, E-STOP, Go-To/Hold/RTH/Transit, plan edits, comms/water settings…) and every **state transition**, in time order. A **rejected (409) command is shown in red** with its reason. The current event highlights and auto-scrolls as playback advances; **click any row to jump to it**. Toggle with **EVTS**. |
 | **Session pills** (top) | Mode (sim / real), total duration, command count, telemetry-fix count. |
-| **CHART / CONTROLS tabs** (top) | Two views over ONE scrubber. **Chart** replays the sea: track, plan, the **recorded AIS traffic** (faded triangles at their recorded positions, names at close zoom) and a **wind widget** (top-right: an arrow pointing where the wind GOES, speed and Hs beside it). **Controls** replays the cards: Environment (wind, sea, source, water level), Mission (lines, boundary, speed, end-of-plan, nogo buffer — as of the last edit before the cursor), Traffic (the contacts on the card), and Session (vessel identity, LOA, energy type, mode). Every value is the last thing **recorded** before the cursor; a recording made before 2026-08-05 shows *not recorded* rather than a guess. |
 
 ---
 
