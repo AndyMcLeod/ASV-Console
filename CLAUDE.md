@@ -86,6 +86,23 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
+**DOCS-ONLY COMMITS, 2026-08-05 (after the coverage thread) — THE PRESENTATION. No code
+touched; the suites owe nothing here.**
+- `528ab59` — **`docs/ASV-Console-Programming-by-Conversation.pptx` added** (graduate-level
+  deck: this project + the DES schema from Andy's case-study series). **NOT generated** —
+  see the exception note in "Keep docs current" before assuming `tools/` builds it. README's
+  Documentation section updated in the same commit.
+- `8370618` — `.gitignore` gains `~$*` (Office drops a lock file beside an open deck; with a
+  pptx in `docs/` those would recur as untracked noise).
+- (this commit) — **the deck gains an ASV effort-economics estimate** (now 14 slides):
+  unaided professional ≈200 person-hours by the papers' own PERT method (10 components,
+  tabled on its own slide; UI and test infrastructure dominate, not discovery) vs ≈30 h
+  measured from the repo itself — 109 commits clustered into 27 bursts at a ≤60-min gap.
+  ≈7×, smaller than the small tools' 10–16×, exactly the series' scaling caveat. The slide
+  names the new bias plainly: the estimate was produced by the development agent grading
+  its own work. **The pptx generator lives in the session scratchpad, not this repo** — the
+  deck is the artifact; edit it in PowerPoint, or ask for a regeneration.
+
 **THE SESSION JUST FINISHED ("ASV console refinement", 2026-08-02 → 08-04) — SEVENTEEN
 commits.** Andy's scope was a POLISH pass: no new features; tighten, delete special cases,
 verify by pixels, refresh docs. It ran well past that, because five faults he reported live
