@@ -25,3 +25,6 @@ node_modules/
 
 # ROC placements are per-operator session state, not project config
 roc_config.json
+
+# Office lock files (~$xxx) while a doc/deck is open
+~$*
