@@ -64,7 +64,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-ONE REGRESSION SUITES (446 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-TWO REGRESSION SUITES (455 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1002,6 +1002,30 @@ the other end.
 Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No client
 change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
 the server ignores them if anything ever does.
+
+## HOVER TIPS THE POINTER CANNOT OCCLUDE (2026-08-06)
+
+Andy: every informational popup was partially hidden under the pointer. Those were the
+console's 118 NATIVE `title` tooltips — drawn and positioned by the BROWSER, not the
+page's to move — so the fix is ONE delegated layer (`#uiTip`) that takes over from
+`[title]`: on hover the title is STASHED off the element (which is what suppresses the
+native tip), and the text shows anchored to the ELEMENT — below its left edge with a
+gap, flipped ABOVE when the bottom would clip, clamped to the viewport — so the
+pointer, sitting on the control, can never sit on the tip. 400 ms delay to match native
+pacing; hidden on mouseout / mousedown / blur; `pointer-events:none` and a 340 px wrap.
+
+**THE RESTORE IS GUARDED, and this is the part a rewrite would lose:** FIVE readouts
+rewrite their titles at runtime (nogo, AIS table rows, water trust ×2, mission speed).
+On leave the stash is restored ONLY if the title is still absent — a value written
+mid-hover wins. Measured live before the suite existed: stash, placement, no-overlap,
+the bottom-edge flip (tip bottom 700 ≤ control top 708), restore, and the mid-hover
+writer all verified in a browser. `#aisTip` stays separate on purpose — it is a canvas
+pointer-follower over hit-tested vessels, not an attribute tip.
+
+`tests/ui_tooltips.js` (9 assertions; tipPos driven PURE with the page's own constants
+parsed out of the source; 5/5 mutations caught, each by exactly the check written for
+it). Works identically in both split windows — one document-level delegation, no
+per-element listeners to lose across the mirror's DOM replacement.
 
 ## THE SURV CARD'S RIGHT-EDGE LOCK — THE UICARD CLAMP (2026-08-06)
 

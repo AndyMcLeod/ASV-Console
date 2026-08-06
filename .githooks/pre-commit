@@ -43,6 +43,7 @@ advice_for() {
     wreck_clearance.js) echo "  A charted wreck / obstruction no longer keeps a route off it, or the vessel's nogo buffer floor leaked (hazExtent / blocked / rasterKeepouts)." ;;
     water_trust.js)    echo "  A tide reading from far away would no longer be flagged as such (waterTrust / WATER_FAR_KM / WATER_REMOTE_KM in static/asv.html)." ;;
     speed_recalc.js)   echo "  Changing the plan speed no longer recalculates, or a committed plan is not re-checked against the turn radius the new speed implies (recalcForSpeed)." ;;
+    ui_tooltips.js)    echo "  The hover-tip layer broke: tipPos lost its flip/clamp (the pointer can occlude the tip again), the stash stopped suppressing the native tip (two tips at once), the restore stopped guarding for mid-hover title writers, or moving within a control kills its tip (the [title] delegation block in static/asv.html - CRLF file)." ;;
     ui_split.js)       echo "  A window-split registration selector no longer resolves, or the vessel-status card has been mirrored back into the controls window (UI_BRIDGED / UI_CARD_TITLES)." ;;
     stored_settings.js) echo "  A stored setting no longer survives blocked or full storage, a toggle saved by an older build as \"1\"/\"0\" no longer reads, or a bare localStorage call crept back in (lsGet / lsSet / lsDel / lsBool)." ;;
     ais_table.js)      echo "  The traffic list is being REBUILT rather than patched - that resets the card's scroll position mid-read and drops a text selection every poll (renderAisTable / setCellText)." ;;
