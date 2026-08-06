@@ -33,6 +33,9 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 `DEFAULT_VESSEL_ID`; no `--vessel` needed). Web port **8791**; the branded sibling at
 `D:\Claude\Zboat` uses 8781, so both run side by side. **Keep this console brand-free**
 — the sanitization rules below are locked decisions, not preferences.
+**⛔ THE SIBLING IS PARKED (Andy's standing directive, 2026-08-05): all future effort
+resides HERE. Do not port fixes back to the Z-Boat console or touch its repo until he
+redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **THIRTY REGRESSION SUITES (415 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
