@@ -66,7 +66,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-TWO REGRESSION SUITES (455 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-TWO REGRESSION SUITES (461 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1004,6 +1004,40 @@ the other end.
 Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No client
 change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
 the server ignores them if anything ever does.
+
+## THE LANE YIELDS TO THE LAW — gateLegClear (2026-08-06)
+
+Andy, with a screenshot: the zboat's Go-To at Erie drove through a charted seawall while
+the banner said "routed around nogo zone(s) · Rule 9: channel lane". **Diagnosed with
+his exact recorded route (the session log carries every goto's waypoints) and reproduced
+to five decimal places: `legPath` HAD routed clear of every keep-out — then
+`channelLaneRoute` REPLACED that route with the buoy-gate centreline (offset to port),
+`smoothTrack` rounded the bends, and where Erie's charted channel hugs the waterfront
+that lane geometry crossed the seawall's land polygon in three places. NOTHING re-checked
+the substitution** — the banner's safety claim described a route that no longer existed.
+The raster, the exact test and the search all agreed the cells were blocked; the lane
+pass simply never asked. (Ruled out on the way, each measured: extract radius — the 10 km
+box covers the bay; enforcement toggles — land-off routes nearly DIRECT, not shore-hugging;
+raster line-stamping — the walls were stamped.)
+
+**THE FIX: `gateLegClear`, one gate inside `channelLaneRoute`** — no route leaves the
+lane pipeline without passing the SAME `legClear` the search obeyed. A failing stretch is
+re-routed by `legPath` and spliced (the lane survives everywhere it is lawful — at Erie
+the 41-wpt lane became 44 wpts: the arc plus three small lawful detours, `lane:true`
+kept); endpoint exemption within 2·buf of the route's own start/goal (a boat moored
+inside the buffer is led OUT on its own first leg, same as routeAround's A-rule); a
+spliced patch is legPath's own product and is NOT re-checked (the gate catches the
+lane's inventions, not the search's — and re-checking an in-buffer patch end would loop);
+if the law cannot patch, the pre-lane input ships and `abandoned` DEMOTES the lane fact
+— the Rule 9 banner never claims a lane the gate threw away. Because the gate lives in
+the producer, every lane consumer (goto, transit, routePlan, survey approach) inherits it.
+
+`tests/buoy_lane.js` 14→20: the synthetic pier world reproduces the Erie class (check 15
+proves the scenario has teeth by running the UN-gated pipeline), 4/4 mutations caught —
+including the exemption drop, whose check took THREE forms to grow teeth: wp[0] survives
+a splice, a length equality broke on clean code (mid-route splices are lawful), wp[1] is
+the observable the exemption actually protects. Ops manual: the banner chapter now states
+the lane-yields-to-the-law rule and the honest fallback.
 
 ## HOVER TIPS THE POINTER CANNOT OCCLUDE (2026-08-06)
 

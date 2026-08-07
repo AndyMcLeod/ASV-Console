@@ -2891,12 +2891,51 @@ function narrowChannelLane(pathLL, ref, ko, buf){
 //     counted - a transit that rode a lane on leg 1 and open water on leg 3 reported none.
 // A value returned with its subject cannot drift from it, and cannot be read by an
 // operation that did not produce it.
+// THE GATE: no route leaves the lane pipeline without passing the SAME legClear the
+// obstacle search obeyed. Found at Erie (2026-08-06): legPath routed clear of every
+// keep-out, then buoyChannelLane REPLACED that route with the buoy-gate centreline
+// (offset to port) and smoothTrack rounded the bends - and where the charted channel
+// hugs the waterfront, that lane geometry crossed the seawall's land polygon in three
+// places. Nothing re-checked the substitution, so the banner said "routed around
+// nogo zone(s)" about a route that no longer existed. The lane is a PREFERENCE; the
+// nogo model is LAW. A failing stretch is re-routed by legPath and spliced, so the
+// lane survives everywhere it is lawful; if the law cannot patch it, the pre-lane
+// input ships instead (it was legPath-clear by construction) and `abandoned` tells
+// the caller the Rule 9 banner would be a lie.
+//
+// Endpoint exemption, same as routeAround's A-rule: a block within 2*buf of the
+// route's OWN start or goal is tolerated - a boat moored inside the buffer must
+// still be led OUT, and the arrival can end at a dock.
+// A spliced patch is legPath's own product and is NOT re-checked: the gate exists
+// to catch the lane's inventions, not to out-lawyer the search - and re-checking a
+// patch whose stretch-ends sit in-buffer would loop forever.
+function gateLegClear(route, fallback, ref, ko, buf){
+  if(!route || route.length < 2) return {route, abandoned:false};
+  const start = route[0], goal = route[route.length-1];
+  const near = (at, P) => { const a=llEN(at.lat,at.lon,ref), q=llEN(P.lat,P.lon,ref);
+    return Math.hypot(a.e-q.e, a.n-q.n) <= buf*2; };
+  const out = route.slice(); let splices = 0;
+  for(let i = 1; i < out.length; ){
+    if(legClear(out[i-1], out[i], ref, ko, buf)){ i++; continue; }
+    const hit = firstBlockAlong(out[i-1], out[i], ref, ko, buf);
+    if(hit && (near(hit.at, start) || near(hit.at, goal))){ i++; continue; }
+    if(++splices > 20) return {route: fallback.slice(), abandoned:true};
+    let j = i;
+    while(j < out.length-1 && !legClear(out[j], out[j+1], ref, ko, buf)) j++;
+    const patch = legPath(out[i-1], out[j], ref, ko, buf);
+    if(!patch) return {route: fallback.slice(), abandoned:true};
+    out.splice(i, j - i + 1, ...patch);
+    i += patch.length;                                // trust the patch: see above
+  }
+  return {route: out, abandoned:false};
+}
 function channelLaneRoute(pathLL, ref, ko, buf){
   laneUsed = false;                                  // scratch: consumed on the next line
   let out = buoyChannelLane(pathLL, ref, ko, buf);   // marked channels (buoy-pair centreline)
   out = narrowChannelLane(out, ref, ko, buf);        // unmarked / channel-like confined water
-  return {route: smoothTrack(out, ref, ko, buf),     // round the bends, set the waypoint count
-          lane: laneUsed};
+  out = smoothTrack(out, ref, ko, buf);              // round the bends, set the waypoint count
+  const g = gateLegClear(out, pathLL, ref, ko, buf); // THE LAW - see gateLegClear above
+  return {route: g.route, lane: laneUsed && !g.abandoned};
 }
 // Pair the lateral marks into channel GATES: each port-hand mark with its nearest
 // starboard-hand mark across the channel (15-400 m apart), giving the gate centre, its

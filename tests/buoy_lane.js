@@ -62,6 +62,7 @@ function grabDecl(name) {
 const HELPERS = ["llEN", "fromEN", "blocked", "inBB", "pinp", "dSeg", "distTo", "azTo",
                  "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
+                 "blockedInfo", "firstBlockAlong", "gateLegClear",
                  "smoothTrack", "systemCenterline", "buoyChannelLane",
                  "narrowChannelLane", "channelLaneRoute"];
 const M_PER_DEG_LAT = 111320.0;
@@ -269,6 +270,72 @@ for (const [tag, dir, base] of [
         first.lane === true && second.lane === false,
         "first=" + first.lane + " second=" + second.lane + " (a remembered flag would say true,true)");
 }
+
+// --- 15-19. THE GATE: the lane yields to the nogo model --------------------- //
+// Found at Erie (2026-08-06): legPath routed clear, then the lane pass REPLACED the
+// route with buoy-gate geometry that crossed a seawall in three places, and nothing
+// re-checked it. Mutations RUN, 4/4 caught: gate removed -> 16+19b; exemption
+// dropped -> 18 (on the THIRD form of that check: wp[0] survives a splice, a length
+// equality broke on clean code because mid-route splices are lawful - wp[1] is the
+// observable the exemption actually protects); un-gated fallback -> 19; lane fact
+// kept on abandonment -> 19b.
+// re-checked the substitution - the banner claimed "routed around nogo zone(s)" about
+// a route that no longer existed. The synthetic wall below reproduces the class: a
+// pier polygon intrudes into the very line the lane must ride.
+function walledChannel(){
+  const w = channel();
+  const ring = [{e:15,n:480},{e:35,n:480},{e:35,n:520},{e:15,n:520}];
+  w.polys = [{ring, bb: bbOf(ring), kind: "land"}];
+  return w;
+}
+const WW = walledChannel();
+const NB = [{e:-80,n:0},{e:-80,n:1000}].map(p=>enLL(p.e,p.n));
+const badLegsOf = (wps, world) => { let bad=0;
+  for(let i=1;i<wps.length;i++) if(!legClear(wps[i-1],wps[i],ref,world,3)) bad++;
+  return bad; };
+// the UN-gated pipeline, exactly as channelLaneRoute ran before the gate existed
+const ungated = (()=>{ laneUsed=false;
+  let o = buoyChannelLane(NB, ref, WW, 3); o = narrowChannelLane(o, ref, WW, 3);
+  return [NB[0], ...smoothTrack(o, ref, WW, 3)]; })();
+check("15. the scenario has TEETH: the un-gated lane pipeline crosses the pier",
+      badLegsOf(ungated, WW) >= 1,
+      badLegsOf(ungated, WW) + " unlawful leg(s) without the gate - the Erie class, synthetically");
+const gatedRun = laneRun(WW, [{e:-80,n:0},{e:-80,n:1000}]);
+const gated = [NB[0], ...gatedRun.route];
+check("16. THE GATE: every leg of the shipped route passes the SAME legClear the search obeyed",
+      badLegsOf(gated, WW) === 0,
+      badLegsOf(gated, WW) + " unlawful leg(s) with the gate");
+const gtrack = gated.map(p=>({e:toE(p), n:toN(p)}));
+check("17. ... and the lane SURVIVES where it is lawful - still riding +¼W away from the pier, lane fact intact",
+      gatedRun.lane === true
+      && Math.abs(eAtN(gtrack,300) - WANT) < 8 && Math.abs(eAtN(gtrack,700) - WANT) < 8,
+      "e@300=" + (eAtN(gtrack,300)||0).toFixed(1) + " e@700=" + (eAtN(gtrack,700)||0).toFixed(1) + " (lane line " + WANT + ")");
+// 18. ENDPOINT EXEMPTION: a boat moored INSIDE the buffer must be led out, not
+// re-routed around its own berth. The start-adjacent leg stays the pipeline's own.
+const dockWorld = walledChannel();
+const dring = [{e:-84,n:-6},{e:-78,n:-6},{e:-78,n:-2},{e:-84,n:-2}];
+dockWorld.polys.push({ring: dring, bb: bbOf(dring), kind: "land"});
+const moored = laneRun(dockWorld, [{e:-80,n:0},{e:-80,n:1000}]);   // start ~2 m off the dock face
+const mooredUngated = (()=>{ laneUsed=false;
+  let o = buoyChannelLane(NB, ref, dockWorld, 3); o = narrowChannelLane(o, ref, dockWorld, 3);
+  return smoothTrack(o, ref, dockWorld, 3); })();
+check("18. a start INSIDE the buffer is exempt: the berth leg ships UNCHANGED - same shape, no spliced detour around the boat's own dock",
+      Math.abs(toE(moored.route[1]) - toE(mooredUngated[1])) < 1
+      && Math.abs(toN(moored.route[1]) - toN(mooredUngated[1])) < 1,
+      "wp[1] must be the pipeline's own - a dropped exemption REPLACES it with a spliced detour around the berth (wp[0] alone cannot see that; mid-route splices elsewhere are lawful and expected)");
+// 19. THE LAW CANNOT PATCH -> the lawful pre-lane input ships, and the lane fact
+// goes with it (a Rule 9 banner over an abandoned lane would be a lie).
+const realLegPath = legPath;
+legPath = () => null;
+const gres = gateLegClear(ungated, NB, ref, WW, 3);
+legPath = realLegPath;
+check("19. when legPath cannot patch a stretch, the pre-lane input ships and `abandoned` says so",
+      gres.abandoned === true && gres.route.length === NB.length
+      && Math.abs(toN(gres.route[gres.route.length-1]) - 1000) < 1,
+      "fallback = the legPath-clear input, flagged");
+check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
+      /lane: laneUsed && !g\.abandoned/.test(H),
+      "the banner must never claim a lane the gate threw away");
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");
 process.exit(fails ? 1 : 0);

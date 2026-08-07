@@ -134,6 +134,7 @@ c.push(TBL(["Row", "Reads"], [
 ], [1900, 7460]));
 c.push(H2("4.4  Banners and the note line"));
 c.push(P("A banner across the chart reports what a command actually did — the route it planned, how many waypoints, whether it rode a channel lane, and any warning attached to it. The note line under the status bar carries the vessel's own last message. READ THE BANNER AFTER EVERY COMMAND. It is where the console tells you it degraded something."));
+c.push(P("Where a route rides a channel lane, the lane always YIELDS to the nogo model: if the buoyed fairway’s geometry would cross a charted obstruction — a seawall the channel hugs, a pier inside the fairway line — the route detours around it and rejoins the lane, and every leg of the shipped plan passes the same clearance test the obstacle search uses. If no lawful lane is possible, the plan falls back to the plain obstacle-clear route and the banner drops its Rule 9 note rather than claim a lane that was abandoned."));
 
 // 5 ---------------------------------------------------------------------------
 c.push(H1("5  Choosing the vessel"));
