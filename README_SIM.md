@@ -219,7 +219,10 @@ the propulsion energy source, so it isn't modeled as the endurance limit.
    is short, how far the loops reach past the line ends, and what spacing (or speed)
    would restore a semicircle — a big ASV on tight lines is the usual cause. Where not
    even the teardrop fits clear of the keep-outs the reversal falls back to a straight
-   hop and the banner flags it as **untrackable**, not merely routed. Turn waypoints
+   hop and the banner flags it as **untrackable**, not merely routed. Turns also may
+   not swing into a **navigation channel** the survey lines do not enter (lines drawn
+   beside a channel keep their loops out of it; a survey drawn inside a channel keeps
+   using it) — a refusal names and outlines the channel and quotes the standoff needed. Turn waypoints
    (reversals + arc) draw **unlabeled** — the line's own `L#` label identifies it —
    and arcs use a coarse (~3 m) point spacing, so a wide survey keeps only a handful
    of waypoints per turn.

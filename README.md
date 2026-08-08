@@ -319,6 +319,18 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    the spacing, i.e. the radius that was just rejected, so that case is a warning to
    act on (widen the lines, slow down, or move the line ends), not a working turn.
 
+   **Turn water.** The keep-out set the turns answer to is *stricter* than the one
+   transits use: charted channel polygons (dredged areas + buoy-gate fairway
+   corridors) that none of the clipped survey lines occupy are keep-outs for the
+   reversal turns, the reversal straight-hop check and the serpentine ordering — a
+   loop may not swing into a navigation channel the survey does not enter, even
+   though the channel is deep, is not an enforced keep-out, and a charted pile row
+   (individual point features) cannot block a loop that threads between the points.
+   A survey drawn *inside* a channel keeps each fragment its lines reach, and routed
+   region-hop transits may still cross the channel as ordinary navigation. Refusals
+   name the channel in the banner, outline it as a violation, and quote the standoff
+   the turns need (`tests/turn_channel.js`).
+
    The turn waypoints — the line reversals and the arc points — are drawn
    **unlabeled** (each line already carries its own `L#` label, so per-point `W#`
    numbers are just clutter), and arcs are sampled coarsely (~3 m) so a wide-spacing

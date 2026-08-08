@@ -1992,23 +1992,17 @@ function buildKeepouts(ref, enf, dr, feats){
   }
   return {polys, lines, points, marks, sys:markSystems(marks)};
 }
-// PUNCH-OUT channel exclusion (survey coverage only): if a survey line SPANS ACROSS
-// a channel, that channel is returned as keep-out polygons so the coverage lines
-// clip out of it. "Spans across" = a survey line runs OUTSIDE -> INSIDE the channel
-// -> OUTSIDE again (it crosses the fairway). The channel is the ENC dredged area,
-// which is often FRAGMENTED into adjacent polygons, so a sample is treated as "in
-// the channel" if it's inside ANY dredged poly - internal poly-to-poly boundaries
-// don't count as a crossing. A survey CONTAINED within the channel (never goes
-// out->in->out) excludes nothing. This augments ONLY the survey-line clip, never the
-// transit routing, so normal transits and internal-channel surveys are unaffected.
-function channelSpanKeepouts(src, ref, feats, marks){
+// Charted-channel polygons: the ENC dredged areas plus the buoy-gate FAIRWAY
+// corridors (the marked channel where no dredged polygon is charted, e.g. an
+// inlet mouth). ONE list, shared by the span clip and the turn-water rule below,
+// so "what counts as a channel" cannot drift between the two.
+function channelPolys(ref, feats, marks){
   const chans=[];
   // 1) dredged-area channels
   for(const f of (feats||[])){ if(f.role!=="dredged") continue;
     eachRing(f.geometry, rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>=3) chans.push({ring, bb:bbOf(ring)}); }); }
-  // 2) buoy-gate FAIRWAY corridors: pair the lateral marks into gates, then sweep
-  // each gate line +/- one gate-width along the channel axis into a corridor polygon
-  // (the marked fairway where no dredged polygon is charted, e.g. an inlet mouth).
+  // 2) buoy-gate corridors: pair the lateral marks into gates, then sweep each
+  // gate line +/- one gate-width along the channel axis into a corridor polygon.
   for(const g of pairGates(marks)){
     const gux=g.axis[1], guy=-g.axis[0];         // gate-line unit (port -> starboard)
     const P={e:g.C.e-gux*g.width/2, n:g.C.n-guy*g.width/2};   // port mark
@@ -2018,24 +2012,64 @@ function channelSpanKeepouts(src, ref, feats, marks){
                  {e:S.e+ax*Le,n:S.n+ay*Le}, {e:P.e+ax*Le,n:P.n+ay*Le} ];
     chans.push({ring, bb:bbOf(ring)});
   }
+  return chans;
+}
+// ~5 m EN samples along one survey line [a,b] (lat/lon pair).
+function segSamplesEN(l, ref){
+  const a=llEN(l[0].lat,l[0].lon,ref), b=llEN(l[1].lat,l[1].lon,ref);
+  const L=Math.hypot(b.e-a.e,b.n-a.n), n=Math.max(2,Math.ceil(L/5)), out=[];
+  for(let i=0;i<=n;i++){ const t=i/n; out.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); }
+  return out;
+}
+// PUNCH-OUT channel exclusion (survey coverage only): if a survey line SPANS ACROSS
+// a channel, that channel is returned as keep-out polygons so the coverage lines
+// clip out of it. "Spans across" = a survey line runs OUTSIDE -> INSIDE the channel
+// -> OUTSIDE again (it crosses the fairway). The channel is often FRAGMENTED into
+// adjacent polygons, so a sample is treated as "in the channel" if it's inside ANY
+// channel poly - internal poly-to-poly boundaries don't count as a crossing. A
+// survey CONTAINED within the channel (never goes out->in->out) excludes nothing.
+// This augments ONLY the survey-line clip, never the transit routing, so normal
+// transits and internal-channel surveys are unaffected. (The TURNS between the
+// clipped lines answer to channelTurnKeepouts below, not to this.)
+function channelSpanKeepouts(src, ref, feats, marks){
+  const chans=channelPolys(ref, feats, marks);
   if(!chans.length) return [];
   const inChan=(p)=>{ for(const c of chans){ if(inBB(p,c.bb,0) && pinp(p,c.ring)) return true; } return false; };
-  const samples=(l)=>{ const a=llEN(l[0].lat,l[0].lon,ref), b=llEN(l[1].lat,l[1].lon,ref);
-    const L=Math.hypot(b.e-a.e,b.n-a.n), n=Math.max(2,Math.ceil(L/5)), out=[];
-    for(let i=0;i<=n;i++){ const t=i/n; out.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); } return out; };
   // spanning = some survey line goes out -> in -> out across the channel region
   let spans=false;
   for(const l of src){ let seenOut=false, inAfterOut=false, outAfterIn=false, inRun=false;
-    for(const p of samples(l)){ const ic=inChan(p);
+    for(const p of segSamplesEN(l, ref)){ const ic=inChan(p);
       if(ic){ if(seenOut) inAfterOut=true; inRun=true; }
       else { if(inRun) outAfterIn=true; seenOut=true; inRun=false; } }
     if(inAfterOut && outAfterIn){ spans=true; break; } }
   if(!spans) return [];
-  // exclude only the dredged polys the survey actually enters (the crossed channel)
+  // exclude only the channel polys the survey actually enters (the crossed channel)
   const out=[];
   for(const c of chans){ let entered=false;
-    for(const l of src){ for(const p of samples(l)){ if(inBB(p,c.bb,0) && pinp(p,c.ring)){ entered=true; break; } } if(entered) break; }
+    for(const l of src){ for(const p of segSamplesEN(l, ref)){ if(inBB(p,c.bb,0) && pinp(p,c.ring)){ entered=true; break; } } if(entered) break; }
     if(entered) out.push({ring:c.ring, bb:c.bb, kind:"a navigation channel"}); }
+  return out;
+}
+// TURN WATER (survey generation): a reversal turn may only use channel water the
+// survey's own coverage lines occupy. Channel polys that contain NO sample of any
+// CLIPPED coverage line are returned as keep-outs for the turns, the reversal
+// straight-hop check and the serpentine ordering - never for routed region-hop
+// transits, which may lawfully cross a channel under channelLaneRoute/gateLegClear.
+// The grant is PER POLY and deliberately strict: a channel the survey genuinely
+// occupies is granted fragment by fragment as its lines reach each fragment, and a
+// wrongly REFUSED turn is a visible straight-hop flag while a wrongly GRANTED one
+// is a silent excursion into traffic. This rule exists because generated teardrops
+// arced 34 m into the Lewes channel across a charted pile row (2026-08-07): piles
+// are charted as POINTS ~60 m apart so the arc threaded their keep-out disks
+// lawfully, and a dredged channel is only a blanket keep-out when the operator
+// enforces "Dredged / restricted" - which would also stop transiting it.
+function channelTurnKeepouts(clipped, ref, feats, marks){
+  const chans=channelPolys(ref, feats, marks);
+  if(!chans.length) return [];
+  const out=[];
+  for(const c of chans){ let entered=false;
+    for(const l of clipped){ for(const p of segSamplesEN(l, ref)){ if(inBB(p,c.bb,0) && pinp(p,c.ring)){ entered=true; break; } } if(entered) break; }
+    if(!entered) out.push({ring:c.ring, bb:c.bb, kind:"a navigation channel"}); }
   return out;
 }
 function pinp(p, ring){ let inside=false;
@@ -3710,7 +3744,10 @@ function teardropTurn(E, F, hE, hF, ref, ko, buf, minR){
     for(const p of pts){ const pe=llEN(p.lat,p.lon,ref);
       outboard=Math.max(outboard, (pe.e-Ee.e)*fwd.e + (pe.n-Ee.n)*fwd.n); }
   }
-  let prev=E; for(const p of [...pts, F]){ if(!legClear(prev,p,ref,ko,buf)) return {why:"nogo"}; prev=p; }
+  // `seg` on refusal = the failing chord, so the caller can ask blockedInfo/
+  // firstBlockAlong WHAT blocked it and name it (a "keep-out" the operator is
+  // staring at can be open-looking water - a navigation channel).
+  let prev=E; for(const p of [...pts, F]){ if(!legClear(prev,p,ref,ko,buf)) return {why:"nogo", seg:[prev,p]}; prev=p; }
   return {pts, kind, R, outboard};
 }
 async function punchOut(){
@@ -3744,12 +3781,19 @@ async function punchOut(){
     const chanExcl = channelSpanKeepouts(src, ref, nogo.features, ko.marks);
     const koClip = chanExcl.length ? {...ko, polys:[...ko.polys, ...chanExcl]} : ko;
     const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
+    // TURN WATER: channel polys that none of the clipped coverage lines occupy are
+    // off-limits to everything that CONNECTS those lines (turns, reversal hops,
+    // serpentine adjacency) - the lines' own water is the plan's declared water.
+    // Routed region-hop transits keep plain `ko`: crossing a channel to reach the
+    // other side is lawful navigation and channelLaneRoute/gateLegClear governs it.
+    const turnExcl = channelTurnKeepouts(clipped, ref, nogo.features, ko.marks);
+    const koTurn = turnExcl.length ? {...ko, polys:[...ko.polys, ...turnExcl]} : ko;
     // Re-order so the ASV covers each obstacle-free region as a serpentine and no
     // leg is numbered through a keep-out; flag any residual crossing transit.
     const legSafe=(a,b)=>{ const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
       const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,buffer/2)));
       for(let i=0;i<=n;i++){ const t=i/n;
-        if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, ko, buffer)) return false; }
+        if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, koTurn, buffer)) return false; }
       return true; };
     const ro=regionOrder(clipped, ref, sp.direction, sp.spacing, legSafe);
     // SHORTEN each survey segment (settle on-line + leave room for the turn to loop
@@ -3766,7 +3810,7 @@ async function punchOut(){
     const minTurnR = minTurnRadiusM(mission.speed || "survey");
     patClip = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin)).filter(s=>distTo(s[0],s[1])>1);
     patTransits=[]; patRoutes=[]; patUnsafe=[];
-    let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0;
+    let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
@@ -3774,12 +3818,18 @@ async function punchOut(){
       const Ap=patClip[k][1], Bp=patClip[k+1][0];
       const hE=azTo(patClip[k][0], patClip[k][1]), hF=azTo(patClip[k+1][0], patClip[k+1][1]);
       const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)
+      // A REVERSAL and everything standing in for one answers to koTurn (the turn
+      // water rule); only a genuine region-hop transit may use the channel (ko).
+      const koHere = antiParallel ? koTurn : ko;
       let via=null;
       if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
-        const t = teardropTurn(Ap, Bp, hE, hF, ref, ko, buffer, minTurnR);  // radius-floored + nogo-validated
+        const t = teardropTurn(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR);  // radius-floored + nogo-validated
         if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard); }
-        else nNoTurn++;    // a loop exists at ANY spacing now, so this is nogo/skew, not tightness
+        else { nNoTurn++;  // a loop exists at ANY spacing now, so this is nogo/skew, not tightness
+          if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
+            const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
+            if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at}); } }
       }
       if(via){ patTransits.push(via); patRoutes.push([Ap,...via,Bp]); continue; }
       // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
@@ -3787,14 +3837,15 @@ async function punchOut(){
       // fallback the nNoTurn banner warns about - clear of nogo, but a 180 the boat
       // cannot track. Kept so the plan stays complete and the operator sees the flag.
       if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
-      const around=routeAround(Ap,Bp,ref,ko,buffer);
+      const around=routeAround(Ap,Bp,ref,koHere,buffer);
       if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
-        const kr=channelLaneRoute([Ap,...around,Bp], ref, ko, buffer).route;  // route only: no banner here
+        const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer).route;  // route only: no banner here
         patTransits.push(kr.slice(1,-1)); patRoutes.push(kr);
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
     const nRoute=patRoutes.length-nSemi-nTear, nU=patUnsafe.length;
+    const nChanTurn = turnBlocks.filter(r=>r.info && r.info.kind==="a navigation channel").length;
     // Turn-radius advisory. The spacing a plain semicircle needs is twice the minimum
     // radius the boat can hold at the plan speed; below that the reversals become
     // teardrops that swing outboard, and if that water isn't clear they become nothing
@@ -3822,7 +3873,7 @@ async function punchOut(){
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
       (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
       (nTear?`, ${nTear} teardrop turn(s) @ R ${minTurnR.toFixed(1)} m (reaching ${maxOutboard.toFixed(0)} m past the line ends)`:``)+
-      (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight)`:``)+
+      (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight${nChanTurn?`; ${nChanTurn} refused by a navigation channel`:``})`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       (!nRoute&&!nU&&!nSemi&&!nTear?`, clear of keep-outs`:``)+
@@ -3831,10 +3882,14 @@ async function punchOut(){
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
     const widenTxt = `Widen the spacing to ${Math.ceil(needSpacing)} m`+
       (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
-    if(nU){ const reasons=legReasons(patUnsafe); setViolations(reasons);
+    if(nU){ const reasons=legReasons(patUnsafe); setViolations([...reasons, ...turnBlocks]);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
-    else if(nNoTurn){ clearViolation();
-      showBanner(`${nNoTurn} reversal(s) have no clear turn — the loop at the ${spdKey}-speed radius (${minTurnR.toFixed(1)} m) would enter a keep-out, so those legs fall back to a straight hop the ASV CANNOT actually track (it needs ${(sp.spacing/2).toFixed(1)} m of radius there and has ${minTurnR.toFixed(1)} m). ${widenTxt}`); }
+    else if(nNoTurn){ setViolations(turnBlocks);
+      // The channel case earns its own sentence: the "keep-out" the loop hit LOOKS
+      // like open water on the chart, and widening the spacing may not cure a line
+      // that already ENDS at the channel's edge - the sure remedy is standoff.
+      const chanTxt = nChanTurn ? ` ${nChanTurn} of them would swing into a navigation channel the survey lines do not enter (highlighted) — turns need up to ~${Math.ceil(2.75*minTurnR)} m of clear water past the line ends, so end those lines that far from the channel, or draw the survey into the channel if it is meant to be covered.` : ``;
+      showBanner(`${nNoTurn} reversal(s) have no clear turn — the loop at the ${spdKey}-speed radius (${minTurnR.toFixed(1)} m) would enter a keep-out, so those legs fall back to a straight hop the ASV CANNOT actually track (it needs ${(sp.spacing/2).toFixed(1)} m of radius there and has ${minTurnR.toFixed(1)} m).${chanTxt} ${widenTxt}`); }
     else if(nTear){ clearViolation();
       showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear. ${widenTxt}`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }

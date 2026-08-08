@@ -66,7 +66,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-FOUR REGRESSION SUITES (493 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-FIVE REGRESSION SUITES (507 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -87,6 +87,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
+| `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
@@ -120,6 +121,19 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**THE LATEST WORK (this commit, 2026-08-08): THE TURN YIELDS TO THE CHANNEL.** Survey
+turns may only use channel water the survey's own coverage lines occupy — Andy's live
+survey at Lewes generated end-of-line turns that arced up to 34 m INTO the dredged
+channel across a charted pile row ("This must not happen"). **Built 2026-08-07, then
+HELD at his instruction while he tested his own approach, and completed on his
+"return to the turn-water work and complete".** Re-verified WHOLE on the current tree
+before landing, because it had been carried across three commits by patch
+re-application: 8/8 mutations still caught, his logged plan replays 68 in-channel arc
+points → 0, and a live console at his exact tide (+1.54 m, set through
+`/api/waterlevel` — the ENV card is gone) reproduces "3 refused by a navigation
+channel" with the channel outlined. **Read "THE TURN YIELDS TO THE CHANNEL" below
+before touching punchOut's keep-out plumbing.**
 
 **THE LATEST WORK (this commit, 2026-08-08): THE ENV CARD IS DELETED.** Andy's call,
 scoped with him first: the CLIENT card goes (wind rose, tide chart, override controls,
@@ -1175,6 +1189,74 @@ was auditing ITSELF:** the "no suite may write to the operator's registry" check
 files by substring, and this file names both `asv_console.py` and `--roc-config`, so it
 put itself in its own audit set and passed on its own text. It parses the AST for a real
 `Popen` CALL now — a pattern that occurs in its own source cannot tell the two apart.
+
+## THE TURN YIELDS TO THE CHANNEL — channelTurnKeepouts / koTurn (2026-08-07, landed 08-08)
+
+Andy, with a screenshot, mid-mission at Lewes: "The survey plan end of line turns are
+pushing into the channel across the line of pilings in a dangerous maneuver. This must
+not happen." **Diagnosed from his exact logged plan** (the session log carries the
+`/api/mission` save — 897 waypoints, 38 lines): all 50 in-channel waypoints were TURN
+points, zero coverage-line points, two 24-point loops reaching 34.3 m inside the
+dredged channel. **Every layer was individually "correct", and that is the finding:**
+- the dredged channel is only a keep-out when the operator enforces "Dredged /
+  restricted" — OFF by default, or no boat could ever transit a channel;
+- `channelSpanKeepouts` fires only when a coverage line crosses the channel
+  out→in→out, and his lines ran PARALLEL to it (bearing 213° vs the channel's axis) —
+  and it only ever clipped LINES, never the turns connecting them;
+- the pilings are charted as individual `Pile_point` features ~60 m apart, so the
+  turn's legClear sweep lawfully THREADED between their keep-out disks while crossing
+  the pile ROW as a real-world barrier. **A row of points is not a line to the model.**
+- reproduction needed the plan-time tide: at `waterOffset` 0 the turns refuse on
+  shallow water and the fault hides; at his +1.54 m (live NOAA, verified) 30 turns
+  generate and 68 arc points sit inside the channel.
+
+**THE RULE (one derived rule, no new setting): a turn may only use channel water the
+survey's own coverage lines occupy.** `channelPolys` (factored out of
+channelSpanKeepouts: dredged areas + buoy-gate fairway corridors) minus the polys any
+CLIPPED line samples into = `turnExcl`; `koTurn = ko + turnExcl` governs
+`teardropTurn`, the `legSafe` closure (serpentine adjacency AND the reversal
+straight-hop fallback) and, via `koHere = antiParallel ? koTurn : ko`, the
+routeAround/channelLaneRoute fallback for a REVERSAL — while genuine region-hop
+transits keep plain `ko` (crossing a channel to reach the other side is lawful
+navigation under gateLegClear). The grant is PER POLY and strict on purpose: a
+wrongly refused turn is a visible straight-hop flag; a wrongly granted one is a
+silent excursion into traffic. An in-channel survey keeps each fragment its lines
+reach; the spanning case (lines clipped OUT of the channel) forbids it to turns too.
+
+**The refusal names its blocker**: `teardropTurn` returns `{why:"nogo", seg}` (the
+failing chord), punchOut runs `firstBlockAlong` over it with koTurn, the nNoTurn
+banner branch now calls `setViolations(turnBlocks)` (never clearViolation) so the
+channel is OUTLINED with the blocked spot marked, the hint counts "refused by a
+navigation channel", and the banner quotes the standoff (~2.75×minR) — because this
+"keep-out" LOOKS like open water and the widen-the-spacing advisory alone may not
+cure a line that already ends at the channel's edge.
+
+**Verified three ways**: replay of his exact 38 lines (old ko: 30 turns, 68 arc
+points in-channel; new koTurn: the 3 channel-crossing reversals refuse by name, 0
+points inside, dock refusals unchanged); `tests/turn_channel.js` (14 checks — the
+synthetic pier-row world proves the scenario has teeth by running the UNgated
+function; 8/8 mutations caught, including restoring the shipped `ko` at the call
+site, which only the CALLER check sees); and live in the real console against the
+real ENC (reconstructed his box from the log: "25 semicircle turn(s), 5 with no
+clear loop (3 refused by a navigation channel)", channel outlined, zero reversal
+arc points in the channel — the 8 in-channel via points that remain are genuine
+region-hop ROUTED transits, allowed by design). **Mutation trap re-confirmed:
+`static/asv.html` is CRLF** — three multi-line anchors written with `\n` scored
+SKIP until rewritten with `\r\n`; only a runner that scores a missing anchor as
+SKIP (not "caught") surfaces that.
+
+**TWO TEST DEFECTS THE HOOK RUN EXPOSED, both in `run_link_control.py` check 6
+(PAUSE → standstill), both fixed in this commit:** (1) the sim's EnvMonitor pushes
+the boat with LIVE NDBC weather at the spawn, so the paused boat's SOG floor was
+the real wind at Lewes — the check passed for days in calm air and then failed at
+sog 0.16–0.18 vs its 0.15 threshold the evening Lewes blew up. A control suite must
+not be hostage to the weather: the suite now runs its console becalmed
+(`/api/env {"enabled": false}` at boot — the disable-returns-calm behaviour is
+env_water.py's own check). (2) Becalming it unmasked the second: the check read
+`(sog_kn or 1) <= 0.15`, and a PERFECT standstill reads sog 0.0 → `0.0 or 1` → 1 →
+FAIL. The lsGet falsiness lesson, server-side: live weather had hidden it because
+sog never actually reached zero. Now `is None`-guarded (`sog_of`). Three
+consecutive clean runs after both.
 
 ## THE LANE YIELDS TO THE LAW — gateLegClear (2026-08-06)
 
