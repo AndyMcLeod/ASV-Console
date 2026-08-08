@@ -84,7 +84,7 @@ c.push(TBL(["Control", "Effect"], [
 c.push(H1("7  Worth trying next"));
 c.push(TBL(["Try", "Why"], [
   ["`SRC`", "The chart's own title block and the SURVEY CONFIDENCE under the vessel. Some water is charted far better than other water."],
-  ["`ENV`", "Real wind and sea push the simulated vessel off track. Override them and watch the crab angle change."],
+  ["Wind / Sea / Set on the vessel card", "Real wind and sea push the simulated vessel off track. Watch SET and the crab angle change as it steers out of the drift."],
   ["Switch vessel", "The picker in the top bar. A different hull changes speeds, turn radius and the depth floor — watch the keep-out model change with it."],
   ["`TRAN`", "Draw a multi-segment transit and Follow it, when you want a specific path rather than the router's."],
   ["`ROC`", "Place a mothership, set it steaming, make it HOME — then Return-to-Home chases a moving recovery point."],

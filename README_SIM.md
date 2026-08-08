@@ -89,9 +89,10 @@ reads higher than the commanded speed with a following wind, lower into a head w
 and stays non-zero when the boat is **paused and drifting** with the motors off.
 
 It's **sim only** (a real boat feels the real weather, so `RealVcu` is untouched).
-The vessel-status card shows **Wind / Sea / Set·crab**; the **ENV** toolbar button
-opens a panel to **disable** it (deterministic clean tracking) or **manually override**
-wind/sea for demos and tuning (blank = live buoy; *Auto* restores live; ↻ refetches).
+The vessel-status card shows **Wind / Sea / Set·crab**, which is where the effect is
+read. There is no ENV card: **disable** the forcing (deterministic clean tracking) or
+**manually override** wind/sea for demos and tuning over the API — `POST /api/env`
+with `enabled:false`, any of the wind/sea fields, or `auto:true` to restore live buoys.
 Note: a *plausible force model, not validated seakeeping*.
 
 ---

@@ -267,7 +267,6 @@
     <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
-    <button class="ctl small" id="envBtn" title="Environmental simulator (SIM ONLY): real wind + sea state push the boat off course. Open to view / override / disable.">ENV</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
@@ -348,43 +347,6 @@
     <div class="phint" id="sr_hint">Click the chart to set the datum (search origin), then tune the params.</div>
   </div>
 
-  <div class="panel" id="envPanel" style="display:none">
-    <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Environment (sim)</div>
-    <label class="prow" style="cursor:pointer;"><span>Enabled</span>
-      <input type="checkbox" id="env_on" checked title="Apply wind + wave forces to the sim boat. Off = deterministic clean tracking."/></label>
-    <div class="phint" id="env_src">locating weather…</div>
-    <div class="prow"><label>Wind kn</label><input type="number" id="env_wind_kn" step="1" min="0" placeholder="auto" title="Override wind speed (blank = live buoy)."/></div>
-    <div class="prow"><label>Wind from°</label><input type="number" id="env_wind_from" step="5" min="0" max="360" placeholder="auto" title="Override wind direction (FROM)."/></div>
-    <div class="prow"><label>Sea Hs m</label><input type="number" id="env_hs" step="0.1" min="0" placeholder="auto" title="Override significant wave height (blank = live)."/></div>
-    <div class="prow"><label>Sea from°</label><input type="number" id="env_wave_from" step="5" min="0" max="360" placeholder="auto" title="Override wave direction (FROM)."/></div>
-    <div class="prow" style="gap:4px">
-      <button class="ctl small" id="env_apply" title="Apply the manual override values above" style="flex:1">Apply</button>
-      <button class="ctl small" id="env_auto" title="Drop the override, use live buoy data" style="flex:1">Auto</button>
-      <button class="ctl small" id="env_ref" title="Refetch from the nearest NOAA buoys" style="width:26px;">&#8635;</button>
-    </div>
-    <div id="tideBox" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;">
-        <span style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Tide · water level</span>
-        <span id="tide_ref" title="Refresh tide data from NOAA CO-OPS" style="cursor:pointer;color:var(--ink-faint);font-size:12px;line-height:1;">&#8635;</span>
-      </div>
-      <!-- aspect-ratio, NOT a fixed pixel height: the card is resizable, so the graphic
-           has to grow WITH it and keep its shape. The ratio MUST match ENV_DESIGN.tide
-           (140x105) - that is what keeps the uniform fit from letterboxing - and the
-           width/height ATTRIBUTES are the design size, so even the un-drawn canvas at
-           boot sits at scale 1 rather than showing a stretched default bitmap. -->
-      <canvas id="tideChart" width="140" height="105" style="width:100%;aspect-ratio:4/3;display:block;margin-top:4px;"></canvas>
-      <div class="phint" id="tide_note">tide: waiting for a fix…</div>
-    </div>
-    <div id="windBox" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;">
-      <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Wind rose</div>
-      <!-- SQUARE: a compass rose is round, and the ring radius is min(cx,cy) - in a wide
-           box the rose stays small with dead space either side. Square matches
-           ENV_DESIGN.rose (140x140) so the fit never letterboxes, and lets the rose fill
-           the card at every size. Attributes are the design size (see the tide chart). -->
-      <canvas id="windRose" width="140" height="140" style="width:100%;aspect-ratio:1/1;display:block;margin-top:2px;"></canvas>
-      <div class="phint" id="wind_note">--</div>
-    </div>
-  </div>
   <div class="panel" id="transitPanel" style="display:none">
     <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Transit line</div>
     <div class="prow"><label>Points</label><span class="phint" id="tr_count" style="color:var(--ink);">0</span></div>
@@ -620,7 +582,7 @@ document.title = UIROLE === "controls" ? "ASV Controls" : "ASV Chart";        //
 const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : null;
 // Every pop-out this console has. There is no Mission entry: the Mission readout is a
 // section of #vcard, so it rides across on that card's mirror.
-const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel", "#envPanel",
+const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel",
                     "#transitPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
                     "#aisReopen", "#chartPanel"];
 document.body.classList.add("ui-" + UIROLE);
@@ -658,7 +620,7 @@ document.body.classList.add("ui-" + UIROLE);
   // peer — --single-window, or the controls window closed/crashed — everything shows on
   // main again, so the app is never left without its toolbar.
   "body.ui-split #ctlReopen{display:none!important;}"+
-  "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,body.ui-split #envPanel,"+
+  "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,"+
   "body.ui-split #transitPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
   "body.ui-split #aisReopen{display:none!important;}";
@@ -4315,7 +4277,6 @@ function setupUISplit(){
     window.addEventListener("mouseup", uiSaveSoon);
     uiBus.onmessage = ev=>{ const m=ev.data; if(!m) return;
       if(m.t==="sync") applyUISync(m);
-      else if(m.t==="canvas") paintUICanvas(m.sel, m.png)      // ENV tide/wind bitmaps from main
       else if(m.t==="ping?") uiBus.postMessage({t:"ping"}); }; // echo main's poll (event-driven:
       // message delivery is NOT throttled in a background tab, unlike the timer below —
       // as a background TAB this page's setInterval slows to ~1/min and the main window
@@ -4367,24 +4328,15 @@ function setupUISplit(){
     for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(el)
       mo.observe(el,{subtree:true, childList:true, attributes:true, characterData:true}); }
     pushUISync();
-    // ENV tide/wind are <canvas>, which don't serialize through the outerHTML mirror.
-    // While the ENV card is open, ship the rendered bitmaps to the controls window.
-    setInterval(()=>{ if(!uiBus) return;
-      const env=document.querySelector("#envPanel"); if(!env || env.style.display==="none") return;
-      for(const sel of ["#tideChart","#windRose"]){ const cv=document.querySelector(sel); if(!cv||!cv.width) continue;
-        let png; try{ png=cv.toDataURL("image/png"); }catch(e){ continue; }
-        if(uiCanvasCache[sel]===png) continue; uiCanvasCache[sel]=png;   // only on change
-        uiBus.postMessage({t:"canvas", sel, png}); } }, 400);
   }
 }
-let uiCanvasCache = {};                               // main: last tide/wind PNGs (see setupUISplit)
 function pushUISync(){
   if(!uiBus) return;
   const html={}, vals={};                             // outerHTML for structure; live field values separately
   for(const s of UI_BRIDGED){ const el=document.querySelector(s); if(!el) continue;
     html[s]=el.outerHTML;
     el.querySelectorAll("input,select,textarea").forEach(f=>{ if(f.id) vals[f.id]={value:f.value, checked:f.checked}; }); }
-  uiBus.postMessage({t:"sync", html, vals, canvas:uiCanvasCache});   // canvas: repaint after a panel re-render
+  uiBus.postMessage({t:"sync", html, vals});
 }
 function applyUISync(m){
   const foc=document.activeElement;
@@ -4399,22 +4351,12 @@ function applyUISync(m){
   if(m.vals){ for(const id in m.vals){ const f=document.getElementById(id); if(!f || f===foc) continue;
     const v=m.vals[id]; if(f.type==="checkbox"||f.type==="radio") f.checked=v.checked; else f.value=v.value; } }
   syncUICards();                                        // a hidden panel hides its whole card
-  if(m.canvas){ for(const sel in m.canvas) paintUICanvas(sel, m.canvas[sel]); }   // repaint ENV charts (re-render blanked them)
-}
-// Controls window: paint a bitmap pushed from main onto the matching (mirror-blanked) canvas.
-function paintUICanvas(sel, png){
-  if(!png) return; const cv=document.querySelector(sel); if(!cv) return;
-  const img=new Image();
-  img.onload=()=>{ try{ cv.width=img.width; cv.height=img.height;   // CSS sizes it for display
-    const ctx=cv.getContext("2d"); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,0);
-  }catch(e){} };
-  img.src=png;
 }
 // Controls window only: wrap each panel/table in a persistent .uicard the operator can
 // drag (by the grip) and resize (native corner). The card owns position/size and is NOT
 // part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
 const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
-  "#envPanel":"Environment", "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
+  "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
 function loadUILayout(){ return lsGet(UI_LAYOUT_KEY, {}); }
@@ -4508,7 +4450,7 @@ const RESIZABLE_CARDS = [
   {sel:"#chartPanel",     body:"#chartBody"},
   {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations centre
   {sel:"#linePanel"}, {sel:"#boundPanel"}, {sel:"#searchPanel"},
-  {sel:"#envPanel"},  {sel:"#transitPanel"},       // forms: no body to nominate, scroll whole
+  {sel:"#transitPanel"},                           // forms: no body to nominate, scroll whole
 ];
 function loadCardSizes(){ return lsGet(CARD_SIZE_KEY, {}); }
 // ONLY A SIZE THE OPERATOR SET. Several cards carry an authored inline width in the markup,
@@ -5348,7 +5290,19 @@ $("#sp_water").onchange = ()=>{
       waterOffset=effectiveWaterOffset(water); updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
 };
 
-// --- environmental simulator UI (SIM ONLY) ------------------------------- //
+// --- environment READOUTS on the vessel-status card ----------------------- //
+// THE ENV CARD IS GONE (2026-08-08, Andy's call): no wind rose, no tide chart, no
+// override controls, no ENV button. What is NOT gone is the environment itself - the
+// server still locates NDBC buoys, still pushes the sim boat with wind and wave, and
+// still corrects charted depths to the live water level. Only the operator's window
+// onto it was deleted, so this function is what remains of that UI: the three rows on
+// the vessel-status card that report what the weather is DOING to the boat.
+//
+// Which is why WIND, SEA and SET/CRAB stay. They are not a duplicate of the deleted
+// card - they are the readouts that explain a boat sitting off its trackline, and with
+// the card gone they are the only place that says so. The env forces can still be
+// disabled or overridden, now only over the API (POST /api/env), and the SRC card still
+// reports the water-level correction being applied to charted depths.
 function dirTxt(d){ return d==null ? "" : Math.round(d)+"°"; }
 function updateEnvUI(env, st){
   const simOff = env.source==="off";
@@ -5361,205 +5315,7 @@ function updateEnvUI(env, st){
   const set = st.env_set_kn, sd = st.env_set_deg, crab = st.crab_deg;
   $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
-  const src=$("#env_src"); if(src){
-    src.textContent = simOff ? "sim only — connect the simulator"
-      : (env.source==="manual" ? "manual override (buoys paused)"
-        : (env.ok ? (env.note||"NDBC buoys") : (env.note||"no buoy data")));
-    src.style.color = (env.ok||env.source==="manual") ? "var(--ink-dim)" : "var(--warn)";
-  }
-  const cb=$("#env_on"); if(cb && document.activeElement!==cb) cb.checked = !!env.enabled;
-  // reflect live values as placeholders in the (blank) override fields
-  const ph=(id,v)=>{ const el=$(id); if(el && document.activeElement!==el && el.value==="") el.placeholder = v; };
-  if(env.source!=="manual"){ ph("#env_wind_kn", w?String(Math.round(w.speed_kn)):"auto");
-    ph("#env_wind_from", w?String(Math.round(w.dir_from_deg)):"auto");
-    ph("#env_hs", sea?sea.hs_m.toFixed(1):"auto"); ph("#env_wave_from", sea?String(Math.round(sea.dir_from_deg)):"auto"); }
-  if($("#envPanel").style.display!=="none") drawWindRose(env);
 }
-// --- ENV GRAPHICS: ONE FIT, DRAWN IN A FIXED DESIGN SPACE ------------------ //
-// Both graphics are drawn in DESIGN UNITS - a fixed logical box - which fitEnvCanvas
-// maps onto the real one with a SINGLE uniform scale. Two properties fall out of that,
-// and neither depends on anyone remembering to do anything:
-//
-//   * A CIRCLE IS ROUND BY CONSTRUCTION. The same factor scales x and y, so no box
-//     shape, fractional layout size or device pixel ratio can turn the compass ring
-//     into an ellipse. The old code re-derived every coordinate from the live box
-//     instead, which kept the ring round only because the box happened to stay square.
-//   * EVERYTHING SCALES TOGETHER. Ring, ticks, labels, arrowheads, stroke widths and
-//     the tide's axes are all in the same units, so the graphic grows as ONE picture,
-//     the way a vector drawing does. That is the actual fault Andy reported as
-//     "distorted": the ring did track the card, but the 9 px labels, 1 px strokes and
-//     9 px arrowheads did NOT, so at a big card a huge circle carried microscopic text
-//     and hairlines, and at a small one the labels crowded the ring.
-//
-// THE DESIGN SIZE IS THE SIZE THE DRAWINGS WERE TUNED AT (the card's natural width), so
-// the scale is exactly 1 there and the default rendering is unchanged - every constant
-// below keeps the meaning it was chosen with. The CSS aspect-ratio on each canvas is
-// what keeps the box in step with these numbers; if they ever disagree the fit
-// LETTERBOXES (centred, same scale both axes) rather than stretching, so the failure
-// mode is a margin, never a distortion.
-const ENV_DESIGN = {tide: [140, 105], rose: [140, 140]};
-function fitEnvCanvas(cv, DW, DH){
-  const dpr = window.devicePixelRatio || 1;
-  // getBoundingClientRect, NOT clientWidth: the laid-out box is FRACTIONAL (a card at
-  // 387.33 px reports 387), and sizing the backing store off the rounded number is a
-  // sub-pixel non-uniform stretch - the ellipse this function exists to make impossible.
-  const r = cv.getBoundingClientRect();
-  const w = Math.max(1, Math.round((r.width  || cv.clientWidth  || DW) * dpr));
-  const h = Math.max(1, Math.round((r.height || cv.clientHeight || DH) * dpr));
-  if(cv.width !== w) cv.width = w;                 // assigning either dimension clears
-  if(cv.height !== h) cv.height = h;               // the canvas, so only write on change
-  const ctx = cv.getContext("2d");
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,w,h);                          // needed when the size did NOT change
-  const s = Math.min(w/DW, h/DH);                  // CONTAIN: one factor, both axes
-  ctx.setTransform(s, 0, 0, s, (w - DW*s)/2, (h - DH*s)/2);
-  return ctx;
-}
-// Compass rose for the wind (and, faintly, the sea) below the tide chart. The arrow
-// flies WITH the wind (tail on the FROM bearing, head downwind), the ring is labelled
-// N/E/S/W, and the caption gives speed + the FROM bearing.
-function compassName(d){ const n=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]; return n[Math.round(((d%360)+360)%360/22.5)%16]; }
-function drawWindRose(env){
-  const cv=$("#windRose"), note=$("#wind_note"); if(!cv) return;
-  const W=ENV_DESIGN.rose[0], H=ENV_DESIGN.rose[1], ctx=fitEnvCanvas(cv, W, H);
-  const cx=W/2, cy=H/2, R=Math.min(cx,cy)-14;
-  const P=(ox,oy,brg,rad)=>{ const a=brg*Math.PI/180; return {x:ox+rad*Math.sin(a), y:oy-rad*Math.cos(a)}; };
-  // ring + 30° ticks + cardinal labels
-  ctx.strokeStyle="rgba(120,150,180,.35)"; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.arc(cx,cy,R,0,2*Math.PI); ctx.stroke();
-  for(let b=0;b<360;b+=30){ const p0=P(cx,cy,b,R-(b%90===0?7:4)), p1=P(cx,cy,b,R);
-    ctx.strokeStyle="rgba(120,150,180,"+(b%90===0?".55":".3")+")"; ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke(); }
-  ctx.font="9px Consolas,monospace"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="rgba(200,215,230,.6)";
-  [["N",0],["E",90],["S",180],["W",270]].forEach(([t,b])=>{ const p=P(cx,cy,b,R+8); ctx.fillText(t,p.x,p.y); });
-  const off = env && env.source==="off";
-  const w = env && env.wind, sea = env && env.sea;
-  // arrow flying WITH the flow: tail on the FROM bearing, head on the downwind bearing
-  const arrow=(fromDeg,color,lw,headLen)=>{
-    const flow=(fromDeg+180)%360, tail=P(cx,cy,fromDeg,R*0.82), tip=P(cx,cy,flow,R*0.82);
-    ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(tail.x,tail.y); ctx.lineTo(tip.x,tip.y); ctx.stroke();
-    const b1=P(tip.x,tip.y,(fromDeg-25+360)%360,headLen), b2=P(tip.x,tip.y,(fromDeg+25)%360,headLen);  // barbs point upwind
-    ctx.beginPath(); ctx.moveTo(tip.x,tip.y); ctx.lineTo(b1.x,b1.y); ctx.moveTo(tip.x,tip.y); ctx.lineTo(b2.x,b2.y); ctx.stroke();
-  };
-  ctx.textBaseline="middle"; ctx.textAlign="center";
-  if(off){ ctx.fillStyle="var(--ink-faint)"; ctx.fillText("sim only", cx, cy); if(note){ note.textContent="sim only — connect the simulator"; note.style.color="var(--ink-faint)"; } return; }
-  // sea direction (faint, dashed) first so the wind sits on top
-  if(sea && sea.dir_from_deg!=null){ ctx.setLineDash([4,3]); arrow(sea.dir_from_deg, "rgba(74,144,208,.7)", 1.4, 6); ctx.setLineDash([]); }
-  if(w && w.speed_kn!=null && w.speed_kn>0.2){
-    arrow(w.dir_from_deg, "#e0a83f", 2.2, 9);
-    ctx.fillStyle="var(--ink)"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText(w.speed_kn.toFixed(0), cx, cy-1);
-    ctx.font="8px Consolas,monospace"; ctx.fillStyle="rgba(200,215,230,.6)"; ctx.fillText("kn", cx, cy+9);
-    if(note){ note.textContent="wind "+w.speed_kn.toFixed(0)+" kn from "+Math.round(w.dir_from_deg)+"° ("+compassName(w.dir_from_deg)+")"
-      +(sea&&sea.dir_from_deg!=null?" · sea from "+Math.round(sea.dir_from_deg)+"°":""); note.style.color="var(--ink-dim)"; }
-  } else {
-    ctx.fillStyle="var(--ink-faint)"; ctx.font="10px Consolas,monospace"; ctx.fillText("calm", cx, cy);
-    if(note){ note.textContent = env&&env.enabled ? "calm — no wind" : "wind forces off"; note.style.color="var(--ink-faint)"; }
-  }
-}
-function postEnv(body, cb){
-  fetch("/api/env", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})
-    .then(r=>r.json()).then(j=>{ if(j.env) updateEnvUI(j.env, S.status||{}); if(cb) cb(j); }).catch(()=>{});
-}
-// --- tide / water-level chart (ENV card): 12 h observed + 24 h predicted ------
-// Fetched from NOAA CO-OPS at the vessel's nearest station while the ENV card is up;
-// refreshed on CO-OPS' ~6 min cadence. A red vertical line marks the current time,
-// observed is solid, predicted dashed. (Great Lakes stations have no tide prediction.)
-let tideData=null, tideTimer=null, tideBusy=false;
-function fetchTide(force){
-  if(tideBusy) return; tideBusy=true;
-  const note=$("#tide_note"); if(note && !tideData) note.textContent="tide: loading…";
-  fetch("/api/tide"+(force?"?force=1":"")).then(r=>r.json())
-    .then(j=>{ tideData=j; drawTide(); }).catch(()=>{}).finally(()=>{ tideBusy=false; });
-}
-function _tideEpoch(s){ return s ? Date.parse(s.replace(" ","T")+"Z")/1000 : null; }
-function drawTide(){
-  const cv=$("#tideChart"), note=$("#tide_note"); if(!cv) return;
-  const W=ENV_DESIGN.tide[0], H=ENV_DESIGN.tide[1], ctx=fitEnvCanvas(cv, W, H);
-  const d=tideData;
-  const obs=((d&&d.observed)||[]).map(p=>({t:_tideEpoch(p.t),v:p.v})).filter(p=>p.t);
-  const prd=((d&&d.predicted)||[]).map(p=>({t:_tideEpoch(p.t),v:p.v})).filter(p=>p.t);
-  const all=obs.concat(prd);
-  if(!d || !all.length){
-    note.textContent = (d&&d.note) ? d.note : (d&&!d.ok ? (d.note||"tide unavailable") : "tide: no samples");
-    note.style.color="var(--warn)"; return;
-  }
-  const now=d.now_epoch||(Date.now()/1000), t0=now-(d.past_h||12)*3600, t1=now+(d.pred_h||24)*3600;
-  let vmin=Math.min(...all.map(p=>p.v)), vmax=Math.max(...all.map(p=>p.v));
-  if(vmax-vmin<0.1){ const m=(vmin+vmax)/2; vmin=m-0.5; vmax=m+0.5; }
-  const padV=(vmax-vmin)*0.14; vmin-=padV; vmax+=padV;
-  const padL=26, padR=6, padT=6, padB=13;
-  const X=t=>padL+(t-t0)/(t1-t0)*(W-padL-padR), Y=v=>padT+(vmax-v)/(vmax-vmin)*(H-padT-padB);
-  ctx.font="9px Consolas,monospace"; ctx.textAlign="left"; ctx.textBaseline="alphabetic";
-  // horizontal gridlines + level labels (m)
-  ctx.strokeStyle="rgba(120,150,180,.16)"; ctx.lineWidth=1;
-  [vmax,(vmin+vmax)/2,vmin].forEach(v=>{ const y=Y(v); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
-    ctx.fillStyle="rgba(200,215,230,.55)"; ctx.fillText(v.toFixed(2), 1, y+3); });
-  // x hour ticks every 12 h. The END labels are ANCHORED to the edge rather than
-  // centred on their tick: the last tick sits at W-padR, so a centred label hangs half
-  // its width off the canvas and the "h" is clipped away ("+24" for "+24h") - at every
-  // size, including the default, since the overhang scales with the text.
-  ctx.fillStyle="rgba(200,215,230,.5)";
-  for(let h=-(d.past_h||12); h<=(d.pred_h||24); h+=12){ const x=X(now+h*3600);
-    ctx.textAlign = x <= padL+1 ? "left" : (x >= W-padR-1 ? "right" : "center");
-    ctx.fillText((h>0?"+"+h:h)+"h", x, H-3); }
-  ctx.textAlign="left";
-  const plot=(pts,color,dash)=>{ if(pts.length<1) return; ctx.setLineDash(dash||[]); ctx.strokeStyle=color; ctx.lineWidth=1.6;
-    ctx.beginPath(); pts.forEach((p,i)=>{ const x=X(p.t),y=Y(p.v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke(); ctx.setLineDash([]); };
-  plot(obs, "#3fbf6b");                                   // observed = solid green
-  plot(obs.length&&prd.length ? [obs[obs.length-1]].concat(prd) : prd, "#e0a83f", [5,3]); // predicted = dashed amber
-  // red NOW line
-  ctx.strokeStyle="#ff5a3c"; ctx.lineWidth=1.4; const xn=X(now);
-  ctx.beginPath(); ctx.moveTo(xn,padT); ctx.lineTo(xn,H-padB); ctx.stroke();
-  note.style.color="var(--ink-dim)";
-  note.textContent = (d.name||d.station||"station")+" · "+(d.datum||"")+(d.note?" · "+d.note:"");
-}
-$("#tide_ref").onclick = ()=>{ $("#tide_note").textContent="tide: refreshing…"; fetchTide(true); };
-// REDRAWING ON RESIZE IS NOW ONLY ABOUT SHARPNESS. The fit above makes the SHAPE
-// correct at any box, so a bitmap the browser is still scaling is soft, never
-// distorted - which is why this is one plain mechanism and not the belt-and-braces
-// pair it used to be. A redraw re-renders at the new backing-store size and the
-// softness goes; miss one and the graphic is merely a little blurry until the next
-// state push (rose) or tide fetch redraws it anyway.
-function redrawEnvGraphics(){
-  if(!$("#envPanel") || $("#envPanel").style.display === "none") return;
-  if(tideData) drawTide();                 // no data yet: leave the note alone, don't
-  drawWindRose(S.env || {});               // overwrite "loading…" with "no samples"
-}
-window.addEventListener("resize", redrawEnvGraphics);
-// MAIN WINDOW ONLY: in the controls window these canvases hold BITMAPS MIRRORED FROM MAIN
-// (paintUICanvas) with no env/tide data behind them - redrawing there would wipe the
-// mirrored graphic and paint an empty "calm" rose over it. The mirror needs no redraw:
-// both windows carry the same aspect ratio, so the PNG scales uniformly into its box.
-if(UIROLE === "main"){
-  // The CARD is resizable (.rsz / the controls window's .uicard) and a window listener
-  // never sees that, so watch the canvases themselves. Debounced with setTimeout, NOT
-  // requestAnimationFrame - rAF is suspended in a background window, which is what
-  // froze the split mirror.
-  if(window.ResizeObserver){
-    let pend = null;
-    const ro = new ResizeObserver(()=>{ if(pend) return;
-      pend = setTimeout(()=>{ pend = null; redrawEnvGraphics(); }, 40); });
-    for(const sel of ["#tideChart", "#windRose"]){ const cv = $(sel); if(cv) ro.observe(cv); }
-  }
-}
-$("#envBtn").onclick = ()=>{
-  const p=$("#envPanel"), show = p.style.display==="none";
-  if(show){ setMode("pan"); }                     // hide any mode panel behind it
-  p.style.display = show ? "block" : "none";
-  $("#envBtn").classList.toggle("on", show);
-  if(show){ fetchTide(); tideTimer=setInterval(fetchTide, 360000); drawWindRose(S.env||{}); }   // refresh while open
-  else if(tideTimer){ clearInterval(tideTimer); tideTimer=null; }
-};
-$("#env_on").onchange = ()=>postEnv({enabled: $("#env_on").checked});
-$("#env_ref").onclick = ()=>{ $("#env_src").textContent="refetching from nearest buoys…"; postEnv({refresh:true}); };
-$("#env_auto").onclick = ()=>{ ["#env_wind_kn","#env_wind_from","#env_hs","#env_wave_from"].forEach(i=>$(i).value=""); postEnv({auto:true}); };
-$("#env_apply").onclick = ()=>{
-  const num=id=>{ const v=$(id).value.trim(); return v===""?undefined:parseFloat(v); };
-  const body={}; const map={"#env_wind_kn":"wind_kn","#env_wind_from":"wind_from","#env_hs":"hs_m","#env_wave_from":"wave_from"};
-  for(const id in map){ const v=num(id); if(v!==undefined) body[map[id]]=v; }
-  if(!Object.keys(body).length){ showBanner("Enter at least one override value, or use Auto."); return; }
-  postEnv(body);
-};
 // --- MISSION block (inside the vessel-status card) ------------------------- //
 // One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit
 // all set `runRoute` (the ENC-routed path) and the server reports behavior +

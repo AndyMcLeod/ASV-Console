@@ -126,9 +126,22 @@ check("11. ... and it is DISPLAY-AGNOSTIC — cards are shown as block AND as fl
 
 const reg = H.slice(H.indexOf("const RESIZABLE_CARDS"), H.indexOf("function loadCardSizes"));
 const regCards = (reg.match(/sel:"#([A-Za-z0-9_]+)"/g) || []).map(x => x.slice(6, -1));
-check("12. every chart-window card is in the registry, the vessel card included",
-      regCards.includes("vcard") && regCards.length >= 10,
-      regCards.length + " cards: " + regCards.join(", "));
+// DERIVED, not counted. This asserted `regCards.length >= 10` and broke the day the ENV
+// card was deleted - the registry was still complete, the magic number had just gone
+// stale. The real property is that every panel the PAGE defines is registered, so the
+// check reads the panel ids out of the markup: a new card fails this the day it is
+// added, and a deleted one needs no edit here. Same rule as the hook's suite list and
+// the manual's harness table - name the paths, don't count them.
+const pagePanels = [...H.matchAll(/<div class="panel" id="([A-Za-z0-9_]+)"/g)].map(m => m[1]);
+const unregistered = pagePanels.filter(id => !regCards.includes(id));
+// A BOOLEAN, not a thunk: this file's check() reads `cond` directly rather than calling
+// it, so an arrow function here is an object, an object is truthy, and the check passes
+// no matter what the page says. Mine did exactly that until an injected unregistered
+// panel failed to fail it.
+check("12. every panel the page defines is in the resizable registry, vessel card included",
+      regCards.includes("vcard") && pagePanels.length > 0 && unregistered.length === 0,
+      regCards.length + " registered vs " + pagePanels.length + " panels in the page" +
+      (unregistered.length ? "; NOT registered: " + unregistered.join(", ") : ""));
 
 // 13. THE SAVE MUST NOT DEPEND ON RENDERING. A ResizeObserver is delivered with the
 // rendering steps, and an occluded window has those suspended - measured in a hidden pane:

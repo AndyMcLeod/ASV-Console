@@ -220,7 +220,6 @@ c.push(TBL(["Card", "Purpose"], [
   ["Transit (`TRAN`)", "Draw and follow a route with no survey plan"],
   ["Vessel status", "Live telemetry, water level, nogo, comms — and the MISSION block: one readout for every commanded run (type, waypoint progress, routed length, time to end, end mode, run time, status), shown only while there is a run to describe"],
   ["ROC · HOME", "Remote Operations Centers, recovery offsets, and HOME selection"],
-  ["Environment (`ENV`)", "Wind and sea state, live or overridden"],
   ["Chart source (`SRC`)", "Every ENC cell in view + the zone-of-confidence under the vessel"],
   ["Survey lines (`LINES`)", "Per-line planned versus actual run times"],
   ["AIS", "Nearby traffic from the AIS service"],

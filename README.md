@@ -36,7 +36,9 @@ operating instructions (GUI + headless API), the boat model, the command flow,
 and the safety gates. Sim mode also runs an **environmental simulator**: it pulls
 **real-time wind + sea state** from the nearest NOAA buoys and pushes the boat off
 course (a steady crab + a gust-driven wander the autopilot steers out) — toggle or
-override it from the **ENV** panel (sim only; a real boat feels real weather).
+read the effect on the vessel card's **Wind / Sea / Set·crab** rows (sim only; a real
+boat feels real weather). There is no ENV card — override or disable the forcing over
+the API (`POST /api/env`).
 
 ## Run
 

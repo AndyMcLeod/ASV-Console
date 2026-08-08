@@ -66,7 +66,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-FIVE REGRESSION SUITES (509 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-FOUR REGRESSION SUITES (493 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -88,7 +88,6 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
-| `node tests/env_card_graphics.js` | the ENV graphics: one design space, one uniform scale (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
@@ -121,6 +120,14 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**THE LATEST WORK (this commit, 2026-08-08): THE ENV CARD IS DELETED.** Andy's call,
+scoped with him first: the CLIENT card goes (wind rose, tide chart, override controls,
+ENV button) and the ENVIRONMENT STAYS — buoys, wind/wave forcing and the water-level
+correction all still run, now reported only by the vessel card's WIND/SEA/SET rows and
+overridden only over `POST /api/env`. The cut also retired the split-window canvas
+mirroring, which existed solely to carry those two canvases. **Read "THE ENV CARD IS
+DELETED" below before re-adding anything environmental.**
 
 **THE LATEST WORK (this commit, 2026-08-08): THE ROC CARD — and the Remove button was
 never broken.** The card opened on 198 stale ROCs that OUR OWN test suite had been
@@ -1032,65 +1039,48 @@ Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No c
 change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
 the server ignores them if anything ever does.
 
-## THE ENV GRAPHICS: ONE DESIGN SPACE, ONE UNIFORM SCALE (2026-08-07, REWRITTEN SAME DAY)
+## THE ENV CARD IS DELETED — THE ENVIRONMENT IS NOT (2026-08-08)
 
-Andy: "changing size should not distort the wind graphic or the water level graphic ...
-they should size in scale with the card." Shipped in `eec6794`; **he came back with
-"The wind circle is distorted and the tide also distorted. Come up with a cleaner
-solution where the wind rose and the tide curves scale consistently when resizing."**
-This is the replacement, and the first attempt's failure is the lesson.
+Andy: "delete the ENV card functionality." **Scope confirmed with him before cutting,
+because the card held three separable things with different consequences:** the env SIM
+CONTROLS (which drive real physics), the WIND ROSE (display), and a TIDE · WATER LEVEL
+box belonging to a different subsystem whose offset corrects charted depths. His answers:
+**delete the CLIENT card only — keep the server-side environment — and delete the tide
+DISPLAY while keeping the correction.**
 
-**THE FIRST FIX TREATED THE WRONG FAULT, AND THE WAY I VERIFIED IT IS WHY.** It gave
-both canvases an aspect ratio and redrew them on resize — which makes the BOX keep its
-shape — and I verified it by measuring the box: width, height, ratio, backing store.
-All perfect at every size. **Measuring the DRAWN PIXELS instead showed the ring was
-already round.** What was wrong was everything else: the 9/11/8 px fonts, 4 and 7 px
-ticks, 1/1.4/2.2 px strokes, 9 px arrowheads and the 14 px margin were all in ABSOLUTE
-pixels while only the radius tracked the box. A big card drew a huge ring with
-microscopic labels and hairlines; a small one crowded the ring with text. **The picture
-changed shape as it grew — which is exactly what "distorted" meant.** Same fault in the
-tide chart. *A geometry check on the container cannot see a composition that does not
-scale; measure the ink.*
+**GONE (client only):** `#envPanel` and the `ENV` toolbar button, `drawWindRose`,
+`drawTide`, `fitEnvCanvas`, `ENV_DESIGN`, `compassName`, `fetchTide`/`tideData`,
+`postEnv`, `redrawEnvGraphics` + its resize wiring, every `#env_*` / `#tide_*` /
+`#wind_*` control, and the card's entries in `UI_BRIDGED`, the split CSS, the card-title
+map and `RESIZABLE_CARDS`. ~18.6 k characters of `static/asv.html`.
 
-**THE REWRITE:** both graphics are drawn in DESIGN UNITS and `fitEnvCanvas(cv, DW, DH)`
-maps them onto the real box with **one factor, `Math.min(w/DW, h/DH)`, applied to BOTH
-axes and centred**. Two properties become structural rather than lucky: a circle is
-round BY CONSTRUCTION (no box shape, fractional size or dpr can make an ellipse — the
-old code kept it round only because the box happened to stay square), and EVERYTHING
-SCALES TOGETHER, so the graphic grows as one picture the way a vector drawing does.
-`ENV_DESIGN = {tide:[140,105], rose:[140,140]}` **is the card's natural size, so the
-scale is exactly 1 there and the default rendering did not change** — and the CSS
-`aspect-ratio` on each canvas must match its design entry (checks 10–11), which is what
-stops the fit from letterboxing. A mismatch letterboxes (a centred margin), never
-stretches: the safe failure mode. `getBoundingClientRect`, not `clientWidth` — the box
-is FRACTIONAL and rounding it first puts the backing store out of step with the box.
+**AND A WHOLE SUBSYSTEM THE CUT EXPOSED AS DEAD:** the split-window CANVAS MIRRORING —
+`paintUICanvas`, `uiCanvasCache`, the `{t:"canvas"}` message and a 400 ms `setInterval`
+shipping PNGs between windows — existed ONLY because those two canvases cannot travel
+through the `outerHTML` mirror. With them gone it has no other user. *Deleting a feature
+is not only tidying: it retires the scaffolding that existed solely to carry it.*
 
-**THE RESIZE MACHINERY GOT SIMPLER, and that is a consequence of the fix, not a
-separate decision:** with the shape correct at any box, a stale bitmap is merely SOFT,
-never distorted, so the redraw is only about sharpness. The belt-and-braces `mouseup`
-path and `envCanvasStale` are **deleted**; one ResizeObserver (setTimeout-debounced, not
-rAF) plus the window listener remain. Still main-window only — the controls window's
-canvases hold bitmaps mirrored from main and a local redraw would wipe them.
+**KEPT, and this is the load-bearing half.** `EnvMonitor` still locates NDBC buoys,
+`/api/env` still overrides and disables, and `SimVcu` still pushes the boat with wind
+and wave — `env_water.py`'s physics-seam checks (2/3/4) pass untouched. The water-level
+correction still adjusts charted depths and the nogo floor. What remains of the UI is
+`updateEnvUI`, now feeding ONLY the vessel-status card's WIND / SEA / SET·CRAB rows —
+**those are not a leftover duplicate of the deleted card, they are the readouts that
+explain a boat sitting off its trackline, and they are now the only place that says so.**
+The SRC card still states the water correction and its datum, so an adjusted depth is
+not entirely silent. Overriding or disabling the forcing is now an API-only action
+(`POST /api/env`), which the ops manual says plainly.
 
-**Fixed on the way, pre-existing and visible at EVERY size including the default:** the
-`+24h` axis label was clipped to `+24`, because the end ticks sit on the plot edge and
-the label was centred on them. End labels are now anchored to the edge.
-
-`tests/env_card_graphics.js` REWRITTEN around the new invariants (16, **12/12
-mutations**) — it runs the real `fitEnvCanvas` against a fake canvas and asserts the
-transform as NUMBERS, so "one factor on both axes" is checked on a deliberately
-wrong-shaped box, the only case that separates the two formulas. **One of my own checks
-was a dud and the mutation run caught it:** the fractional-layout check passed with the
-fault restored, because at dpr 1 `round(387.4)` and `round(387)` are both 387 — the
-"cannot tell the bug from the fix" shape, fifth instance. It needed dpr 2 to separate
-the routes (775 vs 774).
-
-**LIVE-MEASURED at Lewes from the rendered pixels** (discriminate the ring stroke from
-the paler labels by red channel — raw ink reads as a 2 % ellipse that is not there,
-because the N/S labels sit further out than E/W): card 156/260/340/440 px → ring
-111/184/248/328 px, **horizontal ÷ vertical span = 1.0000 at every size**, ring ÷ box
-constant at 0.806 ± 0.002, and label overhang ÷ ring constant at 0.15 (before: 0.22
-shrinking to 0.07 across that range).
+**A TEST TRAP WORTH THE WHOLE ENTRY.** `ui_split.js` check 12 asserted
+`regCards.length >= 10` — a magic number that failed the moment a card was deleted while
+the registry was still complete. Rewritten to DERIVE the panel list from the markup. **My
+replacement then passed no matter what, because I handed this suite's `check()` an arrow
+function and it reads `cond` directly rather than calling it — a function object is
+truthy.** Every other check in that file passes a boolean; mine was silently vacuous, and
+the only reason I caught it is that I injected an unregistered panel and it FAILED TO
+FAIL. **Before trusting a check you just wrote, make it fail on purpose** — and know
+which harnesses take thunks (`env_water`, `roc_persist`, `panel_drag`) and which take
+booleans (`ui_split`). `tests/env_card_graphics.js` is deleted with the feature.
 
 ## THE SRC CARD LISTS EVERY CHART IN VIEW (2026-08-07)
 

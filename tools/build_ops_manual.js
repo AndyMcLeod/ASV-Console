@@ -191,14 +191,14 @@ c.push(TBL(["Band", "Shown as", "Applied to depths?"], [
 ], [1400, 4960, 3000]));
 c.push(P("A reading from another stretch of coast is shown so you can see what it says, and is not allowed to credit the vessel with depth nobody has measured here. An operator's manual override is always applied and never ghosted — it is your number."));
 c.push(NOTE("RESIDUAL RISK", "The chart datum is a LOW-water reference, so when no correction is applied, charted depths are conservative — except when the real tide is BELOW datum, where they become optimistic. If you are working a big negative tide, set the water level manually."));
-c.push(H2("7.3  When the tide card cannot get data"));
-c.push(P("The card draws two series: OBSERVED levels already measured, and PREDICTED levels for the hours ahead. They are separate requests to the same public service, so either can fail on its own and the card says which. A note under the chart names what is missing and why — for example “no observed data (no water_level data)” when that station reports predictions only."));
-c.push(P("If the service itself is having trouble, both series fail for the same reason, and the card says so ONCE: “no observed data and no predictions”, followed by the single cause. Reading the same failure twice would not tell you anything more, and it would hide the fact that BOTH halves are gone rather than just the observed one. The message clears itself as soon as a request succeeds; the card retries every few minutes while it is open, so a passing outage at the far end needs nothing from you."));
+c.push(H2("7.3  When the tide service cannot be reached"));
+c.push(P("The console keeps asking the public tide service for the level, and simply falls back to chart datum when it cannot get one — the conservative direction. The WATER LVL row on the vessel-status card is where you see what is being applied, and the chart-source card states the correction together with the datum it corrects to."));
+c.push(P("A failure at the far end therefore costs you the correction, not the run. If you need one while the service is down, enter the water level by hand — a manual override is always applied, and it is the answer for a big negative tide."));
 c.push(NOTE("NOT A VESSEL FAULT", "A tide failure is an outage at a public data service, not a problem with the boat. The console keeps running and simply falls back to chart datum for depth decisions, which is the conservative direction. If you need a correction while the service is down, enter the water level by hand — a manual override is always applied."));
 c.push(H2("7.4  Wind and sea"));
-c.push(P("`ENV` opens the environmental card. Real wind and wave observations from nearby public buoys push the SIMULATED vessel off track, and the vessel-status card shows the resulting set and crab angle. You can override any value to rehearse a specific condition, or disable the forcing entirely."));
-c.push(NOTE("SIMULATOR ONLY", "Environmental forcing is a property of the simulator. Against a real vessel the card still reports the observed conditions, but nothing on it changes how the vessel behaves — the water does that."));
-c.push(P("THE TWO GRAPHICS SCALE WITH THE CARD, AS WHOLE PICTURES. The tide trace and the wind rose grow and shrink with the card the way a printed figure does when it is enlarged: the ring, the curves, the labels, the tick marks, the arrows and the line weights all change together, in proportion. Nothing is stretched, the compass ring stays a true circle at every size and in every card shape, and the trace keeps its proportions. Drag the card's corner to whatever size you want to read them at — a big card on a second monitor is a legible instrument, not a small drawing blown up — and the size is remembered between sessions like every other card."));
+c.push(P("Real wind and wave observations from nearby public buoys push the SIMULATED vessel off track. THERE IS NO ENVIRONMENT CARD — it has been removed. What the weather is DOING to the vessel is reported on the vessel-status card, which is what you steer by: WIND (speed and the direction it blows FROM), SEA (height, period and direction), and SET / CRAB — the resulting drift and the angle the vessel is holding into it to stay on the line."));
+c.push(NOTE("SIMULATOR ONLY", "Environmental forcing is a property of the simulator. Against a real vessel the observed conditions are still reported, but nothing the console does changes how the vessel behaves — the water does that."));
+c.push(P("The forcing can still be overridden or switched off, but over the API only (`POST /api/env` with any of the wind and sea fields, or `enabled:false` for a deterministic calm run). Nothing on screen changes it any more, which is deliberate: it is a rehearsal control, not a helm control."));
 
 // 8 ---------------------------------------------------------------------------
 c.push(H1("8  Direct behaviours"));
@@ -398,7 +398,6 @@ c.push(TBL(["Button", "Does"], [
   ["`TRAN`", "Draw and follow a transit line"],
   ["`AREA` / `CHRT` / `NOGO`", "Show or hide the boundary, chart features, keep-out zones"],
   ["`AIS`", "Traffic overlay and table"],
-  ["`ENV`", "Environment card (simulator forcing)"],
   ["`ROC`", "Operations centers and HOME"],
   ["`LINES`", "Per-line planned versus actual table"],
   ["`SRC`", "Chart source and survey confidence"],
