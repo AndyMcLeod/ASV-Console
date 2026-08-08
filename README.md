@@ -71,7 +71,8 @@ bar to reopen it — so the console is never left without its controls. Pass
 CO-OPS water-levels page for the station nearest the vessel — the station is
 derived from the live GPS fix, not configured, and the depth correction behind it
 is an inverse-distance blend of up to 3 stations in range (`--no-tide-window` to
-skip it).
+skip it). A **fourth window** does the same for weather — the NDBC page for the
+nearest buoy, whose wind and waves drive the sim forcing (`--no-weather-window`).
 
 ### Vessel profiles
 

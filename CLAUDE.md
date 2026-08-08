@@ -72,7 +72,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SIX REGRESSION SUITES (524 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SIX REGRESSION SUITES (531 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -122,7 +122,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/ais_error_frames.py` | an aisstream error frame SURFACES (state error, note names it), survives the quiet-box re-stamp, clears on real data (10, hermetic, scripted fake websocket) |
 | `python tests/ais_sources.py` | many AIS feeds, ONE merged picture: per-vessel provenance, the stale-position guard, AISHub fault-as-data + per-response format detection, endpoint specs, a real AIVDM sentence over TCP and UDP (26, hermetic) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
-| `python tests/tide_window.py` | the third window: station DERIVED from the fix, and the IDW blend is disclosed (17) |
+| `python tests/station_windows.py` | the third + fourth windows: station DERIVED from the fix, one shared opener, the IDW blend disclosed (24) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
@@ -1295,7 +1295,7 @@ FAIL. The lsGet falsiness lesson, server-side: live weather had hidden it becaus
 sog never actually reached zero. Now `is None`-guarded (`sog_of`). Three
 consecutive clean runs after both.
 
-## THE THIRD WINDOW: THE TIDE STATION THE VESSEL SELECTS (2026-08-08)
+## THE THIRD AND FOURTH WINDOWS: THE STATIONS THE VESSEL SELECTS (2026-08-08)
 
 Andy: "Add a third browser window with `…/waterlevels.html?id=8557380`. This is for Lewes
 Delaware. Use the vessel GPS to get the nearest tide station. Conduct a IDW analysis of 3
@@ -1332,7 +1332,27 @@ the card's Correction tooltip lists every contributor, with an `idw N` marker on
 times further away counts a sixteenth as much, so at Lewes the split rounds to
 "100%, 0%, 0%" at integer precision and hides that the far stations are in it at all.
 
-`tests/tide_window.py` (17, hermetic — fake opener + fake water monitor, no network and
+**THE FOURTH WINDOW (same ask, the other network):** the NDBC page for the nearest
+WEATHER BUOY. The env monitor had already been doing the identical thing for wind and
+sea — nearest NDBC buoys, `ENV_K` = 3, `ENV_IDW_POWER` = 2 — so again only the window and
+the disclosure were missing, plus carrying the contributing buoy ids **with distances**
+through `EnvMonitor.snapshot()` (it had the ids but not the distances, and an id alone
+cannot say how much a station contributed).
+
+**BUILT AS ONE MECHANISM, NOT A SECOND COPY.** `STATION_WINDOWS` is a registry of two
+entries — each naming its snapshot source, URL builder, IDW power, reach and the words it
+describes a blend in — driven by a single `open_station_window()`. The hard part (there
+is no station until the vessel has a fix) is identical for a tide gauge and a weather
+buoy, so a second wait loop would only drift. A third network would be another entry.
+
+**THE NEAREST BUOY IS NOT THE ONE ANDY NAMED, and that is the point of deriving it:** he
+gave BRND1 (Brandywine Shoal) as the example, but from the DriX spawn the nearest is
+**LWSD1 at Lewes, 3.7 km, taking 95.5% of the weight**; BRND1 is 22.3 km out at 2.6% and
+CMAN4 26.4 km at 1.9%. **Both networks resolve to the same three sites** — NDBC carries
+the co-located CO-OPS gauges — which is why the weather percentages match the tide ones
+exactly.
+
+`tests/station_windows.py` (24, hermetic — fake opener + fake water monitor, no network and
 no browser; 9/9 mutations). **TWO HARNESS FAULTS FOUND WHILE MUTATING, both old friends:**
 check 8's call sat at module level, so the fault it tests for (a throwing browser)
 KILLED the suite instead of failing the check — *a harness that cannot survive the fault

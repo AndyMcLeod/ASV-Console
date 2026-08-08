@@ -1498,6 +1498,17 @@ WATER = WaterLevel()
 # tracks perfectly" feel. RealVcu is untouched: a real boat feels the real weather.
 NDBC_STATIONS_CACHE = os.path.join(CHART_DIR, "ndbc_stations.json")
 NDBC_STATIONS_URL = "https://www.ndbc.noaa.gov/activestations.xml"
+# The operator-facing NDBC page for ONE buoy - the FOURTH browser window, the weather
+# twin of COOPS_PAGE_URL. Same rule: the id is derived from the vessel fix, and the page
+# shows the PRIMARY buoy while the forcing may be an IDW blend of ENV_K of them.
+NDBC_PAGE_URL = "https://www.ndbc.noaa.gov/station_page.php?station=%s"
+
+
+def ndbc_station_url(station_id):
+    """NDBC station page for a buoy id, or None when there is no id. The twin of
+    tide_station_url - see it for why no id is ever hardcoded."""
+    sid = str(station_id or "").strip()
+    return NDBC_PAGE_URL % sid if sid else None
 NDBC_OBS_URL = "https://www.ndbc.noaa.gov/data/realtime2/%s.txt"
 ENV_K = 3                      # IDW: blend up to this many nearest stations
 ENV_MAX_KM = 120.0             # ignore buoys farther than this
@@ -1675,7 +1686,15 @@ def fetch_environment(lat, lon):
                 "note": "buoys reachable but reporting no wind/wave right now"}
     src = "derived" if (derived and not (sea and not sea["derived"])) else "buoy"
     note = "NDBC buoys" + (" (sea state estimated from wind)" if derived else "")
-    return {"ok": True, "source": src, "note": note, "wind": wind, "sea": sea}
+    # WHICH BUOYS, WITH DISTANCES. wind/sea each already carry their own id list, but an
+    # id alone cannot say how much a station contributed, and the fourth browser window
+    # has to name the PRIMARY (nearest reporting) and disclose the blend behind it - the
+    # same shape the water reading has always returned. The wind set leads because wind
+    # is what actually pushes the boat; sea is the fallback when only waves are reported.
+    used = windset or seaset
+    return {"ok": True, "source": src, "note": note, "wind": wind, "sea": sea,
+            "station": (used[0][1] if used else None),
+            "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in used]}
 
 
 class EnvMonitor:
@@ -1758,7 +1777,14 @@ class EnvMonitor:
                 "enabled": enabled,
                 "source": "manual" if man else base.get("source", "none"),
                 "note": ("manual override" if man else base.get("note", "")),
-                "wind": wind, "sea": sea}
+                "wind": wind, "sea": sea,
+                # WHICH BUOYS the reading came from, carried through the override layer
+                # so the fourth browser window (and the WIND row's provenance) can name
+                # the primary and disclose the blend. Kept even under a MANUAL override:
+                # the operator has replaced the VALUES, not the geography, and the buoy
+                # page is still the right page for where the vessel is.
+                "station": base.get("station"),
+                "stations": base.get("stations") or []}
 
     def snapshot(self):
         return self._effective()
@@ -3486,10 +3512,15 @@ TIDE_WINDOW_WAIT_S = 120.0        # give up rather than hang a thread forever
 TIDE_WINDOW_POLL_S = 2.0
 
 
-def tide_window_report(w):
-    """One human line describing the water reading behind the opened page: the primary
+def station_window_report(w, label, power, noun="reading", applied="value"):
+    """One human line describing the reading behind an opened station page: the primary
     station, and the full IDW blend when there is one. Pure, so it is testable without a
-    network or a browser."""
+    network or a browser.
+
+    Shared by both station windows because the disclosure problem is identical - a page
+    that shows ONE station standing in front of a reading blended from three - and the
+    only differences are the label and the IDW power the monitor actually used. Two
+    copies would drift the moment one of them learnt something."""
     sid = w.get("station")
     if not sid:
         return None
@@ -3498,47 +3529,70 @@ def tide_window_report(w):
         bits.append(str(w["name"]))
     if w.get("dist_km") is not None:
         bits.append("%.1f km off" % w["dist_km"])
-    line = "  Tide window: " + " · ".join(bits)
+    line = "  %s window: " % label + " · ".join(bits)
     used = [g for g in (w.get("stations") or []) if g.get("id")]
     method = w.get("method") or ("idw%d" % len(used) if len(used) > 1 else "single")
     if len(used) > 1:
-        ws = [1.0 / max(g.get("dist_km") or 0.01, 0.01) ** WATER_IDW_POWER for g in used]
+        ws = [1.0 / max(g.get("dist_km") or 0.01, 0.01) ** power for g in used]
         tot = sum(ws) or 1.0
         # ONE DECIMAL, not zero: inverse-SQUARE weighting means a station four times
         # further away contributes a sixteenth as much, so at Lewes (3.7 km against 22
         # and 26) the blend rounds to "100%, 0%, 0%" at integer precision and hides that
         # the far stations are in it at all. The decimal shows the primary dominating.
         blend = ", ".join("%s %.1f%%" % (g["id"], 100.0 * x / tot) for g, x in zip(used, ws))
-        line += "\n    correction is %s over %d stations: %s" % (method, len(used), blend)
-        line += "\n    the page shows the PRIMARY only - the applied offset is the blend"
+        line += "\n    %s is %s over %d stations: %s" % (noun, method, len(used), blend)
+        line += ("\n    the page shows the PRIMARY only - the applied %s is the blend"
+                 % applied)
     else:
-        line += " · correction from this station alone (%s)" % method
+        line += " · %s from this station alone (%s)" % (noun, method)
     return line
 
 
-def open_tide_window(opener, wait_s=TIDE_WINDOW_WAIT_S):
-    """Wait for a station, then open its CO-OPS page. Never raises: a browser that will
-    not open is a missing convenience, not a reason to take the console down."""
+# The two station windows, as DATA rather than two near-identical functions: each names
+# where its reading comes from, how to turn a station id into a page, the IDW power its
+# monitor used, and how far it looks. Adding a third would be another entry, not another
+# copy of the wait loop.
+STATION_WINDOWS = {
+    "tide":    {"label": "Tide", "url": lambda sid: tide_station_url(sid),
+                "snap": lambda: WATER.snapshot(), "power": WATER_IDW_POWER,
+                "max_km": WATER_MAX_KM, "what": "water-level station",
+                "noun": "correction", "applied": "offset"},
+    "weather": {"label": "Weather", "url": lambda sid: ndbc_station_url(sid),
+                "snap": lambda: ENV.snapshot(), "power": ENV_IDW_POWER,
+                "max_km": ENV_MAX_KM, "what": "weather buoy",
+                "noun": "wind and sea", "applied": "forcing"},
+}
+
+
+def open_station_window(opener, kind, wait_s=TIDE_WINDOW_WAIT_S):
+    """Wait for a station of `kind`, then open its page. Never raises: a browser that
+    will not open is a missing convenience, not a reason to take the console down.
+
+    ONE loop for both windows. The waiting is the whole difficulty - the station is
+    derived from the vessel fix, so at process start there is nothing to open - and it is
+    the same difficulty for a tide gauge and a weather buoy."""
+    spec = STATION_WINDOWS[kind]
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         try:
-            w = WATER.snapshot()
+            w = spec["snap"]() or {}
         except Exception:
             w = {}
-        url = tide_station_url(w.get("station"))
+        url = spec["url"](w.get("station"))
         if url:
-            report = tide_window_report(w)
+            report = station_window_report(w, spec["label"], spec["power"],
+                                           spec["noun"], spec["applied"])
             if report:
                 print(report)
             try:
                 opener.open(url, new=1)
             except Exception:
-                print("  Could not open the tide window; the URL is %s" % url)
+                print("  Could not open the %s window; the URL is %s"
+                      % (spec["label"].lower(), url))
             return url
         time.sleep(TIDE_WINDOW_POLL_S)
-    print("  Tide window: no water-level station resolved within %.0fs "
-          "(no GPS fix, or no CO-OPS station within %.0f km) - not opened."
-          % (wait_s, WATER_MAX_KM))
+    print("  %s window: no %s resolved within %.0fs (no GPS fix, or none within "
+          "%.0f km) - not opened." % (spec["label"], spec["what"], wait_s, spec["max_km"]))
     return None
 
 
@@ -3717,6 +3771,9 @@ def main():
     ap.add_argument("--no-tide-window", action="store_true",
                     help="do not open the third window (the NOAA CO-OPS page for the "
                          "water-level station nearest the vessel)")
+    ap.add_argument("--no-weather-window", action="store_true",
+                    help="do not open the fourth window (the NOAA NDBC page for the "
+                         "weather buoy nearest the vessel)")
     ap.add_argument("--roc-config", metavar="PATH",
                     help="ROC registry file to use instead of roc_config.json (a test "
                          "harness points this at a temp file so it cannot write to the "
@@ -3821,7 +3878,13 @@ def main():
                 # selects. On its own thread, not a Timer, because it WAITS for a station
                 # to exist - see open_tide_window. Daemon, so it can never hold shutdown.
                 if not args.no_tide_window:
-                    threading.Thread(target=open_tide_window, args=(opener,),
+                    threading.Thread(target=open_station_window, args=(opener, "tide"),
+                                     daemon=True).start()
+                # FOURTH window: the NDBC page for the weather buoy nearest the vessel.
+                # Same mechanism, same reason for deferring it - the buoy is chosen by
+                # the fix, which does not exist yet at start-up.
+                if not args.no_weather_window:
+                    threading.Thread(target=open_station_window, args=(opener, "weather"),
                                      daemon=True).start()
         except Exception:
             print("  Could not auto-open a browser; open the URL above manually.")

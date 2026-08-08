@@ -167,7 +167,7 @@ op5 = FakeOpener()
 w5 = FakeWater(station_after=2)
 old_poll = C.TIDE_WINDOW_POLL_S
 C.TIDE_WINDOW_POLL_S = 0.01
-url5 = with_water(w5, lambda: C.open_tide_window(op5, wait_s=2.0))
+url5 = with_water(w5, lambda: C.open_station_window(op5, "tide", wait_s=2.0))
 check("5. it WAITS for the vessel to have a station, then opens that station's page "
       "(the station cannot exist at process start — there is no fix yet)",
       lambda: url5 and url5.endswith("id=8557380") and len(op5.calls) == 1
@@ -180,7 +180,7 @@ check("6. ... in a NEW window, not the console's own tab",
 # 7. no station ever -> gives up, opens nothing, and does not hang.
 op7 = FakeOpener()
 t0 = time.monotonic()
-url7 = with_water(FakeWater(station_after=10 ** 9), lambda: C.open_tide_window(op7, wait_s=0.2))
+url7 = with_water(FakeWater(station_after=10 ** 9), lambda: C.open_station_window(op7, "tide", wait_s=0.2))
 check("7. no station within the wait -> gives up quietly, opens nothing, never hangs",
       lambda: url7 is None and not op7.calls and (time.monotonic() - t0) < 5.0,
       lambda: "%.2fs, calls=%s" % (time.monotonic() - t0, op7.calls))
@@ -196,7 +196,7 @@ op8 = FakeOpener(explode=True)
 
 
 def browser_that_throws():
-    url = with_water(FakeWater(), lambda: C.open_tide_window(op8, wait_s=1.0))
+    url = with_water(FakeWater(), lambda: C.open_station_window(op8, "tide", wait_s=1.0))
     return url is not None and len(op8.calls) == 1
 
 
@@ -209,7 +209,7 @@ BLEND = {"station": "8557380", "name": "Lewes", "dist_km": 3.7, "method": "idw3"
          "stations": [{"id": "8557380", "dist_km": 3.7},
                       {"id": "8555889", "dist_km": 22.3},
                       {"id": "8536110", "dist_km": 26.4}]}
-rep = C.tide_window_report(BLEND)
+rep = C.station_window_report(BLEND, "Tide", C.WATER_IDW_POWER, "correction", "offset")
 check("9. a blended correction NAMES every contributing station, so one station's page "
       "cannot be mistaken for the whole answer",
       lambda: all(s in rep for s in ("8557380", "8555889", "8536110"))
@@ -226,27 +226,28 @@ check("10. the reported weights are inverse-SQUARE by distance (the primary domi
       and abs(sum(pcts) - 100.0) < 0.3,
       lambda: str(pcts))
 
-single = C.tide_window_report({"station": "8557380", "name": "Lewes", "dist_km": 3.7,
-                               "method": "single",
-                               "stations": [{"id": "8557380", "dist_km": 3.7}]})
+single = C.station_window_report({"station": "8557380", "name": "Lewes", "dist_km": 3.7,
+                                 "method": "single",
+                                 "stations": [{"id": "8557380", "dist_km": 3.7}]},
+                                "Tide", C.WATER_IDW_POWER, "correction", "offset")
 check("11. a SINGLE-station correction says so plainly and claims no blend",
       lambda: "alone" in single and "blend" not in single and "PRIMARY" not in single,
       lambda: single)
 check("11b. no station at all -> no report (nothing to say, and nothing to open)",
-      lambda: C.tide_window_report({}) is None
-      and C.tide_window_report({"station": ""}) is None)
+      lambda: C.station_window_report({}, "Tide", 2.0) is None
+      and C.station_window_report({"station": ""}, "Tide", 2.0) is None)
 
 # ---- 12-14. the wiring ---------------------------------------------------- #
 check("12. the window is opened on its own DAEMON thread — it waits for a fix, so on the "
       "main thread it would stall start-up, and non-daemon it would hold shutdown",
-      lambda: re.search(r"threading\.Thread\(target=open_tide_window[\s\S]{0,120}?daemon=True\)", SRC)
+      lambda: re.search(r"threading\.Thread\(target=open_station_window[\s\S]{0,160}?daemon=True\)", SRC)
       is not None)
 check("13. --no-tide-window suppresses it",
       lambda: '"--no-tide-window"' in SRC and "args.no_tide_window" in SRC)
 check("14. it is inside the browser block, so --browser none opens NOTHING (which is why "
       "every real-console harness is unaffected by it)",
       lambda: (SRC.index('if args.browser != "none":')
-               < SRC.index("threading.Thread(target=open_tide_window")))
+               < SRC.index("threading.Thread(target=open_station_window")))
 
 # 15. the page and the card must name the SAME station, or the operator is reading two
 # different answers. Both read `water.station`; assert the client does too.
@@ -257,6 +258,56 @@ check("15. the chart-source card attributes the correction to the SAME field the
 check("16. ... and the card discloses the blend rather than showing a blended number "
       "under one station's name",
       lambda: "water.stations" in HTML and "inverse-distance blend" in HTML)
+
+
+# ---- 17-23. THE WEATHER WINDOW: the same mechanism, the other network ------ #
+# It is deliberately the SAME opener with a different spec entry, not a second copy of
+# the wait loop - the hard part (there is no station until the vessel has a fix) is
+# identical for a tide gauge and a weather buoy, and two copies would drift.
+check("17. the NDBC page is built from the buoy id, and no id means no URL",
+      lambda: C.ndbc_station_url("BRND1") ==
+      "https://www.ndbc.noaa.gov/station_page.php?station=BRND1"
+      and C.ndbc_station_url("") is None and C.ndbc_station_url(None) is None,
+      lambda: C.ndbc_station_url("BRND1"))
+check("18. NO buoy id is hardcoded either — the buoy is whichever the fix selects",
+      lambda: not [v for v in code_constants(SRC)
+                   if isinstance(v, str) and re.fullmatch(r"[A-Z]{4}\d", v)],
+      lambda: "none, as required")
+check("19. both windows are entries in ONE registry, sharing one wait/open/timeout path",
+      lambda: set(C.STATION_WINDOWS) == {"tide", "weather"}
+      and "def open_station_window" in SRC
+      and SRC.count("def open_tide_window") == 0,
+      lambda: "kinds: " + ", ".join(sorted(C.STATION_WINDOWS)))
+
+WBLEND = {"station": "LWSD1",
+          "stations": [{"id": "LWSD1", "dist_km": 3.7},
+                       {"id": "BRND1", "dist_km": 22.3},
+                       {"id": "CMAN4", "dist_km": 26.4}]}
+# BUILT FROM THE REGISTRY ENTRY, not from literals repeated here: passing the nouns in
+# by hand tested the helper's parameters and NOT the weather window's configuration -
+# swapping the spec to the tide's wording sailed straight through. Read the spec, and
+# the check covers what actually ships.
+WSPEC = C.STATION_WINDOWS["weather"]
+wrep = C.station_window_report(WBLEND, WSPEC["label"], WSPEC["power"],
+                               WSPEC["noun"], WSPEC["applied"])
+check("20. the weather report names every contributing buoy and its share",
+      lambda: all(b in wrep for b in ("LWSD1", "BRND1", "CMAN4")) and "Weather window" in wrep
+      and "PRIMARY" in wrep,
+      lambda: wrep.replace(chr(10), " | ")[:130])
+check("21. ... in the WEATHER's own words — a buoy blend is not a 'correction'",
+      lambda: "wind and sea is" in wrep and "forcing" in wrep and "correction" not in wrep,
+      lambda: wrep.replace(chr(10), " | ")[:110])
+
+# 22. the same blend maths as the tide side, because both monitors use inverse-SQUARE
+# weighting - and at Lewes the two networks happen to sit on the SAME three sites, which
+# is why the percentages match the tide window's exactly.
+wp = [float(x) for x in re.findall(r"(\d+\.\d)%", wrep or "")]
+check("22. the weather blend is inverse-SQUARE weighted (nearest buoy dominates)",
+      lambda: len(wp) == 3 and 94.0 < wp[0] < 97.0 and abs(sum(wp) - 100.0) < 0.3,
+      lambda: str(wp))
+check("23. --no-weather-window suppresses the fourth window on its own",
+      lambda: '"--no-weather-window"' in SRC and "args.no_weather_window" in SRC
+      and 'args=(opener, "weather")' in SRC)
 
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)
