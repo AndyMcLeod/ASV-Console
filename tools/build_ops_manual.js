@@ -102,6 +102,7 @@ c.push(P("Saved card positions are always kept on the chart. If you place a card
 c.push(H1("4  Reading the display"));
 c.push(H2("4.1  The chart"));
 c.push(P("A slippy nautical chart centred on the vessel. `+` / `−` zoom; drag to pan; BOAT re-centres and keeps the vessel centred as it moves. The vessel draws as a filled marker with a heading line. Its track paints behind it and persists across a page refresh within a session — it is dropped when the simulator is power-cycled, because that track belongs to a run that no longer exists."));
+c.push(P("RIGHT-CLICK ANYWHERE ON THE CHART for a menu of the things that act on a POINT. Its header shows the position you clicked and every row acts there: the measuring tool (4.5), Go-To here, Spawn here, and Copy position. Go-To and Spawn are greyed out exactly when their toolbar buttons are, with the reason beside the row — the menu is a shortcut past the \"arm the button, then click the chart\" second step, never a way around the arm gate itself. Escape closes it, as does clicking elsewhere; a click that closes the menu does nothing else, so you cannot dismiss it and place something by accident."));
 c.push(H2("4.2  The top status bar"));
 c.push(P("Always visible, and the fastest read on the vessel:"));
 c.push(TBL(["Field", "Meaning"], [
@@ -135,6 +136,11 @@ c.push(TBL(["Row", "Reads"], [
 c.push(H2("4.4  Banners and the note line"));
 c.push(P("A banner across the chart reports what a command actually did — the route it planned, how many waypoints, whether it rode a channel lane, and any warning attached to it. The note line under the status bar carries the vessel's own last message. READ THE BANNER AFTER EVERY COMMAND. It is where the console tells you it degraded something."));
 c.push(P("Where a route rides a channel lane, the lane always YIELDS to the nogo model: if the buoyed fairway’s geometry would cross a charted obstruction — a seawall the channel hugs, a pier inside the fairway line — the route detours around it and rejoins the lane, and every leg of the shipped plan passes the same clearance test the obstacle search uses. If no lawful lane is possible, the plan falls back to the plain obstacle-clear route and the banner drops its Rule 9 note rather than claim a lane that was abandoned."));
+c.push(H2("4.5  Measuring on the chart"));
+c.push(P("Right-click and choose MEASURE DISTANCE, then click a point, move the pointer, and click again. The line follows the pointer as you move, and the reading runs ALONG it — distance and true bearing — so you read it without taking your eye off the leg you are measuring. Lay down as many as you need: the tool stays armed and finished measurements stay on the chart until you clear them."));
+c.push(P("The distance follows the DIST unit on the top status bar, exactly like every other long distance on the console: switch to nm and every measurement on the chart converts with it. Anything under a kilometre reads in metres in both modes. The bearing is TRUE, in three digits."));
+c.push(P("To clear them: press Escape, or right-click and choose CLEAR MEASUREMENTS. Escape works through them one layer at a time — first a half-drawn line, then the finished measurements, then the tool itself — so a single press never takes more than you were looking at. DRAGGING STILL PANS THE CHART while the tool is armed, so you can measure across water wider than the screen."));
+c.push(NOTE("A MEASUREMENT IS YOURS, NOT THE VESSEL'S", "The ruler is an annotation and nothing more. It is drawn in magenta — the colour a paper chart reserves for the mariner's own markings, and the one colour on this display that is never a plan — so it can never be confused with something the vessel will drive. Measurements are not uploaded, not saved with the mission, not sent to the vessel, and not written to the session record. They disappear when you reload the page."));
 
 // 5 ---------------------------------------------------------------------------
 c.push(H1("5  Choosing the vessel"));
@@ -410,6 +416,8 @@ c.push(TBL(["Button", "Does"], [
   ["`SRC`", "Chart source and survey confidence"],
   ["`CLR`", "Clear the displayed track"],
   ["`?`", "Quick start card"],
+  ["right-click", "Chart menu at that point: measure, Go-To here, Spawn here, copy position (4.1, 4.5)"],
+  ["`Esc`", "Close the chart menu; then the half-drawn measurement; then all measurements; then the tool"],
 ], [2100, 7260]));
 
 // 17 --------------------------------------------------------------------------

@@ -199,6 +199,20 @@
   .cfmmsg{font-family:var(--sans);font-size:13px;color:var(--ink);line-height:1.5;white-space:pre-line;margin-bottom:14px;}
   .cfmrow{display:flex;gap:8px;justify-content:flex-end;}
   .cfmrow .ctl{width:auto;padding:0 14px;height:32px;}
+  /* CHART CONTEXT MENU (right-click the chart). z-index sits BELOW #uiTip's 70 so a
+     hover tip still reads over it, and above the pointer-follower tips at 60. */
+  .cmenu{position:fixed;z-index:68;display:none;min-width:210px;padding:4px 0;
+    background:rgba(10,20,28,.98);border:1px solid #24506a;border-radius:5px;
+    box-shadow:0 6px 22px rgba(0,0,0,.62);font-family:var(--mono);font-size:11px;
+    color:var(--ink-dim);user-select:none;}
+  .cmenu .cmhd{padding:5px 11px 6px;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-faint);border-bottom:1px solid var(--line);white-space:nowrap;}
+  .cmenu .cmi{padding:6px 11px;cursor:pointer;display:flex;gap:12px;align-items:baseline;white-space:nowrap;}
+  .cmenu .cmi:hover{background:#16293a;color:var(--ink);}
+  .cmenu .cmi.off{color:var(--ink-faint);cursor:default;}
+  .cmenu .cmi.off:hover{background:transparent;color:var(--ink-faint);}
+  .cmenu .cmk{margin-left:auto;font-size:9px;color:var(--ink-faint);}
+  .cmenu .cmsep{height:1px;margin:4px 0;background:var(--line);}
 </style>
 </head>
 <body>
@@ -206,6 +220,21 @@
   <div id="lineTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.94);color:#bfe8c8;border:1px solid #2a7a45;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
   <div id="uiTip" style="position:fixed;z-index:70;display:none;pointer-events:none;background:rgba(10,20,28,0.96);color:#c8dbe6;border:1px solid #3a6a8a;border-radius:4px;padding:5px 9px;font:11px/1.45 Consolas,monospace;max-width:340px;box-shadow:0 2px 10px rgba(0,0,0,0.5);"></div>
   <div id="aisTip" style="position:fixed;z-index:60;display:none;pointer-events:none;background:rgba(10,20,28,0.95);color:#c8dbe6;border:1px solid #3a6a8a;border-radius:4px;padding:3px 7px;font:11px Consolas,monospace;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>
+  <!-- CHART CONTEXT MENU. Right-click anywhere on the chart. Every row acts AT THE POINT
+       the menu was opened over, so the menu carries a coordinate (its header shows which)
+       as well as commands - which is what lets Go-To and Spawn drop the toolbar's "arm,
+       then click" step. The rows are relabelled and gated from LIVE state on every open;
+       see openChartMenu(). -->
+  <div id="chartMenu" class="cmenu">
+    <div class="cmhd" id="cmPos">--</div>
+    <div class="cmi" id="cmMeasure"><span id="cmMeasureLbl">Measure distance</span><span class="cmk" id="cmMeasureK"></span></div>
+    <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
+    <div class="cmsep"></div>
+    <div class="cmi" id="cmGoto"><span>Go-To here</span><span class="cmk" id="cmGotoK"></span></div>
+    <div class="cmi" id="cmSpawn"><span>Spawn here</span><span class="cmk" id="cmSpawnK"></span></div>
+    <div class="cmsep"></div>
+    <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
+  </div>
   <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
@@ -590,7 +619,10 @@ document.body.classList.add("ui-" + UIROLE);
   // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
   "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
   "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls #note,"+
-  "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip{display:none!important;}"+
+  "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip,"+
+  // the context menu belongs to the CHART: it is opened by a right-click on #map (hidden
+  // here) and every row acts on a chart coordinate, so there is nothing for it to act on.
+  "body.ui-controls #chartMenu{display:none!important;}"+
   // THE VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02).
   // It used to be bridged, so the SAME card appeared in BOTH windows - as "VESSEL STATUS"
   // on the chart and as a "Vessel" uicard here, with nine rows trimmed out to stop it
@@ -693,6 +725,14 @@ function fmtDist(m, dp){
   const d = dp==null ? 2 : dp;
   return distUnit==="nm" ? (m/M_PER_NM).toFixed(d)+" nm" : (m/1000).toFixed(d)+" km";
 }
+// THE MEASUREMENT TOOL (right-click the chart -> Measure distance). An OPERATOR
+// ANNOTATION and nothing else: no measurement is uploaded, saved to the mission, sent
+// to the boat, or logged - it is a ruler laid on the chart, so it deliberately has no
+// persistence at all and a refresh clears it. Declared up here beside the other chart
+// state because drawMeasure() runs inside render(), which fires before the interaction
+// section below executes; a `let` read before its declaration is a ReferenceError.
+let measures = [];                // [{a:{lat,lon}, b:{lat,lon}}] completed legs
+let measPend = null;              // the leg being laid down: {a} anchored, {b} follows the pointer
 let rocPlaceKind = null;          // "shore" | "ship" while arming a click-to-place ROC
 let transit = [];                              // in-memory draft; Follow ENC-routes + drives it
 // CAMP-style arbitrary survey-area boundary: lines are clipped to this polygon
@@ -1113,6 +1153,7 @@ function render(){
     ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
   }
   drawPatMoveGrip();                                // above the boat — it is a HANDLE, not decoration
+  drawMeasure(toScreen);                            // the operator's own ruler — over everything it measures
   drawViolation(toScreen);                          // refusal highlight (on top)
   $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
   $("#r_wpts").textContent = mission.waypoints.length;
@@ -3116,6 +3157,59 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
     ctx.fillStyle="#39c0ff"; ctx.fillText("T"+(i+1), s.x+7, s.y-6); });
   ctx.restore();
 }
+// --- the measurement overlay ---------------------------------------------- //
+// MAGENTA on purpose: S-52 reserves it for the MARINER'S OWN information, and it is the
+// one chart colour this console had not already spent - amber is the plan, cyan the
+// track and the transit draft, green/orange the routed run. A measurement can therefore
+// never be mistaken for something the boat will drive.
+const MEAS_COL = "#e05cff";
+const MEAS_LABEL_MIN_PX = 30;     // shorter than this and the label is longer than its leg
+// The readout FLOWS ALONG THE LINE: rotated to the leg's screen angle, centred on its
+// midpoint, sitting just off the leg so it never has to punch a hole in it. Distance goes
+// through fmtDist(), so a measurement follows the DIST pill exactly like every other long
+// distance on the console; the bearing is the TRUE azimuth a->b in three digits, as a
+// chart reads one.
+function measLabel(m){
+  return fmtDist(distTo(m.a, m.b)) + " · " + String(Math.round(azTo(m.a, m.b)) % 360).padStart(3,"0") + "°";
+}
+function drawMeasureLeg(s, e, text, pending){
+  const dx = e.x-s.x, dy = e.y-s.y, len = Math.hypot(dx, dy);
+  ctx.save();
+  ctx.strokeStyle = MEAS_COL; ctx.lineWidth = pending ? 1.4 : 1.8;
+  if(pending) ctx.setLineDash([6,4]);                 // dashed until the second click lands
+  ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(e.x,e.y); ctx.stroke();
+  ctx.setLineDash([]);
+  if(len > 1){                                        // end ticks ACROSS the leg, so an
+    const ux = dx/len, uy = dy/len, T = 5;            // endpoint stays findable where the
+    for(const p of [s,e]){ ctx.beginPath();           // leg crosses other chart ink
+      ctx.moveTo(p.x - uy*T, p.y + ux*T); ctx.lineTo(p.x + uy*T, p.y - ux*T); ctx.stroke(); }
+  }
+  if(len < MEAS_LABEL_MIN_PX){ ctx.restore(); return; }
+  let ang = Math.atan2(dy, dx);
+  if(ang > Math.PI/2 || ang < -Math.PI/2) ang += Math.PI;   // flip: never print upside-down
+  ctx.translate((s.x+e.x)/2, (s.y+e.y)/2); ctx.rotate(ang);
+  ctx.font = "bold 11px Consolas,monospace"; ctx.textAlign = "center";
+  ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(10,20,28,0.92)";
+  ctx.strokeText(text, 0, -5);                        // halo first - the chart under it is
+  ctx.fillStyle = MEAS_COL; ctx.fillText(text, 0, -5);// tiles, ENC fill and depth figures
+  ctx.restore();
+}
+function drawMeasure(toScreen){
+  if(!measures.length && !measPend) return;
+  ctx.save();
+  for(const m of measures)
+    drawMeasureLeg(toScreen(m.a.lat,m.a.lon), toScreen(m.b.lat,m.b.lon), measLabel(m), false);
+  if(measPend && measPend.b)
+    drawMeasureLeg(toScreen(measPend.a.lat,measPend.a.lon), toScreen(measPend.b.lat,measPend.b.lon),
+                   measLabel(measPend), true);
+  else if(measPend){                                  // anchored, pointer has not moved yet
+    const s = toScreen(measPend.a.lat, measPend.a.lon);
+    ctx.beginPath(); ctx.arc(s.x,s.y,4,0,2*Math.PI);
+    ctx.strokeStyle = MEAS_COL; ctx.lineWidth = 1.6; ctx.stroke();
+  }
+  ctx.restore();
+}
+function clearMeasures(){ measures = []; measPend = null; render(); }
 function updateTransitPanel(){
   $("#tr_count").textContent = transit.length;
   $("#tr_follow").disabled = !(transit.length>=1 && S.armed && !S.estop);
@@ -3920,6 +4014,14 @@ function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; missio
 // --- interaction --------------------------------------------------------- //
 let dragging=false, last=null, downAt=null, wpDrag=null;
 mapEl.addEventListener("mousedown", e=>{
+  // ONLY THE PRIMARY BUTTON COMMANDS THE CHART. mousedown/mouseup fire for the right and
+  // middle buttons too, so without this a right-click — now the context-menu gesture — would
+  // ALSO run the mode chain below and anchor a measurement, drop a waypoint, or place a
+  // pattern corner on its way past. Refusing to record any drag state here is enough on its
+  // own: the window mouseup then returns at its existing `!wasDrag || !downAt` guard, so
+  // there is no second place to keep in step. (This costs middle-button panning, which was
+  // never a stated feature and carried the same misfire.)
+  if(e.button !== 0) return;
   if(mode === "survey"){ const h = patHandleAt(e.clientX, e.clientY);
     if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY};
       if(h==="M"){ const o=originPx(), r=mapEl.getBoundingClientRect();   // seed the move-grip delta
@@ -4001,6 +4103,16 @@ window.addEventListener("mouseup", e=>{
   } else if(mode === "spawn"){                   // click a point -> (re)spawn the sim boat there
     setMode("pan");
     doSpawn(ll);
+  } else if(mode === "measure"){
+    // CLICK, MOVE, CLICK. The first click anchors; the leg then follows the pointer
+    // (mousemove, below) until a second click fixes its far end. It rides this handler's
+    // existing `moved > 5` guard, which is what keeps a PAN-DRAG from being read as a
+    // measurement — dragging the chart still pans while the tool is armed, exactly as it
+    // does in every other mode. A completed leg stays on the chart and the tool stays
+    // armed, so the next pair of clicks lays down another one.
+    if(!measPend) measPend = {a:{lat:ll.lat, lon:ll.lon}, b:null};
+    else { measures.push({a: measPend.a, b:{lat:ll.lat, lon:ll.lon}}); measPend = null; }
+    render();
   }
 });
 window.addEventListener("mousemove", e=>{
@@ -4021,6 +4133,10 @@ window.addEventListener("mousemove", e=>{
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
     syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
     $("#lineTip").style.display="none"; updateXTE(); render(); return; }
+  // the pending measurement's far end follows the pointer. Deliberately does NOT return:
+  // a pan may be live underneath (the chart still drags while the tool is armed), and the
+  // pan branch below renders — so only render here when it will not.
+  if(measPend){ measPend.b = {lat:ll.lat, lon:ll.lon}; if(!dragging) render(); }
   if(!dragging) return;
   follow = false; setFollow();
   const c = worldPx(center.lat, center.lon, zoom);
@@ -4051,6 +4167,9 @@ function setFollow(){ $("#follow").classList.toggle("on", follow); }
 function setMode(m){
   mode = (mode === m) ? "pan" : m;
   if(mode !== "roc-place") rocPlaceKind = null;   // leaving placement disarms it
+  if(mode !== "measure") measPend = null;         // ... and leaving the ruler drops a half-drawn leg
+                                                  // (COMPLETED legs stay: they are annotations on the
+                                                  //  chart, not a mode's working state)
   // pattern + boundary persist across mode switches (they compose); use Reset /
   // Clear BND to discard them explicitly.
   $("#wptBtn").classList.toggle("mode-on", mode==="wpt");
@@ -4072,6 +4191,121 @@ function setMode(m){
   if(mode==="transit") updateTransitPanel();
   render();
 }
+// --- the chart context menu ------------------------------------------------ //
+// Right-click anywhere on the chart. The menu carries a COORDINATE as well as commands:
+// it remembers the point it was opened over (`menuLL`, shown in its header) and every row
+// acts there, which is what lets Go-To and Spawn drop the toolbar's "arm, then click"
+// second step.
+//
+// THE GATES ARE NOT RE-DERIVED HERE. Each command row reads the .disabled of the button
+// that already owns that command — Go-To needs ARMED and no E-STOP, Spawn is simulator
+// only — so a change to either rule reaches this menu for free and the two can never
+// disagree. A second, ungated path to a vessel command is exactly the "one value serving
+// two masters" shape this console keeps finding; deriving the gate from the existing
+// control means there is still only one.
+const cmenuEl = $("#chartMenu");
+let menuLL = null;                                 // the chart point the open menu acts on
+function chartMenuOpen(){ return !!cmenuEl && cmenuEl.style.display === "block"; }
+function closeChartMenu(){ if(cmenuEl) cmenuEl.style.display = "none"; menuLL = null; }
+// A row is enabled by its OWNING BUTTON and says WHY when it is off — a greyed row with
+// no reason beside it reads exactly like a broken control (the ROC Remove lesson).
+function cmGate(rowId, btnId, why){
+  const row = $(rowId), btn = $(btnId), off = !btn || btn.disabled;
+  row.classList.toggle("off", off);
+  const k = row.querySelector(".cmk"); if(k) k.textContent = off ? why : "";
+  return !off;
+}
+function openChartMenu(clientX, clientY, ll){
+  if(!cmenuEl) return;
+  menuLL = {lat: ll.lat, lon: ll.lon};
+  $("#cmPos").textContent = fmtLL(ll.lat, ll.lon);
+  // every row relabelled/gated from live state on each open — derived, never remembered
+  $("#cmMeasureLbl").textContent = (mode === "measure") ? "Stop measuring" : "Measure distance";
+  $("#cmMeasureK").textContent   = (mode === "measure") ? "armed" : "click · click";
+  const n = measures.length + (measPend ? 1 : 0);
+  $("#cmClear").classList.toggle("off", n === 0);
+  $("#cmClearK").textContent = n ? (n + (n>1 ? " legs · Esc" : " leg · Esc")) : "none drawn";
+  cmGate("#cmGoto",  "#b_goto",  "arm first");
+  cmGate("#cmSpawn", "#b_spawn", "sim only");
+  cmenuEl.style.display = "block";
+  // clamp into the viewport, flipping at the right/bottom edges — same discipline as the
+  // hover tips and the pop-out panels: a menu opened near a corner must stay reachable.
+  cmenuEl.style.left = "0px"; cmenuEl.style.top = "-9999px";        // measure first
+  const w = cmenuEl.offsetWidth, h = cmenuEl.offsetHeight, M = 4;
+  let x = clientX, y = clientY;
+  if(x + w > innerWidth  - M) x = Math.max(M, clientX - w);
+  if(y + h > innerHeight - M) y = Math.max(M, clientY - h);
+  cmenuEl.style.left = x + "px"; cmenuEl.style.top = y + "px";
+}
+// Each row captures the coordinate BEFORE the menu closes (closeChartMenu drops it), and
+// a disabled row is inert rather than a silently-swallowed command.
+function cmRow(id, fn){
+  const el = $(id); if(!el) return;
+  el.onclick = ()=>{
+    if(el.classList.contains("off")) return;
+    const ll = menuLL; closeChartMenu(); if(ll) fn(ll);
+  };
+}
+cmRow("#cmMeasure", ()=>{
+  setMode("measure");                              // setMode toggles, so this row is both ways
+  flashNote(mode === "measure"
+    ? "Measure: click a point, move, click again. Esc clears. Dragging still pans."
+    : "Measure tool off.");                        // (setMode already re-rendered)
+});
+cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
+cmRow("#cmGoto",  ll => doGoTo(ll));
+cmRow("#cmSpawn", ll => doSpawn(ll));
+cmRow("#cmCopy",  ll => copyPosition(ll));
+// Clipboard: the async API needs a secure context (localhost qualifies), so fall back to
+// a scratch textarea + execCommand for anything served over plain http on the LAN — the
+// console is routinely opened from a second machine on the boat's network.
+function copyPosition(ll){
+  const text = fmtLL(ll.lat, ll.lon);
+  const done = ok => flashNote(ok ? ("Copied  " + text) : ("Copy blocked by the browser — " + text));
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>done(true), ()=>done(fallbackCopy(text)));
+  } else done(fallbackCopy(text));
+}
+function fallbackCopy(text){
+  try{
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position="fixed"; ta.style.top="-9999px";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); return ok;
+  }catch(e){ return false; }
+}
+mapEl.addEventListener("contextmenu", e=>{
+  e.preventDefault();                              // the chart's own menu replaces the browser's
+  const o = originPx(), r = mapEl.getBoundingClientRect();
+  openChartMenu(e.clientX, e.clientY,
+    worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom));
+});
+document.addEventListener("mousedown", e=>{
+  if(!chartMenuOpen() || cmenuEl.contains(e.target)) return;
+  closeChartMenu();
+  // A click that DISMISSES the menu is a dismissal, not a chart command: stop it before
+  // mapEl's own mousedown so it cannot also drop a waypoint / anchor a measurement / pan.
+  // Outside the chart it is let through — a toolbar button clicked with the menu up should
+  // still act. (No swallow flag: with mapEl's mousedown never firing, `dragging` stays
+  // false and the window mouseup returns at its own `!wasDrag` guard.)
+  if(mapEl.contains(e.target)) e.stopPropagation();
+}, true);
+mapEl.addEventListener("wheel", closeChartMenu, {passive:true});   // the chart moved under it
+window.addEventListener("resize", closeChartMenu);
+window.addEventListener("blur", closeChartMenu);
+// ESCAPE PEELS ONE LAYER AT A TIME, most transient first, so a single key never destroys
+// more than the operator was looking at: the menu, then the leg being drawn, then the
+// completed measurements, then the tool itself.
+window.addEventListener("keydown", e=>{
+  if(e.key !== "Escape") return;
+  const t = e.target;
+  if(t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;     // Esc belongs to the field
+  if(chartMenuOpen()){ closeChartMenu(); return; }
+  if(measPend){ measPend = null; render(); return; }
+  if(measures.length){ clearMeasures(); return; }
+  if(mode === "measure") setMode("pan");
+});
+
 $("#wptBtn").onclick = ()=>setMode("wpt");
 $("#lineBtn").onclick = ()=>setMode("survey");
 $("#bndBtn").onclick = ()=>setMode("bound");

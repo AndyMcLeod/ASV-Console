@@ -26,6 +26,15 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-08, end of "ASV console refinement")
 
+**THE NEWEST WORK (this commit, 2026-08-08): THE CHART MEASURING TOOL + THE RIGHT-CLICK
+MENU THAT ARMS IT.** Andy asked for a ruler: right-click → Measure, click a point, move,
+click again, distance flowing along the line. Scoped with him before building — he chose
+the menu to carry the point-at-cursor chart actions too (Go-To here / Spawn here / Copy
+position), the label to read distance **and** bearing, and completed measurements to stay
+until cleared. **Read "THE MEASURING TOOL" below before touching the chart's mouse
+handlers** — the feature is small, but it exposed a latent fault in them that had nothing
+to do with measuring.
+
 **Repo:** PRIVATE GitHub remote `AndyMcLeod/ASV-Console` (created 2026-08-06 at Andy's
 instruction — push after committing; before this it was local-only and every note below
 saying "never push" predates it). Tree clean. `git log --oneline -5` for the tip —
@@ -40,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **35 regression suites / 507 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 558 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -72,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SIX REGRESSION SUITES (531 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (558 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -99,6 +108,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
+| `node tests/measure_tool.js` | the chart ruler: the reading flows ALONG the leg, the gesture is click-move-click, the menu's gates are the buttons' own (27) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
@@ -130,15 +140,16 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**THE LATEST WORK (this commit, 2026-08-08): THE THIRD WINDOW — the NOAA tide page for
-the station the VESSEL'S OWN FIX selects.** The IDW over 3 proximal stations Andy asked
-for already existed in the water monitor; what was new is the window, and disclosing the
-blend instead of reporting it under one station's name. No station id is hardcoded
-anywhere — check 1 enforces that by AST. **Read "THE THIRD WINDOW" below.**
+**THE WORK BEFORE THIS ONE (`eb6e34f` + `575855f`, 2026-08-08): THE THIRD AND FOURTH
+WINDOWS — the NOAA tide page and the NDBC buoy page for the stations the VESSEL'S OWN FIX
+selects.** The IDW over 3 proximal stations Andy asked for already existed in the water and
+env monitors; what was new is the windows, and disclosing the blend instead of reporting it
+under one station's name. No station id is hardcoded anywhere — check 1 enforces that by
+AST. **Read "THE THIRD AND FOURTH WINDOWS" below.**
 
-**THE SESSION JUST FINISHED (2026-08-08, "ASV console refinement") — FIVE COMMITS,
+**THE SESSION JUST FINISHED (2026-08-08, "ASV console refinement") — EIGHT COMMITS,
 TREE CLEAN, EVERYTHING PUSHED.** Andy drove it card by card from live use, and every
-item below started as something he SAW on his own console. In order:
+item below started as something he SAW on his own console — or, at the end, asked for. In order:
 
 | commit | what |
 |---|---|
@@ -147,6 +158,9 @@ item below started as something he SAW on his own console. In order:
 | `1a9e7c1` | **the ROC card** — cap what survives at 3, and lock the test suites out of the operator's registry |
 | `324b1b7` | **the ENV card is DELETED** — client card only; the environment itself still runs |
 | `a548c14` | **the turn yields to the channel** — survey turns may only use channel water the lines occupy |
+| `eb6e34f` | **the third window** — the NOAA tide page for the station the vessel's fix selects |
+| `575855f` | **the fourth window** — the NDBC buoy page, same derived mechanism |
+| (this commit) | **the chart measuring tool + the right-click menu** — and the latent right-click fault it exposed |
 
 **THE FOUR THAT STILL MATTER, and each has its own section below:**
 - **THE TURN YIELDS TO THE CHANNEL** (`a548c14`) — the safety one. Turns arced 34 m into
@@ -680,6 +694,13 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 - **NOTHING IS HELD BACK.** The turn-water hold is closed and the tree is clean; the
   items below are genuinely open, not work in progress. Andy's three standing parks
   (MarineTraffic, payloads, AISHub membership) are further down and unchanged.
+- **ONE COSMETIC DOC GAP, spotted 2026-08-08 while adding the measure suite.** The tech
+  manual's 13.1 harness table is DERIVED from `tests/`, and prints
+  `(undocumented — add an entry to GUARDS in tools/build_tech_manual.js)` for any suite
+  with no entry. **`log_routes.py` has no entry, so that placeholder is in the shipped
+  docx a reader opens.** One line in `GUARDS` fixes it. Not done here because it is
+  unrelated to the measuring tool; the self-flagging design is working exactly as
+  intended, so trust the table over any hand-kept list.
 - **THE LINES-CARD MIRROR FAULT IS STILL OPEN, and it is the oldest live unknown.** His
   LINES card froze in the controls window on 2026-08-06; the recording feature was
   reverted the same day but never convicted. **Prime suspect, and it costs nothing to
@@ -781,6 +802,91 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE MEASURING TOOL + THE CHART CONTEXT MENU (2026-08-08)
+
+Andy: *"Create a right click menu for a measurement tool. Click in one spot drag a line to
+another and click again. A measurement of distance flows along the line."* Three forks were
+put to him before a line was written, and all three answers shaped the build: the menu also
+carries the **point-at-cursor chart actions**; the label reads **distance AND bearing**; and
+completed measurements **stay until cleared**.
+
+**WHAT IT IS.** Right-click anywhere on `#map` → `#chartMenu`, which remembers the chart
+point it was opened over (`menuLL`, shown in its header) and acts THERE. Rows: Measure
+distance (arm/disarm, reads the live `mode`), Clear measurements, Go-To here, Spawn here,
+Copy position. The tool itself is `mode === "measure"`, a peer of `wpt`/`survey`/`goto` —
+**not a parallel mechanism**, which is why it needed no state machine (see below).
+
+**THE GESTURE NEEDS NO STATE MACHINE, AND THAT IS THE DESIGN.** The measure branch is one
+more `else if` in the window `mouseup` chain, which means it sits BELOW the handler's
+existing `if(moved > 5 || mode === "pan") return;`. That single pre-existing guard does all
+the work: a press-drag is a PAN in every mode, so it can never be read as a measurement, and
+a click is a click. First click anchors `measPend`, `mousemove` walks `measPend.b`, second
+click pushes to `measures`. **My first design had a `measFresh` flag and a
+distance-from-anchor threshold to tell a press-drag-release from a click-move-click; reading
+the existing handler properly deleted both.** `tests/measure_tool.js` check 12 is the guard
+on that ordering — move the branch above the pan guard and it fails.
+
+**⚠ THE FEATURE EXPOSED A LATENT FAULT WITH NOTHING TO DO WITH MEASURING.** A right-click
+fires `mousedown` AND `mouseup`, so the chart's mode chain has ALWAYS run on the right
+button — **right-clicking in WPT mode dropped a waypoint**, and had since the handler was
+written. Nobody saw it because the browser's own context menu appeared over the result.
+Adding a menu of our own would have made it anchor a measurement on the very gesture that
+opens the menu. Fixed with **one line at the top of `mapEl`'s mousedown:
+`if(e.button !== 0) return;`** — refusing to record drag state there is enough on its own,
+because the window `mouseup` then returns at its existing `!wasDrag || !downAt` guard, so
+there is no second place to keep in step. Costs middle-button panning, which was never a
+stated feature and carried the same misfire. Check 13.
+
+**THE MENU'S VESSEL GATES ARE DERIVED, NOT RE-DERIVED.** `cmGate(rowId, btnId, why)` reads
+the `.disabled` of the button that already owns each command — `#b_goto` (armed, no E-STOP),
+`#b_spawn` (simulator only) — so a change to either rule reaches the menu for free and the
+two can never disagree. **A second ungated path to a vessel command is precisely the "one
+value serving two masters" shape this console keeps finding**, and deriving is what keeps
+there being only one. A disabled row is inert AND says why beside itself (`arm first`,
+`sim only`) — the ROC lesson: a greyed control with no reason reads exactly like a broken
+one. Check 16 asserts the menu section contains **no second copy** of either rule.
+
+**THE LABEL FLOWS ALONG THE LINE**: `drawMeasureLeg` translates to the leg's midpoint,
+rotates to its screen angle, flips by π when that would print upside-down, and draws haloed
+text 5 px off the leg. Distance goes through **`fmtDist()`** — so a measurement follows the
+DIST pill like every other long distance, and `units_toggle.js` stays green. Bearing is the
+true azimuth **a→b**, three digits. A leg under `MEAS_LABEL_MIN_PX` (30) carries no label.
+**MAGENTA** (`MEAS_COL`) on purpose: S-52 reserves it for the mariner's own information and
+it was the one chart colour unspent here — amber is the plan, cyan the track and transit
+draft, green/orange the routed run — so a ruler can never be mistaken for something the boat
+will drive. Drawn AFTER the boat in `render()` (check 25): the move-grip lesson.
+
+**IT IS AN ANNOTATION, DELIBERATELY WITH NO PERSISTENCE.** Not uploaded, not in
+`mission.json`, not on the wire, not in the session log, not in `localStorage` — a refresh
+clears it. Check 24 scans every line in the page that mentions `measures`/`measPend` against
+the outbound paths. **If a future session is asked to persist measurements, that check is the
+thing to change deliberately, not to work around.** `Esc` peels ONE layer per press — menu,
+then the half-drawn leg, then the completed set, then the tool — and skips a focused
+INPUT/SELECT/TEXTAREA.
+
+**TWO TEST LESSONS EARNED HERE, both already in the general list but re-learnt the hard way:**
+- **THE HARNESS THAT CANNOT SURVIVE THE FAULT IT TESTS FOR.** I moved the menu scenarios out
+  of their thunks so failure notes would report the state the check actually saw (they had
+  been rebuilding a fresh empty object and printing `[]`). That made the `cmGate` mutation
+  **CRASH** the suite instead of failing it — and only because the runner scores a crash
+  separately did it show up as anything other than a clean pass. Setup that runs outside a
+  thunk now goes through `attempt()`, which turns a throw into data.
+- **A MUTATION THAT DOES NOT VIOLATE THE INVARIANT PROVES NOTHING.** My first "drawMeasure
+  painted before the boat" mutation only swapped it past `drawPatMoveGrip` — still after the
+  boat — and check 25 rightly passed. The real mutation needs TWO edits (lift it out, re-seat
+  it above `if(asv){`). It survived once for exactly the right reason, and the fix was to the
+  mutation, not the check. **The CRLF trap also cost a round: `static/asv.html` is CRLF, so
+  six multi-line anchors written with `\n` matched nothing and scored SKIP.**
+
+**27 checks, 24 mutations, 0 survivors, 0 skipped.** Live-verified in a real browser for
+everything source shape cannot see — screenshots time out on the animating canvas, so the
+ink was read with `getImageData`: the magenta bounding box hugs the leg's own box (the label
+is contained ALONG the line, not sticking out horizontally), and `ctx.rotate` was intercepted
+on the LIVE canvas across twelve compass directions, worst effective rotation exactly 90°.
+Also confirmed live: the pill converts a drawn measurement (3.68 km ↔ 1.99 nm), a right-click
+anchors nothing, the click that dismisses the menu commands nothing, and the controls window
+suppresses the menu even when forced visible.
 
 ## MULTI-SOURCE AIS — MANY FEEDS, ONE MERGED PICTURE (2026-08-05)
 

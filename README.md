@@ -260,6 +260,23 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    short distances (spacing, buffers, depths, the LINES table) always read metres,
    chart tiles print feet as charted, and the AIS card always reads nm.
 
+   **The chart menu + the measuring tool (right-click).** Right-clicking the chart
+   opens a menu of the things that act on a **point** — its header names the position
+   you clicked and every row acts *there*: **Measure distance**, **Go-To here**,
+   **Spawn here**, **Copy position**. The two vessel commands are a shortcut past the
+   toolbar's "arm the button, then click the chart" second step, never past the arm
+   gate itself: each row reads the `.disabled` of the button that already owns that
+   command and says why beside the row (`arm first`, `sim only`), so there is exactly
+   one copy of each rule. **Measure** is click → move → click: the leg follows the
+   pointer and the reading — **distance and true bearing** — is drawn **along the
+   line**, rotated to it and flipped so it never reads upside-down. Distance goes
+   through the same `fmtDist()` as every other long distance, so a measurement follows
+   the `DIST` pill. Legs accumulate until cleared; `Esc` peels one layer at a time
+   (menu → half-drawn leg → all measurements → the tool), and **dragging still pans**.
+   Drawn in **magenta** — S-52's colour for the mariner's own information, and the one
+   chart colour this console had not spent — because a measurement is an *annotation*:
+   it is never uploaded, saved to the mission, sent to the vessel, or logged.
+
    **Search patterns.** `SRCH` generates a canned search route (à la CCOM's
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
    creeping-line**. Click a datum, tune the params (leg / radius / spacing /

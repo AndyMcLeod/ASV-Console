@@ -68,6 +68,8 @@ const GUARDS = {
     "That the tide card reports ONE cause ONCE: two failed requests to the same upstream must not print the same failure twice, and must still say BOTH series were lost rather than only the observed one",
   "docs_valid.py":
     "That the generated documents are valid packages a reader will actually open, and that their code blocks reached the page - validity alone would not notice content silently dropped",
+  "measure_tool.js":
+    "The chart ruler and the right-click menu that arms it: that the reading flows ALONG the leg and never upside-down, that it goes through the one distance formatter so it follows the display-unit pill, that a bearing is the azimuth from the first click and not its reciprocal, that a pan-drag is never read as a measurement, and that the menu's vessel commands are gated by the buttons that already own them rather than by a second copy of the rule",
 };
 
 function harnessRows() {
