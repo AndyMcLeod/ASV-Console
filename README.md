@@ -232,8 +232,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    command bar. The plan persists server-side (`mission.json`).
 
    **Chart source (`SRC`).** The ENC's answer to a paper chart's title block, as a
-   card: which **cell** the vessel is in (e.g. `US5DE1EF`) and how many more are in
-   view, the **usage band**, the **chart datum** with the *live* water-level
+   card: **every cell in view, one row each** (broadest scale first, usage band
+   spelled out), with the cell the vessel is actually in marked and named — where
+   scales overlap it is the **largest-scale** cell covering the vessel, the sheet
+   you are bound to navigate by. Then the **usage band**, the **chart datum** with the *live* water-level
    correction being applied, and WGS 84 / Mercator. It states the **sounding units
    on both sides**, because they differ: the chart image prints **feet**, while the
    ENC data and every depth the console computes — including this vessel's

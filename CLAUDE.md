@@ -66,7 +66,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-TWO REGRESSION SUITES (461 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-FOUR REGRESSION SUITES (492 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -87,6 +87,8 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
+| `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
+| `node tests/env_card_graphics.js` | the ENV graphics scale with the card, never stretch (15) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
@@ -119,7 +121,19 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**THE LATEST WORK (this commit, 2026-08-05): MULTI-SOURCE AIS — many feeds, one merged
+**THE LATEST WORK (this commit, 2026-08-07): TWO CARD FIXES ANDY ASKED FOR.**
+(1) **THE ENV GRAPHICS SCALE WITH THE CARD** — the tide trace and wind rose stretched on
+resize and never grew with the card. Aspect-ratio sizing (the rose is now SQUARE) + a
+redraw on card resize wired the way an occluded window survives (mouseup primary,
+ResizeObserver as the extra). New suite `tests/env_card_graphics.js` (15, 10/10
+mutations). (2) **THE SRC CARD LISTS EVERY CHART IN VIEW** — it named one cell and
+counted the rest as "+N in view"; one row per cell now, broadest scale first, the
+vessel's own marked. Two correctness fixes fell out (a cell arrives as SEVERAL polygons;
+"mine" was whichever the service returned first, now the largest-scale cell containing
+the vessel). New suite `tests/chart_source_card.js` (16, 10/10 mutations). **Both have
+their own sections below.**
+
+**Previous headline (2026-08-05): MULTI-SOURCE AIS — many feeds, one merged
 picture** (aishub + multi-endpoint nmea + opencpn sources, merge provenance, the
 stale-position guard, and the collect-radius ordering fix). New suite
 `tests/ais_sources.py` (26, 6/6 mutations). **See "MULTI-SOURCE AIS" below before
@@ -1004,6 +1018,96 @@ the other end.
 Ops manual 8.5 (Set Home) now states the provenance rule and both refusals. No client
 change — the SET HOME button already sent no coordinates; the decoy in check 2 proves
 the server ignores them if anything ever does.
+
+## THE ENV GRAPHICS SCALE WITH THE CARD (2026-08-07)
+
+Andy: "In the Environment Card changing size should not distort the wind graphic or
+the water level graphic", then: "they should size in scale with the card." **Two
+faults, one symptom.** (1) Both canvases were `width:100%;height:104px|132px` — a
+FIXED pixel height, so widening the card stretched them sideways and they never grew
+with it. Now sized by ASPECT RATIO: the tide chart `4/3` (its shape at the default
+width, so nothing moves at the size everyone already has), the wind rose **SQUARE** —
+the ring's radius is `min(cx,cy)`, so in a wide box the rose stays small with dead
+space either side; square lets it fill the card and makes an oval compass impossible.
+The `width`/`height` ATTRIBUTES were re-set to match (300×225, 300×300) because the
+un-drawn canvas at boot showed its default bitmap scaled into the box — the tide chart
+was ALREADY distorted at rest, 300×150 shown in a 140×104 box, before anyone touched a
+corner. (2) Nothing redrew on a CARD resize: both draw functions already re-derive the
+backing store from `clientWidth/Height × dpr`, so a redraw at any size is exact, but
+between the resize and the next redraw **the browser stretches the old bitmap into the
+new box** — and only a WINDOW resize was hooked.
+
+**THE TRAP, AND IT IS NOW WRITTEN DOWN THREE TIMES IN THIS PAGE (saveCardSizes, the
+split mirror, here): A RESIZEOBSERVER IS DELIVERED WITH THE RENDERING STEPS, so in an
+occluded or background window it does not fire AT ALL.** My first version used one,
+with an rAF debounce — doubly wrong. What made it look half-working is worth keeping:
+**the wind rose appeared to redraw correctly and the tide chart did not — not because
+the rose was handled, but because the 4 Hz state push repaints the rose on every frame
+while nothing repaints the tide until its 6-minute fetch.** A single instrumented run
+(wrap both draw functions, count calls) showed `drawRose ×3, drawTide ×0` and killed
+the theory. The shipped wiring is the house pattern: **`mouseup` is primary** —
+event-driven, lands whatever the window is doing, and a drag-resize always ends in one
+— with the observer as the EXTRA that redraws continuously while the window really is
+rendering, `setTimeout`-debounced. Both paths go through `redrawEnvGraphicsIfResized`,
+gated on `envCanvasStale` (backing store ≠ box × dpr — that mismatch IS the stretched
+state), so every path is idempotent and cheap enough to hang off a global mouseup.
+
+**MAIN-WINDOW ONLY.** In the controls window those canvases hold BITMAPS MIRRORED FROM
+MAIN (`paintUICanvas`) with no env/tide data behind them — a local redraw would wipe
+the mirrored graphic and paint an empty "calm" rose over it. The mirror needs no
+redraw: both windows now carry the same aspect ratio, so the PNG scales uniformly.
+Verified live — mirrored PNG 140×105 into a 1.333 box, 140×140 into a 1.000 box.
+
+`tests/env_card_graphics.js` (15, 10/10 mutations). Live at Lewes with real tide data:
+dragging 363 → 208 → 283 px left the tide backing store stale (347×260 in a 192×144
+box) and a mouseup made it exact at every size; box aspect held 1.335 / 1.000
+throughout. **One test-writing note:** check 7 asserts the debounce is not rAF, and the
+first version FAILED on the code's own comment explaining why rAF is not used — these
+assertions strip comments first. A prose-matching check reports the fault it exists to
+prevent.
+
+## THE SRC CARD LISTS EVERY CHART IN VIEW (2026-08-07)
+
+Andy: "Chart source Card: Display all charts rather than the selected chart and
+'others'." The card named one cell and counted the rest — `US5DE1EF +3 in view` —
+with the other names reachable only as a hover tooltip. **A survey routinely spans
+several cells, and the sheet the vessel floats on says nothing about the scale,
+survey dates or currency of the ones the lines are about to run over**, so the
+count hid exactly the charts worth looking at. Now one row per cell, sorted
+BROAD→DETAILED by usage band (the name's 3rd character) then by name, each row
+keyed `data-cell` (the AIS table's `data-mmsi` pattern) and carrying its usage band
+spelled out; the vessel's own cell is bulleted AND named in words underneath —
+a bare green dot is a guess.
+
+**TWO CORRECTNESS FIXES CAME OUT OF IT, both invisible before the list existed:**
+- **one cell arrives as SEVERAL `Coverage_area` polygons**, so the rows are folded
+  by name and the vessel is inside a cell if **ANY** of its polygons contains the
+  fix (latched, never overwritten per polygon);
+- **which cell is "mine"** was `cells.find(...)` — whichever polygon the service
+  happened to return first. It is now the **largest-scale** cell containing the
+  vessel (the sheet a navigator is bound to where scales overlap), and the card
+  says how many cover the vessel in total. Inside none of them, it says so rather
+  than promoting a neighbour.
+
+`tests/chart_source_card.js` (16 checks, 10/10 mutations) runs the real
+`updateChartCard` against a stub DOM. **THREE OF ITS CHECKS ONLY GREW TEETH ON THE
+SECOND ATTEMPT — all the 6.4 "cannot tell the bug from the fix" shape, and all three
+traps are generic to list rendering:** (1) **order matters in a fold** — with the
+containing polygon listed SECOND an overwriting fold still ends up `true`; only
+containing-FIRST separates "any polygon counts" from "the last one decides".
+(2) **US cell names cannot test a band sort** — every US name starts `US`, so the
+usage digit is the 3rd char of an identical prefix and alphabetical order IS band
+order; a Canadian sheet beside a US one splits them (real: CA/US cells overlap
+across the Great Lakes). (3) **a tie-break needs a tie** — three cells one-per-band
+never exercise the within-band comparator; the four real band-5 Lewes cells do.
+**A harness trap worth keeping too:** `let` declared inside an `eval` is
+block-scoped to that eval, so state assigned from outside is a DIFFERENT binding
+from the one the card reads — the first harness painted an empty card and blamed
+the page. It now returns a painter closure from inside the eval.
+
+Live against the real Lewes ENC: all four cells (`US5DE1DF/DG/EF/EG`) listed in
+order, `US5DE1EF` marked `data-here`, legend reading "● the vessel is on
+US5DE1EF". Ops manual 6.3 + tech manual's card table + README updated and rebuilt.
 
 ## THE LANE YIELDS TO THE LAW — gateLegClear (2026-08-06)
 

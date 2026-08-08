@@ -271,7 +271,7 @@
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
-    <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — cells in use, scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
+    <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — EVERY cell in view (the vessel's own marked), scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
   </div>
   <!-- Quick Start / help button — pinned to the LOWER-LEFT corner (opens the popup, which also anchors there). -->
   <button class="ctl" id="helpBtn" title="Quick start / help" style="position:absolute;left:14px;bottom:14px;z-index:7;">?</button>
@@ -367,12 +367,18 @@
         <span style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Tide · water level</span>
         <span id="tide_ref" title="Refresh tide data from NOAA CO-OPS" style="cursor:pointer;color:var(--ink-faint);font-size:12px;line-height:1;">&#8635;</span>
       </div>
-      <canvas id="tideChart" style="width:100%;height:104px;display:block;margin-top:4px;"></canvas>
+      <!-- aspect-ratio, NOT a fixed pixel height: the card is resizable, so the graphic
+           has to grow WITH it and keep its shape. The width/height ATTRIBUTES match the
+           ratio so the un-drawn canvas at boot is not a stretched default either. -->
+      <canvas id="tideChart" width="300" height="225" style="width:100%;aspect-ratio:4/3;display:block;margin-top:4px;"></canvas>
       <div class="phint" id="tide_note">tide: waiting for a fix…</div>
     </div>
     <div id="windBox" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;">
       <div style="font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Wind rose</div>
-      <canvas id="windRose" style="width:100%;height:132px;display:block;margin-top:2px;"></canvas>
+      <!-- SQUARE: a compass rose is round, and the ring radius is min(cx,cy) - in a wide
+           box the rose stays small with dead space either side. Square lets it fill the
+           card at every size and makes a distorted rose geometrically impossible. -->
+      <canvas id="windRose" width="300" height="300" style="width:100%;aspect-ratio:1/1;display:block;margin-top:2px;"></canvas>
       <div class="phint" id="wind_note">--</div>
     </div>
   </div>
@@ -4783,16 +4789,60 @@ function updateChartCard(){
          + '<span style="min-width:84px;color:var(--ink-faint);flex:none;">' + k + '</span>'
          + '<span style="flex:1;"' + tip + '>' + v + '</span></div>';
   };
-  const hdr = t=> `<div style="margin:6px 0 2px;padding-top:5px;border-top:1px solid #1d3348;` +
-    `color:var(--ink-faint);font-size:9px;letter-spacing:.08em;text-transform:uppercase;">${t}</div>`;
+  // `first` drops the top rule: a section header at the very top of the card would
+  // otherwise draw a stray line under the title bar.
+  const hdr = (t, first)=> '<div style="margin:6px 0 2px;'
+    + (first ? "" : "padding-top:5px;border-top:1px solid #1d3348;")
+    + 'color:var(--ink-faint);font-size:9px;letter-spacing:.08em;text-transform:uppercase;">'
+    + t + '</div>';
   const cells = (chartInfo && chartInfo.cells) || [];
-  const names = [...new Set(cells.map(c=>cellName(c.props)).filter(Boolean))].sort();
-  const inCell = cells.find(c=> ptInGeom(here.lat, here.lon, c.geometry));
-  const mine = inCell ? cellName(inCell.props) : (names[0] || null);
-  const title = inCell && inCell.props.TITLE;
+  // EVERY cell in view gets a row. A survey routinely spans several cells, and the
+  // one the vessel happens to sit in says nothing about the scale, survey dates or
+  // currency of the others it is about to work over - "+3 in view" hid exactly the
+  // charts the operator needed to look at, with the names only in a hover tooltip.
+  // One ENC cell can arrive as SEVERAL Coverage_area polygons, so fold by name and
+  // keep the richest props; the vessel is "inside" a cell if ANY of its polygons
+  // contains the fix.
+  const byName = new Map();
+  for(const c of cells){
+    const n = cellName(c.props); if(!n) continue;
+    let e = byName.get(n);
+    if(!e){ e = {name:n, props:c.props||{}, here:false}; byName.set(n, e); }
+    if(Object.keys(c.props||{}).length > Object.keys(e.props).length) e.props = c.props;
+    if(ptInGeom(here.lat, here.lon, c.geometry)) e.here = true;
+  }
+  // Sorted BROAD -> DETAILED (usage band = the cell name's 3rd character), then by
+  // name, so overlapping scales read in the order a navigator thinks about them.
+  const chartList = [...byName.values()].sort((a,b)=>
+    a.name.charAt(2) === b.name.charAt(2) ? (a.name < b.name ? -1 : 1)
+                                          : (a.name.charAt(2) < b.name.charAt(2) ? -1 : 1));
+  const names = chartList.map(c=>c.name);
+  // The primary is the LARGEST-SCALE cell containing the vessel (last, once sorted) -
+  // the chart a navigator is bound to use where several overlap. The old code took
+  // `cells.find(...)`, i.e. whichever polygon the service happened to return first.
+  const under = chartList.filter(c=>c.here);
+  const primary = under.length ? under[under.length-1] : null;
+  const mine = primary ? primary.name : (names[0] || null);
+  const title = primary && primary.props.TITLE;
   const usage = mine ? ENC_USAGE_LBL[mine.charAt(2)] : null;
   const band = (chartInfo && chartInfo.band) || nogo.band || null;
-  const others = names.filter(n=> n !== mine).length;
+  // One line per chart: a marker for the cell the vessel is in, the cell name, and
+  // its usage band spelled out.
+  const cellLine = c=>{
+    const u = ENC_USAGE_LBL[c.name.charAt(2)] || "";
+    const t = c.props.TITLE ? String(c.props.TITLE) + " — " : "";
+    const tip = (t + "ENC cell " + c.name + (u ? " (" + u + " band)" : "")
+                 + (c.here ? " — the vessel is inside this cell" : "")).split('"').join("&quot;");
+    // data-cell keys the row by the thing it describes (the AIS table's data-mmsi
+    // pattern): one stable hook for the tests and for anything that later has to
+    // find a row without parsing inline styles.
+    return '<div data-cell="' + c.name + '"' + (c.here ? ' data-here="1"' : '')
+         + ' style="display:flex;gap:6px;padding:1.5px 0;align-items:baseline;" title="' + tip + '">'
+         + '<span style="flex:none;width:8px;color:#4fd08a;">' + (c.here ? "●" : "") + '</span>'
+         + '<span style="flex:none;color:' + (c.here ? "var(--ink)" : "var(--ink-dim)") + ';'
+         + (c.here ? "font-weight:bold;" : "") + '">' + c.name + '</span>'
+         + '<span style="flex:1;text-align:right;color:var(--ink-faint);">' + u + '</span></div>';
+  };
   const dat = (water && water.datum) || null;
   const off = (water && water.ok && water.offset_m != null) ? water.offset_m : null;
   let h = "";
@@ -4801,9 +4851,17 @@ function updateChartCard(){
       : "no chart source yet"}</div>`; }
   else if(!names.length){ h = `<div style="color:var(--ink-faint);">${chartInfo.note || "no ENC coverage here"}</div>`; }
   else {
-    h += row("Cell", `<b style="color:var(--ink);">${mine||"--"}</b>` +
-             (others ? ` <span style="color:var(--ink-faint);">+${others} in view</span>` : ""),
-             names.join(", "));
+    h += hdr(names.length === 1 ? "Chart in view" : names.length + " charts in view", true);
+    for(const c of chartList) h += cellLine(c);
+    // The bullet is the only thing naming the vessel's own cell, so say what it means
+    // rather than leaving a green dot to be guessed at - and say so plainly when the
+    // vessel is inside none of them (the rows above are then neighbours, not the
+    // sheet in use, and the derived rows below describe the first cell only).
+    h += '<div style="margin:2px 0 1px;color:var(--ink-faint);font-size:10px;">'
+       + (primary ? '● the vessel is on <b style="color:var(--ink);">' + primary.name + '</b>'
+                    + (under.length > 1 ? " (largest scale of " + under.length + " covering it)" : "")
+                  : "the vessel is not inside any of these cells")
+       + '</div>';
     if(title) h += row("Title", title);
     h += row("Usage", (usage || "--") + (band ? ` <span style="color:var(--ink-faint);">(${band.replace("enc_","")})</span>` : ""),
              "ENC usage band from the cell name's 3rd character");
@@ -5412,7 +5470,59 @@ function drawTide(){
   note.textContent = (d.name||d.station||"station")+" · "+(d.datum||"")+(d.note?" · "+d.note:"");
 }
 $("#tide_ref").onclick = ()=>{ $("#tide_note").textContent="tide: refreshing…"; fetchTide(true); };
-window.addEventListener("resize", ()=>{ if($("#envPanel").style.display!=="none"){ if(tideData) drawTide(); drawWindRose(S.env||{}); } });
+// THE ENV GRAPHICS ARE RE-RENDERED AT THE NEW SIZE, NEVER SCALED. Both canvases size
+// their backing store from the laid-out CSS box (clientWidth/Height x devicePixelRatio)
+// every time they draw, so a redraw at any size is crisp and correctly proportioned -
+// but between a resize and the next redraw the browser STRETCHES the old bitmap into
+// the new box, which is the distortion. The window listener already covered a window
+// resize; the CARD is resizable too (.rsz / the controls window's .uicard) and nothing
+// watched that, so dragging the card's corner left both graphics stretched until the
+// next state push or tide fetch happened to repaint them.
+function redrawEnvGraphics(){
+  if(!$("#envPanel") || $("#envPanel").style.display === "none") return;
+  if(tideData) drawTide();                 // no data yet: leave the note alone, don't
+  drawWindRose(S.env || {});               // overwrite "loading…" with "no samples"
+}
+// A canvas is STALE when its backing store no longer matches its laid-out box - which is
+// exactly the state that renders as a stretched graphic. Cheap enough to test on any
+// event, and it makes every redraw path below idempotent.
+function envCanvasStale(cv){
+  if(!cv) return false;
+  const dpr = window.devicePixelRatio || 1;
+  return cv.width  !== Math.round((cv.clientWidth  || 0) * dpr)
+      || cv.height !== Math.round((cv.clientHeight || 0) * dpr);
+}
+function redrawEnvGraphicsIfResized(){
+  const p = $("#envPanel"); if(!p || p.style.display === "none") return;
+  if(envCanvasStale($("#tideChart")) || envCanvasStale($("#windRose"))) redrawEnvGraphics();
+}
+window.addEventListener("resize", redrawEnvGraphics);
+// MAIN WINDOW ONLY: in the controls window these canvases hold BITMAPS MIRRORED FROM MAIN
+// (paintUICanvas) with no env/tide data behind them - redrawing there would wipe the
+// mirrored graphic and paint an empty "calm" rose over it. The mirror needs no redraw:
+// both windows now carry the same aspect ratio, so the PNG scales uniformly into its box.
+if(UIROLE === "main"){
+  // THE REDRAW MUST NOT DEPEND ON RENDERING - the same rule saveCardSizes was built on,
+  // and the reason it is stated twice: a ResizeObserver is delivered with the rendering
+  // steps, and an occluded or background window has those suspended, so in a hidden
+  // window it does not fire AT ALL. Measured again here while building this: the observer
+  // alone left the tide chart stretched, and only the wind rose looked right - because
+  // the 4 Hz state push happens to repaint the rose and nothing repaints the tide until
+  // its 6-minute fetch. `mouseup` is event-driven, lands whatever the window is doing,
+  // and a drag-resize always ends in one.
+  window.addEventListener("mouseup", redrawEnvGraphicsIfResized);
+  // The observer is the EXTRA: while the window really is being rendered it redraws
+  // continuously through the drag (so the graphic tracks the corner instead of snapping
+  // at the end), and it catches a resize made without the mouse. Debounced with
+  // setTimeout, NOT requestAnimationFrame - rAF is suspended in exactly the same
+  // conditions the observer is, which is what froze the split mirror.
+  if(window.ResizeObserver){
+    let pend = null;
+    const ro = new ResizeObserver(()=>{ if(pend) return;
+      pend = setTimeout(()=>{ pend = null; redrawEnvGraphicsIfResized(); }, 40); });
+    for(const sel of ["#tideChart", "#windRose"]){ const cv = $(sel); if(cv) ro.observe(cv); }
+  }
+}
 $("#envBtn").onclick = ()=>{
   const p=$("#envPanel"), show = p.style.display==="none";
   if(show){ setMode("pan"); }                     // hide any mode panel behind it

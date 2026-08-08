@@ -221,7 +221,7 @@ c.push(TBL(["Card", "Purpose"], [
   ["Vessel status", "Live telemetry, water level, nogo, comms — and the MISSION block: one readout for every commanded run (type, waypoint progress, routed length, time to end, end mode, run time, status), shown only while there is a run to describe"],
   ["ROC · HOME", "Remote Operations Centers, recovery offsets, and HOME selection"],
   ["Environment (`ENV`)", "Wind and sea state, live or overridden"],
-  ["Chart source (`SRC`)", "The ENC cell and zone-of-confidence under the vessel"],
+  ["Chart source (`SRC`)", "Every ENC cell in view + the zone-of-confidence under the vessel"],
   ["Survey lines (`LINES`)", "Per-line planned versus actual run times"],
   ["AIS", "Nearby traffic from the AIS service"],
 ], [2200, 7160]));
