@@ -24,7 +24,7 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff 2026-08-04 — written for "ASV console refinement 1")
+## ⇒ START HERE (handoff refreshed 2026-08-08, end of "ASV console refinement")
 
 **Repo:** PRIVATE GitHub remote `AndyMcLeod/ASV-Console` (created 2026-08-06 at Andy's
 instruction — push after committing; before this it was local-only and every note below
@@ -38,6 +38,12 @@ and a commit cannot name itself** (see "Keep docs current"). Run:
 **⛔ THE SIBLING IS PARKED (Andy's standing directive, 2026-08-05): all future effort
 resides HERE. Do not port fixes back to the Z-Boat console or touch its repo until he
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
+
+**STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
+turn-water hold is closed (`a548c14`). **35 regression suites / 507 assertions**, derived
+with the one-liner below and matching the hook. If you are picking this up cold: read
+this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
+OPEN / NEXT at the end of this section for what is actually open.
 
 **⚠ A FEATURE WAS BUILT AND REVERTED THE SAME DAY (2026-08-06) — READ BEFORE TOUCHING
 THE RECORDER OR PLAYBACK.** `d473b5b` shipped full-picture recording (a `LOG.aux`
@@ -83,7 +89,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 
 | | guards |
 |---|---|
-| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route (14) |
+| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law (20) |
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
@@ -98,8 +104,9 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
-| `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap (17) |
+| `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap, the uicard clamp (22) |
 | `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
+| `node tests/ui_tooltips.js` | hover tips the pointer cannot occlude; guarded restore for runtime title writers (9) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
 | `node tests/units_toggle.js` | the km↔nm DIST pill: value converts BOTH ways, short stays metric, one formatter (12) |
@@ -122,50 +129,51 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
 
-**THE LATEST WORK (this commit, 2026-08-08): THE TURN YIELDS TO THE CHANNEL.** Survey
-turns may only use channel water the survey's own coverage lines occupy — Andy's live
-survey at Lewes generated end-of-line turns that arced up to 34 m INTO the dredged
-channel across a charted pile row ("This must not happen"). **Built 2026-08-07, then
-HELD at his instruction while he tested his own approach, and completed on his
-"return to the turn-water work and complete".** Re-verified WHOLE on the current tree
-before landing, because it had been carried across three commits by patch
-re-application: 8/8 mutations still caught, his logged plan replays 68 in-channel arc
-points → 0, and a live console at his exact tide (+1.54 m, set through
-`/api/waterlevel` — the ENV card is gone) reproduces "3 refused by a navigation
-channel" with the channel outlined. **Read "THE TURN YIELDS TO THE CHANNEL" below
-before touching punchOut's keep-out plumbing.**
+**THE SESSION JUST FINISHED (2026-08-08, "ASV console refinement") — FIVE COMMITS,
+TREE CLEAN, EVERYTHING PUSHED.** Andy drove it card by card from live use, and every
+item below started as something he SAW on his own console. In order:
 
-**THE LATEST WORK (this commit, 2026-08-08): THE ENV CARD IS DELETED.** Andy's call,
-scoped with him first: the CLIENT card goes (wind rose, tide chart, override controls,
-ENV button) and the ENVIRONMENT STAYS — buoys, wind/wave forcing and the water-level
-correction all still run, now reported only by the vessel card's WIND/SEA/SET rows and
-overridden only over `POST /api/env`. The cut also retired the split-window canvas
-mirroring, which existed solely to carry those two canvases. **Read "THE ENV CARD IS
-DELETED" below before re-adding anything environmental.**
+| commit | what |
+|---|---|
+| `eec6794` | ENV graphics scale with the card (**superseded, see `327ce0c`**) + **the SRC card lists EVERY chart in view** |
+| `327ce0c` | ENV graphics REWRITTEN: one design space, one uniform scale (**then deleted whole in `324b1b7`**) |
+| `1a9e7c1` | **the ROC card** — cap what survives at 3, and lock the test suites out of the operator's registry |
+| `324b1b7` | **the ENV card is DELETED** — client card only; the environment itself still runs |
+| `a548c14` | **the turn yields to the channel** — survey turns may only use channel water the lines occupy |
 
-**THE LATEST WORK (this commit, 2026-08-08): THE ROC CARD — and the Remove button was
-never broken.** The card opened on 198 stale ROCs that OUR OWN test suite had been
-writing into the operator's `roc_config.json`, one per run; Remove was correct but took
-~1200 ms at that size and removed 1 row of 198, so it read as dead. Now capped at the 3
-most recent (save AND load, HOME always retained), the suites are locked out of that file
-with `--roc-config`, and a malformed record can no longer take the whole card down. New
-suite `tests/roc_persist.py` (16, 8/8 mutations). **Read "THE ROC CARD" below before
-touching the registry.**
+**THE FOUR THAT STILL MATTER, and each has its own section below:**
+- **THE TURN YIELDS TO THE CHANNEL** (`a548c14`) — the safety one. Turns arced 34 m into
+  the Lewes dredged channel across a charted pile row. Built 08-07, **HELD at his
+  instruction while he tested his own approach**, completed on his word 08-08 and
+  re-verified whole first (it had been carried across three commits by patch
+  re-application). **Read it before touching punchOut's keep-out plumbing.**
+- **THE ENV CARD IS DELETED** (`324b1b7`) — scoped with him BEFORE cutting, because the
+  card held three separable things. The CLIENT card is gone; `EnvMonitor`, `/api/env`,
+  the wind/wave forcing and the water-level correction all still run. **Read it before
+  re-adding anything environmental** — and note it retired `327ce0c` and half of
+  `eec6794` from the same day, both recoverable there if he ever wants the rose back.
+- **THE ROC CARD** (`1a9e7c1`) — the Remove button he reported as broken was CORRECT;
+  198 stale ROCs (written by our own test suite, one per run) made it look dead. Capped
+  at 3, suites locked out with `--roc-config`. **Read it before touching the registry.**
+- **THE SRC CARD LISTS EVERY CHART IN VIEW** (`eec6794`) — one row per ENC cell,
+  broadest scale first, the vessel's own marked.
 
-**THE LATEST WORK (2026-08-07): TWO CARD FIXES ANDY ASKED FOR — the ENV one
-REWRITTEN in THIS commit after he reported the first attempt still distorted.**
-(1) **THE ENV GRAPHICS SCALE WITH THE CARD** — the tide trace and wind rose stretched on
-resize and never grew with the card. **THE FIRST ATTEMPT (`eec6794`) FIXED THE BOX AND
-ANDY REPORTED BOTH GRAPHICS STILL DISTORTED; this commit replaces it.** They are now
-drawn in a fixed DESIGN SPACE fitted with ONE uniform scale, so the ring is round by
-construction and the text, ticks, strokes and arrowheads scale WITH it — see "THE ENV
-GRAPHICS: ONE DESIGN SPACE, ONE UNIFORM SCALE" below and read it before touching either
-canvas. Suite `tests/env_card_graphics.js` rewritten (16, 12/12 mutations). (2) **THE SRC CARD LISTS EVERY CHART IN VIEW** — it named one cell and
-counted the rest as "+N in view"; one row per cell now, broadest scale first, the
-vessel's own marked. Two correctness fixes fell out (a cell arrives as SEVERAL polygons;
-"mine" was whichever the service returned first, now the largest-scale cell containing
-the vessel). New suite `tests/chart_source_card.js` (16, 10/10 mutations). **Both have
-their own sections below.**
+**FIVE THINGS THIS SESSION COST TIME TO LEARN. They are general, and three of them are
+about CHECKS THAT LOOKED LIKE CHECKS:**
+- **A geometry check on the CONTAINER cannot see a composition that does not scale.** The
+  first ENV-graphics fix measured the canvas box — perfect at every size — and shipped;
+  Andy came back with "still distorted". The ring had been round all along; the 9 px
+  labels and 1 px strokes were what did not scale. **Measure the INK.**
+- **A control that is correct but smothered by data reads exactly like a broken one.**
+  Reading the ROC Remove handler found nothing, because there was nothing to find.
+- **A harness that launches the real app in the app directory writes the operator's real
+  files.** `http_contract.py` had been adding a ROC to his own registry on every run.
+- **KNOW WHICH HARNESS TAKES A THUNK.** `ui_split.js`'s `check()` reads `cond` directly,
+  so an arrow function is an object, an object is truthy, and the check passes forever. I
+  shipped exactly that and only caught it by making it fail on purpose.
+- **A source-shape check whose pattern occurs in ITS OWN source will match itself.**
+  `roc_persist.py`'s "no suite may write the registry" audit put itself in its own set
+  and passed on its own text; it parses the AST for a real call now.
 
 **Previous headline (2026-08-05): MULTI-SOURCE AIS — many feeds, one merged
 picture** (aishub + multi-endpoint nmea + opencpn sources, merge provenance, the
@@ -662,6 +670,28 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 "is the code here".
 
 **OPEN / NEXT:**
+- **NOTHING IS HELD BACK.** The turn-water hold is closed and the tree is clean; the
+  items below are genuinely open, not work in progress. Andy's three standing parks
+  (MarineTraffic, payloads, AISHub membership) are further down and unchanged.
+- **THE LINES-CARD MIRROR FAULT IS STILL OPEN, and it is the oldest live unknown.** His
+  LINES card froze in the controls window on 2026-08-06; the recording feature was
+  reverted the same day but never convicted. **Prime suspect, and it costs nothing to
+  check the next time it happens: the mirror rides a BroadcastChannel, which is
+  ORIGIN-SCOPED — a chart window on `localhost:8791` and a controls window on
+  `127.0.0.1:8791` can NEVER sync, silently, while commanding still works.** So: F5 the
+  controls window, compare the two address bars, then F12 on the chart window. See the
+  ⚠ entry at the top.
+- **THE SECOND-CLIENT GAP, designed and parked.** A second full client (a laptop beside
+  the console) never learns of plan edits — each window loads `mission` once at boot.
+  The fix is 4 lines of design, built and live-tested during the revert-day diagnosis:
+  server bumps `MISSION_REV` in `save_mission` + publishes it on the state + the POST
+  returns it; client adopts its own echo, guards in-flight edits with `savePending`,
+  refetches on a foreign rev. **Not started here — ask before building it.**
+- **THE ENV CARD IS GONE BUT THE ENVIRONMENT IS NOT** (`324b1b7`). If anything
+  environmental is asked for again, read that section first: the forcing, the buoys and
+  the water-level correction all still run and are reachable at `POST /api/env` and
+  `/api/waterlevel`. The deleted wind rose / tide chart live in `327ce0c`. **Do not
+  rebuild them unasked.**
 - **ROUTE COVERAGE, remainder.** The estop_chain audit found 20 of 33 routes untested;
   covered since: E-STOP, the five in `run_link_control.py` (transit/pause/reset/connect/
   disconnect), `sethome` + `spawn` in `home_spawn.py` — which also drives `rth`'s
