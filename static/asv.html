@@ -4876,9 +4876,25 @@ function updateChartCard(){
              "They do not match - convert before comparing.");
     h += row("Datum", dat || "--",
              "Chart datum of the depth data. The console corrects to it live.");
-    h += row("Correction", off != null ? `${off>=0?"+":""}${off.toFixed(2)} m live`
-             : `<span style="color:var(--ink-faint);">none (uncorrected)</span>`,
-             water && water.name ? `CO-OPS ${water.station} ${water.name}` : "live water level");
+    // The correction can be an IDW BLEND of up to three stations, and naming only the
+    // primary made a blended number read as one station's own level. The row still shows
+    // the primary - it is the station whose page the third browser window opens, so the
+    // two can never disagree - and the tooltip names every contributor with its distance
+    // and says outright when the applied offset is a blend.
+    const wsta = (water && water.stations) || [];
+    let corrTip = (water && water.name) ? "CO-OPS " + water.station + " " + water.name : "live water level";
+    if(wsta.length > 1){
+      corrTip += " — the applied offset is an inverse-distance blend of " + wsta.length + " stations: "
+               + wsta.map(g=>(g.id + " " + (g.name||"") + " " + (g.dist_km!=null ? g.dist_km.toFixed(1)+" km" : "")).trim()).join("; ")
+               + ". The station named here is the nearest reporting one, not the whole answer.";
+    } else if(water && water.dist_km!=null){
+      corrTip += " — " + water.dist_km.toFixed(1) + " km away, this station alone";
+    }
+    h += row("Correction",
+             (off != null ? `${off>=0?"+":""}${off.toFixed(2)} m live`
+                          : `<span style="color:var(--ink-faint);">none (uncorrected)</span>`)
+             + (wsta.length > 1 ? ` <span style="color:var(--ink-faint);">idw ${wsta.length}</span>` : ``),
+             corrTip);
     h += row("Horizontal", "WGS 84 · Mercator");
     const q = qualityAt(here.lat, here.lon);
     h += hdr("At the vessel");

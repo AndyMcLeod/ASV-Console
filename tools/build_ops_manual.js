@@ -35,7 +35,7 @@ c.push(H1("Contents"));
   "12  Remote Operations Centers and a moving HOME",
   "13  Contingencies — what goes wrong and what to do",
   "14  Session recording and playback",
-  "15  Working across two screens",
+  "15  Working across your screens",
   "16  Checklists and quick reference",
   "17  Glossary",
 ].forEach(t => c.push(B(t)));
@@ -82,7 +82,7 @@ c.push(CODE([
   "python asv_console.py --sim --vessel <id>   # start on a specific vessel profile",
   "python asv_console.py --sim --browser none  # headless (testing)",
 ]));
-c.push(P("The console serves its interface on a local web port and opens it for you. By default it opens TWO windows — a chart window and a controls window — which is covered in section 15. `--single-window` keeps everything in one."));
+c.push(P("The console serves its interface on a local web port and opens it for you. By default it opens THREE windows — a chart window, a controls window, and a tide window showing the water-level station nearest the vessel — which are covered in section 15. `--single-window` keeps the console itself in one window; `--no-tide-window` skips the third."));
 c.push(H2("3.2  Useful start-up options"));
 c.push(TBL(["Option", "Effect"], [
   ["`--vessel <id>`", "Start on a named vessel profile instead of the default"],
@@ -358,14 +358,17 @@ c.push(P("Open the playback view from the top bar. It replays any recording on t
 c.push(P("Use it for post-mission review, for showing a client what was covered, and for working out what actually happened when something surprised you."));
 
 // 15 --------------------------------------------------------------------------
-c.push(H1("15  Working across two screens"));
+c.push(H1("15  Working across your screens"));
 c.push(P("By default the console opens a CHART window and a CONTROLS window. Put the chart on one screen and the controls on the other and the chart is left clean. The two stay in step automatically; the chart window remains where you draw. In the controls window each panel becomes a draggable, resizable card and the layout is remembered between sessions."));
+c.push(H2("15.1  The tide window"));
+c.push(P("A THIRD window opens on the NOAA Tides and Currents page for the water-level station nearest the vessel — the official record, live, alongside the console rather than inside it. YOU DO NOT CHOOSE THE STATION: it is whichever one the vessel's own GPS position selects, so moving the boat to another stretch of coast opens a different station without anything being configured. It waits for a fix before opening, because until the vessel reports a position there is no nearest station to open."));
+c.push(NOTE("THE PAGE SHOWS ONE STATION; THE CORRECTION MAY USE THREE", "The console corrects charted depths using an inverse-distance blend of up to three stations within range, weighted by the SQUARE of distance — so a station four times further away counts a sixteenth as much. The window shows the PRIMARY, the nearest one actually reporting, which is the station the chart-source card names. Where the primary is close and the others are far the blend is effectively that one station; where they are comparable it is genuinely mixed, and then the page is one voice of three. The console prints the full blend, with each station's share, when it opens the window, and the chart-source card lists the contributors in its Correction tooltip and marks a blended reading `idw`."));
 c.push(P("Every card on the chart window can be RESIZED by dragging its bottom-right corner, and each remembers the size you gave it. Widen the vessel-status card to read the keep-out breakdown, or pull the traffic table taller when the sea is busy."));
 c.push(P("They can also be MOVED, by dragging the header strip along the top of the card — the vessel-status card, the survey settings, the survey-lines table, the AIS traffic table, the chart-source card and the ROC list. Each remembers where you put it, so a layout you arrange once comes back next session. A card's close `×` is not a drag grip: clicking it closes the card rather than starting a move."));
 c.push(P("A CARD CANNOT GROW PAST THE SCREEN, in either direction. A card sized by its own contents — the traffic table with a busy sea, or the lines table with a long plan — stops at a height that still fits the display and scrolls inside itself from there, with its header staying put at the top so you always know what you are reading. The size you drag is capped the same way. This is a display limit only: the size you asked for is remembered, so the same profile on a larger screen gives you the larger card back."));
 c.push(P("Lists that update on their own — the AIS traffic table above all — are updated IN PLACE rather than redrawn. Scrolling down the list to read a distant contact does not throw you back to the top when the next update lands, and text you are part way through selecting, an MMSI you mean to copy, survives it. Only the values that actually changed are rewritten."));
 c.push(P("The VESSEL-STATUS CARD stays on the chart window and is not duplicated into the controls window — one card, one place to look. The top status bar keeps its own quick read of position, speed, heading, energy and time, so the chart window alone tells you everything about the vessel."));
-c.push(P("If the controls window is closed, everything returns to the chart window automatically and a pill appears to reopen it — the console is never left without its controls. `--single-window` skips the second window entirely."));
+c.push(P("If the controls window is closed, everything returns to the chart window automatically and a pill appears to reopen it — the console is never left without its controls. `--single-window` skips the second window entirely, and `--no-tide-window` the third. Closing the tide window costs nothing: it is an external page, not part of the console, and the depth correction it illustrates carries on regardless."));
 
 // 16 --------------------------------------------------------------------------
 c.push(H1("16  Checklists and quick reference"));

@@ -72,7 +72,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-FIVE REGRESSION SUITES (507 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SIX REGRESSION SUITES (524 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -122,12 +122,19 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/ais_error_frames.py` | an aisstream error frame SURFACES (state error, note names it), survives the quiet-box re-stamp, clears on real data (10, hermetic, scripted fake websocket) |
 | `python tests/ais_sources.py` | many AIS feeds, ONE merged picture: per-vessel provenance, the stale-position guard, AISHub fault-as-data + per-response format detection, endpoint specs, a real AIVDM sentence over TCP and UDP (26, hermetic) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
+| `python tests/tide_window.py` | the third window: station DERIVED from the fix, and the IDW blend is disclosed (17) |
 | `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**THE LATEST WORK (this commit, 2026-08-08): THE THIRD WINDOW — the NOAA tide page for
+the station the VESSEL'S OWN FIX selects.** The IDW over 3 proximal stations Andy asked
+for already existed in the water monitor; what was new is the window, and disclosing the
+blend instead of reporting it under one station's name. No station id is hardcoded
+anywhere — check 1 enforces that by AST. **Read "THE THIRD WINDOW" below.**
 
 **THE SESSION JUST FINISHED (2026-08-08, "ASV console refinement") — FIVE COMMITS,
 TREE CLEAN, EVERYTHING PUSHED.** Andy drove it card by card from live use, and every
@@ -1287,6 +1294,60 @@ env_water.py's own check). (2) Becalming it unmasked the second: the check read
 FAIL. The lsGet falsiness lesson, server-side: live weather had hidden it because
 sog never actually reached zero. Now `is None`-guarded (`sog_of`). Three
 consecutive clean runs after both.
+
+## THE THIRD WINDOW: THE TIDE STATION THE VESSEL SELECTS (2026-08-08)
+
+Andy: "Add a third browser window with `…/waterlevels.html?id=8557380`. This is for Lewes
+Delaware. Use the vessel GPS to get the nearest tide station. Conduct a IDW analysis of 3
+proximal stations if there isn't one in the immediate area."
+
+**HALF OF IT ALREADY EXISTED, and that is the point worth carrying:** the water monitor
+has always located the nearest CO-OPS stations FROM THE VESSEL FIX and blended up to
+`WATER_K` (3) of them by inverse-distance weighting (`WATER_IDW_POWER` 2,
+`WATER_MAX_KM` 200), banding by distance so a remote reading is never applied to charted
+depths. The IDW he asked for was already running. **What was missing was the window — and
+the disclosure.**
+
+**THE STATION IS DERIVED, NEVER CONFIGURED.** `tide_station_url()` is the one place the
+URL is built and **no station id exists as a literal anywhere in the console** (check 1
+guards it, by AST). 8557380 is simply what the DriX spawn resolves to — measured live:
+**Lewes 3.7 km (95.5% of the weight), Brandywine Shoal Light 22.3 km (2.6%), Cape May
+26.4 km (1.9%)**. Move the boat and the window follows.
+
+**WHY IT IS A DEFERRED DAEMON THREAD, not a `threading.Timer` beside the other two
+windows:** at process start there is NO GPS FIX, so there is no nearest station to open.
+`open_tide_window` waits for the monitor to resolve one, gives up after
+`TIDE_WINDOW_WAIT_S` rather than living forever, and never raises — a browser that will
+not open is a missing convenience, not a reason to take the console down. `--browser
+none` opens nothing (so every real-console harness is untouched), `--no-tide-window`
+skips just this one.
+
+**THE PAGE SHOWS ONE STATION; THE CORRECTION MAY USE THREE.** A CO-OPS page takes a
+single id, so it shows the PRIMARY — the nearest station actually returning data, which
+is the same one the chart-source card attributes the correction to (**both read
+`water.station`, so they cannot disagree** — check 15). Naming one station against a
+blended number would misrepresent it, so the blend is PRINTED when the window opens and
+the card's Correction tooltip lists every contributor, with an `idw N` marker on the row.
+**Reported to one decimal deliberately:** inverse-SQUARE weighting means a station four
+times further away counts a sixteenth as much, so at Lewes the split rounds to
+"100%, 0%, 0%" at integer precision and hides that the far stations are in it at all.
+
+`tests/tide_window.py` (17, hermetic — fake opener + fake water monitor, no network and
+no browser; 9/9 mutations). **TWO HARNESS FAULTS FOUND WHILE MUTATING, both old friends:**
+check 8's call sat at module level, so the fault it tests for (a throwing browser)
+KILLED the suite instead of failing the check — *a harness that cannot survive the fault
+it tests for cannot report it*, third instance in this repo. And check 1 first matched
+its own subject: a plain substring search for a pinned station id flagged the word
+inside my own COMMENT explaining what Lewes resolves to, so it now walks the AST for
+constants used as VALUES, skipping docstrings.
+
+**A REAL SCARE, and the reason the mutation runner now writes atomically:** the first
+mutation pass timed out (one mutation removes the wait's deadline, so the SUITE hangs
+rather than fails), the runner was killed between `open(path,'w')` truncating and the
+write completing, and **`asv_console.py` was left at 0 bytes**. Recovered from HEAD plus
+re-applied edits. The runner now writes to a temp file and `os.replace`s it, bounds each
+run with a subprocess timeout, and scores TIMEOUT as its own verdict — for that mutation
+a hang IS the expected result, and it proves the give-up path is real.
 
 ## THE LANE YIELDS TO THE LAW — gateLegClear (2026-08-06)
 

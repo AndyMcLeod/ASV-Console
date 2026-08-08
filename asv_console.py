@@ -1116,9 +1116,25 @@ COOPS_STATIONS_URL = ("https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/"
                       "stations.json?type=waterlevels")
 COOPS_DATA_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 COOPS_APP = "asv_console"
-# Tide-chart window (ENV card): hours of OBSERVED past + PREDICTED future to fetch.
+# The operator-facing CO-OPS page for ONE station - the THIRD browser window. It takes a
+# single station id, so when the correction is an IDW blend this page can only show the
+# PRIMARY (the nearest station actually returning data). The console prints the whole
+# blend when it opens the window, so a blended correction is visible rather than implied.
+COOPS_PAGE_URL = "https://tidesandcurrents.noaa.gov/waterlevels.html?id=%s"
+# Tide series: hours of OBSERVED past + PREDICTED future to fetch.
 TIDE_PAST_H = 12
 TIDE_PRED_H = 24
+
+
+def tide_station_url(station_id):
+    """CO-OPS water-levels page for a station id, or None when there is no id.
+
+    ONE place, because the id is DERIVED from the vessel's own fix rather than
+    configured: hardcoding a station anywhere would pin the console to whatever water it
+    happened to be written in. The DriX spawn resolves to Lewes, Delaware - that is a
+    measurement, not a default."""
+    sid = str(station_id or "").strip()
+    return COOPS_PAGE_URL % sid if sid else None
 WATER_STATIONS_CACHE = os.path.join(CHART_DIR, "coops_stations.json")
 _water_stations = None
 _water_stations_lock = threading.Lock()
@@ -3453,6 +3469,79 @@ def pick_browser(pref):
     return None
 
 
+# --- third window: the CO-OPS page for the station driving the correction ---- #
+# WHY IT IS DEFERRED, and why it cannot simply be opened next to the other two: the
+# station is DERIVED FROM THE VESSEL'S GPS, and at process start there is no fix yet, so
+# there is no station to open. This waits for the water monitor to resolve one.
+#
+# WHICH station: the PRIMARY - the nearest one actually returning data. That is the same
+# station the chart-source card attributes the correction to, so the window and the card
+# can never disagree. When three stations are in range the correction is an IDW blend of
+# all of them (WATER_K / WATER_IDW_POWER, which predate this window), and a page showing
+# one station would quietly misrepresent that - so the blend is PRINTED here, every
+# contributor with its weight. `ok` is deliberately not required: a station with no data
+# still names the right page, and "which water are we in" is worth answering even when
+# the reading failed.
+TIDE_WINDOW_WAIT_S = 120.0        # give up rather than hang a thread forever
+TIDE_WINDOW_POLL_S = 2.0
+
+
+def tide_window_report(w):
+    """One human line describing the water reading behind the opened page: the primary
+    station, and the full IDW blend when there is one. Pure, so it is testable without a
+    network or a browser."""
+    sid = w.get("station")
+    if not sid:
+        return None
+    bits = ["station %s" % sid]
+    if w.get("name"):
+        bits.append(str(w["name"]))
+    if w.get("dist_km") is not None:
+        bits.append("%.1f km off" % w["dist_km"])
+    line = "  Tide window: " + " · ".join(bits)
+    used = [g for g in (w.get("stations") or []) if g.get("id")]
+    method = w.get("method") or ("idw%d" % len(used) if len(used) > 1 else "single")
+    if len(used) > 1:
+        ws = [1.0 / max(g.get("dist_km") or 0.01, 0.01) ** WATER_IDW_POWER for g in used]
+        tot = sum(ws) or 1.0
+        # ONE DECIMAL, not zero: inverse-SQUARE weighting means a station four times
+        # further away contributes a sixteenth as much, so at Lewes (3.7 km against 22
+        # and 26) the blend rounds to "100%, 0%, 0%" at integer precision and hides that
+        # the far stations are in it at all. The decimal shows the primary dominating.
+        blend = ", ".join("%s %.1f%%" % (g["id"], 100.0 * x / tot) for g, x in zip(used, ws))
+        line += "\n    correction is %s over %d stations: %s" % (method, len(used), blend)
+        line += "\n    the page shows the PRIMARY only - the applied offset is the blend"
+    else:
+        line += " · correction from this station alone (%s)" % method
+    return line
+
+
+def open_tide_window(opener, wait_s=TIDE_WINDOW_WAIT_S):
+    """Wait for a station, then open its CO-OPS page. Never raises: a browser that will
+    not open is a missing convenience, not a reason to take the console down."""
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            w = WATER.snapshot()
+        except Exception:
+            w = {}
+        url = tide_station_url(w.get("station"))
+        if url:
+            report = tide_window_report(w)
+            if report:
+                print(report)
+            try:
+                opener.open(url, new=1)
+            except Exception:
+                print("  Could not open the tide window; the URL is %s" % url)
+            return url
+        time.sleep(TIDE_WINDOW_POLL_S)
+    print("  Tide window: no water-level station resolved within %.0fs "
+          "(no GPS fix, or no CO-OPS station within %.0f km) - not opened."
+          % (wait_s, WATER_MAX_KM))
+    return None
+
+
 # --- auto-started AIS provider (ais_service.py as a child process) ---------- #
 _ais_proc = None
 
@@ -3625,6 +3714,9 @@ def main():
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
     ap.add_argument("--no-log", action="store_true",
                     help="disable the session recorder (logs/*.jsonl for future playback)")
+    ap.add_argument("--no-tide-window", action="store_true",
+                    help="do not open the third window (the NOAA CO-OPS page for the "
+                         "water-level station nearest the vessel)")
     ap.add_argument("--roc-config", metavar="PATH",
                     help="ROC registry file to use instead of roc_config.json (a test "
                          "harness points this at a temp file so it cannot write to the "
@@ -3725,6 +3817,12 @@ def main():
                 # it sidesteps the browser pop-up blocker. Slight delay so it lands as a
                 # separate window after the first is up.
                 threading.Timer(1.0, lambda: opener.open(url + "?panel=controls", new=1)).start()
+                # THIRD window: the NOAA CO-OPS page for the station the vessel's own fix
+                # selects. On its own thread, not a Timer, because it WAITS for a station
+                # to exist - see open_tide_window. Daemon, so it can never hold shutdown.
+                if not args.no_tide_window:
+                    threading.Thread(target=open_tide_window, args=(opener,),
+                                     daemon=True).start()
         except Exception:
             print("  Could not auto-open a browser; open the URL above manually.")
 

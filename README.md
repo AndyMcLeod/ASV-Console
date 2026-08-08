@@ -67,7 +67,11 @@ drag its bottom-right corner; the size is remembered per card, and only a size y
 actually changed is stored, so a card's default can still be improved later. If the controls window is closed the toolbar and panels
 return to the main window automatically, and a **⏏ Controls** pill appears on the top
 bar to reopen it — so the console is never left without its controls. Pass
-`--single-window` to skip the second window.
+`--single-window` to skip the second window. A **third window** opens the NOAA
+CO-OPS water-levels page for the station nearest the vessel — the station is
+derived from the live GPS fix, not configured, and the depth correction behind it
+is an inverse-distance blend of up to 3 stations in range (`--no-tide-window` to
+skip it).
 
 ### Vessel profiles
 
