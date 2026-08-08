@@ -322,7 +322,7 @@ c.push(P("`/api/roc` takes an `op` field: `add`, `update`, `offset`, `motion`, `
 c.push(H1("11  Data formats and persistence"));
 c.push(TBL(["File", "Format", "Contents"], [
   ["`mission.json`", "JSON", "The committed plan: waypoints, survey lines, speed, arrival radius, completion mode, buffer"],
-  ["`roc_config.json`", "JSON", "ROC definitions, placements and lifecycle state"],
+  ["`roc_config.json`", "JSON", "ROC definitions, placements and lifecycle state — capped at the 3 most recent (ROC_PERSIST_MAX), HOME always retained; enforced on save AND load, so an oversized file heals itself"],
   ["`vessels/<id>.json`", "JSON", "One vessel's complete configuration (chapter 4)"],
   ["`logs/*.jsonl`", "JSONL", "Append-only session recording: every command, setting, state transition and telemetry sample"],
   ["`charts/`", "Tiles + JSON", "Chart tile and ENC feature caches, regenerated at runtime"],

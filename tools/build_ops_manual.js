@@ -321,7 +321,10 @@ c.push(B("SHORE — a fixed position. Its ARRIVAL POINT is offset from it by a r
 c.push(B("SHIP (mothership) — a position that MOVES. Its offset is normally measured from the ship's own course, so “so many metres astern” stays astern as she turns."));
 c.push(H2("12.1  Place, edit, confirm"));
 c.push(P("Click `+ Shore` or `+ Ship`, then click the chart to place it. While STAGED it is editable and CANNOT be HOME. Set its position, its recovery offset, and for a ship its heading and speed, then Confirm — which activates it and starts a ship steaming. Selecting Hold reverts it to staged."));
-c.push(H2("12.2  A moving recovery"));
+c.push(H2("12.2  Removing one, and what survives a restart"));
+c.push(P("`Remove` on a ROC row deletes it immediately — the row goes and the registry is written straight away. THE LIST YOU SEE THIS SESSION IS NOT BOUNDED: place as many operations centres as the work needs. What is bounded is what COMES BACK. Only the three most recently placed survive a restart, so the card cannot fill up with the leftovers of every session that went before it; if one of them is HOME it is always among the three, because losing it would quietly move where Return-to-Home goes."));
+c.push(NOTE("IF THE CARD EVER OPENS FULL OF STRANGERS", "It will now trim itself to the three most recent on the next start — you do not have to delete anything by hand. A long list is also slow to edit: every change re-sends and re-draws the whole list, so with a very long one a Remove can take about a second to appear, which looks exactly like a button that does not work."));
+c.push(H2("12.3  A moving recovery"));
 c.push(P("With a ship selected as HOME, Return-to-Home CHASES it: the console re-aims the vessel at the current arrival point as the ship moves. A moving recovery point is driven DIRECT rather than routed, because a detour computed against a point that has since moved is worse than useless."));
 c.push(NOTE("CHECK THE CLOSING SPEED", "A return only converges if the vessel can actually overhaul the ship. The card computes the closing rate against THIS vessel's top speed and says plainly when the ship is uncatchable. A mothership one vessel overhauls easily is one a slower vessel never reaches."));
 

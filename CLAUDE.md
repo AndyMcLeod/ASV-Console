@@ -66,7 +66,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-FOUR REGRESSION SUITES (493 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-FIVE REGRESSION SUITES (509 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -95,6 +95,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
+| `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap (17) |
@@ -120,6 +121,15 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
 `cd tools && node build_docs.js` rebuilds all four; **never hand-edit a docx**. Shared
 formatting in `tools/docx_kit.js`. Full table in "Keep docs current" below.
+
+**THE LATEST WORK (this commit, 2026-08-08): THE ROC CARD — and the Remove button was
+never broken.** The card opened on 198 stale ROCs that OUR OWN test suite had been
+writing into the operator's `roc_config.json`, one per run; Remove was correct but took
+~1200 ms at that size and removed 1 row of 198, so it read as dead. Now capped at the 3
+most recent (save AND load, HOME always retained), the suites are locked out of that file
+with `--roc-config`, and a malformed record can no longer take the whole card down. New
+suite `tests/roc_persist.py` (16, 8/8 mutations). **Read "THE ROC CARD" below before
+touching the registry.**
 
 **THE LATEST WORK (2026-08-07): TWO CARD FIXES ANDY ASKED FOR — the ENV one
 REWRITTEN in THIS commit after he reported the first attempt still distorted.**
@@ -1124,6 +1134,57 @@ the page. It now returns a painter closure from inside the eval.
 Live against the real Lewes ENC: all four cells (`US5DE1DF/DG/EF/EG`) listed in
 order, `US5DE1EF` marked `data-here`, legend reading "● the vessel is on
 US5DE1EF". Ops manual 6.3 + tech manual's card table + README updated and rebuilt.
+
+## THE ROC CARD: THE REMOVE BUTTON WAS NEVER BROKEN (2026-08-08)
+
+Andy: "The ROC card opens with old data. The remove button on each entry fails to remove
+the entry. Delete the data and allow only the most recent 3 entries to preserve through
+restarts."
+
+**`roc_config.json` held 198 IDENTICAL STAGED ROCs, and they were OURS.**
+`tests/http_contract.py` POSTs every ROC op — `add` among them — against a live console
+started with `cwd=APP`, so **every run wrote one more ROC into the OPERATOR'S OWN
+registry** and nothing ever removed it. Same class as the mission.json scare, except this
+one was real and had been accumulating since the suite was written.
+
+**THE REMOVE BUTTON WORKS. IT ALWAYS DID.** Every ROC edit ships the whole registry back
+and re-renders the whole list, so measured in a real browser one Remove took **~1200 ms
+at 198 entries against 28 ms at 4** — and it took away 1 row out of 198 identical ones.
+The operator clicks, nothing appears to happen, the list looks unchanged. **A control
+that is correct but smothered by data reads exactly like a broken control**, and the
+first instinct — go and read the click handler — finds nothing, because there is nothing
+there to find. Check 12 now pins `remove()` so a real regression is not blamed on the UI.
+
+**THE FIX, three parts:**
+- **`ROC_PERSIST_MAX = 3`, enforced on SAVE AND ON LOAD.** The load side is what makes an
+  oversized file left by an older build heal itself on the next start instead of needing
+  to be deleted by hand. **The LIVE registry is NOT capped** — a session may place as
+  many as the work needs; the cap is a property of what SURVIVES.
+- **HOME is the one exception to "most recent".** If it falls outside the tail it
+  displaces the OLDEST kept entry, so the count stays 3 and Return-to-Home cannot quietly
+  move on a restart.
+- **`--roc-config PATH` + `RocTracker.use_config()`**, and both ROC-touching suites now
+  pass it. Proven by hash: the operator's file is byte-identical after running them.
+
+**A REAL LATENT BUG FOUND ON THE WAY, and it is the sharper one:** `_load` builds the
+offset as `{"range_m": c.get("range_m"), ...}`, so a record written before those fields
+existed arrives with the keys PRESENT and None. The merge used `if k in offset`, which
+overwrote the defaults with None, and `set_offset()` SKIPS None — so `self.range_m` was
+**never assigned at all** and the first read of the arrival point raised inside
+`snapshot()`. **One malformed record would have taken out the whole ROC card and every
+`/api/state` frame with it.** Fixed in `Roc.__init__` (`offset.get(k) is not None`), which
+covers the `/api/roc add` body too — the producer, so every caller inherits it.
+
+**New suite `tests/roc_persist.py` (16, 8/8 mutations).** **TWO of those mutations first
+scored as survivors by KILLING THE HARNESS** — module-level `snapshot()` and `add()` calls
+threw under the very fault check 8 exists for, so the process died before the relevant
+check ran and printed no FAIL line. *A harness that cannot survive the fault it tests for
+cannot report it* — already written down in this file for `stored_settings.js`, and
+reintroduced twice here. Every fault-touching call is now inside a thunk. **A third check
+was auditing ITSELF:** the "no suite may write to the operator's registry" check matched
+files by substring, and this file names both `asv_console.py` and `--roc-config`, so it
+put itself in its own audit set and passed on its own text. It parses the AST for a real
+`Popen` CALL now — a pattern that occurs in its own source cannot tell the two apart.
 
 ## THE LANE YIELDS TO THE LAW — gateLegClear (2026-08-06)
 

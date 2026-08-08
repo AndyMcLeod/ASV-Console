@@ -345,10 +345,15 @@ if os.path.exists(mpath):
     with io.open(mpath, encoding="utf-8") as f:
         mission_bak = f.read()
 
+# This suite POSTs ROC ops against a live console. Without its own registry file
+# every run left a staged ROC behind in the OPERATOR's roc_config.json - that is
+# how the ROC card came to open on 198 stale rows.
+ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
 srvlog = tempfile.TemporaryFile(mode="w+")
 port = free_port()
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log",
+                         "--roc-config", ROC_CFG],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 no_response, not_json, roc_dead = [], [], []
 get_dead, get_hung, sse = [], [], (None, "", b"")

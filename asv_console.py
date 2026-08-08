@@ -3625,7 +3625,20 @@ def main():
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
     ap.add_argument("--no-log", action="store_true",
                     help="disable the session recorder (logs/*.jsonl for future playback)")
+    ap.add_argument("--roc-config", metavar="PATH",
+                    help="ROC registry file to use instead of roc_config.json (a test "
+                         "harness points this at a temp file so it cannot write to the "
+                         "operator's own ROCs)")
     args = ap.parse_args()
+
+    # A harness that drives a real console MUST be able to keep its ROCs out of the
+    # operator's registry. Without this every run of the HTTP-contract suite, which POSTs
+    # every ROC op including `add` against a live console in the app directory, left one
+    # more staged ROC behind in roc_config.json - 198 of them by the time the card was
+    # reported as opening on stale data. Re-pointed here rather than at import so --help
+    # and --fetch-charts still touch nothing.
+    if args.roc_config:
+        ROC.use_config(args.roc_config)
 
     # Load the requested vessel profile (default already applied at import). Fail
     # loudly on a bad id / malformed file rather than silently running the default.

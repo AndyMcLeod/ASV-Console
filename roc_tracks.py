@@ -50,6 +50,17 @@ import time
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROC_CONFIG_PATH = os.path.join(APP_DIR, "roc_config.json")
+# How many ROCs survive a restart. The registry itself is UNBOUNDED - a session may place
+# as many as the work needs - but the config file keeps only the most recent few, because
+# an unbounded file is exactly what went wrong: it had grown to 198 identical staged
+# entries, each one left behind by something that added a ROC and never removed it. The
+# card then opened on a wall of stale rows, and because every edit ships and re-renders
+# the WHOLE set, one removal took about a second to appear and took away 1 row out of 198
+# - which reads precisely like a Remove button that does not work.
+# THE OPERATOR'S RULE (Andy, 2026-08-08): "allow only the most recent 3 entries to
+# preserve through restarts". Applied on BOTH save and load, so an oversized file written
+# by an older build heals itself on the next start rather than needing deleting by hand.
+ROC_PERSIST_MAX = 3
 
 # Telemetry-age thresholds for a live-fed ROC's link indicator (seconds).
 FRESH_S = 5.0
@@ -295,7 +306,16 @@ class Roc:
         self.gps_spawned = False   # True when the console auto-spawned a gps_sim.py for it
         o = dict(ship_offset() if self.kind == "ship" else SHORE_OFFSET)
         if offset:
-            o.update({k: offset[k] for k in ("range_m", "bearing_deg", "ref") if k in offset})
+            # `is not None`, NOT `in`: a caller that spells an ABSENT field as None - the
+            # persisted config does exactly that, `c.get("range_m")` on a record written
+            # before the field existed - would otherwise overwrite the default with None,
+            # and set_offset() skips None, so the attribute was never assigned at all.
+            # The ROC then raised AttributeError the first time anything read its arrival
+            # point, which is inside snapshot(), so ONE malformed record took out the
+            # whole ROC card and every /api/state frame with it. Defaults must survive an
+            # unspecified field; only a real value may replace one.
+            o.update({k: offset[k] for k in ("range_m", "bearing_deg", "ref")
+                      if offset.get(k) is not None})
         self.set_offset(o.get("range_m"), o.get("bearing_deg"), o.get("ref"))
         if self.status == "active" and self.kind == "ship":   # a restored active ship displays its motion
             self.cog, self.sog = self.heading, self.speed_kn
@@ -458,13 +478,59 @@ class RocTracker:
         return "%s-%d" % (kind, self._seq)
 
     # -- persistence ----------------------------------------------------------- #
+    @staticmethod
+    def _persist_keep(items, home_id, key=lambda x: x):
+        """The ROC_PERSIST_MAX most recent of `items`, in their original order.
+
+        Recency is INSERTION ORDER - the registry is an ordered dict and the config file
+        is written in that order, so the tail is the newest. There is no timestamp on a
+        ROC and adding one to mean "recent" would be a second source of truth for
+        something the order already says.
+
+        THE ONE EXCEPTION IS HOME. Dropping it would quietly move where Return-to-Home
+        goes on the next start, so if HOME falls outside the tail it displaces the OLDEST
+        of the kept entries rather than being lost. The count is still exactly
+        ROC_PERSIST_MAX, and HOME keeps its place in the order (the result stays ordered,
+        so the next save is stable).
+        """
+        if len(items) <= ROC_PERSIST_MAX:
+            return list(items)
+        keep = list(items[-ROC_PERSIST_MAX:])
+        if home_id is not None and not any(key(i) == home_id for i in keep):
+            home = next((i for i in items if key(i) == home_id), None)
+            if home is not None:
+                keep = [home] + keep[1:]        # displace the oldest kept, not the newest
+        return keep
+
+    def use_config(self, path):
+        """Re-point the registry at another config file and reload from it.
+
+        For a TEST HARNESS driving a real console: the registry is a module-level global
+        built at import, so without this a suite that adds a ROC writes into the
+        operator's own roc_config.json. Clears whatever the default file had already
+        loaded, so the harness starts from that file and only that file.
+        """
+        with self._lock:
+            for rid in list(self._rocs):
+                self._detach_gps_locked(rid)     # never orphan a reader thread or child
+            self._rocs.clear()
+            self._home_id = None
+            self._seq = 0
+            self._config_path = path
+        self._load()
+
     def _load(self):
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
             return
-        for c in data.get("rocs", []):
+        # Cap on the way IN as well as out: a file written by an older build (or by hand)
+        # can be any size, and the operator should not have to delete it to get a usable
+        # card. Whatever is dropped here is gone at the next save, which is the point.
+        raw = self._persist_keep([c for c in data.get("rocs", []) if isinstance(c, dict)],
+                                 data.get("home_id"), key=lambda c: c.get("id"))
+        for c in raw:
             try:
                 r = Roc(c["id"], c.get("name"), c.get("kind", "shore"),
                         lat=c.get("lat"), lon=c.get("lon"), status=c.get("status", "staged"),
@@ -484,10 +550,15 @@ class RocTracker:
         self._home_id = data.get("home_id") if data.get("home_id") in self._rocs else None
 
     def _save_locked(self):
+        # ONLY the most recent ROC_PERSIST_MAX reach the file. The live registry is left
+        # alone - removing a ROC the operator is still using because they placed a fourth
+        # would be a surprise mid-session; the cap is a property of what SURVIVES.
+        keep = self._persist_keep(list(self._rocs.values()), self._home_id, key=lambda r: r.id)
+        home = self._home_id if any(r.id == self._home_id for r in keep) else None
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump({"rocs": [r.to_config() for r in self._rocs.values()],
-                           "home_id": self._home_id}, f, indent=2)
+                json.dump({"rocs": [r.to_config() for r in keep],
+                           "home_id": home}, f, indent=2)
         except OSError:
             pass
 

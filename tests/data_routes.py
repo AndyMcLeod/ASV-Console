@@ -152,11 +152,17 @@ for name in ("mission.json", "comms_config.json"):
         with open(p, "r", encoding="utf-8") as f:
             backups[p] = f.read()
 
+# This suite adds a ROC ("Test Dock") against a live console. Without its own registry
+# file it writes into the OPERATOR's roc_config.json - the accumulation that had the ROC
+# card opening on 198 stale rows. It removes what it adds, but a suite that fails part
+# way through would still leave one behind, and no test should be able to reach that file.
+ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
 srvlog = tempfile.TemporaryFile(mode="w+")
 # Logging ON: the comms redaction check reads the session recorder's own records -
 # the same --no-log mask that hid the logevent defect would hide a redaction break.
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service"],
+                         "--port", str(port), "--no-ais-service",
+                         "--roc-config", ROC_CFG],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False

@@ -184,6 +184,14 @@ try:
     vessel = api(port, "/api/vessel")["vessel"]
     boot0 = state(port).get("boot_id")
 
+    # DETERMINISM: the sim's EnvMonitor pushes the boat with LIVE NDBC weather at the
+    # spawn, so a paused boat drifts at the real wind's whim - check 6's standstill
+    # (<= 0.15 kn) was seen failing at sog 0.16-0.18 purely because Lewes was blowing
+    # that evening (2026-08-07), after passing for days in calmer air. A control suite
+    # must not be hostage to the weather: run this console becalmed. The env override
+    # itself is covered by env_water.py (disable RETURNS CALM is its check 5).
+    cmd(port, "/api/env", {"enabled": False})
+
     # ---- TRANSIT ------------------------------------------------------------------- #
     # A dogleg with a SHORT first leg (see the module docstring for why), then two long
     # ones the run will never finish inside this suite - the subject is control, not
@@ -228,12 +236,16 @@ try:
           lambda: (idx_before or 0) >= 1, "wp_index=%s" % idx_before)
 
     cmd(port, "/api/cmd/pause")
-    st = wait_for(port, lambda s: (s["status"].get("sog_kn") or 1) <= 0.15, limit=20)
+    # `is None`, NOT `or`: a becalmed boat reads sog_kn 0.0, and `0.0 or 1` is 1 -
+    # the old guard could not tell a PERFECT standstill from a missing field (the
+    # lsGet lesson, server-side). Live weather hid it: sog never used to reach 0.
+    sog_of = lambda s: (lambda v: 999.0 if v is None else v)(s["status"].get("sog_kn"))
+    st = wait_for(port, lambda s: sog_of(s) <= 0.15, limit=20)
     check("6. PAUSE holds the boat: speed over ground falls to a standstill",
-          lambda: (st["status"].get("sog_kn") or 1) <= 0.15 and st.get("run") == "paused"
+          lambda: sog_of(st) <= 0.15 and st.get("run") == "paused"
           and st["status"].get("paused") is True,
           "sog=%.2f run=%s link paused=%s"
-          % (st["status"].get("sog_kn") or -1, st.get("run"), st["status"].get("paused")))
+          % (sog_of(st), st.get("run"), st["status"].get("paused")))
     check("6b. ... and PAUSE IS NOT STOP: the plan and the waypoint index survive it",
           lambda: state(port).get("wp_index") == idx_before
           and state(port).get("plan_uploaded") is True and state(port).get("wp_total") == 3,
