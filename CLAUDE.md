@@ -603,7 +603,7 @@ Two rules fall out, both cheap:
 - `3080e6a` **documentation set** — there was one generated document, for engineers; Andy
   asked for three more readers to be served. **Quick Start** (976 w, ~20 min to a running
   survey, deliberately ruthless — don't grow it), **Operations Manual** (5,487 w, 17 ch, the
-  person at the console with a vessel in the water), **Development Guide** (3,523 w, 10 ch,
+  person at the console with a vessel in the water), **Development Guide** (10 ch,
   how the project is BUILT AND VERIFIED, since the tech manual covers what it is — including
   five case studies kept because each is a CLASS). Helpers extracted to `tools/docx_kit.js`;
   **the tech manual's `word/document.xml` is byte-identical across that extraction**, which
@@ -1208,6 +1208,19 @@ closing commit): defect shapes **6.5 "the unguarded branch before the safety net
 (the dropped-connection family + its placement rule) and **6.6 "the masked branch"**
 (--no-log; a masked branch is untested no matter how many suites run past it), and case
 study **8.7 "the coverage campaign"** with the four mutation rules the thread earned.
+
+**AND THE MUTATION RUNNER ITSELF IS NOW DOCUMENTED (2026-08-09), because it damaged this
+repo twice.** Defect shape **6.7 "a check that cannot report the fault it exists for"** —
+a suite that dies part-way prints no FAIL line, and "no failures printed" is
+indistinguishable from "everything passed" to whatever grades it; **including the trap of
+fixing the wrong symptom** (asserting the console still ANSWERS when the real invariant was
+that HOME is still a usable coordinate). Case study **8.8 "the tool that damaged the thing
+it was testing"** — a killed runner does not run its cleanup, so the recovery must be
+durable and visible: **a `.mutorig` sidecar restored on START, atomic writes, background
+execution, and a `git diff` after every run**. It also records the two cheaper traps from
+the same session: **a line-ending mismatch silently matching no anchors** (the repo blob is
+LF, the working copy CRLF), and why a missing anchor must score as SKIPPED rather than
+caught. **Read 8.8 before writing another mutation runner.**
 
 ## /api/logevent + /api/logs + /api/log UNDER TEST — THE FAMILY'S THIRD MEMBER (2026-08-05)
 
