@@ -64,6 +64,7 @@ const MODSRC = require("fs")
   .replace(/^export /gm, "");
 
 const STATIC = path.join(__dirname, "..", "static");
+const { sea } = require("../static/js/state.js");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
@@ -107,7 +108,10 @@ const M_PER_DEG_LAT = 111320.0;
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      "const SEG_LEN_M=2200;\nlet CHANNEL_REACH_M=null;\n" +          // vessel override: default reach
-     grabDecl("LANE_FRAC") + "\n" + grabDecl("laneUsed") + "\n" +
+     // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
+     // bodies below write into the SHARED state object rather than a local of their own -
+     // which is what lets the checks below read back what the router actually did.
+     grabDecl("LANE_FRAC") + "\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
@@ -328,7 +332,7 @@ const badLegsOf = (wps, world) => { let bad=0;
   for(let i=1;i<wps.length;i++) if(!legClear(wps[i-1],wps[i],ref,world,3)) bad++;
   return bad; };
 // the UN-gated pipeline, exactly as channelLaneRoute ran before the gate existed
-const ungated = (()=>{ laneUsed=false;
+const ungated = (()=>{ sea.laneUsed=false;
   let o = buoyChannelLane(NB, ref, WW, 3); o = narrowChannelLane(o, ref, WW, 3);
   return [NB[0], ...smoothTrack(o, ref, WW, 3)]; })();
 check("15. the scenario has TEETH: the un-gated lane pipeline crosses the pier",
@@ -350,7 +354,7 @@ const dockWorld = walledChannel();
 const dring = [{e:-84,n:-6},{e:-78,n:-6},{e:-78,n:-2},{e:-84,n:-2}];
 dockWorld.polys.push({ring: dring, bb: bbOf(dring), kind: "land"});
 const moored = laneRun(dockWorld, [{e:-80,n:0},{e:-80,n:1000}]);   // start ~2 m off the dock face
-const mooredUngated = (()=>{ laneUsed=false;
+const mooredUngated = (()=>{ sea.laneUsed=false;
   let o = buoyChannelLane(NB, ref, dockWorld, 3); o = narrowChannelLane(o, ref, dockWorld, 3);
   return smoothTrack(o, ref, dockWorld, 3); })();
 check("18. a start INSIDE the buffer is exempt: the berth leg ships UNCHANGED - same shape, no spliced detour around the boat's own dock",
@@ -368,8 +372,39 @@ check("19. when legPath cannot patch a stretch, the pre-lane input ships and `ab
       && Math.abs(toN(gres.route[gres.route.length-1]) - 1000) < 1,
       "fallback = the legPath-clear input, flagged");
 check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
-      /lane: laneUsed && !g\.abandoned/.test(H),
+      // channelLaneRoute lives in passage.js now, so this source-shape check reads the
+      // modules rather than the page. MODSRC strips `export `, so the text is unchanged.
+      /lane: sea\.laneUsed && !g\.abandoned/.test(MODSRC),
       "the banner must never claim a lane the gate threw away");
+
+// --- the vessel block must be reached THROUGH V, in every module ---------------------- //
+// THIS CHECK EXISTS BECAUSE THIS SUITE HID THE BUG IT SHOULD HAVE CAUGHT. The eval above
+// stubs `let CHANNEL_REACH_M = null` into its own scope so the default reach is exercised.
+// When Rule 9 moved to passage.js it took a BARE `CHANNEL_REACH_M` with it - undefined in
+// the browser, where the value lives on V. Every check here still passed, because the stub
+// satisfied the reference; the console threw "CHANNEL_REACH_M is not defined" the moment a
+// route was planned for real, and only a live probe found it.
+//
+// So this reads the module SOURCE rather than running it: a stub cannot mask a name that is
+// never resolved here at all. Vessel parameters are reassigned on every hull switch, which
+// is exactly why they must be read through V and never captured loose.
+{
+  const VESSEL_KEYS = ["VESSEL", "SPEED_KN", "MAX_TURN_RATE_DEG_S", "NOGO_MIN_DEPTH_M",
+                       "NOGO_BUFFER_M", "CHANNEL_REACH_M", "WRECK_RADIUS_M"];
+  const modDir = path.join(__dirname, "..", "static", "js");
+  const bare = [];
+  for (const f of fs.readdirSync(modDir).filter(x => x.endsWith(".js") && x !== "state.js")) {
+    const src = fs.readFileSync(path.join(modDir, f), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:"'])\/\/[^\n]*/g, "$1");      // comments name these constants freely
+    for (const k of VESSEL_KEYS) {
+      if (new RegExp("(?<![\\w.$])" + k + "\\b").test(src)) bare.push(f + ":" + k);
+    }
+  }
+  check("20. no module reads a vessel parameter loose — every one goes through V",
+        bare.length === 0,
+        bare.length ? bare.join(", ") : "checked " + VESSEL_KEYS.length + " names across the modules");
+}
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");
 process.exit(fails ? 1 : 0);

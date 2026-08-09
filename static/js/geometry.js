@@ -82,3 +82,14 @@ export function ptInGeom(lat, lon, geom){
     if(ring.length > 2 && pinp(p, ring)) inside = !inside; });
   return inside;
 }
+
+// Sample a segment at ~5 m in the ENU frame. The keep-out tests are POINT tests, so a
+// leg is only as well tested as it is densely sampled; 5 m is finer than the
+// smallest hazard the model carries.
+// ~5 m EN samples along one survey line [a,b] (lat/lon pair).
+export function segSamplesEN(l, ref){
+  const a=llEN(l[0].lat,l[0].lon,ref), b=llEN(l[1].lat,l[1].lon,ref);
+  const L=Math.hypot(b.e-a.e,b.n-a.n), n=Math.max(2,Math.ceil(L/5)), out=[];
+  for(let i=0;i<=n;i++){ const t=i/n; out.push({e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t}); }
+  return out;
+}

@@ -75,4 +75,7 @@ export const sea = {
   enc: {features:[], band:null, minDepth:null},   // the fetched ENC feature set
   waterOffset: 0,   // live water level above chart datum (m), ADDED to charted soundings
   chartInfo: null,  // the ENC title block: cells, zone of confidence, survey dates
+  // Did the LAST route actually engage the Rule 9 keep-right lane? Read by the
+  // readouts so the operator can tell a lane-following leg from a direct one.
+  laneUsed: false,
 };

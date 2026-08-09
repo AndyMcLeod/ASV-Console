@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 581 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 582 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (581 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (582 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -171,7 +171,28 @@ item below started as something he SAW on his own console — or, at the end, as
 | `d742f42` | what "visible" means is the panel's property, not the caller's |
 | `d1c11db` | **LAYER 0 LEAVES THE PAGE** — `static/js/{geodesy,geometry,units,state}.js` as ES modules |
 | `f4d5376` | **the chart STATE moves; the code does not** — `nogo` + `sea` to `state.js` |
-| (this commit) | **the chart CODE follows** — 22 functions + 5 constants to `static/js/chart.js` |
+| `02c3f1c` | **the chart CODE follows** — 22 functions + 5 constants to `static/js/chart.js` |
+| (this commit) | **RULE 9 + THE ROUTER LEAVE THE PAGE** — 18 functions to `static/js/passage.js` |
+
+**⇒ THE CLIENT SPLIT IS COMPLETE (this commit). `static/js/passage.js`, 20 exports.** The
+COLREGS Rule 9 keep-right lane and the keep-out router, **in ONE module because they are
+mutually recursive** — the router asks for a lane, and building that lane asks the router
+for a path. `gateLegClear` belongs with them despite reading like a clearance test.
+`segSamplesEN` went to `geometry.js`; `laneUsed` became `sea.laneUsed`.
+**ONE suite needed touching**, against seven for the combined attempts — the `MODSRC`
+search path added with `02c3f1c` absorbed the rest automatically. **The page is 4,790 lines,
+down from 5,979**; the six modules hold 1,471.
+**⚠ THE BUG THE SUITES COULD NOT SEE, AND THE CHECK THAT NOW CATCHES IT.** `passage.js`
+carried a **bare `CHANNEL_REACH_M`** — undefined in the browser, where that value lives on
+`V`. **Every suite still passed**, because `buoy_lane`'s eval stubs `let CHANNEL_REACH_M =
+null` into its own scope to exercise the default reach; the stub satisfied the reference.
+The console threw *"CHANNEL_REACH_M is not defined"* the moment a route was planned for
+real, and **only the live probe found it**. New **check 20** reads the module SOURCE for
+bare vessel-parameter names across every module — a stub cannot mask a name that is never
+resolved there. Mutation-verified: re-introducing the bare reference fails it.
+**THE GENERAL LESSON: a harness that STUBS a global cannot tell you the shipped code needs
+it.** Wherever a suite substitutes for the real world, that substitution is a blind spot,
+and the cheap cover is a source-shape check rather than another runtime one.
 
 **⇒ THE CHART STATE MOVED, THE CHART CODE DID NOT — AND THAT SPLIT IS THE POINT (this
 commit).** `nogo`, `NOGO_ENF` and a new `sea` object (`enc`, `waterOffset`, `chartInfo`) now
