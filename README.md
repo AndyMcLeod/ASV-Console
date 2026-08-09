@@ -50,6 +50,18 @@ python asv_console.py --sim --single-window               # one window (no contr
 python asv_console.py --sim --ais-collect-km 250          # collect a wider AIS area (sparse feed coverage)
 ```
 
+**Windows: `start_sim.bat`** is the same thing for a double-click, and is what a desktop
+shortcut should point at. It finds the project from **its own location**, so the repo can be
+moved or cloned anywhere without editing it, and resolves the interpreter through `PATH`
+rather than a pinned path (the Microsoft Store build of Python lives under a
+version-stamped directory, so naming the executable outright breaks at the next upgrade).
+It **forwards any extra arguments** to `asv_console.py`, so one launcher also serves a
+variant shortcut — `start_sim.bat --vessel example_usv_4m`, or `--port 8792` for a second
+console beside the first. The window it opens *is* the console: closing it stops the run.
+
+To put it on the desktop: right-drag `start_sim.bat` there → *Create shortcuts here*, then
+Properties → *Change Icon* → `tools\asv.ico`.
+
 **Multi-monitor.** On start the server opens **two** windows: the **main** window
 (chart, status, command bar) and a **controls** window (`?panel=controls`) holding
 *only* the control column and its pop-out panels — drag it to a second screen for a

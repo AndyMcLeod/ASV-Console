@@ -1,3 +1,12 @@
 # Shell hooks must stay LF - a CRLF shebang breaks the interpreter on checkout.
 .githooks/** text eol=lf
 *.sh text eol=lf
+
+# ... and the MIRROR of that rule: a Windows batch file must arrive as CRLF. cmd.exe
+# tolerates LF for ordinary commands but mishandles LABELS, so an LF checkout can break
+# `goto :done` while the happy path still looks fine.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# The launcher icon is binary - never newline-translated, never diffed as text.
+*.ico binary
