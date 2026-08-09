@@ -43,6 +43,19 @@ const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit } = require("../static/js/
 // recalcCommittedForSpeed reads the vessel block (V.SPEED_KN, V.MAX_TURN_RATE_DEG_S),
 // which moved to state.js with the Layer-0 split.
 const { V } = require("../static/js/state.js");
+
+// --- source lookup: the page AND its modules -----------------------------------------
+// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
+// may be in either place. MODSRC is those modules concatenated with the `export` keyword
+// stripped, which makes each declaration read exactly as it did when it sat in the page -
+// so the grab helpers below need no other change.
+const MODSRC = require("fs")
+  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
+  .filter(f => f.endsWith(".js"))
+  .map(f => require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
+  .join("\n")
+  .replace(/^export /gm, "");
 // The module's own SOURCE, for checks that must read a DECLARATION rather than a runtime
 // value - a default is a property of the text, not of a live object that an earlier check
 // in this same file may already have moved.
@@ -62,11 +75,12 @@ function check(name, cond, detail) {
 }
 
 function grab(name) {
-  const start = H.indexOf("function " + name + "(");
+  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
+  const start = HS.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  let k = H.indexOf("{", start), depth = 0;
-  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return H.slice(start, k + 1);
+  let k = HS.indexOf("{", start), depth = 0;
+  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return HS.slice(start, k + 1);
 }
 
 console.log("Units toggle — one preference, applied at the display edge, long distances only:");

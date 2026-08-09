@@ -34,16 +34,38 @@
 const fs = require("fs");
 const path = require("path");
 
+// --- source lookup: the page AND its modules -----------------------------------------
+// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
+// may be in either place. MODSRC is those modules concatenated with the `export` keyword
+// stripped, which makes each declaration read exactly as it did when it sat in the page -
+// so the grab helpers below need no other change.
+const MODSRC = require("fs")
+  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
+  .filter(f => f.endsWith(".js"))
+  .map(f => require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
+  .join("\n")
+  .replace(/^export /gm, "");
+
+const { WATER_FAR_KM, WATER_REMOTE_KM } = require("../static/js/chart.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
-  const start = H.indexOf("function " + name + "(");
+  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
+  const start = HS.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  let k = H.indexOf("{", start), depth = 0;
-  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return H.slice(start, k + 1);
+  let k = HS.indexOf("{", start), depth = 0;
+  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return HS.slice(start, k + 1);
 }
 function grabDecl(name) {
+  // the page first, then the modules - same order the page itself loads them
+  for (const HS of [H, MODSRC]) {
+    for (const kw of ["const ", "let ", "var "]) {
+      const i = HS.indexOf(kw + name + " =");
+      if (i >= 0) return HS.slice(i, HS.indexOf(";", i) + 1);
+    }
+  }
   for (const kw of ["const ", "let "]) {
     const i = H.indexOf(kw + name + " =");
     if (i >= 0) return "var " + H.slice(i + kw.length, H.indexOf(";", i) + 1);

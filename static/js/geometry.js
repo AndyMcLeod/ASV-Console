@@ -67,3 +67,18 @@ export function eachPath(g, fn){ if(!g) return;
 export function eachPoint(g, fn){ if(!g) return;
   if(g.type==="Point") fn(g.coordinates);
   else if(g.type==="MultiPoint") g.coordinates.forEach(fn); }
+
+// Is (lat,lon) inside a Polygon/MultiPolygon? Evaluated in an ENU frame CENTRED
+// ON THE POINT ITSELF, so the point under test is the origin and each ring is
+// projected around it - which keeps the flat-earth error smallest exactly
+// where the answer is decided.
+// Even-odd point-in-polygon over a GeoJSON geometry, reusing the routing
+// primitives (the test point is its own ENU reference, so holes subtract).
+export function ptInGeom(lat, lon, geom){
+  if(!geom) return false;
+  const ref = {lat, lon}, p = {e:0, n:0};
+  let inside = false;
+  eachRing(geom, rg=>{ const ring = rg.map(c=>llEN(c[1], c[0], ref));
+    if(ring.length > 2 && pinp(p, ring)) inside = !inside; });
+  return inside;
+}

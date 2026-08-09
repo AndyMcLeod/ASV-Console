@@ -49,7 +49,8 @@ c.push(TBL(["Module", "Holds", "Depends on"], [
   ["`geodesy.js`", "Azimuth, distance, ENU, Web Mercator. No DOM, no state, no imports.", "nothing"],
   ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers.", "geodesy"],
   ["`units.js`", "The distance DISPLAY EDGE. Owns the km/nm preference outright.", "nothing"],
-  ["`state.js`", "The vessel-derived parameter block, as one mutable object.", "nothing"],
+  ["`state.js`", "Shared mutable state: the vessel parameter block, the keep-out model, live chart state.", "nothing"],
+  ["`chart.js`", "What the chart SAYS: hazard extent, corrected depth, clearance tests, the fairway's identity.", "geodesy, geometry, state"],
 ], [1700, 5600, 1500]));
 c.push(P("Two rules make this work, and both are the same rule in different clothes. FUNCTIONS are imported by name, because a function binding is never reassigned — so moving one costs no call-site change anywhere. SHARED MUTABLE STATE is reached through an object and never destructured: an ES module namespace is sealed, so `import * as S` cannot be written to at all, and `const {x} = V` copies a value that a vessel switch will later change without telling you."));
 c.push(P("The layer is pure on purpose. A suite can require these directly and exercise the SHIPPED function rather than an eval of its source text, which is what made the older harnesses fragile: they matched their own comments, went stale against renames, and could not tell a missing helper from a broken one."));

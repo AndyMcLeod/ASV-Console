@@ -170,7 +170,8 @@ item below started as something he SAW on his own console — or, at the end, as
 | `0ac3ae6` | **a card is not a mode** — opening ROC no longer cancels SURV |
 | `d742f42` | what "visible" means is the panel's property, not the caller's |
 | `d1c11db` | **LAYER 0 LEAVES THE PAGE** — `static/js/{geodesy,geometry,units,state}.js` as ES modules |
-| (this commit) | **the chart STATE moves; the code does not** — `nogo` + `sea` to `state.js` |
+| `f4d5376` | **the chart STATE moves; the code does not** — `nogo` + `sea` to `state.js` |
+| (this commit) | **the chart CODE follows** — 22 functions + 5 constants to `static/js/chart.js` |
 
 **⇒ THE CHART STATE MOVED, THE CHART CODE DID NOT — AND THAT SPLIT IS THE POINT (this
 commit).** `nogo`, `NOGO_ENF` and a new `sea` object (`enc`, `waterOffset`, `chartInfo`) now
@@ -196,9 +197,28 @@ like it is fighting the harness, the state and the code are probably moving toge
 **`nogo_readout` needed the sharpest change:** it used to rebind `nogo` wholesale per
 scenario. It now writes into the shared object and **clears the keys first** — `Object.assign`
 cannot remove a field, so a model omitting `ko` would inherit the previous scenario's.
-**NEXT STEP:** cut the 22 chart functions into `static/js/chart.js`. No state work remains,
-so the suites' `grab()` helpers are the only thing to re-point. The built module and a
-migrated page are in the session scratchpad under `chart-wip/`.
+**⇒ AND THE CHART CODE FOLLOWED (this commit): `static/js/chart.js`, 27 exports.** The
+two-step split paid for itself exactly as intended — **with the state already migrated, the
+move rewrote NOTHING inside the function bodies**, and only three suites needed touching:
+one leftover `H` where the widened helper wanted `HS`, two constants the suite pulled out of
+the page by hand, and one eval-scope `const` that no longer leaked to an imported caller.
+Compare that to the seven-suite breakage of the combined attempts.
+**HOW THE SUITES FIND IT NOW: `MODSRC`.** Each suite's `grab()` / `grabDecl()` searches the
+page AND `static/js/*.js` with `export ` stripped, so a declaration reads exactly as it did
+when it sat in the page. **This is a deliberate half-measure.** Layer 0 converted its suites
+to real `require()`s, which is better — but Layer 0 moved small PURE functions that suites
+merely CALLED, while these 22 are woven through eval'd page code in half a dozen spellings,
+and two automated rewrites damaged suites faster than they fixed them. Widening the search
+path is one edit per suite and cannot change what any check asserts. **Converting suites to
+real imports one at a time remains worth doing, off the critical path.**
+**3/3 mutations caught** — `blocked()` always clear, the wreck's intrinsic extent collapsed
+to a point, the water-trust distance threshold defeated — so the suites really do bind to
+the module. Two of those registered as CRASHES rather than clean check failures: the same
+reportability gap recorded for `home_spawn` 2e, noted rather than counted as a pass.
+**STILL IN THE PAGE, AND TOGETHER ON PURPOSE:** the Rule 9 lane and the keep-out router.
+They are mutually recursive — the router asks for a keep-right lane, and building that lane
+asks the router for a path — so they move as ONE unit or not at all, and `gateLegClear`
+belongs with them despite reading like a clearance test.
 
 **⇒ THE CLIENT NOW HAS MODULES (this commit). READ THIS BEFORE TOUCHING `static/asv.html`.**
 The page is a **`<script type="module">`**, and its lowest layer lives in `static/js/`:

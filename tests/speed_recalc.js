@@ -52,15 +52,29 @@ const { fmtDist, fmtDur } = require("../static/js/units.js");
 // leans on a vessel default is then reading the real one.
 const { V } = require("../static/js/state.js");
 
+// --- source lookup: the page AND its modules -----------------------------------------
+// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
+// may be in either place. MODSRC is those modules concatenated with the `export` keyword
+// stripped, which makes each declaration read exactly as it did when it sat in the page -
+// so the grab helpers below need no other change.
+const MODSRC = require("fs")
+  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
+  .filter(f => f.endsWith(".js"))
+  .map(f => require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
+  .join("\n")
+  .replace(/^export /gm, "");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
-  let start = H.indexOf("function " + name + "(");
+  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
+  let start = HS.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  if (H.slice(start - 6, start) === "async ") start -= 6;
-  let k = H.indexOf("{", start), depth = 0;
-  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return H.slice(start, k + 1);
+  if (HS.slice(start - 6, start) === "async ") start -= 6;
+  let k = HS.indexOf("{", start), depth = 0;
+  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return HS.slice(start, k + 1);
 }
 
 let fails = 0, ran = 0;

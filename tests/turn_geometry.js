@@ -48,11 +48,25 @@ const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
 // that leans on a vessel default is reading the real one.
 const { V } = require("../static/js/state.js");
 
+// --- source lookup: the page AND its modules -----------------------------------------
+// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
+// may be in either place. MODSRC is those modules concatenated with the `export` keyword
+// stripped, which makes each declaration read exactly as it did when it sat in the page -
+// so the grab helpers below need no other change.
+const MODSRC = require("fs")
+  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
+  .filter(f => f.endsWith(".js"))
+  .map(f => require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
+  .join("\n")
+  .replace(/^export /gm, "");
+
 const STATIC = path.join(__dirname, "..", "static");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
 function grab(src, name) {
+  if (src.indexOf("function " + name + "(") < 0) src = MODSRC;
   const start = src.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
   let k = src.indexOf("{", start), depth = 0;
