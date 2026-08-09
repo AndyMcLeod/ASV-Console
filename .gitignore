@@ -8,6 +8,10 @@ logs/
 *.log
 *.jsonl
 *.part
+# A mutation runner's pristine-source sidecar. It exists only WHILE a run is in flight; if
+# you find one at rest, that run DIED and the source it guards is suspect - restore from it
+# before trusting a green suite. Ignored so a killed run can never be committed.
+*.mutorig
 
 # proprietary vendor material - do not publish
 *.pdf

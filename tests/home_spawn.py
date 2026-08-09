@@ -18,9 +18,21 @@ makes the browser drop the old trail (check 10: the same lie on a real link now 
 "no position fix").
 
 THE CONTRACTS OTHERWISE (read from the code, asserted live):
-  * sethome - captures the PRESENT position; anything in the request body is IGNORED
-    (check 2 posts a decoy and must see it discarded - home is "where the boat is", not
-    "where the client says"). No arm gate, by design: setting home while SAFE is normal.
+  * sethome - TWO SOURCES FOR ONE FIELD. With an explicit lat/lon it sets HOME at that
+    point (2a); with none it captures the vessel's PRESENT fix (2b). Half a coordinate is
+    refused rather than silently falling back (2c), and a coordinate that is not one is a
+    stated refusal rather than a dropped connection (2d). No arm gate, by design: setting
+    home while SAFE is normal.
+    CHANGED 2026-08-08 at the operator's instruction. This suite used to assert the exact
+    OPPOSITE of 2a - a supplied position was discarded, and check 2 posted a decoy to
+    prove it - because home was defined as "where the boat is", never "where the client
+    says". The right-click chart menu now sets HOME at the clicked point. THE HAZARD DID
+    NOT DISAPPEAR, IT MOVED: RTH still drives to HOME, so a home the vessel never occupied
+    is still a destination nobody validated. What guards it now is (a) the client warning
+    when the chosen point sits inside the keep-out model, at the moment the operator is
+    looking at that spot, and (b) RTH still refusing a route it cannot plan clear. If a
+    later session finds this surprising, that is the reason - do not "restore" the old
+    rule without asking.
   * HOME IS THE RTH TARGET - the consequence that makes sethome worth guarding: after
     sailing away, Return-to-Home closes on the home sethome captured (check 4-5). This
     also puts the rth route's happy path under test for the first time.
@@ -34,11 +46,30 @@ THE CONTRACTS OTHERWISE (read from the code, asserted live):
 
     python tests/home_spawn.py      # exit 0 = pass, 1 = fail   (stdlib only)
 
-TEETH - eight mutations RUN, 8/8 caught (recorded results, not predictions; the runner
-scores a missing anchor as SKIP and a crash as its own outcome):
-  * sethome captures the CLIENT's coordinates instead of the boat's -> caught by 2 AND 5:
-    the RTH then closed on the planted point, never reaching the home it should have -
-    the display check and the consequence check see the same lie from both ends.
+TEETH (recorded results, not predictions; the runner scores a missing anchor as SKIP and a
+crash as its own outcome, never as "caught"):
+  * sethome IGNORES an explicit lat/lon (the pre-2026-08-08 rule)  -> caught by 2a
+  * ... and the mirror: a bodyless sethome uses the LAST explicit  -> caught by 2b, which
+    point instead of the live fix                                     is why 2b runs second
+  * a half-given coordinate falls back to the present position     -> caught by 2c
+  * the local numeric guard dropped (a bare float() under          -> caught by 2d
+    _dispatch_post's catch-all)
+  * the RANGE guard dropped, so inf/nan reach HOME                 -> caught by 2d + 2e,
+    but ONLY after 2e was rewritten - twice. It first CRASHED the harness instead of
+    failing a check: the suite died at an unguarded call and printed NO FAIL line at all,
+    which a mutation runner cannot tell from a pass. The first rewrite asserted the
+    console was still ANSWERING - and it was: a nan home serialises fine and /api/state
+    returns it, so the check passed, the suite took (nan, nan) as its RTH target, and died
+    four checks later. The invariant that actually matters is that HOME IS STILL A USABLE
+    COORDINATE, because every check below steers to it. Now the abort reads
+    "aborted: home {'lat': nan, ...}".
+    TWO RULES FALL OUT: a suite must survive the fault it tests for or it cannot report
+    it; and when a harness dies, fix WHAT KILLED IT rather than the first symptom visible
+    from where you are standing.
+  * the isfinite() guard dropped ALONE                             -> SURVIVES, correctly:
+    -90.0 <= x <= 90.0 is already False for inf, -inf and nan (every nan comparison is),
+    so nothing could reach it. It was deleted rather than kept - a guard that cannot be
+    earned is not defence in depth, it is dead code.
   * THE SHIPPED DEFECT RESTORED: sethome loses its link guard      -> caught by 9 alone
   * THE OTHER HALF RESTORED: connect keeps the dead boat's status  -> caught by 10 alone
     (the two halves are independent and independently earned - neither check covers the
@@ -170,22 +201,117 @@ try:
 
     here = (st0["lat_deg"], st0["lon_deg"])
 
-    # 2. HOME IS WHERE THE BOAT IS, never where the client says. The decoy coordinates
-    # must be discarded: a home the client can plant is a home an off-by-one (or a stale
-    # cached form field) can plant, and RTH drives there.
-    decoy = {"lat": here[0] + 0.5, "lon": here[1] + 0.5}
-    cmd(port, "/api/cmd/sethome", decoy)
+    # 2. TWO SOURCES FOR ONE FIELD, and both need pinning - which is why this is now four
+    # checks. Until 2026-08-08 a supplied position was DISCARDED and check 2 asserted
+    # exactly that; the operator asked for the chart's right-click point to set HOME, so an
+    # explicit lat/lon is honoured. THE HAZARD THE OLD RULE GUARDED HAS NOT GONE AWAY - RTH
+    # still drives to HOME - it has moved to where the operator can see it: the client
+    # warns when the chosen point is inside the keep-out model, and RTH refuses a route it
+    # cannot plan. What this suite must hold is that each source lands where it says, that
+    # neither silently stands in for the other, and that a coordinate is validated as input.
+
+    # 2a. AN EXPLICIT POINT IS HONOURED EXACTLY - not nudged, not rounded toward the boat.
+    chosen = {"lat": here[0] + 0.5, "lon": here[1] + 0.5}
+    cmd(port, "/api/cmd/sethome", chosen)
     st = state(port)
-    check("2. sethome captures the PRESENT position and IGNORES the request body",
+    check("2a. sethome HONOURS an explicit lat/lon - home lands on the chosen point",
           lambda: st.get("home") is not None
-          and dist_m((st["home"]["lat"], st["home"]["lon"]), here) < 50
           and dist_m((st["home"]["lat"], st["home"]["lon"]),
-                     (decoy["lat"], decoy["lon"])) > 10000,
-          lambda: "home %.0f m from the boat, %.0f km from the decoy"
-                  % (dist_m((st["home"]["lat"], st["home"]["lon"]), here),
-                     dist_m((st["home"]["lat"], st["home"]["lon"]),
-                            (decoy["lat"], decoy["lon"])) / 1000))
-    home = (st["home"]["lat"], st["home"]["lon"])
+                     (chosen["lat"], chosen["lon"])) < 1
+          and dist_m((st["home"]["lat"], st["home"]["lon"]), here) > 10000,
+          lambda: "home %.1f m from the chosen point, %.0f km from the boat"
+                  % (dist_m((st["home"]["lat"], st["home"]["lon"]),
+                            (chosen["lat"], chosen["lon"])),
+                     dist_m((st["home"]["lat"], st["home"]["lon"]), here) / 1000))
+
+    # 2b. NO POINT still means THE BOAT'S OWN FIX - the original contract, and the one the
+    # stale-telemetry guards in checks 9-10 protect. Deliberately run AFTER 2a so it has to
+    # MOVE home back off the explicit point: run first, a no-op would inherit 2a's answer
+    # and pass on it.
+    cmd(port, "/api/cmd/sethome")
+    st = state(port)
+    check("2b. ... and with NO position it still captures the boat's PRESENT fix",
+          lambda: st.get("home") is not None
+          and dist_m((st["home"]["lat"], st["home"]["lon"]), here) < 50,
+          lambda: "home %.0f m from the boat"
+                  % dist_m((st["home"]["lat"], st["home"]["lon"]), here))
+
+    # 2c. HALF A COORDINATE IS A REFUSAL, never a silent fall-back to the present position.
+    # Setting HOME somewhere other than the caller named is the substitution both branches
+    # exist to prevent, and a partial body is the shape that invites it.
+    r_half = cmd(port, "/api/cmd/sethome", {"lat": here[0] + 0.2})
+    st_half = state(port)
+    check("2c. a HALF-given coordinate refuses - it never falls back to the boat",
+          lambda: bool(r_half.get("error"))
+          and dist_m((st_half["home"]["lat"], st_half["home"]["lon"]), here) < 50,
+          lambda: "%r; home unchanged %.0f m from the boat"
+                  % (str(r_half.get("error"))[:40],
+                     dist_m((st_half["home"]["lat"], st_half["home"]["lon"]), here)))
+
+    # 2d. AND IT IS VALIDATED AS INPUT. A coordinate that is not a coordinate must not
+    # reach the field RTH drives to.
+    #
+    # THE REFUSAL HAS TO NAME THE RULE, and that clause is not decoration - it is the only
+    # thing separating a guard from a crash. _dispatch_post ends in a catch-all that turns
+    # any stray exception into a 500 with the interpreter's own message, so an UNGUARDED
+    # float() still comes back as "an error": the first version of this check asserted only
+    # that some error string arrived and SURVIVED the mutation that removed the guard
+    # entirely. A local refusal says "home ..."; the catch-all says "could not convert
+    # string to float". The difference is a handler refusing versus a handler falling over,
+    # and the session recorder logs them differently.
+    bad_results = []
+    for body in ({"lat": "abc", "lon": -75.0},        # not a number
+                 {"lat": 91.0, "lon": -75.0},         # off the globe
+                 {"lat": float("inf"), "lon": -75.0},  # non-finite (the range guard's job)
+                 {"lat": float("nan"), "lon": -75.0}):
+        try:
+            bad_results.append(cmd(port, "/api/cmd/sethome", body).get("error"))
+        except Exception as e:                       # a dropped connection IS the failure
+            bad_results.append("THREW %s" % type(e).__name__)
+
+    # READ THE STATE DEFENSIVELY. Mutating the range guard away CRASHED this harness rather
+    # than failing a check: a non-finite home reaches the engine, the console stops
+    # answering, and the suite died at the next unguarded call having printed no FAIL line
+    # at all - which a mutation runner cannot tell from a pass. That is the same trap the
+    # runner has at its own level, one level down, and the fix is the same: SURVIVE the
+    # fault so it can be REPORTED. 2e states the verdict; the guard here just keeps the
+    # process alive long enough to say it.
+    try:
+        st_bad = state(port)
+        _hb = st_bad.get("home") or {}
+        _hlat, _hlon = _hb.get("lat"), _hb.get("lon")
+        # USABLE, not merely PRESENT. The first version of 2e asked only whether the console
+        # was still answering - and it WAS: a NaN home serialises fine and /api/state returns
+        # it happily. The suite passed 2e, took (nan, nan) as its RTH target, and died four
+        # checks later. The fault is not "the console fell over", it is "a coordinate that is
+        # not a coordinate reached the field Return-to-Home drives to", so that is what gets
+        # asserted here.
+        usable = (isinstance(_hlat, (int, float)) and isinstance(_hlon, (int, float))
+                  and math.isfinite(_hlat) and math.isfinite(_hlon)
+                  and dist_m((_hlat, _hlon), here) < 50)
+        why = "home %r" % (_hb,) if not usable else "answering, home usable"
+    except Exception as e:
+        st_bad, usable, why = ({"home": {"lat": 0.0, "lon": 0.0}}, False,
+                               "state() THREW %s - the console stopped answering"
+                               % type(e).__name__)
+    check("2d. a malformed home is a refusal that NAMES the rule, not a crash or a drop",
+          lambda: all(isinstance(e, str) and e.startswith("home ") for e in bad_results)
+          and dist_m((st_bad["home"]["lat"], st_bad["home"]["lon"]), here) < 50,
+          lambda: "%s; home still %.0f m from the boat"
+                  % ([str(e)[:30] for e in bad_results],
+                     dist_m((st_bad["home"]["lat"], st_bad["home"]["lon"]), here)))
+
+    check("2e. ... and HOME is still a USABLE coordinate afterwards - RTH drives to it",
+          lambda: usable is True, lambda: why)
+    if usable is not True:
+        # EVERY CHECK BELOW STEERS TO THIS VALUE. Continuing with a poisoned home means
+        # sailing at (nan, nan) and dying at some unguarded call four checks later, having
+        # printed no summary - which a mutation runner cannot tell from a pass. Exit through
+        # the SAME summary line the suite normally ends on, so it is scored as a FAILURE.
+        print("\n%d CHECK(S) FAILED (%d ran)  [aborted: %s]" % (fails, ran, why))
+        sys.exit(1)
+
+    home = (st_bad["home"]["lat"], st_bad["home"]["lon"])
     boot0 = st.get("boot_id")
 
     # 3-5. HOME IS THE RTH TARGET - the consequence. Sail away, then Return-to-Home has

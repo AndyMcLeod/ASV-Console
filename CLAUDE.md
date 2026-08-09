@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 564 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 570 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (564 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (570 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -108,7 +108,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
-| `node tests/measure_tool.js` | the chart ruler + the point-command menu: the reading flows ALONG the leg sized by ONE constant, the gesture is click-move-click, each row asks the console's own gate predicate, Set Home never sends the click (32) |
+| `node tests/measure_tool.js` | the chart ruler + the point-command menu: the reading flows ALONG the leg sized by ONE constant, the gesture is click-move-click, each row asks the console's own gate predicate, Set Home sends the click, checks it against the keep-out model, and confirms only on the server's own ok (34) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
@@ -123,7 +123,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/completion_modes.py` | end-of-plan setting vs run (11, drives a real console) |
 | `python tests/estop_chain.py` | E-STOP reaches the VESSEL, latches, refuses, releases cleanly (17, real console) |
 | `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
-| `python tests/home_spawn.py` | sethome trusts only the LIVE fix (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point (14, real console) |
+| `python tests/home_spawn.py` | sethome lands where it says from BOTH sources — an explicit point, or the LIVE fix when none is given (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point; and the console SURVIVES a malformed one (18, real console) |
 | `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
 | `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
 | `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
@@ -794,11 +794,21 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   and `showPanel` corrects it on reveal.
 - **MUTATION-TESTING GOTCHAS, all three cost a false result this session.** Set
   **`PYTHONDONTWRITEBYTECODE=1`** when mutating a Python source — rapid rewrites fall inside
-  the mtime granularity and a run imports the PREVIOUS mutation's `.pyc`. **`asv_console.py`
-  is LF, `ais_service.py` is CRLF** — a multi-line anchor written with `\n` matches one and
-  not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
-  outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
-  only parse stdout.
+  the mtime granularity and a run imports the PREVIOUS mutation's `.pyc`.
+  **⚠ LINE ENDINGS — THIS NOTE USED TO SAY "`asv_console.py` is LF, `ais_service.py` is
+  CRLF" AND IT WAS WRONG ON DISK. Corrected 2026-08-08 after all seven server mutations
+  scored SKIP against it.** This clone has git `autocrlf` on, so **the repo BLOB is LF while
+  the WORKING COPY a mutation runner opens is CRLF** — and a runner reads the disk. Measured:
+  `asv_console.py`, `ais_service.py` and `static/asv.html` are **all CRLF** (0 bare LF);
+  `tests/*.py` are LF. **Do not reason about this from the repo or from this file — measure
+  it**, and normalise both sides of every multi-line anchor:
+  `s.replace("\r\n","\n").replace("\n","\r\n")`. And a runner **must score a missing anchor
+  as SKIP and a crash as its own outcome**, never as "caught": "no FAIL lines" and "the
+  process died" look identical if you only parse stdout.
+
+```
+python -c "b=open('asv_console.py','rb').read(); c=b.count(b'\r\n'); print('CRLF',c,'bare-LF',b.count(b'\n')-c)"
+```
 
 ## THE MANUAL WAS TALKING TO ITS OWN MAINTAINER (2026-08-08)
 
@@ -848,17 +858,92 @@ Go-To and Spawn were already menu rows; this removes their toolbar buttons and a
 Home. **The command bar is now Arm · Upload · Start · Pause · Stop · Hold · RTH · E-STOP ·
 Reset.**
 
-**"SET HOME AT VESSEL", NOT "SET HOME HERE" — and the wording is load-bearing.**
-`Engine.set_home()` **takes no position argument at all**: it reads the boat's own live fix
-and refuses without one, and `/api/cmd/sethome` discards a body (`home_spawn.py` posts a
-decoy 0.5° off to prove it). That is a deliberate safety property — **RTH drives to HOME, so
-a home the boat never occupied is a destination nobody validated** — and it was itself a fix
-(`5ac17bc`: Set-Home used to capture a DEAD boat's stale fix). Every other row on this menu
-acts at the clicked point, so this one has to say out loud that it does not. **To put HOME
-somewhere the vessel is not, place a ROC** — that IS the click-a-point mechanism, it is
-confirmed before it takes effect, and a ship-borne one lets HOME move. **If a future session
-is asked for "set home HERE", that is a server change to a tested invariant — raise it, do
-not just wire the point through.**
+**⚠ SET HOME USES THE CLICKED POINT. THIS REVERSES A TESTED INVARIANT, DELIBERATELY, ON
+ANDY'S EXPLICIT INSTRUCTION** — *"yes, make set home use the clicked point"*, after I
+shipped it as "Set Home at vessel" and flagged the conflict. **Do not "restore" the old rule
+because a comment or an old suite docstring says home is "where the boat is".** The history,
+so nobody re-litigates it:
+- **What it was:** `Engine.set_home()` took no position and DISCARDED one sent to it;
+  `home_spawn.py` check 2 posted a decoy 0.5° off to prove the discard. That rule existed
+  because HOME had once been captured from a DEAD boat's stale telemetry (`5ac17bc`).
+- **What it is now:** `set_home(lat=None, lon=None)` — an explicit point is honoured;
+  **no point still captures the live fix, with BOTH original guards intact** (link up, and a
+  real fix present). Half a coordinate is a refusal, never a silent fall-back. The point is
+  validated as INPUT: numeric, finite, on the globe.
+- **THE HAZARD DID NOT GO AWAY — IT MOVED SOMEWHERE THE OPERATOR CAN SEE IT.** RTH still
+  drives to HOME, so a home on land is still a return that gets refused. Two things now
+  carry that: **`doSetHome()` tests the chosen point against the same keep-out model every
+  behaviour routes by and WARNS on the banner**, and RTH still refuses a route it cannot
+  plan clear. **It warns, it does not refuse** — the operator asked for the point they
+  picked, and this console's rule is that a refusal is a RESULT, not a veto to work around.
+  **VERIFIED LIVE END TO END, and the warning turns out to be exactly truthful:** Home set
+  on land banners *"it sits in a keep-out zone (land) — Return-to-Home may be REFUSED from
+  here"*, and commanding RTH from that home then answers *"RTH refused: the target sits in
+  land."* Warned at placement, refused at use — the warning predicts the refusal rather
+  than merely gesturing at it.
+- **The warning had to widen the extract first** (`ensureNogoCovers`, as Go-To does): a home
+  outside the modelled box tests "clear" because nothing is loaded near it, and **silence
+  would read as approval**. An unloaded model says so rather than passing. Checks 15b2's
+  three clauses each earned their own mutation.
+- **A ROC is still the right answer for a MOVING home** (a tender, a ship) — it is confirmed
+  before it takes effect and it tracks.
+
+**THE SERVER MUTATION PASS PRODUCED THREE REAL FINDINGS — two from SURVIVORS and one from a
+CRASH, which is precisely why a runner must score a crash as its own outcome:**
+- **⚠ A SUITE THAT COULD NOT REPORT THE FAULT IT TESTS FOR (new check 2e) — AND I MISREAD
+  THE DIAGNOSIS THE FIRST TIME.** Dropping the range guard did not fail a check: it **killed
+  the harness**, which printed **no FAIL line at all**. That is the runner's own rule one
+  level down — *"no FAIL lines" and "the process died" look identical if you only parse
+  stdout*. **My first fix asserted the console was still ANSWERING. It was.** A `nan` home
+  serialises perfectly happily and `/api/state` hands it straight back; the suite passed
+  that check, took **`(nan, nan)` as its Return-to-Home target**, and died four checks later
+  — so the mutation crashed a SECOND full run before I looked properly. The real invariant
+  is not "the console survived" but **"HOME is still a USABLE coordinate"** — finite, in
+  range, and where it was — because every check below steers to it. 2e asserts that and
+  aborts through the normal summary line, so the mutation is now **CAUGHT** and names the
+  poison: `aborted: home {'lat': nan, 'lon': -75.0}`. **THE LESSON: when a harness dies, fix
+  WHAT KILLED IT — not the first plausible symptom visible from where you are standing.**
+- **A GUARD NOTHING COULD REACH.** `set_home` was written with an `isfinite()` check beside
+  the range check. Its mutation SURVIVED — correctly, because `-90.0 <= x <= 90.0` is
+  already False for `inf`, `-inf` AND `nan` (every nan comparison is). **One guard subsumed
+  the other entirely, so the second could never be earned.** Deleted, with the reasoning
+  left behind so it is not re-added; check 2d now feeds nan as well as inf to hold that.
+- **A CHECK THAT COULD NOT TELL THE BUG FROM THE FIX** — the fourth instance of that shape
+  here. Dropping the local numeric guard leaves a bare `float("abc")`, which
+  `_dispatch_post`'s **catch-all `except Exception → 500`** turns into an error response.
+  Check 2d asserted only that *some* error string came back, so **it survived the guard
+  being removed entirely.** It now requires the refusal to NAME the rule (`home …`) rather
+  than echo the interpreter (`could not convert string to float`) — the difference between
+  a handler refusing and a handler falling over, which the session recorder logs
+  differently. **The local guard's whole value is that it is not the catch-all.**
+- And a third wrong-mutation, same family as the two before it: `if given == 1 and False`
+  never produced the fallback it was meant to test — it fell through to the explicit branch,
+  hit `float(None)` and refused anyway. **A mutation that never violates the invariant
+  proves nothing.** Corrected to `given = 0`; caught by 2c.
+
+**A BUG I SHIPPED INTO `doSetHome`, CAUGHT BY RE-READING IT (now check 15b3).** I guarded
+the response with `if(r && r.error) return;` — but **`cmd()` returns `{}` on a network
+error**, having already flashed it, so that guard falls straight through and the banner
+announces "Home set at the chosen point" **for a command the server never saw.** Now
+`if(!(r && r.ok)) return;`: test for the POSITIVE signal, because only the server sends
+`{ok:true}`. **Same shape as the extract-widening bullet above, and the pair is worth one
+rule: THE ABSENCE OF BAD NEWS WAS BEING READ AS GOOD NEWS.** Wherever this console reports
+that something worked, ask what it would say if nothing had happened at all.
+
+**⚠ AND A NEAR-MISS WORTH MORE THAN ALL THREE — THE SECOND TIME THIS HAS HAPPENED.** A
+mutation runner was killed by a tool timeout **before its `finally`**, leaving
+`asv_console.py` MUTATED in the working tree — the bodyless Set-Home path silently not
+setting home at all. It was caught only because a `git diff --stat` I happened to run showed
+the insert count off by one. **A `finally` does not run when the process is killed, and the
+previously recorded fix (atomic writes, after a run left the file at 0 bytes) addresses a
+DIFFERENT failure — a torn write, not an unrestored one.** The runner now writes a
+**`.mutorig` sidecar** before touching anything and **restores from it on start if one is
+present**, so a killed run is self-healing and, more importantly, LOUD; it also runs in the
+BACKGROUND rather than against a foreground timeout. **If you ever find
+`asv_console.py.mutorig` on disk, a mutation run died and the source is suspect — restore
+from it before doing anything else.** Runner kept at `scratchpad/mutate_server.py`.
+**The general rule: after ANY mutation run, verify the source is restored before you trust
+a green suite — `git diff` it, do not assume the `finally` ran.**
 
 **THE GATES MOVED OUT OF THE BUTTONS, because the buttons left.** The menu used to read
 `#b_goto.disabled` / `#b_spawn.disabled` — right while those buttons existed, and broken the

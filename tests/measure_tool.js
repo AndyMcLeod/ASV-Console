@@ -397,31 +397,59 @@ check("15 each command row is gated by the console's OWN predicate, one rule per
     && rowOff(v.down, "#cmHome") && rowOff(v.down, "#cmSpawn");         // no link, no home
 }, () => g15.ok ? "canCommand / canSpawn / canSetHome drive the rows" : "THREW: " + g15.err);
 
-// SET HOME TAKES NO POINT, and that is a safety property, not an oversight. Engine.set_home
-// reads the boat's OWN live fix and discards a position sent to it (tests/home_spawn.py
-// posts a decoy 0.5 deg off to prove it), because Return-to-Home drives to home - a home
-// the boat never occupied is a destination nobody validated. The row therefore must not
-// learn to send the clicked point, and must not be LABELLED as if it did.
+// SET HOME USES THE CLICKED POINT (the operator's call, 2026-08-08 - this asserted the
+// exact opposite for one commit, while the server still discarded a supplied position).
+// The row must send the point the MENU was opened over, and the label must say "here", so
+// the wording and the behaviour cannot drift apart. Because RTH drives to HOME, the client
+// also has to CHECK the point against the keep-out model before it is accepted quietly -
+// that is check 15b2, and it is the half that keeps a home on land from being silent.
+//
 // Runs the SHIPPED registration, not a stand-in. The first version of this check
 // re-registered the row with a handler the test wrote itself and then asserted that
-// handler sent no point - it passed happily with the real row mutated to send one. A check
-// on a registration has to execute the registration.
+// handler behaved - it passed happily with the real row mutated. A check on a registration
+// has to execute the registration.
 const HOME_REG = (H.match(/^\s*cmRow\("#cmHome",[\s\S]*?\);\s*$/m) || [""])[0];
 const g15b = attempt(() => {
   const G = menu({});
   if (!/cmRow\("#cmHome"/.test(HOME_REG)) throw new Error("cmHome registration not found (renamed?)");
+  G.doSetHome = (ll) => G.acted.push(["sethome", ll]);
   G.runShipped(HOME_REG);
   G.openChartMenu(10, 10, { lat: 38.75, lon: -74.25 });
   G.D["#cmHome"].onclick();
   return G;
 });
-check("15b Set Home commands the VESSEL'S fix — it never sends the clicked point",
+check("15b Set Home acts at the CLICKED POINT, and the row says so",
   () => g15b.ok && g15b.value.acted.length === 1
-    && g15b.value.acted[0][0] === "cmd" && g15b.value.acted[0][1] === "/api/cmd/sethome"
-    && g15b.value.acted[0][2] === undefined                    // no body at all
-    && /Set Home at vessel/.test(H)                            // ... and the row says so
-    && !/id="cmHome"[^>]*>\s*<span>[^<]*here/.test(H),
+    && g15b.value.acted[0][0] === "sethome"
+    && g15b.value.acted[0][1].lat === 38.75 && g15b.value.acted[0][1].lon === -74.25
+    && /<span>Set Home here<\/span>/.test(H),                  // label and behaviour agree
   () => g15b.ok ? JSON.stringify(g15b.value.acted) : "THREW: " + g15b.err);
+
+// RTH DRIVES TO HOME. A home on land, inside a charted structure, or in water this hull
+// cannot sit in is a return that gets refused LATER - mid-mission, when it is least useful
+// to find out. doSetHome must therefore (a) widen the keep-out extract to cover the point,
+// or a home outside the modelled box tests "clear" because nothing is loaded near it and
+// silence reads as approval, and (b) WARN rather than refuse, because the operator asked
+// for the point they picked and this console's rule is that a refusal is a result, not a
+// veto to work around.
+const SETHOME_SRC = grab("doSetHome");
+check("15b2 ... and the chosen point is CHECKED against the keep-out model, then warned about",
+  () => /ensureNogoCovers\(/.test(SETHOME_SRC)          // extract widened before testing
+    && /blockedInfo\(/.test(SETHOME_SRC)                 // tested against the real model
+    && /nogo\.ready/.test(SETHOME_SRC)                   // an unloaded model is not "clear"
+    && /showBanner\(/.test(SETHOME_SRC)                  // and the operator is told
+    && !/return\s*;\s*}\s*$/.test(SETHOME_SRC.replace(/\s+/g, " ")),  // warns, never refuses
+  () => SETHOME_SRC.replace(/\s+/g, " ").slice(0, 90));
+
+// A COMMAND THAT NEVER LANDED MUST NOT REPORT SUCCESS. cmd() returns {} on a network error
+// (having already flashed it), so a `if (r.error) return` guard falls straight through and
+// announces "Home set" for a command the server never saw. Test for the POSITIVE signal -
+// the server answers {ok:true} and nothing else does. Same family as the extract widening
+// two checks up: in both, the absence of bad news was being read as good news.
+check("15b3 ... and it confirms Home only on the server's OWN ok, never on silence",
+  () => /if\(!\(r && r\.ok\)\)\s*return;/.test(SETHOME_SRC)
+    && SETHOME_SRC.indexOf("r.ok") < SETHOME_SRC.indexOf("Home set at the chosen point"),
+  () => (SETHOME_SRC.match(/if\(![^\n]*\)\s*return;/) || ["<no success guard>"])[0]);
 
 // Andy moved all three off the command bar. A button left behind is a SECOND path to a
 // vessel command, gated by whatever that button happens to still say.

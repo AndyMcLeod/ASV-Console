@@ -2648,21 +2648,67 @@ class Engine:
         self._run_route([{"lat": st["lat_deg"], "lon": st["lon_deg"]}], "hold",
                         "Hold: station-keeping at present position.")
 
-    def set_home(self):
+    def set_home(self, lat=None, lon=None):
+        """Set HOME at an explicit point, or at the vessel's present position.
+
+        TWO SOURCES FOR ONE FIELD, AND THEY FAIL DIFFERENTLY - which is why the branches
+        below stay separate rather than merging. Until 2026-08-08 a supplied position was
+        DISCARDED and only the live fix was ever used; the operator asked for the chart's
+        right-click point to set HOME, so an explicit lat/lon is now honoured.
+
+        WHAT THAT CHANGES, stated plainly because RETURN-TO-HOME DRIVES TO HOME: an
+        explicit point is OPERATOR INPUT landing in a field the vessel will later be sent
+        to, and nothing here has checked it against the chart. Two things carry that
+        weight instead - the CLIENT warns when the chosen point sits inside the keep-out
+        model, and RTH still refuses a route it cannot plan clear. This layer validates it
+        as INPUT - numeric, and on the globe, which rejects inf and NaN along with anything
+        else out of range because every comparison against NaN is false - and that is all a
+        coordinate can honestly be checked for here. It is not cosmetic: a non-finite value
+        reaching HOME does not merely set a bad home, it stops the console (see the mutation
+        note in tests/home_spawn.py).
+
+        WHAT IT DOES NOT CHANGE: the present-position path keeps BOTH of its guards, and
+        they still catch DIFFERENT lies. Without the link check, Set-Home after a
+        disconnect "succeeded" - reading the DEAD boat's last fix out of self.status and
+        reporting "Home set to present position" about a boat that no longer existed. The
+        fix guard stays for a link that is up but has not fixed yet (a real link in Phase 0
+        produces no telemetry at all; see connect(), which clears self.status so the
+        previous boat's fix cannot stand in). An explicit point is immune to both by
+        construction - it never came from telemetry - but still needs a link, because
+        setting HOME is commanding where the vessel will return to.
+        """
         with self._lock:
-            # Both guards are load-bearing and they catch DIFFERENT lies. Without the
-            # link check, Set-Home after a disconnect "succeeded" - reading the DEAD
-            # boat's last fix out of self.status and reporting "Home set to present
-            # position" about a boat that no longer existed; RTH would then aim at it.
-            # The fix guard stays for a link that is up but has not fixed yet (a real
-            # link in Phase 0 produces no telemetry at all; see connect(), which now
-            # clears self.status so the previous boat's fix cannot stand in).
             self._require(self._link is not None, "not connected")
-            st = self.status
-            if st.get("lat_deg") is None:
-                raise VcuProtocolError("no position fix to set home")
-            self.home = {"lat": st["lat_deg"], "lon": st["lon_deg"]}
-            self.note = "Home set to present position."
+            given = (lat is not None) + (lon is not None)
+            if given == 1:
+                # Half a coordinate is a MALFORMED REQUEST, not an instruction to fall
+                # back to the present position. Quietly setting HOME somewhere other than
+                # the caller named is the substitution this whole method exists to avoid.
+                raise VcuProtocolError("home needs both lat and lon, or neither")
+            if given == 0:
+                st = self.status
+                if st.get("lat_deg") is None:
+                    raise VcuProtocolError("no position fix to set home")
+                self.home = {"lat": st["lat_deg"], "lon": st["lon_deg"]}
+                self.note = "Home set to present position."
+            else:
+                try:
+                    hlat = float(lat)
+                    hlon = float(lon)
+                except (TypeError, ValueError):
+                    raise VcuProtocolError("home needs a numeric lat/lon")
+                # ONE range guard, and it covers non-finite values too: inf, -inf and nan
+                # all make this comparison False (every nan comparison is), so they are
+                # refused here. An isfinite() check alongside it was written first and
+                # SURVIVED its own mutation - nothing could reach it that this line did not
+                # already reject - so it went. The local guard above matters for a
+                # different reason: _dispatch_post has a catch-all that would turn a bare
+                # float() failure into a 500, which is the handler falling over rather than
+                # refusing, and the session log records the difference.
+                if not (-90.0 <= hlat <= 90.0 and -180.0 <= hlon <= 180.0):
+                    raise VcuProtocolError("home lat/lon out of range")
+                self.home = {"lat": hlat, "lon": hlon}
+                self.note = "Home set to the chosen point."
         self._push_state()
 
     def pause(self):
@@ -3406,8 +3452,8 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.transit(body.get("route"))
             elif path == "/api/cmd/hold":              # behavior: station-keep here
                 ENGINE.hold()
-            elif path == "/api/cmd/sethome":           # capture home = present position
-                ENGINE.set_home()
+            elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
+                ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
                 ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
             elif path == "/api/cmd/speed":             # live speed change (low|survey|high)

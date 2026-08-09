@@ -107,7 +107,7 @@ c.push(TBL(["Row", "Does"], [
   ["Measure distance", "The chart ruler — click, move, click. See 4.5"],
   ["Clear measurements", "Removes every measurement drawn"],
   ["Go-To here", "Drives to the clicked point and station-keeps (8.1). Needs ARMED, no E-STOP"],
-  ["Set Home at vessel", "Captures the VESSEL'S position as HOME (8.5). Needs a live link"],
+  ["Set Home here", "Moves HOME to the clicked point (8.5). Needs a live link; warns if the point is a keep-out"],
   ["Spawn here", "Simulator: places the vessel at the clicked point (8.6)"],
   ["Copy position", "Puts the clicked coordinate on the clipboard"],
 ], [2100, 7260]));
@@ -227,11 +227,12 @@ c.push(P("Press `TRAN` and click the chart to lay down a single- or multi-segmen
 c.push(H2("8.3  Hold"));
 c.push(P("Station-keeps at the present position. The immediate answer to “stop where you are but stay under command”."));
 c.push(H2("8.4  Return-to-Home"));
-c.push(P("Drives to HOME on a routed path and station-keeps there. HOME is set automatically at the first fix, moved by `Set Home`, or taken from a Remote Operations Center (section 12) — in which case it can be MOVING, and the return chases it."));
+c.push(P("Drives to HOME on a routed path and station-keeps there. HOME is set automatically at the first fix, moved by SET HOME HERE on the chart menu (8.5), or taken from a Remote Operations Center (section 12) — in which case it can be MOVING, and the return chases it. Because the return is ROUTED, a HOME the vessel cannot reach clear of the keep-out model is refused: that is why 8.5 asks you to read the banner when you place one."));
 c.push(H2("8.5  Set Home"));
-c.push(P("Right-click the chart and choose SET HOME AT VESSEL. Do this at the launch point, before arming, unless HOME is coming from a Remote Operations Center. The position captured is always the vessel's own reported fix, never a value supplied from the screen — and the command refuses when no link is up or the link has not produced a fix yet, because a HOME taken from anything but live telemetry is a place the boat is not: Return-to-Home drives to HOME, so a stale one is not a display blemish but a destination."));
-c.push(NOTE("WHY THIS ROW SAYS “AT VESSEL” AND NOT “HERE”",
-  "Every other row on the chart menu acts at the point you right-clicked. This one does not, and cannot: it captures the vessel's own fix, and a position sent with the command is discarded. That is deliberate. To put HOME somewhere the vessel is not — a dock, a tender, a ship — place a Remote Operations Center instead (section 12): those ARE positioned by clicking the chart, they are confirmed before they take effect, and a ship-borne one lets HOME move."));
+c.push(P("Right-click the chart and choose SET HOME HERE. HOME moves to the point you clicked. Right-clicking over the vessel itself is how you make the vessel's own position HOME — do that at the launch point, before arming, unless HOME is coming from a Remote Operations Center."));
+c.push(P("The command refuses when no link is up. It also still captures the vessel's own reported fix if it is ever called without a point, and refuses THAT when the link has produced no fix yet — a HOME taken from stale telemetry is a place the boat is not."));
+c.push(NOTE("CHECK WHERE YOU PUT IT — RETURN-TO-HOME DRIVES THERE",
+  "HOME is not a label, it is a destination. A HOME on land, inside a charted structure, or in water too shallow for this vessel is a return that will be REFUSED — and you will find that out mid-mission, at the moment it is least useful. The console checks the point you choose against the same keep-out model every behaviour routes by and WARNS on the banner if it is not water the vessel can sit in; it does not stop you, because the point you picked is the point you asked for. Read that banner. If you want HOME on a dock, a tender or a ship, place a Remote Operations Center instead (section 12): those are confirmed before they take effect, and a ship-borne one lets HOME move."));
 c.push(H2("8.6  Simulator-only controls"));
 c.push(TBL(["Control", "Does"], [
   ["SPAWN HERE (chart menu)", "Right-click a point to place the vessel there — a clean slate where you choose"],

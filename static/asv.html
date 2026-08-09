@@ -231,13 +231,12 @@
     <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmGoto"><span>Go-To here</span><span class="cmk" id="cmGotoK"></span></div>
-    <!-- "at vessel", not "here", and the wording is load-bearing. Set Home captures the
-         boat's OWN live fix - Engine.set_home() takes no position and discards one sent
-         to it, which is a deliberate safety property with a test behind it (a home the
-         boat never occupied is somewhere Return-to-Home will still drive). Every other
-         row on this menu acts at the clicked point, so this one has to say that it does
-         not. To put HOME somewhere the vessel is not, place a ROC. -->
-    <div class="cmi" id="cmHome"><span>Set Home at vessel</span><span class="cmk" id="cmHomeK"></span></div>
+    <!-- Sets HOME at the CLICKED POINT (Andy, 2026-08-08 - this row read "at vessel" for
+         one commit, when set_home still discarded a supplied position). RTH drives to
+         HOME, so doSetHome() tests the point against the keep-out model first and WARNS
+         when it is not water the vessel can sit in - it does not refuse, because the
+         operator asked for the point they picked. -->
+    <div class="cmi" id="cmHome"><span>Set Home here</span><span class="cmk" id="cmHomeK"></span></div>
     <div class="cmi" id="cmSpawn"><span>Spawn here</span><span class="cmk" id="cmSpawnK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
@@ -3084,6 +3083,45 @@ async function doGoTo(target){
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
+// SET HOME AT THE CLICKED POINT (Andy's call, 2026-08-08 — the row read "at vessel" for one
+// commit, while the server still discarded a supplied position).
+//
+// IT WARNS, IT DOES NOT REFUSE. The operator asked for the point they picked, and this
+// console's rule is that a refusal is a RESULT rather than a veto to work around. But
+// Return-to-Home DRIVES TO HOME: a home on land, inside a charted structure or in water
+// too shallow for this hull is a return that will be refused LATER — mid-mission, at the
+// moment it is least useful to discover. So the point is tested against the same keep-out
+// model every behaviour routes by, and anything wrong with it is said NOW, at the one
+// moment the operator is looking at that spot and can pick a better one.
+//
+// The extract is widened to cover the point first, exactly as Go-To does: without that,
+// a home outside the modelled box tests "clear" because there is nothing loaded near it,
+// and silence would read as approval. `blockedInfo` names WHAT blocks it, not just that
+// something does.
+async function doSetHome(ll){
+  // Says what it is doing before it blocks, exactly as Go-To does: a point outside the
+  // modelled box makes ensureNogoCovers FETCH, which can take seconds. In the common case
+  // (a right-click on chart already modelled) it returns at once and this banner is
+  // replaced within the same frame.
+  showBanner("Setting Home at the chosen point… checking it against the keep-out model.");
+  await ensureNogoCovers([{lat:ll.lat, lon:ll.lon}], 400);
+  const r = await cmd("/api/cmd/sethome", {lat:ll.lat, lon:ll.lon});
+  // TEST FOR SUCCESS, NOT FOR FAILURE. cmd() returns {} on a network error (having already
+  // flashed it), so `if(r.error)` would fall straight through and announce "Home set" for a
+  // command that never landed — the same "silence reads as approval" shape the extract
+  // widening above exists for. The server answers {ok:true} and nothing else does.
+  if(!(r && r.ok)) return;                         // cmd() already surfaced the reason; saying
+                                                    // it twice is the tide-note defect again
+  let warn = "";
+  if(!nogo.ready) warn = "the keep-out model is not loaded, so it was not checked";
+  else {
+    const bi = blockedInfo(llEN(ll.lat, ll.lon, nogo.ref), nogo.ko, nogo.buffer);
+    if(bi) warn = "it sits in a keep-out zone ("+(bi.kind||"charted feature")+")";
+  }
+  if(warn) showBanner("Home set at the chosen point, but "+warn+" — Return-to-Home may be REFUSED from here. Pick open water, or right-click over the vessel to put Home back on the boat.");
+  else showBanner("Home set at the chosen point.");
+  render();
+}
 // opts.chained marks the END-OF-PLAN RTH the console fires itself. It is only ever set by
 // that chain (the RTH button hands us a click Event, which has no .chained), and it exists
 // so a REFUSED chain can retract the "rth" the readouts are promising - the boat stays at
@@ -4281,9 +4319,7 @@ cmRow("#cmMeasure", ()=>{
 });
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
-// Takes no point ON PURPOSE — see the markup. cmRow hands one over; Set Home ignores it,
-// exactly as the server does.
-cmRow("#cmHome",  () => cmd("/api/cmd/sethome"));
+cmRow("#cmHome",  ll => doSetHome(ll));
 cmRow("#cmSpawn", ll => doSpawn(ll));
 cmRow("#cmCopy",  ll => copyPosition(ll));
 // Clipboard: the async API needs a secure context (localhost qualifies), so fall back to

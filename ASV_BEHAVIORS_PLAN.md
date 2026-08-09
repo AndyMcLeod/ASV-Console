@@ -1,5 +1,13 @@
 # ASV Generalized Behaviors — design/plan
 
+**THIS FILE IS A DATED RECORD, NOT A CURRENT REFERENCE.** Every entry below says what was
+true on the day it was written, and is deliberately left that way rather than edited to
+match today. Where it describes the UI it has since drifted — the 2026-07-20 slice names
+**command-bar buttons** for Go-To and Set Home, both of which **moved to the chart's
+right-click menu on 2026-08-08**, and Set Home now takes the clicked point rather than the
+vessel's own fix. For what the console does TODAY, read `CLAUDE.md`'s "⇒ START HERE" and the
+generated operations manual.
+
 > **FIRST SLICE DONE (2026-07-20):** Go-To, real Return-to-Home, Hold/station-keep,
 > and Set-Home — server + GUI, verified in sim. `SimVcu` station-keeps at the last
 > waypoint when `hold`; Engine `_run_route`/`go_to`/`hold`/`set_home`/`return_home`

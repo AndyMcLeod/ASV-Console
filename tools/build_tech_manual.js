@@ -73,7 +73,7 @@ const GUARDS = {
   "run_link_control.py":
     "The run and link lifecycle in one arc on one boot: that pause HOLDS a survey rather than losing it (the leg is preserved and resumed, which is the difference between pause and stop), that a transit is arm-gated with its route validated first, that reset is a clean simulator power-cycle and REFUSES on a real link, and that a disconnect leaves no link still taking commands",
   "home_spawn.py":
-    "That Set-Home trusts only the vessel's LIVE fix - not the request body, and not a dead link's last telemetry, which used to make Home a place the boat no longer was and Return-to-Home a destination taken from a simulation - that Return-to-Home closes on that home, and that a spawn is a validated power-cycle at the chosen point",
+    "That Set-Home lands where it says from EITHER of its two sources: an explicit point is honoured exactly, and with no point given the vessel's own live fix is captured - never a dead link's last telemetry, which once made Home a place the boat no longer was and Return-to-Home a destination taken from a simulation. Also that half a coordinate is refused rather than falling back silently, that a malformed one is a refusal NAMING the rule rather than the generic failure a bare cast would produce, that the console is still answering afterwards at all - a coordinate that reaches the engine does not merely set a bad home, it stops the console - that Return-to-Home closes on the home that was set, and that a spawn is a validated power-cycle at the chosen point",
   "energy_chartinfo.py":
     "The energy override's TWO layers, earned separately because the engine's published gauge masks the simulated tank while the override is on and is the only mechanism when there is no link at all; and that chart info is served from its exact-key cache and answers a malformed area with a usage message rather than a failure",
   "enc_extract.py":
@@ -101,7 +101,7 @@ const GUARDS = {
   "units_toggle.js":
     "That the distance-unit preference converts the VALUE and not merely the label - a field labelled in nautical miles showing kilometres is wrong by a factor with a plausible number on screen - that it applies only to LONG distances, and that no readout hand-rolls its own kilometre string beside the toggle it would then ignore",
   "measure_tool.js":
-    "The chart ruler and the right-click menu that arms it: that the reading flows ALONG the leg and never upside-down, that it goes through the one distance formatter so it follows the display-unit pill, that a bearing is the azimuth from the first click and not its reciprocal, that a pan-drag is never read as a measurement, that each of the menu's vessel commands asks the console's own gate predicate rather than a second copy of the rule, and that Set Home commands the vessel's own fix and never the clicked point",
+    "The chart ruler and the right-click menu that arms it: that the reading flows ALONG the leg and never upside-down, that it goes through the one distance formatter so it follows the display-unit pill, that a bearing is the azimuth from the first click and not its reciprocal, that a pan-drag is never read as a measurement, that each of the menu's vessel commands asks the console's own gate predicate rather than a second copy of the rule, and that Set Home acts at the clicked point AND tests that point against the keep-out model before accepting it quietly - a home the vessel cannot return to is a refusal deferred to mid-mission",
 };
 
 function harnessRows() {

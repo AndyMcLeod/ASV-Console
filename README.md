@@ -262,18 +262,23 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
 
    **The chart menu + the measuring tool (right-click).** Right-clicking the chart
    opens the **point commands** — its header names the position you clicked:
-   **Measure distance**, **Go-To here**, **Set Home at vessel**, **Spawn here**,
+   **Measure distance**, **Go-To here**, **Set Home here**, **Spawn here**,
    **Copy position**. Go-To, Set Home and Spawn are **no longer on the command bar**;
    each was a two-step control (arm a button, then click the chart) and the menu
    already carries the point. It is a shortcut past the arming *step*, never past the
    arm *gate*: every row asks the console's own predicate — `canCommand()` (armed, no
    E-STOP), `canSetHome()` (a live link), `canSpawn()` (simulator only) — and says why
    beside the row when it is closed (`arm first`, `no link`, `sim only`), so each rule
-   still exists exactly once. **Set Home says "at vessel", not "here", and that wording
-   is load-bearing:** it captures the boat's own live fix and a position sent with it is
-   discarded, because RTH drives to HOME and a home the boat never occupied is a
-   destination nobody validated. To put HOME somewhere else, place a ROC. **Measure**
-   is click → move → click: the leg follows the
+   still exists exactly once. **Set Home moves HOME to the clicked point** — `set_home`
+   takes an explicit lat/lon (validated numeric and on the globe — which rejects `inf` and
+   `NaN` too, since every comparison against them is false) or, given none,
+   still captures the vessel's own live fix with both its stale-telemetry guards intact.
+   **Because RTH *drives* to HOME, the client tests the chosen point against the same
+   keep-out model every behaviour routes by and WARNS on the banner** when it is not water
+   the vessel can sit in — it widens the ENC extract to cover the point first, so a distant
+   home can't read as "clear" merely because nothing is loaded near it. It warns rather
+   than refuses: the point you picked is the point you asked for, and RTH still refuses a
+   route it cannot plan. **Measure** is click → move → click: the leg follows the
    pointer and the reading — **distance and true bearing** — is drawn **along the
    line**, rotated to it and flipped so it never reads upside-down. Distance goes
    through the same `fmtDist()` as every other long distance, so a measurement follows
