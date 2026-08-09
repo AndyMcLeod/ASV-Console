@@ -235,6 +235,33 @@ thin = [os.path.basename(d) for d in docs if len(doc_text(d)) < 2000]
 check("6. no document came out suspiciously empty",
       not thin, "; ".join(thin) or "all four carry a full body of text")
 
+# A DOCUMENT MUST NOT SHIP A MESSAGE ADDRESSED TO ITS OWN MAINTAINER.
+#
+# WHY THIS CHECK EXISTS, and it is the same shape as the fault this suite was born for.
+# The technical manual's test-harness table is DERIVED from tests/ - deliberately, so a new
+# suite appears in the manual the day it is written rather than when someone remembers. Its
+# per-suite descriptions come from a hand-kept GUARDS lookup, and a suite with no entry
+# renders a literal "(undocumented - add an entry to GUARDS in tools/build_tech_manual.js)"
+# in the row. That is a good design: it self-reports. But NOTHING READ THE REPORT. Fifteen
+# of thirty-seven suites had no entry, so fifteen rows of build instructions addressed to a
+# developer sat in a document written for a reader.
+#
+# The derived half is exactly why this needs a test rather than diligence: the placeholder
+# comes BACK, silently, the next time a suite is added without an entry. So the graceful
+# degradation gets an alarm on it. Kept generic rather than matching that one string - any
+# builder's TODO or FIXME leaking into a shipped document is the same defect.
+leaked = []
+for d in docs:
+    body = doc_text(d)
+    for marker in ("(undocumented", "TODO", "FIXME", "XXX:"):
+        if marker in body:
+            leaked.append("%s contains %r x%d"
+                          % (os.path.basename(d), marker, body.count(marker)))
+check("7. no document ships a note addressed to its own maintainer",
+      not leaked,
+      lambda: "; ".join(leaked[:3]) if leaked
+      else "no placeholder, TODO or FIXME reached a reader")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

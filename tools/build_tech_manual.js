@@ -68,6 +68,38 @@ const GUARDS = {
     "That the tide card reports ONE cause ONCE: two failed requests to the same upstream must not print the same failure twice, and must still say BOTH series were lost rather than only the observed one",
   "docs_valid.py":
     "That the generated documents are valid packages a reader will actually open, and that their code blocks reached the page - validity alone would not notice content silently dropped",
+  "estop_chain.py":
+    "That E-STOP actually reaches the VESSEL and is not merely believed by the console: the commanded latch and the link's own reported state are asserted SEPARATELY, because cutting the seam leaves every console flag looking correct. Also that it latches, refuses commands while latched, and releases cleanly",
+  "run_link_control.py":
+    "The run and link lifecycle in one arc on one boot: that pause HOLDS a survey rather than losing it (the leg is preserved and resumed, which is the difference between pause and stop), that a transit is arm-gated with its route validated first, that reset is a clean simulator power-cycle and REFUSES on a real link, and that a disconnect leaves no link still taking commands",
+  "home_spawn.py":
+    "That Set-Home trusts only the vessel's LIVE fix - not the request body, and not a dead link's last telemetry, which used to make Home a place the boat no longer was and Return-to-Home a destination taken from a simulation - that Return-to-Home closes on that home, and that a spawn is a validated power-cycle at the chosen point",
+  "energy_chartinfo.py":
+    "The energy override's TWO layers, earned separately because the engine's published gauge masks the simulated tank while the override is on and is the only mechanism when there is no link at all; and that chart info is served from its exact-key cache and answers a malformed area with a usage message rather than a failure",
+  "enc_extract.py":
+    "The chart-feature extract the whole keep-out model is built from: that a malformed area is refused with usage, that the cache answers without going upstream and is never rewritten by a read, and that the shallow-water retag is per-request with an exclusive boundary. It also guards the query parse and cache key SHARED with the chart-info route, which a mutation must be caught for from both sides",
+  "env_water.py":
+    "That an environment override REACHES the running vessel rather than only the readout, that disabling it returns the water to calm (every other suite stands on that), and that a non-numeric water-level offset is a stated refusal rather than a dropped connection - that branch runs before the dispatcher's safety net, so its guard has to be local",
+  "log_routes.py":
+    "That a client event survives a data field whose name collides with the record's own - the log renames it rather than refusing, and the record stays FLAT because playback reads it - that the recording list includes the console's own live session, and that the raw-log route serves nothing but a bare session file from the log directory. The only suite that boots WITH logging on, which is what makes that branch reachable at all",
+  "data_routes.py":
+    "The remaining data surfaces: that switching vessel is gated to disarmed-and-idle and, when allowed, really respawns as the new vessel (proved by the energy gauge changing type, which a renamed profile cannot fake), that the comms password leaks by none of its three paths - never stored, never echoed, never logged - and that the tide and recovery-point routes map their errors rather than failing open",
+  "roc_persist.py":
+    "That only the most recent few recovery points survive a restart, so the registry cannot grow until a correct Remove button LOOKS broken - the reported fault was a control smothered by 198 stale records, not a control that failed - and that no test suite can write to the operator's own registry",
+  "ais_error_frames.py":
+    "That an upstream fault SURFACES instead of reading as a quiet sea: the feed reports its errors as ordinary text frames on the data channel, which the ingest path used to discard silently, so an invalid key showed as connected with nothing in sight forever. The error must also survive the periodic quiet-area re-stamp and clear only when real data arrives",
+  "ais_sources.py":
+    "Many traffic feeds merged into ONE picture: that each vessel carries provenance for every feed that reported it, that a stale polled report cannot walk a live track backwards while its static details still merge, that a feed answering a fault AS DATA on a successful response surfaces as an error, and that a mistyped endpoint is refused loudly rather than binding the wrong thing",
+  "station_windows.py":
+    "That the tide and weather pages opened alongside the console are for the stations the VESSEL'S OWN FIX selects - no station identifier is hardcoded anywhere, enforced by parsing the source - and that where a reading is blended from several stations the console DISCLOSES the blend rather than reporting it under one station's name",
+  "turn_channel.js":
+    "That a survey's end-of-line turns may only use navigation-channel water the survey's own coverage lines already occupy. Every layer was individually correct when turns arced into a dredged channel across a charted row of pilings: the channel is only a keep-out when enforced, the line-clipping rule only fires on lines that CROSS it, and the piles are charted far enough apart that a turn could lawfully thread between them",
+  "chart_source_card.js":
+    "That the chart-source card lists EVERY cell in view, one row each, broadest scale first, with the vessel's own marked - it used to name one and count the rest, hiding the scale and survey age of the sheets a survey was about to work over. Also that a cell arriving as several polygons appears once, and that the vessel's cell is the largest-scale one containing it",
+  "ui_tooltips.js":
+    "That an informational tip is anchored to its CONTROL rather than to the pointer, flipping above at the bottom of the screen and clamped to the viewport, so the pointer sitting on a control can never sit on the tip explaining it - and that a readout which rewrites its own tip text mid-hover wins over the stashed copy",
+  "units_toggle.js":
+    "That the distance-unit preference converts the VALUE and not merely the label - a field labelled in nautical miles showing kilometres is wrong by a factor with a plausible number on screen - that it applies only to LONG distances, and that no readout hand-rolls its own kilometre string beside the toggle it would then ignore",
   "measure_tool.js":
     "The chart ruler and the right-click menu that arms it: that the reading flows ALONG the leg and never upside-down, that it goes through the one distance formatter so it follows the display-unit pill, that a bearing is the azimuth from the first click and not its reciprocal, that a pan-drag is never read as a measurement, and that the menu's vessel commands are gated by the buttons that already own them rather than by a second copy of the rule",
 };

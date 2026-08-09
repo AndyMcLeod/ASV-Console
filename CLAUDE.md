@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 558 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 559 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (558 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (559 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -133,7 +133,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/ais_sources.py` | many AIS feeds, ONE merged picture: per-vessel provenance, the stale-position guard, AISHub fault-as-data + per-response format detection, endpoint specs, a real AIVDM sentence over TCP and UDP (26, hermetic) |
 | `python tests/tide_note.py` | the tide card names ONE cause ONCE (8) |
 | `python tests/station_windows.py` | the third + fourth windows: station DERIVED from the fix, one shared opener, the IDW blend disclosed (24) |
-| `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN (7) |
+| `python tests/docs_valid.py` | the generated documents are packages a reader will OPEN — and carry no note addressed to their own maintainer (8) |
 | `python tests/http_contract.py` | BOTH servers: POST returns `(code, obj)`, GET commits its own response; nothing raises (22) |
 
 **FOUR GENERATED DOCUMENTS in `docs/`** — quick start · operations · technical · development.
@@ -694,13 +694,10 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 - **NOTHING IS HELD BACK.** The turn-water hold is closed and the tree is clean; the
   items below are genuinely open, not work in progress. Andy's three standing parks
   (MarineTraffic, payloads, AISHub membership) are further down and unchanged.
-- **ONE COSMETIC DOC GAP, spotted 2026-08-08 while adding the measure suite.** The tech
-  manual's 13.1 harness table is DERIVED from `tests/`, and prints
-  `(undocumented — add an entry to GUARDS in tools/build_tech_manual.js)` for any suite
-  with no entry. **`log_routes.py` has no entry, so that placeholder is in the shipped
-  docx a reader opens.** One line in `GUARDS` fixes it. Not done here because it is
-  unrelated to the measuring tool; the self-flagging design is working exactly as
-  intended, so trust the table over any hand-kept list.
+- ~~**ONE COSMETIC DOC GAP**~~ **CLOSED the same day — and it was FIFTEEN suites, not the
+  one I reported. I had read a window of the table and generalised from it. See "THE
+  MANUAL WAS TALKING TO ITS OWN MAINTAINER" below; `docs_valid.py` check 7 is now the
+  alarm on it.**
 - **THE LINES-CARD MIRROR FAULT IS STILL OPEN, and it is the oldest live unknown.** His
   LINES card froze in the controls window on 2026-08-06; the recording feature was
   reverted the same day but never convicted. **Prime suspect, and it costs nothing to
@@ -802,6 +799,47 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
   not the other. And a runner **must score a missing anchor as SKIP and a crash as its own
   outcome**, never as "caught": "no FAIL lines" and "the process died" look identical if you
   only parse stdout.
+
+## THE MANUAL WAS TALKING TO ITS OWN MAINTAINER (2026-08-08)
+
+Andy: *"fix the log_routes GUARDS entry too."* **It was not one entry. It was fifteen of
+thirty-seven** — and the reason I told him "one line" is worth recording, because it is the
+same mistake in miniature as the fault this repo keeps finding: I read a WINDOW of the
+generated table (a grep with context), saw one `(undocumented)` in it, and reported that as
+the count. **A partial view is not a census. Enumerate against the directory.** The
+one-liner that actually answers it:
+
+```
+node -e 'const fs=require("fs");const s=fs.readFileSync("tools/build_tech_manual.js","utf8");
+const b=s.slice(s.indexOf("const GUARDS = {"),s.indexOf("};",s.indexOf("const GUARDS = {")));
+const have=new Set([...b.matchAll(/^\s*"([\w.]+)":/gm)].map(m=>m[1]));
+console.log(fs.readdirSync("tests").filter(f=>/\.(js|py)$/.test(f)&&!have.has(f)))'
+```
+
+**THE MECHANISM, and it is a GOOD design that was working.** Chapter 13.1's harness table is
+DERIVED from `tests/` so a new suite appears in the manual the day it is written; the
+per-suite descriptions come from a hand-kept `GUARDS` lookup, and a suite with no entry
+renders `(undocumented — add an entry to GUARDS in tools/build_tech_manual.js)` in its row.
+It self-reports rather than failing silently. **Nothing read the report.** Fifteen rows of
+build instructions addressed to a developer sat in a Word document written for an engineer
+reader, in every commit since the table was first derived.
+
+**THE HALF-DERIVED SHAPE IS THE HAZARD, and this repo now has three instances of it** (the
+hook's suite list, this file's suite counts, and now GUARDS): when one half of a table is
+derived and the other is hand-kept, the derived half keeps GROWING the hand-kept half's
+debt, silently, and the graceful placeholder is what makes it survivable enough to ignore.
+**So the degradation now has an alarm on it:** `tests/docs_valid.py` check 7 — *no document
+ships a note addressed to its own maintainer* — scans every generated document for
+`(undocumented`, `TODO`, `FIXME`, `XXX:`. Deliberately generic, not a match on that one
+string. **2 mutations caught** (a suite's entry removed; a `TODO` inside a REAL suite's
+description so it actually renders). **Two others SURVIVED correctly and are worth not
+re-deriving: a GUARDS key for a suite that does not exist, and an unused JS constant
+containing "FIXME", neither of which reaches the rendered prose — a mutation that never
+renders cannot violate a check on what was rendered.** That is the second time in two days
+that trap cost a round; see the same note in the measuring-tool section.
+
+All fifteen entries were written from each suite's OWN docstring rather than invented, in
+the voice of the existing rows. `docs_valid.py` 7 → 8 checks.
 
 ## THE MEASURING TOOL + THE CHART CONTEXT MENU (2026-08-08)
 
