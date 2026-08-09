@@ -1026,7 +1026,14 @@ function clampPanelPos(el, left, top){
 // on screen now, and the next restore or resize re-derives from storage as before.
 function showPanel(el, show, display){
   if(!el) return;                                // panel absent in this window
-  el.style.display = show ? (display || "block") : "none";
+  // WHAT "VISIBLE" LOOKS LIKE IS A PROPERTY OF THE PANEL, NOT OF THE CALLER. A `.panel`
+  // is a flex column in the stylesheet - that is where its 6 px row gap comes from -
+  // while the other pop-outs are plain blocks. This used to default to "block" and rely
+  // on each caller passing "flex", which only ONE of them did: the ROC card is shown from
+  // THREE places, none of them passing it, so it opened as a block and silently lost the
+  // row spacing every other `.panel` has. Deriving it from the class the rule lives on
+  // means a caller cannot forget, and the next `.panel` is right the day it is added.
+  el.style.display = show ? (display || (el.classList.contains("panel") ? "flex" : "block")) : "none";
   if(!show || !el.style.left) return;            // hidden, or never positioned by left/top
   const c = clampPanelPos(el, parseFloat(el.style.left), parseFloat(el.style.top));
   el.style.left = c.left+"px"; el.style.top = c.top+"px";
@@ -4245,7 +4252,8 @@ function setMode(m){
   $("#bndBtn").classList.toggle("mode-on", mode==="bound");
   $("#srchBtn").classList.toggle("mode-on", mode==="search");
   $("#tranBtn").classList.toggle("mode-on", mode==="transit");
-  showPanel($("#linePanel"), mode==="survey", "flex");   // draggable: re-clamp when shown
+  showPanel($("#linePanel"), mode==="survey");   // draggable: re-clamp when shown ("flex"
+                                                // is now derived - see showPanel)
   $("#boundPanel").style.display = mode==="bound" ? "flex" : "none";
   $("#searchPanel").style.display = mode==="search" ? "flex" : "none";
   $("#transitPanel").style.display = mode==="transit" ? "flex" : "none";

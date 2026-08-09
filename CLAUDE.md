@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 573 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 576 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (573 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (576 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -115,7 +115,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap, the uicard clamp (22) |
-| `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen; a CARD IS NOT A MODE (26) |
+| `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen; a CARD IS NOT A MODE; what "visible" means is DERIVED from the panel (29) |
 | `node tests/ui_tooltips.js` | hover tips the pointer cannot occlude; guarded restore for runtime title writers (9) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
@@ -197,6 +197,24 @@ FIXED code, because **the comment explaining the removal quotes the very call it
 Same family as `roc_persist.py` matching its own source text. It now brace-matches the
 handler's real body and strips comments first: **a source-shape check must read CODE, not
 prose about code.**
+
+**THE FOLLOW-UP ANDY ASKED FOR — WHAT "VISIBLE" MEANS IS THE PANEL'S PROPERTY, NOT THE
+CALLER'S.** Found while measuring the fix above: the ROC card opened as `display:block`,
+overriding `.panel`'s `display:flex`, so it silently lost the **6 px row gap** every other
+`.panel` has. `showPanel(el, show, display)` defaulted to `"block"` and expected each caller
+to pass `"flex"` — **exactly one of eight call sites did, and the ROC card is shown from
+THREE.** A per-caller hint is the wrong mechanism when the answer is a property of the
+element: it is derived now, `el.classList.contains("panel") ? "flex" : "block"`, and the one
+site that passed the hint no longer needs to. Measured live with both cards open: SURV and
+ROC both `flex` / `column` / `rowGap 6px`, ROC 264 px tall and fully on screen, still no
+overlap. `panel_drag.js` 26 → 29.
+**AND THE MUTATION THAT SURVIVED IS THE LESSON:** check 26c matched
+`showPanel\([^)]*"block"\)` — a character class **cannot cross a `)`**, so
+`showPanel($("#linePanel"), mode==="survey", "block")` hid its third argument behind the
+`)` of `$("#linePanel")`, and the mutation restoring a hard-coded display went undetected.
+It extracts each call with **balanced parens** now. **A check that reads a CALL has to parse
+the call** — nested parentheses are normal in every real call site, so a regex over
+arguments is wrong by default, not by accident.
 
 **THE FOUR THAT STILL MATTER, and each has its own section below:**
 - **THE TURN YIELDS TO THE CHANNEL** (`a548c14`) — the safety one. Turns arced 34 m into

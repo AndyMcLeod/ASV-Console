@@ -439,6 +439,61 @@ check("25. the ROC card's default position CLEARS the mode panels",
       () => { const d = panelDefaults();
               return "mode panels " + d.left + "-" + d.right + "px, ROC opens at " + d.rocLeft + "px"; });
 
+// --- what "visible" means is the PANEL's property, not the caller's ---------------------
+// The ROC card opened as `display:block`, overriding `.panel`'s `display:flex`, so it lost
+// the 6px row gap SURV has. The cause was showPanel defaulting to "block" and expecting
+// each caller to pass "flex" - which exactly one of seven call sites did, while the ROC
+// card is shown from THREE. Derived from the class now, so no caller can forget.
+//
+// FUNCTIONAL, not source-shape: run the real showPanel against a fake element and read
+// back what it set. A regex for the word "flex" would pass on a comment mentioning it -
+// the trap check 24 fell into one commit ago.
+function displayAfterShow(classes) {
+  const el = { classList: { contains: c => classes.includes(c) },
+               style: { display: "none", left: "", top: "" } };
+  const fn = new Function("clampPanelPos", "return " + SHOW)(() => ({ left: 0, top: 0 }));
+  fn(el, true);
+  return el.style.display;
+}
+check("26. a .panel opens as FLEX, so it keeps the row gap the stylesheet gives it",
+      () => displayAfterShow(["panel"]) === "flex",
+      () => ".panel -> " + displayAfterShow(["panel"]));
+
+check("26b ... and a plain pop-out still opens as block",
+      () => displayAfterShow(["rsz"]) === "block",
+      () => "non-.panel -> " + displayAfterShow(["rsz"]));
+
+// The derivation only pays off if the callers STOP passing the hint - otherwise one
+// forgotten argument is still a differently-rendered card. The ROC card is the case that
+// proved it, so name it rather than counting call sites.
+// BALANCED PARENS, not [^)]*. The first version of this check used a character class that
+// cannot cross a ")", so `showPanel($("#linePanel"), mode==="survey", "block")` hid its
+// third argument behind the ")" of $("#linePanel") - and the mutation restoring a
+// hard-coded display SURVIVED. Any check that reads a CALL has to parse the call.
+function showPanelCalls() {
+  const out = [];
+  for (let i = 0; ; ) {
+    const at = H.indexOf("showPanel(", i);
+    if (at < 0) break;
+    i = at + 10;
+    if (/function\s+$/.test(H.slice(Math.max(0, at - 12), at))) continue;   // the definition
+    let k = at + "showPanel".length, depth = 0;
+    for (;;) {
+      const c = H[k];
+      if (c === "(") depth++;
+      else if (c === ")") { depth--; if (!depth) break; }
+      if (k++ > at + 400) break;                       // unbalanced: give up, don't hang
+    }
+    out.push(H.slice(at, k + 1));
+  }
+  return out;
+}
+const HARDCODED = showPanelCalls().filter(s => /"(flex|block|inline[\w-]*)"/.test(s));
+check("26c no call site hard-codes a display any more - every one derives it",
+      () => HARDCODED.length === 0,
+      () => HARDCODED.length ? HARDCODED.join(" | ")
+                             : showPanelCalls().length + " showPanel calls, none hard-coded");
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
