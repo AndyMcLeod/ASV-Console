@@ -44,6 +44,14 @@
 const fs = require("fs");
 const path = require("path");
 
+// LAYER-0 HELPERS COME FROM THE REAL MODULES, not from asv.html's source text.
+// These moved out of the page on 2026-08-09. Requiring them means a renamed or
+// deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
+// and the checks below exercise the shipped function rather than an eval of its text.
+// Top-level so the suite's DIRECT eval() of page functions still resolves them.
+const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp } = require("../static/js/geometry.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
@@ -72,11 +80,9 @@ let code = "const M_PER_DEG_LAT = 111320;\n" +
 code += H.match(/const MARK_TAIL=.*$/m)[0] + "\n";
 { const i = H.indexOf("const HAZ_UNKNOWN_EXTENT"); code += H.slice(i, H.indexOf(";", i) + 1) + "\n"; }
 { const m = H.match(/(?:const|let) WRECK_RADIUS_M[^;]*;/); if (m) code += m[0] + "\n"; }
-for (const f of ["llEN", "fromEN", "eachRing", "eachPath", "eachPoint", "bbOf", "markId",
+for (const f of ["markId",
   "markSystems", "depthExcluded", "nogoKind", "hazExtent", "buildKeepouts", "pairGates",
-  "channelPolys", "segSamplesEN", "channelTurnKeepouts", "pinp", "dSeg", "inBB",
-  "blocked", "blockedInfo", "firstBlockAlong", "legClear", "distTo", "azTo",
-  "arcPts", "teardropTurn"]) code += grab(f) + "\n";
+  "channelPolys", "segSamplesEN", "channelTurnKeepouts", "blocked", "blockedInfo", "firstBlockAlong", "legClear", "arcPts", "teardropTurn"]) code += grab(f) + "\n";
 eval(code);
 
 // ---- synthetic world ----------------------------------------------------- //

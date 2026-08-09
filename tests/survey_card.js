@@ -35,6 +35,12 @@
 const fs = require("fs");
 const path = require("path");
 
+// Layer-0 helpers come from the real modules now (2026-08-09), not lifted out of
+// asv.html as source text: a renamed or deleted export fails HERE instead of quietly
+// falling back to a stale copy. Top-level, so the DIRECT eval() below still resolves
+// them through its lexical scope.
+const { llEN } = require("../static/js/geodesy.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -56,7 +62,7 @@ function check(name, cond, detail) {
 var M_PER_DEG_LAT = 111320;
 var mission = { lines: [] }, planKind = "survey";
 // eslint-disable-next-line no-eval
-eval(grab("llEN") + "\n" + grab("committedPatternInfo"));
+eval(grab("committedPatternInfo"));
 
 // Build a committed boustrophedon at a real latitude: `n` lines of `len` m running due
 // north/south, `sp` m apart, alternating end for end exactly as the real plan does.

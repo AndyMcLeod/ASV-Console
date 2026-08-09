@@ -12,7 +12,8 @@ Every commanded motion is planned **clear of charted ENC obstacles** (shoreline,
 piers/docks, and shallow water) — the console extracts a **nogo model** at startup
 and routes Go-To, RTH, search, transit and survey transits around it.
 
-Single-file, Python-3 standard library only. No pip, no build step. Run it, a
+Python-3 standard library only. **No pip, no build step, no bundler** — the page
+and its ES modules under `static/js/` are served exactly as written. Run it, a
 browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
 keep-clear buffer, short survey/search patterns).
 

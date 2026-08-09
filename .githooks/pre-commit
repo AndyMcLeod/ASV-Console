@@ -32,7 +32,11 @@
 # Only bother when a source the tests cover, or ANY test, is staged.
 changed=$(git diff --cached --name-only)
 case "$changed" in
-  *static/asv.html*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*gps_sim.py*|*tests/*|*tools/*|*docs/*) ;;
+  # `static/*` (not just asv.html) so the EXTRACTED ES MODULES are covered: static/js/*.js
+  # now holds the geodesy, units, geometry and shared-state the page imports, and naming
+  # the page alone would let a change to those run nothing - the exact drift this filter
+  # was rewritten to remove the first time.
+  *static/*|*roc_tracks.py*|*asv_console.py*|*ais_service.py*|*gps_sim.py*|*tests/*|*tools/*|*docs/*) ;;
   *) exit 0 ;;
 esac
 

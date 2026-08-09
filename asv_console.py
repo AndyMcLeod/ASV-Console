@@ -3035,6 +3035,24 @@ def safe_log_path(name):
     return p if os.path.isfile(p) else None
 
 
+# The page's ES modules (static/js/*.js). SAME GUARD SHAPE AS safe_log_path, and for the
+# same reason: this turns a URL into a filesystem read, so the only defence that holds is
+# refusing anything that is not a bare basename from one directory with one extension.
+# `os.path.basename(name) != name` rejects every traversal spelling at once (`../`, a
+# nested path, an absolute path, a drive letter) without trying to enumerate them.
+JS_DIR = os.path.join(STATIC_DIR, "js")
+_JS_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.js$")      # geodesy.js, units.js, ...
+
+
+def safe_js_path(name):
+    """Resolve a client-supplied module name to a path inside static/js, or None."""
+    base = os.path.basename(name or "")
+    if base != name or not _JS_NAME_RE.match(base):
+        return None
+    p = os.path.join(JS_DIR, base)
+    return p if os.path.isfile(p) else None
+
+
 class Server(ThreadingHTTPServer):
     """Threaded HTTP server that swallows benign client-disconnect errors.
 
@@ -3088,6 +3106,20 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 html = INDEX_HTML
             self._send(200, html, "text/html; charset=utf-8")
+        elif root.startswith("/static/js/"):
+            # The page's ES modules. Served fresh per request for the same reason the page
+            # is (edits show up on refresh, no restart), and with an explicit JavaScript
+            # MIME TYPE because a module script is REFUSED by the browser on anything else
+            # - a wrong content type here fails as a blank console, not as a 404.
+            p = safe_js_path(root[len("/static/js/"):])
+            if not p:
+                self._send(404, json.dumps({"error": "no such module"}))
+            else:
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        self._send(200, f.read(), "text/javascript; charset=utf-8")
+                except OSError:
+                    self._send(404, json.dumps({"error": "no such module"}))
         elif self.path == "/playback" or self.path.startswith("/playback?"):
             try:
                 html = load_static("playback.html")

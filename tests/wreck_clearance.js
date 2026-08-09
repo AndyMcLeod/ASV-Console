@@ -36,6 +36,16 @@
 const fs = require("fs");
 const path = require("path");
 
+// The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
+// functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
+// needs the SAME object the page mutates - and gets it, rather than a stub, so a check
+// that leans on a vessel default is reading the real one.
+const { V } = require("../static/js/state.js");
+
+
+// Layer-0 helpers from the real modules (2026-08-09) rather than lifted out of the page.
+const { fromEN, llEN } = require("../static/js/geodesy.js");
+const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp } = require("../static/js/geometry.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -57,8 +67,8 @@ function grabDecl(name) {
   throw new Error("test setup: declaration " + name + " not found (renamed?)");
 }
 
-const HELPERS = ["llEN", "fromEN", "bbOf", "inBB", "pinp", "dSeg", "blocked", "blockedInfo",
-                 "legClear", "eachPoint", "eachRing", "eachPath", "depthExcluded", "nogoKind",
+const HELPERS = ["blocked", "blockedInfo",
+                 "legClear", "depthExcluded", "nogoKind",
                  "markId", "markSystems", "hazExtent", "buildKeepouts", "bufferFloor",
                  "stampSeg", "dilateGrid", "rasterKeepouts", "snapClearLL", "routeAround"];
 const M_PER_DEG_LAT = 111320.0;
@@ -67,9 +77,9 @@ const M_PER_DEG_LAT = 111320.0;
 // than copies that can drift.
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
-     "var waterOffset=0; var NOGO_MIN_DEPTH_M=2.3; var NOGO_BUFFER_M=5;\n" +
+     "var waterOffset=0; V.NOGO_MIN_DEPTH_M = 2.3; V.NOGO_BUFFER_M = 5;\n" +
      "var enc={features:[],band:null,minDepth:null};\n" +
-     grabDecl("HAZ_UNKNOWN_EXTENT") + "\n" + grabDecl("WRECK_RADIUS_M") + "\n" +
+     grabDecl("HAZ_UNKNOWN_EXTENT") + "\n" +
      grabDecl("WRECK_CLEAR_MARGIN_M") + "\n" +
      HELPERS.map(grab).join("\n"));
 
@@ -103,13 +113,13 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
   const wreck = feat("Wreck_point", 0, 0);
   const pile = feat("Pile_point", 0, 0);
   check("1. an unsurveyed wreck carries the configured radius, a pile carries none",
-        hazExtent(wreck) === WRECK_RADIUS_M && hazExtent(pile) === 0,
+        hazExtent(wreck) === V.WRECK_RADIUS_M && hazExtent(pile) === 0,
         "wreck=" + hazExtent(wreck) + " m, pile=" + hazExtent(pile) + " m");
-  // NOGO_MIN_DEPTH_M is 2.3 here (2.0 m draft + 0.3 UKC) and the clear margin is 1.0.
+  // V.NOGO_MIN_DEPTH_M is 2.3 here (2.0 m draft + 0.3 UKC) and the clear margin is 1.0.
   check("2. a wreck with charted water over it (VALSOU 4.5) collapses to a point",
         hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 4.5 })) === 0);
   check("3. ... but a SHALLOW charted wreck (VALSOU 2.5) keeps the full berth",
-        hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 2.5 })) === WRECK_RADIUS_M,
+        hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 2.5 })) === V.WRECK_RADIUS_M,
         "2.5 m over it vs a 2.3 m floor + 1.0 margin");
 }
 
@@ -122,7 +132,7 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         blocked({ e: 10, n: 0 }, K, BUF) === true);
   check("5. a point 40 m away is still inside the berth; 80 m is outside",
         blocked({ e: 40, n: 0 }, K, BUF) === true && blocked({ e: 80, n: 0 }, K, BUF) === false,
-        "radius = extent " + WRECK_RADIUS_M + " + buffer " + BUF);
+        "radius = extent " + V.WRECK_RADIUS_M + " + buffer " + BUF);
   // The headline: a straight leg threading 10 m past the wreck.
   const A = enLL(-300, 10), B = enLL(300, 10);
   check("6. A STRAIGHT LEG PASSING 10 m FROM THE WRECK IS REFUSED",
@@ -158,10 +168,10 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         minD = Math.min(minD, Math.hypot(a.e + (b.e-a.e)*t, a.n + (b.n-a.n)*t));
       }
     }
-    ok = ok && minD >= WRECK_RADIUS_M;
+    ok = ok && minD >= V.WRECK_RADIUS_M;
   }
   check("9. the A* search ROUTES AROUND the wreck rather than through it",
-        ok, route ? ("closest approach " + minD.toFixed(1) + " m, want >= " + WRECK_RADIUS_M)
+        ok, route ? ("closest approach " + minD.toFixed(1) + " m, want >= " + V.WRECK_RADIUS_M)
                   : "no route returned");
 }
 
@@ -174,7 +184,7 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
   const atTide = hazExtent(marginal);
   waterOffset = 0;
   check("10. VALSOU is tide-corrected (blocked at datum, passable at +1.16 m)",
-        atDatum === WRECK_RADIUS_M && atTide === 0,
+        atDatum === V.WRECK_RADIUS_M && atTide === 0,
         "datum=" + atDatum + " m, +1.16 m=" + atTide + " m");
 }
 
@@ -191,11 +201,11 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
 // 12. The radius is vessel-configurable (planning.wreck_radius_m), so a vessel that
 // works a wreck-strewn area can widen it without a code change.
 {
-  const saved = WRECK_RADIUS_M;
-  WRECK_RADIUS_M = 120;
+  const saved = V.WRECK_RADIUS_M;
+  V.WRECK_RADIUS_M = 120;
   const K = ko([feat("Wreck_point", 0, 0)]);
   const wide = blocked({ e: 100, n: 0 }, K, 3) === true;
-  WRECK_RADIUS_M = saved;
+  V.WRECK_RADIUS_M = saved;
   const K2 = ko([feat("Wreck_point", 0, 0)]);
   check("12. the radius is vessel-configurable, and reverts with the setting",
         wide && blocked({ e: 100, n: 0 }, K2, 3) === false,

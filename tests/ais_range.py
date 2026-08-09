@@ -282,10 +282,17 @@ tb = [ln.strip() for ln in server_out.splitlines()
 # against the definition (1 nm = 1852 m exactly) rather than a copied constant.
 HTML = io.open(os.path.join(APP, "static", "asv.html"), encoding="utf-8").read()
 
-m_per_nm = re.search(r"const M_PER_NM = (\d+)", HTML)
+# The nm definition moved OUT of the page into static/js/units.js with the Layer-0 module
+# split (2026-08-09): it is the display edge's own constant, so it lives with the display
+# edge. Read it there - and assert the page does NOT redeclare one, because two definitions
+# of a conversion factor is exactly how a display edge drifts from the wire.
+UNITS_JS = io.open(os.path.join(APP, "static", "js", "units.js"), encoding="utf-8").read()
+m_per_nm = re.search(r"export const M_PER_NM = (\d+)", UNITS_JS)
 check("8b. the client converts with the DEFINED nautical mile, 1852 m exactly",
-      m_per_nm is not None and int(m_per_nm.group(1)) == 1852,
-      "M_PER_NM = %s" % (m_per_nm.group(1) if m_per_nm else "not found"))
+      m_per_nm is not None and int(m_per_nm.group(1)) == 1852
+      and "M_PER_NM =" not in HTML,
+      "units.js M_PER_NM = %s; page redeclares it: %s"
+      % (m_per_nm.group(1) if m_per_nm else "not found", "M_PER_NM =" in HTML))
 
 # 50 km is the shipped default and must present as 27 nm, which is the value the markup
 # opens with - if those two disagree the field jumps the first time the poll lands.

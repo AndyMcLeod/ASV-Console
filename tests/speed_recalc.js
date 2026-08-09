@@ -39,6 +39,19 @@
 const fs = require("fs");
 const path = require("path");
 
+// Layer-0 helpers come from the real modules now (2026-08-09), not lifted out of
+// asv.html as source text: a renamed or deleted export fails HERE instead of quietly
+// falling back to a stale copy. Top-level, so the DIRECT eval() below still resolves
+// them through its lexical scope.
+const { distTo, llEN } = require("../static/js/geodesy.js");
+const { fmtDist, fmtDur } = require("../static/js/units.js");
+
+// The vessel-derived parameter block lives in static/js/state.js now (2026-08-09). The
+// page functions eval'd below read V.NOGO_BUFFER_M / V.MAX_TURN_RATE_DEG_S / ..., so the
+// suite hands them the SAME object the page mutates rather than a stub - a check that
+// leans on a vessel default is then reading the real one.
+const { V } = require("../static/js/state.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -59,10 +72,10 @@ function check(name, cond, detail) {
 
 // The two shipped hulls' figures, as the turn-geometry suite uses them.
 var M_PER_DEG_LAT = 111320;
-var SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 }, MAX_TURN_RATE_DEG_S = 20;
+V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 }, MAX_TURN_RATE_DEG_S = 20;
 var mission = { speed: "survey", lines: [], waypoints: [] };
 var speedWarnShown = false;   // the page declares this beside the function; the harness must too
-var M_PER_NM = 1852, distUnit = "km";   // fmtDist's globals - km keeps the legacy km shape here
+// distUnit lives in units.js now - setDistUnit() is the only way in.   // fmtDist's globals - km keeps the legacy km shape here
 var asv = null;
 var banners = [], notes = [];
 function showBanner(t) { banners.push(t); const b = $("#encbanner"); b.textContent = t; b.style.display = "block"; }
@@ -71,7 +84,7 @@ function flashNote(t) { notes.push(t); }
 var EL = {};
 function $(sel) { return (EL[sel] = EL[sel] || { textContent: "", style: {} }); }
 // eslint-disable-next-line no-eval
-eval(grab("llEN") + "\n" + grab("distTo") + "\n" + grab("fmtDur") + "\n" + grab("fmtDist") + "\n" +
+eval(
      grab("minTurnRadiusM") + "\n" + grab("committedPatternInfo") + "\n" +
      grab("recalcCommittedForSpeed"));
 
@@ -149,7 +162,7 @@ check("6. the survey duration is recomputed when the speed changes",
 // passed for any two different strings at all.
 const secs = t => { const h = /(\d+)h/.exec(t), m = /(\d+)m/.exec(t), s = /\b(\d+)s/.exec(t);
                     return (h ? +h[1]*3600 : 0) + (m ? +m[1]*60 : 0) + (s ? +s[1] : 0); };
-const ratio = SPEED_KN.survey / SPEED_KN.low;
+const ratio = V.SPEED_KN.survey / V.SPEED_KN.low;
 check("7. ... and it is longer by the SPEED RATIO, not merely different",
       Math.abs(secs(atLow) / secs(atSurvey) - ratio) < 0.12,
       secs(atLow) + "s / " + secs(atSurvey) + "s = " + (secs(atLow)/secs(atSurvey)).toFixed(2)

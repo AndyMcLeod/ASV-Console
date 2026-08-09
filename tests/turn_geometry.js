@@ -34,6 +34,20 @@
 const fs = require("fs");
 const path = require("path");
 
+// LAYER-0 HELPERS COME FROM THE REAL MODULES, not from asv.html's source text.
+// These moved out of the page on 2026-08-09. Requiring them means a renamed or
+// deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
+// and the checks below exercise the shipped function rather than an eval of its text.
+// Top-level so the suite's DIRECT eval() of page functions still resolves them.
+const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
+
+// The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
+// functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
+// needs the SAME object the page mutates - and gets it, rather than a stub, so a check
+// that leans on a vessel default is reading the real one.
+const { V } = require("../static/js/state.js");
+
 const STATIC = path.join(__dirname, "..", "static");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
 
@@ -47,15 +61,15 @@ function grab(src, name) {
 }
 
 // The turn cluster plus everything its nogo validation reaches.
-const HELPERS = ["llEN", "fromEN", "distTo", "azTo", "inBB", "pinp", "dSeg", "blocked",
+const HELPERS = ["blocked",
                  "legClear", "minTurnRadiusM", "arcPts", "teardropTurn"];
 const M_PER_DEG_LAT = 111320.0;
 
-// SPEED_KN / MAX_TURN_RATE_DEG_S are the vessel mirrors loadVessel() fills from
+// V.SPEED_KN / V.MAX_TURN_RATE_DEG_S are the vessel mirrors loadVessel() fills from
 // /api/vessel; declared mutable here so each vessel below can be swapped in.
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
-     "var SPEED_KN={low:1.5,survey:3.0,high:6.0};\nvar MAX_TURN_RATE_DEG_S=60;\n" +
+     "V.SPEED_KN = {low:1.5,survey:3.0,high:6.0};\nV.MAX_TURN_RATE_DEG_S=60;\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
@@ -81,7 +95,7 @@ function box(e0, n0, e1, n1) {
 // Returns the full path in local E/N (E ... turn ... F) plus the raw result.
 function turn(vessel, spacing, opts) {
   opts = opts || {};
-  SPEED_KN = vessel.speeds; MAX_TURN_RATE_DEG_S = vessel.rate;
+  V.SPEED_KN = vessel.speeds; V.MAX_TURN_RATE_DEG_S = vessel.rate;
   const minR = minTurnRadiusM(opts.speed || "survey");
   const E = enLL(0, 0), F = enLL(spacing, opts.ahead || 0);
   const hF = opts.hF === undefined ? 180 : opts.hF;
@@ -177,7 +191,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // circle degenerates (q -> 0) and the two shapes are the same semicircle, so the
 // families agree where they meet rather than jumping.
 {
-  const minR = (() => { SPEED_KN = LARGE.speeds; MAX_TURN_RATE_DEG_S = LARGE.rate; return minTurnRadiusM("survey"); })();
+  const minR = (() => { V.SPEED_KN = LARGE.speeds; V.MAX_TURN_RATE_DEG_S = LARGE.rate; return minTurnRadiusM("survey"); })();
   const below = turn(LARGE, 2 * minR - 0.001), above = turn(LARGE, 2 * minR + 0.001);
   check("14. teardrop and semicircle agree at spacing = 2 x minR",
         below.t.kind === "teardrop" && above.t.kind === "semicircle" &&

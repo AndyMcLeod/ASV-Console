@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 576 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 581 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (576 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (581 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -167,9 +167,47 @@ item below started as something he SAW on his own console — or, at the end, as
 | `c752a30` | **Set Home takes the CLICKED POINT** (Andy's reversal of the old rule) + the keep-out warning |
 | `5ca63d0` | the dev guide documents the mutation runner that damaged this repo twice |
 | `d43c8bf` | `start_sim.bat` + `tools/asv.ico` — a double-click launcher for simulator mode |
-| (this commit) | **a card is not a mode** — opening ROC no longer cancels SURV |
+| `0ac3ae6` | **a card is not a mode** — opening ROC no longer cancels SURV |
+| `d742f42` | what "visible" means is the panel's property, not the caller's |
+| (this commit) | **LAYER 0 LEAVES THE PAGE** — `static/js/{geodesy,geometry,units,state}.js` as ES modules |
 
-**⚠ A CARD IS NOT A MODE (this commit) — DO NOT PUT THE `setMode` BACK.** Andy, live:
+**⇒ THE CLIENT NOW HAS MODULES (this commit). READ THIS BEFORE TOUCHING `static/asv.html`.**
+The page is a **`<script type="module">`**, and its lowest layer lives in `static/js/`:
+`geodesy.js` (zero imports), `geometry.js`, `units.js` (owns the km/nm preference outright),
+`state.js` (the vessel-derived parameter block). Served by a new whitelisted route,
+`safe_js_path`, **guarded exactly like `safe_log_path`** because both turn a URL into a file
+read; `http_contract.py` 23–26 probe it live, including nine traversal and near-miss
+spellings and the JavaScript MIME type (a wrong type fails as a BLANK CONSOLE, not a 404).
+**THE TWO RULES, which are one rule twice over:**
+- **FUNCTIONS are imported BY NAME.** A function binding is never reassigned, so moving one
+  costs **zero call-site edits** — 142 call sites needed no change.
+- **SHARED MUTABLE STATE goes through an object and is NEVER destructured.** An ES module
+  namespace is **sealed**: `import * as S` then `S.x = 1` throws `TypeError`. I claimed the
+  opposite in the analysis and had to correct it — **measured, not assumed**. And
+  `const {NOGO_BUFFER_M} = V` copies a value a vessel switch later changes silently, in the
+  direction that gives a deeper boat LESS clearance. Always `V.NOGO_BUFFER_M`.
+**WHAT IT BOUGHT:** eleven suites stopped regex-ing functions out of HTML and now
+`require()` the real modules (Node 24 supports `require()` of ESM). A renamed export is a
+**load error** now, not a silent "helper not found"; `turn_geometry`, `buoy_lane` and
+`turn_channel` call the shipped `distTo`/`llEN` themselves.
+**VERBATIM MATTERS:** `toEN`/`fromEN`/`llEN` keep the unfactored `*M_PER_DEG_LAT*Math.cos(…)`.
+Hoisting that product reads better and is **not the same number** — IEEE-754 multiplication
+is not associative, and this is the frame the keep-out routing and the Rule 9 lane are
+computed in. A move whose whole claim is "no behaviour change" should not spend its
+credibility on a tidier line.
+**8/9 mutations caught.** The survivor was real: nothing owned `state.js`'s **shipped**
+depth floor, because every `nogo_readout` check seeds its own first — now check 15. **Three
+"catches" were CRASHES rather than clean check failures** — those suites die in scenario
+setup instead of failing a check, the same reportability gap `home_spawn` 2e had. Recorded
+as a known gap, not quietly counted as a pass.
+**HOOK:** the pre-commit path filter is `*static/*` now, not `*static/asv.html*` — a change
+to a module alone would otherwise have run nothing.
+**A TOOLING TRAP THAT COST FOUR ATTEMPTS:** a `<<'PY'` heredoc in this environment **strips
+one backslash level**, so a Python `"\\n"` arrives as a REAL newline. It kept landing inside
+JS regex literals and I misdiagnosed it as CRLF three times. **Write patch scripts to a
+file and run them; do not pipe them through a heredoc.**
+
+**⚠ A CARD IS NOT A MODE (`0ac3ae6`) — DO NOT PUT THE `setMode` BACK.** Andy, live:
 "the selection of ROC chip deselects the SURV chip, although the active mission data
 preserves on re-selection." Right on both halves — the drawn pattern DOES survive (it is
 kept across mode switches on purpose), and what was lost was only the MODE. Cause:

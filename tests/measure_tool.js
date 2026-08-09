@@ -44,6 +44,14 @@
 const fs = require("fs");
 const path = require("path");
 
+// LAYER-0 HELPERS COME FROM THE REAL MODULES, not from asv.html's source text.
+// These moved out of the page on 2026-08-09. Requiring them means a renamed or
+// deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
+// and the checks below exercise the shipped function rather than an eval of its text.
+// Top-level so the suite's DIRECT eval() of page functions still resolves them.
+const { azTo, distTo } = require("../static/js/geodesy.js");
+const { fmtDist, setDistUnit } = require("../static/js/units.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
@@ -92,9 +100,9 @@ console.log("Measurement tool — a ruler on the chart, and the menu that arms i
 // ---- the readout that flows along the line ----------------------------------------- //
 // Real geodesy + the real formatter: measLabel is only correct if the console's own
 // distance and azimuth functions are the ones behind it.
-var M_PER_NM = 1852, M_PER_DEG_LAT = 111320, distUnit = "km";
+var M_PER_DEG_LAT = 111320;   // distUnit now lives in units.js (setDistUnit)
 // eslint-disable-next-line no-eval
-eval(grab("fmtDist")); eval(grab("distTo")); eval(grab("azTo")); eval(grab("measLabel"));
+eval(grab("measLabel"));
 
 const MEAS_SRC = grab("measLabel");
 check("1  distance goes through fmtDist, so a measurement follows the DIST pill",
@@ -106,15 +114,15 @@ check("1  distance goes through fmtDist, so a measurement follows the DIST pill"
 const A = { lat: 40.0, lon: -75.0 };
 const eastM = (m) => ({ lat: A.lat, lon: A.lon + m / (M_PER_DEG_LAT * Math.cos(A.lat * Math.PI / 180)) });
 check("2  the nm VALUE converts both ways (1852 m = 1.00 nm, 1.85 km)", () => {
-  distUnit = "nm"; const nm = measLabel({ a: A, b: eastM(1852) });
-  distUnit = "km"; const km = measLabel({ a: A, b: eastM(1852) });
+  setDistUnit("nm"); const nm = measLabel({ a: A, b: eastM(1852) });
+  setDistUnit("km"); const km = measLabel({ a: A, b: eastM(1852) });
   return /^1\.00 nm/.test(nm) && /^1\.85 km/.test(km);
-}, () => { distUnit = "nm"; const n = measLabel({ a: A, b: eastM(1852) }); distUnit = "km"; return n + " / " + measLabel({ a: A, b: eastM(1852) }); });
+}, () => { setDistUnit("nm"); const n = measLabel({ a: A, b: eastM(1852) }); setDistUnit("km"); return n + " / " + measLabel({ a: A, b: eastM(1852) }); });
 
 check("3  a short leg still reads in metres (the standing units rule)", () => {
-  distUnit = "nm"; const s = measLabel({ a: A, b: eastM(240) }); distUnit = "km";
+  setDistUnit("nm"); const s = measLabel({ a: A, b: eastM(240) }); setDistUnit("km");
   return /^240 m/.test(s);
-}, () => { distUnit = "nm"; const s = measLabel({ a: A, b: eastM(240) }); distUnit = "km"; return s; });
+}, () => { setDistUnit("nm"); const s = measLabel({ a: A, b: eastM(240) }); setDistUnit("km"); return s; });
 
 // A bearing is only right if reversing the endpoints moves it by 180.
 check("4  the bearing is the TRUE azimuth a->b, not its reciprocal", () => {

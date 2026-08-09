@@ -36,6 +36,20 @@
 const fs = require("fs");
 const path = require("path");
 
+// LAYER-0 HELPERS COME FROM THE REAL MODULES, not from asv.html's source text.
+// These moved out of the page on 2026-08-09. Requiring them means a renamed or
+// deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
+// and the checks below exercise the shipped function rather than an eval of its text.
+// Top-level so the suite's DIRECT eval() of page functions still resolves them.
+const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
+
+// The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
+// functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
+// needs the SAME object the page mutates - and gets it, rather than a stub, so a check
+// that leans on a vessel default is reading the real one.
+const { V } = require("../static/js/state.js");
+
 const STATIC = path.join(__dirname, "..", "static");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
 
@@ -59,8 +73,7 @@ function grabDecl(name) {
 }
 
 // Geometry helpers + the whole route-search cluster - all in static/asv.html here.
-const HELPERS = ["llEN", "fromEN", "blocked", "inBB", "pinp", "dSeg", "distTo", "azTo",
-                 "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
+const HELPERS = ["blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  "blockedInfo", "firstBlockAlong", "gateLegClear",
                  "smoothTrack", "systemCenterline", "buoyChannelLane",

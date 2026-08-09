@@ -38,11 +38,21 @@ c.push(H1("1  The shape of this codebase"));
 c.push(P("Three deliberate constraints shape everything, and each one buys something specific."));
 c.push(TBL(["Constraint", "Buys"], [
   ["Python STANDARD LIBRARY ONLY on the server", "Runs anywhere Python does. No dependency resolution on a field laptop, no supply chain, no version drift."],
-  ["ONE self-contained page for the client", "No build step, no bundler, no transpile. Open the file and the whole client is there — and a harness can read the real functions straight out of it."],
+  ["NO BUILD STEP for the client", "No bundler, no transpile, no install. The page and its modules are served as written — and a harness can call the real shipping functions, not a copy of them."],
   ["Every vessel parameter in a DATA FILE", "The console studies behaviour across vessel types. Adding a vessel is a data change; no code knows a hull's numbers."],
 ], [3000, 6360]));
 c.push(P("These are not stylistic preferences. They are the reason the console can be deployed to an operating area by copying a directory, and the reason a regression harness can exercise browser code in plain Node with no toolchain."));
-c.push(NOTE("THE COST, STATED HONESTLY", "The client page is large and single-scope, and it will keep growing. The trade is accepted deliberately: no build step and directly testable shipping code, against file size and the discipline that a single global scope demands. Do not introduce a bundler to solve a problem that is really about organisation."));
+c.push(NOTE("THE COST, STATED HONESTLY", "The client page is large, and it will keep growing. The trade is accepted deliberately: no build step and directly testable shipping code, against file size. Do not introduce a bundler to solve a problem that is really about organisation."));
+c.push(H2("1.1  The client's modules"));
+c.push(P("The page began as one file in one global scope. Its lowest layer now lives in `static/js/` as ES modules, loaded by the page with `<script type=\"module\">` and served by a whitelisted route — a basename from one directory with one extension, guarded exactly like the session-log route, because both turn a URL into a file read."));
+c.push(TBL(["Module", "Holds", "Depends on"], [
+  ["`geodesy.js`", "Azimuth, distance, ENU, Web Mercator. No DOM, no state, no imports.", "nothing"],
+  ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers.", "geodesy"],
+  ["`units.js`", "The distance DISPLAY EDGE. Owns the km/nm preference outright.", "nothing"],
+  ["`state.js`", "The vessel-derived parameter block, as one mutable object.", "nothing"],
+], [1700, 5600, 1500]));
+c.push(P("Two rules make this work, and both are the same rule in different clothes. FUNCTIONS are imported by name, because a function binding is never reassigned — so moving one costs no call-site change anywhere. SHARED MUTABLE STATE is reached through an object and never destructured: an ES module namespace is sealed, so `import * as S` cannot be written to at all, and `const {x} = V` copies a value that a vessel switch will later change without telling you."));
+c.push(P("The layer is pure on purpose. A suite can require these directly and exercise the SHIPPED function rather than an eval of its source text, which is what made the older harnesses fragile: they matched their own comments, went stale against renames, and could not tell a missing helper from a broken one."));
 
 // 2 ---------------------------------------------------------------------------
 c.push(H1("2  Ground rules"));

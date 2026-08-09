@@ -53,6 +53,20 @@
 const fs = require("fs");
 const path = require("path");
 
+// LAYER-0 HELPERS COME FROM THE REAL MODULES, not from asv.html's source text.
+// These moved out of the page on 2026-08-09. Requiring them means a renamed or
+// deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
+// and the checks below exercise the shipped function rather than an eval of its text.
+// Top-level so the suite's DIRECT eval() of page functions still resolves them.
+const { llEN } = require("../static/js/geodesy.js");
+const { eachRing, pinp } = require("../static/js/geometry.js");
+
+// The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
+// functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
+// needs the SAME object the page mutates - and gets it, rather than a stub, so a check
+// that leans on a vessel default is reading the real one.
+const { V } = require("../static/js/state.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
@@ -96,7 +110,7 @@ let code = "const M_PER_DEG_LAT = 111320;\n"
   + "                : sel === '#chartBody' ? {set innerHTML(v){ __body = v; }} : null;\n";
 for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_USAGE_LBL"])
   code += grabDecl(d) + "\n";
-for (const f of ["llEN", "eachRing", "pinp", "cellName", "ptInGeom", "qualityAt",
+for (const f of ["cellName", "ptInGeom", "qualityAt",
                  "fmtEncDate", "updateChartCard"]) code += grab(f) + "\n";
 code += "(function(cells, quality, at){\n"
       + "  asv = at; chartInfo = cells === null ? null\n"

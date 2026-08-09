@@ -414,6 +414,25 @@ try:
     except Exception as e:
         sse = (None, "", repr(e).encode())
 
+    # /static/js/ — A URL THAT BECOMES A FILE READ. Added with the Layer-0 ES-module split
+    # (2026-08-09). This is the console's second route that turns a client-supplied name
+    # into a path on disk (safe_log_path is the other), so it is probed LIVE: a guard being
+    # present in the source says nothing about the route actually reaching it.
+    js_code, js_len = getp(port, "/static/js/geodesy.js")
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/static/js/units.js" % port,
+                                    timeout=10) as r:
+            js_ctype = r.headers.get("Content-Type", "")
+    except Exception as e:
+        js_ctype = "ERROR %s" % e
+    # Every traversal spelling, plus the near-misses a whitelist must reject on its own
+    # terms: a real file in the parent tree, a sub-path, a different case, another extension.
+    js_refused = {}
+    for name in ["../asv_console.py", "..%2Fasv_console.py", "../../asv_console.py",
+                 "..\\asv_console.py", "sub/geodesy.js", "Geodesy.js",
+                 "geodesy.js.map", "geodesy.txt", ""]:
+        js_refused[name] = getp(port, "/static/js/" + name)[0]
+
     # Leave the link connected so shutdown is ordinary.
     post(port, "/api/connect", {})
 finally:
@@ -582,6 +601,31 @@ check("22. the AIS service logged NO exception either",
       lambda: not ais_tb,
       lambda: ("%d line(s), first: %s" % (len(ais_tb), ais_tb[0][:90])) if ais_tb
       else "a second process, so the console's log says nothing about this one")
+
+check("23. the page's ES modules are served",
+      lambda: js_code == 200 and js_len > 500,
+      lambda: "geodesy.js -> %s, %s bytes" % (js_code, js_len))
+
+# A module script is REFUSED by the browser on a wrong content type, and that failure shows
+# up as a BLANK CONSOLE rather than a 404 - so the type is part of the contract, not a detail.
+check("24. ... with a JavaScript content type, or the browser refuses the module",
+      lambda: "javascript" in js_ctype,
+      lambda: "Content-Type: %s" % js_ctype)
+
+check("25. every traversal and near-miss spelling is refused, none reaches disk",
+      lambda: all(c == 404 for c in js_refused.values()),
+      lambda: ", ".join("%s->%s" % (k or "(empty)", v)
+                        for k, v in js_refused.items() if v != 404)
+              or "all %d spellings refused with 404" % len(js_refused))
+
+# ... and the guard has the SAME SHAPE as the log one, so a reader who has understood
+# safe_log_path has understood this too. Source-shape, because the live checks above can see
+# THAT it refused but not WHY - a route that 404s because the file is missing would pass them.
+check("26. safe_js_path refuses on the basename identity, like safe_log_path",
+      lambda: "safe_js_path" in FNS
+      and "basename" in ast.dump(FNS["safe_js_path"])
+      and "_JS_NAME_RE" in ast.dump(FNS["safe_js_path"]),
+      "os.path.basename(name) != name rejects every traversal spelling at once")
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

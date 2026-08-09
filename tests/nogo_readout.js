@@ -38,6 +38,12 @@
 const fs = require("fs");
 const path = require("path");
 
+// The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
+// functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
+// needs the SAME object the page mutates - and gets it, rather than a stub, so a check
+// that leans on a vessel default is reading the real one.
+const { V } = require("../static/js/state.js");
+
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -52,7 +58,7 @@ function grab(name) {
   return H.slice(start, k + 1);
 }
 
-var NOGO_MIN_DEPTH_M = 2.3;             // the DriX: 2.0 m draft + 0.3 m under-keel clearance
+V.NOGO_MIN_DEPTH_M = 2.3;             // the DriX: 2.0 m draft + 0.3 m under-keel clearance
 var nogo = null;
 // eslint-disable-next-line no-eval
 eval(grab("nogoKindCounts") + "\n" + grab("nogoReadout"));
@@ -204,6 +210,20 @@ async function drive(fetchResult) {
   check("14. and a THROWN extract does too, naming the failure",
         !/reading chart/.test(bad.last) && /failed/.test(bad.last) && nogo.busy === false,
         "final paint: " + JSON.stringify(bad.last));
+
+  // THE SHIPPED DEFAULT, not the one this suite seeds. Every check above sets
+  // V.NOGO_MIN_DEPTH_M to the DriX's 2.3 m first, so none of them can see what the console
+  // STARTS at before a vessel profile loads - which is why a mutation moving state.js's
+  // default survived the entire suite. It matters: that is the floor in force during the
+  // window between page load and /api/vessel answering, and a shallower one would let an
+  // early route cross water the boat cannot swim in. 1.0 m is the conservative baseline;
+  // the vessel profile raises it to draft + under-keel clearance.
+  const stateSrc = fs.readFileSync(
+    path.join(__dirname, "..", "static", "js", "state.js"), "utf8");
+  const dflt = stateSrc.match(/NOGO_MIN_DEPTH_M:\s*([\d.]+)/);
+  check("15. state.js ships a CONSERVATIVE depth floor for the pre-vessel window",
+        !!dflt && parseFloat(dflt[1]) === 1.0,
+        "default floor " + (dflt ? dflt[1] : "not found") + " m (the vessel raises it)");
 
   summary();
 })();

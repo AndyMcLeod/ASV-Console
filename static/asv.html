@@ -584,7 +584,28 @@
     </div>
   </div>
 
-<script>
+<script type="module">
+// A MODULE, not a classic script (2026-08-09). Three consequences worth knowing before
+// editing this file:
+//   * top-level names are MODULE-scoped, not globals - nothing here lands on `window`.
+//     That is safe because this page has no inline on* handlers (it wires every control
+//     with `$("#id").onclick = ...`), so nothing outside this script calls into it.
+//   * module code is deferred and strict by default; the "use strict" below is redundant
+//     but kept as documentation.
+//   * imports are hoisted and the served files come from /static/js/ (see safe_js_path in
+//     asv_console.py - a whitelisted basename route, not a static file server).
+//
+// FUNCTIONS are imported BY NAME because a function binding is never reassigned, so every
+// existing call site keeps working untouched. SHARED MUTABLE STATE is imported as an
+// OBJECT (`V`) and must be reached through it - see the long note in state.js for why a
+// module namespace cannot be written to, and why destructuring V goes stale.
+import { M_PER_DEG_LAT, TILE, azTo, distTo, atDA, toEN, fromEN, llEN,
+         worldPx, worldToLatLon, distPtSegPx, alignDeg } from "/static/js/geodesy.js";
+import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nmRound,
+         fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
+import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
+         eachRing, eachPath, eachPoint } from "/static/js/geometry.js";
+import { V } from "/static/js/state.js";
 "use strict";
 const $ = s => document.querySelector(s);
 
@@ -639,8 +660,8 @@ document.body.classList.add("ui-" + UIROLE);
   // the context menu belongs to the CHART: it is opened by a right-click on #map (hidden
   // here) and every row acts on a chart coordinate, so there is nothing for it to act on.
   "body.ui-controls #chartMenu{display:none!important;}"+
-  // THE VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02).
-  // It used to be bridged, so the SAME card appeared in BOTH windows - as "VESSEL STATUS"
+  // THE V.VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02).
+  // It used to be bridged, so the SAME card appeared in BOTH windows - as "V.VESSEL STATUS"
   // on the chart and as a "Vessel" uicard here, with nine rows trimmed out to stop it
   // duplicating the top status bar. Two copies of one card is not a second view, it is a
   // second place to look; the chart window has the card, the top bar has the quick read,
@@ -676,7 +697,7 @@ document.body.classList.add("ui-" + UIROLE);
 
 // --- map config ---------------------------------------------------------- //
 const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
-const TILE = 256, MINZ = 3, MAXZ = 20, MAX_TRACK = 8000, M_PER_DEG_LAT = 111320;
+const MINZ = 3, MAXZ = 20, MAX_TRACK = 8000;   // TILE + M_PER_DEG_LAT: geodesy.js
 
 let zoom = 13;
 let center = {lat: 42.137083, lon: -80.087367}; // fallback until first fix (spawn: 42 08.225'N 80 05.242'W)
@@ -732,15 +753,8 @@ let planKind = "survey";                         // what the last committed PLAN
 // fmtDist() is THE formatter for a long distance; a new readout that hand-rolls its own
 // divide-by-1000 kilometre string beside it will not follow the pill
 // (tests/units_toggle.js checks none has crept back in).
-const M_PER_NM = 1852;            // one definition, shared with the AIS card's nm helpers
 const UNITS_KEY = "asv_units_v1";
-let distUnit = (lsGet(UNITS_KEY, {u:"km"}).u === "nm") ? "nm" : "km";
-function fmtDist(m, dp){
-  if(m==null) return "--";
-  if(m < 1000) return Math.round(m)+" m";        // short stays METRIC in both modes
-  const d = dp==null ? 2 : dp;
-  return distUnit==="nm" ? (m/M_PER_NM).toFixed(d)+" nm" : (m/1000).toFixed(d)+" km";
-}
+setDistUnit(lsGet(UNITS_KEY, {u:"km"}).u);   // units.js owns the value; this seeds it
 // THE MEASUREMENT TOOL (right-click the chart -> Measure distance). An OPERATOR
 // ANNOTATION and nothing else: no measurement is uploaded, saved to the mission, sent
 // to the boat, or logged - it is a ruler laid on the chart, so it deliberately has no
@@ -764,12 +778,9 @@ let water = {}, waterOffset = 0;
 // Every behavior (Go-To / RTH / search patterns / survey) routes clear of these
 // nogo zones: shoreline + manmade features + water shallower than 1 m CORRECTED
 // (charted depth + live water-level offset). Fetched once around the first fix.
-let NOGO_MIN_DEPTH_M = 1.0;                     // corrected-depth nogo floor (vessel-driven: draft + under-keel clearance)
-let NOGO_BUFFER_M = 3;                          // keep-clear buffer default (vessel-derived via loadVessel)
 // COLREGS Rule 9 keep-right wall-detection reach (m): a channel/fairway engages
 // keep-right only when BOTH walls are within this on each side. Vessel-driven
 // (planning.channel_reach_m); null -> the buf*10 default (tight-marina scale).
-let CHANNEL_REACH_M = null;
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
 const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
 // CHARTED POINT HAZARDS HAVE AN EXTENT THE CHART DOES NOT GIVE US. A wreck symbol is a
@@ -784,7 +795,6 @@ const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+ma
 const HAZ_UNKNOWN_EXTENT = new Set(["Wreck_point", "Hulk_point", "Obstruction_point",
                                     "Underwater_Awash_Rock_point"]);
 // Vessel-configurable via planning.wreck_radius_m; loadVessel() overwrites this.
-let WRECK_RADIUS_M = 50;
 // A wreck with a CHARTED depth over it (VALSOU) is a known quantity: if the corrected
 // sounding clears the vessel's own navigability floor by this margin, the boat can pass
 // over it and the hazard collapses back to a point. Absent VALSOU means UNKNOWN, which
@@ -792,10 +802,10 @@ let WRECK_RADIUS_M = 50;
 const WRECK_CLEAR_MARGIN_M = 1.0;
 // The nogo is the SINGLE keep-out model: behaviors and the survey Punch Out both
 // clip against it (shared ref/features/enforce/buffer). Its depth floor is fixed
-// at NOGO_MIN_DEPTH_M (navigability). The survey's Min/Max depth is a survey-only
+// at V.NOGO_MIN_DEPTH_M (navigability). The survey's Min/Max depth is a survey-only
 // COVERAGE window layered on top of this floor inside punchOut().
 let nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
-            buffer:NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
+            buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
 let nogoShow = true;                            // nogo overlay wash visibility
 // AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
 const AIS_KEY = "asv_ais_show_v1";
@@ -864,20 +874,19 @@ async function loadMission(){
 // --- active vessel: the single source of truth for the boat's parameters ---- //
 // Fetched from /api/vessel (which the server derives from vessels/<id>.json), so
 // the client no longer hardcodes speeds / turn rate / buffer / search sizes.
-let VESSEL = null;
 function applyVesselToUI(v){
   if(!v) return;
-  VESSEL = v;
+  V.VESSEL = v;
   // physics mirrors the sim uses for routing/turn geometry
-  if(v.propulsion && v.propulsion.speeds_kn) SPEED_KN = {...v.propulsion.speeds_kn};
-  if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
-  if(v.planning && typeof v.planning.nogo_buffer_m === "number") NOGO_BUFFER_M = v.planning.nogo_buffer_m;
-  if(v.planning && typeof v.planning.wreck_radius_m === "number") WRECK_RADIUS_M = v.planning.wreck_radius_m;
+  if(v.propulsion && v.propulsion.speeds_kn) V.SPEED_KN = {...v.propulsion.speeds_kn};
+  if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) V.MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
+  if(v.planning && typeof v.planning.nogo_buffer_m === "number") V.NOGO_BUFFER_M = v.planning.nogo_buffer_m;
+  if(v.planning && typeof v.planning.wreck_radius_m === "number") V.WRECK_RADIUS_M = v.planning.wreck_radius_m;
   // The vessel's buffer is a FLOOR, not a default a stale mission may undercut. A
   // persisted plan carries whatever buffer it was saved with - often a smaller boat's -
   // and silently applying that to a bigger, deeper vessel gives it LESS clearance than
   // its own file demands. The operator can always widen it beyond the floor.
-  if(nogo.buffer < NOGO_BUFFER_M){
+  if(nogo.buffer < V.NOGO_BUFFER_M){
     nogo.buffer = bufferFloor(nogo.buffer);
     const cb=$("#c_buffer"), sb=$("#sp_buffer");
     if(cb) cb.value = nogo.buffer;
@@ -886,9 +895,9 @@ function applyVesselToUI(v){
   // nogo navigability floor = draft + under-keel clearance (deep-draft vessels
   // avoid more shallow water). Drives the ENC extract + keep-out reclassification.
   if(v.hull && v.planning && typeof v.hull.draft_m==="number" && typeof v.planning.under_keel_clearance_m==="number")
-    NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
+    V.NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
   // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
-  CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
+  V.CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
   // vessel-scaled search-pattern defaults (only overwrite blanks/unfocused inputs)
   const s = (v.planning && v.planning.search) || {};
   const setDefault = (id,val)=>{ const el=$("#"+id); if(el && val!=null && document.activeElement!==el) el.value=val; };
@@ -926,37 +935,12 @@ async function switchVessel(id){
     if(asv && typeof refreshNogo==="function") refreshNogo({lat:asv.lat, lon:asv.lon});
     else if(typeof rebuildNogo==="function" && nogo.ready) rebuildNogo();
     render();
-    flashNote("Vessel: " + (d.vessel.name || id) + " · nogo floor " + NOGO_MIN_DEPTH_M.toFixed(1) + " m");
+    flashNote("Vessel: " + (d.vessel.name || id) + " · nogo floor " + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m");
   }catch(e){ flashNote("vessel switch failed"); }
 }
-function toEN(p, ref){
-  return {e:(p.lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180),
-          n:(p.lat-ref.lat)*M_PER_DEG_LAT};
-}
-function fromEN(e, n, ref){
-  return {lat: ref.lat + n/M_PER_DEG_LAT,
-          lon: ref.lon + e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))};
-}
-
 // --- geodesy (flat-earth, fine at survey scale) -------------------------- //
 // Azimuth 0=N, 90=E, clockwise - matching CAMP's QGeoCoordinate convention so
 // the survey-pattern maths below is a faithful port of CAMP surveypattern.cpp.
-function azTo(a, b){
-  const mlon = M_PER_DEG_LAT*Math.cos((a.lat+b.lat)/2*Math.PI/180);
-  return (Math.atan2((b.lon-a.lon)*mlon, (b.lat-a.lat)*M_PER_DEG_LAT)*180/Math.PI + 360) % 360;
-}
-function distTo(a, b){
-  const mlon = M_PER_DEG_LAT*Math.cos((a.lat+b.lat)/2*Math.PI/180);
-  return Math.hypot((b.lat-a.lat)*M_PER_DEG_LAT, (b.lon-a.lon)*mlon);
-}
-function fmtDur(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600), m=Math.round((sec%3600)/60);
-  return h>0 ? h+"h "+String(m).padStart(2,"0")+"m" : (m>0 ? m+"m" : "<1m"); }
-function atDA(p, dist, az){                    // move dist(m) along azimuth az(deg)
-  const r = az*Math.PI/180;
-  return {lat: p.lat + dist*Math.cos(r)/M_PER_DEG_LAT,
-          lon: p.lon + dist*Math.sin(r)/(M_PER_DEG_LAT*Math.cos(p.lat*Math.PI/180))};
-}
-
 // CAMP 3-click survey pattern (port of SurveyPattern::getLines). A=start,
 // B=diagonal end, C=spacing/direction (optional; defaults to diag/10 at 90deg).
 // Returns {lines:[[p0,p1],...] boustrophedon, spacing, direction, legLength,
@@ -996,8 +980,8 @@ const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.get
 // that is how a card goes missing: a position saved on a large window - or a second monitor,
 // or before the window was resized - is re-applied verbatim to a smaller one, putting the
 // panel outside the viewport. It is still display:block and fully live, just nowhere the
-// operator can see or reach it. The VESSEL card was the cruel case, because placeVcard()
-// puts its VESSEL reopen pill at the SAME coordinates, so the one control that brings the
+// operator can see or reach it. The V.VESSEL card was the cruel case, because placeVcard()
+// puts its V.VESSEL reopen pill at the SAME coordinates, so the one control that brings the
 // card back went off-screen with it and there was no way home.
 //
 // This lives up here, beside mapEl, because showPanel() below is called from mode changes
@@ -1037,20 +1021,6 @@ function showPanel(el, show, display){
   if(!show || !el.style.left) return;            // hidden, or never positioned by left/top
   const c = clampPanelPos(el, parseFloat(el.style.left), parseFloat(el.style.top));
   el.style.left = c.left+"px"; el.style.top = c.top+"px";
-}
-function worldPx(lat, lon, z){
-  const s = TILE * Math.pow(2, z);
-  const x = (lon + 180) / 360 * s;
-  const sinLat = Math.sin(lat * Math.PI/180);
-  const y = (0.5 - Math.log((1+sinLat)/(1-sinLat)) / (4*Math.PI)) * s;
-  return {x, y};
-}
-function worldToLatLon(x, y, z){
-  const s = TILE * Math.pow(2, z);
-  const lon = x / s * 360 - 180;
-  const n = Math.PI - 2*Math.PI*y/s;
-  const lat = 180/Math.PI * Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
-  return {lat, lon};
 }
 function viewSize(){ return {w: mapEl.clientWidth, h: mapEl.clientHeight}; }
 function originPx(){
@@ -1197,11 +1167,7 @@ function updateXTE(){
   });
   activeXTE = best;
 }
-function fmtETA(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60;
-  return m>0 ? m+"m "+String(s).padStart(2,"0")+"s" : s+"s"; }
 // point-to-segment distance in pixels
-function distPtSegPx(px,py, ax,ay, bx,by){ const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy||1;
-  let t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/l2)); return Math.hypot(px-(ax+t*dx), py-(ay+t*dy)); }
 // nearest survey line (mission.lines index) within `tol` px of (cx,cy) map-local, or -1
 function surveyLineAtPx(cx, cy, tol){ const o=originPx(); let best=-1, bd=tol||8;
   mission.lines.forEach((L,i)=>{ const a=worldPx(L.a.lat,L.a.lon,zoom), b=worldPx(L.b.lat,L.b.lon,zoom);
@@ -1224,7 +1190,7 @@ function updateLineTip(e){
   const end=(aE.e*fe+aE.n*fn) > (bE.e*fe+bE.n*fn) ? L.a : L.b;   // endpoint ahead of the boat
   const dist=distTo({lat:asv.lat,lon:asv.lon}, end);
   const sog=(S.status&&S.status.sog_kn)||0;
-  const spd=(sog>0.3?sog:(SPEED_KN[mission.speed]||SPEED_KN.survey))*0.514444;
+  const spd=(sog>0.3?sog:(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey))*0.514444;
   tip.textContent="line "+(runLineIdx+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
@@ -1257,7 +1223,6 @@ function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; 
   turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; }
 // fold a heading difference to [0,90]: 0 = parallel, 90 = perpendicular (a line runs
 // in either direction, so parallel and anti-parallel both read as aligned).
-function alignDeg(courseDeg, lineDeg){ let d=Math.abs(((courseDeg-lineDeg)%360+360)%360); if(d>180)d=360-d; return Math.min(d,180-d); }
 // turn-zone radius: how close to a line endpoint still counts as a between-lines
 // maneuver vs a long transit. Scaled to the lane spacing so it adapts to the plan.
 function turnZoneM(){
@@ -1319,8 +1284,7 @@ function accumLineTime(){
   }
   lineClock = (S.run==="running") ? now : null;
 }
-function fmtMS(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
-function buildLineTable(){ const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
+function buildLineTable(){ const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
     return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
@@ -1396,7 +1360,7 @@ function updateRunTime(){
     return;
   }
   const elapsed=fmtMS(runElapsed);
-  const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444, rr=routeRemainingM();
+  const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444, rr=routeRemainingM();
   if(!rr || spd<=0){ el.textContent=elapsed+(run==="paused"?" · paused":""); return; }
   if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;          // full run length captured at Start (incl. approach)
   const pct=runTotalM>0 ? Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM))) : 0;
@@ -1449,13 +1413,6 @@ function patSourceLines(){
   const ref = planRef(), ring = boundary.map(p=>llEN(p.lat,p.lon,ref));
   const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>out.push(s)));
   return out;
-}
-function lerpLL(a,b,t){ return {lat:a.lat+(b.lat-a.lat)*t, lon:a.lon+(b.lon-a.lon)*t}; }
-function segInt(p1,p2,p3,p4){                  // param t along p1->p2 where it meets p3->p4
-  const d1x=p2.e-p1.e,d1y=p2.n-p1.n,d2x=p4.e-p3.e,d2y=p4.n-p3.n, den=d1x*d2y-d1y*d2x;
-  if(Math.abs(den)<1e-9) return null;
-  const t=((p3.e-p1.e)*d2y-(p3.n-p1.n)*d2x)/den, u=((p3.e-p1.e)*d1y-(p3.n-p1.n)*d1x)/den;
-  return (t>=0&&t<=1&&u>=0&&u<=1) ? t : null;
 }
 // exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs
 function clipToPoly(a,b,ring,ref){
@@ -1860,16 +1817,6 @@ function commitSearch(){
 
 // --- ENC chart features + Punch Out -------------------------------------- //
 // GeoJSON geometry iterators ([lon,lat] order).
-function eachRing(g, fn){ if(!g) return;
-  if(g.type==="Polygon") g.coordinates.forEach(fn);
-  else if(g.type==="MultiPolygon") g.coordinates.forEach(poly=>poly.forEach(fn)); }
-function eachPath(g, fn){ if(!g) return;
-  if(g.type==="LineString") fn(g.coordinates);
-  else if(g.type==="MultiLineString") g.coordinates.forEach(fn); }
-function eachPoint(g, fn){ if(!g) return;
-  if(g.type==="Point") fn(g.coordinates);
-  else if(g.type==="MultiPoint") g.coordinates.forEach(fn); }
-
 // survey depth window from the panel: {min, max} in metres (max 0 = no maximum)
 function depthRange(){
   const mn = Math.max(0, parseFloat($("#sp_mindepth").value)||0);
@@ -1944,17 +1891,10 @@ async function fetchENCBbox(b, minDepth){
   const d=await (await fetch(url)).json();
   enc={features:d.features||[], band:d.band, minDepth}; return d;
 }
-function bboxAround(ll, radM){
-  const dlat=radM/M_PER_DEG_LAT, dlon=radM/(M_PER_DEG_LAT*Math.cos(ll.lat*Math.PI/180));
-  return {W:ll.lon-dlon, S:ll.lat-dlat, E:ll.lon+dlon, N:ll.lat+dlat};
-}
-
 // local ENU (metres) about a reference lat/lon
-function llEN(lat,lon,ref){ return {e:(lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180), n:(lat-ref.lat)*M_PER_DEG_LAT}; }
-function bbOf(pts){ let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18; for(const p of pts){ if(p.e<x0)x0=p.e; if(p.e>x1)x1=p.e; if(p.n<y0)y0=p.n; if(p.n>y1)y1=p.n; } return {x0,y0,x1,y1}; }
 // A human-readable category for a keep-out, so a refusal can say WHAT blocks it.
 function nogoKind(r, depthbad){
-  if(depthbad) return "water shallower than "+NOGO_MIN_DEPTH_M.toFixed(1)+" m";
+  if(depthbad) return "water shallower than "+V.NOGO_MIN_DEPTH_M.toFixed(1)+" m";
   if(r==="dock"||r==="dock_line") return "a dock / pier";
   if(r==="hazard_area"||r==="hazard_point") return "a charted hazard";
   if(r==="dredged") return "a dredged area";
@@ -2020,15 +1960,15 @@ function markSystems(marks){
 function hazExtent(f){
   if(!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
   const vs = f.props && f.props.VALSOU;
-  if(typeof vs === "number" && (vs + waterOffset) >= NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
-  return WRECK_RADIUS_M;
+  if(typeof vs === "number" && (vs + waterOffset) >= V.NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
+  return V.WRECK_RADIUS_M;
 }
 // The active vessel's planning.nogo_buffer_m is a FLOOR. A persisted mission carries
 // whatever buffer it was saved with - often a smaller boat's - and silently applying
 // that to a bigger, deeper vessel would give it LESS clearance than its own file
 // demands. The operator can still widen it beyond the floor from the panel.
 function bufferFloor(missionBuf){
-  return Math.max(NOGO_BUFFER_M, (typeof missionBuf === "number") ? missionBuf : NOGO_BUFFER_M);
+  return Math.max(V.NOGO_BUFFER_M, (typeof missionBuf === "number") ? missionBuf : V.NOGO_BUFFER_M);
 }
 function buildKeepouts(ref, enf, dr, feats){
   const polys=[], lines=[], points=[], marks=[];
@@ -2136,13 +2076,6 @@ function channelTurnKeepouts(clipped, ref, feats, marks){
     if(!entered) out.push({ring:c.ring, bb:c.bb, kind:"a navigation channel"}); }
   return out;
 }
-function pinp(p, ring){ let inside=false;
-  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const xi=ring[i].e,yi=ring[i].n,xj=ring[j].e,yj=ring[j].n;
-    if(((yi>p.n)!=(yj>p.n)) && (p.e < (xj-xi)*(p.n-yi)/(yj-yi)+xi)) inside=!inside; } return inside; }
-function dSeg(p,a,b){ const dx=b.e-a.e, dy=b.n-a.n, l2=dx*dx+dy*dy||1;
-  let t=((p.e-a.e)*dx+(p.n-a.n)*dy)/l2; t=t<0?0:t>1?1:t;
-  return Math.hypot(p.e-(a.e+t*dx), p.n-(a.n+t*dy)); }
-function inBB(p,bb,buf){ return p.e>=bb.x0-buf&&p.e<=bb.x1+buf&&p.n>=bb.y0-buf&&p.n<=bb.y1+buf; }
 function blocked(p, ko, buf){
   for(const poly of ko.polys){ if(!inBB(p,poly.bb,buf)) continue; if(pinp(p,poly.ring)) return true;
     const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return true; } }
@@ -2456,7 +2389,7 @@ function pruneStitch(full, ref, ko, buf){
   return full;
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
-function nogoDR(){ return {min: NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
+function nogoDR(){ return {min: V.NOGO_MIN_DEPTH_M, max: 0}; }   // fixed 1 m corrected
 function featuresBboxRef(feats){                // ENU reference = centroid of the fetched features' extent
   let s0=1e9,n0=-1e9,w0=1e9,e0=-1e9, any=false;
   const scan=c=>{ any=true; const lon=c[0],lat=c[1];
@@ -2475,9 +2408,6 @@ function rebuildNogo(){                         // (re)build the keep-out model 
                   : "no nogo features in this area";
   updateNogoUI();
 }
-function bboxContains(outer, inner){            // does the fetched coverage cover a survey bbox?
-  return outer && inner && outer.W<=inner.W && outer.S<=inner.S && outer.E>=inner.E && outer.N>=inner.N;
-}
 async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
   if(nogo.busy) return;
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
@@ -2485,7 +2415,7 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
   nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter
   updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
   try{
-    const d = await fetchENCBbox(b, NOGO_MIN_DEPTH_M);
+    const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M);
     if(!d || !d.band){
       nogo.ready=false; nogo.busy=false;
       nogo.note = (d&&d.note) || "no ENC coverage / offline";
@@ -2531,7 +2461,7 @@ function nogoKindCounts(){                      // tally the keep-outs by their 
   return c;
 }
 function nogoReadout(){
-  const floor = (typeof NOGO_MIN_DEPTH_M === "number" ? NOGO_MIN_DEPTH_M.toFixed(1)+" m" : "?");
+  const floor = (typeof V.NOGO_MIN_DEPTH_M === "number" ? V.NOGO_MIN_DEPTH_M.toFixed(1)+" m" : "?");
   // The shared tail: what a nogo IS. The operator should never have to remember that the
   // shallow-water part of it is derived from THIS vessel's draft.
   const why = "\n\nThe keep-out model every commanded motion routes clear of: charted land and "
@@ -2887,7 +2817,7 @@ function narrowChannelLane(pathLL, ref, ko, buf){
   // ASV: the per-vessel channel_reach_m override applies HERE. It used to set the
   // wall-search REACH of the old edge-march keep-right (deleted 2026-08-02); this is
   // the equivalent knob - how far out an edge still counts as a channel wall.
-  const CONFINE = Math.max(120, CHANNEL_REACH_M!=null ? CHANNEL_REACH_M : buf*30);
+  const CONFINE = Math.max(120, V.CHANNEL_REACH_M!=null ? CHANNEL_REACH_M : buf*30);
   const STANDOFF = Math.max(buf+2, 6);
   const MS = Math.max(2, buf/2);                    // march step
   const cum=[0]; for(let i=1;i<en.length;i++) cum.push(cum[i-1]+Math.hypot(en[i].e-en[i-1].e, en[i].n-en[i-1].n));
@@ -3449,7 +3379,6 @@ function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.t
 // The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
 // at will). Lists the in-range vessels by range, with bearing / SOG.
 let aisTableShown=false;
-function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round(nm); }
 // THE RANGE CONTROL READS IN NAUTICAL MILES; THE WIRE STAYS IN KILOMETRES. The contact
 // list has always reported range in nm (fmtNm above), so a selector in km meant filtering
 // in one unit and reading distances in another. Converting at the display edge keeps the
@@ -3458,9 +3387,7 @@ function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Math.round
 // --ais-radius-km / --ais-collect-km flags exactly as they were. Every field on the wire
 // is named _km, so nothing downstream has to guess.
 // (M_PER_NM is declared up beside fmtDist - one definition serves both display edges.)
-function nmFromKm(km){ return km * 1000 / M_PER_NM; }
-function kmFromNm(nm){ return nm * M_PER_NM / 1000; }
-function nmRound(km){ return Math.round(nmFromKm(km)); }   // whole nm, for a display field
+   // whole nm, for a display field
 function setAisTable(show){ aisTableShown=show;
   const p=$("#aisTablePanel"), chip=$("#aisReopen");
   showPanel(p, show);
@@ -3795,11 +3722,9 @@ function shortenSeg(a, b, m){
 // Vessel-derived; populated by loadVessel() from /api/vessel (single source of
 // truth = the active vessel file). The literals are only a fallback if the fetch
 // fails before first paint.
-let SPEED_KN = {low:1.5, survey:3.0, high:6.0};
-let MAX_TURN_RATE_DEG_S = 60;
 function minTurnRadiusM(speedKey){
-  const kn = SPEED_KN[speedKey] || 3.0;
-  const v = kn*0.514444, w = MAX_TURN_RATE_DEG_S*Math.PI/180;   // m/s, rad/s
+  const kn = V.SPEED_KN[speedKey] || 3.0;
+  const v = kn*0.514444, w = V.MAX_TURN_RATE_DEG_S*Math.PI/180;   // m/s, rad/s
   return (v/w) * 1.4;                                    // 1.4× the physical v/ω (tracking margin)
 }
 // Interior points of a circular arc: centre C, radius R, from angle a0 sweeping
@@ -3928,7 +3853,7 @@ async function punchOut(){
   const sp=currentPattern();
   if(!sp){ $("#sp_hint").textContent="Draw a survey pattern first (SURV, then 3 clicks)."; return; }
   const surveyDr=depthRange();                     // survey COVERAGE window (panel)
-  const dr={min: Math.max(NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
+  const dr={min: Math.max(V.NOGO_MIN_DEPTH_M, surveyDr.min), max: surveyDr.max};  // >= the fixed nogo floor
   applyNogoControls();                             // fold panel buffer/enforce into the shared nogo
   punchBusy=true; $("#sp_punch").disabled=true; $("#sp_hint").textContent="Extracting ENC / nogo for the survey area…";
   try{
@@ -4036,7 +3961,7 @@ async function punchOut(){
       const pts=[patClip[k][1], ...via, patClip[k+1][0]];
       for(let i=1;i<pts.length;i++) surveyLen += distTo(pts[i-1], pts[i]); }
     const approachLen = (asv && patClip.length) ? distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]) : 0;
-    const spd=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;               // m/s
+    const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;               // m/s
     const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${mission.speed||"survey"} (${fmtDist(surveyLen)})` : "--";
     const approachTxt = spd>0 && approachLen>0 ? `${fmtDur(approachLen/spd)} (${fmtDist(approachLen)})` : "--";
     $("#v_surveydur").textContent = surveyTxt;                                   // vessel-card readouts
@@ -4494,7 +4419,7 @@ let speedWarnShown = false;   // is the committed-plan speed warning currently o
 // mission.waypoints / mission.lines rather than from a pattern that no longer exists.
 function recalcCommittedForSpeed(){
   const wps = mission.waypoints || [];
-  const spd = (SPEED_KN[mission.speed] || SPEED_KN.survey) * 0.514444;
+  const spd = (V.SPEED_KN[mission.speed] || V.SPEED_KN.survey) * 0.514444;
   if(!wps.length || !(spd > 0)){
     ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; });
     return;
@@ -4991,19 +4916,13 @@ makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "
 makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
                                                 ignore: "#aisTableClose"});
 
-function fmtLL(lat, lon){                          // decimal degrees (5 dp ≈ 1 m)
-  const f=(v,pos,neg)=> `${Math.abs(v).toFixed(5)}° ${v>=0?pos:neg}`;
-  return `${f(lat,'N','S')}  ${f(lon,'E','W')}`;
-}
-
-
 // --- CHART SOURCE: the ENC's title block --------------------------------- //
 // A paper chart prints its title block ONCE: cell, scale, units, datum, source.
 // An ENC carries the same facts as S-57 META objects, and M_QUAL carries the zone
 // of confidence as POLYGONS - the part a printed block cannot express, because
 // confidence varies WITHIN a sheet (recent resurveys sit alongside pockets still
 // charted from mid-20th-century leadline work). So this card reports the ZOC UNDER
-// THE VESSEL. Cells + quality come from /api/chartinfo (deliberately NOT the
+// THE V.VESSEL. Cells + quality come from /api/chartinfo (deliberately NOT the
 // routing extract); units, datum and the applied correction come from the console's
 // own water feed - it states the datum it is actually correcting to, not a chart
 // annotation.
@@ -5181,11 +5100,11 @@ function updateChartCard(){
              "ENC usage band from the cell name's 3rd character");
     // Units, stated explicitly for both sides - the operator reads the chart in
     // FEET while every number the console computes is METRES. The nogo floor is
-    // VESSEL-DERIVED here (draft + under-keel clearance), so quote it live.
+    // V.VESSEL-DERIVED here (draft + under-keel clearance), so quote it live.
     h += row("Soundings", 'chart <b style="color:var(--ink);">' + CHART_DISPLAY_UNITS +
              '</b> · data ' + CHART_DATA_UNITS,
              "The chart image prints soundings in FEET (NOAA chart service default). "+
-             "The ENC data, the " + NOGO_MIN_DEPTH_M.toFixed(1) + " m nogo floor for this "+
+             "The ENC data, the " + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m nogo floor for this "+
              "vessel and every depth the console computes or logs are METRES. "+
              "They do not match - convert before comparing.");
     h += row("Datum", dat || "--",
@@ -5386,12 +5305,14 @@ $("#battPill").onclick = ()=>{
 // and the survey/committed figures are owned by recalcForSpeed(), the SAME path a plan
 // speed change takes; a units change is just another display input to the plan readouts.
 function applyDistUnit(u, save){
-  distUnit = (u === "nm") ? "nm" : "km";
-  const el = $("#p_units"); if(el) el.textContent = distUnit.toUpperCase();
-  if(save) lsSet(UNITS_KEY, {u: distUnit});
+  // units.js owns the value and normalises it; take back what it actually adopted rather
+  // than re-deriving the same ternary here and risking the two disagreeing.
+  const adopted = setDistUnit(u);
+  const el = $("#p_units"); if(el) el.textContent = adopted.toUpperCase();
+  if(save) lsSet(UNITS_KEY, {u: adopted});
   recalcForSpeed();
 }
-if($("#unitsPill")) $("#unitsPill").onclick = ()=> applyDistUnit(distUnit==="km" ? "nm" : "km", true);
+if($("#unitsPill")) $("#unitsPill").onclick = ()=> applyDistUnit(distUnit()==="km" ? "nm" : "km", true);
 window.addEventListener("storage", e=>{
   if(e.key === UNITS_KEY) applyDistUnit(lsGet(UNITS_KEY, {u:"km"}).u, false);
 });
@@ -5400,10 +5321,10 @@ window.addEventListener("storage", e=>{
 // code may not have initialized yet (a `let` read before its declaration is a
 // ReferenceError that takes out the whole script - the showPanel lesson). Nothing
 // unit-dependent has painted yet, so there is nothing to repaint: every readout that
-// follows reads distUnit when it first draws.
-{ const el = $("#p_units"); if(el) el.textContent = distUnit.toUpperCase(); }
+// follows reads distUnit() when it first draws.
+{ const el = $("#p_units"); if(el) el.textContent = distUnit().toUpperCase(); }
 
-// THE VESSEL-COMMAND GATES — ONE COPY OF EACH RULE, and they live out here as named
+// THE V.VESSEL-COMMAND GATES — ONE COPY OF EACH RULE, and they live out here as named
 // predicates rather than inline in the poll below because THE CHART MENU NEEDS THEM TOO.
 // They used to be written straight onto the buttons (`$("#b_goto").disabled = !armed ||
 // estop`) and the menu derived from the button's own .disabled, which was the right shape
@@ -5752,7 +5673,7 @@ function updateMissionCard(){
   if(!S.wp_total && runRoute && runRoute.length) $("#v_wpt").textContent = runRoute.length + " planned";
   const rr = routeRemainingM();
   $("#mi_len").textContent = rr ? fmtDist(rr.total) : "--";
-  const spdPlan=(SPEED_KN[mission.speed]||SPEED_KN.survey)*0.514444;
+  const spdPlan=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;
   const sog=(st.sog_kn||0)*0.514444, spd=(sog>0.15? sog : spdPlan);
   const ended = st.holding || st.drifting;
   $("#mi_toend").textContent = ended ? "arrived"
@@ -5870,7 +5791,7 @@ function renderRoc(){
     : "No ROC HOME — Return-to-Home uses the boat's launch point.";
 }
 // MOVING tag, with the vessel-dependent closing rate. `closable` comes from the server,
-// which compares the ship's speed against the ACTIVE VESSEL's top speed - the same
+// which compares the ship's speed against the ACTIVE V.VESSEL's top speed - the same
 // mothership is routine for a fast USV and impossible for a slow one, so the tag has to
 // be read per vessel rather than assumed.
 function rocMovingTag(r){
