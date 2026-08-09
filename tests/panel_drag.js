@@ -373,6 +373,72 @@ check("23. ... and does NOT persist, so a reveal cannot overwrite the stored pos
       () => !/lsSet\(/.test(SHOW) && !/saveVcardPrefs\(/.test(SHOW),
       "showing a panel is not the operator moving it");
 
+// --- a card is not a mode ------------------------------------------------------------
+// REPORTED LIVE (Andy, 2026-08-09): opening the ROC card deselected the SURV chip. The
+// drawn pattern survived - it is kept across mode switches on purpose - but the MODE was
+// cancelled, so mid-layout a glance at HOME cost the operator their drawing mode.
+//
+// The cause was a `setMode("pan")` inside the ROC button, whose comment explained it as
+// hiding "any mode panel behind it": #rocPanel and the mode panels are all `.panel`, so
+// they shared one default position and the card opened on top of them. The cure closed
+// the operator's mode instead of moving the card. It was also UNCONDITIONAL while the
+// collision was not - a dragged ROC position is persisted, so for anyone who had ever
+// moved the card there was no overlap left to justify it.
+//
+// Checked as a PAIR, because either half alone is a half-fix: the button must not touch
+// the mode, AND the card must not default on top of the mode panels - otherwise removing
+// the setMode simply restores the overlap it was papering over.
+// Read the handler's real BODY (brace-matched, not a fixed window) and strip comments
+// before matching. The first version of check 24 did neither and failed against the fixed
+// code, because the comment explaining the removal quotes the very call it removed - the
+// same self-matching trap roc_persist.py hit when its "no suite writes the registry" audit
+// found its own source text. A source-shape check must read CODE, not prose about code.
+function stripComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
+function handlerBody(id) {
+  const at = H.indexOf('$("#' + id + '").onclick');
+  if (at < 0) return null;
+  const open = H.indexOf("{", at);
+  if (open < 0) return "";
+  let k = open, depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return stripComments(H.slice(open, k + 1));
+}
+const ROCBTN = handlerBody("rocBtn");
+check("24. opening the ROC card does NOT cancel the chart mode",
+      () => ROCBTN !== null && !/setMode\(/.test(ROCBTN),
+      () => (ROCBTN || "").match(/setMode\([^)]*\)/) ?
+            "still calls " + ROCBTN.match(/setMode\([^)]*\)/)[0] : "no setMode call in the body");
+
+// ... and the sibling cards never did, which is what made ROC the odd one out. Derived
+// from the source so a NEW card that cancels the mode is caught the day it is written.
+const CARD_TOGGLES = ["linesBtn", "srcBtn", "rocBtn"];
+check("24b no card toggle cancels the mode (ROC was the only one that did)", () => {
+  for (const id of CARD_TOGGLES) {
+    const body = handlerBody(id);
+    if (body && /setMode\(/.test(body)) return false;
+  }
+  return true;
+}, () => CARD_TOGGLES.filter(id => handlerBody(id) !== null).join(" / ") + " checked");
+
+// The ROC card must not default onto the mode panels' spot. `.panel` puts every panel at
+// left:14px and the mode panels are 158px wide, so anything sharing that origin lands on
+// top of SURV. Read BOTH numbers out of the stylesheet rather than restating them.
+function panelDefaults() {
+  const rule = (H.match(/\.panel\{[^}]*\}/) || [""])[0];
+  const left = parseFloat((rule.match(/left:(-?[\d.]+)px/) || [0, NaN])[1]);
+  const width = parseFloat((rule.match(/width:([\d.]+)px/) || [0, NaN])[1]);
+  const roc = (H.match(/id="rocPanel"[^>]*style="([^"]*)"/) || [0, ""])[1];
+  const rocLeft = parseFloat((roc.match(/left:(-?[\d.]+)px/) || [0, NaN])[1]);
+  return { left, width, rocLeft, right: left + width };
+}
+check("25. the ROC card's default position CLEARS the mode panels",
+      () => { const d = panelDefaults();
+              return Number.isFinite(d.rocLeft) && d.rocLeft >= d.right; },
+      () => { const d = panelDefaults();
+              return "mode panels " + d.left + "-" + d.right + "px, ROC opens at " + d.rocLeft + "px"; });
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

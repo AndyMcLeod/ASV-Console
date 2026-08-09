@@ -427,7 +427,13 @@
     #rocPanel .roc-gpsaddr{width:96px;}
     #rocPanel input:disabled{opacity:.55;}
   </style>
-  <div class="panel" id="rocPanel" style="display:none;width:252px;">
+  <!-- left:186px is LOAD-BEARING, not styling. `.panel` defaults every panel to
+       left:14px/top:96px, which is where the MODE panels (SURV / BND / SRCH / TRAN)
+       sit; the ROC card is a `.panel` too, so on a fresh profile it opened exactly on
+       top of them. That collision is why the ROC button used to cancel the chart mode.
+       14 + 158 (the mode panels' width) = 172, so this clears them with a 14px gap and
+       the mode can be left alone. A dragged position is persisted and overrides it. -->
+  <div class="panel" id="rocPanel" style="display:none;width:252px;left:186px;">
     <div class="phead" id="rocPanelHead" title="Drag to move">ROC · HOME</div>
     <div class="phint">Remote Operations Centers. Click + Shore or + Ship, then click the chart to
       place it. Edit its position (and a ship's heading/speed) here, then Confirm to start it —
@@ -5907,7 +5913,16 @@ $("#roc_add_ship").onclick  = ()=> armRocPlace("ship");
 $("#roc_home_clear").onclick = ()=> rocPost({op:"clear_home"});
 $("#rocBtn").onclick = ()=>{
   const p=$("#rocPanel"), show = p.style.display==="none";
-  if(show){ setMode("pan"); }                      // hide any mode panel behind it
+  // A CARD IS NOT A MODE, AND OPENING ONE MUST NOT CANCEL THE OPERATOR'S. This used to
+  // `setMode("pan")` on open, to stop the ROC card landing on whichever mode panel was
+  // showing - both are `.panel`, so both default to left:14px/top:96px. The cure closed
+  // the operator's SURV (or WPT / BND / SRCH / TRAN) every time the card was opened:
+  // mid-layout, checking HOME cost you your drawing mode. It was also the ONLY card that
+  // did this - LINES, AIS and SRC never have, because they sit at their own coordinates.
+  // The overlap is now solved where it actually lives, in the card's own default
+  // position, and the mode is left alone. (Arming a PLACEMENT still changes mode, in
+  // armRocPlace - that one is a real mode change: the next chart click means "put a ROC
+  // here", not "add a survey anchor".)
   showPanel(p, show);
   $("#rocBtn").classList.toggle("on", show);
   if(show) renderRoc();

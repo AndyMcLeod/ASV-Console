@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 570 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 573 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (570 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (573 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -115,7 +115,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap, the uicard clamp (22) |
-| `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen (23) |
+| `node tests/panel_drag.js` | ONE drag + ONE show mechanism; no pop-out forgets its position OR goes off-screen; a CARD IS NOT A MODE (26) |
 | `node tests/ui_tooltips.js` | hover tips the pointer cannot occlude; guarded restore for runtime title writers (9) |
 | `node tests/ais_table.js` | the AIS traffic list is PATCHED, never rebuilt (9) |
 | `node tests/stored_settings.js` | guarded localStorage; legacy `"1"`/`"0"` toggles still read (11) |
@@ -147,7 +147,7 @@ env monitors; what was new is the windows, and disclosing the blend instead of r
 under one station's name. No station id is hardcoded anywhere — check 1 enforces that by
 AST. **Read "THE THIRD AND FOURTH WINDOWS" below.**
 
-**THE SESSION JUST FINISHED (2026-08-08, "ASV console refinement") — EIGHT COMMITS,
+**THE SESSION JUST FINISHED (2026-08-08 → 08-09, "ASV console refinement") — FIFTEEN COMMITS,
 TREE CLEAN, EVERYTHING PUSHED.** Andy drove it card by card from live use, and every
 item below started as something he SAW on his own console — or, at the end, asked for. In order:
 
@@ -160,7 +160,43 @@ item below started as something he SAW on his own console — or, at the end, as
 | `a548c14` | **the turn yields to the channel** — survey turns may only use channel water the lines occupy |
 | `eb6e34f` | **the third window** — the NOAA tide page for the station the vessel's fix selects |
 | `575855f` | **the fourth window** — the NDBC buoy page, same derived mechanism |
-| (this commit) | **the chart measuring tool + the right-click menu** — and the latent right-click fault it exposed |
+| `4e3b4e9` | **the chart measuring tool + the right-click menu** — and the latent right-click fault it exposed |
+| `db0555b` | every suite now describes itself in the tech manual's derived harness table |
+| `c6c4425` | measurement numbers 11 → 15 px, sized by **one** constant everything derives from |
+| `7eceab5` | **Go-To / Spawn / Set Home leave the command bar** for the chart menu; gates become named predicates |
+| `c752a30` | **Set Home takes the CLICKED POINT** (Andy's reversal of the old rule) + the keep-out warning |
+| `5ca63d0` | the dev guide documents the mutation runner that damaged this repo twice |
+| `d43c8bf` | `start_sim.bat` + `tools/asv.ico` — a double-click launcher for simulator mode |
+| (this commit) | **a card is not a mode** — opening ROC no longer cancels SURV |
+
+**⚠ A CARD IS NOT A MODE (this commit) — DO NOT PUT THE `setMode` BACK.** Andy, live:
+"the selection of ROC chip deselects the SURV chip, although the active mission data
+preserves on re-selection." Right on both halves — the drawn pattern DOES survive (it is
+kept across mode switches on purpose), and what was lost was only the MODE. Cause:
+`$("#rocBtn").onclick` opened with `setMode("pan")`, commented as hiding "any mode panel
+behind it". **`#rocPanel` and the mode panels (SURV / BND / SRCH / TRAN) are all `.panel`,
+so they shared one default position — `left:14px; top:96px` — and the ROC card opened
+directly on top of them.** The cure closed the operator's mode instead of moving the card,
+so glancing at HOME mid-layout cost you your drawing mode.
+**Two things made it wrong rather than a trade-off:** it was the ONLY card that did this
+(LINES, SRC and AIS never have — they sit at their own coordinates), and it was
+**UNCONDITIONAL while the collision was not** — the ROC card's position is persisted, so for
+anyone who had ever dragged it there was no overlap left to justify cancelling anything.
+**Fixed where the problem actually lives:** the `setMode` is gone and `#rocPanel` now
+defaults to `left:186px` (14 + the mode panels' 158 px = 172, so a 14 px gap).
+**Both halves are load-bearing** — remove the `setMode` alone and you restore the overlap it
+was papering over, which is why checks 24 and 25 are a pair. `panel_drag.js` 23 → 26,
+**5 mutations, 0 survivors**, including the shipped bug restored and a variant using a
+DIFFERENT mode so the check cannot pass by keying on the string `"pan"`. Live-measured with
+both cards open: SURV 14–172 px, ROC 186–438 px, **overlap false**, mode still `survey`,
+both chips lit, anchors intact. **`armRocPlace` still calls `setMode("roc-place")` and must
+— arming a placement IS a mode change, because the next chart click means "put a ROC here".**
+**A TEST-WRITING TRAP HIT ON THE WAY, the third instance of this shape here:** my first
+check 24 searched a fixed window after the handler for `setMode(` — and FAILED against the
+FIXED code, because **the comment explaining the removal quotes the very call it removed.**
+Same family as `roc_persist.py` matching its own source text. It now brace-matches the
+handler's real body and strips comments first: **a source-shape check must read CODE, not
+prose about code.**
 
 **THE FOUR THAT STILL MATTER, and each has its own section below:**
 - **THE TURN YIELDS TO THE CHANNEL** (`a548c14`) — the safety one. Turns arced 34 m into
