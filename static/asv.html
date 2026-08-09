@@ -231,6 +231,13 @@
     <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmGoto"><span>Go-To here</span><span class="cmk" id="cmGotoK"></span></div>
+    <!-- "at vessel", not "here", and the wording is load-bearing. Set Home captures the
+         boat's OWN live fix - Engine.set_home() takes no position and discards one sent
+         to it, which is a deliberate safety property with a test behind it (a home the
+         boat never occupied is somewhere Return-to-Home will still drive). Every other
+         row on this menu acts at the clicked point, so this one has to say that it does
+         not. To put HOME somewhere the vessel is not, place a ROC. -->
+    <div class="cmi" id="cmHome"><span>Set Home at vessel</span><span class="cmk" id="cmHomeK"></span></div>
     <div class="cmi" id="cmSpawn"><span>Spawn here</span><span class="cmk" id="cmSpawnK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
@@ -475,13 +482,17 @@
     <button class="cbtn" id="b_pause" disabled>Pause</button>
     <button class="cbtn" id="b_stop" disabled>Stop</button>
     <span class="cdiv"></span>
-    <button class="cbtn" id="b_goto" disabled title="Go-To: click, then pick a point on the chart — the ASV drives there and station-keeps">Go-To</button>
+    <!-- Go-To, Spawn and Set Home have MOVED TO THE CHART'S RIGHT-CLICK MENU (Andy,
+         2026-08-08). The first two were always two-step controls - arm the button, then
+         click the chart - and the menu already carries the point, so the arming step was
+         pure ceremony. Set Home takes no point at all and rides along to keep the three
+         home/placement commands in one place. The GATES that used to live on these
+         buttons' .disabled now live in canCommand() / canSpawn() / canSetHome(), because
+         the menu used to derive from the buttons and there is no button left to ask. -->
     <button class="cbtn" id="b_hold" disabled title="Hold / station-keep at the present position">Hold</button>
     <button class="cbtn" id="b_rth" disabled title="Return-to-Home: drive to the home point and station-keep">RTH</button>
-    <button class="cbtn" id="b_home" disabled title="Set Home to the present position">Set&nbsp;Home</button>
     <span class="cdiv"></span>
     <button class="cbtn estop" id="b_estop">E-STOP</button>
-    <button class="cbtn" id="b_spawn" title="Sim: click the chart to place the boat there. Same clean slate as Reset (full energy, SAFE, no plan or home) but at the point you pick, instead of the active vessel's configured spawn. Simulator only — a real boat can't be teleported.">Spawn</button>
     <button class="cbtn reset" id="b_reset" title="Sim power-cycle: full energy, boat back at spawn, all plans/lines cleared, SAFE — then reloads the page fresh (cache-busting). As if shut down and restarted.">Reset</button>
   </div>
 
@@ -4114,12 +4125,8 @@ window.addEventListener("mouseup", e=>{
   } else if(mode === "transit"){                 // click drops a transit vertex
     transit.push({lat:ll.lat, lon:ll.lon});
     updateTransitPanel(); render();
-  } else if(mode === "goto"){                    // click a point -> ENC-aware Go-To
-    doGoTo(ll);
-    setMode("pan");
-  } else if(mode === "spawn"){                   // click a point -> (re)spawn the sim boat there
-    setMode("pan");
-    doSpawn(ll);
+  // (the "goto" and "spawn" MODES are gone with their toolbar buttons — the right-click
+  //  menu carries the point, so there was nothing left to arm and no way to reach them.)
   } else if(mode === "measure"){
     // CLICK, MOVE, CLICK. The first click anchors; the leg then follows the pointer
     // (mousemove, below) until a second click fixes its far end. It rides this handler's
@@ -4194,7 +4201,6 @@ function setMode(m){
   $("#bndBtn").classList.toggle("mode-on", mode==="bound");
   $("#srchBtn").classList.toggle("mode-on", mode==="search");
   $("#tranBtn").classList.toggle("mode-on", mode==="transit");
-  $("#b_spawn").classList.toggle("mode-on", mode==="spawn");
   showPanel($("#linePanel"), mode==="survey", "flex");   // draggable: re-clamp when shown
   $("#boundPanel").style.display = mode==="bound" ? "flex" : "none";
   $("#searchPanel").style.display = mode==="search" ? "flex" : "none";
@@ -4214,20 +4220,23 @@ function setMode(m){
 // acts there, which is what lets Go-To and Spawn drop the toolbar's "arm, then click"
 // second step.
 //
-// THE GATES ARE NOT RE-DERIVED HERE. Each command row reads the .disabled of the button
-// that already owns that command — Go-To needs ARMED and no E-STOP, Spawn is simulator
-// only — so a change to either rule reaches this menu for free and the two can never
-// disagree. A second, ungated path to a vessel command is exactly the "one value serving
-// two masters" shape this console keeps finding; deriving the gate from the existing
-// control means there is still only one.
+// THE GATES ARE NOT RE-DERIVED HERE. Each command row asks the SAME NAMED PREDICATE the
+// rest of the console asks — canCommand() for Go-To (armed, no E-STOP), canSpawn()
+// (simulator only), canSetHome() (a live link). Until 2026-08-08 these rows read the
+// .disabled of the toolbar button that owned each command, which was the same idea while
+// those buttons existed; they have since moved HERE, so the predicates are where the rule
+// lives now. Either way the point stands: a second copy of "armed and not E-STOPped"
+// beside this menu is exactly the "one value serving two masters" shape this console keeps
+// finding, and there is still only one.
 const cmenuEl = $("#chartMenu");
 let menuLL = null;                                 // the chart point the open menu acts on
 function chartMenuOpen(){ return !!cmenuEl && cmenuEl.style.display === "block"; }
 function closeChartMenu(){ if(cmenuEl) cmenuEl.style.display = "none"; menuLL = null; }
-// A row is enabled by its OWNING BUTTON and says WHY when it is off — a greyed row with
-// no reason beside it reads exactly like a broken control (the ROC Remove lesson).
-function cmGate(rowId, btnId, why){
-  const row = $(rowId), btn = $(btnId), off = !btn || btn.disabled;
+// A row is enabled by the console's own gate predicate and says WHY when it is off — a
+// greyed row with no reason beside it reads exactly like a broken control (the ROC Remove
+// lesson). `allowed` is the predicate's ANSWER, so the rule itself is never spelled here.
+function cmGate(rowId, allowed, why){
+  const row = $(rowId), off = !allowed;
   row.classList.toggle("off", off);
   const k = row.querySelector(".cmk"); if(k) k.textContent = off ? why : "";
   return !off;
@@ -4242,8 +4251,9 @@ function openChartMenu(clientX, clientY, ll){
   const n = measures.length + (measPend ? 1 : 0);
   $("#cmClear").classList.toggle("off", n === 0);
   $("#cmClearK").textContent = n ? (n + (n>1 ? " legs · Esc" : " leg · Esc")) : "none drawn";
-  cmGate("#cmGoto",  "#b_goto",  "arm first");
-  cmGate("#cmSpawn", "#b_spawn", "sim only");
+  cmGate("#cmGoto",  canCommand(), "arm first");
+  cmGate("#cmHome",  canSetHome(), "no link");
+  cmGate("#cmSpawn", canSpawn(),   "sim only");
   cmenuEl.style.display = "block";
   // clamp into the viewport, flipping at the right/bottom edges — same discipline as the
   // hover tips and the pop-out panels: a menu opened near a corner must stay reachable.
@@ -4271,6 +4281,9 @@ cmRow("#cmMeasure", ()=>{
 });
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
+// Takes no point ON PURPOSE — see the markup. cmRow hands one over; Set Home ignores it,
+// exactly as the server does.
+cmRow("#cmHome",  () => cmd("/api/cmd/sethome"));
 cmRow("#cmSpawn", ll => doSpawn(ll));
 cmRow("#cmCopy",  ll => copyPosition(ll));
 // Clipboard: the async API needs a secure context (localhost qualifies), so fall back to
@@ -5256,9 +5269,8 @@ $("#b_start").onclick = async ()=>{
 $("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
 $("#b_stop").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
-$("#b_goto").onclick = ()=>{ setMode("goto"); flashNote("Go-To: click a point on the chart."); };
 $("#b_hold").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/hold"); render(); }; // station-keep: no transit to draw
-$("#b_home").onclick = ()=>cmd("/api/cmd/sethome");
+// (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
   if(on && !await guiConfirm("Latch the command E-STOP",
@@ -5271,19 +5283,14 @@ $("#b_estop").onclick = async ()=>{
 // server with a cache-buster. The reload makes it a true "shut down and restarted":
 // it drops any client state AND guarantees the freshest UI (a stale cached page can
 // never survive a Reset - handy right after pulling new code).
-// CLICK-TO-SPAWN (simulator only). Arms placement; the chart click above calls
-// doSpawn. Server-side this reuses the sim POWER-CYCLE (`reset` with a spawn
-// override) rather than teleporting a live boat, so the boat comes up at the clicked
-// point with full energy, SAFE, no plan or home - and a new boot_id, which is what
+// CLICK-TO-SPAWN (simulator only), commanded from the chart's right-click menu at the
+// point the menu was opened over. Server-side this reuses the sim POWER-CYCLE (`reset`
+// with a spawn override) rather than teleporting a live boat, so the boat comes up at the
+// clicked point with full energy, SAFE, no plan or home - and a new boot_id, which is what
 // drops the old trail. The per-vessel DEFAULT spawn is unchanged and still lives in
 // vessels/<id>.json — each profile carries its own operating area; this only overrides it
 // for the current sim boot. The drawn mission/lines stay in the browser; re-Upload to
 // fly them from the new position.
-$("#b_spawn").onclick = ()=>{
-  setMode("spawn");
-  flashNote(mode==="spawn" ? "Click the chart to place the boat there."
-                           : "Spawn placement cancelled.");
-};
 async function doSpawn(ll){
   clearTrack();                                   // new boot = new track
   runRoute = null; runUnsafe = []; updateMissionCard();
@@ -5346,8 +5353,24 @@ window.addEventListener("storage", e=>{
 // follows reads distUnit when it first draws.
 { const el = $("#p_units"); if(el) el.textContent = distUnit.toUpperCase(); }
 
+// THE VESSEL-COMMAND GATES — ONE COPY OF EACH RULE, and they live out here as named
+// predicates rather than inline in the poll below because THE CHART MENU NEEDS THEM TOO.
+// They used to be written straight onto the buttons (`$("#b_goto").disabled = !armed ||
+// estop`) and the menu derived from the button's own .disabled, which was the right shape
+// while the button existed. Go-To, Spawn and Set Home moved to the right-click menu
+// (2026-08-08) and their buttons are gone, so the RULE moved here instead of being copied
+// into the menu — a second copy of "armed and not E-STOPped" is exactly the drift this
+// console keeps finding. Default to the live state S so a caller with no state in hand
+// still asks the same question.
+function linkConnected(s){ s = s || S; return !!((s.link && s.link !== "idle") || s.mode); }
+// May the operator command MOTION? The safety model's core gate, shared by Go-To, Hold and
+// RTH — RTH adds a home to go to, and that is the only difference.
+function canCommand(s){ s = s || S; return !!(s.armed && !s.estop); }
+function canSpawn(s){   s = s || S; return s.mode === "sim"; }        // a real boat can't be teleported
+function canSetHome(s){ return linkConnected(s); }                    // needs a live fix, not an arm
+
 function applyCmdState(s){
-  const connected = s.link && s.link !== "idle" || s.mode;
+  const connected = linkConnected(s);
   const armed = !!s.armed, estop = !!s.estop, run = s.run;
   $("#b_arm").classList.toggle("on", armed);
   $("#b_arm").textContent = armed ? "Disarm" : "Arm";
@@ -5356,19 +5379,16 @@ function applyCmdState(s){
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || run==="running";
   $("#b_pause").disabled = run!=="running";
   $("#b_stop").disabled = !(run==="running" || run==="paused");
-  $("#b_rth").disabled = !armed || estop || !s.home;
-  $("#b_goto").disabled = !armed || estop;
-  $("#b_goto").classList.toggle("on", mode==="goto");
-  $("#b_hold").disabled = !armed || estop;
-  $("#b_home").disabled = !connected;
+  $("#b_rth").disabled = !canCommand(s) || !s.home;
+  $("#b_hold").disabled = !canCommand(s);
   $("#b_estop").classList.toggle("on", estop);
   $("#b_estop").textContent = estop ? "CLEAR" : "E-STOP";
-  $("#b_reset").disabled = s.mode !== "sim";     // sim power-cycle only (real boat can't be teleported/refilled)
-  $("#b_spawn").disabled = s.mode !== "sim";     // ... same for click-to-spawn
-  if(s.mode !== "sim" && mode === "spawn") setMode("pan");   // never leave placement armed on a real link
-  // transit Follow follows the same arm gate as Go-To (no survey plan needed)
+  $("#b_reset").disabled = !canSpawn(s);         // sim power-cycle only (a real boat can't be refilled)
+  // (the old "never leave placement armed on a real link" reset went with the spawn MODE:
+  //  the menu row commands the spawn outright, so there is no armed state to leave behind.)
+  // transit Follow follows the same motion gate as Go-To (no survey plan needed)
   const trf = $("#tr_follow");
-  if(trf) trf.disabled = !(transit.length>=1 && armed && !estop);
+  if(trf) trf.disabled = !(transit.length>=1 && canCommand(s));
 }
 
 // --- live data via SSE --------------------------------------------------- //

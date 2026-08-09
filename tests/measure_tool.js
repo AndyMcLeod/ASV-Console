@@ -331,6 +331,9 @@ function El(o) {
   };
   return el;
 }
+// A LIVE, CONNECTED, ARMED SIMULATOR — every gate open. Each scenario below turns exactly
+// one thing off, so a row that stops following its predicate is unambiguous.
+const STATE_OK = { armed: true, estop: false, mode: "sim", link: "sim" };
 function menu(opts) {
   opts = opts || {};
   const D = {};
@@ -338,13 +341,13 @@ function menu(opts) {
   ["#cmPos", "#cmMeasureLbl", "#cmMeasureK", "#cmClearK"].forEach(id => mk(id));
   mk("#cmClear", { kid: D["#cmClearK"] });
   mk("#cmGoto", { kid: mk("#cmGotoK") });
+  mk("#cmHome", { kid: mk("#cmHomeK") });
   mk("#cmSpawn", { kid: mk("#cmSpawnK") });
   mk("#cmMeasure", { kid: D["#cmMeasureK"] });
   mk("#cmCopy", { kid: mk("#cmCopyK") });
-  mk("#b_goto", { disabled: !!opts.gotoOff });
-  mk("#b_spawn", { disabled: !!opts.spawnOff });
   const G = {
     cmenuEl: El({ w: 210, h: 190 }), menuLL: null, acted: [],
+    S: Object.assign({}, STATE_OK, opts.state || {}),
     mode: opts.mode || "pan", measures: opts.measures || [], measPend: opts.measPend || null,
     innerWidth: opts.vw || 1200, innerHeight: opts.vh || 800,
     $: (id) => D[id] || El(),
@@ -353,30 +356,88 @@ function menu(opts) {
     flashNote: () => {}, render: () => {}, clearMeasures: () => { G.measures = []; },
     doGoTo: (ll) => G.acted.push(["goto", ll]), doSpawn: (ll) => G.acted.push(["spawn", ll]),
     copyPosition: (ll) => G.acted.push(["copy", ll]),
+    cmd: (path, body) => G.acted.push(["cmd", path, body]),
     D,
   };
+  // The REAL gate predicates run here, against a fake server state - not a paraphrase of
+  // them. That is the whole point: if canCommand() changes, this test changes with it.
   // eslint-disable-next-line no-new-func
   new Function("G", "with(G){" +
+    grab("linkConnected") + grab("canCommand") + grab("canSpawn") + grab("canSetHome") +
     grab("chartMenuOpen") + grab("closeChartMenu") + grab("cmGate") + grab("openChartMenu") + grab("cmRow") +
     "G.openChartMenu=openChartMenu; G.closeChartMenu=closeChartMenu;" +
-    "G.chartMenuOpen=chartMenuOpen; G.cmRow=cmRow; G.cmGate=cmGate; }")(G);
+    "G.chartMenuOpen=chartMenuOpen; G.cmRow=cmRow; G.cmGate=cmGate;" +
+    // Run a SHIPPED source line inside this scope. A direct eval() here sees the local
+    // chain (cmRow, cmd, doGoTo...), so a row's real registration can be executed rather
+    // than paraphrased - which is the only way a check on a registration means anything.
+    "G.runShipped = function(src){ return eval(src); }; }")(G);
   return G;
 }
+const rowOff = (G, id) => G.D[id].classList.contains("off");
 
-// The point of deriving: change the BUTTON's gate and the menu follows, with no second
-// copy of "armed and not E-STOPped" / "simulator only" to drift out of step.
+// The point of the named predicates: the rule exists ONCE, and the menu asks it. Each
+// scenario disables exactly one gate and only its own row may react.
 const g15 = attempt(() => {
-  const on = menu({}); on.openChartMenu(10, 10, { lat: 40, lon: -75 });
-  const off = menu({ gotoOff: true, spawnOff: true }); off.openChartMenu(10, 10, { lat: 40, lon: -75 });
-  return { on, off };
+  const open = (o) => { const G = menu(o); G.openChartMenu(10, 10, { lat: 40, lon: -75 }); return G; };
+  return {
+    all:    open({}),                                     // armed sim, link up
+    unarmed:open({ state: { armed: false } }),
+    stopped:open({ state: { estop: true } }),
+    real:   open({ state: { mode: "real", link: "vcu" } }),
+    down:   open({ state: { mode: null, link: "idle" } }),
+  };
 });
-check("15 the command rows are gated by their OWNING BUTTON, not a second copy of the rule",
-  () => g15.ok
-    && !g15.value.on.D["#cmGoto"].classList.contains("off")
-    && !g15.value.on.D["#cmSpawn"].classList.contains("off")
-    && g15.value.off.D["#cmGoto"].classList.contains("off")
-    && g15.value.off.D["#cmSpawn"].classList.contains("off"),
-  () => g15.ok ? "b_goto/b_spawn .disabled drives the rows" : "THREW: " + g15.err);
+check("15 each command row is gated by the console's OWN predicate, one rule per gate", () => {
+  if (!g15.ok) return false;
+  const v = g15.value;
+  return !rowOff(v.all, "#cmGoto") && !rowOff(v.all, "#cmHome") && !rowOff(v.all, "#cmSpawn")
+    && rowOff(v.unarmed, "#cmGoto") && !rowOff(v.unarmed, "#cmHome")   // arming is not a link
+    && rowOff(v.stopped, "#cmGoto")                                     // E-STOP closes motion
+    && rowOff(v.real, "#cmSpawn") && !rowOff(v.real, "#cmGoto")         // sim-only is sim-only
+    && rowOff(v.down, "#cmHome") && rowOff(v.down, "#cmSpawn");         // no link, no home
+}, () => g15.ok ? "canCommand / canSpawn / canSetHome drive the rows" : "THREW: " + g15.err);
+
+// SET HOME TAKES NO POINT, and that is a safety property, not an oversight. Engine.set_home
+// reads the boat's OWN live fix and discards a position sent to it (tests/home_spawn.py
+// posts a decoy 0.5 deg off to prove it), because Return-to-Home drives to home - a home
+// the boat never occupied is a destination nobody validated. The row therefore must not
+// learn to send the clicked point, and must not be LABELLED as if it did.
+// Runs the SHIPPED registration, not a stand-in. The first version of this check
+// re-registered the row with a handler the test wrote itself and then asserted that
+// handler sent no point - it passed happily with the real row mutated to send one. A check
+// on a registration has to execute the registration.
+const HOME_REG = (H.match(/^\s*cmRow\("#cmHome",[\s\S]*?\);\s*$/m) || [""])[0];
+const g15b = attempt(() => {
+  const G = menu({});
+  if (!/cmRow\("#cmHome"/.test(HOME_REG)) throw new Error("cmHome registration not found (renamed?)");
+  G.runShipped(HOME_REG);
+  G.openChartMenu(10, 10, { lat: 38.75, lon: -74.25 });
+  G.D["#cmHome"].onclick();
+  return G;
+});
+check("15b Set Home commands the VESSEL'S fix — it never sends the clicked point",
+  () => g15b.ok && g15b.value.acted.length === 1
+    && g15b.value.acted[0][0] === "cmd" && g15b.value.acted[0][1] === "/api/cmd/sethome"
+    && g15b.value.acted[0][2] === undefined                    // no body at all
+    && /Set Home at vessel/.test(H)                            // ... and the row says so
+    && !/id="cmHome"[^>]*>\s*<span>[^<]*here/.test(H),
+  () => g15b.ok ? JSON.stringify(g15b.value.acted) : "THREW: " + g15b.err);
+
+// Andy moved all three off the command bar. A button left behind is a SECOND path to a
+// vessel command, gated by whatever that button happens to still say.
+const CMDBAR = H.slice(H.indexOf('<div class="cmdbar'), H.indexOf('</div>', H.indexOf('id="b_estop"')));
+check("15c Go-To, Spawn and Set Home are gone from the command bar",
+  () => !/id="b_goto"/.test(H) && !/id="b_spawn"/.test(H) && !/id="b_home"/.test(H)
+    && /id="b_estop"/.test(CMDBAR) && /id="b_rth"/.test(CMDBAR),   // ... the rest still there
+  () => ["b_goto", "b_spawn", "b_home"].filter(b => H.includes('id="' + b + '"')).join(",") || "all three removed");
+
+// Their MODES were reachable only from those buttons. Dead mode branches are how a console
+// grows a second way to do something that nobody can reach and nobody deletes.
+check("15d ... and the goto/spawn placement modes went with them",
+  () => !/setMode\("goto"\)/.test(H) && !/setMode\("spawn"\)/.test(H)
+    && !/mode\s*===\s*"goto"/.test(H) && !/mode\s*===\s*"spawn"/.test(H)
+    && /S\.behavior\s*===\s*"goto"/.test(H),      // the SERVER's behaviour name is not a mode
+  "no unreachable placement mode left behind");
 
 const MENU_SRC = H.slice(H.indexOf("// --- the chart context menu ---"), H.indexOf('$("#wptBtn").onclick'));
 check("16 ... and the menu section contains no second copy of either rule", () =>
@@ -384,7 +445,7 @@ check("16 ... and the menu section contains no second copy of either rule", () =
   () => (MENU_SRC.match(/S\.armed|\.estop|mode\s*===?\s*["']sim["']|s\.mode/) || ["clean"])[0]);
 
 const g17 = attempt(() => {
-  const G = menu({ gotoOff: true });
+  const G = menu({ state: { armed: false } });        // disarmed: Go-To must be inert
   G.cmRow("#cmGoto", (ll) => G.doGoTo(ll));
   G.openChartMenu(10, 10, { lat: 40, lon: -75 });
   G.D["#cmGoto"].onclick();

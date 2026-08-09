@@ -102,7 +102,17 @@ c.push(P("Saved card positions are always kept on the chart. If you place a card
 c.push(H1("4  Reading the display"));
 c.push(H2("4.1  The chart"));
 c.push(P("A slippy nautical chart centred on the vessel. `+` / `−` zoom; drag to pan; BOAT re-centres and keeps the vessel centred as it moves. The vessel draws as a filled marker with a heading line. Its track paints behind it and persists across a page refresh within a session — it is dropped when the simulator is power-cycled, because that track belongs to a run that no longer exists."));
-c.push(P("RIGHT-CLICK ANYWHERE ON THE CHART for a menu of the things that act on a POINT. Its header shows the position you clicked and every row acts there: the measuring tool (4.5), Go-To here, Spawn here, and Copy position. Go-To and Spawn are greyed out exactly when their toolbar buttons are, with the reason beside the row — the menu is a shortcut past the \"arm the button, then click the chart\" second step, never a way around the arm gate itself. Escape closes it, as does clicking elsewhere; a click that closes the menu does nothing else, so you cannot dismiss it and place something by accident."));
+c.push(P("RIGHT-CLICK ANYWHERE ON THE CHART for a menu of the point commands. Its header shows the position you clicked, and this is where GO-TO, SPAWN and SET HOME now live — they are no longer on the command bar, because each was a two-step control (arm a button, then click the chart) and the menu already carries the point."));
+c.push(TBL(["Row", "Does"], [
+  ["Measure distance", "The chart ruler — click, move, click. See 4.5"],
+  ["Clear measurements", "Removes every measurement drawn"],
+  ["Go-To here", "Drives to the clicked point and station-keeps (8.1). Needs ARMED, no E-STOP"],
+  ["Set Home at vessel", "Captures the VESSEL'S position as HOME (8.5). Needs a live link"],
+  ["Spawn here", "Simulator: places the vessel at the clicked point (8.6)"],
+  ["Copy position", "Puts the clicked coordinate on the clipboard"],
+], [2100, 7260]));
+c.push(P("A row that cannot act right now is greyed and SAYS WHY beside itself — `arm first`, `no link`, `sim only`. The menu is a shortcut past the arming STEP, never past the arm GATE: the rules are the same ones the safety model applies everywhere else, and they are checked as the menu opens, so a row closes the moment an E-STOP is latched."));
+c.push(P("Escape closes the menu, as does clicking elsewhere. A click that closes the menu does nothing else, so you cannot dismiss it and place something by accident."));
 c.push(H2("4.2  The top status bar"));
 c.push(P("Always visible, and the fastest read on the vessel:"));
 c.push(TBL(["Field", "Meaning"], [
@@ -210,7 +220,8 @@ c.push(P("The forcing can still be overridden or switched off, but over the API 
 c.push(H1("8  Direct behaviours"));
 c.push(P("These need no survey plan. All of them require ARM, and all of them route clear of the keep-out model."));
 c.push(H2("8.1  Go-To"));
-c.push(P("Press `Go-To`, then click the chart. The vessel drives to the point, around anything in the way, and station-keeps on arrival. The banner reports whether the route was direct or routed and how many waypoints it used. If no clear route exists the command is REFUSED and the blocking feature is highlighted."));
+c.push(P("RIGHT-CLICK the point and choose GO-TO HERE. The vessel drives there, around anything in the way, and station-keeps on arrival. The banner reports whether the route was direct or routed and how many waypoints it used. If no clear route exists the command is REFUSED and the blocking feature is highlighted."));
+c.push(P("The row is greyed until the vessel is armed and clear of E-STOP, and says so beside itself — it is a shortcut past the old two-step (arm a toolbar button, then click the chart), never past the arm gate."));
 c.push(H2("8.2  Transit"));
 c.push(P("Press `TRAN` and click the chart to lay down a single- or multi-segment line, then `Follow`. Useful when you want the vessel to take a specific path rather than the one the router would choose. `Undo` removes the last point; `Clear` discards the line. The drawn line is a guide, not a guarantee — each leg is still routed clear of keep-outs, and the vessel keeps right in channels."));
 c.push(H2("8.3  Hold"));
@@ -218,10 +229,12 @@ c.push(P("Station-keeps at the present position. The immediate answer to “stop
 c.push(H2("8.4  Return-to-Home"));
 c.push(P("Drives to HOME on a routed path and station-keeps there. HOME is set automatically at the first fix, moved by `Set Home`, or taken from a Remote Operations Center (section 12) — in which case it can be MOVING, and the return chases it."));
 c.push(H2("8.5  Set Home"));
-c.push(P("Makes the present position HOME. Do this at the launch point, before arming, unless HOME is coming from a Remote Operations Center. The position captured is always the vessel's own reported fix, never a value supplied from the screen — and the command refuses when no link is up or the link has not produced a fix yet, because a HOME taken from anything but live telemetry is a place the boat is not: Return-to-Home drives to HOME, so a stale one is not a display blemish but a destination."));
+c.push(P("Right-click the chart and choose SET HOME AT VESSEL. Do this at the launch point, before arming, unless HOME is coming from a Remote Operations Center. The position captured is always the vessel's own reported fix, never a value supplied from the screen — and the command refuses when no link is up or the link has not produced a fix yet, because a HOME taken from anything but live telemetry is a place the boat is not: Return-to-Home drives to HOME, so a stale one is not a display blemish but a destination."));
+c.push(NOTE("WHY THIS ROW SAYS “AT VESSEL” AND NOT “HERE”",
+  "Every other row on the chart menu acts at the point you right-clicked. This one does not, and cannot: it captures the vessel's own fix, and a position sent with the command is discarded. That is deliberate. To put HOME somewhere the vessel is not — a dock, a tender, a ship — place a Remote Operations Center instead (section 12): those ARE positioned by clicking the chart, they are confirmed before they take effect, and a ship-borne one lets HOME move."));
 c.push(H2("8.6  Simulator-only controls"));
 c.push(TBL(["Control", "Does"], [
-  ["`Spawn`", "Click the chart to place the vessel there — a clean slate at a point you choose"],
+  ["SPAWN HERE (chart menu)", "Right-click a point to place the vessel there — a clean slate where you choose"],
   ["`Reset`", "Power-cycle the simulator: full energy, back at the profile's spawn, plans cleared, SAFE"],
   ["energy pill", "Click to report energy as full and stop the drain, for rehearsing a long mission quickly"],
 ], [1500, 7860]));
@@ -416,7 +429,7 @@ c.push(TBL(["Button", "Does"], [
   ["`SRC`", "Chart source and survey confidence"],
   ["`CLR`", "Clear the displayed track"],
   ["`?`", "Quick start card"],
-  ["right-click", "Chart menu at that point: measure, Go-To here, Spawn here, copy position (4.1, 4.5)"],
+  ["right-click", "Chart menu at that point — measure, Go-To here, Set Home, Spawn here, copy position (4.1)"],
   ["`Esc`", "Close the chart menu; then the half-drawn measurement; then all measurements; then the tool"],
 ], [2100, 7260]));
 

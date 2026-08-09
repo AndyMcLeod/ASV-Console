@@ -45,7 +45,7 @@ c.push(P("Zoom with `+` / `−`, drag to pan, `BOAT` re-centres on the vessel. T
 c.push(H1("3  Your first command — a Go-To"));
 c.push(P("Nothing moves until you arm. That is the whole safety model in one sentence."));
 c.push(B("Press `Arm`. The safety pill changes from SAFE."));
-c.push(B("Press `Go-To`, then click a point on open water a few hundred metres away."));
+c.push(B("RIGHT-CLICK a point on open water a few hundred metres away and choose GO-TO HERE. The chart's right-click menu is where the point commands live — Go-To, Set Home, Spawn, and the measuring tool. Until you arm, the Go-To row is greyed and tells you why."));
 c.push(B("Read the BANNER across the chart. It says whether the route went direct or was routed around obstacles, and how many waypoints it used."));
 c.push(P("The vessel drives there, around anything charted in the way, and station-keeps on arrival. Now try clicking a point on the far side of a pier or a shoal — the console will route a way round it, or REFUSE and pulse the offending feature with a cross. A refusal is a result, not a failure. (Ops manual 8.1, 2.4)"));
 

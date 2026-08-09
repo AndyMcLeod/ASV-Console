@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 561 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 564 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (561 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (564 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -108,7 +108,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
-| `node tests/measure_tool.js` | the chart ruler: the reading flows ALONG the leg and is sized by ONE constant everything else derives from, the gesture is click-move-click, the menu's gates are the buttons' own (29) |
+| `node tests/measure_tool.js` | the chart ruler + the point-command menu: the reading flows ALONG the leg sized by ONE constant, the gesture is click-move-click, each row asks the console's own gate predicate, Set Home never sends the click (32) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
@@ -840,6 +840,58 @@ that trap cost a round; see the same note in the measuring-tool section.
 
 All fifteen entries were written from each suite's OWN docstring rather than invented, in
 the voice of the existing rows. `docs_valid.py` 7 → 8 checks.
+
+## THE POINT COMMANDS MOVED TO THE CHART MENU (2026-08-08)
+
+Andy: *"add set home to right click. remove set home, spawn and go-to from bottom bar."*
+Go-To and Spawn were already menu rows; this removes their toolbar buttons and adds Set
+Home. **The command bar is now Arm · Upload · Start · Pause · Stop · Hold · RTH · E-STOP ·
+Reset.**
+
+**"SET HOME AT VESSEL", NOT "SET HOME HERE" — and the wording is load-bearing.**
+`Engine.set_home()` **takes no position argument at all**: it reads the boat's own live fix
+and refuses without one, and `/api/cmd/sethome` discards a body (`home_spawn.py` posts a
+decoy 0.5° off to prove it). That is a deliberate safety property — **RTH drives to HOME, so
+a home the boat never occupied is a destination nobody validated** — and it was itself a fix
+(`5ac17bc`: Set-Home used to capture a DEAD boat's stale fix). Every other row on this menu
+acts at the clicked point, so this one has to say out loud that it does not. **To put HOME
+somewhere the vessel is not, place a ROC** — that IS the click-a-point mechanism, it is
+confirmed before it takes effect, and a ship-borne one lets HOME move. **If a future session
+is asked for "set home HERE", that is a server change to a tested invariant — raise it, do
+not just wire the point through.**
+
+**THE GATES MOVED OUT OF THE BUTTONS, because the buttons left.** The menu used to read
+`#b_goto.disabled` / `#b_spawn.disabled` — right while those buttons existed, and broken the
+moment they did not (`cmGate` would have seen `btn = null` and greyed the rows forever). The
+rules are now named predicates beside `applyCmdState`: `linkConnected(s)` ·
+**`canCommand(s)`** (armed && !estop — the safety model's core motion gate, shared by Go-To,
+Hold and RTH; RTH just adds a home) · `canSpawn(s)` (sim only) · `canSetHome(s)` (a live
+link, NOT an arm). Each defaults to the live `S`, so a caller with no state in hand asks the
+same question. `cmGate(rowId, allowed, why)` now takes the predicate's ANSWER, so the rule is
+never spelled inside the menu — check 16 still enforces that.
+
+**AND THE `goto` / `spawn` MODES ARE DELETED.** They were reachable ONLY from those two
+buttons, so removing them left two unreachable branches in the mouseup chain, two `classList`
+toggles and the "never leave placement armed on a real link" reset. All gone — `setMode("goto")`
+and `setMode("spawn")` no longer exist. **Careful when grepping: `S.behavior === "goto"` is the
+SERVER's behaviour name and is very much alive** (the run-route diamonds, the plan readout);
+check 15d asserts the modes are gone AND that the behaviour name survived.
+
+**32 checks, 36 mutations, 0 survivors.** **THE ONE THAT SURVIVED FIRST IS THE LESSON, and it
+is the sharpest of these three sessions:** my check 15b — *Set Home never sends the clicked
+point*, the safety property above — **re-registered the row with a handler the test wrote
+itself**, then asserted that handler sent no point. It passed happily with the real row
+mutated to send one. **A CHECK ON A REGISTRATION MUST EXECUTE THE REGISTRATION.** Fixed with
+`G.runShipped(src)` — a direct `eval` inside the harness's `with(G)` scope, so the shipped
+`cmRow("#cmHome", …)` line runs against the fakes. Same family as "testing a pure helper does
+not test that anything calls it", but worse, because here the call site WAS the subject.
+
+**Live-verified on a SECOND console (port 8792) while Andy's own ran on 8791** — never touch
+the operator's running console; `mission.json` was hashed before and after and is
+byte-identical. Home landed **0 m from the boat and 4,556 m from the clicked point**; Go-To
+routed 15 ENC-aware waypoints; Spawn put the boat 0 m from the click; the rows opened on arm
+and closed the instant an E-STOP latched. **A launch entry `asv-console-verify` (port 8792,
+`--no-log`, temp `--roc-config`) is in `.claude/launch.json` for exactly this.**
 
 ## THE MEASURING TOOL + THE CHART CONTEXT MENU (2026-08-08)
 
