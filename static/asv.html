@@ -605,7 +605,7 @@ import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nm
          fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
 import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint } from "/static/js/geometry.js";
-import { V } from "/static/js/state.js";
+import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 "use strict";
 const $ = s => document.querySelector(s);
 
@@ -770,10 +770,10 @@ let boundary = [];                             // [{lat,lon}] vertices
 let boundaryClosed = false, boundDrag = null;  // closed ring? / vertex being dragged
 let boundaryShow = true;                       // overlay visibility (a selective layer toggle)
 // ENC chart features (fetched by Punch Out) + overlay state
-let enc = {features:[], band:null, minDepth:null};
+
 let encShow = true, punchBusy = false;
 // real-time water level above the chart datum (m); ADDED to charted ENC depths
-let water = {}, waterOffset = 0;
+let water = {};   // sea.waterOffset -> sea.waterOffset (state.js)
 // --- app-level ENC NOGO model (established at startup) -------------------- //
 // Every behavior (Go-To / RTH / search patterns / survey) routes clear of these
 // nogo zones: shoreline + manmade features + water shallower than 1 m CORRECTED
@@ -782,7 +782,7 @@ let water = {}, waterOffset = 0;
 // keep-right only when BOTH walls are within this on each side. Vessel-driven
 // (planning.channel_reach_m); null -> the buf*10 default (tight-marina scale).
 const NOGO_RADIUS_M = 5000;                     // operating-area half-extent around first fix (10 km box; re-extract at 0.6x = 3 km of travel)
-const NOGO_ENF = {land:true, depth:true, haz:true, area:false};  // shoreline+manmade+depth+hazards
+  // shoreline+manmade+depth+hazards
 // CHARTED POINT HAZARDS HAVE AN EXTENT THE CHART DOES NOT GIVE US. A wreck symbol is a
 // POSITION, not a size: the casualty under it can be a 100 m ship, and the ENC point
 // says nothing about which way it lies. Treating it as a bare point and leaning on the
@@ -804,8 +804,7 @@ const WRECK_CLEAR_MARGIN_M = 1.0;
 // clip against it (shared ref/features/enforce/buffer). Its depth floor is fixed
 // at V.NOGO_MIN_DEPTH_M (navigability). The survey's Min/Max depth is a survey-only
 // COVERAGE window layered on top of this floor inside punchOut().
-let nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
-            buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
+
 let nogoShow = true;                            // nogo overlay wash visibility
 // AIS layer: nearby vessels polled from the standalone AIS service via /api/ais.
 const AIS_KEY = "asv_ais_show_v1";
@@ -1833,14 +1832,14 @@ function depthExcluded(f, dr){
   const d1 = f.props.DRVAL1, d2 = f.props.DRVAL2;
   // charted depths are to a fixed datum (LWD / MLLW); add the live water level to
   // get ACTUAL available depth right now.
-  const deepest = (d2!=null) ? d2 + waterOffset : (d1!=null ? d1 + waterOffset : null);
-  const shallowest = (d1!=null) ? d1 + waterOffset : (d2!=null ? d2 + waterOffset : null);
+  const deepest = (d2!=null) ? d2 + sea.waterOffset : (d1!=null ? d1 + sea.waterOffset : null);
+  const shallowest = (d1!=null) ? d1 + sea.waterOffset : (d2!=null ? d2 + sea.waterOffset : null);
   const tooShallow = (deepest!=null && deepest < dr.min);
   const tooDeep = (dr.max>0 && shallowest!=null && shallowest > dr.max);
   return tooShallow || tooDeep;
 }
 function drawENC(toScreen){
-  if(!enc.features.length) return;
+  if(!sea.enc.features.length) return;
   ctx.save();
   const fillPoly=(g,fill,stroke)=>{ ctx.beginPath(); let any=false;
     eachRing(g,r=>{ any=true; r.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); });
@@ -1851,18 +1850,18 @@ function drawENC(toScreen){
     ctx.setLineDash([]); };
   // fills: land / docks / informational areas. Shallow-water (depth) shading is
   // owned SOLELY by the NOGO layer (drawNogo) - the single depth-shading layer.
-  for(const f of enc.features){ const g=f.geometry, r=f.role;
+  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
     if(r==="land") fillPoly(g,"rgba(120,96,58,0.38)","rgba(150,120,70,0.7)");
     else if(r==="dock"||r==="hazard_area") fillPoly(g,"rgba(200,120,40,0.30)","rgba(210,140,60,0.85)");
     else if(r==="dredged"||r==="restricted") fillPoly(g,"rgba(90,140,190,0.10)",null); }
   // lines
-  for(const f of enc.features){ const g=f.geometry, r=f.role;
+  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
     if(r==="shore_line") strokePath(g,"rgba(185,150,90,0.95)",1.6,[]);
     else if(r==="dock_line") strokePath(g,"rgba(210,140,60,0.95)",1.6,[]);
     else if(r==="depth_contour") strokePath(g,"rgba(95,145,195,0.55)",1,[3,3]);
     else if(r==="dredged"||r==="restricted") strokePath(g,"rgba(110,160,205,0.7)",1.2,[5,4]); }
   // points
-  for(const f of enc.features){ const g=f.geometry, r=f.role;
+  for(const f of sea.enc.features){ const g=f.geometry, r=f.role;
     if(r==="hazard_point") eachPoint(g,c=>{ const s=toScreen(c[1],c[0]);
       // A sized hazard (wreck / obstruction of unknown extent) draws the circle the
       // router actually keeps out of. Without it the operator sees a route swing wide
@@ -1889,7 +1888,7 @@ function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
 async function fetchENCBbox(b, minDepth){
   const url=`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${minDepth}`;
   const d=await (await fetch(url)).json();
-  enc={features:d.features||[], band:d.band, minDepth}; return d;
+  sea.enc={features:d.features||[], band:d.band, minDepth}; return d;
 }
 // local ENU (metres) about a reference lat/lon
 // A human-readable category for a keep-out, so a refusal can say WHAT blocks it.
@@ -1960,7 +1959,7 @@ function markSystems(marks){
 function hazExtent(f){
   if(!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
   const vs = f.props && f.props.VALSOU;
-  if(typeof vs === "number" && (vs + waterOffset) >= V.NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
+  if(typeof vs === "number" && (vs + sea.waterOffset) >= V.NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
   return V.WRECK_RADIUS_M;
 }
 // The active vessel's planning.nogo_buffer_m is a FLOOR. A persisted mission carries
@@ -1972,7 +1971,7 @@ function bufferFloor(missionBuf){
 }
 function buildKeepouts(ref, enf, dr, feats){
   const polys=[], lines=[], points=[], marks=[];
-  for(const f of (feats || enc.features)){ const g=f.geometry, r=f.role;
+  for(const f of (feats || sea.enc.features)){ const g=f.geometry, r=f.role;
     const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
     const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
     // LATERAL channel marks (buoys/beacons): collected as channel-defining marks
@@ -2399,7 +2398,7 @@ function featuresBboxRef(feats){                // ENU reference = centroid of t
   return any ? {lat:(s0+n0)/2, lon:(w0+e0)/2} : null;
 }
 function rebuildNogo(){                         // (re)build the keep-out model from nogo.features + shared config
-  const feats = nogo.features || enc.features || [];
+  const feats = nogo.features || sea.enc.features || [];
   nogo.ref = featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center);
   nogo.ko = buildKeepouts(nogo.ref, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
@@ -2422,8 +2421,8 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
       updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
       render(); return;
     }
-    nogo.features = (enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
-    nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
+    nogo.features = (sea.enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
+    nogo.band = sea.enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
     // painting the row while this was still true left it reading "loading…" forever on
     // the SUCCESS path - the one path that never repainted afterwards. The model was
@@ -3276,7 +3275,7 @@ function drawNogo(toScreen){
 // Lateral channel marks (buoys/beacons) the console uses to define the channel:
 // green = port-hand (CATLAM 1/3), red = starboard-hand (CATLAM 2/4), amber = other.
 function drawMarks(toScreen){
-  const feats = (nogo.features && nogo.features.length) ? nogo.features : (enc && enc.features);
+  const feats = (nogo.features && nogo.features.length) ? nogo.features : (sea.enc && sea.enc.features);
   if(!feats) return;
   ctx.save();
   // The BUOY LINES the routing actually uses: each system's marks joined in number
@@ -4946,7 +4945,7 @@ const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m
   5:["ZOC D","worse than ZOC C"], 6:["ZOC U","unassessed"]};
 const ENC_USAGE_LBL = {"1":"Overview","2":"General","3":"Coastal","4":"Approach",
   "5":"Harbour","6":"Berthing"};
-let chartInfo = null, chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
+let chartInfoBox = null, chartBusy = false, chartRetryAt = 0;
 function cellName(props){ return String((props&&props.DSNM) || "").replace(/\.\d+$/, ""); }
 // Even-odd point-in-polygon over a GeoJSON geometry, reusing the routing
 // primitives (the test point is its own ENU reference, so holes subtract).
@@ -4977,11 +4976,11 @@ async function ensureChartInfo(){
                           ac ? {signal: ac.signal} : undefined);
     const d = await r.json();
     if(!r.ok || d.error){
-      chartInfo = {note:"chart source unavailable ("+(d.error || ("HTTP "+r.status))+")", cells:[], quality:[]};
+      sea.chartInfo = {note:"chart source unavailable ("+(d.error || ("HTTP "+r.status))+")", cells:[], quality:[]};
       chartRetryAt = Date.now() + 30000;
-    } else { chartInfo = d; chartInfoBox = b; chartRetryAt = 0; }
+    } else { sea.chartInfo = d; chartInfoBox = b; chartRetryAt = 0; }
   }catch(e){
-    chartInfo = {note:(e && e.name === "AbortError") ? "chart source timed out" : "chart source unavailable",
+    sea.chartInfo = {note:(e && e.name === "AbortError") ? "chart source timed out" : "chart source unavailable",
                  cells:[], quality:[]};
     chartRetryAt = Date.now() + 30000;
   }
@@ -4993,7 +4992,7 @@ async function ensureChartInfo(){
 // polygons can overlap, and a survey operator wants the pessimistic answer.
 function qualityAt(lat, lon){
   let worst = null;
-  for(const q of (chartInfo && chartInfo.quality) || []){
+  for(const q of (sea.chartInfo && sea.chartInfo.quality) || []){
     if(!ptInGeom(lat, lon, q.geometry)) continue;
     const z = Number(q.props.CATZOC) || 6;
     if(!worst || z > (Number(worst.CATZOC) || 6)) worst = q.props;
@@ -5028,7 +5027,7 @@ function updateChartCard(){
     + (first ? "" : "padding-top:5px;border-top:1px solid #1d3348;")
     + 'color:var(--ink-faint);font-size:9px;letter-spacing:.08em;text-transform:uppercase;">'
     + t + '</div>';
-  const cells = (chartInfo && chartInfo.cells) || [];
+  const cells = (sea.chartInfo && sea.chartInfo.cells) || [];
   // EVERY cell in view gets a row. A survey routinely spans several cells, and the
   // one the vessel happens to sit in says nothing about the scale, survey dates or
   // currency of the others it is about to work over - "+3 in view" hid exactly the
@@ -5058,7 +5057,7 @@ function updateChartCard(){
   const mine = primary ? primary.name : (names[0] || null);
   const title = primary && primary.props.TITLE;
   const usage = mine ? ENC_USAGE_LBL[mine.charAt(2)] : null;
-  const band = (chartInfo && chartInfo.band) || nogo.band || null;
+  const band = (sea.chartInfo && sea.chartInfo.band) || nogo.band || null;
   // One line per chart: a marker for the cell the vessel is in, the cell name, and
   // its usage band spelled out.
   const cellLine = c=>{
@@ -5079,10 +5078,10 @@ function updateChartCard(){
   const dat = (water && water.datum) || null;
   const off = (water && water.ok && water.offset_m != null) ? water.offset_m : null;
   let h = "";
-  if(!chartInfo){ h = `<div style="color:var(--ink-faint);">${chartBusy
+  if(!sea.chartInfo){ h = `<div style="color:var(--ink-faint);">${chartBusy
       ? "reading the chart source…<div style=\"margin-top:3px;font-size:10px;\">first read of a new area fetches from NOAA — this can take up to a minute</div>"
       : "no chart source yet"}</div>`; }
-  else if(!names.length){ h = `<div style="color:var(--ink-faint);">${chartInfo.note || "no ENC coverage here"}</div>`; }
+  else if(!names.length){ h = `<div style="color:var(--ink-faint);">${sea.chartInfo.note || "no ENC coverage here"}</div>`; }
   else {
     h += hdr(names.length === 1 ? "Chart in view" : names.length + " charts in view", true);
     for(const c of chartList) h += cellLine(c);
@@ -5462,11 +5461,11 @@ function onState(s){
 
   // real-time water level (corrects charted depths); applied in depthExcluded
   water = s.water || {};
-  const prevOffset = waterOffset;
-  waterOffset = effectiveWaterOffset(water);
+  const prevOffset = sea.waterOffset;
+  sea.waterOffset = effectiveWaterOffset(water);
   // The nogo model is built against this offset, so a change in it (including the gate
   // flipping when the station changes) must invalidate the punched survey clip.
-  if(waterOffset !== prevOffset) patClip = null;
+  if(sea.waterOffset !== prevOffset) patClip = null;
   // Chart source card: follow the vessel (zone of confidence is position-dependent).
   // Both calls no-op cheaply unless the card is open and something actually changed.
   if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }
@@ -5600,7 +5599,7 @@ $("#sp_water").onchange = ()=>{
   fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({manual_offset: v==="" ? null : parseFloat(v)})})
     .then(r=>r.json()).then(j=>{ if(j.water){ water=j.water;
-      waterOffset=effectiveWaterOffset(water); updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
+      sea.waterOffset=effectiveWaterOffset(water); updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
 };
 
 // --- environment READOUTS on the vessel-status card ----------------------- //

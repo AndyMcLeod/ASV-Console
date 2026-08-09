@@ -59,7 +59,12 @@ function grab(name) {
 }
 
 V.NOGO_MIN_DEPTH_M = 2.3;             // the DriX: 2.0 m draft + 0.3 m under-keel clearance
-var nogo = null;
+// The page reads the SHARED nogo object now, so scenarios are written into it rather
+// than rebinding a local. Keys are cleared first: Object.assign cannot remove a field,
+// and a model that omits one would otherwise inherit the previous scenario's value.
+const { nogo, sea } = require("../static/js/state.js");
+function setNogo(m){ for (const k of Object.keys(nogo)) delete nogo[k];
+                     return Object.assign(nogo, m); }
 // eslint-disable-next-line no-eval
 eval(grab("nogoKindCounts") + "\n" + grab("nogoReadout"));
 
@@ -91,7 +96,7 @@ function model(over) {
     }
   }, over || {});
 }
-const read = over => { nogo = model(over); return nogoReadout(); };
+const read = over => { setNogo(model(over)); return nogoReadout(); };
 
 console.log("Nogo readout — the row has to say which of four things is true:");
 
@@ -178,9 +183,9 @@ eval(grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo"));
 
 async function drive(fetchResult) {
-  nogo = { ready: false, busy: false, ref: null, ko: null, band: null,
-           note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null };
-  enc = { features: [{}], band: "enc_5" };
+  setNogo({ ready: false, busy: false, ref: null, ko: null, band: null,
+           note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+  sea.enc = { features: [{}], band: "enc_5" };
   painted = []; banners = [];
   FETCH = fetchResult;
   await refreshNogo();

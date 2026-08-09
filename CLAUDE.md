@@ -169,7 +169,36 @@ item below started as something he SAW on his own console — or, at the end, as
 | `d43c8bf` | `start_sim.bat` + `tools/asv.ico` — a double-click launcher for simulator mode |
 | `0ac3ae6` | **a card is not a mode** — opening ROC no longer cancels SURV |
 | `d742f42` | what "visible" means is the panel's property, not the caller's |
-| (this commit) | **LAYER 0 LEAVES THE PAGE** — `static/js/{geodesy,geometry,units,state}.js` as ES modules |
+| `d1c11db` | **LAYER 0 LEAVES THE PAGE** — `static/js/{geodesy,geometry,units,state}.js` as ES modules |
+| (this commit) | **the chart STATE moves; the code does not** — `nogo` + `sea` to `state.js` |
+
+**⇒ THE CHART STATE MOVED, THE CHART CODE DID NOT — AND THAT SPLIT IS THE POINT (this
+commit).** `nogo`, `NOGO_ENF` and a new `sea` object (`enc`, `waterOffset`, `chartInfo`) now
+live in `state.js`; every chart function is still in `asv.html`, reading them through those
+objects. **This is step one of moving the chart model to `chart.js`, deliberately separated
+so the file move that follows is pure cut-and-paste with no state change.**
+**WHY IT IS SPLIT: I FAILED THE COMBINED MOVE TWICE.** Doing code and state together broke
+**seven** suites at once, because they do not merely read those functions — they *drive*
+them by assigning page globals. Both attempts were reverted rather than committed red.
+Splitting it broke **three**, each a small scenario-setup change. **If a later step feels
+like it is fighting the harness, the state and the code are probably moving together again.**
+**`nogo` IS NEVER REASSIGNED** — 138 property writes, zero rebinds — so it exports as a
+`const` object and its ~200 page references needed no edit at all. `enc`/`waterOffset`/
+`chartInfo` **are** reassigned, so they are fields on `sea`.
+**THREE REWRITE TRAPS, ALL PAID FOR:**
+- **Never rewrite inside a string.** An earlier pass turned `"/api/enc?bbox="` into
+  `"/api/sea.enc?bbox="` and the ENC fetch 404'd.
+- **...but a TEMPLATE LITERAL is not just a string.** Protecting backticks wholesale left
+  `${chartInfo.note}` unrenamed at `asv.html:5084`, and the SRC card broke. `${…}` holds
+  executable code and must be rewritten; the literal text around it must not.
+- **No `(?!\s*:)` lookahead.** Meant to skip object keys, it silently skips **ternaries**
+  too (`waterOffset : (…)`), which is how four references survived a "complete" rewrite.
+**`nogo_readout` needed the sharpest change:** it used to rebind `nogo` wholesale per
+scenario. It now writes into the shared object and **clears the keys first** — `Object.assign`
+cannot remove a field, so a model omitting `ko` would inherit the previous scenario's.
+**NEXT STEP:** cut the 22 chart functions into `static/js/chart.js`. No state work remains,
+so the suites' `grab()` helpers are the only thing to re-point. The built module and a
+migrated page are in the session scratchpad under `chart-wip/`.
 
 **⇒ THE CLIENT NOW HAS MODULES (this commit). READ THIS BEFORE TOUCHING `static/asv.html`.**
 The page is a **`<script type="module">`**, and its lowest layer lives in `static/js/`:

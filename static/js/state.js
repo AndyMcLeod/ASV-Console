@@ -46,3 +46,33 @@ export const V = {
   // position, not a size, and the casualty under it can be a 100 m ship.
   WRECK_RADIUS_M: 50,
 };
+
+// --- the keep-out model ----------------------------------------------------------------
+// THE ONE MODEL EVERY BEHAVIOUR ROUTES CLEAR OF: shoreline, manmade structures, charted
+// hazards, and water shallower than this vessel's own corrected floor.
+//
+// WHICH CLASSES ARE ENFORCED. A charted AREA is advisory here; the shoreline, structures,
+// depth and point hazards are what actually refuse a route.
+export const NOGO_ENF = {land:true, depth:true, haz:true, area:false};
+
+// A CONST OBJECT, MUTATED IN PLACE AND NEVER REASSIGNED - which is why the page's 200-odd
+// references needed no change when it moved here. Assign to its FIELDS. Reassigning `nogo`
+// itself is impossible through an import, and that is the point: every holder stays in step.
+//
+// THE INITIALISER IS COPIED VERBATIM AND EVERY FIELD IS LOAD-BEARING. An earlier attempt
+// retyped it and got two wrong - `enf:null` for `{...NOGO_ENF}`, and a hardcoded buffer for
+// the vessel's. The console came up over Lewes reporting "clear - none charted": 360
+// keep-out zones had silently become ZERO, which is the failure that lets a route cross
+// land. `features:null` (not `[]`) is the not-yet-loaded signal the readout tells apart
+// from a genuinely empty result.
+export const nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
+            buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
+
+// --- live chart state ------------------------------------------------------------------
+// These three ARE reassigned, so they are fields on an object rather than exported bindings
+// (a module namespace is sealed - see the note at the top of this file).
+export const sea = {
+  enc: {features:[], band:null, minDepth:null},   // the fetched ENC feature set
+  waterOffset: 0,   // live water level above chart datum (m), ADDED to charted soundings
+  chartInfo: null,  // the ENC title block: cells, zone of confidence, survey dates
+};

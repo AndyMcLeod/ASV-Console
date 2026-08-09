@@ -46,6 +46,7 @@ const { V } = require("../static/js/state.js");
 // Layer-0 helpers from the real modules (2026-08-09) rather than lifted out of the page.
 const { fromEN, llEN } = require("../static/js/geodesy.js");
 const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp } = require("../static/js/geometry.js");
+const { sea } = require("../static/js/state.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -77,7 +78,7 @@ const M_PER_DEG_LAT = 111320.0;
 // than copies that can drift.
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
-     "var waterOffset=0; V.NOGO_MIN_DEPTH_M = 2.3; V.NOGO_BUFFER_M = 5;\n" +
+     "V.NOGO_MIN_DEPTH_M = 2.3; V.NOGO_BUFFER_M = 5;\n" +
      "var enc={features:[],band:null,minDepth:null};\n" +
      grabDecl("HAZ_UNKNOWN_EXTENT") + "\n" +
      grabDecl("WRECK_CLEAR_MARGIN_M") + "\n" +
@@ -180,9 +181,9 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
 {
   const marginal = feat("Wreck_point", 0, 0, { VALSOU: 3.0 });   // floor 2.3 + margin 1.0 = 3.3
   const atDatum = hazExtent(marginal);
-  waterOffset = 1.16;                                            // the tide in the report
+  sea.waterOffset = 1.16;                                            // the tide in the report
   const atTide = hazExtent(marginal);
-  waterOffset = 0;
+  sea.waterOffset = 0;
   check("10. VALSOU is tide-corrected (blocked at datum, passable at +1.16 m)",
         atDatum === V.WRECK_RADIUS_M && atTide === 0,
         "datum=" + atDatum + " m, +1.16 m=" + atTide + " m");

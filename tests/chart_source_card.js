@@ -104,7 +104,8 @@ function grabDecl(name) {
 let code = "const M_PER_DEG_LAT = 111320;\n"
   + "let asv = null, water = {}, nogo = {band:null}, chartBusy = false, chartLastHtml = null;\n"
   + "let center = {lat:0, lon:0};\n"
-  + "let chartInfo = null, __body = '';\n"
+  + "const sea = {chartInfo:null, enc:{features:[]}, waterOffset:0};\n"
+  + "let __body = '';\n"
   + "const NOGO_MIN_DEPTH_M = 2.3;\n"
   + "const $ = sel => sel === '#chartPanel' ? {style:{display:'block'}}\n"
   + "                : sel === '#chartBody' ? {set innerHTML(v){ __body = v; }} : null;\n";
@@ -113,7 +114,7 @@ for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_U
 for (const f of ["cellName", "ptInGeom", "qualityAt",
                  "fmtEncDate", "updateChartCard"]) code += grab(f) + "\n";
 code += "(function(cells, quality, at){\n"
-      + "  asv = at; chartInfo = cells === null ? null\n"
+      + "  asv = at; sea.chartInfo = cells === null ? null\n"
       + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here'};\n"
       + "  chartLastHtml = null; __body = '';\n"     // the card skips an unchanged write
       + "  updateChartCard(); return __body;\n"
