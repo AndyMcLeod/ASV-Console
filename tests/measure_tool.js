@@ -137,7 +137,14 @@ function fakeCtx() {
     _rot: [], _text: [], _stack: 0,
     save() { c._stack++; }, restore() { c._stack--; },
     beginPath() {}, moveTo() {}, lineTo() {}, arc() {}, stroke() {}, fill() {},
-    setLineDash() {}, translate() {}, measureText() { return { width: 60 }; },
+    setLineDash() {}, translate() {},
+    // A monospace approximation that answers for the CURRENT font, like the real one.
+    // A fake returning a constant width would let the fit test pass while the threshold
+    // ignored the font entirely - which is the whole thing check 7 now exists to catch.
+    measureText(t) {
+      const px = parseFloat((/(\d+(?:\.\d+)?)px/.exec(c.font) || [0, 10])[1]);
+      return { width: String(t).length * px * 0.6 };
+    },
     rotate(a) { c._rot.push(a); },
     strokeText(t) { c._text.push(t); }, fillText(t) { c._text.push(t); },
     font: "", textAlign: "", lineWidth: 0, strokeStyle: "", fillStyle: "",
@@ -145,11 +152,17 @@ function fakeCtx() {
   return c;
 }
 var ctx = fakeCtx();
-var MEAS_COL, MEAS_LABEL_MIN_PX;
+var MEAS_COL, MEAS_FONT_PX, MEAS_FONT, MEAS_LABEL_GAP, MEAS_HALO_PX, MEAS_LABEL_PAD_PX;
 // `const` inside eval() is scoped to the eval, so it would never reach these vars -
-// strip the keyword and let each become a plain assignment.
-eval(H.match(/const MEAS_COL = .*?;/)[0].replace(/^const /, ""));
-eval(H.match(/const MEAS_LABEL_MIN_PX = .*?;/)[0].replace(/^const /, ""));
+// strip the keyword and let each become a plain assignment. Taken from the page rather
+// than restated here, so a retuned font is measured, never assumed.
+for (const name of ["MEAS_COL", "MEAS_FONT_PX", "MEAS_FONT", "MEAS_LABEL_GAP",
+                    "MEAS_HALO_PX", "MEAS_LABEL_PAD_PX"]) {
+  const m = H.match(new RegExp("const " + name + " = .*?;"));
+  if (!m) throw new Error("test setup: const " + name + " not found (renamed?)");
+  // eslint-disable-next-line no-eval
+  eval(m[0].replace(/^const /, ""));
+}
 eval(grab("drawMeasureLeg")); eval(grab("drawMeasure"));
 
 // "Upside-down" is a question about the EFFECTIVE rotation, so normalise into (-180,180]
@@ -167,14 +180,37 @@ check("6  the label never prints upside-down (|rotation| <= 90° all round the c
   return worstRot <= Math.PI / 2 + 1e-9;
 }, () => "worst " + (worstRot * 180 / Math.PI).toFixed(1) + "°, sampled every 15°");
 
-check("7  a leg too short to carry the label draws none; a long one does", () => {
+// The floor is MEASURED from the text, so the test measures it the same way rather than
+// naming a number the font can invalidate.
+const fitProbe = "1.24 km · 047°";
+const fitWidth = fitProbe.length * MEAS_FONT_PX * 0.6;
+check("7  a leg too short to carry the label draws none; a long enough one does", () => {
   ctx = fakeCtx();
-  drawMeasureLeg({ x: 0, y: 0 }, { x: MEAS_LABEL_MIN_PX - 4, y: 0 }, "12 m · 090°", false);
+  drawMeasureLeg({ x: 0, y: 0 }, { x: fitWidth + MEAS_LABEL_PAD_PX - 4, y: 0 }, fitProbe, false);
   const shortHas = ctx._text.length > 0;
   ctx = fakeCtx();
-  drawMeasureLeg({ x: 0, y: 0 }, { x: MEAS_LABEL_MIN_PX + 40, y: 0 }, "120 m · 090°", false);
+  drawMeasureLeg({ x: 0, y: 0 }, { x: fitWidth + MEAS_LABEL_PAD_PX + 4, y: 0 }, fitProbe, false);
   return !shortHas && ctx._text.length > 0;
-}, () => "floor " + MEAS_LABEL_MIN_PX + " px");
+}, () => "fits at >" + Math.round(fitWidth + MEAS_LABEL_PAD_PX) + " px for " + fitProbe.length + " chars");
+
+// THE INVARIANT THE WHOLE CONSTANT BLOCK EXISTS FOR. One number sets the reading's size and
+// the gap and halo follow it. Restating any of them as a pixel literal is how the ENV rose
+// came apart (327ce0c): the one value that scaled was fine, everything beside it was not.
+const LEG_SRC = grab("drawMeasureLeg");
+const DERIVED_DECLS = ["MEAS_FONT", "MEAS_LABEL_GAP", "MEAS_HALO_PX"]
+  .map(n => (H.match(new RegExp("const " + n + " = .*?;")) || [""])[0]);
+check("7b the label's size, gap and halo all derive from ONE constant",
+  () => DERIVED_DECLS.every(d => d.includes("MEAS_FONT_PX"))
+    && !/\b\d+px\b/.test(LEG_SRC)                    // no font size restated in the drawing
+    && LEG_SRC.includes("MEAS_HALO_PX") && LEG_SRC.includes("MEAS_LABEL_GAP"),
+  () => DERIVED_DECLS.map(d => d.replace(/\s+/g, " ")).join(" | ").slice(0, 96));
+
+// Andy asked for the numbers to read LARGER. Pin the requirement, not the number: the
+// chart's ordinary markers (L#, W#, T#) are read out of render() rather than restated.
+const CHART_LABEL_PX = parseFloat((grab("render").match(/ctx\.font = "(\d+)px/) || [0, 10])[1]);
+check("7c the reading is LARGER than the chart's ordinary labels",
+  () => MEAS_FONT_PX > CHART_LABEL_PX,
+  () => MEAS_FONT_PX + " px vs the chart's " + CHART_LABEL_PX + " px markers");
 
 check("8  the label is haloed, so it reads over tiles, ENC fill and depth figures", () => {
   ctx = fakeCtx();

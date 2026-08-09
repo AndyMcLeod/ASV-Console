@@ -3163,7 +3163,19 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
 // track and the transit draft, green/orange the routed run. A measurement can therefore
 // never be mistaken for something the boat will drive.
 const MEAS_COL = "#e05cff";
-const MEAS_LABEL_MIN_PX = 30;     // shorter than this and the label is longer than its leg
+// ONE NUMBER GOVERNS THE READING'S SIZE. Tune MEAS_FONT_PX and everything that has to stay
+// in proportion to it follows: the gap that holds the text off the leg, and the dark halo
+// that lifts it off whatever chart is underneath. Deliberately NOT four independent pixel
+// literals - the last graphic on this console that mixed absolute pixels with one scaling
+// value came apart as it grew (the ENV rose, 327ce0c: the ring was round the whole time,
+// the 9 px labels and 1 px strokes were what did not scale).
+// Larger than the 10-11 px the rest of the chart labels in, on purpose: this is the
+// operator's own annotation, drawn to be READ, not a marker legend.
+const MEAS_FONT_PX = 15;
+const MEAS_FONT = "bold " + MEAS_FONT_PX + "px Consolas,monospace";
+const MEAS_LABEL_GAP = Math.round(MEAS_FONT_PX * 0.45);   // text sits this far off the leg
+const MEAS_HALO_PX = MEAS_FONT_PX * 0.30;                 // outline behind the glyphs
+const MEAS_LABEL_PAD_PX = 10;     // ... and this much clear leg either side of the text
 // The readout FLOWS ALONG THE LINE: rotated to the leg's screen angle, centred on its
 // midpoint, sitting just off the leg so it never has to punch a hole in it. Distance goes
 // through fmtDist(), so a measurement follows the DIST pill exactly like every other long
@@ -3184,14 +3196,19 @@ function drawMeasureLeg(s, e, text, pending){
     for(const p of [s,e]){ ctx.beginPath();           // leg crosses other chart ink
       ctx.moveTo(p.x - uy*T, p.y + ux*T); ctx.lineTo(p.x + uy*T, p.y - ux*T); ctx.stroke(); }
   }
-  if(len < MEAS_LABEL_MIN_PX){ ctx.restore(); return; }
+  // THE LABEL EITHER FITS ITS LEG OR IT IS NOT DRAWN, and the threshold is MEASURED, not
+  // remembered: the font is the thing most likely to change (it has once already), and a
+  // pixel floor tuned at one size is simply wrong at the next. Set the font BEFORE
+  // measuring - measureText answers for whatever font is current.
+  ctx.font = MEAS_FONT; ctx.textAlign = "center";
+  if(len < ctx.measureText(text).width + MEAS_LABEL_PAD_PX){ ctx.restore(); return; }
   let ang = Math.atan2(dy, dx);
   if(ang > Math.PI/2 || ang < -Math.PI/2) ang += Math.PI;   // flip: never print upside-down
   ctx.translate((s.x+e.x)/2, (s.y+e.y)/2); ctx.rotate(ang);
-  ctx.font = "bold 11px Consolas,monospace"; ctx.textAlign = "center";
-  ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(10,20,28,0.92)";
-  ctx.strokeText(text, 0, -5);                        // halo first - the chart under it is
-  ctx.fillStyle = MEAS_COL; ctx.fillText(text, 0, -5);// tiles, ENC fill and depth figures
+  ctx.lineWidth = MEAS_HALO_PX; ctx.strokeStyle = "rgba(10,20,28,0.92)";
+  ctx.strokeText(text, 0, -MEAS_LABEL_GAP);           // halo first - the chart under it is
+  ctx.fillStyle = MEAS_COL;                           // tiles, ENC fill and depth figures
+  ctx.fillText(text, 0, -MEAS_LABEL_GAP);
   ctx.restore();
 }
 function drawMeasure(toScreen){

@@ -49,7 +49,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 559 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 561 assertions**, derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +81,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (559 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (561 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -108,7 +108,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (15) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
-| `node tests/measure_tool.js` | the chart ruler: the reading flows ALONG the leg, the gesture is click-move-click, the menu's gates are the buttons' own (27) |
+| `node tests/measure_tool.js` | the chart ruler: the reading flows ALONG the leg and is sized by ONE constant everything else derives from, the gesture is click-move-click, the menu's gates are the buttons' own (29) |
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
@@ -887,9 +887,23 @@ one. Check 16 asserts the menu section contains **no second copy** of either rul
 
 **THE LABEL FLOWS ALONG THE LINE**: `drawMeasureLeg` translates to the leg's midpoint,
 rotates to its screen angle, flips by π when that would print upside-down, and draws haloed
-text 5 px off the leg. Distance goes through **`fmtDist()`** — so a measurement follows the
+text just off the leg. Distance goes through **`fmtDist()`** — so a measurement follows the
 DIST pill like every other long distance, and `units_toggle.js` stays green. Bearing is the
-true azimuth **a→b**, three digits. A leg under `MEAS_LABEL_MIN_PX` (30) carries no label.
+true azimuth **a→b**, three digits.
+
+**THE READING'S SIZE IS ONE CONSTANT: `MEAS_FONT_PX` (15).** Andy asked for bigger numbers
+after seeing the first version at 11 px; if he asks again, that is the only number to
+change. `MEAS_FONT`, `MEAS_LABEL_GAP` (the gap holding the text off the leg) and
+`MEAS_HALO_PX` are all **derived from it** rather than restated — check 7b fails the moment
+any of them becomes a pixel literal again. **This is the ENV-rose lesson applied before it
+could bite** (`327ce0c`: the ring scaled, the 9 px labels and 1 px strokes did not, and the
+composition came apart as it grew). **And the fit floor is now MEASURED, not remembered:**
+a leg carries a label only if it is longer than `ctx.measureText(text).width` plus
+`MEAS_LABEL_PAD_PX` — the old hardcoded 30 px floor was tuned at 11 px and would have been
+simply wrong at 15. Check 7c pins Andy's actual requirement rather than the number: the
+reading must be LARGER than the chart's ordinary markers, whose size is read out of
+`render()` instead of restated. **Measured on the live canvas at 15 px: cap height 10.1 px
+(36 % up from 11 px), text 112 px for a 14-character reading, sitting 7.5 px off the leg.**
 **MAGENTA** (`MEAS_COL`) on purpose: S-52 reserves it for the mariner's own information and
 it was the one chart colour unspent here — amber is the plan, cyan the track and transit
 draft, green/orange the routed run — so a ruler can never be mistaken for something the boat
@@ -917,7 +931,7 @@ INPUT/SELECT/TEXTAREA.
   mutation, not the check. **The CRLF trap also cost a round: `static/asv.html` is CRLF, so
   six multi-line anchors written with `\n` matched nothing and scored SKIP.**
 
-**27 checks, 24 mutations, 0 survivors, 0 skipped.** Live-verified in a real browser for
+**29 checks, 29 mutations, 0 survivors, 0 skipped.** Live-verified in a real browser for
 everything source shape cannot see — screenshots time out on the animating canvas, so the
 ink was read with `getImageData`: the magenta bounding box hugs the leg's own box (the label
 is contained ALONG the line, not sticking out horizontally), and `ctx.rotate` was intercepted
