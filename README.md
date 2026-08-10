@@ -463,10 +463,22 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    * **Unmarked, channel-like water** — a basin exit, a canal, a cut between banks.
      The centreline comes from **the water's own edges**: the console looks out both
      sides and takes the middle of what it finds. This engages **only where both
-     edges answer** within the vessel's channel reach (`planning.channel_reach_m`,
-     120 m on the DriX; otherwise buffer-scaled) — genuinely confined water. Open
-     water and a single bank nearby are left alone, so a plain open-water Go-To is
-     never bent toward a channel that isn't there.
+     edges answer** within the vessel's channel reach — genuinely confined water.
+     Open water and a single bank nearby are left alone, so a plain open-water Go-To
+     is never bent toward a channel that isn't there. The reach is buffer-scaled, and
+     `planning.channel_reach_m` may **widen** it for a big boat in a wide fairway; it
+     is a maximum, never a substitute, so an override *below* the buffer-scaled
+     default cannot narrow the search.
+
+   **Where the lane lets go.** A channel does not end at its last buoy, and neither
+   may the lane — releasing at the final mark cuts back across the fairway exactly
+   where converging traffic expects the vessel to stand on. So the centreline is
+   **extended** along its own terminal axis before the lane is built on it, and the
+   full quarter-width offset is held right through that extension, **entering and
+   leaving alike**. How far: as far as the **charted channel** continues, or **one
+   full channel width** past the final pair — whichever reaches further, capped so a
+   dredged area running well beyond the buoyage cannot drag the lane along water the
+   marks never claimed. Two separate channels with a gap between them stay separate.
 
    A **lone buoy is not a wall.** Marks are kept clear (don't hit a buoy) but never
    bound the channel on their own — you may pass either side of a mark. Only
@@ -481,7 +493,15 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    The console never plans a leg it has not verified. Survey coverage lines and
    teardrop turns are never offset (planned geometry). The track is resampled at a
    fixed spacing and lightly smoothed, and generated Go-To / RTH / Transit waypoints
-   draw as unlabelled diamonds. The banner reports when a plan rode the lane.
+   draw as unlabelled diamonds.
+
+   **The banner says how much of the route was laned, not just that some of it was.**
+   Only one buoy system is laned per leg, so a route down two successive channels
+   rides the second on its centreline rather than to starboard of it. A plan whose
+   lane was interrupted — a second channel left un-laned, or a stretch handed back to
+   the router — reports **PARTIAL** rather than a clean Rule 9 transit. A banner
+   claiming keep-right over a route that is not keeping right is worse than no
+   banner: it is a claim you would otherwise have checked yourself.
 
    > **History.** This replaced two earlier designs that both rode the *wrong side of
    > the buoys* on the water: a colour buoy lane that inferred direction from IALA

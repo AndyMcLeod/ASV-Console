@@ -78,4 +78,11 @@ export const sea = {
   // Did the LAST route actually engage the Rule 9 keep-right lane? Read by the
   // readouts so the operator can tell a lane-following leg from a direct one.
   laneUsed: false,
+  // ... and did it engage over ALL of it? Set where a lane was ridden but a stretch of
+  // the route was not: a second buoy system left un-laned (only one is laned per leg),
+  // or a stretch handed back to the router. Both are SCRATCH - channelLaneRoute clears
+  // them on entry and consumes them on the same tick, returning the answer WITH the
+  // route it describes. Nothing outside channelLaneRoute may read them; the moment a
+  // banner does, it is a remembered flag again, able to outlive the plan that set it.
+  lanePartial: false,
 };

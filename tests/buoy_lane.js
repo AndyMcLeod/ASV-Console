@@ -126,8 +126,8 @@ function grabDecl(name) {
 const HELPERS = ["blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  "blockedInfo", "firstBlockAlong", "gateLegClear",
-                 "smoothTrack", "systemCenterline", "buoyChannelLane",
-                 "narrowChannelLane", "channelLaneRoute"];
+                 "smoothTrack", "systemCenterline", "extendCenterline", "laneCenterline",
+                 "buoyChannelLane", "narrowChannelLane", "channelLaneRoute"];
 const M_PER_DEG_LAT = 111320.0;
 
 // One classic scope, exactly like the browser (routing.js + the inline script share
@@ -139,7 +139,7 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.
-     grabDecl("LANE_FRAC") + "\n" +
+     grabDecl("LANE_FRAC") + "\n" + grabDecl("CL_EXTEND_CAP_M") + "\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
@@ -432,6 +432,123 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
   check("20. no module reads a vessel parameter loose — every one goes through V",
         bare.length === 0,
         bare.length ? bare.join(", ") : "checked " + VESSEL_KEYS.length + " names across the modules");
+}
+
+// --- 21-27: WHERE THE LANE LETS GO ---------------------------------------------------- //
+// THE CLAUSE THIS SUITE HAD NO CHECK FOR, and the reason it passed for nine days over a
+// lane that was measurably not doing it. The operator's rule, verbatim: stay a quarter
+// width to the vessel's own right "whether entering or leaving ... hold this until past
+// the extent of the channel as expressed on the chart or at the final set of buoys that
+// mark that channel and only that channel."
+//
+// Every check above samples MIDS = 300/500/700 - deep inside the buoyage, where the lane
+// was never in doubt. Nothing looked at an END. Measured on THIS world before the fix:
+// the offset was already decaying 50 m inside the channel (24.3 at n=850), was 21.3 AT
+// the final pair, and 7.0 one channel width past it, where the deleted channelEndExtend
+// rule required it held. A vessel that lets go at the mouth cuts back across the fairway
+// exactly where converging traffic expects it to stand on.
+//
+// The channel here is the same one: pairs at n=100..900, half-width 50, lane target 25.
+// One channel WIDTH past the last pair is therefore n=1000.
+{
+  const CH = channel();
+  const runEnds = (base, w) => {
+    const pts = base.map((p) => enLL(p.e, p.n));
+    const r = channelLaneRoute(pts, ref, w || CH, 3);
+    return { track: [pts[0], ...r.route].map((p) => ({ e: toE(p), n: toN(p) })),
+             lane: r.lane, partial: r.partial };
+  };
+  const fmt = (es) => es.map((e) => e == null ? "null" : e.toFixed(1)).join(",");
+
+  // 21. LEAVING: the full offset must still be there AT the final pair. A lane that has
+  // begun releasing before the last mark is not "held until past the extent".
+  {
+    const t = runEnds([{ e: 0, n: -200 }, { e: 0, n: 1400 }]).track;
+    const es = [850, 900].map((n) => eAtN(t, n));
+    check("21. LEAVING: the lane still holds the full ¼ width AT the final buoy pair",
+          es.every((e) => e != null && e > WANT - 2),
+          "e@850,900 = " + fmt(es) + " (want > " + (WANT - 2) + "; measured 24.3 / 21.3 before the fix)");
+  }
+  // 22. STAND ON past the mouth. The centreline is extended one full channel width beyond
+  // the last pair (extendCenterline), so the lane is still substantially there at n=1000
+  // and only then releases. This is the deleted channelEndExtend convention, restored.
+  {
+    const t = runEnds([{ e: 0, n: -200 }, { e: 0, n: 1400 }]).track;
+    const e1000 = eAtN(t, 1000), e1300 = eAtN(t, 1300);
+    check("22. STAND-ON: the lane is still held one channel width past the final pair, and released well after",
+          e1000 != null && e1000 > WANT * 0.7 && e1300 != null && Math.abs(e1300) < 3,
+          "e@1000 = " + (e1000 == null ? "null" : e1000.toFixed(1)) + " (want > " + (WANT * 0.7).toFixed(1) +
+          "; was 7.0), e@1300 = " + (e1300 == null ? "null" : e1300.toFixed(1)) + " (released)");
+  }
+  // 23. ENTERING is the same rule run backwards - the boat must be ON the lane before it
+  // reaches the first mark, not still crossing to it. Southbound, "the first pair" is the
+  // n=900 end and the approach runs down from n=1400.
+  {
+    const t = runEnds([{ e: 0, n: 1400 }, { e: 0, n: -200 }]).track;
+    const es = [1000, 900].map((n) => eAtN(t, n));
+    check("23. ENTERING: the lane is established BEFORE the first pair, and on the correct side",
+          es.every((e) => e != null && e < -(WANT - 4)),
+          "e@1000,900 = " + fmt(es) + " (southbound: starboard is WEST, want <= -" + (WANT - 4) + ")");
+  }
+  // 24. "THE EXTENT OF THE CHANNEL AS EXPRESSED ON THE CHART" - a dredged area running
+  // 500 m past the last buoy pair IS the channel there, and the lane must hold to its end
+  // rather than to the buoyage. Before this, charted extent was never an input to the
+  // lane at all: channelPolys fed only the survey clip.
+  {
+    const ring = [{ e: -HALF, n: -300 }, { e: HALF, n: -300 }, { e: HALF, n: 1400 }, { e: -HALF, n: 1400 }];
+    const W = { ...channel(), chans: [{ ring, bb: bbOf(ring) }] };
+    const t = runEnds([{ e: 0, n: -200 }, { e: 0, n: 1800 }], W).track;
+    const es = [1100, 1300].map((n) => eAtN(t, n));
+    check("24. CHARTED EXTENT: the lane holds to the end of the charted channel, not the last buoy",
+          es.every((e) => e != null && e > WANT - 2),
+          "e@1100,1300 = " + fmt(es) + " (dredged area ends n=1400; buoyage ends n=900)");
+  }
+  // 25. "THAT CHANNEL AND ONLY THAT CHANNEL". Two separately-named buoyed channels with
+  // an 800 m unmarked gap: the lane must NOT be held across the gap, or the extension has
+  // chained two channels into one and is steering off the marks of neither.
+  {
+    const two = (() => {
+      const mkSys = (ns, sys, off) => {
+        const port = ns.map((n, i) => ({ e: -HALF, n, side: -1, num: off + 2 * i + 1, sys }));
+        const stbd = ns.map((n, i) => ({ e: HALF, n, side: 1, num: off + 2 * (i + 1), sys }));
+        return { sys, port, stbd };
+      };
+      const A = mkSys([100, 300, 500], "alpha", 0), B = mkSys([1300, 1500, 1700], "bravo", 0);
+      return { polys: [], lines: [], points: [], chans: [],
+               marks: [...A.port, ...A.stbd, ...B.port, ...B.stbd], sys: [A, B] };
+    })();
+    const r = runEnds([{ e: 0, n: -200 }, { e: 0, n: 2000 }], two);
+    const gap = [900, 1100].map((n) => eAtN(r.track, n));
+    check("25. ONLY THAT CHANNEL: the lane is not held across the gap between two separate channels",
+          gap.every((e) => e != null && Math.abs(e) < 5),
+          "e@900,1100 (mid-gap) = " + fmt(gap) + " (want ~0 — a chained centreline would hold ±" + WANT + ")");
+    // 26. ... and the banner says so. Only ONE buoy system is laned per leg, so a route
+    // down two channels rides the second DEAD ON ITS CENTRELINE - the head-on position.
+    // The plan may not describe that as a clean Rule 9 transit.
+    check("26. HONEST BANNER: a route that laned only one of two channels reports `partial`",
+          r.lane === true && r.partial === true,
+          "lane=" + r.lane + " partial=" + r.partial + " (a lane was ridden, but not over all of it)");
+  }
+  // 27. THE WIDENING KNOB MAY ONLY WIDEN. channel_reach_m was added to REACH FURTHER so
+  // keep-right would engage in a wide fairway; the rework rewired it as a REPLACEMENT
+  // (`override ?? buf*30`), so the DriX's 120 silently cut its own 180 m default reach by
+  // a third and stretches of the home channel got no lane at all. Banks at ±150 with
+  // buf=6: reachable at the buf*30 default of 180, NOT at the override's 120.
+  {
+    const bank = (e0, e1) => { const ring = [{ e: e0, n: -200 }, { e: e1, n: -200 }, { e: e1, n: 1200 }, { e: e0, n: 1200 }];
+      return { ring, bb: bbOf(ring), kind: "land" }; };
+    const wide = { polys: [bank(150, 600), bank(-150, -600)], lines: [], points: [], marks: [], sys: [], chans: [] };
+    const prev = V.CHANNEL_REACH_M;
+    V.CHANNEL_REACH_M = 120;                       // the DriX's own value, BELOW buf*30 = 180
+    const pts = [{ e: 0, n: 0 }, { e: 0, n: 1000 }].map((p) => enLL(p.e, p.n));
+    const track = [pts[0], ...channelLaneRoute(pts, ref, wide, 6).route].map((p) => ({ e: toE(p), n: toN(p) }));
+    V.CHANNEL_REACH_M = prev;
+    const es = MIDS.map((n) => eAtN(track, n));
+    check("27. a channel_reach_m BELOW the default cannot narrow the wall search — the knob only widens",
+          es.every((e) => e != null && e > 3),
+          "e=" + fmt(es) + " (banks ±150, buf 6: needs reach 180, override says 120; " +
+          "as a replacement this reads 0,0,0 — no lane)");
+  }
 }
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");

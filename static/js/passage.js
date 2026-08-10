@@ -20,8 +20,14 @@
 import { M_PER_DEG_LAT, azTo, distTo, fromEN, llEN } from "./geodesy.js";
 import { inBB, pinp, segSamplesEN } from "./geometry.js";
 import { V, nogo, sea } from "./state.js";
-import { blocked, blockedInfo, channelPolys, firstBlockAlong, legClear, snapClearLL,
-         systemCenterline } from "./chart.js";
+import { blocked, blockedInfo, channelPolys, extendCenterline, firstBlockAlong, legClear,
+         snapClearLL, systemCenterline } from "./chart.js";
+
+// THE CENTRELINE THE LANE IS BUILT ON: the buoy-pair midline, extended past both ends to
+// the charted extent of the fairway (see extendCenterline). Every consumer goes through
+// this, so "where does the channel reach to" cannot mean one thing to the lane builder and
+// another to the unmarked-water rule that skips already-laned stretches.
+function laneCenterline(sy, ko){ return extendCenterline(systemCenterline(sy), ko && ko.chans); }
 
 // CHANNEL-LANE routing - the operator's specified behaviour, applied to EVERY mode
 // (Go-To, RTH, Transit, the survey approach leg, and any routed detour).
@@ -161,8 +167,8 @@ export function buoyChannelLane(pathLL, ref, ko, buf){
   // Pick the buoy system the ROUTED PATH ACTUALLY RUNS ALONG (longest stretch of it inside
   // the channel), rather than guessing from a boat->target straight line. That is what the
   // splice needs, and it drops the old alignment / detour heuristics that could misfire.
-  let pick=null;
-  for(const sy of ko.sys){ const cl=systemCenterline(sy); if(cl.length<2) continue;
+  let pick=null, qualified=0;
+  for(const sy of ko.sys){ const cl=laneCenterline(sy, ko); if(cl.length<2) continue;
     // Capture scales with the channel: a transit running just OUTSIDE the buoys is still
     // using that channel and should be brought into the lane. Too tight a radius left such
     // a path un-laned entirely; the run-length and parallelism gates below stop it from
@@ -175,8 +181,15 @@ export function buoyChannelLane(pathLL, ref, ko, buf){
     if(runM < Math.max(120, buf*30)) continue;                         // a real stretch, not a brush past
     const qa=proj(base[i0],cl), qb=proj(base[i1],cl);
     if(clLen(cl, qa.u, qb.u) < 0.5*runM) continue;                     // ALONG the channel, not across it
+    // ONE SYSTEM IS LANED PER LEG (the longest run). A transit down two successive
+    // buoyed channels therefore rides the second DEAD ON ITS CENTRELINE - the head-on
+    // position - and nothing downstream could tell, because the flag only ever recorded
+    // "a lane was ridden", never "over all of the channel this route ran along". Count
+    // the systems that qualified so the banner can say `partial` instead of lying.
+    qualified++;
     if(!pick || runM>pick.runM) pick={cl,i0,i1,runM}; }
   if(!pick) return pathLL;
+  if(qualified>1) sea.lanePartial = true;
   const {cl,i0,i1}=pick;
   const pa=proj(base[i0],cl), pb=proj(base[i1],cl);   // where the path enters / leaves the channel
   // DENSIFY the centreline between the boat's and the target's projections, IN TRAVEL
@@ -250,6 +263,10 @@ export function buoyChannelLane(pathLL, ref, ko, buf){
     if(!(sub && sub.length)) return pathLL;                            // unroutable -> keep the routed path
     for(const p of sub) out.push({lat:p.lat, lon:p.lon});
   }
+  // A RESCUE IS AN UN-LANED PATCH. legPath's detour is lawful but carries no starboard
+  // bias, so a lane that needed rescuing was not delivered end to end - say so rather
+  // than letting the banner describe the stretches that worked.
+  if(rescues>0) sea.lanePartial = true;
   sea.laneUsed = true;
   return out;
 }
@@ -275,7 +292,16 @@ export function narrowChannelLane(pathLL, ref, ko, buf){
   // ASV: the per-vessel channel_reach_m override applies HERE. It used to set the
   // wall-search REACH of the old edge-march keep-right (deleted 2026-08-02); this is
   // the equivalent knob - how far out an edge still counts as a channel wall.
-  const CONFINE = Math.max(120, V.CHANNEL_REACH_M!=null ? V.CHANNEL_REACH_M : buf*30);
+  //
+  // THE OVERRIDE MAY ONLY WIDEN. It was added (0f36df7) to REACH FURTHER, so keep-right
+  // would engage in the ~150-175 m Lewes fairway instead of the tight-marina default -
+  // and then the geometric rework rewired it as `override ?? buf*30`, which made it a
+  // REPLACEMENT. The DriX's 120 is below its own buf*30 of 150, so the knob that exists
+  // to widen the search was silently narrowing it by 30 m: a sample near one wall of a
+  // 175 m reach failed the both-edges test and got no lane at all, and the canal spawn
+  // sits ~120 m from either bank - right on the edge, so stretches flipped between laned
+  // and unlaned with the water level. A widening knob is a MAXIMUM, never a substitute.
+  const CONFINE = Math.max(120, buf*30, V.CHANNEL_REACH_M!=null ? V.CHANNEL_REACH_M : 0);
   const STANDOFF = Math.max(buf+2, 6);
   const MS = Math.max(2, buf/2);                    // march step
   const cum=[0]; for(let i=1;i<en.length;i++) cum.push(cum[i-1]+Math.hypot(en[i].e-en[i-1].e, en[i].n-en[i-1].n));
@@ -287,8 +313,10 @@ export function narrowChannelLane(pathLL, ref, ko, buf){
   const samp=[]; for(let s=0; s<total-1e-6; s+=STEP) samp.push(atS(s));
   samp.push(en[en.length-1]);
   const N=samp.length; if(N<4) return pathLL;
-  // stretches already laned off the buoys - leave them exactly as they are
-  const cls=(ko.sys||[]).map(systemCenterline).filter(cl=>cl.length>=2);
+  // Stretches already laned off the buoys - leave them exactly as they are. The SAME
+  // extended centreline the buoy lane was built on, so the stand-on past a mouth is
+  // recognised as buoy-laned water and this rule does not re-lane it off the banks.
+  const cls=(ko.sys||[]).map(sy=>laneCenterline(sy, ko)).filter(cl=>cl.length>=2);
   const inBuoyChannel=(p)=>{ for(const cl of cls){
       for(let i=1;i<cl.length;i++){ const a=cl[i-1],b=cl[i],dx=b.e-a.e,dy=b.n-a.n,l2=dx*dx+dy*dy||1;
         let t=((p.e-a.e)*dx+(p.n-a.n)*dy)/l2; t=Math.max(0,Math.min(1,t));
@@ -337,12 +365,16 @@ export function narrowChannelLane(pathLL, ref, ko, buf){
   return out.map(p=>fromEN(p.e,p.n,ref));
 }
 export function channelLaneRoute(pathLL, ref, ko, buf){
-  sea.laneUsed = false;                                  // scratch: consumed on the next line
+  sea.laneUsed = false; sea.lanePartial = false;         // scratch: consumed on the next lines
   let out = buoyChannelLane(pathLL, ref, ko, buf);   // marked channels (buoy-pair centreline)
   out = narrowChannelLane(out, ref, ko, buf);        // unmarked / channel-like confined water
   out = smoothTrack(out, ref, ko, buf);              // round the bends, set the waypoint count
   const g = gateLegClear(out, pathLL, ref, ko, buf); // THE LAW - see gateLegClear above
-  return {route: g.route, lane: sea.laneUsed && !g.abandoned};
+  // `partial` = a lane was ridden but NOT over every channel this route ran along: a
+  // second buoy system left un-laned, a stretch rescued by the router, or a leg the gate
+  // had to splice. Abandonment already zeroes `lane`, so it cannot also be partial.
+  return {route: g.route, lane: sea.laneUsed && !g.abandoned,
+          partial: (sea.lanePartial || g.splices>0) && sea.laneUsed && !g.abandoned};
 }
 // PUNCH-OUT channel exclusion (survey coverage only): if a survey line SPANS ACROSS
 // a channel, that channel is returned as keep-out polygons so the coverage lines
@@ -397,11 +429,18 @@ export function channelTurnKeepouts(clipped, ref, feats, marks){
 }
 // How the console read the buoyage on THE ROUTE PASSED IN - `lane` comes off that plan's
 // own result, not off a flag describing whichever route was planned most recently.
-export function buoyageNote(lane){
+export function buoyageNote(lane, partial){
   // Go-To / RTH / Transit ride the CHANNEL LANE: offset to starboard of the buoy-pair
   // centreline, so the centreline stays to port and the starboard-hand marks to
   // starboard - either direction of travel.
-  return lane ? "Rule 9: channel lane, centreline to port" : "";
+  //
+  // A PARTIAL LANE SAYS SO. The banner is the only thing telling the operator whether
+  // the boat is keeping right, and "Rule 9: channel lane" over a route that rides one
+  // channel's centreline dead on, or that lost the lane to a spliced detour, is worse
+  // than no banner: it is a claim they would otherwise have checked.
+  if(!lane) return "";
+  return partial ? "Rule 9: channel lane, centreline to port — PARTIAL: some of this route is not laned"
+                 : "Rule 9: channel lane, centreline to port";
 }
 // One entry point, applied to EVERY mode: lane off the buoys where a channel is marked,
 // off the water's own edges where it isn't, then smooth + set the waypoint spacing.
@@ -434,7 +473,7 @@ export function buoyageNote(lane){
 // to catch the lane's inventions, not to out-lawyer the search - and re-checking a
 // patch whose stretch-ends sit in-buffer would loop forever.
 export function gateLegClear(route, fallback, ref, ko, buf){
-  if(!route || route.length < 2) return {route, abandoned:false};
+  if(!route || route.length < 2) return {route, abandoned:false, splices:0};
   const start = route[0], goal = route[route.length-1];
   const near = (at, P) => { const a=llEN(at.lat,at.lon,ref), q=llEN(P.lat,P.lon,ref);
     return Math.hypot(a.e-q.e, a.n-q.n) <= buf*2; };
@@ -443,15 +482,19 @@ export function gateLegClear(route, fallback, ref, ko, buf){
     if(legClear(out[i-1], out[i], ref, ko, buf)){ i++; continue; }
     const hit = firstBlockAlong(out[i-1], out[i], ref, ko, buf);
     if(hit && (near(hit.at, start) || near(hit.at, goal))){ i++; continue; }
-    if(++splices > 20) return {route: fallback.slice(), abandoned:true};
+    if(++splices > 20) return {route: fallback.slice(), abandoned:true, splices};
     let j = i;
     while(j < out.length-1 && !legClear(out[j], out[j+1], ref, ko, buf)) j++;
     const patch = legPath(out[i-1], out[j], ref, ko, buf);
-    if(!patch) return {route: fallback.slice(), abandoned:true};
+    if(!patch) return {route: fallback.slice(), abandoned:true, splices};
     out.splice(i, j - i + 1, ...patch);
     i += patch.length;                                // trust the patch: see above
   }
-  return {route: out, abandoned:false};
+  // `splices` is reported, not just counted: every one replaced a stretch of LANE with
+  // router output that has no starboard bias. Total abandonment was already told to the
+  // caller; a route that kept the lane over four fifths of its length and lost it over
+  // the rest was not, and read to the operator as a full Rule 9 transit.
+  return {route: out, abandoned:false, splices};
 }
 export function dilateGrid(blk, W, H, rad){              // separable box dilation, rad cells
   if(rad<1) return;
@@ -754,8 +797,11 @@ export function planNogoRoute(from, to){
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
   const routed = leg.length > 1;
-  // No buoy-gate projection here: the lane's own centreline already runs out to the
-  // last buoy pair, so the fairway projects past the mouth without a separate pass.
+  // The lane's centreline is EXTENDED to the charted end of the fairway before the lane
+  // is built on it (extendCenterline), so the stand-on past a mouth needs no separate
+  // pass here. This comment used to claim the same thing about the UNextended centreline
+  // - "it already runs out to the last buoy pair, so the fairway projects past the mouth"
+  // - which was false: it ran out AT the last pair and the offset was decaying before it.
   const path = [{lat:from.lat,lon:from.lon}, ...leg];
   const kr = channelLaneRoute(path, ref, ko, buf);
   // knot prune: the lane offset can fold a sharp (but legitimate) corner
@@ -763,7 +809,7 @@ export function planNogoRoute(from, to){
   const clean = pruneStitch(kr.route, ref, ko, buf);
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
-  return {route: clean.slice(1), direct: !routed, routed, lane: kr.lane};
+  return {route: clean.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -778,7 +824,7 @@ export function routePlan(start, wps, keepRightAll){
   // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
   // report only whichever leg happened to be last.
-  let lane = false;
+  let lane = false, partial = false;
   wps.forEach((wp, i)=>{
     const leg = legPath(prev, wp, ref, ko, buf);
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
@@ -790,10 +836,12 @@ export function routePlan(start, wps, keepRightAll){
     // a plain hop, and coverage lines must stay on their planned track.
     if(keepRightAll || i===0 || leg.length>1){
       const kr = channelLaneRoute(seg, ref, ko, buf);
-      seg = kr.route; if(kr.lane) lane = true;
+      seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
     }
     for(let k=1;k<seg.length;k++) out.push({lat:seg[k].lat, lon:seg[k].lon});
     prev = wp;
   });
-  return {route: out, unroutable, lane};
+  // A plan is only fully laned if EVERY laned leg was: one partial leg makes the plan
+  // partial, the same way one laned leg makes it laned.
+  return {route: out, unroutable, lane, partial};
 }

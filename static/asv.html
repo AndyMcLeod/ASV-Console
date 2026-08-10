@@ -1993,7 +1993,7 @@ async function doGoTo(target){
   clearViolation();
   cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
   runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
-  const note = buoyageNote(plan.lane);             // this plan's lane, not the last plan's
+  const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
@@ -2058,7 +2058,7 @@ async function doRTH(opts){
   clearViolation();
   cmd("/api/cmd/rth", {route:plan.route});
   runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
-  const note = buoyageNote(plan.lane);             // this plan's lane, not the last plan's
+  const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
@@ -2215,7 +2215,7 @@ async function doTransit(){
   clearViolation();
   cmd("/api/cmd/transit", {route: plan.route});
   const added = plan.route.length - transit.length;
-  const note = buoyageNote(plan.lane);             // accumulated over every leg of THIS plan
+  const note = buoyageNote(plan.lane, plan.partial);   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }

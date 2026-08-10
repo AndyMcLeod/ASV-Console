@@ -24,16 +24,25 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-08, end of "ASV console refinement")
+## ⇒ START HERE (handoff refreshed 2026-08-10, end of "Rule 9 lane termination rebuild")
 
-**THE NEWEST WORK (this commit, 2026-08-08): THE CHART MEASURING TOOL + THE RIGHT-CLICK
-MENU THAT ARMS IT.** Andy asked for a ruler: right-click → Measure, click a point, move,
-click again, distance flowing along the line. Scoped with him before building — he chose
-the menu to carry the point-at-cursor chart actions too (Go-To here / Spawn here / Copy
-position), the label to read distance **and** bearing, and completed measurements to stay
-until cleared. **Read "THE MEASURING TOOL" below before touching the chart's mouse
-handlers** — the feature is small, but it exposed a latent fault in them that had nothing
-to do with measuring.
+**THE NEWEST WORK (this commit, 2026-08-10): WHERE THE RULE 9 LANE LETS GO.** Andy
+reported that keep-right "has degraded or been lost" and restated the spec: see the
+centreline, stay ¼ width to the vessel's own right entering **or** leaving, and **hold it
+until past the extent of the channel as expressed on the chart, or at the final set of
+buoys that mark that channel and only that channel.** A five-lens investigation found the
+last clause had **no implementation** — it was deleted with the old colour keep-right
+(`channelEndExtend` / `gateProject`, `bcd9529`) and the geometric rework shipped a comment
+asserting a replacement was unnecessary. It was not. **Read "THE LANE'S ENDS" below before
+touching `buoyChannelLane`, `extendCenterline` or the `CONFINE` knob.**
+
+**THE REFACTOR WAS NOT THE CULPRIT — do not go looking there.** The lane's output is
+identical to 0.1 m between the rework's ship commit `7d3c0b5` and the pre-fix tip
+`5927ac1`; `e35ecf4` (Rule 9 leaving the page) changed nothing about it. What *did* exist
+was a three-commit crash window on 2026-08-09 (`d1c11db`…`02c3f1c`) where `CONFINE` read a
+bare `CHANNEL_REACH_M` the state split had deleted — `ReferenceError`, killing the whole
+lane pipeline for any vessel with the override set, which the DriX has. Fixed the same day
+by `e35ecf4`. If Andy's observation dates from that day, that alone explains "lost".
 
 **Repo:** PRIVATE GitHub remote `AndyMcLeod/ASV-Console` (created 2026-08-06 at Andy's
 instruction — push after committing; before this it was local-only and every note below
@@ -49,7 +58,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 584 assertions**, derived
+turn-water hold is closed (`a548c14`). **37 regression suites / 591 assertions** (18 JS / 294,
+19 Python / 297), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -81,7 +91,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (584 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (591 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -98,7 +108,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 
 | | guards |
 |---|---|
-| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law (20) |
+| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law; and WHERE IT LETS GO — held at the final pair, stood on one width past, released before a separate channel, `partial` when a stretch went un-laned, and a reach knob that may only widen (27) |
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
@@ -971,6 +981,87 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 ```
 python -c "b=open('asv_console.py','rb').read(); c=b.count(b'\r\n'); print('CRLF',c,'bare-LF',b.count(b'\n')-c)"
 ```
+
+## THE LANE'S ENDS — hold to the charted extent, stand on past the mouth (2026-08-10)
+
+**THE CLAUSE THAT HAD NO CODE.** The geometric ¼-width rework (`7d3c0b5`) replaced the old
+colour keep-right and, in the same move, retired `channelEndExtend` ("a channel extends past
+its ends by its own width — stand on straight out of a mouth") and `gateProject` ("steer
+through the outermost gate centre and STAND ON past it by the gate width"). `bcd9529` then
+deleted them as dead code. **Nothing replaced them**, and `planNogoRoute` carried a comment
+saying nothing needed to — "the lane's own centreline already runs out to the last buoy pair,
+so the fairway projects past the mouth without a separate pass". Measured on the regression
+suite's own channel (pairs n=100..900, half-width 50, lane target 25), that was false:
+
+| along-channel | before | after |
+|---|---|---|
+| n=850 — 50 m *inside* the buoyage | 24.3 | **25.0** |
+| n=900 — **the final buoy pair** | 21.3 | **24.9** |
+| n=1000 — one channel width past | 7.0 | **21.2** |
+| n=1300 — released | 0 | 0 |
+| charted dredged area to n=1400 | *never an input* | **25.0 held to n=1300** |
+
+**THE FIX IS UPSTREAM OF THE LANE, NOT INSIDE IT.** `extendCenterline` (`static/js/chart.js`)
+extends the buoy-pair centreline straight along its own terminal axis before the lane is
+built on it; `buoyChannelLane` and `narrowChannelLane` both reach it through the single
+`laneCenterline` helper in `passage.js`, so "how far does this channel reach" cannot mean one
+thing to the lane builder and another to the rule that skips already-laned water. The lane
+machinery then holds the full offset through the extension **without knowing it is there** —
+no second pass, no special case in the offset code.
+
+**HOW FAR — both halves of the operator's rule, whichever reaches further:** march the axis
+while still inside a charted channel polygon (`ko.chans`), or one full channel WIDTH past the
+final pair. **Capped at `CL_EXTEND_CAP_M` = 1200 m**, because "that channel and only that
+channel" cuts both ways: a dredged area running kilometres past the buoyage must not drag the
+lane along water the marks never claimed. `hw` is HELD at the terminal value through the
+extension — the width the last pair actually measured, never an extrapolation of it.
+
+**`ko.chans` IS NEW AND IS NOT A KEEP-OUT.** `buildKeepouts` now also returns the charted
+channel polygons. Two different questions share that model — "may the vessel be here"
+(`polys`/`lines`/`points`, gated by `enf`) and "is this water a channel" (`chans`) — and the
+second must not depend on the first: a dredged area is only a blanket keep-out when the
+operator enforces "Dredged / restricted", **which would also stop transiting it**, yet its
+extent is exactly what tells the lane how far the fairway runs. Built unconditionally.
+
+**THE REACH KNOB WAS INVERTED.** `channel_reach_m` was added (`0f36df7`) to REACH FURTHER so
+keep-right would engage in a wide fairway. The rework rewired it as `max(120, override ??
+buf*30)` — a **replacement**, not a maximum. The DriX's 120 is below its own `buf*30` of 150,
+so the knob that exists to widen was silently narrowing by 30 m. Now `max(120, buf*30,
+override)`: **a widening knob is a maximum, never a substitute.** The vessel file's 120 is
+left as written; under the corrected semantics it is simply inert for this hull.
+
+**THE BANNER TELLS THE TRUTH NOW.** Only ONE buoy system is laned per leg, so a route down
+two successive channels rides the second **dead on its centreline** — the head-on position —
+and the old flag recorded only "a lane was ridden". `channelLaneRoute` returns `partial`
+alongside `lane`, set when a second system qualified but went un-laned, when the lane needed
+a rescue, or when `gateLegClear` spliced. `buoyageNote(lane, partial)` says so. **A banner
+claiming Rule 9 over a route that is not keeping right is worse than no banner: it is a claim
+the operator would otherwise have checked.**
+
+**WHAT IS STILL NOT FIXED** (Andy chose the termination scope; these were the other options):
+one-system-per-leg itself, bearing-unconstrained buoy pairing, the unbounded OBJNAM prefix
+merge that can chain two channels into one system, unnamed/unnumbered marks forming no system
+at all, and the wide-channel case where no lane engages and nothing says so (the CH-flag
+decision, still open). `partial` now *surfaces* the first of these rather than hiding it.
+
+**LEWES IS NOT COVERED BY ANY OF THIS, AND THAT IS THE IMPORTANT PART.** Measured against the
+live console's own ENC: the harbour band serves 5 lateral marks, and the "roosevelt inlet"
+system is `port=1 stbd=2` → a **1-point centreline**. Both consumers require ≥2, so the buoy
+lane cannot engage at the home site at all, and an extension cannot help a centreline that
+does not exist. Keep-right there rests **entirely** on `narrowChannelLane`'s bank
+confinement. A live probe of that was attempted and is **inconclusive** — a straight sample
+line up the inlet reads blocked-both-sides at nearly every sample for the DriX's 2.3 m floor
+(draft 2.0 + UKC 0.3), i.e. the line is not a navigable channel, so it measures nothing. **If
+you pick this up: build the probe off the dredged-area centreline, not a guessed straight
+line.** The synthetic evidence above is mutation-verified; the Lewes claim is not made.
+
+**Suite:** `tests/buoy_lane.js` 20 → **27**. Checks 21-27 cover leaving, standing on,
+entering, charted extent, channel separation, the honest banner, and the widening knob.
+**All six mutations were caught by the check that claims to guard them** — extension disabled
+(21/22/23/24), charted extent ignored (24), extension unbounded so channels chain (25), the
+reach knob back to a replacement (27), the second channel uncounted (26), `partial` hard-coded
+false (26). Every other suite (18 JS / 12 Python) re-run green, and the real page boots with
+334 nogo zones and no console errors.
 
 ## THE MANUAL WAS TALKING TO ITS OWN MAINTAINER (2026-08-08)
 
@@ -2133,6 +2224,18 @@ newly orphaned** by the cut. `pairGates` SURVIVES: it is live for `channelSpanKe
 (the buoy-gate fairway corridor), which is a different job from the retired gate
 projection. **NOT implemented** (retired with them, unchanged): the channel end
 extension and the buoy-gate projection.
+
+> **SUPERSEDED 2026-08-10 — and this paragraph is why it took nine days to notice.** The
+> channel end extension was not a colour-rule detail; it was the only implementation of the
+> operator's "hold the lane until past the extent of the channel" clause, and deleting it
+> left that clause with NO implementation at all while every suite stayed green. Measured
+> on the regression suite's own channel before the fix: the offset was already decaying
+> 50 m INSIDE the buoyage (24.3 of a wanted 25 at n=850), was **21.3 AT the final pair**,
+> and **7.0 one channel width past it** where the deleted rule required it held. Restored
+> as `extendCenterline` in `static/js/chart.js` — see "THE LANE'S ENDS" below. The
+> buoy-gate projection stays retired: extending the CENTRELINE upstream of the lane
+> subsumes it, and the lane machinery then holds the offset through the extension without
+> knowing it is there.
 
 Dead code is not free: it was still being read, still being maintained in comments, and
 `tools/buoy_lane_test.js` had already been deleted for *testing* it and passing. The cut

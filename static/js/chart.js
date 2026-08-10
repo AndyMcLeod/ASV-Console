@@ -234,7 +234,8 @@ export function effectiveWaterOffset(wl){
 }
 export function buildKeepouts(ref, enf, dr, feats){
   const polys=[], lines=[], points=[], marks=[];
-  for(const f of (feats || sea.enc.features)){ const g=f.geometry, r=f.role;
+  const F = feats || sea.enc.features;
+  for(const f of F){ const g=f.geometry, r=f.role;
     const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
     const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
     // LATERAL channel marks (buoys/beacons): collected as channel-defining marks
@@ -256,7 +257,14 @@ export function buildKeepouts(ref, enf, dr, feats){
     else if(haz){ const r=hazExtent(f);
       eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; q.r=r; points.push(q); }); }
   }
-  return {polys, lines, points, marks, sys:markSystems(marks)};
+  // `chans` = WHERE THE CHART SAYS THE CHANNEL IS, carried alongside the keep-outs but
+  // NOT one of them. Two different questions share this model: "may the vessel be here"
+  // (polys/lines/points, gated by `enf`) and "is this water a channel" (chans). The
+  // second is chart FACT and must not depend on the first: a dredged area is only a
+  // blanket keep-out when the operator enforces "Dredged / restricted" - which would
+  // also stop transiting it - yet its EXTENT is what tells the Rule 9 lane how far the
+  // fairway runs past the last buoy. Built unconditionally for that reason.
+  return {polys, lines, points, marks, sys:markSystems(marks), chans:channelPolys(ref, F, marks)};
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 export function nogoDR(){ return {min: V.NOGO_MIN_DEPTH_M, max: 0}; }
@@ -317,6 +325,63 @@ export function systemCenterline(sy){
   for(const q of mids){ if(!out.length || Math.hypot(q.e-out[out.length-1].e, q.n-out[out.length-1].n)>10)
     out.push({e:q.e, n:q.n, hw:q.hw}); }
   return out;
+}
+// A CHANNEL DOES NOT END AT ITS LAST BUOY, and neither may the keep-right lane.
+//
+// The operator's rule: hold the quarter-width lane "until past the extent of the channel
+// as expressed on the chart, or at the final set of buoys that mark that channel and only
+// that channel". A vessel that lets the lane go the instant it passes the last mark cuts
+// back across the fairway at exactly the place converging traffic expects it to hold -
+// the mouth. The old colour keep-right had two mechanisms for this (channelEndExtend:
+// "a channel extends past its ends by its own width"; gateProject: "stand on past the
+// outermost gate by the gate width"), both deleted 2026-08-02 with that rule. The
+// geometric lane shipped with a comment asserting a replacement was unnecessary because
+// "the lane's own centreline already runs out to the last buoy pair". Measured on the
+// regression suite's own channel, it is not: the offset is already decaying 50 m INSIDE
+// the buoyage, is 21 of a wanted 25 AT the final pair, and is gone 200 m past it.
+//
+// The fix is upstream of the lane, not inside it: EXTEND THE CENTRELINE along its own
+// terminal axis and the existing machinery holds the full offset right through the
+// extension without knowing it is there. Straight, because standing on is what a mouth
+// asks for - following a curve out of one is inventing water.
+//
+// HOW FAR - both halves of the operator's rule, whichever reaches further:
+//   * CHARTED: march the axis while still inside a charted channel polygon (dredged area
+//     or marked-fairway corridor), so the lane holds to the charted end of the fairway;
+//   * BUOYED: one full channel WIDTH past the final pair - the old channelEndExtend
+//     convention, and enough to clear a mouth without cutting it.
+// CAPPED, because "that channel and only that channel" cuts both ways: a dredged area
+// running kilometres beyond the buoyage must not drag the lane along water the marks
+// never claimed. `hw` is HELD at the terminal value through the extension - the width
+// the last pair actually measured, not an extrapolation of it.
+export const CL_EXTEND_CAP_M = 1200;
+export function extendCenterline(cl, chans){
+  if(!cl || cl.length < 2) return cl || [];
+  const STEP = 10;
+  const inChan=(p)=>{ for(const c of (chans||[])){ if(inBB(p,c.bb,0) && pinp(p,c.ring)) return true; } return false; };
+  // how far this axis stays inside the charted channel, or one full width - whichever is more
+  const reach=(tip, ux, uy, hw)=>{
+    let charted = 0;
+    if(inChan(tip)){
+      for(let d=STEP; d<=CL_EXTEND_CAP_M; d+=STEP){
+        if(!inChan({e:tip.e+ux*d, n:tip.n+uy*d})) break;
+        charted = d; }
+    }
+    return Math.min(CL_EXTEND_CAP_M, Math.max(charted, 2*hw));
+  };
+  const span=(tip, ux, uy, hw)=>{
+    const L = reach(tip, ux, uy, hw);
+    if(!(L > 1)) return [];                       // nothing to stand on for (hw 0, no chart)
+    const N = Math.max(1, Math.ceil(L/50)), pts=[];
+    for(let k=1;k<=N;k++) pts.push({e:tip.e+ux*(L*k/N), n:tip.n+uy*(L*k/N), hw});
+    return pts;
+  };
+  const a0=cl[0], a1=cl[1], b1=cl[cl.length-1], b0=cl[cl.length-2];
+  let hx=a0.e-a1.e, hy=a0.n-a1.n; const hl=Math.hypot(hx,hy)||1; hx/=hl; hy/=hl;   // head, pointing OUT
+  let tx=b1.e-b0.e, ty=b1.n-b0.n; const tl=Math.hypot(tx,ty)||1; tx/=tl; ty/=tl;   // tail, pointing OUT
+  const hHW=(a0.hw!=null?a0.hw:0), tHW=(b1.hw!=null?b1.hw:0);
+  // head points are generated outward from the channel, so they reverse into travel order
+  return [...span(a0, hx,hy, hHW).reverse(), ...cl, ...span(b1, tx,ty, tHW)];
 }
 // Pair the lateral marks into channel GATES: each port-hand mark with its nearest
 // starboard-hand mark across the channel (15-400 m apart), giving the gate centre, its
