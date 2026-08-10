@@ -59,7 +59,7 @@ const path = require("path");
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
 const { llEN } = require("../static/js/geodesy.js");
-const { eachRing, pinp } = require("../static/js/geometry.js");
+const { eachRing, pinp, ptInGeom } = require("../static/js/geometry.js");
 
 // The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
 // functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
@@ -67,18 +67,10 @@ const { eachRing, pinp } = require("../static/js/geometry.js");
 // that leans on a vessel default is reading the real one.
 const { V } = require("../static/js/state.js");
 
-// --- source lookup: the page AND its modules -----------------------------------------
-// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
-// may be in either place. MODSRC is those modules concatenated with the `export` keyword
-// stripped, which makes each declaration read exactly as it did when it sat in the page -
-// so the grab helpers below need no other change.
-const MODSRC = require("fs")
-  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
-  .filter(f => f.endsWith(".js"))
-  .map(f => require("fs").readFileSync(
-    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
-  .join("\n")
-  .replace(/^export /gm, "");
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { qualityAt } = require("../static/js/chart.js");
 
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
@@ -95,21 +87,13 @@ function check(name, cond, detail) {
 }
 
 function grab(name) {
-  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
-  const start = HS.indexOf("function " + name + "(");
+  const start = H.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  let k = HS.indexOf("{", start), depth = 0;
-  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return HS.slice(start, k + 1);
+  let k = H.indexOf("{", start), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return H.slice(start, k + 1);
 }
 function grabDecl(name) {
-  // the page first, then the modules - same order the page itself loads them
-  for (const HS of [H, MODSRC]) {
-    for (const kw of ["const ", "let ", "var "]) {
-      const i = HS.indexOf(kw + name + " =");
-      if (i >= 0) return HS.slice(i, HS.indexOf(";", i) + 1);
-    }
-  }
   for (const kw of ["const ", "let "]) {
     const i = H.indexOf(kw + name + " =");
     if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
@@ -132,8 +116,9 @@ let code = "const M_PER_DEG_LAT = 111320;\n"
   + "                : sel === '#chartBody' ? {set innerHTML(v){ __body = v; }} : null;\n";
 for (const d of ["CHART_DISPLAY_UNITS", "CHART_DATA_UNITS", "CATZOC_LBL", "ENC_USAGE_LBL"])
   code += grabDecl(d) + "\n";
-for (const f of ["cellName", "ptInGeom", "qualityAt",
-                 "fmtEncDate", "updateChartCard"]) code += grab(f) + "\n";
+// ptInGeom and qualityAt are REQUIRED at the top of this file, so the sandbox is handed
+// the real ones through its parameter list rather than a second copy eval'd beside them.
+for (const f of ["cellName", "fmtEncDate", "updateChartCard"]) code += grab(f) + "\n";
 code += "(function(cells, quality, at){\n"
       + "  asv = at; sea.chartInfo = cells === null ? null\n"
       + "        : {band:'enc_harbour', cells:cells, quality:quality||[], note:'no ENC coverage here'};\n"

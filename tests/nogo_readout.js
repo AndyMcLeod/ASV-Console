@@ -47,16 +47,15 @@ const { V } = require("../static/js/state.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
-  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
-  let start = HS.indexOf("function " + name + "(");
+  let start = H.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
   // keep an `async` prefix: refreshNogo awaits the chart fetch, and a body torn off its
   // `async` keyword is a SyntaxError rather than a quiet wrong answer - but only because
   // someone checked. Grab the modifier with the function.
-  if (HS.slice(start - 6, start) === "async ") start -= 6;
-  let k = HS.indexOf("{", start), depth = 0;
-  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return HS.slice(start, k + 1);
+  if (H.slice(start - 6, start) === "async ") start -= 6;
+  let k = H.indexOf("{", start), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return H.slice(start, k + 1);
 }
 
 V.NOGO_MIN_DEPTH_M = 2.3;             // the DriX: 2.0 m draft + 0.3 m under-keel clearance
@@ -65,22 +64,14 @@ V.NOGO_MIN_DEPTH_M = 2.3;             // the DriX: 2.0 m draft + 0.3 m under-kee
 // and a model that omits one would otherwise inherit the previous scenario's value.
 const { nogo, sea } = require("../static/js/state.js");
 
-// --- source lookup: the page AND its modules -----------------------------------------
-// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
-// may be in either place. MODSRC is those modules concatenated with the `export` keyword
-// stripped, which makes each declaration read exactly as it did when it sat in the page -
-// so the grab helpers below need no other change.
-const MODSRC = require("fs")
-  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
-  .filter(f => f.endsWith(".js"))
-  .map(f => require("fs").readFileSync(
-    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
-  .join("\n")
-  .replace(/^export /gm, "");
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { nogoKindCounts } = require("../static/js/chart.js");
 function setNogo(m){ for (const k of Object.keys(nogo)) delete nogo[k];
                      return Object.assign(nogo, m); }
 // eslint-disable-next-line no-eval
-eval(grab("nogoKindCounts") + "\n" + grab("nogoReadout"));
+eval(grab("nogoReadout"));
 
 // `ran` is printed in the summary on purpose. The last half of this suite is async, and a
 // stray top-level process.exit() once cut it off after check 9 - the process ended at 0

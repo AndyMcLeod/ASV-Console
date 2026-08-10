@@ -46,27 +46,18 @@ const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
 // functions eval'd below read V.NOGO_MIN_DEPTH_M / V.WRECK_RADIUS_M / ..., so the suite
 // needs the SAME object the page mutates - and gets it, rather than a stub, so a check
 // that leans on a vessel default is reading the real one.
-const { V } = require("../static/js/state.js");
+const { V, nogo } = require("../static/js/state.js");
 
-// --- source lookup: the page AND its modules -----------------------------------------
-// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
-// may be in either place. MODSRC is those modules concatenated with the `export` keyword
-// stripped, which makes each declaration read exactly as it did when it sat in the page -
-// so the grab helpers below need no other change.
-const MODSRC = require("fs")
-  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
-  .filter(f => f.endsWith(".js"))
-  .map(f => require("fs").readFileSync(
-    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
-  .join("\n")
-  .replace(/^export /gm, "");
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { blocked, legClear } = require("../static/js/chart.js");
 
 const STATIC = path.join(__dirname, "..", "static");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
 function grab(src, name) {
-  if (src.indexOf("function " + name + "(") < 0) src = MODSRC;
   const start = src.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
   let k = src.indexOf("{", start), depth = 0;
@@ -75,8 +66,7 @@ function grab(src, name) {
 }
 
 // The turn cluster plus everything its nogo validation reaches.
-const HELPERS = ["blocked",
-                 "legClear", "minTurnRadiusM", "arcPts", "teardropTurn"];
+const HELPERS = ["minTurnRadiusM", "arcPts", "teardropTurn"];
 const M_PER_DEG_LAT = 111320.0;
 
 // V.SPEED_KN / V.MAX_TURN_RATE_DEG_S are the vessel mirrors loadVessel() fills from
@@ -258,6 +248,37 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         "minR=" + surv.minR.toFixed(1) + " kind=" + surv.t.kind);
   check("21. ... the same lines @ low speed -> semicircle", low.t.kind === "semicircle",
         "minR=" + low.minR.toFixed(1) + " kind=" + low.t.kind);
+}
+
+
+// --- the suites read the modules, not copies of them ---------------------------------- //
+// Every suite but ONE now require()s the real modules instead of lifting their source text
+// out of a file and eval-ing it. The exception is tests/buoy_lane.js, which monkey-patches
+// legPath to reach the "the law cannot patch this stretch" fallback - impossible through an
+// import, because gateLegClear calls passage.js's OWN legPath and nothing outside the
+// module can reach it. That suite's header explains why it keeps the old route.
+//
+// This guard exists because the eval route is easy to reintroduce and hard to notice: a
+// COPY of a function passes every assertion right up until the shipped one changes. A
+// missing import in geometry.js proved the point - ptInGeom called an llEN it never
+// imported, the module LOADED fine, and only calling it through a require raised
+// "llEN is not defined". Importing a module proves far less than calling one.
+{
+  const dir = __dirname;
+  const allowed = new Set(["buoy_lane.js"]);
+  // THE NEEDLE IS ASSEMBLED, NEVER WRITTEN OUT. Spelling it literally makes this file match
+  // itself — first through the comment above (stripped), then through the regex itself,
+  // which is CODE and cannot be stripped. Splitting it is the only version that is true of
+  // the repo rather than of the checker. Fourth instance of this self-match trap here.
+  const NEEDLE = "MOD" + "SRC";
+  const strip = src => src.replace(/\/\*[\s\S]*?\*\//g, " ")
+                          .replace(/(^|[^:"'])\/\/.*$/gm, "$1");
+  const users = fs.readdirSync(dir)
+    .filter(f => f.endsWith(".js") && !allowed.has(f))
+    .filter(f => strip(fs.readFileSync(path.join(dir, f), "utf8")).includes(NEEDLE));
+  check("20. no suite lifts module source text any more - buoy_lane is the one exception",
+        users.length === 0,
+        users.length ? users.join(", ") : "checked every suite but the documented one");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

@@ -11,7 +11,12 @@
 // walkers hand the raw arrays through untouched, so a caller reading `c[0]` is reading a
 // LONGITUDE. Every call site in the page does `toScreen(c[1], c[0])` for that reason.
 
-import { M_PER_DEG_LAT } from "./geodesy.js";
+// llEN is used by ptInGeom and segSamplesEN below, and was MISSING from this import for
+// two commits: the page's eval'd copies resolved it from page scope, so nothing complained
+// until a suite required the real module and got "llEN is not defined". An unresolved free
+// variable in an ES module is a RUNTIME error inside the function, never a load error —
+// which is why importing a module proves so much less than CALLING one.
+import { M_PER_DEG_LAT, llEN } from "./geodesy.js";
 
 // --- bounding boxes -------------------------------------------------------------------
 // ENU bbox of a point list. The 1e18 seeds stand in for infinities so an empty list gives

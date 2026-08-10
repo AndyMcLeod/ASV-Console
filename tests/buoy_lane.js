@@ -51,10 +51,22 @@ const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
 const { V } = require("../static/js/state.js");
 
 // --- source lookup: the page AND its modules -----------------------------------------
-// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
-// may be in either place. MODSRC is those modules concatenated with the `export` keyword
-// stripped, which makes each declaration read exactly as it did when it sat in the page -
-// so the grab helpers below need no other change.
+// THIS SUITE KEEPS THE SOURCE-TEXT ROUTE ON PURPOSE, and it is the only one that does.
+// Every other suite now require()s the real modules. This one cannot, because check 19
+// MONKEY-PATCHES the router: it replaces `legPath` with a stub that always fails, then
+// asserts gateLegClear ships the lawful pre-lane input and flags `abandoned`. A real
+// import makes that impossible in both directions - the binding is const, and more
+// fundamentally gateLegClear calls passage.js's OWN legPath, which nothing outside the
+// module can reach. Reproducing the browser's single shared scope through eval is what
+// lets that branch be reached at all, and the branch is worth reaching: it is the "the law
+// cannot patch this stretch" fallback, where a wrong answer means a Rule 9 banner over a
+// lane the router already abandoned.
+//
+// The alternative would be a dependency-injection seam in passage.js existing solely for
+// this test. Not worth it: routing code should not grow a hook so a harness can lie to it.
+//
+// MODSRC is those modules concatenated with the `export` keyword stripped, so each
+// declaration reads exactly as it did when it sat in the page.
 const MODSRC = require("fs")
   .readdirSync(require("path").join(__dirname, "..", "static", "js"))
   .filter(f => f.endsWith(".js"))

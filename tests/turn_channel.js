@@ -50,20 +50,22 @@ const path = require("path");
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
 const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
-const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp } = require("../static/js/geometry.js");
+const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp, segSamplesEN } = require("../static/js/geometry.js");
 
-// --- source lookup: the page AND its modules -----------------------------------------
-// Parts of the client live in static/js/*.js now, so a name this suite lifts as SOURCE TEXT
-// may be in either place. MODSRC is those modules concatenated with the `export` keyword
-// stripped, which makes each declaration read exactly as it did when it sat in the page -
-// so the grab helpers below need no other change.
-const MODSRC = require("fs")
-  .readdirSync(require("path").join(__dirname, "..", "static", "js"))
-  .filter(f => f.endsWith(".js"))
-  .map(f => require("fs").readFileSync(
-    require("path").join(__dirname, "..", "static", "js", f), "utf8"))
-  .join("\n")
-  .replace(/^export /gm, "");
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { HAZ_UNKNOWN_EXTENT, MARK_TAIL, blocked, blockedInfo, buildKeepouts, channelPolys, depthExcluded, firstBlockAlong, hazExtent, legClear, markId, markSystems, nogoKind, pairGates } = require("../static/js/chart.js");
+
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { channelTurnKeepouts } = require("../static/js/passage.js");
+
+// THE REAL MODULE, not its source text lifted out of the page. A renamed or
+// deleted export now fails HERE, at load, instead of quietly resolving to a stale
+// copy - and the checks below exercise the function that actually ships.
+const { nogo } = require("../static/js/state.js");
 
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
@@ -80,26 +82,22 @@ function check(name, cond, detail) {
 }
 
 function grab(name) {
-  const HS = H.indexOf("function " + name + "(") >= 0 ? H : MODSRC;
-  const start = HS.indexOf("function " + name + "(");
+  const start = H.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  let k = HS.indexOf("{", start), depth = 0;
-  for (;;) { const c = HS[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
-  return HS.slice(start, k + 1);
+  let k = H.indexOf("{", start), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return H.slice(start, k + 1);
 }
 
 // ---- pull the REAL page functions --------------------------------------- //
 let code = "const M_PER_DEG_LAT = 111320;\n" +
   "let waterOffset = 0; const NOGO_MIN_DEPTH_M = 2.3, WRECK_CLEAR_MARGIN_M = 0.5;\n";
-// Both of these moved to static/js/chart.js, so they come from MODSRC now (the modules
-// with `export` stripped) rather than from the page.
-code += MODSRC.match(/const MARK_TAIL=.*$/m)[0] + "\n";
-{ const i = MODSRC.indexOf("const HAZ_UNKNOWN_EXTENT");
-  code += MODSRC.slice(i, MODSRC.indexOf(";", i) + 1) + "\n"; }
+// MARK_TAIL and HAZ_UNKNOWN_EXTENT are REQUIRED from chart.js above; the sandbox is
+// handed the real values rather than a second copy parsed out of the source.
+code += "const MARK_TAIL = " + MARK_TAIL.toString() + ";\n";
+code += "const HAZ_UNKNOWN_EXTENT = new Set(" + JSON.stringify([...HAZ_UNKNOWN_EXTENT]) + ");\n";
 { const m = H.match(/(?:const|let) WRECK_RADIUS_M[^;]*;/); if (m) code += m[0] + "\n"; }
-for (const f of ["markId",
-  "markSystems", "depthExcluded", "nogoKind", "hazExtent", "buildKeepouts", "pairGates",
-  "channelPolys", "segSamplesEN", "channelTurnKeepouts", "blocked", "blockedInfo", "firstBlockAlong", "legClear", "arcPts", "teardropTurn"]) code += grab(f) + "\n";
+for (const f of ["arcPts", "teardropTurn"]) code += grab(f) + "\n";
 eval(code);
 
 // ---- synthetic world ----------------------------------------------------- //
