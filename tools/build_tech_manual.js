@@ -49,7 +49,7 @@ const GUARDS = {
   "survey_card.js":
     "That a committed survey plan is still described rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines and self-validating on parallelism",
   "speed_recalc.js":
-    "That the plan speed is an INPUT: changing it recalculates turn geometry, durations and per-line times, and a plan already committed is re-checked against the radius the new speed implies",
+    "That the plan speed is an INPUT: changing it recalculates turn geometry, durations and per-line times, and a plan already committed is re-checked against the radius the new speed implies. Also the Lines card's transit and RTH rows: ENC-ROUTED distances (boat to line 1, last line home), each row degrading alone when its input is missing, a planner refusal surfaced in the planner's own words, times derived from the current plan speed with no re-route, and a cache key that ignores boat jitter but re-keys on real motion",
   "live_speed.py":
     "That a commanded speed change REACHES the vessel rather than only the readout: under way, speed over ground follows the command in both directions. Drives a real console, because accepting the command proves nothing",
   "ais_range.py":

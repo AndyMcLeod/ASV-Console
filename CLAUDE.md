@@ -24,9 +24,27 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-10, third refresh — the mission's own knots are closed)
+## ⇒ START HERE (handoff refreshed 2026-08-10, fourth refresh — the Lines card quotes the whole day)
 
-**NEWEST (this commit): THE MISSION'S OWN KNOTS — the junction seam.** The task chip the
+**NEWEST (this commit): TRANSIT + RTH TIMES ON THE LINES CARD (Andy's ask).** Two rows
+bracketing the per-line table: the **ENC-routed** time/distance from the boat to line 1,
+and from the last line home — the same `planNogoRoute` every behaviour flies, because at
+Lewes the straight line to the survey area crosses LAND (the vessel card's `#v_approach`
+straight-line figure is exactly the shortcut these rows improve on; measured live, routed
+2.85 km vs 2.14 km straight). Routing is CPU work and `renderLineTable` runs on EVERY
+telemetry frame, so the routes are computed OFF the tick, one in flight, re-keyed only on
+real change (boat > `TRANSIT_REKEY_M` = 50 m, plan endpoints, home, nogo identity);
+**metres are cached, seconds are derived at render from the CURRENT plan speed**, so a
+speed change re-times instantly with no re-route (verified live: 13:13→6:36 at
+survey→high, same 2.85 km). Rows degrade ALONE and honestly (no fix / no home / planner's
+own refusal / "direct" when nogo unloaded); while a run is under way the transit row is
+`--` and the boat leaves the cache key (the Mission card owns the live ETA).
+`speed_recalc.js` 10→22, **7/7 mutations caught by the check that claims to guard each**
+(straight-line length, RTH-from-boat, swallowed refusal, fixed-speed time, hidden
+"direct", boat out of the key, running boat still routing). Read "THE LINES CARD'S
+TRANSIT + RTH ROWS" below.
+
+**THE WORK BEFORE THIS ONE (same day): THE MISSION'S OWN KNOTS — the junction seam.** The task chip the
 circle-at-the-mouth commit left open: the SURVEY MISSION itself (not the Upload route)
 carried two reversal knots, wpt 475 and 551 of session `20260810-131214`. Replayed offline
 against the real ENC at the live parameters: **475 (interior splice seam) was already cured
@@ -76,7 +94,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 599 assertions** (18 JS / 302,
+turn-water hold is closed (`a548c14`). **37 regression suites / 611 assertions** (18 JS / 314,
 19 Python / 297), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -109,7 +127,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (599 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (611 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1038,6 +1056,54 @@ wpt 551 (176° in 4.5 m) — client-side punchOut stitching, present before rout
 ran. See "THE MISSION'S OWN KNOTS" directly below: 475 turned out to be already cured by
 THIS commit's prune move; 551 was a JUNCTION fold the prune structurally cannot reach,
 fixed at punchOut's transit assembly.
+
+## THE LINES CARD'S TRANSIT + RTH ROWS (2026-08-10)
+
+**WHAT ANDY ASKED FOR:** "In the Lines card, add transit time to survey area and RTH time
+home." Two rows now bracket the per-line table: `transit → L1: 13:13 (2.85 km)` above,
+`RTH L3 → home: 13:34 (2.93 km)` below.
+
+**ROUTED, NOT STRAIGHT-LINE — this is the design decision that matters.** The vessel
+card's `#v_approach` is a straight-line estimate whose own comment admits the real
+approach is ENC-routed at Upload. Here that shortcut would not be an approximation but a
+different route's time: at Lewes the geodesic from the pier to the bay CROSSES LAND. Both
+rows run `planNogoRoute` — keep-outs + the Rule 9 lane, the planner every behaviour flies
+— so the quoted time belongs to the route the boat would actually run. Transit legs:
+BOAT → `wps[0]`. RTH legs: `wps[last]` → HOME (the boat is deliberately NOT in the RTH
+leg — an RTH after a completed survey departs from where the survey ends).
+
+**THE CONSTRAINT THAT SHAPED THE CODE: `renderLineTable` RUNS ON EVERY TELEMETRY FRAME**
+(the `updateXTE()` tick at ~asv.html:4515). A synchronous A* there freezes the chart. So:
+`scheduleTransitEst()` computes OFF the tick (setTimeout 0, one in flight), keyed by
+`transitEstKey` — plan endpoints + home + nogo identity + the boat bucketed to
+`TRANSIT_REKEY_M` (50 m) cells, so GPS jitter never re-routes but real motion does. The
+cache stores METRES; SECONDS are derived at render from the current plan speed —
+`mission.speed` re-times both rows in the same click with zero routing (measured live:
+13:13 → 6:36 on survey → high, distance unchanged). While `S.run === "running"` the boat
+leaves the key and the transit row reads `--`: the approach is being flown, the Mission
+card owns the live ETA, and a moving boat must not re-run A* every 50 m for a number
+nobody is planning with. No `ensureNogoCovers` in the passive path — a readout must not
+trigger chart extraction; the command paths still widen the extract before flying.
+
+**EACH ROW DEGRADES ALONE AND SAYS WHY:** no fix → transit `--` while RTH still answers
+(it never needed the boat); no home → the mirror; a planner REFUSAL renders as
+`unroutable — <the planner's own reason>` (never a silent `--`, which would be
+indistinguishable from "no fix", and never a number); nogo-not-loaded renders the figure
+with `direct — nogo not loaded` beside it.
+
+**Suite:** `speed_recalc.js` 10 → 22 (the plan-speed suite is the right home — the rows'
+whole contract is "metres routed once, timed at the current speed"). 7/7 mutations caught
+by the check that claims to guard each: `routeLenM` straight-lined → 9; RTH routed from
+the boat → 10b; refusal swallowed to null → 12; time at a fixed speed → 14; "direct"
+hidden → 13; boat dropped from the key → 15; running boat still an input → 15c. Two
+mutation anchors initially missed because **asv.html is CRLF** (the standing trap — the
+runner reads `newline=''`, so multi-line anchors need `\r\n`).
+
+**Verified live** (sim console, 3-line plan in the bay NW of Roosevelt Inlet posted via
+`/api/mission`): rows render with believable numbers (routed 2.85 km = the inlet transit,
+vs 2.14 km straight across land), speed change re-times without re-routing, zero console
+errors. The live eyeball was DOM reads (`#lineTableBody.innerText` three ways), not a
+screenshot — the Browser pane wasn't compositing.
 
 ## THE MISSION'S OWN KNOTS — the junction seam (2026-08-10)
 

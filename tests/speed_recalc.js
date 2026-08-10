@@ -60,7 +60,8 @@ const path = require("path");
 // falling back to a stale copy. Top-level, so the DIRECT eval() below still resolves
 // them through its lexical scope.
 const { distTo, llEN } = require("../static/js/geodesy.js");
-const { fmtDist, fmtDur } = require("../static/js/units.js");
+const { fmtDist, fmtDur, fmtMS } = require("../static/js/units.js");
+const { nogo } = require("../static/js/state.js");   // transitEstKey reads the REAL model's identity
 
 // The vessel-derived parameter block lives in static/js/state.js now (2026-08-09). The
 // page functions eval'd below read V.NOGO_BUFFER_M / V.MAX_TURN_RATE_DEG_S / ..., so the
@@ -77,6 +78,14 @@ function grab(name) {
   let k = H.indexOf("{", start), depth = 0;
   for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
   return H.slice(start, k + 1);
+}
+// A module-level `const X = ...;` pulled out verbatim - the REAL tuning value, not a copy.
+function grabDecl(name) {
+  for (const kw of ["const ", "let "]) {
+    const i = H.indexOf(kw + name + " =");
+    if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
+  }
+  throw new Error("test setup: declaration " + name + " not found (renamed?)");
 }
 
 let fails = 0, ran = 0;
@@ -99,10 +108,26 @@ function flashNote(t) { notes.push(t); }
 // the DOM the recalculation writes into
 var EL = {};
 function $(sel) { return (EL[sel] = EL[sel] || { textContent: "", style: {} }); }
+// The transit/RTH estimator calls the page's planNogoRoute; the harness scripts it so a
+// check can hand back a routed detour, a refusal, or a degraded direct answer at will —
+// and RECORDS the endpoints each call was asked for, which is what checks 10/10b assert.
+var S = null;
+var planCalls = [], planScript = {};
+function planNogoRoute(from, to) {
+  planCalls.push({ from: { ...from }, to: { ...to } });
+  const r = planScript;
+  if (r.error) return { error: r.error };
+  const route = (r.route || [to]).map(p => ({ ...p }));
+  return { route, degraded: !!r.degraded, routed: route.length > 1, lane: false };
+}
 // eslint-disable-next-line no-eval
 eval(
+     grabDecl("TRANSIT_REKEY_M") + "\n" +
      grab("minTurnRadiusM") + "\n" + grab("committedPatternInfo") + "\n" +
-     grab("recalcCommittedForSpeed"));
+     grab("recalcCommittedForSpeed") + "\n" +
+     grab("routeLenM") + "\n" + grab("transitEstBoat") + "\n" +
+     grab("transitEstKey") + "\n" + grab("transitEstCompute") + "\n" +
+     grab("transitRowHtml"));
 
 const LAT0 = 38.7896, LON0 = -75.1609;
 const mPerLon = M_PER_DEG_LAT * Math.cos(LAT0 * Math.PI / 180);
@@ -193,6 +218,116 @@ check("8. an empty plan degrades to '--', it does not throw",
       (() => { try { recalcCommittedForSpeed();
                      return $("#v_surveydur").textContent === "--"; }
                catch (e) { return false; } })());
+
+// --- 9-15: the Lines card's transit + RTH rows (Andy's ask, 2026-08-10) --------------- //
+// "Transit time to survey area and RTH time home." The number quoted must be the ROUTED
+// distance over the CURRENT plan speed — the vessel card's straight-line #v_approach is
+// exactly the shortcut these rows exist to improve on (at Lewes the straight line from
+// the pier to the survey area crosses land). The estimator is scripted here through a
+// recorded planNogoRoute, so every claim below is about OUR wiring, not the router's.
+nogo.ready = true; nogo.band = "enc_harbour"; nogo.buffer = 5;
+
+// 9. The distance is the ROUTE's length, leg by leg — not boat-to-target as the crow flies.
+{
+  const from = at(0, 0), dog = at(300, 400), end = at(0, 800);   // dogleg: 500+500 vs 800 direct
+  const m = routeLenM(from, [dog, end]);
+  check("9. routeLenM walks the routed legs, not the straight line",
+        Math.abs(m - 1000) < 2 && m - distTo(from, end) > 190,
+        m.toFixed(0) + " m routed vs " + distTo(from, end).toFixed(0) + " m direct");
+}
+
+// 10. Transit routes BOAT -> FIRST waypoint; RTH routes LAST waypoint -> HOME. The wrong
+// endpoints produce a plausible number describing a route nobody will fly.
+commit(3, 400, 60);
+asv = at(-500, -500); S = { run: "idle", home: at(-600, 0) };
+planCalls = []; planScript = {};
+{
+  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const wps = mission.waypoints, last = wps[wps.length - 1];
+  check("10. the transit leg is boat -> FIRST waypoint",
+        planCalls.length === 2
+          && distTo(planCalls[0].from, asv) < 1 && distTo(planCalls[0].to, wps[0]) < 1,
+        "call 1: " + (planCalls[0] ? "boat->wp0 offsets " + distTo(planCalls[0].from, asv).toFixed(1)
+          + "/" + distTo(planCalls[0].to, wps[0]).toFixed(1) + " m" : "never made"));
+  check("10b. the RTH leg is LAST waypoint -> home, and the boat is not in it",
+        planCalls[1] && distTo(planCalls[1].from, last) < 1 && distTo(planCalls[1].to, S.home) < 1,
+        planCalls[1] ? "offsets " + distTo(planCalls[1].from, last).toFixed(1)
+          + "/" + distTo(planCalls[1].to, S.home).toFixed(1) + " m" : "never made");
+  check("10c. both rows carry routed metres",
+        r.transit && r.transit.m > 0 && r.rth && r.rth.m > 0,
+        "transit " + (r.transit && r.transit.m | 0) + " m, rth " + (r.rth && r.rth.m | 0) + " m");
+}
+
+// 11. Each row degrades ALONE: no fix loses only the transit row, no home only the RTH row.
+{
+  const noBoat = transitEstCompute(null, mission.waypoints, S.home);
+  const noHome = transitEstCompute(asv, mission.waypoints, null);
+  check("11. no fix -> transit '--' while RTH still answers; no home -> the mirror",
+        noBoat.transit === null && noBoat.rth && noBoat.rth.m > 0
+          && noHome.rth === null && noHome.transit && noHome.transit.m > 0);
+}
+
+// 12. A planner REFUSAL reaches the operator's eyes as the planner's own words — never a
+// silent '--' (indistinguishable from "no fix") and never a number.
+{
+  planScript = { error: "the target sits in land" };
+  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const html = transitRowHtml("RTH:", r.rth, 3.6);
+  check("12. a refused route renders 'unroutable' with the planner's reason",
+        r.rth && r.rth.err === "the target sits in land"
+          && html.indexOf("unroutable") >= 0 && html.indexOf("the target sits in land") >= 0,
+        html.replace(/<[^>]+>/g, "").trim());
+}
+
+// 13. nogo-not-loaded is an ESTIMATE DOWNGRADE, said in the row, not hidden.
+{
+  planScript = { degraded: true };
+  const r = transitEstCompute(asv, mission.waypoints, S.home);
+  const html = transitRowHtml("transit:", r.transit, 3.6);
+  check("13. a degraded (nogo not loaded) answer says 'direct' beside the figure",
+        r.transit && r.transit.direct === true && /direct/.test(html),
+        html.replace(/<[^>]+>/g, "").trim());
+}
+
+// 14. The seconds shown are metres over the SPEED PASSED IN — so a plan-speed change
+// re-times the rows with no re-route. 3000 m at 5 m/s is 10:00; at 2 m/s it is 25:00.
+{
+  const est = { m: 3000, direct: false };
+  const atFive = transitRowHtml("t:", est, 5), atTwo = transitRowHtml("t:", est, 2);
+  check("14. the row's time is metres / the CURRENT plan speed",
+        atFive.indexOf(fmtMS(600)) >= 0 && atTwo.indexOf(fmtMS(1500)) >= 0,
+        "5 m/s -> " + fmtMS(600) + " ok=" + (atFive.indexOf(fmtMS(600)) >= 0)
+          + ", 2 m/s -> " + fmtMS(1500) + " ok=" + (atTwo.indexOf(fmtMS(1500)) >= 0));
+}
+
+// 15. THE CACHE KEY: routing runs on a telemetry-driven render path, so the key must hold
+// still for jitter and move for a real change. Under TRANSIT_REKEY_M of boat motion is the
+// SAME key (no re-route); past it, a new one; and home moving re-keys with the boat still.
+{
+  // the REAL threshold, read from the page (a const in a direct eval stays lexical to it -
+  // the eval'd functions close over it; this harness code cannot, so parse the number out)
+  const REKEY = parseFloat(grabDecl("TRANSIT_REKEY_M").match(/=\s*([\d.]+)/)[1]);
+  const k0 = transitEstKey(at(0, 0), mission.waypoints, S.home);
+  const kNear = transitEstKey(at(0, REKEY * 0.3), mission.waypoints, S.home);
+  const kFar = transitEstKey(at(0, REKEY * 2.5), mission.waypoints, S.home);
+  const kHome = transitEstKey(at(0, 0), mission.waypoints, at(-900, 40));
+  check("15. boat jitter under the re-key threshold keeps the key; real motion changes it",
+        k0 === kNear && k0 !== kFar,
+        "0 vs " + (REKEY * 0.3).toFixed(0) + " m same, vs "
+          + (REKEY * 2.5).toFixed(0) + " m different");
+  check("15b. home moving re-keys even with the boat still",
+        k0 !== kHome);
+}
+
+// 15c. While a run is under way the boat leaves the estimate entirely (the Mission card
+// owns the live ETA) — a moving boat must not re-run the router every rekey cell.
+{
+  S = { run: "running", home: S.home }; asv = at(50, 50);
+  check("15c. a running boat is not an estimator input",
+        transitEstBoat() === null);
+  S = { run: "idle", home: S.home };
+  check("15d. ... and it returns when the run ends", transitEstBoat() === asv);
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

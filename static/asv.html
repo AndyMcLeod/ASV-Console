@@ -304,7 +304,7 @@
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
-    <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
+    <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
     <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — EVERY cell in view (the vessel's own marked), scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
   </div>
   <!-- Quick Start / help button — pinned to the LOWER-LEFT corner (opens the popup, which also anchors there). -->
@@ -1280,11 +1280,88 @@ function buildLineTable(){ const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.surv
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
     return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
+// --- transit-to-survey + RTH-home estimates (Lines card; Andy's ask 2026-08-10) ------- //
+// ENC-ROUTED, deliberately. The vessel card's #v_approach is a straight-line estimate with
+// a comment admitting the real approach is routed at Upload - and at this console's home
+// water the straight line from the pier to the survey area crosses LAND, so a straight-line
+// "transit time" here would not be an approximation, it would be a different route's time.
+// These two rows use the same planner every behaviour flies (planNogoRoute: keep-outs +
+// the Rule 9 lane), so the time quoted is the time of the route the boat would actually run.
+//
+// ROUTING IS CPU WORK AND renderLineTable RUNS ON EVERY TELEMETRY FRAME. So the routes are
+// computed OFF the tick (setTimeout 0), at most one computation in flight, and re-keyed only
+// when an input genuinely changed: the plan's endpoints, home, the nogo model, or the boat
+// by more than TRANSIT_REKEY_M (the boat feeds only the transit row; RTH runs LAST WAYPOINT
+// -> HOME and never re-routes for boat motion). The tick renders the cached answer.
+//
+// DISTANCE IS CACHED, TIME IS NOT: seconds are derived at render from the CURRENT plan
+// speed, so a speed change re-times both rows instantly without re-routing anything.
+//
+// While a survey is RUNNING the transit row reads "--": the approach is already flown or
+// under way (the Mission card owns the live ETA), and freezing it keeps a moving boat from
+// re-running A* every 50 m for a number nobody is planning with.
+const TRANSIT_REKEY_M = 50;
+let transitEst = {key:"", busy:false, transit:null, rth:null};
+function routeLenM(from, route){ let m=0, prev=from;
+  for(const p of (route||[])){ m += distTo(prev, p); prev = p; } return m; }
+function transitEstBoat(){ return (S && S.run==="running") ? null : asv; }
+function transitEstKey(boat, wps, home){
+  if(!wps || !wps.length) return "";
+  const w0=wps[0], wL=wps[wps.length-1];
+  // the boat's cell only re-keys past TRANSIT_REKEY_M of real motion (~50 m in lat/lon)
+  const cell = boat ? Math.round(boat.lat*M_PER_DEG_LAT/TRANSIT_REKEY_M)+","+
+                      Math.round(boat.lon*M_PER_DEG_LAT*Math.cos(boat.lat*Math.PI/180)/TRANSIT_REKEY_M) : "-";
+  return [cell, w0.lat,w0.lon, wL.lat,wL.lon, home?home.lat+","+home.lon:"-",
+          nogo.ready, nogo.band, nogo.buffer, wps.length].join("|");
+}
+function transitEstCompute(boat, wps, home){
+  // Pure of the DOM and of the cache: route the two legs and report honestly.
+  //   {m, direct}  routed metres (direct=true when nogo wasn't loaded - a straight guess)
+  //   {err}        the planner REFUSED (start/target in a keep-out, no clear route)
+  //   null         an input is missing (no fix / no home / no plan)
+  // No ensureNogoCovers here: a passive readout must not trigger chart extraction. The
+  // command paths (Upload / RTH) still widen the extract before flying.
+  const out = {transit:null, rth:null};
+  if(!wps || !wps.length) return out;
+  if(boat){
+    const p = planNogoRoute({lat:boat.lat,lon:boat.lon}, {lat:wps[0].lat,lon:wps[0].lon});
+    out.transit = p.error ? {err:p.error} : {m:routeLenM(boat, p.route), direct:!!p.degraded};
+  }
+  if(home){
+    const last = wps[wps.length-1];
+    const q = planNogoRoute({lat:last.lat,lon:last.lon}, {lat:home.lat,lon:home.lon});
+    out.rth = q.error ? {err:q.error} : {m:routeLenM(last, q.route), direct:!!q.degraded};
+  }
+  return out;
+}
+function scheduleTransitEst(){
+  const boat=transitEstBoat(), wps=mission.waypoints||[], home=S&&S.home;
+  const key = transitEstKey(boat, wps, home);
+  if(!key || key===transitEst.key || transitEst.busy) return;
+  transitEst.busy = true;
+  setTimeout(()=>{
+    try{ const r = transitEstCompute(transitEstBoat(), mission.waypoints||[], S&&S.home);
+         transitEst = {key, busy:false, transit:r.transit, rth:r.rth}; }
+    catch(e){ transitEst = {key, busy:false, transit:null, rth:null}; }
+    renderLineTable();                       // paint the fresh answer
+  }, 0);
+}
+function transitRowHtml(label, est, spd){
+  // One row of honest text: routed time (distance), "direct" when un-modeled, the
+  // planner's own refusal when it refused, "--" when an input is missing.
+  let txt;
+  if(!est) txt = `<span style="color:var(--ink-faint)">--</span>`;
+  else if(est.err) txt = `<span class="warn" style="color:#d9958f">unroutable — ${est.err}</span>`;
+  else { const t = (spd>0) ? fmtMS(Math.round(est.m/spd)) : "--";
+    txt = `${t} <span style="color:var(--ink-faint)">(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
+  return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}</div>`;
+}
 function renderLineTable(){
   const panel=$("#lineTablePanel"); if(!panel || panel.style.display==="none") return;
   const el=$("#lineTableBody"); if(!el) return;   // header ("Survey lines" + drag grip) is a sibling, kept intact
   const t=buildLineTable();
   if(!t.length){ el.innerHTML="Punch Out + Add to plan to populate."; return; }
+  scheduleTransitEst();                          // off-tick; re-renders when it lands
   const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
   const runningSurvey = S && S.run==="running" && S.behavior==="survey";
   const rows=t.map(r=>{
@@ -1294,7 +1371,9 @@ function renderLineTable(){
     return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
   }).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
+  const estSpd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;   // time from CURRENT plan speed
   let html=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
+    transitRowHtml("transit → L1:", (S&&S.run==="running")?null:transitEst.transit, estSpd)+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
   // TURNS - independent components between lines, timed separately from the lines.
@@ -1312,6 +1391,7 @@ function renderLineTable(){
       `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
       `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${TT?fmtMS(TT):'--'}</td></tr></table>`;
   }
+  html+=transitRowHtml(`RTH L${t.length} → home:`, transitEst.rth, estSpd);
   el.innerHTML=html;
 }
 function logLineTable(reason){ if(!mission.lines.length) return;

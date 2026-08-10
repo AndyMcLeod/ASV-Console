@@ -273,6 +273,21 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    short distances (spacing, buffers, depths, the LINES table) always read metres,
    chart tiles print feet as charted, and the AIS card always reads nm.
 
+   **The Lines card (`LINES`).** A per-survey-line table: each line's length, its
+   planned time at the plan speed, and the actual time once flown (actuals accrue
+   while the survey runs and land in the session log, with the turns timed as their
+   own components). Above and below the table sit the **transit and RTH rows**:
+   the **ENC-routed** time and distance from the boat to line 1, and from the last
+   line back home — routed by the same planner every behaviour flies (keep-outs +
+   the Rule 9 channel lane), because at this console's home water the straight
+   line to the survey area crosses land and a straight-line "estimate" would be a
+   different route's time. Each row degrades alone and honestly: no fix, no
+   transit row; no home, no RTH row; planner refusal, the refusal itself in the
+   row ("unroutable — the target sits in land"); nogo not loaded, the figure
+   marked **direct**. A plan-speed change re-times both rows instantly from the
+   cached routed distance — no re-route — and while a run is under way the transit
+   row reads `--` (the Mission card owns the live ETA).
+
    **The chart menu + the measuring tool (right-click).** Right-clicking the chart
    opens the **point commands** — its header names the position you clicked:
    **Measure distance**, **Go-To here**, **Set Home here**, **Spawn here**,
