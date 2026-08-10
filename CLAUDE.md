@@ -24,7 +24,14 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-10, end of "Rule 9 lane termination rebuild")
+## ⇒ START HERE (handoff refreshed 2026-08-10, second refresh — after the live circle at the mouth)
+
+**NEWEST (this commit): THE CIRCLE AT THE MOUTH.** Andy flew the new lane live; the transit
+was clean until just past the outer green, then the boat orbited 360°. The plan — not the
+boat: the Upload path shipped a gate-splice seam as a 4 m reversal knot, unflyable at a
+20 m turn radius. `pruneStitch` moved into `channelLaneRoute` (the producer), so Upload
+inherits what Go-To/RTH always had. Read "THE CIRCLE AT THE MOUTH" below; note the mission
+generator ITSELF still emits two knots (separate producer, task chip pending).
 
 **THE NEWEST WORK (this commit, 2026-08-10): WHERE THE RULE 9 LANE LETS GO.** Andy
 reported that keep-right "has degraded or been lost" and restated the spec: see the
@@ -58,7 +65,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 591 assertions** (18 JS / 294,
+turn-water hold is closed (`a548c14`). **37 regression suites / 593 assertions** (18 JS / 296,
 19 Python / 297), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -91,7 +98,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (591 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (593 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -108,7 +115,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 
 | | guards |
 |---|---|
-| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law; and WHERE IT LETS GO — held at the final pair, stood on one width past, released before a separate channel, `partial` when a stretch went un-laned, and a reach knob that may only widen (27) |
+| `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law; WHERE IT LETS GO — held at the final pair, stood on one width past, released before a separate channel, `partial` when a stretch went un-laned, a reach knob that may only widen; and NO ROUTE SHIPS A REVERSAL KNOT — the knot prune runs in the producer on the gate's own output (29) |
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |
 | `node tests/turn_geometry.js` | survey turn geometry (21) |
@@ -981,6 +988,44 @@ what the diff had already said was fine. Ask "can the operator SEE it and REACH 
 ```
 python -c "b=open('asv_console.py','rb').read(); c=b.count(b'\r\n'); print('CRLF',c,'bare-LF',b.count(b'\n')-c)"
 ```
+
+## THE CIRCLE AT THE MOUTH — the knot prune moves into the producer (2026-08-10)
+
+**ANDY'S REPORT, WITH A SCREENSHOT:** the survey transit "worked perfectly until just after
+the green outer buoy", then the boat flew a full circle. His theory was a look-forward
+delay on the shallows. **The log said otherwise** (session `20260810-131214`, diagnosed by
+replaying it — the standing rule): the shallows were fully modeled at plan time and nothing
+re-planned mid-run; the flown circle is the boat FAITHFULLY flying a defective plan. The
+uploaded route carried two REVERSAL KNOTS at the mouth of Roosevelt Inlet — wpt 10→11 a
+3.9 m step backwards (arrive 042°, leave 211°), wpt 15→17 the same shape — and the DriX at
+13.8 kn has a ~20 m turn radius (20°/s yaw cap), so a 177° turn demanded in 4 m becomes a
+360° orbit chasing the waypoint. The heading trace shows it: 61→184° in six seconds, then a
+full wrap through 346°.
+
+**THE PRODUCER WAS gateLegClear'S SPLICE SEAM, and the dissection proves it stage by
+stage** (offline replay against the same ENC + vessel + mission: pre-lane 0 knots, buoy 0,
+narrow 0, smoothTrack 0, **after the gate: 2, splices=1**). legPath's patch is lawful, but
+where it rejoins the lane a few metres BEHIND the point it left, the seam itself is the
+reversal. `planNogoRoute` has always pruned this (`pruneStitch` — "the lane offset can fold
+a sharp corner into a small reversal knot"); **`routePlan` — the Upload path — took the
+lane output RAW**, so Go-To and RTH never showed the fault while every uploaded survey
+approach could carry it. That asymmetry is also why Andy's RTH back through the same
+channel was clean.
+
+**FIX: `pruneStitch` moved INTO `channelLaneRoute`** (on the gate's output — after the law,
+before the return), so every consumer inherits it; `planNogoRoute`'s own call is deleted as
+redundant. Same producer-not-consumers rule as the gate itself. The prune is lawful by
+construction: a waypoint goes only if its neighbours connect CLEAR. Measured on the replay:
+the mouth knots are GONE from `routePlan`'s output; suites `buoy_lane.js` 27→29 (check 28 =
+the mechanism unfolds a reversal, 28b = the wiring pins `pruneStitch(g.route`, the 19/19b
+split — no synthetic world folds the seam, measured, so the real-geometry proof lives in
+the session-log replay). 3/3 mutations caught, incl. the exact pre-fix behaviour.
+
+**STILL OPEN FROM THE SAME LOG (separate producer, task chip spawned):** the MISSION ITSELF
+carries two more reversal knots — mission wpt 475 (155° in 3.8 m) and wpt 551 (176° in
+4.5 m) — client-side punchOut stitching, present before routePlan ever ran. The boat will
+wobble there mid-survey. Repro: pull `/api/mission` from the log, run the knot detector
+(turn >150° within <12 m).
 
 ## THE LANE'S ENDS — hold to the charted extent, stand on past the mouth (2026-08-10)
 

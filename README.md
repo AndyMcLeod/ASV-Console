@@ -490,6 +490,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    largest that keeps the boat in **clear water**, rate-limited so the track eases in
    and out where one side is shoal. Every leg is clearance-checked; if a leg cannot
    be routed the lane is **abandoned entirely** and the plain routed path is used.
+   And every shipped route is **flyable**: a splice seam can fold a reversal a few
+   metres long — a turn no hull can make, which a vessel answers by orbiting the
+   waypoint — so the producer prunes any such fold whose neighbours connect clear.
+   The clear-water condition means a corner that exists to dodge an obstacle stays.
    The console never plans a leg it has not verified. Survey coverage lines and
    teardrop turns are never offset (planned geometry). The track is resampled at a
    fixed spacing and lightly smoothed, and generated Go-To / RTH / Transit waypoints

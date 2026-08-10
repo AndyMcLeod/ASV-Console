@@ -370,10 +370,22 @@ export function channelLaneRoute(pathLL, ref, ko, buf){
   out = narrowChannelLane(out, ref, ko, buf);        // unmarked / channel-like confined water
   out = smoothTrack(out, ref, ko, buf);              // round the bends, set the waypoint count
   const g = gateLegClear(out, pathLL, ref, ko, buf); // THE LAW - see gateLegClear above
+  // THE KNOT PRUNE LIVES IN THE PRODUCER (moved here 2026-08-10; it was planNogoRoute's
+  // alone). A gate SPLICE SEAM can fold a reversal knot: legPath's patch rejoins the lane
+  // a few metres BEHIND the point it left, and the shipped route then demands a ~180°
+  // turn in less water than any hull can turn in — flown at Lewes as a full 360° orbit
+  // at the mouth of Roosevelt Inlet (session 20260810-131214: two 3-4 m reversal steps
+  // at the exact splice seam, boat at 13.8 kn with a ~20 m turn radius). planNogoRoute
+  // pruned its own output, so Go-To and RTH never showed this; routePlan (Upload) took
+  // the lane output RAW, and the survey's approach leg carried the knot to the boat.
+  // Pruning here means every consumer inherits it — the same producer-not-consumers rule
+  // as gateLegClear itself. The prune is lawful by construction: a waypoint goes only if
+  // its neighbours connect CLEAR, so a corner that exists to dodge a keep-out stays.
+  const clean = pruneStitch(g.route, ref, ko, buf);
   // `partial` = a lane was ridden but NOT over every channel this route ran along: a
   // second buoy system left un-laned, a stretch rescued by the router, or a leg the gate
   // had to splice. Abandonment already zeroes `lane`, so it cannot also be partial.
-  return {route: g.route, lane: sea.laneUsed && !g.abandoned,
+  return {route: clean, lane: sea.laneUsed && !g.abandoned,
           partial: (sea.lanePartial || g.splices>0) && sea.laneUsed && !g.abandoned};
 }
 // PUNCH-OUT channel exclusion (survey coverage only): if a survey line SPANS ACROSS
@@ -804,12 +816,11 @@ export function planNogoRoute(from, to){
   // - which was false: it ran out AT the last pair and the offset was decaying before it.
   const path = [{lat:from.lat,lon:from.lon}, ...leg];
   const kr = channelLaneRoute(path, ref, ko, buf);
-  // knot prune: the lane offset can fold a sharp (but legitimate) corner
-  // into a small reversal knot; drop knot waypoints whose neighbours connect clear
-  const clean = pruneStitch(kr.route, ref, ko, buf);
+  // (the knot prune that used to run here moved INTO channelLaneRoute — the producer —
+  // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
-  return {route: clean.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial};
+  return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are

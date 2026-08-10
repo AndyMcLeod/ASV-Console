@@ -551,5 +551,41 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
   }
 }
 
+// --- 28: THE KNOT PRUNE LIVES IN THE PRODUCER ----------------------------------------- //
+// Flown at Lewes (session 20260810-131214): the Upload plan carried two 3-4 m REVERSAL
+// steps at the mouth of Roosevelt Inlet — a gate splice seam that rejoined behind the
+// point it left — and the DriX at 13.8 kn (turn radius ~20 m) orbited a full 360° trying
+// to fly them. planNogoRoute pruned its own output so Go-To/RTH never showed this;
+// routePlan took the lane output RAW. The fix moved pruneStitch INTO channelLaneRoute.
+// No synthetic world here folds the seam (measured: the pier world splices but does not
+// knot — the fold needed the real ENC's confluence), so the guard is two-part, the same
+// split as 19/19b: the MECHANISM is proven functionally, and the WIRING is pinned in the
+// module source. The real-geometry reproduction lives in the session log, replayed
+// offline during the fix; its numbers are in CLAUDE.md "THE CIRCLE AT THE MOUTH".
+{
+  // 28. the mechanism: pruneStitch unfolds a 3 m reversal whose neighbours connect clear.
+  const knotted = [
+    { e: 0, n: 0 }, { e: 0, n: 60 },
+    { e: -2, n: 57 },                        // the Lewes shape: a tiny step BACKWARDS
+    { e: 8, n: 78 }, { e: 40, n: 120 },
+  ].map((p) => enLL(p.e, p.n));
+  const un = pruneStitch(knotted, ref, { polys: [], lines: [], points: [], marks: [], sys: [] }, 3);
+  const turns = [];
+  for (let i = 1; i < un.length - 1; i++) {
+    const t = ((azTo(un[i], un[i + 1]) - azTo(un[i - 1], un[i]) + 540) % 360) - 180;
+    turns.push(Math.abs(t));
+  }
+  check("28. pruneStitch unfolds a reversal knot the boat cannot fly",
+        un.length < knotted.length && turns.every((t) => t <= 150),
+        "5 wpts with a 3 m back-step -> " + un.length + " wpts, max turn " +
+        (turns.length ? Math.max(...turns).toFixed(0) : "0") + "° (a 20 m-radius hull orbits a 177° reversal)");
+  // 28b. the wiring: channelLaneRoute prunes THE GATE'S OWN OUTPUT — after the law, so a
+  // splice seam cannot ship, and before the return, so every consumer inherits it.
+  // (routePlan taking kr.route raw is exactly the path that carried the knot to the boat.)
+  check("28b. channelLaneRoute ships the gate's output through the knot prune",
+        /pruneStitch\(g\.route/.test(MODSRC),
+        "the prune must run on gateLegClear's route inside the producer, not in one caller");
+}
+
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");
 process.exit(fails ? 1 : 0);
