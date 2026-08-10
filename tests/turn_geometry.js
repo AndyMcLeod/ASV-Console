@@ -31,6 +31,22 @@
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy and shares
 // one global scope; the eval below reproduces that.
 
+// --- crash guard: a throw outside a check() must still REPORT ------------------------
+// check() turns a throw inside its own thunk into a failed check. Scenario SETUP is not
+// inside one - building a world, eval-ing page code, awaiting a fetch - and a throw there
+// would kill the process before a single FAIL line printed. "No FAIL lines" and "the
+// process died" are indistinguishable to anything reading stdout, so a mutation that
+// crashes this suite would score as SURVIVED. Report it instead, in the normal format.
+function __crash(e) {
+  console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
+              ((e && e.stack) ? e.stack.split("\n").slice(0, 3).join(" | ") : e));
+  console.log("\n1 CHECK(S) FAILED (crashed before finishing)");
+  process.exit(1);
+}
+process.on("uncaughtException", __crash);
+process.on("unhandledRejection", __crash);
+
+
 const fs = require("fs");
 const path = require("path");
 
@@ -279,6 +295,33 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
   check("20. no suite lifts module source text any more - buoy_lane is the one exception",
         users.length === 0,
         users.length ? users.join(", ") : "checked every suite but the documented one");
+}
+
+// --- every suite must be able to REPORT its own death ---------------------------------- //
+// check() turns a throw inside its thunk into a failed check, but scenario SETUP runs
+// outside one, and a throw there used to end the process with no FAIL line at all. To
+// anything reading stdout, "no FAIL lines" and "the process died" are the same, so a
+// mutation that crashed a suite scored as SURVIVED. Three chart mutations were recorded
+// that way before the guard existed.
+//
+// It also removes a fragility in the RUNNER: the suites end with five different summary
+// wordings ("all checks passed", "PASSED n of m", "14 checks, 3 failed", ...), so anything
+// sniffing summary text to decide "did this finish?" gets it wrong somewhere - and did,
+// reading a healthy turn_channel failure as a crash. With the guard, a death always prints
+// a FAIL line, so FAIL lines alone are a sufficient signal and the wording stops mattering.
+{
+  const dir = __dirname;
+  const missing = { js: [], py: [] };
+  for (const f of fs.readdirSync(dir)) {
+    const src = () => fs.readFileSync(path.join(dir, f), "utf8");
+    if (f.endsWith(".js") && !/process\.on\("uncaughtException"/.test(src())) missing.js.push(f);
+    if (f.endsWith(".py") && !/sys\.excepthook = _crash_report/.test(src())) missing.py.push(f);
+  }
+  const gone = missing.js.concat(missing.py);
+  check("21. every suite carries the crash guard, so a death is REPORTED not silent",
+        gone.length === 0,
+        gone.length ? gone.join(", ")
+                    : "all " + fs.readdirSync(dir).filter(f => /\.(js|py)$/.test(f)).length + " suites guarded");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

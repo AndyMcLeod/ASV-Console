@@ -56,6 +56,23 @@ sys.path.insert(0, APP)
 
 import importlib.util
 
+# --- crash guard: a throw outside a check() must still REPORT ---------------------------
+# check() turns an exception inside its own thunk into a failed check. Scenario SETUP is
+# not inside one - booting a console, driving an endpoint, waiting on a fix - and an
+# exception there would end the process before a single FAIL line printed. "No FAIL lines"
+# and "the process died" are indistinguishable to anything reading stdout, so a mutation
+# that crashes this suite would score as SURVIVED rather than caught. Report it instead, in
+# this suite's normal format; Python still exits non-zero on its own.
+def _crash_report(_t, _e, _tb):
+    import traceback
+    print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (_t.__name__, _e))
+    print("".join(traceback.format_exception(_t, _e, _tb))[-500:])
+    print("\n1 CHECK(S) FAILED (crashed before finishing)")
+
+
+sys.excepthook = _crash_report
+
+
 spec = importlib.util.spec_from_file_location("aissvc", os.path.join(APP, "ais_service.py"))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)

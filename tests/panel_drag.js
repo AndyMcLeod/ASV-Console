@@ -63,6 +63,22 @@
 //
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
+// --- crash guard: a throw outside a check() must still REPORT ------------------------
+// check() turns a throw inside its own thunk into a failed check. Scenario SETUP is not
+// inside one - building a world, eval-ing page code, awaiting a fetch - and a throw there
+// would kill the process before a single FAIL line printed. "No FAIL lines" and "the
+// process died" are indistinguishable to anything reading stdout, so a mutation that
+// crashes this suite would score as SURVIVED. Report it instead, in the normal format.
+function __crash(e) {
+  console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
+              ((e && e.stack) ? e.stack.split("\n").slice(0, 3).join(" | ") : e));
+  console.log("\n1 CHECK(S) FAILED (crashed before finishing)");
+  process.exit(1);
+}
+process.on("uncaughtException", __crash);
+process.on("unhandledRejection", __crash);
+
+
 const fs = require("fs");
 const path = require("path");
 

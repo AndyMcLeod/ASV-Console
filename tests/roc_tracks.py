@@ -359,6 +359,23 @@ check("22. a gps_sim fix round-trips through parse_nmea, poles and dateline incl
 # by its sibling.
 import re as _re                                                    # noqa: E402
 
+# --- crash guard: a throw outside a check() must still REPORT ---------------------------
+# check() turns an exception inside its own thunk into a failed check. Scenario SETUP is
+# not inside one - booting a console, driving an endpoint, waiting on a fix - and an
+# exception there would end the process before a single FAIL line printed. "No FAIL lines"
+# and "the process died" are indistinguishable to anything reading stdout, so a mutation
+# that crashes this suite would score as SURVIVED rather than caught. Report it instead, in
+# this suite's normal format; Python still exits non-zero on its own.
+def _crash_report(_t, _e, _tb):
+    import traceback
+    print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (_t.__name__, _e))
+    print("".join(traceback.format_exception(_t, _e, _tb))[-500:])
+    print("\n1 CHECK(S) FAILED (crashed before finishing)")
+
+
+sys.excepthook = _crash_report
+
+
 WIDTHS = []
 for lat, lon, cog, sog in [(38.78965, -75.16094, 84.4, 12.4),
                            (5.5 / 60.0, 7.25 / 60.0, 0.0, 0.0),     # minutes < 10: needs the pad
