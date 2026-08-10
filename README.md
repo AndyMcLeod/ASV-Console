@@ -693,7 +693,11 @@ part of it asks the boat to hold a radius tighter than it can at the plan speed 
 along the whole path, not just at the nominal radius), that the outboard excursion reported
 to the operator is what the path actually does, and that a keep-out over the loop refuses
 the turn. Both a fast-turning small hull and a slow-turning larger one are exercised, since
-the turn shape is chosen from the **active vessel's** minimum turn radius.
+the turn shape is chosen from the **active vessel's** minimum turn radius. It also guards
+the **junction seam**: a routed inter-line transit whose first waypoint folds back against
+the line end in less water than any hull can turn in (a reversal knot — the boat orbits
+trying to capture it) is pruned where the transit is built, kept when an obstacle genuinely
+forces it, and reported to the operator rather than shipped silently.
 
 ```
 python tests/roc_tracks.py

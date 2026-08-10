@@ -26,7 +26,11 @@
 // checks 5-9 fail (no turn is produced for the big boat at all). Keep the teardrop but
 // build it at half the offset instead of minR, or flip either outer arc's direction,
 // and the curvature / alignment / turn-away checks fail. Drop the legClear sweep and
-// check 15 fails.
+// check 15 fails. THE JUNCTION SEAM (22-27): loosen KNOT_TURN_DEG or KNOT_STEP_M and
+// 22/23 fail; neuter pruneJunctionKnots (return the via unchanged) and 23/24 fail;
+// drop its legClear bridge guard and 25 fails (an obstacle-forced fold gets pruned
+// into an unlawful leg); unwire it from punchOut's routed branch - the shipped
+// 2026-08-10 fault - and 27 fails.
 //
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy and shares
 // one global scope; the eval below reproduces that.
@@ -68,6 +72,10 @@ const { V, nogo } = require("../static/js/state.js");
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { blocked, legClear } = require("../static/js/chart.js");
+
+// The junction-seam guard (2026-08-10, mission wpt 551) ships in passage.js beside
+// pruneStitch - the interior prune it completes. Required, not grabbed: real module.
+const { KNOT_STEP_M, KNOT_TURN_DEG, junctionKnot, pruneJunctionKnots } = require("../static/js/passage.js");
 
 const STATIC = path.join(__dirname, "..", "static");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
@@ -266,6 +274,74 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         "minR=" + low.minR.toFixed(1) + " kind=" + low.t.kind);
 }
 
+// 22-27. THE JUNCTION SEAM (session 20260810-131214, mission wpt 551). A ROUTED
+// inter-line transit meets the survey line AT the line's own endpoint, and the
+// line's heading is outside the route - so channelLaneRoute's interior knot prune
+// (pruneStitch) cannot unfold a reversal folded at the junction, at this or any
+// version. The generator shipped a via whose first point sat 4.5 m BEHIND a 22 m
+// sliver line end (176° fold); a boat with any real turn radius orbits trying to
+// capture it. pruneJunctionKnots runs in punchOut's transit loop - the one place
+// holding both the via and the line endpoints. NO SYNTHETIC WORLD FOLDS THE SEAM
+// through the real router here (same finding as buoy_lane 19/19b): the real-geometry
+// proof is the session-log replay - logged 23-line plan + real Lewes ENC at the live
+// parameters (buffer 5, plan speed high) still assembles the exact 175.9°/4.46 m
+// knot from the RAW route at HEAD, and none with the prune, every other routed via
+// untouched (8->8, 3->3, 4->4 points; the folded one 2->1). The checks below
+// rebuild the CLASS hermetically on hand-built vias, in the logged knot's own
+// geometry, and pin the wiring.
+{
+  // The logged shape, scaled into the suite's frame: line k arrives at Ap heading
+  // north; the next line lies BEHIND (a genuine reversal gap); the routed via's
+  // first point v1 folds 160° within 4.5 m of Ap.
+  const lineIn = enLL(0, -50), Ap = enLL(0, 0);
+  const v1 = enLL(1.5, -4.2), v2 = enLL(4, -35);
+  const Bp = enLL(6, -45), lineOut = enLL(6, -105);
+
+  check("22. junctionKnot: the flown fold (160° in 4.5 m) IS a knot; the same reversal " +
+        "over the full 45 m gap is NOT (that is the flyable wide swing)",
+        junctionKnot(lineIn, Ap, v1) && !junctionKnot(lineIn, Ap, Bp),
+        "thresholds " + KNOT_TURN_DEG + "°/" + KNOT_STEP_M + " m");
+
+  const clear = pruneJunctionKnots(lineIn, Ap, [v1, v2], Bp, lineOut, ref, CLEAR, BUF);
+  check("23. in clear water the folding entry point goes, the lawful one stays, and no " +
+        "junction knot remains on the assembled seam",
+        clear.length === 1 && near(toE(clear[0]), 4, 0.01) &&
+        !junctionKnot(lineIn, Ap, clear[0]) && !junctionKnot(clear[0], Bp, lineOut),
+        "via 2 -> " + clear.length);
+
+  // exit-side mirror: the route overshoots Bp and folds back onto the line start
+  const w1 = enLL(4, -35), w2 = enLL(6, -49.5);          // w2 = 4.5 m PAST Bp, 180° fold
+  const ex = pruneJunctionKnots(lineIn, Ap, [w1, w2], Bp, lineOut, ref, CLEAR, BUF);
+  check("24. the mirrored fold at the EXIT junction is pruned the same way",
+        ex.length === 1 && near(toE(ex[0]), 4, 0.01) && !junctionKnot(ex[0], Bp, lineOut),
+        "via 2 -> " + ex.length);
+
+  // an obstacle across the bridge Ap->v2 forbids the drop: the fold is FORCED, the
+  // via ships intact (unpruned), and junctionKnot still reports it for the caller
+  const forced = pruneJunctionKnots(lineIn, Ap, [v1, v2], Bp, lineOut, ref, box(-2, -20, 6, -15), BUF);
+  check("25. an obstacle-forced fold is KEPT (the bridge refuses), and still reads as a " +
+        "knot for the caller to report",
+        forced.length === 2 && near(toE(forced[0]), 1.5, 0.01) && junctionKnot(lineIn, Ap, forced[0]),
+        "via stays " + forced.length);
+
+  // the drop keys on the VIA's own step: a wide fold (steep angle, long first leg)
+  // is the straight-hop class, not a knot - pruning it would drain lane discipline
+  const wide = pruneJunctionKnots(lineIn, Ap, [v2], Bp, lineOut, ref, CLEAR, BUF);
+  check("26. a wide fold (35 m first leg) is NOT pruned - only the unflyable step is",
+        wide.length === 1 && near(toE(wide[0]), 4, 0.01), "via stays " + wide.length);
+}
+
+// 27. THE WIRING (a pure helper proves nothing about who calls it): punchOut's routed
+// branch runs the lane route's via through pruneJunctionKnots WITH the line context,
+// pushes the PRUNED via, and reports a surviving fold instead of shipping it silently.
+{
+  const P = grab(H, "punchOut");
+  check("27. punchOut prunes the routed via's junction seams and reports a survivor",
+        P.includes("pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, buffer)") &&
+        P.includes("patTransits.push(via); patRoutes.push([Ap,...via,Bp]);") &&
+        /junctionKnot\(patClip\[k\]\[0\], Ap, via\[0\]\|\|Bp\)[\s\S]{0,220}?nNoTurn\+\+/.test(P));
+}
+
 
 // --- the suites read the modules, not copies of them ---------------------------------- //
 // Every suite but ONE now require()s the real modules instead of lifting their source text
@@ -292,7 +368,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
   const users = fs.readdirSync(dir)
     .filter(f => f.endsWith(".js") && !allowed.has(f))
     .filter(f => strip(fs.readFileSync(path.join(dir, f), "utf8")).includes(NEEDLE));
-  check("20. no suite lifts module source text any more - buoy_lane is the one exception",
+  check("28. no suite lifts module source text any more - buoy_lane is the one exception",
         users.length === 0,
         users.length ? users.join(", ") : "checked every suite but the documented one");
 }
@@ -318,7 +394,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
     if (f.endsWith(".py") && !/sys\.excepthook = _crash_report/.test(src())) missing.py.push(f);
   }
   const gone = missing.js.concat(missing.py);
-  check("21. every suite carries the crash guard, so a death is REPORTED not silent",
+  check("29. every suite carries the crash guard, so a death is REPORTED not silent",
         gone.length === 0,
         gone.length ? gone.join(", ")
                     : "all " + fs.readdirSync(dir).filter(f => /\.(js|py)$/.test(f)).length + " suites guarded");

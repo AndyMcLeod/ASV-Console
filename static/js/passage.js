@@ -678,6 +678,44 @@ export function pruneStitch(full, ref, ko, buf){
   }
   return full;
 }
+// THE JUNCTION IS A SEAM pruneStitch CANNOT SEE. A routed inter-line transit meets the
+// survey line AT the line's own endpoint, and the line's heading is outside the route -
+// so a via whose first point folds back against the line (a reversal knot AT the
+// junction) has no interior corner for pruneStitch to drop, at this or any version.
+// The survey generator shipped exactly that (session 20260810-131214, mission wpt 551:
+// 176° in 4.5 m where a routed transit met a 22 m sliver line end - the boat orbits
+// trying to capture it; reproduced at HEAD from the same log, buffer 5 / plan speed
+// high). Only the caller that holds BOTH the via and the line endpoints can measure
+// the junction; punchOut's transit loop calls these two there.
+//
+// A KNOT, as the log replay defines it: the course reverses (>KNOT_TURN_DEG of
+// deflection) with less water than the hull can turn in (<KNOT_STEP_M on the shorter
+// leg). Wider reversals are the documented straight-hop class - flyable as a wide
+// swing, reported by the nNoTurn banner - so the thresholds are deliberately the knot
+// detector's, NOT pruneStitch's 60°: a lane via lawfully leaves a line end steeply,
+// and eating those points would trade Rule 9 discipline for no safety.
+export const KNOT_TURN_DEG = 150, KNOT_STEP_M = 12;
+export function junctionKnot(a, b, c){           // the b-vertex: arrive a->b, leave b->c
+  const t = Math.abs(((azTo(b, c) - azTo(a, b) + 540) % 360) - 180);
+  return t > KNOT_TURN_DEG && Math.min(distTo(a, b), distTo(b, c)) < KNOT_STEP_M;
+}
+// Prune a routed via's JUNCTION knots: while the seam at a line end folds (deflection
+// past KNOT_TURN_DEG) within a VIA step shorter than KNOT_STEP_M, and the bridge to
+// the next point connects CLEAR, the folding point goes - the same lawful-by-
+// construction rule as pruneStitch, applied where it cannot reach. The drop keys on
+// the via's OWN step, not junctionKnot's min-of-both-legs: a sliver LINE under
+// KNOT_STEP_M would otherwise keep the knot test true whatever is dropped and drain a
+// lawful via to nothing. An obstacle-forced fold keeps its points (the bridge
+// refuses) and it is the CALLER's job to report it rather than ship it silently.
+export function pruneJunctionKnots(lineIn, Ap, via, Bp, lineOut, ref, ko, buf){
+  via = via.slice();
+  const folds=(a,b,c)=>Math.abs(((azTo(b,c)-azTo(a,b)+540)%360)-180) > KNOT_TURN_DEG;
+  while(via.length && folds(lineIn, Ap, via[0]) && distTo(Ap, via[0]) < KNOT_STEP_M &&
+        legClear(Ap, via[1] || Bp, ref, ko, buf)) via.shift();
+  while(via.length && folds(via[via.length-1], Bp, lineOut) && distTo(via[via.length-1], Bp) < KNOT_STEP_M &&
+        legClear(via[via.length-2] || Ap, Bp, ref, ko, buf)) via.pop();
+  return via;
+}
 // ============================================================================
 // CHANNEL LANE (ported from the sibling console, 2026-07-31). COLREGS Rule 9 for
 // every transit: ride a lane offset to STARBOARD of the channel CENTRELINE, half

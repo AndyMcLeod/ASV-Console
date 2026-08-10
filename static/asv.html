@@ -608,8 +608,9 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          ptInGeom, segSamplesEN } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
-         channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear, legPath,
-         narrowChannelLane, planNogoRoute, pruneStitch, rasterKeepouts, regionOrder,
+         channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
+         junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
+         pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM,
          WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts,
@@ -2894,7 +2895,21 @@ async function punchOut(){
       const around=routeAround(Ap,Bp,ref,koHere,buffer);
       if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
         const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer).route;  // route only: no banner here
-        patTransits.push(kr.slice(1,-1)); patRoutes.push(kr);
+        // The route meets the survey line AT Ap/Bp and the line's heading is outside
+        // it, so channelLaneRoute's knot prune (interior corners) cannot unfold a
+        // reversal folded at the junction - the seam that sent wpt 551 (176° in
+        // 4.5 m) to the boat. Measure it with the line context only this loop holds.
+        const via=pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, buffer);
+        // a fold an obstacle genuinely forces cannot be pruned away; count it as a
+        // reversal with no clear turn (it is one) instead of shipping it silently
+        const inKnot=junctionKnot(patClip[k][0], Ap, via[0]||Bp);
+        if(inKnot || junctionKnot(via[via.length-1]||Ap, Bp, patClip[k+1][1])){
+          nNoTurn++;
+          const seg=inKnot ? [Ap, via[1]||Bp] : [via[via.length-2]||Ap, Bp];  // the bridge that refused
+          const fb=firstBlockAlong(seg[0], seg[1], ref, koHere, buffer);
+          if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at});
+        }
+        patTransits.push(via); patRoutes.push([Ap,...via,Bp]);
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
