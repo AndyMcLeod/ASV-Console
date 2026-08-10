@@ -1297,14 +1297,15 @@ function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, 
 // DISTANCE IS CACHED, TIME IS NOT: seconds are derived at render from the CURRENT plan
 // speed, so a speed change re-times both rows instantly without re-routing anything.
 //
-// While a survey is RUNNING the transit row reads "--": the approach is already flown or
-// under way (the Mission card owns the live ETA), and freezing it keeps a moving boat from
-// re-running A* every 50 m for a number nobody is planning with.
+// The transit row stays LIVE while a run is under way (Andy's call, 2026-08-10 — the first
+// cut blanked it to "--" once running, and he watched the boat fly the transit against a
+// dash). The 50 m re-key bucket is what makes that affordable: one re-route per 50 m of
+// real motion, not one per telemetry frame.
 const TRANSIT_REKEY_M = 50;
 let transitEst = {key:"", busy:false, transit:null, rth:null};
 function routeLenM(from, route){ let m=0, prev=from;
   for(const p of (route||[])){ m += distTo(prev, p); prev = p; } return m; }
-function transitEstBoat(){ return (S && S.run==="running") ? null : asv; }
+function transitEstBoat(){ return asv; }
 function transitEstKey(boat, wps, home){
   if(!wps || !wps.length) return "";
   const w0=wps[0], wL=wps[wps.length-1];
@@ -1373,7 +1374,7 @@ function renderLineTable(){
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
   const estSpd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;   // time from CURRENT plan speed
   let html=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
-    transitRowHtml("transit → L1:", (S&&S.run==="running")?null:transitEst.transit, estSpd)+
+    transitRowHtml("transit → L1:", transitEst.transit, estSpd)+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
   // TURNS - independent components between lines, timed separately from the lines.

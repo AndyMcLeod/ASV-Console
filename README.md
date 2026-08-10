@@ -285,8 +285,8 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    transit row; no home, no RTH row; planner refusal, the refusal itself in the
    row ("unroutable — the target sits in land"); nogo not loaded, the figure
    marked **direct**. A plan-speed change re-times both rows instantly from the
-   cached routed distance — no re-route — and while a run is under way the transit
-   row reads `--` (the Mission card owns the live ETA).
+   cached routed distance — no re-route — and the transit row stays **live during
+   the run**, re-routing once per 50 m of real motion as the boat closes on line 1.
 
    **The chart menu + the measuring tool (right-click).** Right-clicking the chart
    opens the **point commands** — its header names the position you clicked:

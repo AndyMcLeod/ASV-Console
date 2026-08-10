@@ -319,14 +319,15 @@ planCalls = []; planScript = {};
         k0 !== kHome);
 }
 
-// 15c. While a run is under way the boat leaves the estimate entirely (the Mission card
-// owns the live ETA) — a moving boat must not re-run the router every rekey cell.
+// 15c. The transit row stays LIVE during a run — the first cut blanked it once running
+// and Andy watched the boat fly the transit against a dash. The 50 m re-key bucket is the
+// cost control, not a run-state gate.
 {
   S = { run: "running", home: S.home }; asv = at(50, 50);
-  check("15c. a running boat is not an estimator input",
-        transitEstBoat() === null);
+  check("15c. a RUNNING boat still feeds the transit estimate",
+        transitEstBoat() === asv);
   S = { run: "idle", home: S.home };
-  check("15d. ... and it returns when the run ends", transitEstBoat() === asv);
+  check("15d. ... and so does an idle one", transitEstBoat() === asv);
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

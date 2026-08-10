@@ -37,8 +37,10 @@ real change (boat > `TRANSIT_REKEY_M` = 50 m, plan endpoints, home, nogo identit
 **metres are cached, seconds are derived at render from the CURRENT plan speed**, so a
 speed change re-times instantly with no re-route (verified live: 13:13→6:36 at
 survey→high, same 2.85 km). Rows degrade ALONE and honestly (no fix / no home / planner's
-own refusal / "direct" when nogo unloaded); while a run is under way the transit row is
-`--` and the boat leaves the cache key (the Mission card owns the live ETA).
+own refusal / "direct" when nogo unloaded). **The run-state gate was REMOVED the same day
+it shipped:** the first cut blanked the transit row to `--` once running, and Andy watched
+the boat fly the transit against a dash — the row now stays LIVE through the run, one
+re-route per 50 m bucket.
 `speed_recalc.js` 10→22, **7/7 mutations caught by the check that claims to guard each**
 (straight-line length, RTH-from-boat, swallowed refusal, fixed-speed time, hidden
 "direct", boat out of the key, running boat still routing). Read "THE LINES CARD'S
@@ -1079,11 +1081,14 @@ leg — an RTH after a completed survey departs from where the survey ends).
 `TRANSIT_REKEY_M` (50 m) cells, so GPS jitter never re-routes but real motion does. The
 cache stores METRES; SECONDS are derived at render from the current plan speed —
 `mission.speed` re-times both rows in the same click with zero routing (measured live:
-13:13 → 6:36 on survey → high, distance unchanged). While `S.run === "running"` the boat
-leaves the key and the transit row reads `--`: the approach is being flown, the Mission
-card owns the live ETA, and a moving boat must not re-run A* every 50 m for a number
-nobody is planning with. No `ensureNogoCovers` in the passive path — a readout must not
-trigger chart extraction; the command paths still widen the extract before flying.
+13:13 → 6:36 on survey → high, distance unchanged). **A run-state gate here was shipped
+and REVERSED the same day (Andy: "the transit line out to the survey does not land in the
+lines card"): the first cut blanked the transit row to `--` while running, reasoning the
+Mission card owns the live ETA — but the operator flying the transit is exactly who wants
+the number.** The row stays live through the run; the 50 m bucket (one re-route per 50 m
+of real motion, ~every 14 s at survey speed) is the cost control a run-state gate was
+wrongly doing double duty for. No `ensureNogoCovers` in the passive path — a readout must
+not trigger chart extraction; the command paths still widen the extract before flying.
 
 **EACH ROW DEGRADES ALONE AND SAYS WHY:** no fix → transit `--` while RTH still answers
 (it never needed the boat); no home → the mirror; a planner REFUSAL renders as
