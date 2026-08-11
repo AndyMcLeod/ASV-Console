@@ -42,6 +42,15 @@ export const V = {
   // COLREGS Rule 9 keep-right wall-detection reach (m): a channel engages keep-right only
   // when BOTH walls are within this on each side. null -> the buf*10 tight-marina default.
   CHANNEL_REACH_M: null,
+  // Shortest survey line worth running, in metres, AS RUN (after the turn margin is taken
+  // off both ends). A survey line costs two turns whatever its length, so below some
+  // length the boat spends more time manoeuvring onto the line than surveying it - and
+  // that length is a property of the HULL, not of the survey. A 7.7 m DriX at survey
+  // speed needs ~20 m of turning radius, so an 80 m line is mostly turn; a 1.3 m Z-Boat
+  // turns in its own length and short lines are exactly what it is for. 0 = keep every
+  // line (the default, so a vessel file that says nothing behaves as it always did).
+  // SURVEYS ONLY - transits, search patterns and hand-drawn lines are never filtered.
+  MIN_SURVEY_LINE_M: 0,
   // Intrinsic radius for a charted point hazard of UNKNOWN extent - a wreck symbol is a
   // position, not a size, and the casualty under it can be a 100 m ship.
   WRECK_RADIUS_M: 50,

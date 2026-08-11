@@ -38,6 +38,7 @@
   "planning": {
     "nogo_buffer_m": 8.0,
     "under_keel_clearance_m": 0.65,
+    "min_survey_line_m": 25,
     "search": {
       "expbox_step_m": 20,
       "sector_radius_m": 60,

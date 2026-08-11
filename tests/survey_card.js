@@ -161,6 +161,107 @@ check("11. a single-line plan reports length and count, and no spacing",
           && one.spacing === null && one.width === null,
       one ? "len=" + one.legLength.toFixed(0) + " spacing=" + one.spacing : "null");
 
+// --- 12-17: the per-vessel MINIMUM SURVEY LINE ---------------------------------------- //
+// Andy, 2026-08-10: "short survey lines are inefficient and unnecessary for vessels the
+// size of DriX. For the ZBoat this would be fine... If a generated plan has lines or line
+// segments of less than 80m cut them out of the plan and jump straight to the next
+// waypoint. This applies only to surveys." A line costs two turns whatever its length, so
+// the threshold is a property of the HULL - which is why it is vessel configuration
+// (planning.min_survey_line_m) and not a constant in the page.
+//
+// THE MEASUREMENT THAT MATTERS: length AS RUN. shortenSeg takes the turn margin off both
+// ends before the comparison, so a 100 m line at 30 m spacing is judged on the 70 m the
+// boat actually surveys, not the 100 m that was drawn.
+{
+  const { distTo } = require("../static/js/geodesy.js");
+  const { V } = require("../static/js/state.js");
+  eval(grab("shortenSeg"));                       // the REAL shortener, not a copy
+
+  const LAT0 = 38.7896, LON0 = -75.1609;
+  const mPerLon = M_PER_DEG_LAT * Math.cos(LAT0 * Math.PI / 180);
+  const at = (e, n) => ({ lat: LAT0 + n / M_PER_DEG_LAT, lon: LON0 + e / mPerLon });
+  // RUN THE SHIPPED LINES, DO NOT PARAPHRASE THEM. The first version of this block
+  // reimplemented the filter in the harness; every behavioural mutation of the page then
+  // SURVIVED, because the checks were grading a copy. (Same trap as measure_tool 15b: a
+  // check on a mechanism has to execute the mechanism.) So the statements are lifted from
+  // punchOut verbatim and eval'd with the harness supplying their inputs - mutate the
+  // page and these fail, which is the whole point.
+  const PUNCH_SRC = (() => {
+    const a = H.indexOf("const minLine = V.MIN_SURVEY_LINE_M");
+    const b = H.indexOf("const nShort = shortened.length - patClip.length;");
+    if (a < 0 || b < 0) throw new Error("test setup: the min-line block moved or was renamed");
+    return H.slice(a, b + "const nShort = shortened.length - patClip.length;".length);
+  })();
+  const punch = (rawLensM, turnMargin, minSetting) => {
+    const ro = { ordered: rawLensM.map((L, i) => [at(i * 40, 0), at(i * 40, L)]) };
+    const prev = V.MIN_SURVEY_LINE_M;
+    V.MIN_SURVEY_LINE_M = minSetting;              // the value a vessel file would supply
+    let patClip = null, nShort = 0;
+    try {
+      // eslint-disable-next-line no-eval
+      const out = eval("(function(ro, turnMargin, V, distTo, shortenSeg){ let patClip;\n"
+                       + PUNCH_SRC + "\n return {patClip, nShort}; })")
+                  (ro, turnMargin, V, distTo, shortenSeg);
+      patClip = out.patClip; nShort = out.nShort;
+    } finally { V.MIN_SURVEY_LINE_M = prev; }
+    return { kept: patClip, dropped: nShort,
+             lens: patClip.map(s => Math.round(distTo(s[0], s[1]))) };
+  };
+
+  // 12. THE ACCEPTANCE HALF, first: a threshold that keeps the long lines is the whole
+  // point. A filter that dropped everything would pass a refusal-only check.
+  const r12 = punch([300, 300, 300], 2, 80);
+  check("12. lines comfortably over the minimum are ALL kept",
+        r12.kept.length === 3 && r12.dropped === 0,
+        "kept " + r12.lens.join(",") + " m");
+
+  // 13. ... and the refusal half: the short ones go, the long ones stay, in one plan.
+  const r13 = punch([300, 40, 300, 60], 2, 80);
+  check("13. lines under the minimum are dropped, longer ones survive the same punch",
+        r13.kept.length === 2 && r13.dropped === 2 && r13.lens.every(l => l > 80),
+        "kept " + r13.lens.join(",") + " m, dropped " + r13.dropped);
+
+  // 14. MEASURED AS RUN. A 100 m line at a 15 m turn margin runs as 70 m: under an 80 m
+  // minimum it must go, even though it was drawn longer than the threshold.
+  const r14 = punch([100], 15, 80);
+  check("14. the length compared is AS RUN (after the turn margin), not as drawn",
+        r14.kept.length === 0 && r14.dropped === 1,
+        "100 m drawn − 2×15 m margin = 70 m run, under the 80 m minimum");
+
+  // 15. ZERO MEANS KEEP EVERYTHING - the Z-Boat case, and the default for any vessel file
+  // that says nothing. Andy: "For the ZBoat this would be fine."
+  const r15 = punch([300, 40, 300, 12], 2, 0);
+  check("15. a minimum of 0 keeps every line - the Z-Boat / legacy-file behaviour",
+        r15.kept.length === 4 && r15.dropped === 0,
+        "kept " + r15.lens.join(",") + " m");
+
+  // 16. The threshold reaches the page THROUGH V, and the page reads it from the vessel
+  // block - never a literal. A hardcoded 80 would be correct for the DriX and wrong for
+  // every other hull, which is precisely the bug this is shaped to prevent.
+  check("16. punchOut takes the minimum from V, not from a constant in the page",
+        /const minLine\s*=\s*V\.MIN_SURVEY_LINE_M/.test(H)
+          && /V\.MIN_SURVEY_LINE_M\s*=\s*\(v\.planning/.test(H),
+        "must read V.MIN_SURVEY_LINE_M, itself set from v.planning.min_survey_line_m");
+  check("16b. ... and V carries a 0 default, so a vessel file that omits it is unchanged",
+        V.MIN_SURVEY_LINE_M === 0,
+        "state.js default = " + V.MIN_SURVEY_LINE_M);
+
+  // 17. NEVER SILENTLY. Dropping coverage the operator drew has to be said out loud, with
+  // the count and the threshold - otherwise a thin survey reads as a chart fault.
+  check("17. the punch-out readout reports how many lines were dropped, and the threshold",
+        /nShort\s*\?\s*`,\s*\$\{nShort\}\s*line\(s\) under \$\{minLine\} m dropped/.test(H),
+        "the hint must name both the count and the minimum");
+
+  // 17b. The three shipped hulls state their own value: the DriX at Andy's 80 m, the
+  // Z-Boat explicitly 0 (short lines are what it is for), the example in between.
+  const vess = f => JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", f), "utf8"));
+  const drix = vess("drix08.json").planning.min_survey_line_m;
+  const zb = vess("zboat_1800hs.json").planning.min_survey_line_m;
+  check("17b. each shipped hull declares its own minimum (DriX 80, Z-Boat 0)",
+        drix === 80 && zb === 0,
+        "drix=" + drix + " zboat=" + zb);
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

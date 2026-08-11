@@ -890,6 +890,10 @@ function applyVesselToUI(v){
     V.NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
   // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
   V.CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
+  // Shortest survey line this hull is worth putting on the water (0 = keep every line).
+  // Absent or non-numeric reads as 0, so an older vessel file behaves exactly as before.
+  V.MIN_SURVEY_LINE_M = (v.planning && typeof v.planning.min_survey_line_m==="number"
+                         && v.planning.min_survey_line_m > 0) ? v.planning.min_survey_line_m : 0;
   // vessel-scaled search-pattern defaults (only overwrite blanks/unfocused inputs)
   const s = (v.planning && v.planning.search) || {};
   const setDefault = (id,val)=>{ const el=$("#"+id); if(el && val!=null && document.activeElement!==el) el.value=val; };
@@ -3052,7 +3056,30 @@ async function punchOut(){
     // clears that radius the turn is a semicircle; where it doesn't, teardropTurn
     // loops at minTurnR instead (wider, reaches further outboard) rather than giving up.
     const minTurnR = minTurnRadiusM(mission.speed || "survey");
-    patClip = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin)).filter(s=>distTo(s[0],s[1])>1);
+    // MINIMUM SURVEY LINE (per-vessel, Andy 2026-08-10: "short survey lines are
+    // inefficient and unnecessary for vessels the size of DriX... for the ZBoat this
+    // would be fine"). A line costs two turns whatever its length, so below some length
+    // the boat spends longer manoeuvring onto it than surveying it. That length belongs
+    // to the HULL, so it lives in vessels/<id>.json as planning.min_survey_line_m and
+    // reaches here through V - never a constant in this file.
+    //
+    // MEASURED AS RUN, not as drawn: the length compared is the segment AFTER shortenSeg
+    // has taken the turn margin off both ends, because that is the water the boat
+    // actually surveys. A 100 m line at 30 m spacing runs as 70 m, and 70 m of coverage
+    // is what the operator is deciding about.
+    //
+    // The dropped segments simply leave the plan; the ordering already ran, so the
+    // survivors keep their serpentine and the transit loop below bridges the gap the
+    // same way it bridges any other line-to-line hop - "jump straight to the next
+    // waypoint", with the turn / straight / route-around ladder unchanged.
+    const minLine = V.MIN_SURVEY_LINE_M || 0;
+    const shortened = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin))
+                                .filter(s=>distTo(s[0],s[1])>1);
+    patClip = minLine > 0 ? shortened.filter(s=>distTo(s[0],s[1]) >= minLine) : shortened;
+    // NEVER SILENTLY. Dropping coverage the operator asked for is exactly the kind of
+    // thing that must be said out loud, with the number and the threshold, or a thin
+    // survey looks like a chart problem instead of a setting.
+    const nShort = shortened.length - patClip.length;
     patTransits=[]; patRoutes=[]; patUnsafe=[];
     let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
@@ -3129,6 +3156,7 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      (nShort?`, ${nShort} line(s) under ${minLine} m dropped (this hull's minimum)`:``)+
       (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
       (nTear?`, ${nTear} teardrop turn(s) @ R ${minTurnR.toFixed(1)} m (reaching ${maxOutboard.toFixed(0)} m past the line ends)`:``)+
       (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight${nChanTurn?`; ${nChanTurn} refused by a navigation channel`:``})`:``)+

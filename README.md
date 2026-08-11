@@ -361,6 +361,19 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    serpentine. At each line-to-line reversal Punch Out inserts a **generated turn**
    that rolls the boat onto the next line *aligned* with its heading instead of
    pivoting hard, and **shortens the survey lines** slightly to give the turn room.
+
+   **Minimum survey line (per vessel).** A survey line costs two turns whatever its
+   length, so below some length the boat spends longer manoeuvring onto the line
+   than surveying it. That length belongs to the *hull*, so it is vessel
+   configuration — `planning.min_survey_line_m`. Any segment shorter than it is cut
+   from the plan and the boat runs straight on to the next one. The length judged is
+   the segment **as run**, after the turn margin comes off both ends, since that is
+   the water actually surveyed. **0 (or an absent setting) keeps every line** — a
+   small survey launch is built for exactly the short lines a large vessel should
+   skip. Whatever is dropped is named in the Punch Out readout with the count and the
+   threshold: coverage is never removed silently. **Surveys only** — transits, search
+   patterns and hand-drawn lines are never filtered. Shipped values: the 7.7 m DriX
+   **80 m**, the 4 m example USV **25 m**, the 1.3 m Z-Boat **0**.
    Every turn is built at a radius the boat can actually **hold** at the run speed
    (from the vessel file's `max_turn_rate_deg_s`), in one of two shapes:
 

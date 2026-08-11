@@ -24,9 +24,34 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-10, fifth refresh — a wind rose on the chart)
+## ⇒ START HERE (handoff refreshed 2026-08-10, sixth refresh — the hull decides its shortest line)
 
-**NEWEST (this commit): THE WIND ROSE (Andy's ask).** "Need a wind speed and direction on
+**NEWEST (this commit): THE MINIMUM SURVEY LINE, PER VESSEL (Andy's ask).** "Short survey
+lines are inefficient and unnecessary for vessels the size of DriX. For the ZBoat this
+would be fine... if a generated plan has lines or line segments of less than 80m cut them
+out of the plan and jump straight to the next waypoint. This applies only to surveys.
+Figure out how to apply this to vessel configuration." A line costs TWO TURNS whatever its
+length, so the threshold belongs to the HULL — `planning.min_survey_line_m`, reaching
+punchOut through `V.MIN_SURVEY_LINE_M`, never a constant in the page. Shipped: DriX **80**,
+example USV **25**, Z-Boat **0**. **Absent or 0 = keep every line**, so an older or
+third-party vessel file behaves exactly as before (the parameter is deliberately OPTIONAL,
+like `channel_reach_m` — not added to `_VESSEL_SCHEMA`).
+**THE DECISION THAT MATTERS: the length compared is AS RUN**, i.e. after `shortenSeg` has
+taken the turn margin off both ends, because that is the water the boat actually surveys —
+a 100 m line at 30 m spacing runs as 70 m and is judged on the 70. One line changed in
+punchOut, right where the existing `>1 m` sliver filter already sat; the ordering has
+already run, so survivors keep their serpentine and the transit loop bridges the gap with
+its usual turn / straight / route-around ladder. **NEVER SILENTLY** — the punch-out hint
+names the count and the threshold, or a thin survey reads as a chart fault.
+**⚠ A TESTING LESSON, RE-LEARNED THE HARD WAY:** my first version of checks 12-15
+REIMPLEMENTED the filter in the harness. Every behavioural mutation of the page SURVIVED,
+because the checks were grading a copy. The block is now LIFTED FROM `asv.html` VERBATIM
+and eval'd with the harness supplying its inputs — same trap as `measure_tool` 15b, and
+the same cure: **a check on a mechanism must execute the mechanism.** `survey_card.js`
+11→19; 6/8 mutations caught by their own check, one more caught loudly by the crash guard
+(hardcoding the threshold makes the harness refuse to find the block at all).
+
+**THE WORK BEFORE THIS ONE (same day): THE WIND ROSE (Andy's ask).** "Need a wind speed and direction on
 the chart. Create a small wind rose with direction and speed that can be dragged around."
 Then, on seeing a compass-rose reference: **"I do not want that on a card or chip.
 Something like this with background transparency."** So it is a CHART OVERLAY painted in
@@ -119,7 +144,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 615 assertions** (18 JS / 318,
+turn-water hold is closed (`a548c14`). **37 regression suites / 623 assertions** (18 JS / 326,
 19 Python / 297), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -152,7 +177,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (615 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (623 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

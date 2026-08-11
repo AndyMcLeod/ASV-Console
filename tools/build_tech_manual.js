@@ -214,7 +214,7 @@ c.push(TBL(["Block", "Fields", "Drives"], [
   ["`maneuvering`", "`max_turn_rate_deg_s`, `approach_m`, `lookahead_m`, `arrival_radius_m`", "Minimum turn radius, survey turn geometry, waypoint following"],
   ["`autopilot`", "`xte_ki_deg`, `xte_i_max_deg`", "Cross-track integral term under a steady sideways push"],
   ["`power`", "`type` = `battery` (voltage sag) or `fuel` (litres, burn curve)", "Endurance, range, the console's energy gauge"],
-  ["`planning`", "`nogo_buffer_m`, `under_keel_clearance_m`, optional `channel_reach_m`, `roc`, `search`", "Keep-out buffer, depth floor, channel lane reach, ROC defaults, search sizes"],
+  ["`planning`", "`nogo_buffer_m`, `under_keel_clearance_m`, optional `channel_reach_m`, optional `min_survey_line_m`, `roc`, `search`", "Keep-out buffer, depth floor, channel lane reach, shortest survey line worth running for this hull, ROC defaults, search sizes"],
   ["`spawn`", "`lat`, `lon`", "Where the simulated vessel comes up"],
 ], [1500, 3700, 4160]));
 c.push(SP());
@@ -302,6 +302,7 @@ c.push(P("A three-click pattern (start corner, opposite corner, then a spacing a
 c.push(B("Clip every line to nogo-clear water, sampling at buffer resolution."));
 c.push(B("Re-order the result so each obstacle-free region is run as its own serpentine and no leg is numbered through a keep-out."));
 c.push(B("Shorten each segment at both ends to settle on-line and leave turning room."));
+c.push(B("Drop any segment shorter than this hull's minimum survey line and bridge straight to the next one. A line costs two turns whatever its length, so below some length the vessel spends longer manoeuvring onto it than surveying it — and that length is a property of the hull, so it is vessel configuration (planning.min_survey_line_m), not a constant. The length judged is the segment AS RUN, after the turn margin has been taken off both ends, because that is the water actually surveyed. Zero, or an absent setting, keeps every line: a small survey launch is built for exactly the short lines a large vessel should skip. Whatever is dropped is reported in the punch-out readout with the count and the threshold — coverage is never removed silently. Surveys only; transits, search patterns and hand-drawn lines are never filtered."));
 c.push(B("Generate a turn at every line-to-line reversal (below)."));
 c.push(B("Route the remaining transits: straight if clear, else around the obstacle with the channel lane applied, else flag them."));
 c.push(H2("8.2  Turn geometry"));
