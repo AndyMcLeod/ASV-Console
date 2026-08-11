@@ -510,6 +510,41 @@ check("26c no call site hard-codes a display any more - every one derives it",
       () => HARDCODED.length ? HARDCODED.join(" | ")
                              : showPanelCalls().length + " showPanel calls, none hard-coded");
 
+// --- 27: the WIND ROSE is the one movable thing that is NOT a panel ------------------- //
+// Andy asked for it "on the chart... with background transparency", explicitly not a card
+// or chip, so it is painted straight onto the map canvas and cannot use makeDraggablePanel
+// (there is no DOM element to move). That exemption is fine; what is NOT fine is the thing
+// it creates: an object sitting over the chart in EVERY mode, which the mode chain would
+// otherwise act underneath - a press on it dropping a waypoint, placing a pattern corner
+// or anchoring a measurement. Same class as the right-button misfire the chain already
+// guards. Verified live before this was written: in WPT mode a press on the rose added no
+// waypoint while a press on open water still did.
+{
+  const md = H.slice(H.indexOf('mapEl.addEventListener("mousedown"'),
+                     H.indexOf('window.addEventListener("mouseup"'));
+  const roseAt = md.indexOf("roseAt(");
+  const firstMode = md.indexOf('mode === "survey"');
+  check("27. the wind rose claims a press BEFORE any mode handler sees it",
+        () => roseAt >= 0 && firstMode >= 0 && roseAt < firstMode,
+        () => "roseAt at " + roseAt + ", first mode branch at " + firstMode
+              + " (rose must come first, or a press on it edits the plan underneath)");
+  // the branch body carries object literals, so brace-counting a regex is the wrong tool:
+  // assert instead that a `return` lands between the hit test and the first mode branch
+  const branch = md.slice(roseAt, firstMode);
+  check("27b. ... and it RETURNS, so no pan starts under it either",
+        () => /\breturn;/.test(branch),
+        () => "no `return` between roseAt() and the first mode branch - the chain runs on");
+  check("27c. releasing the drag PERSISTS the position, so it survives a reload",
+        () => /roseDrag\s*\)\s*\{[\s\S]{0,220}lsSet\(ROSE_KEY/.test(H),
+        () => "mouseup must lsSet(ROSE_KEY, ...)");
+  // The rose is clamped on READ, not on write - a window resize can strand a position
+  // that was legal when it was saved. roseCentre() is the only place that answers "where
+  // is it", so the clamp belongs there and nowhere else.
+  check("27d. the position is clamped inside the viewport every time it is read",
+        () => /function roseCentre\(\)[\s\S]{0,400}Math\.max\(ROSE_R[\s\S]{0,120}Math\.min\(/.test(H),
+        () => "roseCentre() must clamp, or a resize can strand it off-screen");
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

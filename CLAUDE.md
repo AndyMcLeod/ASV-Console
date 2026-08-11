@@ -24,9 +24,32 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-10, fourth refresh — the Lines card quotes the whole day)
+## ⇒ START HERE (handoff refreshed 2026-08-10, fifth refresh — a wind rose on the chart)
 
-**NEWEST (this commit): TRANSIT + RTH TIMES ON THE LINES CARD (Andy's ask).** Two rows
+**NEWEST (this commit): THE WIND ROSE (Andy's ask).** "Need a wind speed and direction on
+the chart. Create a small wind rose with direction and speed that can be dragged around."
+Then, on seeing a compass-rose reference: **"I do not want that on a card or chip.
+Something like this with background transparency."** So it is a CHART OVERLAY painted in
+`render()` — no panel, no uicard, nothing behind it — which is why it is the ONE movable
+thing here that does not use `makeDraggablePanel` (that mechanism moves DOM elements;
+there is no element). Graduated ring (5° ticks, longer every 30°), 8-point star, cardinal
+letters, a needle whose RED half points where the wind is GOING so the barb sits on the
+side it blows FROM, speed + from-direction at the hub. `ROSE_R` is the ONE dimension and
+every number derives from it — the `327ce0c` lesson that killed the deleted ENV-card rose,
+applied up front rather than after Andy spotted it.
+**⚠ THE HAZARD IT CREATES, and the reason it has checks: it sits over the chart in EVERY
+mode**, so without a guard a press on it would drop a waypoint / place a pattern corner /
+anchor a measurement UNDERNEATH it — the same class as the right-button misfire. It claims
+the press before any mode branch and returns. **Proven live: in WPT mode a press on the
+rose added NO waypoint while a press on open water still did.** `panel_drag.js` 29→33.
+**It also broke `measure_tool.js` for real** (its `gesture()` harness evals the mouseup
+chain and had no `roseDrag`) — fixed by giving the harness the true value, `null`, not a
+convenience stub. Andy then asked for **double size and black rings/lettering**: `ROSE_R`
+46→92, `ROSE_INK`/`ROSE_INK_SOFT` constants, and I flipped the readout to dark-on-light-halo
+too, since black rings on a pale NOAA tile would have left a light readout the only
+illegible thing on it.
+
+**THE WORK BEFORE THIS ONE (same day): TRANSIT + RTH TIMES ON THE LINES CARD (Andy's ask).** Two rows
 bracketing the per-line table: the **ENC-routed** time/distance from the boat to line 1,
 and from the last line home — the same `planNogoRoute` every behaviour flies, because at
 Lewes the straight line to the survey area crosses LAND (the vessel card's `#v_approach`
@@ -96,7 +119,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 611 assertions** (18 JS / 314,
+turn-water hold is closed (`a548c14`). **37 regression suites / 615 assertions** (18 JS / 318,
 19 Python / 297), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -129,7 +152,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (611 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-SEVEN REGRESSION SUITES (615 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

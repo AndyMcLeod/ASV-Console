@@ -1139,9 +1139,117 @@ function render(){
   }
   drawPatMoveGrip();                                // above the boat — it is a HANDLE, not decoration
   drawMeasure(toScreen);                            // the operator's own ruler — over everything it measures
+  drawWindRose();                                   // ON the chart, transparent — not a card
   drawViolation(toScreen);                          // refusal highlight (on top)
   $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
   $("#r_wpts").textContent = mission.waypoints.length;
+}
+
+// --- WIND ROSE (Andy's ask, 2026-08-10) ------------------------------------------- //
+// ON THE CHART, NOT IN A CARD. He was explicit: "I do not want that on a card or chip...
+// with background transparency." So this is a chart OVERLAY drawn straight onto the map
+// canvas in render() — no panel, no uicard, no drag-grip header, nothing behind it. It is
+// the only movable thing here that is not a DOM panel, which is why it carries its own
+// tiny hit test and drag rather than reusing makeDraggablePanel (that mechanism moves
+// DOM elements; there is no element to move).
+//
+// A NOTE ON THE ONE THAT WAS DELETED. An ENV-card wind rose shipped and was cut whole at
+// Andy's instruction (`324b1b7`); its geometry was reused here in spirit, and so was the
+// lesson from `327ce0c` that killed it the first time: EVERY dimension derives from ONE
+// radius. The original drew 9/11/8 px fonts, 4/7 px ticks and 1-2.2 px strokes as
+// absolute pixels while only the radius scaled, so the composition changed shape as it
+// grew. Here R is the single input and every number below is a fraction of it — see
+// [[verify-the-ink-not-the-box]].
+//
+// WHAT IT SHOWS: the wind the sim is actually pushing the boat with, FROM-direction (the
+// meteorological convention the readouts already use), speed in knots at the centre.
+const ROSE_KEY = "asv_windrose_v1";
+const ROSE_R = 92;                                    // the ONE dimension; everything derives
+// Ring + lettering ink (Andy, 2026-08-10: "make the rings and lettering black"). Kept as
+// named constants so the two are changed together and neither drifts into a literal.
+const ROSE_INK = "rgba(8,14,20,0.92)";                // rings, ticks, cardinal letters
+const ROSE_INK_SOFT = "rgba(8,14,20,0.62)";           // the 5° minor ticks
+let rosePos = lsGet(ROSE_KEY, null);                  // {x,y} chart-local centre, or null = default
+let roseDrag = null;                                  // {dx,dy} grab offset while dragging
+let roseEnv = null;                                   // last env block seen (wind lives here)
+function roseCentre(){
+  const {w,h} = viewSize();
+  const p = rosePos || {x: w - (ROSE_R + 18), y: h - (ROSE_R + 58)};   // default: clear of the scale bar
+  return {x: Math.max(ROSE_R, Math.min(w - ROSE_R, p.x)),              // clamp: never off-screen
+          y: Math.max(ROSE_R, Math.min(h - ROSE_R, p.y))};
+}
+function roseAt(cx, cy){ const c = roseCentre();
+  return Math.hypot(cx - c.x, cy - c.y) <= ROSE_R; }
+// Draw one 4-point star arm (a kite: tip, two shoulders at the hub, back to the hub).
+function roseArm(ctx, ang, len, halfW, fill){
+  ctx.save(); ctx.rotate(ang); ctx.beginPath();
+  ctx.moveTo(0, -len); ctx.lineTo(halfW, 0); ctx.lineTo(0, halfW*0.55); ctx.lineTo(-halfW, 0);
+  ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
+}
+function drawWindRose(){
+  const c = roseCentre(), R = ROSE_R;
+  const w = roseEnv && roseEnv.wind, simOff = roseEnv && roseEnv.source === "off";
+  const kn = (w && w.speed_kn != null) ? w.speed_kn : null;
+  const from = (w && w.dir_from_deg != null) ? w.dir_from_deg : null;
+  const live = !!(roseEnv && roseEnv.enabled && !simOff && kn != null);
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  if(roseDrag) ctx.globalAlpha = 0.85;                // being moved: lift it slightly
+  // --- graduated outer ring: a tick every 5°, longer every 30° ---------------
+  ctx.lineWidth = R*0.028; ctx.strokeStyle = ROSE_INK;
+  ctx.beginPath(); ctx.arc(0,0, R*0.98, 0, 2*Math.PI); ctx.stroke();
+  ctx.lineWidth = R*0.020;
+  ctx.beginPath(); ctx.arc(0,0, R*0.76, 0, 2*Math.PI); ctx.stroke();
+  for(let d=0; d<360; d+=5){
+    const a = d*Math.PI/180, lng = (d%30===0), r0 = R*0.76, r1 = R*(lng?0.90:0.845);
+    ctx.beginPath();
+    ctx.moveTo(Math.sin(a)*r0, -Math.cos(a)*r0);
+    ctx.lineTo(Math.sin(a)*r1, -Math.cos(a)*r1);
+    ctx.lineWidth = lng ? R*0.030 : R*0.016;
+    ctx.strokeStyle = lng ? ROSE_INK : ROSE_INK_SOFT;
+    ctx.stroke();
+  }
+  // --- the 8-point star ------------------------------------------------------
+  const DARK = "rgba(31,62,92,0.92)", DARKER = "rgba(20,44,68,0.92)";
+  for(let k=0;k<4;k++) roseArm(ctx, (k*90+45)*Math.PI/180, R*0.50, R*0.115, DARKER);  // inter-cardinals
+  for(let k=0;k<4;k++) roseArm(ctx, k*90*Math.PI/180,      R*0.70, R*0.150, DARK);    // cardinals
+  // --- cardinal letters, outside the ring -----------------------------------
+  ctx.fillStyle = ROSE_INK;
+  ctx.font = "600 " + (R*0.24).toFixed(1) + "px Consolas,monospace";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  [["N",0],["E",90],["S",180],["W",270]].forEach(([ch,d])=>{
+    const a = d*Math.PI/180, rr = R*1.20;
+    ctx.fillText(ch, Math.sin(a)*rr, -Math.cos(a)*rr);
+  });
+  // --- the WIND NEEDLE: red half points the way the wind is GOING, so the barb
+  // sits on the side it blows FROM (the operator reads "it is pushing me that way").
+  if(from != null){
+    ctx.save(); ctx.rotate((from + 180) * Math.PI/180);            // from -> toward
+    ctx.beginPath();                                                // leading (toward) half, red
+    ctx.moveTo(0, -R*0.86); ctx.lineTo(R*0.085, 0); ctx.lineTo(-R*0.085, 0); ctx.closePath();
+    ctx.fillStyle = live ? "rgba(200,58,52,0.95)" : "rgba(150,150,150,0.55)"; ctx.fill();
+    ctx.beginPath();                                                // trailing (from) half, teal
+    ctx.moveTo(0, R*0.86); ctx.lineTo(R*0.075, 0); ctx.lineTo(-R*0.075, 0); ctx.closePath();
+    ctx.fillStyle = live ? "rgba(46,134,171,0.95)" : "rgba(120,120,120,0.45)"; ctx.fill();
+    ctx.restore();
+  }
+  // --- hub + the reading -----------------------------------------------------
+  ctx.beginPath(); ctx.arc(0,0, R*0.13, 0, 2*Math.PI);
+  ctx.fillStyle = "rgba(10,20,28,0.90)"; ctx.fill();
+  ctx.lineWidth = R*0.030; ctx.strokeStyle = ROSE_INK; ctx.stroke();
+  const txt = simOff ? "sim only" : (kn != null ? kn.toFixed(0) + " kn" : (roseEnv && roseEnv.enabled ? "calm" : "off"));
+  const sub = (from != null && kn != null) ? String(Math.round(from)).padStart(3,"0") + "°" : "";
+  ctx.font = "700 " + (R*0.30).toFixed(1) + "px Consolas,monospace";
+  // Dark ink like the rings, over a LIGHT halo - the inverse of the chart's other labels.
+  // A NOAA harbour tile is pale, so black-on-light is the legible pairing here; the halo
+  // is what carries it across a dark depth-area fill or the boat's own track.
+  ctx.fillStyle = live ? ROSE_INK : "rgba(60,72,84,0.75)";
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.075;
+  ctx.strokeText(txt, 0, R*1.02); ctx.fillText(txt, 0, R*1.02);
+  if(sub){ ctx.font = "600 " + (R*0.22).toFixed(1) + "px Consolas,monospace";
+    ctx.strokeText(sub, 0, R*1.38); ctx.fillText(sub, 0, R*1.38); }
+  ctx.restore();
 }
 
 // signed cross-track distance to the nearest planned line
@@ -1170,7 +1278,7 @@ function surveyLineAtPx(cx, cy, tol){ const o=originPx(); let best=-1, bd=tol||8
 // running survey) shows the time to the end of that line. Only the active line.
 function updateLineTip(e){
   const tip=$("#lineTip"); const hide=()=>{ tip.style.display="none"; };
-  if(dragging||patDrag||boundDrag!=null||searchDrag){ return hide(); }
+  if(dragging||patDrag||boundDrag!=null||searchDrag||roseDrag){ return hide(); }
   const running = S && S.run==="running" && S.behavior==="survey";
   if(!running || !asv || runLineIdx<0 || !mission.lines.length){ return hide(); }
   const r=mapEl.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
@@ -2574,7 +2682,7 @@ function aisAt(clientX, clientY){ if(!aisShow || !aisVessels.length) return null
     const d=Math.hypot(p.x-o.x-cx, p.y-o.y-cy); if(d<bd){ bd=d; best=v; } }
   return best; }
 function updateAisTip(e){ const tip=$("#aisTip");
-  if(!aisShow || dragging||patDrag||boundDrag!=null||searchDrag||wpDrag){ tip.style.display="none"; return; }
+  if(!aisShow || dragging||patDrag||boundDrag!=null||searchDrag||wpDrag||roseDrag){ tip.style.display="none"; return; }
   const v=aisAt(e.clientX,e.clientY);
   if(!v){ tip.style.display="none"; return; }
   const nm = v.name ? v.name+" · " : "";
@@ -3078,6 +3186,15 @@ mapEl.addEventListener("mousedown", e=>{
   // there is no second place to keep in step. (This costs middle-button panning, which was
   // never a stated feature and carried the same misfire.)
   if(e.button !== 0) return;
+  // THE ROSE IS GRABBED BEFORE ANY MODE. It sits over the chart in every mode, so if the
+  // mode chain ran first a press on it would drop a waypoint / place a pattern corner /
+  // anchor a measurement UNDER it - the same class of fault the right-button guard above
+  // fixes. Claiming the press here (and returning) also means no pan starts beneath it.
+  { const r0 = mapEl.getBoundingClientRect();
+    const cx = e.clientX - r0.left, cy = e.clientY - r0.top;
+    if(roseAt(cx, cy)){ const c = roseCentre();
+      roseDrag = {dx: cx - c.x, dy: cy - c.y}; downAt = {x:e.clientX, y:e.clientY};
+      mapEl.style.cursor = "grabbing"; render(); return; } }
   if(mode === "survey"){ const h = patHandleAt(e.clientX, e.clientY);
     if(h){ patDrag = h; downAt={x:e.clientX,y:e.clientY};
       if(h==="M"){ const o=originPx(), r=mapEl.getBoundingClientRect();   // seed the move-grip delta
@@ -3107,6 +3224,9 @@ window.addEventListener("mouseup", e=>{
       }
     }
   }
+  if(roseDrag){ roseDrag=null; downAt=null; mapEl.style.cursor="";
+    lsSet(ROSE_KEY, roseCentre());                  // remember where he put it
+    render(); return; }
   if(patDrag){ patDrag=null; patMoveLast=null; downAt=null; updatePatReadout(); saveMission(); return; }
   if(boundDrag!=null){ boundDrag=null; downAt=null; patClip=null; updatePatReadout(); saveMission(); render(); return; }
   if(searchDrag){ searchDrag=false; downAt=null; updateSearchPanel(); return; }
@@ -3173,6 +3293,9 @@ window.addEventListener("mousemove", e=>{
   $("#r_cursor").textContent = fmtLL(ll.lat, ll.lon);
   updateLineTip(e);                              // time-to-end-of-line when hovering the active line
   updateAisTip(e);                               // AIS vessel identity/course on hover
+  if(roseDrag){                                  // chart-local, clamped on read by roseCentre()
+    rosePos = {x: (e.clientX-r.left) - roseDrag.dx, y: (e.clientY-r.top) - roseDrag.dy};
+    render(); return; }
   if(patDrag){
     if(patDrag==="M"){                            // move grip: translate every placed anchor by one delta
       if(patMoveLast){ const dlat=ll.lat-patMoveLast.lat, dlon=ll.lon-patMoveLast.lon;
@@ -4604,6 +4727,7 @@ $("#sp_water").onchange = ()=>{
 // reports the water-level correction being applied to charted depths.
 function dirTxt(d){ return d==null ? "" : Math.round(d)+"°"; }
 function updateEnvUI(env, st){
+  roseEnv = env;                                  // the chart's wind rose reads the same block
   const simOff = env.source==="off";
   const w = env.wind, sea = env.sea;
   $("#v_wind").textContent = simOff ? "-- (sim only)"

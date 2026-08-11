@@ -39,7 +39,11 @@ and the safety gates. Sim mode also runs an **environmental simulator**: it pull
 course (a steady crab + a gust-driven wander the autopilot steers out) — toggle or
 read the effect on the vessel card's **Wind / Sea / Set·crab** rows (sim only; a real
 boat feels real weather). There is no ENV card — override or disable the forcing over
-the API (`POST /api/env`).
+the API (`POST /api/env`). A **wind rose** sits on the chart itself — a graduated
+compass ring with the wind needle and the speed and from-direction at its centre,
+drawn with a transparent background (no card, no chip) and **draggable anywhere on
+the chart**; it remembers where you put it and is clamped back into view if the
+window shrinks.
 
 ## Run
 

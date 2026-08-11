@@ -251,6 +251,10 @@ function gesture() {
     mode: "measure", measures: [], measPend: null,
     dragging: true, downAt: null, renders: 0,
     patDrag: null, patMoveLast: null, boundDrag: null, searchDrag: false, wpDrag: null,
+    // The chart's wind rose is movable too, and mouseup checks its drag before the
+    // measure branch. NOT a stub of convenience: a measure gesture genuinely never has a
+    // rose drag in flight, so null is the true state and the branch is correctly skipped.
+    roseDrag: null,
     mission: { lines: [], waypoints: [] },
   };
   const env = {

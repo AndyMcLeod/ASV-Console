@@ -59,7 +59,7 @@ const GUARDS = {
   "stored_settings.js":
     "That every stored operator setting goes through ONE guarded pair of storage helpers, so a browser with site data blocked cannot take out start-up, and that toggles saved by an older build still read",
   "panel_drag.js":
-    "That ONE drag mechanism serves every floating pop-out, that none forgets where it was put, and that a restored position is CLAMPED into the chart - a position saved on a larger window used to put a card, and its own reopen control, off the screen entirely",
+    "That ONE drag mechanism serves every floating pop-out, that none forgets where it was put, and that a restored position is CLAMPED into the chart - a position saved on a larger window used to put a card, and its own reopen control, off the screen entirely. Also the chart's wind rose, the one movable thing that is deliberately NOT a panel: that it claims a press before any editing mode can act underneath it, that it persists where it was dropped, and that its position is clamped on every read rather than on save",
   "ais_table.js":
     "That the traffic list is PATCHED in place rather than rebuilt each poll, so an update cannot reset the card's scroll position while it is being read, nor drop a text selection part way through a copy",
   "http_contract.py":
