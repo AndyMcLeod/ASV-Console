@@ -64,8 +64,31 @@ It **forwards any extra arguments** to `asv_console.py`, so one launcher also se
 variant shortcut — `start_sim.bat --vessel example_usv_4m`, or `--port 8792` for a second
 console beside the first. The window it opens *is* the console: closing it stops the run.
 
-To put it on the desktop: right-drag `start_sim.bat` there → *Create shortcuts here*, then
-Properties → *Change Icon* → `tools\asv.ico`.
+To put it on the desktop, run the script that builds it:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
+```
+
+It resolves the project from **its own location** and writes that into the shortcut, so
+there is no path to edit and no way to end up pointing at a folder that has moved — clone
+or copy the repo anywhere, re-run it, and the shortcut is right. It picks up
+`tools\asv.ico`, asks Windows where the Desktop actually is (this matters on a
+OneDrive-redirected profile, where `%USERPROFILE%\Desktop` is not it), and **verifies by
+reading the shortcut back** — `Save()` accepts a target that does not exist and would
+otherwise only fail on double-click. Re-running overwrites rather than making a second one.
+
+`-Name` and `-Arguments` make a variant shortcut beside the first, since `start_sim.bat`
+forwards everything through:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1 -Name "ASV Console (4 m USV)" -Arguments "--vessel example_usv_4m"
+```
+
+The `.lnk` is not tracked in the repo — it is a binary holding absolute paths for one
+machine. The script and the icon are what travel; between them the shortcut is
+reproducible on any clone. (The old manual route still works: right-drag `start_sim.bat`
+to the desktop → *Create shortcuts here*, then Properties → *Change Icon* → `tools\asv.ico`.)
 
 **Multi-monitor.** On start the server opens **two** windows: the **main** window
 (chart, status, command bar) and a **controls** window (`?panel=controls`) holding

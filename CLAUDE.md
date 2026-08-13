@@ -24,9 +24,26 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-10, sixth refresh — the hull decides its shortest line)
+## ⇒ START HERE (handoff refreshed 2026-08-12, seventh refresh — the shortcut has a builder)
 
-**NEWEST (this commit): THE MINIMUM SURVEY LINE, PER VESSEL (Andy's ask).** "Short survey
+**NEWEST (this commit): THE DESKTOP SHORTCUT IS BUILT BY THE REPO, NOT BY HAND (Andy's
+ask).** "Make sure the desktop shortcut and script are included in the repository."
+`start_sim.bat` and `tools/asv.ico` were already tracked, but nothing here could RECREATE
+the shortcut — the README told the operator to right-drag the bat to the desktop and change
+its icon by hand, so a fresh clone had no repeatable way to the same result. Now
+`tools/make_shortcut.ps1` does it, the mirror of the fuel planner's script of the same name
+(the launcher went Fuel-ward, the shortcut builder came back). **It verifies by reading the
+`.lnk` back** — `Save()` accepts a target that does not exist and only fails on
+double-click. **Proven against the live shortcut**: generated into a scratch folder and
+compared field-by-field with the real desktop one — target, arguments, working directory,
+description, icon and window style all identical, so the operator's existing shortcut is
+reproduced rather than changed. Both refusals were exercised (script moved out of `tools\`,
+bad `-DesktopPath`) alongside their acceptance cases, and a re-run reports *Updated* with no
+second `.lnk`. **The `.lnk` itself stays untracked** — a binary of absolute paths for one
+machine is wrong for every other clone; the script plus the icon are what travel. See
+"Run it" for the three things to know before changing any of it.
+
+**THE WORK BEFORE THIS ONE (`1a39cb0`): THE MINIMUM SURVEY LINE, PER VESSEL (Andy's ask).** "Short survey
 lines are inefficient and unnecessary for vessels the size of DriX. For the ZBoat this
 would be fine... if a generated plan has lines or line segments of less than 80m cut them
 out of the plan and jump straight to the next waypoint. This applies only to surveys.
@@ -51,7 +68,7 @@ the same cure: **a check on a mechanism must execute the mechanism.** `survey_ca
 11→19; 6/8 mutations caught by their own check, one more caught loudly by the crash guard
 (hardcoding the threshold makes the harness refuse to find the block at all).
 
-**THE WORK BEFORE THIS ONE (same day): THE WIND ROSE (Andy's ask).** "Need a wind speed and direction on
+**AND BEFORE THAT (`75a1234`, same day): THE WIND ROSE (Andy's ask).** "Need a wind speed and direction on
 the chart. Create a small wind rose with direction and speed that can be dragged around."
 Then, on seeing a compass-rose reference: **"I do not want that on a card or chip.
 Something like this with background transparency."** So it is a CHART OVERLAY painted in
@@ -2637,6 +2654,26 @@ python asv_console.py --sim --browser none --port 8791          # headless, for 
 python asv_console.py --sim                                     # opens a browser tab
 python asv_console.py --sim --vessel example_usv_4m             # study a different ASV
 ```
+
+**Windows double-click: `start_sim.bat` at the repo root, and `tools/make_shortcut.ps1`
+puts a shortcut to it on the desktop.** Both resolve the project from their OWN location —
+the bat via `%~dp0`, the script via `$PSScriptRoot`'s parent — so nothing knows where the
+project lives and a moved or freshly cloned copy needs no editing. Re-running the script
+overwrites rather than duplicating. Three things worth knowing before changing it:
+
+- **It verifies by reading the `.lnk` back** (target *and* working directory). `Save()`
+  accepts a path that does not exist and only fails on double-click, so a save-and-trust
+  version would report success for a broken shortcut.
+- **The Desktop path is asked of Windows** via `GetFolderPath('Desktop')`, not assembled
+  from `%USERPROFILE%`. This profile's desktop is redirected to `OneDrive\Desktop`, and the
+  assembled path silently creates a folder nobody sees.
+- **The `.lnk` is deliberately NOT tracked.** It is a binary carrying absolute paths for one
+  machine, so a committed copy is wrong for every other clone. `tools/make_shortcut.ps1` +
+  `tools/asv.ico` are what the repo carries, and they reproduce it anywhere.
+
+This is the mirror of the fuel planner's `tools/make_shortcut.ps1`, which was itself
+modelled on `start_sim.bat` — the launcher went that way, the shortcut builder came back,
+and the two projects now behave identically at the point an operator touches them.
 
 - Web UI at `http://localhost:<port>/`; playback at `/playback`.
 - Commands: `POST /api/cmd/{arm,upload,start,pause,stop,estop,rth,goto,hold,sethome,transit,speed,approach,energy,reset,spawn}`.
