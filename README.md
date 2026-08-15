@@ -45,6 +45,20 @@ drawn with a transparent background (no card, no chip) and **draggable anywhere 
 the chart**; it remembers where you put it and is clamped back into view if the
 window shrinks.
 
+**Surface current** (vessel card, `Current` row). The console also reads the surface
+current **forecast at the boat's own position**, from a NOAA **Operational Forecast
+System** — `dbofs` (Delaware Bay) by default, `--currents-ofs` for a hull working
+elsewhere. Set is **where the water goes**, degrees true. Unlike the wind rows this is
+**not** simulator-only: a real hull sits in real water, and while the simulator invents
+the wind, nobody invents the tide. It is a *model prediction*, not a measurement, and a
+different question from the **Set / crab** row above it — that is the leeway the boat is
+actually fighting. Every way it can fail to be a live reading is stated rather than
+dressed up as a number: no cycle cached yet, no model water at that position, or a value
+**projected by whole tidal cycles** because no forecast frame covers now (marked `~`,
+and refused outright past three cycles). The model fetch runs on a background thread, so
+a multi-megabyte download never sits on a request. `GET /api/currents` (`?force=1` to
+kick a refresh) serves the same reading headlessly.
+
 ## Run
 
 ```

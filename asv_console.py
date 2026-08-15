@@ -60,8 +60,10 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import currents                            # NOAA OFS surface currents (vendored - see its header)
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
 
 # --------------------------------------------------------------------------- #
@@ -1825,6 +1827,131 @@ class EnvMonitor:
 ENV = EnvMonitor()
 
 
+class CurrentsMonitor:
+    """Surface CURRENT at the vessel's own position, from a NOAA Operational
+    Forecast System (`currents.py`, vendored — see its header).
+
+    SAME SHAPE AS EnvMonitor ON PURPOSE: a position goes in, a background thread does
+    the networking, `snapshot()` rides Engine.state(). Nothing here ever blocks a
+    request or a telemetry tick — a cycle fetch is a multi-megabyte OPeNDAP read and
+    would otherwise stall the console mid-run.
+
+    WHAT IT IS NOT. This is a FORECAST MODEL read at the boat's position, not a
+    measurement and not the sim's applied set. The vessel card's SET row is what the
+    simulator is actually pushing the boat with; this is what NOAA predicts the water
+    is doing there. On a real hull the two answer different questions and both are
+    worth having, so they are separate readouts and neither is derived from the other.
+
+    HONESTY, in the order the answers degrade — every one of these is reported rather
+    than smoothed into a number:
+      * no cycle cached yet (first run, or no network)      -> ok False, "no cycle"
+      * the position is outside the model's water (land,
+        masked node, or beyond the domain)                  -> ok False, "no model water"
+      * the time is outside the cached span                  -> a value, `projected_h`
+        non-zero, flagged: `at_best` shifts by whole M2 tidal cycles (0.14-0.21 kt RMS
+        against the model's own output, capped at 3 cycles), which beats holding the
+        last value or assuming slack. Past the cap it refuses instead of guessing.
+    """
+
+    POLL_S = 900.0                       # the model is hourly; a 15 min sample is ample
+    REFETCH_KM = 15.0                    # a move this far re-scopes the fetch bbox
+    BBOX_DEG = 0.35                      # ~39 km half-box around the boat
+
+    def __init__(self, ofs="dbofs"):
+        self._lock = threading.Lock()
+        self._pos = None
+        self._ofs = ofs
+        self._tag = None
+        self._cur = None                 # a currents.Currents, or None
+        self._box_at = None              # position the cached cycle was scoped to
+        self._last = {"ok": False, "source": "none", "note": "waiting for a GPS fix"}
+        self._force = threading.Event()
+        self._stop = threading.Event()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def update_position(self, lat, lon):
+        with self._lock:
+            old = self._pos
+            self._pos = (lat, lon)
+        if old is None or _haversine_km(old[0], old[1], lat, lon) > self.REFETCH_KM:
+            self._force.set()
+
+    def refresh_now(self):
+        self._force.set()
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._last)
+
+    def _sample(self, lat, lon):
+        """The reading at (lat, lon) NOW, or an honest refusal. Never raises."""
+        cur = self._cur
+        if cur is None:
+            return {"ok": False, "source": self._ofs, "note": "no cycle cached yet"}
+        now = datetime.now(timezone.utc)
+        try:
+            vals, shift_h = cur.at_best(lat, lon, now)
+        except ValueError as e:            # past MAX_PROJECT_CYCLES - a guess has a range
+            return {"ok": False, "source": self._ofs, "tag": cur.tag,
+                    "note": "no forecast covers now (%s)" % e}
+        except Exception as e:
+            return {"ok": False, "source": self._ofs, "note": "%s" % type(e).__name__}
+        if vals is None:
+            return {"ok": False, "source": self._ofs, "tag": cur.tag,
+                    "note": "no model water at this position"}
+        speed_kn, set_deg = vals[0], vals[1]
+        out = {"ok": True, "source": self._ofs, "tag": cur.tag,
+               "speed_kn": round(speed_kn, 2), "set_deg": round(set_deg, 1),
+               "projected_h": round(shift_h, 2),
+               "cycle_start_utc": cur.start.isoformat().replace("+00:00", "Z"),
+               "cycle_end_utc": cur.end.isoformat().replace("+00:00", "Z")}
+        if abs(shift_h) > 1e-6:
+            # NOT a measurement of now - say so in words, not just a number nobody reads
+            out["note"] = ("projected %.1f h by tidal cycle (no forecast frame covers now)"
+                           % abs(shift_h))
+        return out
+
+    def _ensure_cycle(self, lat, lon):
+        """Cache a cycle covering NOW, scoped to a box around the boat. Best effort."""
+        now = datetime.now(timezone.utc)
+        bbox = (lat - self.BBOX_DEG, lon - self.BBOX_DEG,
+                lat + self.BBOX_DEG, lon + self.BBOX_DEG)
+        try:
+            tag, _fetched = currents.ensure_cycle_covering(
+                now, now, bbox=bbox, ofs=self._ofs, allow_fetch=True, quiet=True)
+        except Exception as e:
+            print("[currents] cycle lookup failed: %s: %s" % (type(e).__name__, e),
+                  file=sys.stderr)
+            return
+        if not tag:
+            return
+        if tag != self._tag or self._cur is None:
+            try:
+                self._cur = currents.Currents(tag=tag)
+                self._tag = tag
+                self._box_at = (lat, lon)
+                print("[currents] cycle %s (%s .. %s)"
+                      % (tag, self._cur.start.strftime("%Y-%m-%d %H:%MZ"),
+                         self._cur.end.strftime("%H:%MZ")), file=sys.stderr)
+            except Exception as e:
+                print("[currents] cycle %s unreadable: %s" % (tag, e), file=sys.stderr)
+
+    def _loop(self):
+        while not self._stop.is_set():
+            with self._lock:
+                pos = self._pos
+            if pos:
+                self._ensure_cycle(pos[0], pos[1])
+                res = self._sample(pos[0], pos[1])
+                with self._lock:
+                    self._last = res
+            self._force.wait(self.POLL_S)
+            self._force.clear()
+
+
+CURRENTS = CurrentsMonitor()
+
+
 def _opt_float(v):
     """None/"" -> None; else float(v). For optional numeric fields in JSON bodies."""
     return None if v in (None, "") else float(v)
@@ -2855,6 +2982,10 @@ class Engine:
                         # can push it around. Not fed in real mode (real boat, real wx).
                         if self._mode == "sim":
                             ENV.update_position(telem["lat_deg"], telem["lon_deg"])
+                        # The CURRENT is fed in BOTH modes, unlike the wind: a real hull
+                        # sits in real water, and what NOAA forecasts the tide is doing
+                        # under it is exactly as useful there as in the sim (more so).
+                        CURRENTS.update_position(telem["lat_deg"], telem["lon_deg"])
                         # first fix = launch/home point - only when no ROC owns HOME
                         if self.home is None and self.home_source is None:
                             self.home = {"lat": telem["lat_deg"], "lon": telem["lon_deg"]}
@@ -2987,6 +3118,8 @@ class Engine:
             "water": WATER.snapshot(),
             "env": ENV.snapshot() if self._mode == "sim" else {"ok": False, "source": "off",
                      "enabled": False, "note": "environmental sim (sim mode only)"},
+            # Real water, both modes - see CurrentsMonitor. Not gated on `sim`.
+            "current": CURRENTS.snapshot(),
         }
 
 
@@ -3147,6 +3280,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(WATER.tide_series(force=force)))
         elif self.path.startswith("/api/env"):
             self._send(200, json.dumps(ENV.snapshot()))
+        elif self.path.startswith("/api/currents"):
+            # ?force=1 kicks the background thread rather than fetching inline - a cycle
+            # download is multi-megabyte and must never sit on a request.
+            if "force=1" in self.path or "force=true" in self.path:
+                CURRENTS.refresh_now()
+            self._send(200, json.dumps(CURRENTS.snapshot()))
         elif self.path.startswith("/api/ais"):
             self._serve_ais()
         elif self.path == "/api/mission":
@@ -3841,6 +3980,12 @@ def main():
     ap.add_argument("--ais-opencpn", default="", metavar="[HOST:]PORT",
                     help="OpenCPN TCP NMEA server to read with --ais-source ...,opencpn "
                          "(default 127.0.0.1:10110 if the source is named without this)")
+    ap.add_argument("--currents-ofs", default="dbofs", metavar="MODEL",
+                    help="NOAA Operational Forecast System for the surface-current readout "
+                         "(default dbofs = Delaware Bay). One model only: the console asks "
+                         "for the current at the VESSEL'S position, not along a line that "
+                         "might cross a model boundary. cbofs/ngofs2/sfbofs/... for a hull "
+                         "working elsewhere")
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
@@ -3903,6 +4048,9 @@ def main():
     # The display radius can never exceed what is collected - see the endpoint.
     AIS_SHOW_RADIUS_KM = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(args.ais_radius_km)))
     AIS_SOURCE_ARG = (args.ais_source or "auto").strip() or "auto"
+    # The currents monitor is constructed at import (like ENV), so the model choice is
+    # applied here rather than passed to a constructor that already ran.
+    CURRENTS._ofs = (args.currents_ofs or "dbofs").strip().lower() or "dbofs"
     AIS_NMEA_SPECS = list(args.ais_nmea or [])
     AIS_OPENCPN = (args.ais_opencpn or "").strip()
     # Naming an endpoint IS asking for its source - don't make the operator say it twice.

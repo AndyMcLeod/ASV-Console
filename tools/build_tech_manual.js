@@ -48,6 +48,8 @@ const GUARDS = {
     "That the survey pattern's whole-move grip is both REACHABLE by hit test and VISIBLE - drawn above the vessel marker that used to cover it completely",
   "survey_card.js":
     "That a committed survey plan is still described rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines and self-validating on parallelism",
+  "currents.py":
+    "That the surface-current readout at the vessel's position is wired honestly: the monitor answers rather than raising or blocking, every way a reading can fail to be live is said in words (no cycle cached, no model water at the position, a value projected by tidal cycles, or a refusal past the projection cap), a projected value is flagged as an estimate while a live frame is not, the reading is fed the vessel's own fix and travels on the state, and it is NOT gated on simulator mode - the simulator invents the wind, but nobody invents the tide",
   "speed_recalc.js":
     "That the plan speed is an INPUT: changing it recalculates turn geometry, durations and per-line times, and a plan already committed is re-checked against the radius the new speed implies. Also the Lines card's transit and RTH rows: ENC-ROUTED distances (boat to line 1, last line home), each row degrading alone when its input is missing, a planner refusal surfaced in the planner's own words, times derived from the current plan speed with no re-route, and a cache key that ignores boat jitter but re-keys on real motion",
   "live_speed.py":

@@ -514,6 +514,7 @@
       <div class="vrow"><span class="vk">Wind</span><span class="vv" id="v_wind" title="Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Sea</span><span class="vv" id="v_sea" title="Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
+      <div class="vrow"><span class="vk">Current</span><span class="vv" id="v_current" title="Surface current FORECAST at the vessel's own position, from a NOAA Operational Forecast System (dbofs by default). Set is where the water GOES, degrees true. This is a model prediction for real water — not a measurement, and not the same thing as the Set/crab row above, which is the leeway the boat is actually fighting.">--</span></div>
       <div class="vrow"><span class="vk" id="v_batt_k">Battery</span><span class="vv" id="v_batt">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
       <!-- Nogo: text + tooltip are both written by updateNogoUI() -> nogoReadout(), which
@@ -4656,6 +4657,7 @@ function onState(s){
 
   // environmental simulator (SIM ONLY): wind + sea state pushing the boat
   updateEnvUI(s.env || {}, st);
+  updateCurrentUI(s.current);                    // real water, both modes (not sim-gated)
 
   applyCmdState(s);
 
@@ -4766,6 +4768,30 @@ function updateEnvUI(env, st){
   const set = st.env_set_kn, sd = st.env_set_deg, crab = st.crab_deg;
   $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
+}
+// SURFACE CURRENT at the boat's own position (NOAA OFS via /api/currents, on the state).
+// A FORECAST for real water, so unlike the wind rows it is NOT sim-gated. Every way this
+// can fail to be a live reading is SAID rather than shown as a dash or a plausible
+// number: no cycle cached, no model water here, or a value the module projected by whole
+// tidal cycles because no forecast frame covers now (it flags that itself).
+function updateCurrentUI(cur){
+  const el=$("#v_current"); if(!el) return;
+  cur = cur || {};
+  if(!cur.ok){
+    el.textContent = cur.note ? "-- (" + cur.note + ")" : "--";
+    el.style.color = "var(--ink-faint)";
+    el.title = "Surface current forecast at the vessel's position. " +
+               (cur.note || "No reading yet.");
+    return;
+  }
+  const proj = Math.abs(cur.projected_h || 0) > 1e-6;
+  el.textContent = cur.speed_kn.toFixed(2) + " kn @ " + dirTxt(cur.set_deg) + (proj ? " ~" : "");
+  // A projected value is an ESTIMATE and must not read like a measurement.
+  el.style.color = proj ? "var(--warn, #e8d9a0)" : "";
+  el.title = "Surface current at the vessel's position, set = where the water GOES (true). "
+           + "Model " + (cur.source||"?") + ", cycle " + (cur.tag||"?")
+           + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : "")
+           + (proj ? ". ~ = " + cur.note : "");
 }
 // --- MISSION block (inside the vessel-status card) ------------------------- //
 // One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit

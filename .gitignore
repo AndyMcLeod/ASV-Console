@@ -32,3 +32,6 @@ roc_config.json
 
 # Office lock files (~$xxx) while a doc/deck is open
 ~$*
+
+# NOAA OFS current-model cache (fetched grids, megabytes - never committed)
+ofs_cache/

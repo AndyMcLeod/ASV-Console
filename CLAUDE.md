@@ -24,9 +24,44 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-12, seventh refresh — the shortcut has a builder)
+## ⇒ START HERE (handoff refreshed 2026-08-12, eighth refresh — the console reads the tide under the boat)
 
-**NEWEST (this commit): THE DESKTOP SHORTCUT IS BUILT BY THE REPO, NOT BY HAND (Andy's
+**NEWEST (this commit): SURFACE CURRENTS AT THE VESSEL'S POSITION.** Andy: "implement the
+current module from the transit calculator project... use asv position for reference."
+`currents.py` is **VENDORED** from `D:\Claude\Transit`, which vendored it from
+`D:\Claude\Fuel` — **this is the THIRD copy in the chain and the drift risk is real and
+compounding; its header says so and names both parents.** Unmodified from the Transit
+copy. **`ofs.py` (multi-model chaining) is deliberately NOT vendored:** the console asks
+for a current at ONE POINT — the boat — not along a line that may cross a model boundary,
+so one model (`--currents-ofs`, default `dbofs`) is the honest scope. If a hull ever needs
+coverage spanning two models, vendor `ofs.py` + `geo.py`; do not rewrite this.
+**`CurrentsMonitor` is shaped exactly like `EnvMonitor`** — position in, background thread
+does the networking, `snapshot()` rides `Engine.state()` as `current`. **Nothing blocks:**
+a cycle fetch is a multi-megabyte OPeNDAP read, and `?force=1` KICKS the thread rather
+than fetching in-request.
+**⚠ IT IS NOT SIM-GATED, AND THAT IS DELIBERATE.** The wind rows are sim-only because the
+simulator invents the wind; nobody invents the tide, so a real hull gets this too. Check
+10 pins it at the SOURCE, since a sim run cannot observe the real branch.
+**THE READOUT IS A FORECAST, NOT A MEASUREMENT, AND NOT THE SET ROW.** `Set / crab` is the
+leeway the sim is actually applying; `Current` is what NOAA predicts the water is doing
+there. Different questions, separate rows, neither derived from the other. Degradation is
+spoken in words at every step: no cycle cached / no model water at this position /
+projected N h by tidal cycle (flagged `~` and amber; 0.14–0.21 kt RMS per the source
+project's own measurement) / refused past 3 cycles.
+**Live-verified against real NOAA before shipping:** cycle `dbofs_20260814_t18z` fetched,
+spanning 08-14 13:00Z → 08-16 18:00Z, giving **0.30 kn @ 285.3 °T at the DriX spawn**,
+`projected_h=0.00` — then read back identically off `/api/currents`, off `/api/state`, and
+out of the rendered card. **A false alarm worth remembering: my first probe reported
+"0 cycles" and looked like broken vendoring — it was `days_back=1` on a day whose cycle
+had not posted yet. Running the SAME call in the source project separated "my copy is
+broken" from "NOAA has nothing yet" in one step; do that before debugging a vendored
+module.** `tests/currents.py` NEW (14 checks): it tests THE CONSOLE'S WIRING, not the
+model maths, which the parent projects own and which a third copy of would only drift.
+7/8 mutations caught by their own check; the eighth (an unexpected error escaping the
+background thread) is caught by the crash guard, which is the right place for it.
+**`ofs_cache/` is gitignored** — fetched model grids, megabytes.
+
+**THE WORK BEFORE THIS ONE: THE DESKTOP SHORTCUT IS BUILT BY THE REPO, NOT BY HAND (Andy's
 ask).** "Make sure the desktop shortcut and script are included in the repository."
 `start_sim.bat` and `tools/asv.ico` were already tracked, but nothing here could RECREATE
 the shortcut — the README told the operator to right-drag the bat to the desktop and change
@@ -161,8 +196,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **37 regression suites / 623 assertions** (18 JS / 326,
-19 Python / 297), derived
+turn-water hold is closed (`a548c14`). **38 regression suites / 637 assertions** (18 JS / 326,
+20 Python / 311), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -194,7 +229,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-SEVEN REGRESSION SUITES (623 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (637 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -225,6 +260,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/speed_recalc.js` | plan speed is an INPUT — it recalculates (10) |
 | `python tests/roc_tracks.py` | ROC / moving HOME + NMEA ingest robustness; gps_sim round-trip (23) |
 | `python tests/roc_persist.py` | only the most recent 3 ROCs survive a restart; no suite may write the operator's registry (16) |
+| `python tests/currents.py` | the surface-current readout's WIRING (not the vendored model's maths): never blocks or raises, every degradation said in words, a projected value flagged as an estimate, fed the vessel's own fix, and NOT sim-gated (14) |
 | `python tests/live_speed.py` | a speed change REACHES the boat — SOG follows (11, real console) |
 | `python tests/ais_range.py` | AIS range filters a wide subscription; never on a lake; nm + empty state (20) |
 | `node tests/ui_split.js` | split-window lists resolve; card placement, shared resize + height cap, the uicard clamp (22) |
