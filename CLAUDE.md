@@ -24,7 +24,36 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-12, eighth refresh — the console reads the tide under the boat)
+## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
+
+**NEWEST (this commit): THE CURRENT JOINS THE WIND ROSE.** Andy: "add the current to the
+wind rose on the chart." **⚠ THE HAZARD THAT SHAPED IT: WIND AND CURRENT USE OPPOSITE
+CONVENTIONS.** Wind is named by where it blows FROM; a current's SET is where the water
+GOES. Two needles of the same shape differing only in colour is precisely how an operator
+reads one as the other, so the current is a **single-headed ARROW** (one unambiguous
+point, in the direction of travel) riding the RING outside the star, against the wind's
+two-tone double-ended needle through the middle. Colour (sea-blue) agrees with the
+convention rather than carrying it. A PROJECTED current draws **hollow** so an estimate
+cannot pass as a measured set, and the reading below is LABELLED `set N.NN kn DDD°` —
+two unlabelled knot figures stacked would be a guessing game.
+**A REAL BUG FOUND WHILE ADDING IT: the clamp was wrong before this and would have got
+worse.** `roseCentre()` clamped to `ROSE_R`, but the rose paints well outside R — cardinal
+letters at 1.20 R, readings hanging to 1.70 R BELOW. The wind's direction line could
+already slide under the bottom edge while the ring still looked correctly placed; the
+current's line would have made it obvious. Now clamped to the true drawn extent.
+**AND THE CHECK THAT GUARDED IT WAS THE WRONG KIND.** `panel_drag` 27d asserted the
+literal `Math.max(ROSE_R` — so it FAILED when the clamp was IMPROVED, and would have
+PASSED for any wrong expression of the same shape. Rewritten to RUN `roseCentre()` with an
+absurd position in a fake 900×700 viewport and assert the whole rose lands inside,
+readings included. **Third time this session: a check on a mechanism must execute the
+mechanism** (see also `survey_card` 12-15 and `measure_tool` 15b).
+**Verified by measuring the INK, not the box** ([[verify-the-ink-not-the-box]]): sampled
+the live canvas around the rose — 539 sea-blue arrow pixels beside the wind needle's 438
+red / 514 teal, then walked the shaft from 0.65R to 0.95R along the reported set (285.8°)
+and along its reciprocal: **10 hits along the set, 0 on the reciprocal.** The arrow points
+where the water goes, and that is measured rather than assumed.
+
+## ⇒ (previous) handoff — the console reads the tide under the boat
 
 **NEWEST (this commit): SURFACE CURRENTS AT THE VESSEL'S POSITION.** Andy: "implement the
 current module from the transit calculator project... use asv position for reference."

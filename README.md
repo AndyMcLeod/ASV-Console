@@ -57,7 +57,12 @@ dressed up as a number: no cycle cached yet, no model water at that position, or
 **projected by whole tidal cycles** because no forecast frame covers now (marked `~`,
 and refused outright past three cycles). The model fetch runs on a background thread, so
 a multi-megabyte download never sits on a request. `GET /api/currents` (`?force=1` to
-kick a refresh) serves the same reading headlessly.
+kick a refresh) serves the same reading headlessly. The **chart's wind rose carries it
+too**: a single-headed **sea-blue arrow** riding the ring, pointing where the water goes,
+with `set N.NN kn DDD°` beneath the wind's reading. It is a different *shape* from the
+wind needle on purpose — wind is named by where it blows **from**, a current's set is
+where it **goes**, and two needles differing only in colour is exactly how one gets read
+as the other. A projected (estimated) current draws **hollow** and keeps its `~`.
 
 ## Run
 

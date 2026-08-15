@@ -1177,11 +1177,17 @@ const ROSE_INK_SOFT = "rgba(8,14,20,0.62)";           // the 5° minor ticks
 let rosePos = lsGet(ROSE_KEY, null);                  // {x,y} chart-local centre, or null = default
 let roseDrag = null;                                  // {dx,dy} grab offset while dragging
 let roseEnv = null;                                   // last env block seen (wind lives here)
+let roseCur = null;                                   // last `current` block (NOAA OFS forecast)
 function roseCentre(){
   const {w,h} = viewSize();
-  const p = rosePos || {x: w - (ROSE_R + 18), y: h - (ROSE_R + 58)};   // default: clear of the scale bar
-  return {x: Math.max(ROSE_R, Math.min(w - ROSE_R, p.x)),              // clamp: never off-screen
-          y: Math.max(ROSE_R, Math.min(h - ROSE_R, p.y))};
+  // CLAMP THE DRAWN EXTENT, NOT THE RADIUS. The rose paints well outside R: the cardinal
+  // letters sit at 1.20 R and the readings hang below at 1.02 / 1.38 / 1.70 R. Clamping to
+  // R alone let the wind's direction line - and then the current's - slide under the
+  // bottom edge while the ring itself still looked correctly placed.
+  const below = ROSE_R*1.70 + ROSE_R*0.22, side = ROSE_R*1.34;
+  const p = rosePos || {x: w - (side + 14), y: h - (below + 16)};      // default: clear of the scale bar
+  return {x: Math.max(side, Math.min(w - side, p.x)),
+          y: Math.max(ROSE_R*1.30, Math.min(h - below, p.y))};
 }
 function roseAt(cx, cy){ const c = roseCentre();
   return Math.hypot(cx - c.x, cy - c.y) <= ROSE_R; }
@@ -1238,6 +1244,35 @@ function drawWindRose(){
     ctx.fillStyle = live ? "rgba(46,134,171,0.95)" : "rgba(120,120,120,0.45)"; ctx.fill();
     ctx.restore();
   }
+  // --- the CURRENT ARROW: a different SHAPE, not just a different colour ------
+  // WIND AND CURRENT USE OPPOSITE CONVENTIONS and that is the whole hazard here.
+  // Wind is named by where it comes FROM; a current's SET is where the water GOES.
+  // Two needles of the same shape, differing only in colour, is precisely how an
+  // operator reads one as the other at a glance - so the current is a single-headed
+  // ARROW (one unambiguous point, in the direction the water moves) rather than the
+  // wind's two-tone double-ended needle, and it rides OUTSIDE the star on the ring
+  // instead of through the middle. Colour agrees with the convention rather than
+  // carrying it: sea-blue for water.
+  const cs = (roseCur && roseCur.ok && roseCur.speed_kn != null) ? roseCur.speed_kn : null;
+  const cset = (roseCur && roseCur.ok && roseCur.set_deg != null) ? roseCur.set_deg : null;
+  const cproj = !!(roseCur && Math.abs(roseCur.projected_h || 0) > 1e-6);
+  if(cs != null && cset != null){
+    ctx.save(); ctx.rotate(cset * Math.PI/180);        // set IS the toward-direction
+    // A PROJECTED current is an estimate (the module shifted it by whole tidal
+    // cycles): drawn hollow, so it cannot be mistaken for a measured set.
+    const fill = cproj ? "rgba(255,255,255,0.55)" : "rgba(20,120,190,0.92)";
+    const line = "rgba(12,74,120,0.95)";
+    const tip = R*0.985, tail = R*0.60, hw = R*0.075, hl = R*0.20;
+    ctx.beginPath();                                   // shaft
+    ctx.moveTo(-R*0.030, -tail); ctx.lineTo(R*0.030, -tail);
+    ctx.lineTo(R*0.030, -(tip-hl)); ctx.lineTo(-R*0.030, -(tip-hl)); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.lineWidth = R*0.018; ctx.strokeStyle = line; ctx.stroke();
+    ctx.beginPath();                                   // head
+    ctx.moveTo(0, -tip); ctx.lineTo(hw, -(tip-hl)); ctx.lineTo(-hw, -(tip-hl)); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   // --- hub + the reading -----------------------------------------------------
   ctx.beginPath(); ctx.arc(0,0, R*0.13, 0, 2*Math.PI);
   ctx.fillStyle = "rgba(10,20,28,0.90)"; ctx.fill();
@@ -1254,6 +1289,17 @@ function drawWindRose(){
   ctx.strokeText(txt, 0, R*1.02); ctx.fillText(txt, 0, R*1.02);
   if(sub){ ctx.font = "600 " + (R*0.22).toFixed(1) + "px Consolas,monospace";
     ctx.strokeText(sub, 0, R*1.38); ctx.fillText(sub, 0, R*1.38); }
+  // The current's own line, BELOW the wind's and LABELLED. Two speeds in knots stacked
+  // unlabelled would be a guessing game; "set" names both the quantity and its
+  // convention. A projected value keeps the same `~` it carries in the vessel card.
+  if(cs != null && cset != null){
+    const ct = "set " + cs.toFixed(2) + " kn " + String(Math.round(cset)).padStart(3,"0") + "°"
+             + (cproj ? " ~" : "");
+    ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
+    ctx.fillStyle = cproj ? "rgba(120,96,20,0.95)" : "rgba(12,74,120,0.95)";
+    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
+    ctx.strokeText(ct, 0, R*1.70); ctx.fillText(ct, 0, R*1.70);
+  }
   ctx.restore();
 }
 
@@ -4775,6 +4821,7 @@ function updateEnvUI(env, st){
 // number: no cycle cached, no model water here, or a value the module projected by whole
 // tidal cycles because no forecast frame covers now (it flags that itself).
 function updateCurrentUI(cur){
+  roseCur = cur || null;                          // the chart's rose draws the same block
   const el=$("#v_current"); if(!el) return;
   cur = cur || {};
   if(!cur.ok){

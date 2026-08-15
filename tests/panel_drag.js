@@ -540,9 +540,33 @@ check("26c no call site hard-codes a display any more - every one derives it",
   // The rose is clamped on READ, not on write - a window resize can strand a position
   // that was legal when it was saved. roseCentre() is the only place that answers "where
   // is it", so the clamp belongs there and nowhere else.
-  check("27d. the position is clamped inside the viewport every time it is read",
-        () => /function roseCentre\(\)[\s\S]{0,400}Math\.max\(ROSE_R[\s\S]{0,120}Math\.min\(/.test(H),
-        () => "roseCentre() must clamp, or a resize can strand it off-screen");
+  //
+  // THIS RUNS roseCentre RATHER THAN PATTERN-MATCHING IT. The first version asserted the
+  // literal `Math.max(ROSE_R` and so failed the moment the clamp was IMPROVED - widened
+  // to the rose's true drawn extent, which reaches past R (cardinal letters at 1.20 R,
+  // the wind and current readings hanging to 1.70 R below). A check that pins the shape
+  // of an expression fails on correct changes and passes on wrong ones with the same
+  // shape; the property is what matters, so drive the function and look at the answer.
+  {
+    const VW = 900, VH = 700;
+    // eslint-disable-next-line no-eval
+    const centreAt = eval(
+      "(function(px, py){ " + grabDecl("ROSE_R") + "\n" +
+      "  var rosePos = {x:px, y:py};\n" +
+      "  var viewSize = function(){ return {w:" + VW + ", h:" + VH + "}; };\n" +
+      grab("roseCentre") + "\n  return roseCentre(); })");
+    const farOut = centreAt(99999, 99999), farNeg = centreAt(-99999, -99999);
+    // The whole rose must land inside the viewport, readings included - not just its hub.
+    const R = parseFloat(grabDecl("ROSE_R").match(/=\s*([\d.]+)/)[1]);
+    const below = R * 1.70, side = R * 1.20;
+    const inside = (p) => p.x - side >= -1 && p.x + side <= VW + 1
+                       && p.y - side >= -1 && p.y + below <= VH + 1;
+    check("27d. the position is clamped inside the viewport every time it is read",
+          () => inside(farOut) && inside(farNeg),
+          () => "bottom-right -> " + JSON.stringify(farOut) + ", top-left -> "
+                + JSON.stringify(farNeg) + " in a " + VW + "x" + VH + " view"
+                + " (the READINGS hang to " + below.toFixed(0) + " px below the centre)");
+  }
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
