@@ -26,7 +26,17 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (this commit): THE CURRENT JOINS THE WIND ROSE.** Andy: "add the current to the
+**NEWEST (2026-08-18): `gps_sim.py` IS NOW VENDORED FROM `asv_core`. DO NOT EDIT IT HERE.**
+It and Zboat's copy differed by one docstring word across 215 lines, so it was the first
+and cheapest thing to de-duplicate. Source: `D:\Claude\Core\asv_core\gps_sim.py`; sync
+with `python tools/vendor.py` from that repo, verify with `python tools/vendor.py --check`
+— an edit made here is reported as drift and then overwritten. **No executable line
+changed**: only the docstring, which is now app-neutral, plus a generated header. The file
+stays at this path because `roc_tracks.py` Popens it by `os.path.join(APP_DIR,
+"gps_sim.py")`. It also gained its first tests — 60 NMEA-0183 conformance checks in the
+core, where before neither copy had any. All 38 suites here stay green.
+
+**PREVIOUS: THE CURRENT JOINS THE WIND ROSE.** Andy: "add the current to the
 wind rose on the chart." **⚠ THE HAZARD THAT SHAPED IT: WIND AND CURRENT USE OPPOSITE
 CONVENTIONS.** Wind is named by where it blows FROM; a current's SET is where the water
 GOES. Two needles of the same shape differing only in colour is precisely how an operator

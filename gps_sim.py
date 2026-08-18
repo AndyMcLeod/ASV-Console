@@ -1,7 +1,24 @@
+# ============================================================================
+# VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
+#
+#   source : asv_core/gps_sim.py
+#   core   : D:\Claude\Core
+#   sync   : python tools/vendor.py            (from the core repo)
+#   verify : python tools/vendor.py --check    (fails if this copy drifted)
+#
+# A copy rather than an import because this repo has to stand on its own: it is
+# a separate repository, and this file is opened by path rather than imported
+# as a package. The old trade was drift -- a vendored file did not follow its
+# source, which is how the estate grew three copies of currents.py. The --check
+# above removes that trade: this copy cannot diverge without failing a suite.
+#
+# Edit the core file and re-run the sync. Everything below is verbatim.
+# ============================================================================
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """GPS data-stream simulator - a faithful stand-in for a real GPS receiver / ship
-nav feed, for the ASV console (and anything else that speaks NMEA-0183).
+nav feed, for the survey consoles (and anything else that speaks NMEA-0183).
 
 It dead-reckons a point from a start position along a heading at a speed (with an
 optional gentle weave) and emits standard **NMEA-0183** sentences each cycle:
