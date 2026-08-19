@@ -2,9 +2,16 @@
 # VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
 #
 #   source : asv_core/gps_sim.py
-#   core   : D:\Claude\Core
-#   sync   : python tools/vendor.py            (from the core repo)
+#   sync   : python tools/vendor.py            (from the asv_core repo)
 #   verify : python tools/vendor.py --check    (fails if this copy drifted)
+#
+# NO ABSOLUTE PATH APPEARS ABOVE, AND THAT IS DELIBERATE. Two of these repos
+# publish scrubbed PUBLIC mirrors, and Transit's exporter ABORTS on anything
+# matching [A-Z]:\Claude -- absolute paths name private sibling projects and
+# point a cloner at a drive they do not have. A header naming a path would be
+# publish-safe only for as long as somebody maintained a substitution rule for
+# it in each exporter separately. Naming the repo instead is safe by
+# construction, in every consumer, including ones that do not exist yet.
 #
 # A copy rather than an import because this repo has to stand on its own: it is
 # a separate repository, and this file is opened by path rather than imported

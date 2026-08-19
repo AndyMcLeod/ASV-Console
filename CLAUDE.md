@@ -26,7 +26,16 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (2026-08-18): `gps_sim.py` IS NOW VENDORED FROM `asv_core`. DO NOT EDIT IT HERE.**
+**NEWEST (2026-08-18): `currents.py` IS NOW VENDORED FROM `asv_core` TOO, AND THE THIRD-COPY
+PROBLEM IS SOLVED.** The header below used to say the drift risk was "real and compounding"
+across a Fuel → Transit → ASV chain. There is no chain any more: one body in the core, three
+synced copies, and `python tools/vendor.py --check` from that repo fails if any of them
+differs by a character. **The body did not change here** — ASV's copy was already byte-identical
+to Transit's, which is what the core adopted. **Do not edit it here.** The `ofs.py` decision
+below still holds and now rides in the file as a per-consumer note, so it stays where a reader
+will meet it.
+
+**ALSO (2026-08-18): `gps_sim.py` IS VENDORED FROM `asv_core`. DO NOT EDIT IT HERE.**
 It and Zboat's copy differed by one docstring word across 215 lines, so it was the first
 and cheapest thing to de-duplicate. Source: `D:\Claude\Core\asv_core\gps_sim.py`; sync
 with `python tools/vendor.py` from that repo, verify with `python tools/vendor.py --check`
@@ -67,10 +76,10 @@ where the water goes, and that is measured rather than assumed.
 
 **NEWEST (this commit): SURFACE CURRENTS AT THE VESSEL'S POSITION.** Andy: "implement the
 current module from the transit calculator project... use asv position for reference."
-`currents.py` is **VENDORED** from `D:\Claude\Transit`, which vendored it from
-`D:\Claude\Fuel` — **this is the THIRD copy in the chain and the drift risk is real and
-compounding; its header says so and names both parents.** Unmodified from the Transit
-copy. **`ofs.py` (multi-model chaining) is deliberately NOT vendored:** the console asks
+`currents.py` was **VENDORED** from `D:\Claude\Transit`, which vendored it from
+`D:\Claude\Fuel` — the THIRD copy in a chain, with a drift risk its header could describe
+but not prevent. **Superseded 2026-08-18: it now comes from `asv_core`, one body with a
+check that fails on any divergence** (see the top of this handoff). Unmodified in the move. **`ofs.py` (multi-model chaining) is deliberately NOT vendored:** the console asks
 for a current at ONE POINT — the boat — not along a line that may cross a model boundary,
 so one model (`--currents-ofs`, default `dbofs`) is the honest scope. If a hull ever needs
 coverage spanning two models, vendor `ofs.py` + `geo.py`; do not rewrite this.

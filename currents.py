@@ -1,29 +1,33 @@
 # ============================================================================
-# VENDORED from the Transit Calculator: D:\Claude\Transit\currents.py,
-# which itself vendored it from the DriX Fuel Planner: D:\Claude\Fuel\currents.py
+# VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
 #
-# WHY A COPY AND NOT AN IMPORT, again. Same reason it was copied the first time:
-# those are separate repositories with their own release cadence, and this console
-# is a single-file stdlib server with no pip and no build step. Reaching across the
-# filesystem would make the console break when either of them is moved, renamed or
-# checked out at another revision. currents.py is pure standard library, so a copy
-# costs nothing at runtime.
+#   source : asv_core/currents.py
+#   sync   : python tools/vendor.py            (from the asv_core repo)
+#   verify : python tools/vendor.py --check    (fails if this copy drifted)
 #
-# THE TRADE IS DRIFT, AND THIS HEADER IS HOW YOU SEE IT. This is now the THIRD copy
-# in the chain (Fuel -> Transit -> ASV), so the drift risk is real and compounding.
-# Before trusting a current here for anything that matters, diff it against both
-# sources above. If the three ever need to move together, that is the moment to make
-# it a package rather than a copy.
+# NO ABSOLUTE PATH APPEARS ABOVE, AND THAT IS DELIBERATE. Two of these repos
+# publish scrubbed PUBLIC mirrors, and Transit's exporter ABORTS on anything
+# matching [A-Z]:\Claude -- absolute paths name private sibling projects and
+# point a cloner at a drive they do not have. A header naming a path would be
+# publish-safe only for as long as somebody maintained a substitution rule for
+# it in each exporter separately. Naming the repo instead is safe by
+# construction, in every consumer, including ones that do not exist yet.
 #
-# Copied 2026-08-10 from the Transit revision carrying the multi-OFS grid fix (grid
-# dimensions read from the dataset DDS rather than hard-coded to DBOFS's 487 x 529).
+# A copy rather than an import because this repo has to stand on its own: it is
+# a separate repository, and this file is opened by path rather than imported
+# as a package. The old trade was drift -- a vendored file did not follow its
+# source, which is how the estate grew three copies of currents.py. The --check
+# above removes that trade: this copy cannot diverge without failing a suite.
 #
-# UNMODIFIED from the Transit copy. The console does NOT vendor Transit's ofs.py
-# (multi-model chaining): this reads ONE model, dbofs by default, because the console
-# asks for a current at the VESSEL'S OWN POSITION rather than along a line that may
-# cross a model boundary. `--currents-ofs` picks another model for a vessel working
-# outside Delaware Bay. If a hull ever needs coverage spanning two models, ofs.py +
+# THIS CONSUMER, SPECIFICALLY:
+# The console does NOT vendor Transit's ofs.py (multi-model chaining): this
+# reads ONE model, dbofs by default, because the console asks for a current at
+# the VESSEL'S OWN POSITION rather than along a line that may cross a model
+# boundary. `--currents-ofs` picks another model for a vessel working outside
+# Delaware Bay. If a hull ever needs coverage spanning two models, ofs.py +
 # geo.py are the next thing to vendor, not a rewrite of this.
+#
+# Edit the core file and re-run the sync. Everything below is verbatim.
 # ============================================================================
 
 """Surface currents from a NOAA Operational Forecast System, interpolated to
