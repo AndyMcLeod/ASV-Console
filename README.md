@@ -199,7 +199,8 @@ feed coverage, latency and gaps — not a navigation or collision-avoidance syst
 
 The data comes from a **separate service, `ais_service.py`**, which the console
 queries (proxied at `/api/ais`); the feeds and any API key stay out of the console
-and the browser. **The console auto-starts it** — you never run it yourself. It's
+and the browser. It is **vendored from `asv_core`** and shared with the sibling console —
+change it there, not here. **The console auto-starts it** — you never run it yourself. It's
 scoped to your operating area (the whole lake, or a box around the boat) and is reaped
 when the console exits (a parent-PID watchdog, robust even to a hard kill). The only
 optional setup is a **free aisstream.io key for real US / Great Lakes coverage**, set

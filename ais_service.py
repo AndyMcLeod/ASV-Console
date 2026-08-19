@@ -1,8 +1,57 @@
+# ============================================================================
+# VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
+#
+#   source : asv_core/ais_service.py
+#   sync   : python tools/vendor.py            (from the asv_core repo)
+#   verify : python tools/vendor.py --check    (fails if this copy drifted)
+#
+# NO ABSOLUTE PATH APPEARS ABOVE, AND THAT IS DELIBERATE. Two of these repos
+# publish scrubbed PUBLIC mirrors, and Transit's exporter ABORTS on anything
+# matching [A-Z]:\Claude -- absolute paths name private sibling projects and
+# point a cloner at a drive they do not have. A header naming a path would be
+# publish-safe only for as long as somebody maintained a substitution rule for
+# it in each exporter separately. Naming the repo instead is safe by
+# construction, in every consumer, including ones that do not exist yet.
+#
+# A copy rather than an import because this repo has to stand on its own: it is
+# a separate repository, and this file is opened by path rather than imported
+# as a package. The old trade was drift -- a vendored file did not follow its
+# source, which is how the estate grew three copies of currents.py. The --check
+# above removes that trade: this copy cannot diverge without failing a suite.
+#
+# THIS CONSUMER, SPECIFICALLY:
+# THIS REPO WROTE ais_service.py AND THE CORE BODY IS ITS OWN, so nothing
+# about the merge, the sources or the error frames changes here. One thing
+# does, and it is a fix:
+#
+# THE AISHUB UNIT-FORMAT DETECTOR LET A SINGLE RECORD DECIDE FOR THE WHOLE
+# RESPONSE. AISHub serves either decimal degrees or raw 1/600000-degree
+# integers, so the format has to be settled once per response -- but it was
+# settled with any(), asking whether ANY coordinate was off Earth as degrees.
+# The 91/181 "not available" sentinel that every vessel without a GPS fix
+# broadcasts is off Earth as degrees. One unfixed ship therefore flipped an
+# ordinary human-format response into raw and divided every good position by
+# 600000: measured, two vessels off Lewes came back at 0.00006 N 0.0001 W
+# doing 0.5 kn, with no error raised anywhere. The sentinels are now excluded
+# from the vote, and raw must win a majority of what is left.
+#
+# It is latent rather than live -- AishubSource does not start without a
+# member username, and there is no membership yet -- but it was on the path
+# the moment one existed, and it was about to be copied into a second repo.
+# tests/ais_service.py in the core pins it, with every mixed-response case
+# paired against a genuine raw response that must still be rescaled.
+#
+# This repo's own ais_sources.py and ais_error_frames.py now exercise THIS
+# file, which is what proves the console really runs the core body.
+#
+# Edit the core file and re-run the sync. Everything below is verbatim.
+# ============================================================================
+
 #!/usr/bin/env python3
 """
 AIS provider service — a standalone, stdlib-only aggregator of maritime AIS
-(Automatic Identification System) vessel reports, queried by the survey-ASV console
-over HTTP. AIS is the system by which ships broadcast their identity, position,
+(Automatic Identification System) vessel reports, queried by an ASV console over
+HTTP. AIS is the system by which ships broadcast their identity, position,
 course and speed over VHF (and onto the internet via shore/satellite receivers);
 this service pulls that from open sources and hands the console a clean vessel list.
 
@@ -632,16 +681,66 @@ class OpencpnSource(NmeaSource):
 # --------------------------------------------------------------------------- #
 #  Source: AISHub — member data-sharing pool (HTTP poll)                       #
 # --------------------------------------------------------------------------- #
+AIS_LAT_NA = 91.0            # ITU-R M.1371 "latitude not available"
+AIS_LON_NA = 181.0           # ITU-R M.1371 "longitude not available"
+AISHUB_RAW_PER_DEG = 600000.0
+
+
+def _is_na(v, na):
+    """True for an AIS not-available coordinate sentinel, in EITHER unit system."""
+    if v is None:
+        return False
+    v = abs(v)
+    return abs(v - na) < 1e-6 or abs(v - na * AISHUB_RAW_PER_DEG) < 0.5
+
+
+def _aishub_format_is_raw(dicts):
+    """Is this response in RAW AIS units? Decided ONCE, for the whole response.
+
+    AISHub answers in HUMAN units (decimal degrees, knots) or in RAW AIS units
+    (1/600000-degree integers, tenths of knots/degrees). Field-by-field guessing
+    cannot work -- a raw SOG of 74 (7.4 kn) is indistinguishable from 74 kn on its
+    own -- so the coordinates decide it for every field: a raw latitude is off
+    Earth when read as degrees.
+
+    ONE RECORD MUST NOT DECIDE FOR THE REST, AND THE FIRST VERSION LET IT. It asked
+    `any()` whether a coordinate was off Earth as degrees -- which is true of the
+    91/181 sentinel that EVERY vessel without a GPS fix broadcasts. A single unfixed
+    ship in an otherwise ordinary human-format response therefore flipped the whole
+    response into raw and divided every good position by 600000. Measured, two
+    vessels off Lewes plus one with no fix:
+
+        38.780 N  75.120 W  5.0 kn  ->  0.0000646 N  0.0001252 W  0.5 kn
+        38.800 N  75.200 W  5.0 kn  ->  0.0000647 N  0.0001253 W  0.5 kn
+
+    -- the whole picture moved to the Gulf of Guinea at a tenth of its real speed,
+    with no error raised anywhere. The sentinels are exact and known in BOTH unit
+    systems, so they are excluded from the vote rather than counted in it, and raw
+    must win a majority of what remains. A response with no usable coordinate at all
+    votes human, which is the reading that leaves the upstream's numbers alone.
+    """
+    raw = human = 0
+    for r in dicts:
+        for key, limit, na in (("LATITUDE", 90.0, AIS_LAT_NA),
+                               ("LONGITUDE", 180.0, AIS_LON_NA)):
+            v = _num(r.get(key), None)
+            if v is None or _is_na(v, na):
+                continue                     # no fix: says nothing about the units
+            if abs(v) > limit:
+                raw += 1
+            else:
+                human += 1
+    return raw > human
+
+
 def _aishub_normalize(recs):
     """AISHub records -> normalized report dicts, whichever format the account is
-    served in. AISHub can answer in HUMAN units (decimal degrees, knots) or RAW AIS
-    units (1/600000-degree integers, tenths of knots/degrees). The format is uniform
-    across a response, so it is detected ONCE, from the coordinates - a raw latitude
-    is off Earth as degrees. Field-by-field guessing cannot work: a raw SOG of 74
-    (7.4 kn) is indistinguishable from 74 kn on its own."""
+    served in. The unit system is decided once per response by
+    `_aishub_format_is_raw`; the out-of-range guards below then drop a position the
+    upstream did not have, in either format -- a raw 91-degree sentinel is 54600000,
+    which scales back to 91.0 and fails the same check."""
     dicts = [r for r in recs if isinstance(r, dict)]
-    raw = any(abs(_num(r.get("LATITUDE"), None) or 0) > 90.0
-              or abs(_num(r.get("LONGITUDE"), None) or 0) > 180.0 for r in dicts)
+    raw = _aishub_format_is_raw(dicts)
     out = []
     for rec in dicts:
         m = rec.get("MMSI")
@@ -652,8 +751,8 @@ def _aishub_normalize(recs):
         sog = _num(rec.get("SOG"), None)
         cog = _num(rec.get("COG"), None)
         if raw:
-            lat = lat / 600000.0 if lat is not None else None
-            lon = lon / 600000.0 if lon is not None else None
+            lat = lat / AISHUB_RAW_PER_DEG if lat is not None else None
+            lon = lon / AISHUB_RAW_PER_DEG if lon is not None else None
             sog = sog / 10.0 if sog is not None else None
             cog = cog / 10.0 if cog is not None else None
         if lat is not None and abs(lat) > 90.0:

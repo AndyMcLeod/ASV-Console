@@ -48,6 +48,34 @@ other than typed length and spacing"; the console has a per-line table that rebu
 the plan and the planner does not, so the cap stays and becomes honest instead. Raising it
 here would need the `LEG_ROWS`-style table work WorldView did first.
 
+**ALSO (2026-08-19): `ais_service.py` IS VENDORED FROM `asv_core`, AND ITS AISHUB UNIT
+DETECTOR HAD A BUG.** The core body is THIS repo's — Zboat's copy was the older generation
+and a strict subset, so nothing about the merge, the sources or the error frames changes
+here. One thing does, and it is a fix.
+
+AISHub serves positions in either decimal degrees or raw 1/600000-degree integers, and the
+two are indistinguishable field by field (a raw SOG of 74 is 7.4 kn; 74 kn is also 74). So
+`_aishub_normalize` settled the format once per response, from the coordinates, on the
+sound principle that a raw latitude is off Earth read as degrees. It settled it with
+`any()`. **The 91/181 "not available" sentinel that every vessel without a GPS fix
+broadcasts is off Earth read as degrees.** One unfixed ship flipped an ordinary
+human-format response into raw and divided every good position by 600000 — measured, two
+vessels off Lewes came back at 0.00006 N 0.0001 W doing 0.5 kn, no error anywhere. The
+sentinels are now excluded from the vote (they are exact and known in both unit systems)
+and raw must win a **majority**, which also covers what a sentinel list cannot: a merely
+corrupt coordinate.
+
+**Latent, not live.** `AishubSource` does not start without a member username and there is
+no membership, so this has never run — but it was on the path the moment one existed, and
+it was about to be copied into Zboat. `tests/ais_service.py` in the core pins it: 28
+checks, every mixed-response case paired with a genuine raw response that must still be
+rescaled.
+
+**`tests/ais_sources.py` and `tests/ais_error_frames.py` were NOT moved to the core, and
+that is deliberate** — they now exercise the *vendored* file, which is what proves this
+console really runs the core body. Do not edit `ais_service.py` here; change the core and
+re-sync.
+
 **ALSO (2026-08-18): `currents.py` IS VENDORED FROM `asv_core`, AND THE THIRD-COPY
 PROBLEM IS SOLVED.** The header below used to say the drift risk was "real and compounding"
 across a Fuel → Transit → ASV chain. There is no chain any more: one body in the core, three
