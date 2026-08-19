@@ -48,6 +48,26 @@ other than typed length and spacing"; the console has a per-line table that rebu
 the plan and the planner does not, so the cap stays and becomes honest instead. Raising it
 here would need the `LEG_ROWS`-style table work WorldView did first.
 
+**ALSO (2026-08-19): `roc_tracks.py` IS VENDORED FROM `asv_core`. NO EXECUTABLE LINE
+CHANGED HERE.** The core body is this repo's; the only edits are a docstring made
+app-neutral and a comment. What changed is who else runs it — Zboat's copy was the older
+generation and this body carries **three live crashes** across to it: a checksum-valid NMEA
+sentence with a garbage speed field (bare `float()` → `ValueError` → the GPS link drops for
+3 s), a persisted record spelling an absent offset field as `None` (→ `AttributeError`
+inside `snapshot()`, taking out the ROC card and every `/api/state` frame), and an unbounded
+`roc_config.json`.
+
+**`tests/roc_tracks.py` and `tests/roc_persist.py` STAY HERE** — 677 lines, and they now
+exercise the *vendored* file, which is what proves this console runs the core body. The core
+adds only the one case they cannot: **every check here calls `configure_vessel()` first,
+because this console does.** Zboat never will, and nothing anywhere had asserted what an
+unconfigured module does. That is now 14 checks in the core.
+
+**A CONSEQUENCE FOR THIS REPO: the placeholders in `SHIP_RECOVERY_M` / `ASV_MAX_SPEED_KN`
+are now load-bearing for someone else.** They read 50.0 m and 6.0 kn, which is exactly what
+a single-hull console hardcodes. They are no longer "a value that gets overwritten a
+millisecond later" — do not retune them as if they were.
+
 **ALSO (2026-08-19): `ais_service.py` IS VENDORED FROM `asv_core`, AND ITS AISHUB UNIT
 DETECTOR HAD A BUG.** The core body is THIS repo's — Zboat's copy was the older generation
 and a strict subset, so nothing about the merge, the sources or the error frames changes

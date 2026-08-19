@@ -1,4 +1,40 @@
-"""Remote Operations Center (ROC) tracking + moving-HOME for the ASV console.
+# ============================================================================
+# VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
+#
+#   source : asv_core/roc_tracks.py
+#   sync   : python tools/vendor.py            (from the asv_core repo)
+#   verify : python tools/vendor.py --check    (fails if this copy drifted)
+#
+# NO ABSOLUTE PATH APPEARS ABOVE, AND THAT IS DELIBERATE. Two of these repos
+# publish scrubbed PUBLIC mirrors, and Transit's exporter ABORTS on anything
+# matching [A-Z]:\Claude -- absolute paths name private sibling projects and
+# point a cloner at a drive they do not have. A header naming a path would be
+# publish-safe only for as long as somebody maintained a substitution rule for
+# it in each exporter separately. Naming the repo instead is safe by
+# construction, in every consumer, including ones that do not exist yet.
+#
+# A copy rather than an import because this repo has to stand on its own: it is
+# a separate repository, and this file is opened by path rather than imported
+# as a package. The old trade was drift -- a vendored file did not follow its
+# source, which is how the estate grew three copies of currents.py. The --check
+# above removes that trade: this copy cannot diverge without failing a suite.
+#
+# THIS CONSUMER, SPECIFICALLY:
+# THIS REPO WROTE roc_tracks.py AND THE CORE BODY IS ITS OWN, unchanged apart
+# from a docstring made app-neutral. Nothing here changes.
+#
+# Its 677 lines of tests (tests/roc_tracks.py + tests/roc_persist.py) stay in
+# this repo deliberately and now exercise the VENDORED file, which is what
+# proves the console really runs the core body. The core adds only the one
+# case they cannot cover: every check here calls configure_vessel() first,
+# because this console does, so nothing anywhere asserted what an
+# UNCONFIGURED module does -- and that is precisely what the other consumer
+# runs on.
+#
+# Edit the core file and re-run the sync. Everything below is verbatim.
+# ============================================================================
+
+"""Remote Operations Center (ROC) tracking + moving-HOME for an ASV console.
 
 The operational paradigm: humans command the ASV from one or more Remote
 Operations Centers. A ROC has a GPS position and a telemetry link to the boat.
@@ -17,7 +53,7 @@ Each ROC's "arrival point" is its position walked out along that offset. The
 operator picks one ROC as the active HOME; when it is a ship, HOME is a moving
 point and Return-to-Home chases it (a Mothership recovery). The console pulls
 `active_home()` every telemetry tick and re-targets the boat live - see
-`Engine._run` in asv_console.py.
+`Engine._run` in the console that hosts this.
 
 PLACE -> EDIT -> CONFIRM (the sim's interactive lifecycle). A ROC is created by
 clicking the chart (the console posts its lat/lon). It comes up STAGED: its
@@ -80,6 +116,13 @@ SHIP_HEADING_DEFAULT = 0.0   # deg true
 # GOTCHA THIS EXISTS TO AVOID: these are re-derived on EVERY vessel switch, because
 # apply_vessel() calls configure_vessel(). An import-time-only derived constant goes
 # stale the moment the operator picks another vessel in the top-bar picker.
+#
+# THE PLACEHOLDERS ARE A CONTRACT, NOT A GUESS. A console with ONE hull need never call
+# configure_vessel() at all, and then these values are what it runs on for ever -- so
+# they are exactly the constants such a console would otherwise hardcode: 50 m astern,
+# 6 kn. tests/roc_tracks.py in the core asserts that, because it is the whole reason an
+# unconfigured consumer can adopt this file without changing behaviour. Do not "tidy"
+# them toward some other default, and do not assume every consumer configures.
 SHIP_RECOVERY_M = 50.0        # placeholder; overwritten at import once a vessel loads
 ASV_MAX_SPEED_KN = 6.0        # placeholder; overwritten likewise
 CLOSE_MARGIN_KN = 0.5         # overtake needed before a moving HOME counts as reachable
