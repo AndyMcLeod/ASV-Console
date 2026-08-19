@@ -26,7 +26,29 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (2026-08-18): `currents.py` IS NOW VENDORED FROM `asv_core` TOO, AND THE THIRD-COPY
+**NEWEST (2026-08-18): THE SURVEY-LINE CAP HAS ALWAYS BEEN SILENT, AND NOW IT IS NOT.**
+`MAX_SURVEY_LINES = 600` has clamped the derived count since the pattern maths was ported
+from `surveypattern.cpp`, and said nothing. Past 600 the pattern stopped widening while the
+box carried on: the operator got coverage that did **not** fill the area they drew, with
+nothing on screen to say why. **600 is reachable by a real survey — 25 m spacing across
+15 km is exactly 600.**
+
+`surveyPattern` now also returns `wanted` (the count BEFORE the clamp) and
+`capped: wanted > count`, and the survey card says so in amber, naming both numbers and the
+spacing that would fill the box. `sp_count` reads "600 of 1000" rather than a bare 600.
+
+**`capped` compares against the PRE-CLAMP count, which is stricter than WorldView's.** Its
+equivalent tests `count >= MAX`, which also fires at exactly MAX — where nothing was dropped
+and the box IS covered. Checks 18–30 in `tests/survey_card.js`, mutation-verified; adopting
+WorldView's form makes 20 fail.
+
+**Andy's ruling (2026-08-18): the console KEEPS 600, it does not rise to WorldView's 4000.**
+WorldView removed its bound because Andy's rule for the planner was "no bounding limits
+other than typed length and spacing"; the console has a per-line table that rebuilds with
+the plan and the planner does not, so the cap stays and becomes honest instead. Raising it
+here would need the `LEG_ROWS`-style table work WorldView did first.
+
+**ALSO (2026-08-18): `currents.py` IS VENDORED FROM `asv_core`, AND THE THIRD-COPY
 PROBLEM IS SOLVED.** The header below used to say the drift risk was "real and compounding"
 across a Fuel → Transit → ASV chain. There is no chain any more: one body in the core, three
 synced copies, and `python tools/vendor.py --check` from that repo fails if any of them

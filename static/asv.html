@@ -954,6 +954,19 @@ function surveyPattern(A, B, C, align){
   const legLength = diagD*Math.cos((diagA-legHeading)*Math.PI/180);
   const width = diagD*Math.sin((diagA-legHeading)*Math.PI/180);
   let count = Math.ceil(Math.abs(width)/spacing - 1e-3);   // stable at ~exact multiples
+  // THE CAP, MADE VISIBLE (2026-08-18). This clamp has always been here and has
+  // always been SILENT: past 600 lines the pattern simply stopped widening while
+  // the box carried on, so the operator got coverage that did not fill the area
+  // they drew, with nothing on screen saying so. 600 is reachable by a real
+  // survey — 25 m spacing across 15 km is exactly 600 — so this is not a
+  // theoretical edge. WorldView hit the same thing and reports it; this is that
+  // fix brought back to the console.
+  //
+  // `wanted` is the count BEFORE the clamp, so `capped` is true only when lines
+  // were actually DROPPED. WorldView's equivalent tests `count >= MAX`, which
+  // also fires at exactly MAX — where the box IS fully covered and there is
+  // nothing to warn about. Comparing against the pre-clamp count is exact.
+  const wanted = Math.max(1, count);
   count = Math.max(1, Math.min(MAX_SURVEY_LINES, count));
   const residual = Math.abs(width) - (count-1)*spacing;
   const sgn = width >= 0 ? 1 : -1;             // fill toward B's side
@@ -967,7 +980,8 @@ function surveyPattern(A, B, C, align){
                  atDA(prev[0], spacing*sgn, spacingAngle) ]); // reverse each leg
   }
   return {lines, spacing, direction:(spacingAngle-90+360)%360,
-          legLength:Math.abs(legLength), width:Math.abs(width), count};
+          legLength:Math.abs(legLength), width:Math.abs(width), count,
+          wanted, capped: wanted > count};
 }
 
 const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
@@ -1802,6 +1816,12 @@ function committedPatternInfo(){
 function updatePatReadout(){
   const sp = currentPattern();
   $("#sp_add").disabled = !(pat.A && pat.B);
+  // CLEAR THE WARNING COLOUR FIRST, unconditionally. The capped branch below
+  // paints `sp_hint` amber, and `.phint` is deliberately faint — so a hint left
+  // amber after the operator widens the spacing would say "still truncated"
+  // about a pattern that now fits. Resetting here rather than in each of the
+  // five branches that write this element means a new branch cannot forget.
+  $("#sp_hint").style.color = "";
   if(sp){
     // reflect the derived spacing + direction in the inputs, but don't clobber mid-type
     if(document.activeElement !== $("#sp_spacing")) $("#sp_spacing").value = sp.spacing.toFixed(1);
@@ -1809,8 +1829,26 @@ function updatePatReadout(){
     $("#sp_len").textContent = sp.legLength.toFixed(0)+" m";
     $("#sp_width").textContent = sp.width.toFixed(0)+" m";
     $("#sp_count").textContent = patClip ? (patClip.length+" clipped")
-      : (boundaryActive() ? (patSourceLines().length+" in area") : sp.count);
-    if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out / Add to plan."
+      : (boundaryActive() ? (patSourceLines().length+" in area")
+      : (sp.capped ? sp.count+" of "+sp.wanted : sp.count));
+    // THE CAP WINS THE HINT LINE. A truncated pattern is worth more than "drag
+    // A / B / C to adjust": the operator is looking at coverage that does not
+    // fill the box they drew, and every UI defect this app has had was
+    // something live and invisible. It also outranks the patClip guard below —
+    // a clipped pattern the operator asked for is normal, a silently dropped
+    // 400 lines is not.
+    if(sp.capped){
+      $("#sp_hint").textContent =
+        "Stopped at "+sp.count+" lines — the most this will draw, and the box needs "
+        +sp.wanted+". THE PATTERN DOES NOT COVER THE AREA YOU DREW. Widen the spacing "
+        +"(about "+Math.ceil(sp.width/MAX_SURVEY_LINES)+" m fills it) or draw a smaller box.";
+      // AMBER, because `.phint` is styled faint on purpose. Dropped coverage
+      // rendered in the same de-emphasised grey as "drag A / B / C to adjust"
+      // is a warning nobody reads. --warn, not --bad: the pattern is wrong, the
+      // boat is not in danger.
+      $("#sp_hint").style.color = "var(--warn)";
+    }
+    else if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out / Add to plan."
       : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add). Centre grip moves the whole pattern.";
   } else {
     // No pattern being drawn. If one is COMMITTED, keep describing it rather than

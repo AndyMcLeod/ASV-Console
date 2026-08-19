@@ -23,6 +23,14 @@
 //
 //   node tests/survey_card.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
+// TEETH for the CAP checks (18-28), verified by mutation 2026-08-18: adopt WorldView's
+// `capped: count >= MAX` and 20 fails (it fires at exactly MAX, where nothing was dropped
+// and the box IS covered). Set `capped: false` - the silent clamp, restored - and 21 fails.
+// Keep the flag but drop the card warning and 25 fails. Print a bare count instead of
+// "600 of 1000" and 28 fails. Leave the hint faint - the right words in the grey nobody
+// reads - and 29 fails. Never clear the colour, so amber sticks after the operator widens
+// the spacing, and 30 fails. Put the drag hint ahead of the warning and 25 + 29 fail.
+//
 // TEETH (verified by mutation, not assumed): restore the original blanking - report
 // nothing once the anchors are gone - and 1 fails loudly (the suite then cannot continue,
 // which is the point). Drop the parallel test and 8 fails. Use the FIRST line's length
@@ -260,6 +268,91 @@ check("11. a single-line plan reports length and count, and no spacing",
   check("17b. each shipped hull declares its own minimum (DriX 80, Z-Boat 0)",
         drix === 80 && zb === 0,
         "drix=" + drix + " zboat=" + zb);
+}
+
+// --- 18. THE SILENT CAP -------------------------------------------------------------
+// MAX_SURVEY_LINES has clamped the derived line count since the pattern maths was ported,
+// and it said NOTHING. Past the cap the pattern stopped widening while the box carried on,
+// so the operator got coverage that did not fill the area they drew and no indication why.
+// 600 is not a theoretical edge: 25 m spacing across a 15 km box is exactly 600.
+//
+// WorldView hit this and reports it; Andy's ruling (2026-08-18) was to keep the console's
+// 600 and make it honest rather than raise it, because the console has a per-line table
+// that rebuilds with the plan and the planner does not.
+{
+  const { azTo, distTo, atDA } = require("../static/js/geodesy.js");
+  // READ THE CAP FROM THE PAGE, and bind it under its own name BEFORE the eval:
+  // the grabbed surveyPattern closes over `MAX_SURVEY_LINES` through this scope,
+  // so a `const MAX` declared afterwards is both the wrong name and in the
+  // temporal dead zone by the time the function actually runs.
+  const MAX = Number(/const MAX_SURVEY_LINES\s*=\s*(\d+)/.exec(H)[1]);
+  var MAX_SURVEY_LINES = MAX;                       // eslint-disable-line no-var
+  // eslint-disable-next-line no-eval
+  eval(grab("surveyPattern"));
+
+  // A box `wide` m across at `sp` m spacing, lines running due north. A is one corner and
+  // B the opposite one, which is what the console's three clicks produce.
+  const box = (wide, sp, len = 400) =>
+    surveyPattern(at(0, 0), at(wide, len), at(sp, 0), 0);
+
+  check("18. the cap is still 600 — Andy kept it rather than raising it",
+        MAX === 600, "MAX_SURVEY_LINES=" + MAX);
+
+  const ok = box(1000, 25);
+  check("19. an ordinary survey is NOT flagged",
+        ok.capped === false && ok.count === ok.wanted,
+        ok.count + " lines, wanted " + ok.wanted);
+
+  // THE BOUNDARY WorldView GETS WRONG. Its test is `count >= MAX`, which fires at exactly
+  // MAX — where nothing was dropped and the box IS covered. Comparing against the
+  // pre-clamp count makes the flag mean what it says.
+  const exact = box(MAX * 25, 25);
+  check("20. EXACTLY the cap is not flagged — nothing was dropped there",
+        exact.count === MAX && exact.capped === false,
+        exact.count + " lines, wanted " + exact.wanted);
+
+  const over = box((MAX + 400) * 25, 25);
+  check("21. THE REPORTED CASE: past the cap IS flagged",
+        over.capped === true, "capped=" + over.capped);
+  check("22. ... the drawn count is the cap",
+        over.count === MAX, over.count + " drawn");
+  check("23. ... and `wanted` reports what the box actually needed",
+        over.wanted === MAX + 400, over.wanted + " needed, " + (over.wanted - over.count) + " dropped");
+  check("24. ... so the shortfall is recoverable from the pattern alone",
+        over.wanted - over.count === 400, "no second source of truth to disagree");
+
+  // 25-27. SAID OUT LOUD. The numbers existing is not the fix; the card carrying them is.
+  const R = grab("updatePatReadout");
+  // ORDER BY POSITION, not by a bounded regex. The first version allowed 400
+  // characters between the two branches and broke the moment the capped branch
+  // grew a comment — a test that fails when a comment is added is measuring the
+  // wrong thing. What matters is only that the capped branch comes first.
+  const iCap = R.indexOf('if(sp.capped)'), iClip = R.indexOf('else if(!patClip)');
+  check("25. the card reports the cap, and does so BEFORE the drag hint",
+        iCap > 0 && iClip > iCap,
+        "a truncated pattern outranks 'drag A / B / C to adjust' (capped at "
+        + iCap + ", patClip at " + iClip + ")");
+  check("26. ... naming BOTH the drawn count and what the box needed",
+        /sp\.count[\s\S]{0,200}?sp\.wanted/.test(R),
+        "one number alone does not tell an operator how far short they are");
+  check("27. ... and saying plainly that the coverage is incomplete",
+        /DOES NOT COVER THE AREA/.test(R),
+        "the fault is invisible on the chart — the pattern just looks like a pattern");
+  check("28. the line count itself shows the shortfall, not a bare capped number",
+        /sp\.capped \? sp\.count\+" of "\+sp\.wanted/.test(R),
+        "600 alone reads as a correct answer");
+
+  // 29-30. AND IT HAS TO LOOK LIKE A WARNING. `.phint` is styled faint on purpose
+  // (9.5px, --ink-faint); the correct words in that grey are a warning nobody reads.
+  check("29. the capped hint is painted with the page's warn colour",
+        /sp\.capped\)\{[\s\S]{0,600}?style\.color = "var\(--warn\)"/.test(R),
+        "amber, not the faint hint grey — and --warn not --bad: the pattern is "
+        + "wrong, the boat is not in danger");
+  // THE HALF THAT ROTS. Painting is easy; un-painting is what gets forgotten, and a
+  // hint left amber says "still truncated" about a pattern the operator just fixed.
+  check("30. ... and cleared unconditionally at the top, not per-branch",
+        /function updatePatReadout\(\)\{[\s\S]{0,700}?\$\("#sp_hint"\)\.style\.color = "";[\s\S]*?if\(sp\)\{/.test(R),
+        "reset before any branch writes, so a new branch cannot forget to clear it");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
