@@ -113,6 +113,41 @@ export function llEN(lat, lon, ref){
           n:(lat-ref.lat)*M_PER_DEG_LAT};
 }
 
+// A FRAME: this console's flat plane, in the shape the shared keep-out and routing bodies
+// expect — `{toEN(p), fromEN(e, n)}`, exactly WorldView's `tangentFrame` interface.
+//
+// Andy's ruling, 2026-08-20: `frame`, not a bare `ref`. The two consoles had the same
+// functions differing only in that one argument, and this is the side that moves.
+//
+// ⚠ IT DELEGATES TO THE FUNCTIONS ABOVE RATHER THAN HOISTING THE SCALE, AND THAT IS THE
+// WHOLE POINT. WorldView's tangentFrame computes `metresPerDegree` ONCE and closes over it;
+// doing the same here would be the hoist this file has always warned about — `(a*b)*c`
+// against `a*(b*c)`, about 4 nanometres of easting. Calling `toEN`/`fromEN` per invocation
+// keeps the arithmetic character-for-character what it has always been, which is what makes
+// the adoption of the shared bodies a rename rather than a change of answer: measured
+// 0.000e+0 m across 156 vertices and a mixed feature set. The hoist is available and
+// measured (it changes nothing anyone can observe, and buys nothing either — see the
+// cancelled Frame refactor), so it is not taken.
+//
+// ⚠ A FRAME IS ALSO A REF, AND THAT IS WHAT MAKES THE MIGRATION SAFE. It carries `lat` and
+// `lon` as well as the two closures, so every function in this console that already takes a
+// `ref` and does `ref.lat` / `llEN(lat, lon, ref)` keeps working, unchanged, when handed a
+// frame instead. The switch is therefore one line at each place a ref is CREATED, not a
+// rewrite of the seventy conversion call sites downstream — and it cannot half-apply, since
+// a frame satisfies both contracts at once.
+//
+// That is deliberate scaffolding, not a permanent duck-type. Once the shared bodies replace
+// this console's own (they use `frame.toEN` throughout), the `lat`/`lon` fields stop being
+// read and can go. Until then they are what lets the interface move ahead of the bodies.
+export function planeFrame(ref){
+  return {
+    lat: ref.lat, lon: ref.lon,
+    ref,
+    toEN: (p) => toEN(p, ref),
+    fromEN: (e, n) => fromEN(e, n, ref),
+  };
+}
+
 // Web Mercator. `z` is the tile zoom; the result is in world pixels at that zoom, which
 // the caller offsets by the viewport origin to get screen pixels.
 //

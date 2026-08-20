@@ -804,7 +804,7 @@ export function legPath(A, B, ref, ko, buf){
 // Keeps to the starboard side of channels (Rule 9).
 export function planNogoRoute(from, to){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
-  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const bi = blockedInfo(llEN(to.lat,to.lon,ref), ko, buf);
   if(bi) return {error:"the target sits in "+bi.kind, reason:{mode:"target", info:bi, at:to}};
   const leg = legPath(from, to, ref, ko, buf);
@@ -833,7 +833,7 @@ export function planNogoRoute(from, to){
 // starboard. Returns the full routed list + any legs that couldn't be routed.
 export function routePlan(start, wps, keepRightAll){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
-  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
   // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would

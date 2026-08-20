@@ -65,8 +65,16 @@ const path = require("path");
 // them through its lexical scope.
 const { llEN } = require("../static/js/geodesy.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8")
+  .split("\r\n").join("\n");        // see grab() -- bounded regexes count characters
 
+// LINE ENDINGS ARE NORMALISED HERE, AND THAT IS NOT COSMETIC. Several checks below
+// regex the grabbed source with a BOUNDED window -- `[\s\S]{0,600}` and friends -- to
+// say "these two things are near each other". A CRLF checkout adds one character per
+// line, and check 29's window spans ~14 lines: measured 605 chars on LF and 614 on
+// CRLF, against a bound of 600. So the check passed for whoever wrote it and failed on
+// a fresh Windows checkout, for a reason that has nothing to do with the code it tests.
+// `.gitattributes` leaves .html/.js to core.autocrlf, which is `true` here.
 function grab(name) {
   let start = H.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");

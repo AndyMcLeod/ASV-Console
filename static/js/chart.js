@@ -163,7 +163,7 @@ export function legClear(a, b, ref, ko, buf){
 // Offending feature + spot for one unroutable leg a->b (its direct line is blocked).
 export function legReason(a, b){
   if(!nogo.ready) return null;
-  const fb=firstBlockAlong(a, b, nogo.ref, nogo.ko, nogo.buffer);
+  const fb=firstBlockAlong(a, b, nogo.frame, nogo.ko, nogo.buffer);
   return fb ? {mode:"leg", info:fb.info, at:fb.at} : null;
 }
 export function legReasons(legs){ return (legs||[]).map(([a,b])=>legReason(a,b)).filter(Boolean); }

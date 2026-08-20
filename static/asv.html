@@ -600,7 +600,7 @@
 // existing call site keeps working untouched. SHARED MUTABLE STATE is imported as an
 // OBJECT (`V`) and must be reached through it - see the long note in state.js for why a
 // module namespace cannot be written to, and why destructuring V goes stale.
-import { M_PER_DEG_LAT, TILE, azTo, distTo, atDA, toEN, fromEN, llEN,
+import { M_PER_DEG_LAT, TILE, azTo, distTo, atDA, toEN, fromEN, llEN, planeFrame,
          worldPx, worldToLatLon, distPtSegPx, alignDeg } from "/static/js/geodesy.js";
 import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nmRound,
          fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
@@ -2000,7 +2000,7 @@ let searchNogoTimer = null;
 function computeSearchNogo(){
   const raw = searchRoute(); searchRouted = null;
   if(raw.length<2 || !nogo.ready) return raw;
-  const ref=nogo.ref, ko=nogo.ko, buf=nogo.buffer;
+  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const segs=[];                                 // nogo-clear sub-segments of every leg
   for(let i=1;i<raw.length;i++) clipLine(raw[i-1], raw[i], ref, ko, buf).forEach(s=>segs.push(s));
   const routes=[], unsafe=[]; const out=[];
@@ -2172,8 +2172,13 @@ function featuresBboxRef(feats){                // ENU reference = centroid of t
 }
 function rebuildNogo(){                         // (re)build the keep-out model from nogo.features + shared config
   const feats = nogo.features || sea.enc.features || [];
-  nogo.ref = featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center);
-  nogo.ko = buildKeepouts(nogo.ref, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
+  // A FRAME, not a bare point (Andy, 2026-08-20: "use frame"). It still carries lat/lon,
+  // so every function below that takes a `ref` keeps working unchanged -- and it now also
+  // satisfies WorldView's `{toEN, fromEN}` interface, which is what lets the shared
+  // keep-out bodies be adopted without touching a single caller. Measured 0.00e+0 m
+  // against the bare-ref model over a mixed extract before the switch.
+  nogo.frame = planeFrame(featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center));
+  nogo.ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
   nogo.note = n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
@@ -2309,7 +2314,7 @@ async function doSetHome(ll){
   let warn = "";
   if(!nogo.ready) warn = "the keep-out model is not loaded, so it was not checked";
   else {
-    const bi = blockedInfo(llEN(ll.lat, ll.lon, nogo.ref), nogo.ko, nogo.buffer);
+    const bi = blockedInfo(llEN(ll.lat, ll.lon, nogo.frame), nogo.ko, nogo.buffer);
     if(bi) warn = "it sits in a keep-out zone ("+(bi.kind||"charted feature")+")";
   }
   if(warn) showBanner("Home set at the chosen point, but "+warn+" — Return-to-Home may be REFUSED from here. Pick open water, or right-click over the vessel to put Home back on the boat.");
@@ -2536,13 +2541,13 @@ function drawMarks(toScreen){
   // that looks wrong on the water is nearly always a buoy line that looks wrong
   // here (a mis-merged system, or a mark the ENC didn't attribute).
   const sys = nogo.ready && nogo.ko && nogo.ko.sys;
-  if(sys && nogo.ref){
+  if(sys && nogo.frame){
     ctx.setLineDash([7,5]); ctx.lineWidth=1.6; ctx.globalAlpha=0.55;
     for(const sy of sys){
       for(const [line,col] of [[sy.port,"#3fbf6b"],[sy.stbd,"#e0483f"]]){
         if(line.length<2) continue;
         ctx.strokeStyle=col; ctx.beginPath();
-        line.forEach((m,i)=>{ const g=fromEN(m.e,m.n,nogo.ref), s=toScreen(g.lat,g.lon);
+        line.forEach((m,i)=>{ const g=fromEN(m.e,m.n,nogo.frame), s=toScreen(g.lat,g.lon);
           i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
         ctx.stroke();
       }
@@ -2858,7 +2863,7 @@ function drawAIS(toScreen){
 let nogoViolations=[], violationTimer=null;
 function violationFromReason(reason){
   if(!reason) return null;
-  const ref=nogo.ref, info=reason.info; let poly=null, pt=null;
+  const ref=nogo.frame, info=reason.info; let poly=null, pt=null;
   if(info){
     if(info.type==="poly")      poly=info.ring.map(q=>fromEN(q.e,q.n,ref));
     else if(info.type==="line") poly=info.pts.map(q=>fromEN(q.e,q.n,ref));
@@ -3105,7 +3110,7 @@ async function punchOut(){
     // behaviors use) — but with the survey's coverage depth window layered on the
     // fixed navigability floor. So a survey is trimmed to exactly the water the
     // vessel is allowed in, plus the operator's depth-of-interest band.
-    const ref=nogo.ref, buffer=nogo.buffer, enf=nogo.enf;
+    const ref=nogo.frame, buffer=nogo.buffer, enf=nogo.enf;
     const ko=buildKeepouts(ref, enf, dr, nogo.features);
     const src=patSourceLines();                // boundary-clipped legs (if any) feed the ENC clip
     // If the survey SPANS ACROSS a channel, exclude that channel from the coverage

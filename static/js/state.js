@@ -74,7 +74,11 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false};
 // keep-out zones had silently become ZERO, which is the failure that lets a route cross
 // land. `features:null` (not `[]`) is the not-yet-loaded signal the readout tells apart
 // from a genuinely empty result.
-export const nogo = {ready:false, busy:false, ref:null, ko:null, band:null, note:"nogo not loaded",
+// `frame` (was `ref`, renamed 2026-08-20 at Andy's "use frame"): the tangent plane the
+// whole keep-out layer is computed in, as `{lat, lon, ref, toEN, fromEN}`. It is still a
+// valid ref -- it carries lat/lon -- which is what let the interface move to WorldView's
+// convention ahead of the bodies. See geodesy.planeFrame.
+export const nogo = {ready:false, busy:false, frame:null, ko:null, band:null, note:"nogo not loaded",
             buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null};
 
 // --- live chart state ------------------------------------------------------------------

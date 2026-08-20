@@ -84,6 +84,11 @@ const { nogo, sea } = require("../static/js/state.js");
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { nogoKindCounts } = require("../static/js/chart.js");
+// rebuildNogo() builds a FRAME now (Andy, 2026-08-20: "use frame"), so planeFrame has
+// to resolve in the eval'd scope below. A free variable there is a RUNTIME error inside
+// the function, never a load error -- which is why this suite went red at "it shows the
+// model that was actually built" rather than anywhere near the real cause.
+const { planeFrame } = require("../static/js/geodesy.js");
 function setNogo(m){ for (const k of Object.keys(nogo)) delete nogo[k];
                      return Object.assign(nogo, m); }
 // eslint-disable-next-line no-eval
@@ -204,7 +209,7 @@ eval(grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo"));
 
 async function drive(fetchResult) {
-  setNogo({ ready: false, busy: false, ref: null, ko: null, band: null,
+  setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
            note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
   sea.enc = { features: [{}], band: "enc_5" };
   painted = []; banners = [];
