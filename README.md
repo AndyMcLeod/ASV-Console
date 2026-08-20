@@ -13,7 +13,9 @@ piers/docks, and shallow water) — the console extracts a **nogo model** at sta
 and routes Go-To, RTH, search, transit and survey transits around it.
 
 Python-3 standard library only. **No pip, no build step, no bundler** — the page
-and its ES modules under `static/js/` are served exactly as written. Run it, a
+and its ES modules under `static/js/` are served exactly as written. Two of those
+modules (`core_geodesy.js`, `contracts.js`) are **vendored from `asv_core`** and
+shared with the sibling planning tools — change them there, not here. Run it, a
 browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
 keep-clear buffer, short survey/search patterns).
 

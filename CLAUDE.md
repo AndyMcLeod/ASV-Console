@@ -48,6 +48,55 @@ other than typed length and spacing"; the console has a per-line table that rebu
 the plan and the planner does not, so the cap stays and becomes honest instead. Raising it
 here would need the `LEG_ROWS`-style table work WorldView did first.
 
+**⚠ 2026-08-19: `static/js/geodesy.js` NOW DELEGATES ITS FLAT MODEL TO `asv_core` — AND
+KEEPS ITS ENU TRANSFORM. THE SPLIT IS A MEASUREMENT, NOT A PREFERENCE.**
+
+Delegated: `distTo`, `azTo`, `atDA`, `alignDeg`, `M_PER_DEG_LAT`.
+**Kept local: `toEN`, `fromEN`, `llEN`** — and `worldPx` / `worldToLatLon` / `TILE` /
+`distPtSegPx`, which are the VIEW layer and are not in the core at all.
+
+| | ns/call |
+|---|---|
+| `llEN` as written here, cosine inline | **123** |
+| core `toEN`, Frame built per call | **328** — 2.7× slower |
+| core `toEN`, Frame hoisted to the caller | **26** — 4.7× faster |
+
+The core's `toEN` takes a `Frame` — a validated, frozen contract object with
+`m_per_deg_lon` precomputed — where this console passes a bare ref point. Building one per
+call is a real regression on a function with **63 call sites in the keep-out raster, which
+runs inside a drag**. The hoisted form is the right end state and is worth 4.7×, but it
+means threading a Frame through all 63: **a refactor of the keep-out path, which must be
+its own change with its own before/after on the same plan.** Do not do it as a tidy-up.
+
+**These are WRAPPERS, not aliases, and that is a real cost.** The estate prefers aliases
+because a wrapper is an adapter that can drift. It is impossible here — the core takes
+loose `(lat, lon)`, this console has always passed `{lat, lon}` POINTS, and there are 118
+call sites across the three. Three one-line adapters beat rewriting 118 call sites in the
+thing that drives the boat. Cost: distTo 84→80 ns, azTo 116→111, atDA 26→53.
+
+**What moved, in numbers:** distTo **3.6e-12 m**, azTo **5.7e-14°**, atDA and alignDeg
+**exactly 0** — the core precomputes `D2R` where this file wrote `*Math.PI/180` inline.
+That is the *same class* of hoist the comment above `toEN` has always warned about, at one
+part in 1e12 of the 3 m keep-out buffer.
+
+**`DELEGATES_TO_CORE` IS LOAD-BEARING — DO NOT EDIT IT TO MATCH AN INTENTION.** asv_core's
+differential reads it and stops counting those metrics as evidence, then **proves the claim
+over a 400-pair sweep**: a wrapper returns the core's own bits, a private copy differs at
+~1e-12. Adding a name here without actually delegating makes that suite go red, which is
+the point. (It was verified by mutation: a declared-but-private `distTo` is caught at
+3.638e-12.)
+
+**THE TWO VENDORED FILES ARE FLAT, AND THAT IS THE SERVER'S DOING.** `safe_js_path()`
+refuses anything whose basename is not the whole name — `tests/http_contract.py` pins it —
+so there can be **no `core/` subdirectory** the way WorldView has one.
+`static/js/contracts.js` keeps its own name because `core_geodesy.js` imports
+`./contracts.js` verbatim; the geodesy took the prefix because it would have collided.
+**Do not widen the path guard to make the filenames tidier.**
+
+Verified beyond the 38 suites: the module graph resolves over HTTP, the console boots with
+24 tiles and zero console errors, `distTo === core.flatDistanceM` in the page, and the
+chart overlay paints 380,692 px.
+
 **ALSO (2026-08-19): `roc_tracks.py` IS VENDORED FROM `asv_core`. NO EXECUTABLE LINE
 CHANGED HERE.** The core body is this repo's; the only edits are a docstring made
 app-neutral and a comment. What changed is who else runs it — Zboat's copy was the older
