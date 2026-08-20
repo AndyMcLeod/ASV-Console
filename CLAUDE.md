@@ -26,7 +26,15 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (2026-08-18): THE SURVEY-LINE CAP HAS ALWAYS BEEN SILENT, AND NOW IT IS NOT.**
+**NEWEST (2026-08-20): `static/js/chart.js` IS NOW A SEAM, NOT A KEEP-OUT LAYER.**
+All eighteen shared keep-out symbols come from `asv_core` — see *THE KEEP-OUT LAYER IS
+SHARED* below for what moved, what did not, and the two holes the mutation run found in
+the test that guards it. No behaviour change: the adopted module reproduces the one in git
+**0.000e+0 m over 4,945 vertices** across nine depth/tide settings, with `blocked`,
+`blockedInfo`, `legClear`, `firstBlockAlong` and `snapClearLL` at zero mismatches and no
+export dropped. All 38 suites green.
+
+**PREVIOUSLY (2026-08-18): THE SURVEY-LINE CAP HAS ALWAYS BEEN SILENT, AND NOW IT IS NOT.**
 `MAX_SURVEY_LINES = 600` has clamped the derived count since the pattern maths was ported
 from `surveypattern.cpp`, and said nothing. Past 600 the pattern stopped widening while the
 box carried on: the operator got coverage that did **not** fill the area they drew, with
@@ -59,14 +67,11 @@ reading whitespace. `dSeg` is bit-identical over 500 random cases; `bbOf`/`inBB`
 zero mismatches over 500 each; the three walkers yield identically across seven geometry
 shapes. **Call the functions; do not trust the diff on this layer.**
 
-**⚠ NOTHING ELSE IN THE KEEP-OUT LAYER MOVED, AND IT IS NOT LIKE THESE.** `buildKeepouts`
-here is `(ref, enf, dr, feats)` and WorldView's is `(frame, feats, opts)`. `legClear`,
-`firstBlockAlong` and `channelPolys` take a bare `ref` point here and a `Frame` there —
-**the same ref-vs-Frame split that stopped the geodesy adoption at the ENU boundary**, so
-the keep-out Frame refactor unblocks three of these as well as `llEN`. `blocked`,
-`blockedInfo`, `markId`, `markSystems`, `extendCenterline`, `pairGates` and
-`systemCenterline` share a signature but have NOT been differentially measured — measure
-them before believing anything about them.
+**⚠ THE WARNING THAT STOOD HERE — "nothing else in the keep-out layer moved" — WAS TRUE
+UNTIL 2026-08-20 AND IS NOT NOW.** The whole layer is shared; see *THE KEEP-OUT LAYER IS
+SHARED* below. The seven symbols it said had "NOT been differentially measured" have been:
+`blocked` and `blockedInfo` 0 of 1200, `markId` 0 of 10 names, and `markSystems`,
+`extendCenterline`, `pairGates` and `systemCenterline` JSON-identical.
 
 **2026-08-20: `static/js/passage.js` RE-EXPORTS THE ROUTING GRID FROM `asv_core`.**
 `stampSeg`, `dilateGrid` and `rasterKeepouts` are the core's now. They take a keep-out model
@@ -92,9 +97,63 @@ Downstream already agrees, fed the same model: `blocked` 0 of 800, `blockedInfo`
 `markId`/`markSystems`/`pairGates` agree. Routing likewise — of 16 shared symbols, five were
 identical (now extracted) and eleven differ by that one parameter.
 
-**What is actually left here:** the `ref`-vs-`frame` decision, and **getting `arcPts`,
-`minTurnRadiusM`, `punchOut` and `teardropTurn` out of `asv.html`** — they are inline in the
-4,521-line script block, so they cannot be imported, measured or vendored until they move.
+**What is actually left here:** **getting `arcPts`, `minTurnRadiusM`, `punchOut`,
+`teardropTurn`, `clipLine` and `featuresBboxRef` out of `asv.html`** — they are inline in
+the 4,521-line script block, so they cannot be imported, measured or vendored until they
+move. (`ref`-vs-`frame` was ruled: **frame**, and it is done.)
+
+### THE KEEP-OUT LAYER IS SHARED (2026-08-20)
+
+**`static/js/chart.js` went from 419 lines of keep-out layer to a seam.** Eighteen symbols
+now come from `static/js/core_keepouts.js`:
+
+- **Fourteen are plain re-exports** — `blocked`, `blockedInfo`, `legClear`,
+  `firstBlockAlong`, `markId`, `markSystems`, `systemCenterline`, `extendCenterline`,
+  `pairGates`, `channelPolys`, `HAZ_UNKNOWN_EXTENT`, `WRECK_CLEAR_MARGIN_M`, `MARK_TAIL`,
+  `CL_EXTEND_CAP_M`. The `frame` ruling made every signature match, so no caller moved.
+- **Four are WRAPPERS, and that is a cost, stated** — `buildKeepouts`, `hazExtent`,
+  `depthExcluded` and `nogoKind` read `V.*` and `sea.*` here where the core takes options.
+  `koOpts()` is the one seam that converts, **built per call** because every field is live:
+  `V.*` is rewritten on a vessel switch and `sea.waterOffset` moves with the tide. Caching
+  it is exactly the staleness `state.js` warns about, in the direction that gives a deeper
+  boat LESS clearance than its own file demands.
+
+**Eleven behaviours stay here** because WorldView has no equivalent: `waterTrust`,
+`effectiveWaterOffset`, `WATER_FAR_KM`, `WATER_REMOTE_KM`, `qualityAt`, `bufferFloor`,
+`nogoDR`, `nogoKindCounts`, `legReason`, `legReasons`, `snapClearLL`.
+
+**No behaviour change, measured against the module in git rather than asserted:** the model
+is reproduced **0.000e+0 m over 4,945 vertices** across three depth windows × three water
+levels; `blocked`/`blockedInfo` 0 of 1000; `legClear`/`firstBlockAlong` 0 of 400 (70 clear,
+330 blocked — the fixture exercises both answers); `snapClearLL` 0 of 200; `depthExcluded`
+0 of 180; `hazExtent` 0 of 108; the channel structure JSON-identical; and no export that
+`asv.html`, `passage.js` or any suite names has gone missing.
+
+**⚠ ONE ANSWER CHANGED, AND NOTHING CAN REACH IT.** `nogoKind("chan_mark", false)` said
+`"land"` here and `"a channel buoy"` in WorldView. `buildKeepouts` is the only caller in
+either repo and it handles marks and CONTINUES before `nogoKind` runs — the buoy points it
+builds are labelled at the push site — so the two always agreed about the model. The core
+keeps the correct answer.
+
+**⚠ ONE FIELD IS NEW ON THE BUOY POINTS.** This console pushed channel-buoy keep-outs with
+no `r` key at all; the core writes `r: 0`. Every reader here goes through `pt.r || 0`
+(`chart.js` twice, `core_raster.js` once) and `asv.html` only reads `ko.points.length`.
+Checked, not assumed.
+
+**⚠ AN ABSENT ENFORCEMENT KEY NO LONGER MEANS "OFF".** `buildKeepouts` used to read a
+missing `enf.land` as falsy — disarmed — so a caller who forgot a key silently got no
+shoreline keep-outs. The core defaults an absent key to its ARMED value (`area` alone
+defaults off, because a charted area is advisory) and REFUSES a key that is not one of the
+four. Every caller here passes a full `{...NOGO_ENF}`, so nothing moved.
+
+**⚠ FIVE SUITES PASSED A BARE REF AND NOW BUILD A FRAME.** `turn_channel`,
+`wreck_clearance`, `buoy_lane` and `turn_geometry` constructed `{lat, lon}` literals. The
+core's bodies convert through `frame.toEN`, so each needed one line —
+`planeFrame({lat, lon})` — and nothing else, because a frame still carries `lat`/`lon` and
+every `llEN(...)`/`fromEN(...)` call beside it keeps working. **That property is why the
+ruling was one line in `rebuildNogo` rather than seventy call sites.** `buoy_lane` is the
+one suite that evals module SOURCE into a shared scope, so it picks the clearance bodies
+out of `core_keepouts.js` now; it needed the same one-line fix and nothing more.
 
 **⚠ 2026-08-19: `static/js/geodesy.js` NOW DELEGATES ITS FLAT MODEL TO `asv_core` — AND
 KEEPS ITS ENU TRANSFORM. THE SPLIT IS A MEASUREMENT, NOT A PREFERENCE.**
@@ -454,7 +513,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (637 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (650 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

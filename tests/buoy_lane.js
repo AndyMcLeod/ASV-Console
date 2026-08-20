@@ -57,7 +57,7 @@ const path = require("path");
 // deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
-const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { azTo, distTo, fromEN, llEN, planeFrame } = require("../static/js/geodesy.js");
 const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
 
 // The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
@@ -143,7 +143,10 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
-const ref = { lat: 42.14, lon: -80.08 };
+// A FRAME, not a bare point. The clearance bodies grabbed into the eval scope above are
+// asv_core's now, and those convert through `frame.toEN` rather than `llEN(lat, lon, ref)`.
+// planeFrame still carries lat/lon, so ref.lat/ref.lon below are untouched.
+const ref = planeFrame({ lat: 42.14, lon: -80.08 });
 const cosr = Math.cos(ref.lat * Math.PI / 180);
 const enLL = (e, n) => ({ lat: ref.lat + n / M_PER_DEG_LAT, lon: ref.lon + e / (M_PER_DEG_LAT * cosr) });
 const toE = (p) => (p.lon - ref.lon) * M_PER_DEG_LAT * cosr;   // recover the east offset (m)

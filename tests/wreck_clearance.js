@@ -60,7 +60,7 @@ const { V } = require("../static/js/state.js");
 
 
 // Layer-0 helpers from the real modules (2026-08-09) rather than lifted out of the page.
-const { fromEN, llEN } = require("../static/js/geodesy.js");
+const { fromEN, llEN, planeFrame } = require("../static/js/geodesy.js");
 const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp } = require("../static/js/geometry.js");
 const { sea } = require("../static/js/state.js");
 
@@ -109,7 +109,9 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      HELPERS.map(grab).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
-const ref = { lat: 38.79, lon: -75.16 };                       // the DriX's home water
+// A FRAME, not a bare point -- buildKeepouts converts through `frame.toEN` now. It still
+// carries lat/lon, so ref.lat below and the llEN/fromEN calls are untouched.
+const ref = planeFrame({ lat: 38.79, lon: -75.16 });           // the DriX's home water
 const cosr = Math.cos(ref.lat * Math.PI / 180);
 const enLL = (e, n) => ({ lat: ref.lat + n / M_PER_DEG_LAT, lon: ref.lon + e / (M_PER_DEG_LAT * cosr) });
 const ENF = { land: true, depth: true, haz: true, area: false };

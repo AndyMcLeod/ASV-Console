@@ -65,7 +65,7 @@ const path = require("path");
 // deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
-const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { azTo, distTo, fromEN, llEN, planeFrame } = require("../static/js/geodesy.js");
 const { bbOf, dSeg, eachPath, eachPoint, eachRing, inBB, pinp, segSamplesEN } = require("../static/js/geometry.js");
 
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
@@ -120,7 +120,11 @@ eval(code);
 // EN metres around ref; +n = north. A dredged channel rectangle SOUTH of the
 // survey (y in [-120,-20], x in [-150,250]) with a row of Pile_point hazards
 // along its north edge every 60 m - the Lewes geometry, distilled.
-const ref = { lat: 38.79, lon: -75.157 };
+// A FRAME, not a bare point: buildKeepouts and channelPolys take the core bodies now,
+// and those convert through `frame.toEN`. planeFrame still carries lat/lon, so the same
+// value keeps working as the `ref` fromEN/llEN below want -- which is the property that
+// let the console switch without touching its ~70 conversion call sites.
+const ref = planeFrame({ lat: 38.79, lon: -75.157 });
 const ll = (e, n) => fromEN(e, n, ref);
 const ringLonLat = pts => [pts.map(([e, n]) => { const p = ll(e, n); return [p.lon, p.lat]; })];
 

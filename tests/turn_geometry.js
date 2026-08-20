@@ -59,7 +59,7 @@ const path = require("path");
 // deleted export fails HERE, loudly, instead of silently reverting to a stale copy;
 // and the checks below exercise the shipped function rather than an eval of its text.
 // Top-level so the suite's DIRECT eval() of page functions still resolves them.
-const { azTo, distTo, fromEN, llEN } = require("../static/js/geodesy.js");
+const { azTo, distTo, fromEN, llEN, planeFrame } = require("../static/js/geodesy.js");
 const { dSeg, inBB, pinp } = require("../static/js/geometry.js");
 
 // The vessel-derived parameter block moved to static/js/state.js (2026-08-09). The page
@@ -104,7 +104,9 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
 // Survey lines running due NORTH/SOUTH. The boat finishes line k heading north at E,
 // and must pick up line k+1 heading south at F, `spacing` metres to the EAST. So the
 // turn's outboard direction (+n) is "past the north end of the lines".
-const ref = { lat: 38.7896, lon: -75.1609 };                       // the DriX's Lewes base
+// A FRAME, not a bare point: the clearance bodies teardropTurn calls are asv_core's now
+// and convert through `frame.toEN`. planeFrame still carries lat/lon, so nothing else moves.
+const ref = planeFrame({ lat: 38.7896, lon: -75.1609 });           // the DriX's Lewes base
 const cosr = Math.cos(ref.lat * Math.PI / 180);
 const enLL = (e, n) => ({ lat: ref.lat + n / M_PER_DEG_LAT, lon: ref.lon + e / (M_PER_DEG_LAT * cosr) });
 const toE = (p) => (p.lon - ref.lon) * M_PER_DEG_LAT * cosr;

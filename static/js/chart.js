@@ -6,6 +6,27 @@
 // a question in, an answer out - so a suite can call it directly rather than lifting these
 // functions out of a 5,000-line page as source text and eval-ing them.
 //
+// THE SHARED BODIES MOVED TO asv_core ON 2026-08-20, and this file is now the seam that
+// keeps them speaking this console's language. WorldView had the same eighteen symbols --
+// its own file says it was ported FROM here -- and once Andy ruled `frame` rather than a
+// bare ref, the two were one algorithm with two parameter lists. Measured before the move,
+// this file against WorldView's, both handed THIS console's flat frame:
+//
+//     buildKeepouts    0.000e+0 m over 612 vertices, every bucket count identical
+//                      (polys lines points marks sys chans) -- and again with areas
+//                      enforced, hazards off, land off, and a 2.0-6.0 m depth window
+//     blocked          0 of 1200 disagree (805 blocked)
+//     blockedInfo      0 of 1200 -- same kind, same type
+//     legClear         0 of 400 (70 clear, 330 blocked)
+//     firstBlockAlong  0 of 400, worst reported position 0.000e+0 m
+//     markId 0 of 10 names; markSystems, pairGates, systemCenterline, extendCenterline
+//       and channelPolys JSON-identical; depthExcluded 0 of 90; hazExtent 0 of 63
+//
+// FOUR ARE WRAPPED RATHER THAN RE-EXPORTED, AND THAT IS A COST, STATED. buildKeepouts,
+// hazExtent, depthExcluded and nogoKind read V.* and sea.* here where the core takes
+// options. Wrapping keeps all 26 call sites in asv.html, passage.js and the suites exactly
+// as they were, at the price of one object built per call. Same trade as geodesy.js.
+//
 // WHAT IS DELIBERATELY NOT HERE: the Rule 9 lane and the keep-out router. Those two are
 // mutually recursive - the router asks for a keep-right lane, and building that lane asks
 // the router for a path - so they stay in the page for now and will move together as one
@@ -15,12 +36,35 @@
 // DEPTHS ARE CORRECTED, NOT CHARTED. Everything works in depth-below-the-vessel-NOW: the
 // charted sounding plus the live water-level offset. A charted 0.9 m at +1.2 m of tide is
 // navigable water for a 2 m boat, and treating the chart datum as truth would refuse it.
-//
-// THE BODIES BELOW ARE UNCHANGED FROM THE PAGE. The state they read (`nogo`, `sea.*`,
-// `V.*`) moved one commit earlier, on purpose, so this move had nothing left to rewrite.
-import { M_PER_DEG_LAT, distTo, fromEN, llEN } from "./geodesy.js";
-import { bbOf, inBB, dSeg, pinp, eachRing, eachPath, eachPoint, ptInGeom } from "./geometry.js";
+// That correction is what the `waterOffsetM` option below carries into the core.
+import { fromEN, llEN } from "./geodesy.js";
+import { ptInGeom } from "./geometry.js";
 import { V, nogo, sea } from "./state.js";
+// THE SHARED KEEP-OUT LAYER. `blocked` is used below by snapClearLL and `firstBlockAlong`
+// by legReason; the rest pass straight through to this console's importers.
+import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
+         blocked, blockedInfo, legClear, firstBlockAlong,
+         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
+         buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
+         depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind } from "./core_keepouts.js";
+export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
+         blocked, blockedInfo, legClear, firstBlockAlong,
+         markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys };
+
+// THE ONE SEAM WHERE THIS CONSOLE'S STATE BECOMES THE CORE'S OPTIONS. Built per call
+// rather than cached because every field is live: V.* is rewritten when the operator
+// switches hull, and sea.waterOffset moves with the tide. Caching it is exactly the
+// staleness state.js warns about, in the direction that gives a deeper boat LESS clearance
+// than its own file demands.
+//
+// The three values are the same numbers the core defaults to, checked rather than assumed -
+// V.NOGO_MIN_DEPTH_M, V.WRECK_RADIUS_M and V.NOGO_BUFFER_M equal DEFAULTS.minDepthM,
+// .wreckRadiusM and .bufferM exactly. What makes them worth passing is that all three are
+// vessel-configurable here and the defaults are not.
+function koOpts(){
+  return {minDepthM: V.NOGO_MIN_DEPTH_M, wreckRadiusM: V.WRECK_RADIUS_M,
+          bufferM: V.NOGO_BUFFER_M, waterOffsetM: sea.waterOffset};
+}
 
   // shoreline+manmade+depth+hazards
 // CHARTED POINT HAZARDS HAVE AN EXTENT THE CHART DOES NOT GIVE US. A wreck symbol is a
@@ -29,17 +73,14 @@ import { V, nogo, sea } from "./state.js";
 // nogo buffer for clearance models a wrecked ship as a 3 m dot - a route then only has
 // to miss the charted position by the buffer to validate "clear".
 //
-// So hazards whose EXTENT IS UNKNOWN get an intrinsic radius, and the buffer is added on
-// top of it as the margin it was always meant to be. Objects that genuinely ARE point
-// sized - piles, buoys, beacons, mooring points - keep the plain buffer (extent 0).
-export const HAZ_UNKNOWN_EXTENT = new Set(["Wreck_point", "Hulk_point", "Obstruction_point",
-                                    "Underwater_Awash_Rock_point"]);
-// Vessel-configurable via planning.wreck_radius_m; loadVessel() overwrites this.
-// A wreck with a CHARTED depth over it (VALSOU) is a known quantity: if the corrected
-// sounding clears the vessel's own navigability floor by this margin, the boat can pass
-// over it and the hazard collapses back to a point. Absent VALSOU means UNKNOWN, which
-// is the conservative case - not the permissive one.
-export const WRECK_CLEAR_MARGIN_M = 1.0;
+// So hazards whose EXTENT IS UNKNOWN get an intrinsic radius (HAZ_UNKNOWN_EXTENT, in the
+// core), and the buffer is added on top of it as the margin it was always meant to be.
+// Objects that genuinely ARE point sized - piles, buoys, beacons, mooring points - keep
+// the plain buffer (extent 0).
+//
+// Vessel-configurable via planning.wreck_radius_m; loadVessel() overwrites V.WRECK_RADIUS_M,
+// and koOpts() is what carries it into the shared body.
+export function hazExtent(f){ return coreHazExtent(f, koOpts()); }
 // --- real-time water level UI -------------------------------------------- //
 // HOW FAR AWAY IS THE TIDE THAT IS BEING APPLIED? A CO-OPS reading is only the local
 // water level near its own station. The console interpolates the nearest few, but if the
@@ -55,53 +96,6 @@ export const WRECK_CLEAR_MARGIN_M = 1.0;
 export const WATER_FAR_KM = 25;
       // beyond here the reading is indicative, not local
 export const WATER_REMOTE_KM = 75;
-// --- IALA-B lateral buoyage: mark identity + BUOY LINES --------------------- //
-// A lateral mark carries its channel identity in OBJNAM ("Erie Harbor Lighted
-// Buoy 11"): the trailing integer is the buoy NUMBER - which by IALA convention
-// increases in the CONVENTIONAL DIRECTION OF BUOYAGE, i.e. toward land (odd =
-// green/port-hand, even = red/starboard-hand in region B) - and the leading text
-// names the channel SYSTEM. Strip the designator ("[Lighted] [Bell] Buoy N",
-// "Light N", "Beacon N", "Junction Buoy M") to get the system name.
-export const MARK_TAIL=/\s*(lighted\s+)?(bell\s+|gong\s+|whistle\s+|horn\s+)?(junction\s+)?(buoy|light|beacon|daybeacon|daymark)\b.*$/i;
-export function blocked(p, ko, buf){
-  for(const poly of ko.polys){ if(!inBB(p,poly.bb,buf)) continue; if(pinp(p,poly.ring)) return true;
-    const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return true; } }
-  for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
-    for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return true; } }
-  // R = the hazard's OWN extent (0 for a genuinely point-sized object) plus the buffer
-  // as the clearance margin. Before this, every point hazard was buffer-sized, so a
-  // charted wreck was modelled as a 3 m dot and a route could thread past it.
-  for(const pt of ko.points){ const R=buf+(pt.r||0);
-    if(Math.abs(p.e-pt.e)>R||Math.abs(p.n-pt.n)>R) continue;
-    if(Math.hypot(p.e-pt.e,p.n-pt.n)<R) return true; }
-  return false;
-}
-// Like blocked(), but returns the OFFENDING keep-out (kind + geometry) so a refusal
-// can name it and highlight it. null when p is clear.
-export function blockedInfo(p, ko, buf){
-  for(const poly of ko.polys){ if(!inBB(p,poly.bb,buf)) continue;
-    if(pinp(p,poly.ring)) return {kind:poly.kind, type:"poly", ring:poly.ring};
-    const rg=poly.ring; for(let i=0,j=rg.length-1;i<rg.length;j=i++){ if(dSeg(p,rg[j],rg[i])<buf) return {kind:poly.kind, type:"poly", ring:poly.ring}; } }
-  for(const ln of ko.lines){ if(!inBB(p,ln.bb,buf)) continue;
-    for(let i=1;i<ln.pts.length;i++){ if(dSeg(p,ln.pts[i-1],ln.pts[i])<buf) return {kind:ln.kind, type:"line", pts:ln.pts}; } }
-  for(const pt of ko.points){ const R=buf+(pt.r||0);
-    if(Math.abs(p.e-pt.e)>R||Math.abs(p.n-pt.n)>R) continue;
-    if(Math.hypot(p.e-pt.e,p.n-pt.n)<R) return {kind:pt.kind, type:"point", pt:{e:pt.e,n:pt.n}, r:pt.r||0}; }
-  return null;
-}
-// Intrinsic radius (m) of a charted POINT hazard, before the nogo buffer is added.
-// Zero for genuinely point-sized objects. For a wreck/hulk/obstruction/awash rock the
-// chart gives a position but no extent, so we assume the configured radius UNLESS the
-// feature carries a charted sounding over it (VALSOU) proving there is water above:
-// corrected to the live water level and compared against the vessel's own navigability
-// floor, exactly as depth areas are. No VALSOU means UNKNOWN, and unknown is the
-// conservative case - the boat gives it the full berth.
-export function hazExtent(f){
-  if(!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
-  const vs = f.props && f.props.VALSOU;
-  if(typeof vs === "number" && (vs + sea.waterOffset) >= V.NOGO_MIN_DEPTH_M + WRECK_CLEAR_MARGIN_M) return 0;
-  return V.WRECK_RADIUS_M;
-}
 // Worst (most conservative) zone of confidence containing the point - M_QUAL
 // polygons can overlap, and a survey operator wants the pessimistic answer.
 export function qualityAt(lat, lon){
@@ -120,17 +114,15 @@ export function qualityAt(lat, lon){
 export function bufferFloor(missionBuf){
   return Math.max(V.NOGO_BUFFER_M, (typeof missionBuf === "number") ? missionBuf : V.NOGO_BUFFER_M);
 }
-// local ENU (metres) about a reference lat/lon
 // A human-readable category for a keep-out, so a refusal can say WHAT blocks it.
-export function nogoKind(r, depthbad){
-  if(depthbad) return "water shallower than "+V.NOGO_MIN_DEPTH_M.toFixed(1)+" m";
-  if(r==="dock"||r==="dock_line") return "a dock / pier";
-  if(r==="hazard_area"||r==="hazard_point") return "a charted hazard";
-  if(r==="dredged") return "a dredged area";
-  if(r==="restricted") return "a restricted area";
-  if(r==="shore_line") return "the shoreline";
-  return "land";
-}
+//
+// THE CORE'S ANSWER FOR "chan_mark" IS "a channel buoy" WHERE THIS FILE USED TO SAY
+// "land", and nothing can reach the difference: buildKeepouts is the only caller in either
+// repo, and it handles marks and CONTINUES before this is called - the buoy points it
+// builds are labelled at the push site. The core's is the correct answer and the model was
+// never affected either way; the core's tests/keepouts.py pins the unreachability rather
+// than the strings, because an unreachable branch asserted by its output is a comment.
+export function nogoKind(r, depthbad){ return coreNogoKind(r, depthbad, koOpts()); }
 // --- what the Nogo row SAYS, and why --------------------------------------- //
 // It used to collapse the whole model into "loading…" or a bare zone count, which told
 // the operator neither what the console was doing nor - when it came up empty - WHY.
@@ -152,14 +144,6 @@ export function nogoKindCounts(){                      // tally the keep-outs by
     }
   return c;
 }
-// sampled straight-leg clearance vs a keep-out model
-export function legClear(a, b, ref, ko, buf){
-  const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
-  const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,buf/2)));
-  for(let i=0;i<=n;i++){ const t=i/n;
-    if(blocked({e:ae.e+(be.e-ae.e)*t, n:ae.n+(be.n-ae.n)*t}, ko, buf)) return false; }
-  return true;
-}
 // Offending feature + spot for one unroutable leg a->b (its direct line is blocked).
 export function legReason(a, b){
   if(!nogo.ready) return null;
@@ -167,15 +151,6 @@ export function legReason(a, b){
   return fb ? {mode:"leg", info:fb.info, at:fb.at} : null;
 }
 export function legReasons(legs){ return (legs||[]).map(([a,b])=>legReason(a,b)).filter(Boolean); }
-// Walk the DIRECT line from->to and return the first spot that's blocked (+ what by),
-// used to explain/point at a "boxed in" target that itself sits in clear water.
-export function firstBlockAlong(fromLL, toLL, ref, ko, buf){
-  const a=llEN(fromLL.lat,fromLL.lon,ref), b=llEN(toLL.lat,toLL.lon,ref);
-  const L=Math.hypot(b.e-a.e,b.n-a.n); const n=Math.max(2,Math.ceil(L/Math.max(2,buf/2)));
-  for(let i=0;i<=n;i++){ const t=i/n; const p={e:a.e+(b.e-a.e)*t, n:a.n+(b.n-a.n)*t};
-    const info=blockedInfo(p,ko,buf); if(info) return {at:fromEN(p.e,p.n,ref), info}; }
-  return null;
-}
 export function snapClearLL(p, ref, ko, buf, pe, pn){     // nudge p along +/-(pe,pn) to clear water
   if(!blocked(llEN(p.lat,p.lon,ref), ko, buf)) return p;
   const base=llEN(p.lat,p.lon,ref), lim=Math.max(150, buf*20);
@@ -189,17 +164,10 @@ export function snapClearLL(p, ref, ko, buf, pe, pn){     // nudge p along +/-(p
 // min) is KEPT - only bands entirely shallower than the minimum are excluded, so
 // genuinely deeper water is no longer clipped. Too-deep only applies if a max is
 // set (blank max => deep water is fine to survey).
-export function depthExcluded(f, dr){
-  if(f.role !== "depth_area") return false;
-  const d1 = f.props.DRVAL1, d2 = f.props.DRVAL2;
-  // charted depths are to a fixed datum (LWD / MLLW); add the live water level to
-  // get ACTUAL available depth right now.
-  const deepest = (d2!=null) ? d2 + sea.waterOffset : (d1!=null ? d1 + sea.waterOffset : null);
-  const shallowest = (d1!=null) ? d1 + sea.waterOffset : (d2!=null ? d2 + sea.waterOffset : null);
-  const tooShallow = (deepest!=null && deepest < dr.min);
-  const tooDeep = (dr.max>0 && shallowest!=null && shallowest > dr.max);
-  return tooShallow || tooDeep;
-}
+//
+// The live water level is the third argument in the core; here it is read from `sea` so
+// the 20-odd call sites keep their two-argument shape.
+export function depthExcluded(f, dr){ return coreDepthExcluded(f, dr, sea.waterOffset); }
    // beyond here it is simply another area's tide
 export function waterTrust(wl){
   if(!wl || !wl.ok || wl.source==="manual") return {level:"local", km:null};
@@ -232,188 +200,22 @@ export function effectiveWaterOffset(wl){
   // unreachable, and an unreachable guard is a guard nobody is testing.
   return waterTrust(wl).level === "remote" ? 0 : wl.offset_m;
 }
+// Build the keep-out model. `ref` is a FRAME (Andy, 2026-08-20) - planeFrame() gives
+// {toEN, fromEN} over this console's flat plane, which is the interface the core body
+// takes, so the model that comes back is the one this console has always built.
+//
+// `feats` defaults to the fetched extract, which the core does NOT do - it takes what it
+// is given. That default is this console's, so it stays here.
+//
+// ONE SEMANTIC CHANGED, AND IT IS FAIL-SAFE. A key ABSENT from `enf` used to read as
+// falsy - i.e. disarmed - so a caller who forgot `land` silently got no shoreline
+// keep-outs at all. The core defaults an absent key to its armed value (area alone
+// defaults off, because a charted area is advisory) and REFUSES a key that is not one of
+// the four, so WorldView's old `hazard` spelling can no longer be dropped on the floor.
+// Every caller here passes a full {...NOGO_ENF}, so nothing in this console moves.
 export function buildKeepouts(ref, enf, dr, feats){
-  const polys=[], lines=[], points=[], marks=[];
-  const F = feats || sea.enc.features;
-  for(const f of F){ const g=f.geometry, r=f.role;
-    const land=(r==="land"||r==="dock"||r==="hazard_area"), shore=(r==="shore_line"||r==="dock_line");
-    const depthbad=depthExcluded(f, dr), haz=(r==="hazard_point"), area=(r==="dredged"||r==="restricted");
-    // LATERAL channel marks (buoys/beacons): collected as channel-defining marks
-    // (paired into the Rule 9 channel centreline by systemCenterline) AND kept clear
-    // as small point keep-outs (don't hit a buoy).
-    // CATLAM: 1/3 = port-hand, 2/4 = starboard-hand.
-    if(r==="chan_mark"){ const cat=f.props&&f.props.CATLAM, id=markId(f.props);
-      eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref);
-        marks.push({e:q.e, n:q.n, side:(cat==2||cat==4)?1:(cat==1||cat==3)?-1:0, num:id.num, sys:id.sys});
-        if(enf.haz){ const p={e:q.e,n:q.n,kind:"a channel buoy"}; points.push(p); } });
-      continue; }
-    if((land||shore)&&!enf.land) continue;
-    if(depthbad&&!enf.depth) continue;
-    if(haz&&!enf.haz) continue;
-    if(area&&!enf.area) continue;
-    const kind=nogoKind(r, depthbad);
-    if(land||depthbad||area) eachRing(g,rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>2) polys.push({ring,bb:bbOf(ring),kind}); });
-    else if(shore) eachPath(g,p=>{ const pts=p.map(c=>llEN(c[1],c[0],ref)); if(pts.length>1) lines.push({pts,bb:bbOf(pts),kind}); });
-    else if(haz){ const r=hazExtent(f);
-      eachPoint(g,c=>{ const q=llEN(c[1],c[0],ref); q.kind=kind; q.r=r; points.push(q); }); }
-  }
-  // `chans` = WHERE THE CHART SAYS THE CHANNEL IS, carried alongside the keep-outs but
-  // NOT one of them. Two different questions share this model: "may the vessel be here"
-  // (polys/lines/points, gated by `enf`) and "is this water a channel" (chans). The
-  // second is chart FACT and must not depend on the first: a dredged area is only a
-  // blanket keep-out when the operator enforces "Dredged / restricted" - which would
-  // also stop transiting it - yet its EXTENT is what tells the Rule 9 lane how far the
-  // fairway runs past the last buoy. Built unconditionally for that reason.
-  return {polys, lines, points, marks, sys:markSystems(marks), chans:channelPolys(ref, F, marks)};
+  return coreBuildKeepouts(ref, feats || sea.enc.features,
+                           {...koOpts(), depthRange: dr, enforce: enf});
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
 export function nogoDR(){ return {min: V.NOGO_MIN_DEPTH_M, max: 0}; }
-export function markId(props){
-  const nm=(props&&props.OBJNAM)||"";
-  const m=nm.match(/(\d+)\s*[A-Za-z]?\s*$/);
-  return {num: m?parseInt(m[1],10):null, sys: nm.replace(MARK_TAIL,"").trim().toLowerCase()};
-}
-// Group the marks into channel SYSTEMS and, within each, into the two ordered
-// BUOY LINES (port-hand and starboard-hand, ordered by number = ordered inbound).
-// Two refinements matter on real ENC data:
-//  * DEDUPE - a buoy is charted twice (e.g. "Erie Harbor Buoy 9" AND "Erie Harbor
-//    Lighted Buoy 9") at identical coordinates; without this the line doubles back.
-//  * PREFIX MERGE - "Erie Harbor Entrance" (buoys 1-5) and "Erie Harbor" (7-14) are
-//    the same channel continuing inland. Merging systems where one name is a word
-//    prefix of the other (and their numbers don't collide) closes the ~2 km unmarked
-//    gap between the entrance pair and the inner pairs, so the buoy line runs
-//    continuously from the seaward gate to the head of the harbour. Unrelated
-//    systems ("Presque Isle Park", "Erie Yacht Club Entrance") stay separate, each
-//    with its own numbering restarting at 1.
-export function markSystems(marks){
-  const seen=new Set(), uniq=[];
-  for(const m of (marks||[])){                       // dedupe co-located duplicates
-    const k=Math.round(m.e/3)+","+Math.round(m.n/3)+","+m.side;
-    if(seen.has(k)) continue; seen.add(k); uniq.push(m); }
-  const by=new Map();
-  for(const m of uniq){ const s=m.sys||""; if(!by.has(s)) by.set(s,[]); by.get(s).push(m); }
-  const names=[...by.keys()].filter(s=>s), merged=new Map();
-  const rootOf=(s)=>{ let r=s;                       // shortest word-prefix of s that is itself a system
-    for(const o of names){ if(o!==s && o.length<r.length && s.startsWith(o+" ")){
-      const a=by.get(o).map(x=>x.num).filter(x=>x!=null), b=by.get(s).map(x=>x.num).filter(x=>x!=null);
-      if(!a.some(x=>b.includes(x))) r=o; } }
-    return r; };
-  for(const s of names){ const r=rootOf(s); if(!merged.has(r)) merged.set(r,[]); merged.get(r).push(...by.get(s)); }
-  const out=[];
-  for(const [sys,ms] of merged){
-    const num=(a,b)=>a.num-b.num;
-    const port=ms.filter(m=>m.side<0 && m.num!=null).sort(num);
-    const stbd=ms.filter(m=>m.side>0 && m.num!=null).sort(num);
-    if(port.length||stbd.length) out.push({sys, port, stbd});
-  }
-  return out;
-}
-// The CENTRELINE of one buoy system (E/N), ordered along the channel: pair each
-// port-hand buoy with its nearest starboard-hand buoy and take the midpoint, then
-// order by buoy NUMBER (which by convention runs along the channel). Deduped. This is
-// the geometric middle of the buoyed fairway, independent of any routed base path.
-// Each point also carries `hw` = the channel HALF-WIDTH there (centreline to either
-// buoy line), which sets how far off the centreline the Rule 9 lane rides.
-export function systemCenterline(sy){
-  if(!sy || !sy.port || !sy.stbd || !sy.port.length || !sy.stbd.length) return [];
-  const mids=[];
-  for(const p of sy.port){ let best=null, bd=1e18;
-    for(const s of sy.stbd){ const d=Math.hypot(s.e-p.e, s.n-p.n); if(d<bd){ bd=d; best=s; } }
-    if(best && bd>=10 && bd<=500) mids.push({e:(p.e+best.e)/2, n:(p.n+best.n)/2, hw:bd/2, num:(p.num!=null?p.num:0)}); }
-  mids.sort((a,b)=>a.num-b.num);
-  const out=[];
-  for(const q of mids){ if(!out.length || Math.hypot(q.e-out[out.length-1].e, q.n-out[out.length-1].n)>10)
-    out.push({e:q.e, n:q.n, hw:q.hw}); }
-  return out;
-}
-// A CHANNEL DOES NOT END AT ITS LAST BUOY, and neither may the keep-right lane.
-//
-// The operator's rule: hold the quarter-width lane "until past the extent of the channel
-// as expressed on the chart, or at the final set of buoys that mark that channel and only
-// that channel". A vessel that lets the lane go the instant it passes the last mark cuts
-// back across the fairway at exactly the place converging traffic expects it to hold -
-// the mouth. The old colour keep-right had two mechanisms for this (channelEndExtend:
-// "a channel extends past its ends by its own width"; gateProject: "stand on past the
-// outermost gate by the gate width"), both deleted 2026-08-02 with that rule. The
-// geometric lane shipped with a comment asserting a replacement was unnecessary because
-// "the lane's own centreline already runs out to the last buoy pair". Measured on the
-// regression suite's own channel, it is not: the offset is already decaying 50 m INSIDE
-// the buoyage, is 21 of a wanted 25 AT the final pair, and is gone 200 m past it.
-//
-// The fix is upstream of the lane, not inside it: EXTEND THE CENTRELINE along its own
-// terminal axis and the existing machinery holds the full offset right through the
-// extension without knowing it is there. Straight, because standing on is what a mouth
-// asks for - following a curve out of one is inventing water.
-//
-// HOW FAR - both halves of the operator's rule, whichever reaches further:
-//   * CHARTED: march the axis while still inside a charted channel polygon (dredged area
-//     or marked-fairway corridor), so the lane holds to the charted end of the fairway;
-//   * BUOYED: one full channel WIDTH past the final pair - the old channelEndExtend
-//     convention, and enough to clear a mouth without cutting it.
-// CAPPED, because "that channel and only that channel" cuts both ways: a dredged area
-// running kilometres beyond the buoyage must not drag the lane along water the marks
-// never claimed. `hw` is HELD at the terminal value through the extension - the width
-// the last pair actually measured, not an extrapolation of it.
-export const CL_EXTEND_CAP_M = 1200;
-export function extendCenterline(cl, chans){
-  if(!cl || cl.length < 2) return cl || [];
-  const STEP = 10;
-  const inChan=(p)=>{ for(const c of (chans||[])){ if(inBB(p,c.bb,0) && pinp(p,c.ring)) return true; } return false; };
-  // how far this axis stays inside the charted channel, or one full width - whichever is more
-  const reach=(tip, ux, uy, hw)=>{
-    let charted = 0;
-    if(inChan(tip)){
-      for(let d=STEP; d<=CL_EXTEND_CAP_M; d+=STEP){
-        if(!inChan({e:tip.e+ux*d, n:tip.n+uy*d})) break;
-        charted = d; }
-    }
-    return Math.min(CL_EXTEND_CAP_M, Math.max(charted, 2*hw));
-  };
-  const span=(tip, ux, uy, hw)=>{
-    const L = reach(tip, ux, uy, hw);
-    if(!(L > 1)) return [];                       // nothing to stand on for (hw 0, no chart)
-    const N = Math.max(1, Math.ceil(L/50)), pts=[];
-    for(let k=1;k<=N;k++) pts.push({e:tip.e+ux*(L*k/N), n:tip.n+uy*(L*k/N), hw});
-    return pts;
-  };
-  const a0=cl[0], a1=cl[1], b1=cl[cl.length-1], b0=cl[cl.length-2];
-  let hx=a0.e-a1.e, hy=a0.n-a1.n; const hl=Math.hypot(hx,hy)||1; hx/=hl; hy/=hl;   // head, pointing OUT
-  let tx=b1.e-b0.e, ty=b1.n-b0.n; const tl=Math.hypot(tx,ty)||1; tx/=tl; ty/=tl;   // tail, pointing OUT
-  const hHW=(a0.hw!=null?a0.hw:0), tHW=(b1.hw!=null?b1.hw:0);
-  // head points are generated outward from the channel, so they reverse into travel order
-  return [...span(a0, hx,hy, hHW).reverse(), ...cl, ...span(b1, tx,ty, tHW)];
-}
-// Pair the lateral marks into channel GATES: each port-hand mark with its nearest
-// starboard-hand mark across the channel (15-400 m apart), giving the gate centre, its
-// width, and the channel axis through it. Used by channelSpanKeepouts to sweep a marked
-// fairway into a corridor polygon where no dredged area is charted.
-export function pairGates(marks){
-  const ports=(marks||[]).filter(m=>m.side<0), stbds=(marks||[]).filter(m=>m.side>0), gates=[];
-  for(const p of ports){ let best=null, bd=1e9;
-    for(const s of stbds){ const d=Math.hypot(s.e-p.e, s.n-p.n); if(d>=15 && d<=400 && d<bd){ bd=d; best=s; } }
-    if(best){ const C={e:(p.e+best.e)/2, n:(p.n+best.n)/2}, gx=(best.e-p.e)/bd, gy=(best.n-p.n)/bd;
-      gates.push({C, width:bd, axis:[-gy, gx]}); } }   // axis = perpendicular to the gate line
-  return gates;
-}
-// Charted-channel polygons: the ENC dredged areas plus the buoy-gate FAIRWAY
-// corridors (the marked channel where no dredged polygon is charted, e.g. an
-// inlet mouth). ONE list, shared by the span clip and the turn-water rule below,
-// so "what counts as a channel" cannot drift between the two.
-export function channelPolys(ref, feats, marks){
-  const chans=[];
-  // 1) dredged-area channels
-  for(const f of (feats||[])){ if(f.role!=="dredged") continue;
-    eachRing(f.geometry, rg=>{ const ring=rg.map(c=>llEN(c[1],c[0],ref)); if(ring.length>=3) chans.push({ring, bb:bbOf(ring)}); }); }
-  // 2) buoy-gate corridors: pair the lateral marks into gates, then sweep each
-  // gate line +/- one gate-width along the channel axis into a corridor polygon.
-  for(const g of pairGates(marks)){
-    const gux=g.axis[1], guy=-g.axis[0];         // gate-line unit (port -> starboard)
-    const P={e:g.C.e-gux*g.width/2, n:g.C.n-guy*g.width/2};   // port mark
-    const S={e:g.C.e+gux*g.width/2, n:g.C.n+guy*g.width/2};   // starboard mark
-    const [ax,ay]=g.axis, Le=g.width;            // extend one gate-width each way along the channel
-    const ring=[ {e:P.e-ax*Le,n:P.n-ay*Le}, {e:S.e-ax*Le,n:S.n-ay*Le},
-                 {e:S.e+ax*Le,n:S.n+ay*Le}, {e:P.e+ax*Le,n:P.n+ay*Le} ];
-    chans.push({ring, bb:bbOf(ring)});
-  }
-  return chans;
-}
