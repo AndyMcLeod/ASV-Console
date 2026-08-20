@@ -68,6 +68,9 @@ const { nogo } = require("../static/js/state.js");   // transitEstKey reads the 
 // suite hands them the SAME object the page mutates rather than a stub - a check that
 // leans on a vessel default is then reading the real one.
 const { V } = require("../static/js/state.js");
+// minTurnRadiusM moved out of asv.html into its own module (2026-08-20). Required
+// rather than grabbed, so the eval'd page functions below still see it by name.
+const { minTurnRadiusM } = require("../static/js/turns.js");
 
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
@@ -123,7 +126,7 @@ function planNogoRoute(from, to) {
 // eslint-disable-next-line no-eval
 eval(
      grabDecl("TRANSIT_REKEY_M") + "\n" +
-     grab("minTurnRadiusM") + "\n" + grab("committedPatternInfo") + "\n" +
+     grab("committedPatternInfo") + "\n" +
      grab("recalcCommittedForSpeed") + "\n" +
      grab("routeLenM") + "\n" + grab("transitEstBoat") + "\n" +
      grab("transitEstKey") + "\n" + grab("transitEstCompute") + "\n" +

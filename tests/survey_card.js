@@ -191,7 +191,9 @@ check("11. a single-line plan reports length and count, and no spacing",
 {
   const { distTo } = require("../static/js/geodesy.js");
   const { V } = require("../static/js/state.js");
-  eval(grab("shortenSeg"));                       // the REAL shortener, not a copy
+  // THE REAL SHORTENER, and it is a MODULE now (2026-08-20) rather than page text
+  // lifted and eval'd -- a rename fails at load instead of resolving to a stale copy.
+  const { shortenSeg } = require("../static/js/turns.js");
 
   const LAT0 = 38.7896, LON0 = -75.1609;
   const mPerLon = M_PER_DEG_LAT * Math.cos(LAT0 * Math.PI / 180);

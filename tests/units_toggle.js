@@ -59,6 +59,9 @@ const { distUnit, fmtDist, fmtDur, fmtNm, setDistUnit } = require("../static/js/
 // recalcCommittedForSpeed reads the vessel block (V.SPEED_KN, V.MAX_TURN_RATE_DEG_S),
 // which moved to state.js with the Layer-0 split.
 const { V } = require("../static/js/state.js");
+// minTurnRadiusM moved out of asv.html into its own module (2026-08-20). Required
+// rather than grabbed, so the eval'd page functions below still see it by name.
+const { minTurnRadiusM } = require("../static/js/turns.js");
 // The module's own SOURCE, for checks that must read a DECLARATION rather than a runtime
 // value - a default is a property of the text, not of a live object that an earlier check
 // in this same file may already have moved.
@@ -205,7 +208,7 @@ check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints 
     var showBanner = () => {}, flashNote = () => {};
     // eslint-disable-next-line no-eval
     eval(
-         grab("minTurnRadiusM") + "\n" + grab("committedPatternInfo") + "\n" +
+         grab("committedPatternInfo") + "\n" +
          grab("recalcCommittedForSpeed"));
     const wps = [{ lat: 38.7896, lon: -75.1609 }, { lat: 38.7896 + 2000 / M_PER_DEG_LAT, lon: -75.1609 }];
     mission = { speed: "survey", lines: [], waypoints: wps };

@@ -26,7 +26,15 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (2026-08-20): `static/js/passage.js` IS A SEAM TOO — THE ROUTER AND THE RULE 9
+**NEWEST (2026-08-20): THE TURNS ARE OUT OF `asv.html`.** `arcPts`, `minTurnRadiusM`,
+`shortenSeg` and `teardropTurn` are `static/js/turns.js`. That was the ONE genuine
+prerequisite left in the estate — for three sessions the handoff has recorded that nothing
+about this console's turn geometry could be imported, differentially measured or vendored
+until it came out of the 4,521-line script block. See *THE TURNS LEAVE THE PAGE* below,
+including why `punchOut` did NOT come with them and why the audit's "shared symbol" row is
+misleading about it.
+
+**PREVIOUSLY (2026-08-20): `static/js/passage.js` IS A SEAM TOO — THE ROUTER AND THE RULE 9
 LANE COME FROM `asv_core`.** 862 lines down to 331. See *THE ROUTING LAYER IS SHARED* below
 for what moved, and for the finding that nearly slipped past: **`distTo` is not the same
 quantity in the two consoles**, the shared bodies call it, and every fixture agreed at
@@ -115,6 +123,58 @@ identical (now extracted) and eleven differ by that one parameter.
 `teardropTurn`, `clipLine` and `featuresBboxRef` out of `asv.html`** — they are inline in
 the 4,521-line script block, so they cannot be imported, measured or vendored until they
 move. (`ref`-vs-`frame` was ruled: **frame**, and it is done.)
+
+### THE TURNS LEAVE THE PAGE (2026-08-20)
+
+**`static/js/turns.js`** — `arcPts`, `minTurnRadiusM`, `shortenSeg`, `teardropTurn`. 142
+lines out of `asv.html`, which drops 5,154 → 5,015.
+
+**IT WAS A CLEAN MOVE BECAUSE THOSE FOUR NEVER TOUCHED THE DOM.** `shortenSeg` takes
+`distTo`; `minTurnRadiusM` reads the vessel block through `V`; `arcPts` needs nothing at
+all; `teardropTurn` uses `llEN`/`M_PER_DEG_LAT` and validates every chord with `legClear`.
+All four were already reaching for ES modules. No body changed — the only edit was four
+`function` → `export function` keywords.
+
+**MEASURED FUNCTION BY FUNCTION against the page as it was**, the old bodies eval'd out of
+the backed-up HTML and run beside the module in one process:
+
+| | |
+|---|---|
+| `shortenSeg` | **0.000e+0 m**, 500 cases (491 shortened, 9 left alone — both branches) |
+| `minTurnRadiusM` | **0**, 12 cases across 3 yaw-rate caps, 7 distinct values |
+| `arcPts` | **0.000e+0 m**, 300 arcs / **9,816 points** |
+| `teardropTurn` | **0.000e+0 m**, 600 cases / **17,370 points** — 335 semicircle, 215 teardrop, and all three refusals (37 skew, 9 nogo, 4 degenerate) |
+
+**AND VERIFIED IN A REAL BROWSER, not just node.** The console boots on 8791 with 24 chart
+tiles, zero console errors, the overlay painting **380,744 px**, and `/static/js/turns.js`
+served 200. Both shapes produced live through the module: semicircle R = 20 m / 20 points /
+20 m outboard, teardrop R = 12 m / 27 points / **29.9 m outboard** (≈2.49·R, inside the
+documented ~2.75·R). `minTurnRadiusM("survey")` = 14.443 m for the DriX.
+
+**⚠ `punchOut` DELIBERATELY DID NOT COME, AND THE AUDIT'S ROW IS MISLEADING ABOUT IT.**
+Another shared name that is not a shared quantity, this time at the architecture level:
+WorldView's `punchOut(pattern, opts)` is a PURE MISSION ASSEMBLER with injected seams
+(`clear`, `routeAround`). This console's `punchOut()` **takes no arguments at all** and is
+the BUTTON HANDLER — it reads `currentPattern()`, writes `#sp_hint`, toggles `#sp_punch`,
+flips `encShow`, calls `render()` and `showBanner()`. One is UI, the other is algorithm.
+What corresponds to WorldView's `punchOut` is the ASSEMBLY INSIDE this handler, and
+separating those is its own job with its own decisions.
+
+**⚠ AND THE NEXT JOB HAS A DETAIL WAITING FOR IT.** `teardropTurn` takes a value it uses
+BOTH ways: its own maths goes through `llEN(E.lat, E.lon, ref)` and `ref.lat`, while the
+`legClear` it hands the same value needs `frame.toEN`. That works only because a
+`planeFrame` IS also a ref — the property Andy's frame ruling was built on. A merge with
+WorldView's turn geometry will have to settle it, the way the keep-out and routing layers
+did. (Found by passing a bare `{lat, lon}` to the live module and watching it throw.)
+
+**FIVE SUITES STOPPED LIFTING SOURCE TEXT, WHICH IS THE POINT OF THE MOVE.**
+`turn_geometry.js` had an `eval` of the whole turn cluster and now has **none at all**;
+`turn_channel.js` dropped both its grabs; `speed_recalc.js`, `units_toggle.js` and
+`survey_card.js` each replaced a `grab()` with a `require`. A renamed or deleted export now
+fails at LOAD, loudly, instead of quietly resolving to a stale copy of a function the
+console no longer runs. **Two of those five were not in my first survey** — I had grepped
+for CALLERS, and `survey_card.js` and `units_toggle.js` name the functions only as strings
+inside `grab("…")`. The full suite run found them; a narrower check would not have.
 
 ### THE ROUTER MEASURES TRULY NOW — Andy: "standardize" (2026-08-20)
 
@@ -639,7 +699,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (650 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (651 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

@@ -72,6 +72,8 @@ const { V, nogo } = require("../static/js/state.js");
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { blocked, legClear } = require("../static/js/chart.js");
+// The turn geometry itself, from the module it moved to out of asv.html.
+const { arcPts, minTurnRadiusM, shortenSeg, teardropTurn } = require("../static/js/turns.js");
 
 // The junction-seam guard (2026-08-10, mission wpt 551) ships in passage.js beside
 // pruneStitch - the interior prune it completes. Required, not grabbed: real module.
@@ -89,16 +91,17 @@ function grab(src, name) {
   return src.slice(start, k + 1);
 }
 
-// The turn cluster plus everything its nogo validation reaches.
-const HELPERS = ["minTurnRadiusM", "arcPts", "teardropTurn"];
+// THE TURN CLUSTER IS A MODULE NOW (2026-08-20), so this suite no longer lifts it out
+// of the page as source text and eval()s it. minTurnRadiusM, arcPts and teardropTurn are
+// REQUIRED above, which means a rename or a deletion fails HERE, at load, instead of
+// quietly resolving to a stale copy of a function the console no longer runs.
 const M_PER_DEG_LAT = 111320.0;
 
 // V.SPEED_KN / V.MAX_TURN_RATE_DEG_S are the vessel mirrors loadVessel() fills from
-// /api/vessel; declared mutable here so each vessel below can be swapped in.
-// eslint-disable-next-line no-eval
-eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
-     "V.SPEED_KN = {low:1.5,survey:3.0,high:6.0};\nV.MAX_TURN_RATE_DEG_S=60;\n" +
-     HELPERS.map((n) => grab(H, n)).join("\n"));
+// /api/vessel; set here so each vessel below can be swapped in. They are read THROUGH V
+// by the real module, so writing them is all it takes.
+V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
+V.MAX_TURN_RATE_DEG_S = 60;
 
 // --- synthetic world ------------------------------------------------------- //
 // Survey lines running due NORTH/SOUTH. The boat finishes line k heading north at E,
@@ -375,6 +378,27 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         users.length ? users.join(", ") : "checked every suite but the documented one");
 }
 
+// --- and the PAGE must run the module, not a copy of it -------------------------------- //
+// THE HOLE THIS CLOSES. Every check above now calls turns.js directly, which is the whole
+// point of taking the turn geometry out of asv.html (2026-08-20) -- but it also means this
+// suite would stay green if the page quietly grew its own `teardropTurn` back and stopped
+// importing the module. The tests would be exercising code the console no longer runs, and
+// no comparison of ANSWERS could see it: a re-inlined copy starts out identical.
+//
+// Same instrument as asv_core's identity checks, in the only form available across an HTML
+// boundary: the page must IMPORT the module, and must not DEFINE any of the four.
+{
+  const page = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const imports = /from\s+"\/static\/js\/turns\.js"/.test(page);
+  const redefined = ["arcPts", "minTurnRadiusM", "shortenSeg", "teardropTurn"]
+    .filter(n => new RegExp("(^|\\n)\\s*function\\s+" + n + "\\s*\\(").test(page));
+  check("29. the PAGE imports the turn module and does not define its own",
+        imports && redefined.length === 0,
+        !imports ? "asv.html no longer imports /static/js/turns.js"
+                 : redefined.length ? "redefined in the page: " + redefined.join(", ")
+                 : "imported, and none of the four is defined in the page");
+}
+
 // --- every suite must be able to REPORT its own death ---------------------------------- //
 // check() turns a throw inside its thunk into a failed check, but scenario SETUP runs
 // outside one, and a throw there used to end the process with no FAIL line at all. To
@@ -396,7 +420,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
     if (f.endsWith(".py") && !/sys\.excepthook = _crash_report/.test(src())) missing.py.push(f);
   }
   const gone = missing.js.concat(missing.py);
-  check("29. every suite carries the crash guard, so a death is REPORTED not silent",
+  check("30. every suite carries the crash guard, so a death is REPORTED not silent",
         gone.length === 0,
         gone.length ? gone.join(", ")
                     : "all " + fs.readdirSync(dir).filter(f => /\.(js|py)$/.test(f)).length + " suites guarded");

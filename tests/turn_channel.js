@@ -77,6 +77,7 @@ const { HAZ_UNKNOWN_EXTENT, MARK_TAIL, blocked, blockedInfo, buildKeepouts, chan
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { channelTurnKeepouts } = require("../static/js/passage.js");
+const { arcPts, teardropTurn } = require("../static/js/turns.js");
 
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
@@ -113,7 +114,9 @@ let code = "const M_PER_DEG_LAT = 111320;\n" +
 code += "const MARK_TAIL = " + MARK_TAIL.toString() + ";\n";
 code += "const HAZ_UNKNOWN_EXTENT = new Set(" + JSON.stringify([...HAZ_UNKNOWN_EXTENT]) + ");\n";
 { const m = H.match(/(?:const|let) WRECK_RADIUS_M[^;]*;/); if (m) code += m[0] + "\n"; }
-for (const f of ["arcPts", "teardropTurn"]) code += grab(f) + "\n";
+// arcPts and teardropTurn are a MODULE now (2026-08-20) and are REQUIRED above -- a
+// rename fails at load rather than resolving to a stale copy. The eval below still
+// builds the sandbox the remaining page-sourced helpers need.
 eval(code);
 
 // ---- synthetic world ----------------------------------------------------- //
