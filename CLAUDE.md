@@ -48,6 +48,26 @@ other than typed length and spacing"; the console has a per-line table that rebu
 the plan and the planner does not, so the cap stays and becomes honest instead. Raising it
 here would need the `LEG_ROWS`-style table work WorldView did first.
 
+**2026-08-19: `static/js/geometry.js` RE-EXPORTS ITS PLANAR PRIMITIVES FROM `asv_core`.**
+`bbOf`, `inBB`, `dSeg`, `pinp`, `eachRing`, `eachPath`, `eachPoint` are the core's now;
+`bboxContains`, `bboxAround`, `lerpLL`, `segInt`, `ptInGeom` and `segSamplesEN` stay here —
+WorldView has no equivalent of those.
+
+**Measured BEFORE the move, not after**, because a textual diff of this console's keep-out
+layer against WorldView's claims all 25 shared symbols differ — and for these seven that is
+reading whitespace. `dSeg` is bit-identical over 500 random cases; `bbOf`/`inBB`/`pinp` have
+zero mismatches over 500 each; the three walkers yield identically across seven geometry
+shapes. **Call the functions; do not trust the diff on this layer.**
+
+**⚠ NOTHING ELSE IN THE KEEP-OUT LAYER MOVED, AND IT IS NOT LIKE THESE.** `buildKeepouts`
+here is `(ref, enf, dr, feats)` and WorldView's is `(frame, feats, opts)`. `legClear`,
+`firstBlockAlong` and `channelPolys` take a bare `ref` point here and a `Frame` there —
+**the same ref-vs-Frame split that stopped the geodesy adoption at the ENU boundary**, so
+the keep-out Frame refactor unblocks three of these as well as `llEN`. `blocked`,
+`blockedInfo`, `markId`, `markSystems`, `extendCenterline`, `pairGates` and
+`systemCenterline` share a signature but have NOT been differentially measured — measure
+them before believing anything about them.
+
 **⚠ 2026-08-19: `static/js/geodesy.js` NOW DELEGATES ITS FLAT MODEL TO `asv_core` — AND
 KEEPS ITS ENU TRANSFORM. THE SPLIT IS A MEASUREMENT, NOT A PREFERENCE.**
 

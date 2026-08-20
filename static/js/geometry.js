@@ -18,11 +18,25 @@
 // which is why importing a module proves so much less than CALLING one.
 import { M_PER_DEG_LAT, llEN } from "./geodesy.js";
 
+// THE PLANAR PRIMITIVES COME FROM asv_core (2026-08-19). bbOf, inBB, dSeg, pinp and the
+// three GeoJSON walkers are the core's now, re-exported here so every existing importer
+// is untouched. WorldView had the same seven inside its keepouts.js, and they were
+// measured side by side BEFORE the move rather than after: dSeg/bbOf/inBB bit-identical
+// over 500/300/300 random cases, pinp agreeing over 400, the walkers yielding identically
+// for Polygon, MultiPolygon, LineString and Point. A textual diff says every body differs.
+// It is reading whitespace.
+//
+// NOTHING ELSE IN THE KEEP-OUT LAYER MOVED, AND THE REST IS NOT LIKE THESE. `blocked`,
+// `blockedInfo`, `buildKeepouts`, `legClear`, `firstBlockAlong` and `channelPolys` are
+// parallel implementations with different seams -- and three of them take a bare `ref`
+// point here where WorldView takes a `Frame`, which is the same split that stopped the
+// geodesy adoption at the ENU boundary. Those need a merge, not a vendoring.
+import { bbOf, inBB, dSeg, pinp, eachRing, eachPath, eachPoint } from "./core_geometry.js";
+export { bbOf, inBB, dSeg, pinp, eachRing, eachPath, eachPoint };
+
 // --- bounding boxes -------------------------------------------------------------------
 // ENU bbox of a point list. The 1e18 seeds stand in for infinities so an empty list gives
 // an inverted box that `inBB` rejects for every point, rather than one that accepts all.
-export function bbOf(pts){ let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18; for(const p of pts){ if(p.e<x0)x0=p.e; if(p.e>x1)x1=p.e; if(p.n<y0)y0=p.n; if(p.n>y1)y1=p.n; } return {x0,y0,x1,y1}; }
-export function inBB(p,bb,buf){ return p.e>=bb.x0-buf&&p.e<=bb.x1+buf&&p.n>=bb.y0-buf&&p.n<=bb.y1+buf; }
 
 // Geographic bboxes are {W,S,E,N} in degrees — a different shape from the ENU {x0,y0,x1,y1}
 // above, on purpose: they are not comparable and the field names keep them apart.
@@ -39,9 +53,6 @@ export function lerpLL(a,b,t){ return {lat:a.lat+(b.lat-a.lat)*t, lon:a.lon+(b.l
 
 // Distance from an ENU point to a SEGMENT (not the infinite line): t is clamped to [0,1],
 // which is what makes this usable for keep-out clearance rather than just bearing maths.
-export function dSeg(p,a,b){ const dx=b.e-a.e, dy=b.n-a.n, l2=dx*dx+dy*dy||1;
-  let t=((p.e-a.e)*dx+(p.n-a.n)*dy)/l2; t=t<0?0:t>1?1:t;
-  return Math.hypot(p.e-(a.e+t*dx), p.n-(a.n+t*dy)); }
 
 // Parameter t along p1->p2 where it meets p3->p4, or null. Returns the PARAMETER, not the
 // point, because callers want "how far along my leg does it get blocked" more often than
@@ -56,22 +67,10 @@ export function segInt(p1,p2,p3,p4){
 // --- containment ----------------------------------------------------------------------
 // Ray-casting point-in-polygon over an ENU ring. Boundary cases are not defined, and that
 // is acceptable here because every caller has already added a keep-clear buffer.
-export function pinp(p, ring){ let inside=false;
-  for(let i=0,j=ring.length-1;i<ring.length;j=i++){ const xi=ring[i].e,yi=ring[i].n,xj=ring[j].e,yj=ring[j].n;
-    if(((yi>p.n)!=(yj>p.n)) && (p.e < (xj-xi)*(p.n-yi)/(yj-yi)+xi)) inside=!inside; } return inside; }
 
 // --- GeoJSON traversal ----------------------------------------------------------------
 // Each walker is a no-op on a geometry of the wrong type, so a caller can run all three
 // over a mixed feature list without testing `type` itself.
-export function eachRing(g, fn){ if(!g) return;
-  if(g.type==="Polygon") g.coordinates.forEach(fn);
-  else if(g.type==="MultiPolygon") g.coordinates.forEach(poly=>poly.forEach(fn)); }
-export function eachPath(g, fn){ if(!g) return;
-  if(g.type==="LineString") fn(g.coordinates);
-  else if(g.type==="MultiLineString") g.coordinates.forEach(fn); }
-export function eachPoint(g, fn){ if(!g) return;
-  if(g.type==="Point") fn(g.coordinates);
-  else if(g.type==="MultiPoint") g.coordinates.forEach(fn); }
 
 // Is (lat,lon) inside a Polygon/MultiPolygon? Evaluated in an ENU frame CENTRED
 // ON THE POINT ITSELF, so the point under test is the origin and each ring is
