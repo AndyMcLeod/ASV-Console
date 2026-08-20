@@ -65,19 +65,28 @@ export function atDA(p, dist, az){ return flatOffset(p.lat, p.lon, dist, az); }
 // works in this frame, because a flat plane is exact enough over a survey area and the
 // trigonometry stays readable.
 //
-// ── DELIBERATELY NOT DELEGATED TO asv_core, AND THE REASON IS A NUMBER ──────────────────
+// ── DELIBERATELY NOT DELEGATED TO asv_core ─────────────────────────────────────────────
 // The core's toEN/fromEN take a `Frame` — a validated, frozen contract object carrying
 // `m_per_deg_lon` PRECOMPUTED. These take a bare ref point and compute the cosine inline.
-// Building a Frame per call to bridge that is a regression on the hot path:
+// Building a Frame per call to bridge that costs 328 ns against 123: a real regression
+// for no gain, so these three stay.
 //
-//     llEN as written here, cosine inline       123 ns/call
-//     core toEN, Frame built per call           328 ns/call    2.7x SLOWER
-//     core toEN, Frame hoisted to the caller     26 ns/call     4.7x faster
+// ⚠ THE OTHER HALF OF THIS NOTE WAS WRONG, AND IS CORRECTED HERE (2026-08-19). It said
+// the hoisted form was "worth 4.7x" and that llEN had "63 call sites in the keep-out
+// raster, which runs inside a drag" — and booked a follow-up refactor on that basis. 63
+// is a count of call sites IN THE SOURCE. It was asserted to mean runtime volume on the
+// drag path and never measured there. Counted properly:
 //
-// llEN has 63 call sites in the keep-out raster and that raster runs inside a drag. The
-// fast form is the right end state and it is worth 4.7x, but it means threading a Frame
-// through all 63 — a refactor of the keep-out path, which must be its own change with its
-// own verification rather than a passenger on this one.
+//     legClear  (the drag-path call)          2 llEN, 2 fromEN
+//     firstBlockAlong                         2 llEN, 3 fromEN
+//     planNogoRoute (a whole route search)    0 llEN, 2 fromEN
+//     buildKeepouts (180 polygons)         3060 llEN — but ONCE PER CHART, not per drag
+//
+// A leg is converted at its two endpoints and the raster then works in ENU, where the
+// coordinates already are. The 4.7x was a microbenchmark of the function in isolation;
+// end to end the hoist is unmeasurable, with run-to-run variance (build 0.2–0.5 ms,
+// 40-leg pass 4.0–8.7 ms) far larger than any difference. THERE IS NO REFACTOR TO DO
+// HERE — keeping these three is the end state, not a staging post.
 //
 // THE EXPRESSIONS BELOW ARE VERBATIM FROM THE PAGE, INCLUDING THE UNFACTORED
 // `*M_PER_DEG_LAT*Math.cos(...)`. Hoisting that product into a local reads better and is
@@ -97,7 +106,8 @@ export function fromEN(e, n, ref){
           lon: ref.lon + e/(M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180))};
 }
 // The same transform taking loose lat/lon rather than a point. Kept as its own function
-// (not a wrapper) because it is the hot one - 63 call sites in the keep-out raster.
+// (not a wrapper) because it is the one with the most call sites — 63 in the source,
+// though see above for what that does and does not mean at runtime.
 export function llEN(lat, lon, ref){
   return {e:(lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180),
           n:(lat-ref.lat)*M_PER_DEG_LAT};

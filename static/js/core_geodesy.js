@@ -27,21 +27,30 @@
  * latitude. The core kept that rather than smoothing it, because smoothing
  * it would move keep-out decisions.
  *
- * ADOPTION HERE IS PARTIAL, AND THE SPLIT IS MEASURED, NOT AESTHETIC.
- * static/js/geodesy.js delegates distTo, azTo, atDA, alignDeg and
- * M_PER_DEG_LAT to this file. It KEEPS toEN, fromEN and llEN, because the
- * core's take a Frame where this console passes a bare ref point, and a
- * Frame is a validated contract object:
+ * ADOPTION HERE IS PARTIAL. static/js/geodesy.js delegates distTo, azTo,
+ * atDA, alignDeg and M_PER_DEG_LAT to this file. It KEEPS toEN, fromEN and
+ * llEN, because the core's take a Frame where this console passes a bare
+ * ref point, and a Frame is a validated contract object -- building one per
+ * call measures 328 ns against 123, which is a real regression for no gain.
  *
- *     llEN today, cosine inline          123 ns/call
- *     core toEN, Frame built per call    328 ns/call   2.7x SLOWER
- *     core toEN, Frame hoisted            26 ns/call   4.7x faster
+ * THE OTHER HALF OF THAT NOTE WAS WRONG, AND IS CORRECTED HERE (2026-08-19).
+ * It said the hoisted form was "worth 4.7x" and that llEN had "63 call sites
+ * in the keep-out raster, which runs inside a drag", and used that to book a
+ * follow-up refactor. 63 was a count of call sites IN THE SOURCE, and it was
+ * asserted to mean runtime volume on the drag path without ever being
+ * measured there. Counted properly:
  *
- * llEN has 63 call sites in the keep-out raster, which runs inside a drag.
- * The naive wrapper is a real regression; the fast form needs the Frame
- * threaded through all 63, which is a refactor of the keep-out path and has
- * to be its own job with its own verification. Doing it here would have
- * buried it inside a change whose whole claim is "no behaviour change".
+ *     legClear  (the drag-path call)         2 llEN, 2 fromEN
+ *     firstBlockAlong                        2 llEN, 3 fromEN
+ *     planNogoRoute (a whole route search)   0 llEN, 2 fromEN
+ *     buildKeepouts (180 polygons)        3060 llEN -- but ONCE PER CHART
+ *
+ * A leg is converted at its two endpoints and the raster then works in ENU,
+ * where the coordinates already are. The 4.7x was a microbenchmark of the
+ * function alone; end to end the hoist is unmeasurable, with run-to-run
+ * variance (build 0.2-0.5 ms, 40-leg pass 4.0-8.7 ms) far larger than any
+ * difference. THERE IS NO REFACTOR TO DO HERE. Keeping these three is the
+ * right end state, not a staging post.
  *
  * NOT ADOPTED AND NOT IN THE CORE AT ALL: worldPx, worldToLatLon, TILE and
  * distPtSegPx. Web Mercator and pixel hit-testing are the VIEW layer.

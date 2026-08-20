@@ -75,18 +75,28 @@ Delegated: `distTo`, `azTo`, `atDA`, `alignDeg`, `M_PER_DEG_LAT`.
 **Kept local: `toEN`, `fromEN`, `llEN`** — and `worldPx` / `worldToLatLon` / `TILE` /
 `distPtSegPx`, which are the VIEW layer and are not in the core at all.
 
-| | ns/call |
-|---|---|
-| `llEN` as written here, cosine inline | **123** |
-| core `toEN`, Frame built per call | **328** — 2.7× slower |
-| core `toEN`, Frame hoisted to the caller | **26** — 4.7× faster |
-
 The core's `toEN` takes a `Frame` — a validated, frozen contract object with
 `m_per_deg_lon` precomputed — where this console passes a bare ref point. Building one per
-call is a real regression on a function with **63 call sites in the keep-out raster, which
-runs inside a drag**. The hoisted form is the right end state and is worth 4.7×, but it
-means threading a Frame through all 63: **a refactor of the keep-out path, which must be
-its own change with its own before/after on the same plan.** Do not do it as a tidy-up.
+call costs **328 ns against 123**: a real regression for no gain, so these three stay.
+
+**⚠ THE REST OF WHAT THIS SECTION USED TO SAY WAS WRONG, AND THE REFACTOR IT BOOKED IS
+CANCELLED (corrected 2026-08-19).** It claimed the hoisted form was "worth 4.7×" because
+`llEN` had "63 call sites in the keep-out raster, which runs inside a drag". **63 is a count
+of call sites in the SOURCE.** It was asserted to mean runtime volume on the drag path and
+never measured there. Counted properly:
+
+| operation | `llEN` | `fromEN` |
+|---|---|---|
+| `legClear` — the drag-path call | **2** | 2 |
+| `firstBlockAlong` | **2** | 3 |
+| `planNogoRoute` — a whole route search | **0** | 2 |
+| `buildKeepouts`, 180 polygons | **3,060** | 0 — but **once per chart**, not per drag |
+
+A leg is converted at its two endpoints and the raster then works in ENU, where the
+coordinates already are. The 4.7× was a **microbenchmark of the function in isolation**; end
+to end the hoist is unmeasurable, with run-to-run variance (build 0.2–0.5 ms, 40-leg pass
+4.0–8.7 ms) far larger than any difference. **Keeping `toEN`/`fromEN`/`llEN` here is the end
+state, not a staging post.**
 
 **These are WRAPPERS, not aliases, and that is a real cost.** The estate prefers aliases
 because a wrapper is an adapter that can drift. It is impossible here — the core takes
