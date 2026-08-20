@@ -91,6 +91,16 @@ const MODSRC = require("fs")
   .join("\n")
   .replace(/^export /gm, "");
 
+// asv_core's routing.js on its own. MODSRC concatenates every module, and `grab` takes
+// the FIRST match -- which for channelLaneRoute is passage.js's WRAPPER, the one that
+// supplies V.CHANNEL_REACH_M and mirrors the lane fact into sea.*. That wrapper is what
+// the console calls, so it is what this suite should exercise; but it calls the core body
+// by the name it imports it under, and the eval scope has to supply that the way the
+// browser's module graph does.
+const ROUTINGSRC = require("fs")
+  .readFileSync(require("path").join(__dirname, "..", "static", "js", "routing.js"), "utf8")
+  .replace(/^export /gm, "");
+
 const STATIC = path.join(__dirname, "..", "static");
 const { sea } = require("../static/js/state.js");
 const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
@@ -100,7 +110,15 @@ function grab(src, name) {
   if (src.indexOf("function " + name + "(") < 0) src = MODSRC;
   const start = src.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
-  let k = src.indexOf("{", start), depth = 0;
+  // SKIP THE PARAMETER LIST FIRST. `legPath(A, B, frame, ko, buf, opts = {})` has a `{}`
+  // DEFAULT ARGUMENT, and starting the brace count at the first `{` after the name stopped
+  // dead on it -- grab returned the signature and nothing else, and the eval below died
+  // with a bare "Unexpected token '}'" that pointed at the eval call, not the cause. Walk
+  // the parens to the end of the signature, THEN find the body brace. (asv_core's routing
+  // bodies took optional `opts` when they moved there, 2026-08-20.)
+  let q = src.indexOf("(", start), par = 0;
+  for (;;) { const c = src[q]; if (c === "(") par++; else if (c === ")") { par--; if (!par) break; } q++; }
+  let k = src.indexOf("{", q), depth = 0;
   for (;;) { const c = src[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
   return src.slice(start, k + 1);
 }
@@ -126,7 +144,12 @@ function grabDecl(name) {
 const HELPERS = ["blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  "blockedInfo", "firstBlockAlong", "gateLegClear",
-                 "smoothTrack", "systemCenterline", "extendCenterline", "laneCenterline",
+                 "smoothTrack", "systemCenterline", "extendCenterline",
+                 // A PRIVATE HELPER OF asv_core's routing module. The lane bodies grabbed
+                 // above call it; this console's old copy inlined the same arc-length
+                 // resampling, so it has to be in the shared scope the way the module
+                 // graph puts it.
+                 "resampleEN",
                  "buoyChannelLane", "narrowChannelLane", "channelLaneRoute"];
 const M_PER_DEG_LAT = 111320.0;
 
@@ -136,10 +159,21 @@ const M_PER_DEG_LAT = 111320.0;
 // eslint-disable-next-line no-eval
 eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      "const SEG_LEN_M=2200;\nlet CHANNEL_REACH_M=null;\n" +          // vessel override: default reach
+     // asv_core's routing tuning constants, read from the module rather than
+     // restated here -- a copy would drift from what the console searches with.
+     grabDecl("HEURISTIC_WEIGHT") + "\n" + grabDecl("POP_CAP") + "\n"
+       + grabDecl("MAX_DIM") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.
      grabDecl("LANE_FRAC") + "\n" + grabDecl("CL_EXTEND_CAP_M") + "\n" +
+     // laneCenterline is an ARROW CONST in asv_core, not a `function` declaration, so it
+     // comes through grabDecl (which reads `const X = ...;`) rather than grab().
+     grabDecl("laneCenterline") + "\n" +
+     // The core pipeline under the name passage.js's wrapper imports it as. A NAMED
+     // function expression: the inner name binds only inside itself, so it does not
+     // shadow the wrapper grabbed from passage.js below.
+     "const coreChannelLaneRoute = " + grab(ROUTINGSRC, "channelLaneRoute") + ";\n" +
      HELPERS.map((n) => grab(H, n)).join("\n"));
 
 // --- synthetic world ------------------------------------------------------- //
@@ -363,9 +397,11 @@ const badLegsOf = (wps, world) => { let bad=0;
   for(let i=1;i<wps.length;i++) if(!legClear(wps[i-1],wps[i],ref,world,3)) bad++;
   return bad; };
 // the UN-gated pipeline, exactly as channelLaneRoute ran before the gate existed
-const ungated = (()=>{ sea.laneUsed=false;
-  let o = buoyChannelLane(NB, ref, WW, 3); o = narrowChannelLane(o, ref, WW, 3);
-  return [NB[0], ...smoothTrack(o, ref, WW, 3)]; })();
+// THE LANE PRODUCERS RETURN {path, used, partial} NOW (asv_core, 2026-08-20) rather than
+// writing sea.laneUsed / sea.lanePartial from inside. The pipeline is otherwise identical.
+const ungated = (()=>{
+  const o = narrowChannelLane(buoyChannelLane(NB, ref, WW, 3).path, ref, WW, 3);
+  return [NB[0], ...smoothTrack(o.path, ref, WW, 3)]; })();
 check("15. the scenario has TEETH: the un-gated lane pipeline crosses the pier",
       badLegsOf(ungated, WW) >= 1,
       badLegsOf(ungated, WW) + " unlawful leg(s) without the gate - the Erie class, synthetically");
@@ -385,9 +421,9 @@ const dockWorld = walledChannel();
 const dring = [{e:-84,n:-6},{e:-78,n:-6},{e:-78,n:-2},{e:-84,n:-2}];
 dockWorld.polys.push({ring: dring, bb: bbOf(dring), kind: "land"});
 const moored = laneRun(dockWorld, [{e:-80,n:0},{e:-80,n:1000}]);   // start ~2 m off the dock face
-const mooredUngated = (()=>{ sea.laneUsed=false;
-  let o = buoyChannelLane(NB, ref, dockWorld, 3); o = narrowChannelLane(o, ref, dockWorld, 3);
-  return smoothTrack(o, ref, dockWorld, 3); })();
+const mooredUngated = (()=>{
+  const o = narrowChannelLane(buoyChannelLane(NB, ref, dockWorld, 3).path, ref, dockWorld, 3);
+  return smoothTrack(o.path, ref, dockWorld, 3); })();
 check("18. a start INSIDE the buffer is exempt: the berth leg ships UNCHANGED - same shape, no spliced detour around the boat's own dock",
       Math.abs(toE(moored.route[1]) - toE(mooredUngated[1])) < 1
       && Math.abs(toN(moored.route[1]) - toN(mooredUngated[1])) < 1,
@@ -402,11 +438,18 @@ check("19. when legPath cannot patch a stretch, the pre-lane input ships and `ab
       gres.abandoned === true && gres.route.length === NB.length
       && Math.abs(toN(gres.route[gres.route.length-1]) - 1000) < 1,
       "fallback = the legPath-clear input, flagged");
+// WAS A SOURCE-TEXT CHECK, AND IS BEHAVIOURAL NOW. It used to grep MODSRC for the literal
+// `lane: sea.laneUsed && !g.abandoned`. That regex stopped being able to fail for the right
+// reason the moment the body moved to asv_core and stopped writing sea.* -- and a check
+// that greps for a line it can no longer find is not testing the rule, it is testing where
+// the rule is written. This runs the real pipeline with legPath stubbed out, so the gate
+// genuinely abandons, and asserts the FACT.
+legPath = () => null;
+const abandonedRun = channelLaneRoute(NB, ref, WW, 3);
+legPath = realLegPath;
 check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
-      // channelLaneRoute lives in passage.js now, so this source-shape check reads the
-      // modules rather than the page. MODSRC strips `export `, so the text is unchanged.
-      /lane: sea\.laneUsed && !g\.abandoned/.test(MODSRC),
-      "the banner must never claim a lane the gate threw away");
+      abandonedRun.lane === false,
+      "lane=" + abandonedRun.lane + " - the banner must never claim a lane the gate threw away");
 
 // --- the vessel block must be reached THROUGH V, in every module ---------------------- //
 // THIS CHECK EXISTS BECAUSE THIS SUITE HID THE BUG IT SHOULD HAVE CAUGHT. The eval above

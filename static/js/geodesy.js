@@ -139,12 +139,31 @@ export function llEN(lat, lon, ref){
 // That is deliberate scaffolding, not a permanent duck-type. Once the shared bodies replace
 // this console's own (they use `frame.toEN` throughout), the `lat`/`lon` fields stop being
 // read and can go. Until then they are what lets the interface move ahead of the bodies.
+//
+// ⚠ AND IT CARRIES THIS CONSOLE'S OWN distTo / azTo, WHICH IS NOT DECORATION.
+//
+// `distTo` IS NOT THE SAME QUANTITY IN THE TWO CONSOLES. Here it is the FLAT model;
+// WorldView's survey.js exports a `distTo` that is VINCENTY ON THE ELLIPSOID. Measured at
+// Lewes they disagree by a steady 0.278 % — 4.4 m at 1600 m and 22.5 m at 8100 m, the
+// widest margin the route search uses — and `azTo` by up to 0.120°.
+//
+// That matters because THE SHARED ROUTING BODIES CALL BOTH. `legPath`'s open-water escape
+// ring keeps a candidate only while `distTo(p, toward) <= distTo(C, toward) + r`, then
+// sorts the survivors best-first; `pruneStitch` folds a vertex when the turn exceeds 150°.
+// Fed the two different functions those decisions genuinely part company: 92 of 20,000
+// keep/drop calls differ, 3.0 % of best-first orderings, and 11 of 20,000 fold tests.
+//
+// So the METRIC TRAVELS WITH THE FRAME, exactly as the plane already does. A shared body
+// writes `frame.distTo(a, b)` and each console keeps its own answer — the same reason the
+// core ships both frame constructors instead of picking one. A core module that imported
+// one of them would silently move the other console's routing.
 export function planeFrame(ref){
   return {
     lat: ref.lat, lon: ref.lon,
     ref,
     toEN: (p) => toEN(p, ref),
     fromEN: (e, n) => fromEN(e, n, ref),
+    distTo, azTo,
   };
 }
 

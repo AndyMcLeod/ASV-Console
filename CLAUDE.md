@@ -26,7 +26,21 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
 
-**NEWEST (2026-08-20): `static/js/chart.js` IS NOW A SEAM, NOT A KEEP-OUT LAYER.**
+**NEWEST (2026-08-20): `static/js/passage.js` IS A SEAM TOO — THE ROUTER AND THE RULE 9
+LANE COME FROM `asv_core`.** 862 lines down to 331. See *THE ROUTING LAYER IS SHARED* below
+for what moved, and for the finding that nearly slipped past: **`distTo` is not the same
+quantity in the two consoles**, the shared bodies call it, and every fixture agreed at
+0.000e+0 m anyway. The metric travels with the frame now. No behaviour change: the adopted
+module reproduces the one in git **0.000e+0 m** across the router, the lane, the gate and
+both survey rules, with the lane flags and the `sea.*` mirror agreeing. All 38 suites green.
+
+**⚠ AND AN OPEN QUESTION FOR ANDY THAT CAME OUT OF IT: should this router keep measuring
+FLAT?** `distTo` here is the flat model, 0.278 % short of the true distance — 4.4 m at
+1600 m, 22.5 m at the widest search margin — where WorldView uses Vincenty. Both consoles
+keep their own today and nothing moved. Standardising would be more accurate AND would move
+real routes on the water, so it is not a change to make as a side effect of an extraction.
+
+**PREVIOUSLY (2026-08-20): `static/js/chart.js` IS NOW A SEAM, NOT A KEEP-OUT LAYER.**
 All eighteen shared keep-out symbols come from `asv_core` — see *THE KEEP-OUT LAYER IS
 SHARED* below for what moved, what did not, and the two holes the mutation run found in
 the test that guards it. No behaviour change: the adopted module reproduces the one in git
@@ -101,6 +115,67 @@ identical (now extracted) and eleven differ by that one parameter.
 `teardropTurn`, `clipLine` and `featuresBboxRef` out of `asv.html`** — they are inline in
 the 4,521-line script block, so they cannot be imported, measured or vendored until they
 move. (`ref`-vs-`frame` was ruled: **frame**, and it is done.)
+
+### THE ROUTING LAYER IS SHARED (2026-08-20)
+
+**`static/js/passage.js` went from 862 lines to 331.** Fourteen symbols now come from
+`static/js/routing.js`: the obstacle search (`routeAround`, `routeAroundSeg`, `legPath`,
+`pruneStitch`, `snapClearLL`, `SEG_LEN_M`) and the Rule 9 lane (`buoyChannelLane`,
+`narrowChannelLane`, `smoothTrack`, `gateLegClear`, `channelSpanKeepouts`,
+`channelTurnKeepouts`, `LANE_FRAC`), with `channelLaneRoute` wrapped.
+
+**What stays here:** `regionOrder`, `buoyageNote`, `junctionKnot`, `pruneJunctionKnots`,
+`KNOT_TURN_DEG`, `KNOT_STEP_M`, `planNogoRoute`, `routePlan`. The first four exist in
+WorldView too (in `mission.js`) but `pruneJunctionKnots` genuinely DIFFERS — it takes an
+injected `clear` predicate there and a keep-out model here — so the mission layer is a merge
+to decide, not the next vendoring.
+
+**No behaviour change, measured against the module in git rather than asserted:**
+`routeAround`, `routeAroundSeg` and `legPath` 0 of 6 legs each; `pruneStitch` and
+`smoothTrack` 0 of 3; both lane producers 0 of 8 with `used`/`partial` agreeing;
+`gateLegClear` 0 of 3 with `abandoned` and `splices` agreeing; `channelLaneRoute` 0 of 4 end
+to end; both survey channel rules 0 of 2; and the `V.CHANNEL_REACH_M` knob agreeing at
+null / 400 / 1500.
+
+**⚠ THE FINDING: `distTo` IS NOT THE SAME QUANTITY IN THE TWO CONSOLES, AND THE SHARED
+BODIES CALL IT.** Here it is the FLAT model; WorldView's `survey.js` exports a `distTo` that
+is VINCENTY on the ellipsoid. They disagree by a steady **0.278 %** — 4.4 m at 1600 m and
+**22.5 m at the 8100 m escalation margin** — and `azTo` by up to **0.120°**.
+
+`legPath`'s open-water escape ring keeps a candidate only while
+`distTo(p, toward) <= distTo(C, toward) + r` and then sorts the survivors best-first;
+`pruneStitch` folds a vertex past 60°; `gateLegClear` forgives a block within 2·buf of an
+endpoint. Fed different functions, those decisions part company: **92 of 20,000 keep/drop
+calls, 3.0 % of best-first orderings, 11 of 20,000 fold tests, 9 of 20,000 exemptions.**
+
+**AND EVERY FIXTURE STILL AGREED AT 0.000e+0 m**, because the gap only decides anything
+within metres of a threshold. That is the whole lesson: *the differential was true and it
+was luck.* So `planeFrame` carries this console's own `distTo`/`azTo` beside
+`toEN`/`fromEN`, the shared bodies call `frame.distTo`, and nothing here moved. A core that
+had imported one metric would have moved the other console's routing silently.
+
+**⚠ THE LANE PRODUCERS RETURN THEIR FLAGS NOW.** `buoyChannelLane` and `narrowChannelLane`
+used to write `sea.laneUsed` / `sea.lanePartial` — a module-level scratch flag set by three
+producers, reset and read by one consumer — where WorldView returns `{path, used, partial}`.
+The core takes the returned form. `channelLaneRoute` here MIRRORS it back into `sea.*`, so
+those fields are now a REPORT rather than a channel and anything reading them is still
+right. `tests/buoy_lane.js` reads `.path` from the producers accordingly.
+
+**⚠ THREE VENDORED FILES WERE RENAMED, and the rule behind it is worth knowing.** The core's
+`routing.js` imports `./keepouts.js` and `./raster.js`, which resolve in WorldView's `core/`
+directory and did NOT here. The rule `contracts.js` had been following all along: **a
+vendored file keeps its natural name when another vendored file imports it that way, and
+takes the `core_` prefix only when it would collide with an app module.** This console owns
+`geometry.js` and `geodesy.js`, so `core_geometry.js` and `core_geodesy.js` keep theirs; it
+owns no `keepouts.js`, `routing.js` or `raster.js`, so those are now
+`static/js/{keepouts,routing,raster}.js`. `safe_js_path` still refuses subdirectories, so
+they stay flat.
+
+**⚠ AND `tests/buoy_lane.js`'s `grab()` COULD NOT READ THE NEW SIGNATURES.** It found the
+first `{` after a function name and started counting braces — which for
+`legPath(A, B, frame, ko, buf, opts = {})` is the DEFAULT ARGUMENT. It returned the
+signature and nothing else, and the eval died with a bare "Unexpected token '}'" pointing at
+the eval call rather than the cause. It walks the parameter list first now.
 
 ### THE KEEP-OUT LAYER IS SHARED (2026-08-20)
 

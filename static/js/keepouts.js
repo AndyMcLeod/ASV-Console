@@ -54,7 +54,7 @@
  *
  * ONE FIELD IS NEW ON THE BUOY POINTS. This console pushed channel-buoy
  * keep-outs with no `r` key at all; the core writes `r: 0`. Every reader of
- * that field in this repo -- chart.js twice, core_raster.js once -- goes
+ * that field in this repo -- chart.js twice, the vendored raster once -- goes
  * through `pt.r || 0`, and asv.html only ever reads ko.points.length.
  * Checked, not assumed.
  *

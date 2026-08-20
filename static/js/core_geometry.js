@@ -20,10 +20,19 @@
  * above removes that trade: this copy cannot diverge without failing a suite.
  *
  * THIS CONSUMER, SPECIFICALLY:
- * The planar primitives under the keep-out layer: bbOf, inBB, dSeg, pinp
- * and the three GeoJSON walkers. static/js/geometry.js re-exports them and
- * keeps its own bboxContains, bboxAround, lerpLL, segInt, ptInGeom and
- * segSamplesEN, which WorldView does not have.
+ * The planar primitives under the keep-out layer: bbOf, inBB, dSeg, pinp,
+ * the three GeoJSON walkers and segSamplesEN. static/js/geometry.js
+ * re-exports them and keeps its own bboxContains, bboxAround, lerpLL,
+ * segInt and ptInGeom, which WorldView does not have.
+ *
+ * segSamplesEN ARRIVED WITH THE ROUTING EXTRACTION (2026-08-20), and the
+ * note here used to say WorldView had no equivalent. It does -- PRIVATE
+ * inside globe/channel.js, line for line the same function differing only
+ * by the conversion call. It takes a FRAME now, and nothing in this repo
+ * outside passage.js ever called it: asv.html and tests/turn_channel.js
+ * import the name and never use it. Putting it in the geometry module
+ * rather than leaving a copy inside the routing one is the difference
+ * between removing a duplicate and making a third.
  *
  * THE BODIES ARE WORLDVIEW'S -- THE SAME CODE WITH THE REASONING WRITTEN
  * DOWN. Measured before adopting, not after: dSeg, bbOf and inBB are
@@ -147,4 +156,30 @@ export function eachPoint(g, fn) {
   if (!g) return;
   if (g.type === 'Point') fn(g.coordinates);
   else if (g.type === 'MultiPoint') g.coordinates.forEach(fn);
+}
+
+/**
+ * ~5 m EN samples along one line `[a, b]` given as lon/lat points.
+ *
+ * THE KEEP-OUT TESTS ARE POINT TESTS, so a line is only as well tested as it is
+ * densely sampled; 5 m is finer than the smallest hazard the model carries. The
+ * survey channel rules use it to ask whether a line crosses a fairway.
+ *
+ * ARRIVED WITH THE ROUTING EXTRACTION (2026-08-20), already present in both
+ * consoles: exported from ASV's `geometry.js` as `segSamplesEN(l, ref)` and
+ * PRIVATE inside WorldView's `channel.js` as `segSamplesEN(line, frame)`. Line
+ * for line the same function, differing only by the conversion call — the
+ * calling convention Andy had already ruled on. Putting it HERE rather than
+ * leaving a copy inside the routing module is the difference between removing a
+ * duplicate and making a third one.
+ */
+export function segSamplesEN(line, frame) {
+  const a = frame.toEN(line[0]), b = frame.toEN(line[1]);
+  const L = Math.hypot(b.e - a.e, b.n - a.n);
+  const n = Math.max(2, Math.ceil(L / 5)), out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    out.push({ e: a.e + (b.e - a.e) * t, n: a.n + (b.n - a.n) * t });
+  }
+  return out;
 }
