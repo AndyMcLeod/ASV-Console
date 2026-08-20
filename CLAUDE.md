@@ -24,7 +24,10 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-12, ninth refresh — the rose carries the current too)
+## ⇒ START HERE (handoff refreshed 2026-08-20, tenth refresh — the turn geometry left the page)
+
+**Tip `6dd3dd9`, tree clean + pushed, 38 suites green.** The estate around it: asv_core
+`dde1687`, WorldView `3f80a0f0`, Zboat `178dadd`, Transit `cda2773`, Fuel `1ec55f83`.
 
 **NEWEST (2026-08-20): THE TURNS ARE OUT OF `asv.html`.** `arcPts`, `minTurnRadiusM`,
 `shortenSeg` and `teardropTurn` are `static/js/turns.js`. That was the ONE genuine
