@@ -95,8 +95,8 @@ export function atDA(p, dist, az){ return flatOffset(p.lat, p.lon, dist, az); }
 // the keep-out routing and the Rule 9 lane are computed in, and a move whose whole claim is
 // "no behaviour change" should not spend its credibility on a tidier line. Carrying the
 // scale as a Frame value IS that hoist, made deliberate — it is exactly the 3.7e-9 m the
-// core's differential reports against these three functions, and why they stay here until
-// somebody does the refactor on purpose.
+// core's differential reports against these three functions. That number is the reason to
+// leave the expressions alone, not a debt: there is no refactor pending (see above).
 export function toEN(p, ref){
   return {e:(p.lon-ref.lon)*M_PER_DEG_LAT*Math.cos(ref.lat*Math.PI/180),
           n:(p.lat-ref.lat)*M_PER_DEG_LAT};

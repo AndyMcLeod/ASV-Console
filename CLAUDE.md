@@ -68,6 +68,34 @@ the keep-out Frame refactor unblocks three of these as well as `llEN`. `blocked`
 `systemCenterline` share a signature but have NOT been differentially measured — measure
 them before believing anything about them.
 
+**2026-08-20: `static/js/passage.js` RE-EXPORTS THE ROUTING GRID FROM `asv_core`.**
+`stampSeg`, `dilateGrid` and `rasterKeepouts` are the core's now. They take a keep-out model
+already in ENU metres and a cell grid — no frame, no coordinates — which is why these three
+could move when the rest of the file could not. Measured identical against WorldView's
+before the move: stampSeg 0 of 60 grids differ, dilateGrid 0 of 40, rasterKeepouts **0 of
+3072 cells**. Same signatures on both sides, so nothing needed adapting.
+
+**⚠ AND THE BIG FINDING: THE KEEP-OUT "MERGE" IS A CALLING CONVENTION, NOT A REWRITE.**
+Handed this console's flat frame, WorldView's `buildKeepouts` reproduces THIS console's
+model **bit-for-bit** — 0.000e+0 m over 156 vertices on 180 land polygons, and 0.000e+0 m
+with identical bucket counts on a mixed extract (land, dock, hazard_area, shore_line,
+dock_line, hazard_points, dredged, restricted, depth areas, chan_marks) across three
+enforcement configurations. The differences are packaging: `(ref, enf, dr, feats)` against
+`(frame, feats, opts)`, `enf.haz` against `enf.hazard`, scalar `dr` against `{min,max}`.
+
+WorldView's `frame` is duck-typed `{toEN, fromEN}` — hand it this console's flat pair and
+you get these numbers; hand it the ellipsoidal pair and you get WorldView's, **1.719 m
+apart**. That is the tangent-plane divergence, and the core already ships both constructors
+so neither console changes behaviour on adoption.
+
+Downstream already agrees, fed the same model: `blocked` 0 of 800, `blockedInfo` 0 of 800,
+`markId`/`markSystems`/`pairGates` agree. Routing likewise — of 16 shared symbols, five were
+identical (now extracted) and eleven differ by that one parameter.
+
+**What is actually left here:** the `ref`-vs-`frame` decision, and **getting `arcPts`,
+`minTurnRadiusM`, `punchOut` and `teardropTurn` out of `asv.html`** — they are inline in the
+4,521-line script block, so they cannot be imported, measured or vendored until they move.
+
 **⚠ 2026-08-19: `static/js/geodesy.js` NOW DELEGATES ITS FLAT MODEL TO `asv_core` — AND
 KEEPS ITS ENU TRANSFORM. THE SPLIT IS A MEASUREMENT, NOT A PREFERENCE.**
 

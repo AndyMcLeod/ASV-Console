@@ -20,6 +20,27 @@
 import { M_PER_DEG_LAT, azTo, distTo, fromEN, llEN } from "./geodesy.js";
 import { inBB, pinp, segSamplesEN } from "./geometry.js";
 import { V, nogo, sea } from "./state.js";
+
+// ── THE ROUTING GRID COMES FROM asv_core (2026-08-19) ──────────────────────────────────
+// stampSeg, dilateGrid and rasterKeepouts are the core's now, re-exported here so
+// asv.html and the two suites that require them from this module are untouched. They take
+// a keep-out model ALREADY IN ENU METRES and a cell grid — no frame, no coordinates —
+// which is exactly why these three could move when the rest of this file could not.
+//
+// Measured identical against WorldView's before the move, not after: stampSeg 0 of 60
+// grids differ, dilateGrid 0 of 40, rasterKeepouts 0 of 3072 cells (948 blocked). The
+// signatures matched on both sides too, so nothing needed adapting.
+//
+// ⚠ THE REST OF THIS FILE DID NOT MOVE, AND THE REASON IS ONE PARAMETER. `legPath`,
+// `routeAround`, `routeAroundSeg`, `smoothTrack`, `gateLegClear`, `pruneStitch`,
+// `buoyChannelLane`, `narrowChannelLane`, `channelLaneRoute`, `channelSpanKeepouts` and
+// `channelTurnKeepouts` are the same functions as WorldView's except that this console
+// passes a bare `ref` POINT where it passes a `frame`. Settling that is a calling
+// convention to decide, not a merge to perform — and WorldView's `frame` is duck-typed
+// `{toEN, fromEN}`, so handing it this console's flat pair reproduces these numbers
+// exactly. See the core's handoff.
+import { stampSeg, dilateGrid, rasterKeepouts } from "./core_raster.js";
+export { stampSeg, dilateGrid, rasterKeepouts };
 import { blocked, blockedInfo, channelPolys, extendCenterline, firstBlockAlong, legClear,
          snapClearLL, systemCenterline } from "./chart.js";
 
@@ -507,62 +528,6 @@ export function gateLegClear(route, fallback, ref, ko, buf){
   // caller; a route that kept the lane over four fifths of its length and lost it over
   // the rest was not, and read to the operator as a full Rule 9 transit.
   return {route: out, abandoned:false, splices};
-}
-export function dilateGrid(blk, W, H, rad){              // separable box dilation, rad cells
-  if(rad<1) return;
-  const tmp=new Uint8Array(W*H);
-  for(let y=0;y<H;y++){ const row=y*W;
-    for(let x=0;x<W;x++){ let v=0; for(let dx=-rad;dx<=rad;dx++){ const xx=x+dx; if(xx>=0&&xx<W&&blk[row+xx]){v=1;break;} } tmp[row+x]=v; } }
-  for(let x=0;x<W;x++){
-    for(let y=0;y<H;y++){ let v=0; for(let dy=-rad;dy<=rad;dy++){ const yy=y+dy; if(yy>=0&&yy<H&&tmp[yy*W+x]){v=1;break;} } blk[y*W+x]=v; } }
-}
-export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer){
-  const X1=x0+W*cell, Y1=y0+H*cell;
-  const gxOf=e=>(e-x0)/cell, gyOf=n=>(n-y0)/cell;
-  for(const poly of ko.polys){ const bb=poly.bb;
-    if(bb.x1<x0||bb.x0>X1||bb.y1<y0||bb.y0>Y1) continue;      // window cull
-    const rg=poly.ring;
-    const gy0=Math.max(0,Math.floor(gyOf(bb.y0))), gy1=Math.min(H-1,Math.ceil(gyOf(bb.y1)));
-    for(let gy=gy0; gy<=gy1; gy++){ const yc=y0+(gy+0.5)*cell; const xs=[];
-      for(let i=0,j=rg.length-1;i<rg.length;j=i++){ const yi=rg[i].n, yj=rg[j].n;
-        if((yi>yc)!=(yj>yc)) xs.push(rg[j].e+(rg[i].e-rg[j].e)*(yc-yj)/(yi-yj)); }
-      xs.sort((p,q)=>p-q);
-      for(let k=0;k+1<xs.length;k+=2){
-        const gxa=Math.max(0,Math.floor(gxOf(xs[k]))), gxb=Math.min(W-1,Math.ceil(gxOf(xs[k+1])));
-        for(let gx=gxa; gx<=gxb; gx++) blk[gy*W+gx]=1; } }
-    for(let i=0,j=rg.length-1;i<rg.length;j=i++) stampSeg(blk,W,H,x0,y0,cell, rg[j], rg[i]); }  // edges (thin slivers)
-  for(const ln of ko.lines){ const bb=ln.bb;
-    if(bb.x1<x0||bb.x0>X1||bb.y1<y0||bb.y0>Y1) continue;
-    for(let i=1;i<ln.pts.length;i++) stampSeg(blk,W,H,x0,y0,cell, ln.pts[i-1], ln.pts[i]); }
-  // Stamp each point hazard as a DISC of its own extent; the uniform buffer dilation
-  // below then adds the margin. A single-cell stamp would let the search plan straight
-  // through a wreck that legClear would later reject, and the leg would just fail.
-  for(const pt of ko.points){ const gx=Math.round(gxOf(pt.e)), gy=Math.round(gyOf(pt.n));
-    const rc=Math.round((pt.r||0)/cell);
-    if(rc<=0){ if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; continue; }
-    for(let dy=-rc; dy<=rc; dy++){ const gyy=gy+dy; if(gyy<0||gyy>=H) continue;
-      const half=Math.floor(Math.sqrt(Math.max(0, rc*rc-dy*dy)));
-      const gxa=Math.max(0,gx-half), gxb=Math.min(W-1,gx+half);
-      for(let gxx=gxa; gxx<=gxb; gxx++) blk[gyy*W+gxx]=1; } }
-  dilateGrid(blk, W, H, Math.max(1, Math.round(buffer/cell)));
-}
-// Option 2: route a blocked transit A->B AROUND the keep-outs. Grid A* over the
-// local region (cells within `buffer` of a keep-out are blocked, baking in the
-// clearance), then line-of-sight string-pulling to a few turn waypoints. Returns
-// the intermediate waypoints (latlon, excluding A & B), or null if no clear route
-// exists in a bounded region (then the transit stays flagged red).
-// --- occupancy rasterization (fast keep-out grid for routeAround) --------- //
-// Stamp / fill the keep-out model into a local grid, instead of testing every
-// cell against every polygon (which was O(cells x polys) and forced a coarse
-// cell that couldn't thread a channel on a long transit). Scanline-fill polygons,
-// stamp line/point features, then dilate by the buffer. Build cost is ~O(edges +
-// filled cells), so a FINE cell stays affordable at km scale.
-export function stampSeg(blk, W, H, x0, y0, cell, a, b){
-  const ax=(a.e-x0)/cell, ay=(a.n-y0)/cell, bx=(b.e-x0)/cell, by=(b.n-y0)/cell;
-  const steps=Math.max(1, Math.ceil(Math.hypot(bx-ax, by-ay)));
-  for(let i=0;i<=steps;i++){ const t=i/steps;
-    const gx=Math.round(ax+(bx-ax)*t), gy=Math.round(ay+(by-ay)*t);
-    if(gx>=0&&gy>=0&&gx<W&&gy<H) blk[gy*W+gx]=1; }
 }
                             // sub-leg length that keeps cell ~3 m
 export function routeAroundSeg(A, B, ref, ko, buf){
