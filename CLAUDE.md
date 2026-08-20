@@ -34,11 +34,11 @@ quantity in the two consoles**, the shared bodies call it, and every fixture agr
 module reproduces the one in git **0.000e+0 m** across the router, the lane, the gate and
 both survey rules, with the lane flags and the `sea.*` mirror agreeing. All 38 suites green.
 
-**⚠ AND AN OPEN QUESTION FOR ANDY THAT CAME OUT OF IT: should this router keep measuring
-FLAT?** `distTo` here is the flat model, 0.278 % short of the true distance — 4.4 m at
-1600 m, 22.5 m at the widest search margin — where WorldView uses Vincenty. Both consoles
-keep their own today and nothing moved. Standardising would be more accurate AND would move
-real routes on the water, so it is not a change to make as a side effect of an extraction.
+**✓ AND THAT QUESTION IS NOW CLOSED — ANDY: "standardize" (2026-08-20).** `planeFrame`
+supplies `trueDistTo`/`trueAzTo`, the core's geodesic pair, which are LITERALLY the same
+functions WorldView's `tangentFrame` supplies. See *THE ROUTER MEASURES TRULY NOW* below —
+including what it moved on the water, which is nothing measurable, and why that is the
+honest answer rather than a reason to think it did not matter.
 
 **PREVIOUSLY (2026-08-20): `static/js/chart.js` IS NOW A SEAM, NOT A KEEP-OUT LAYER.**
 All eighteen shared keep-out symbols come from `asv_core` — see *THE KEEP-OUT LAYER IS
@@ -115,6 +115,57 @@ identical (now extracted) and eleven differ by that one parameter.
 `teardropTurn`, `clipLine` and `featuresBboxRef` out of `asv.html`** — they are inline in
 the 4,521-line script block, so they cannot be imported, measured or vendored until they
 move. (`ref`-vs-`frame` was ruled: **frame**, and it is done.)
+
+### THE ROUTER MEASURES TRULY NOW — Andy: "standardize" (2026-08-20)
+
+**`planeFrame` supplies `trueDistTo`/`trueAzTo`**, which are `geodesicDistanceM` and
+`geodesicBearingDeg` from `core_geodesy.js` — **the same functions WorldView's
+`tangentFrame` supplies**, so the two consoles' route searches ask the same question rather
+than merely similar ones. One file changed: `static/js/geodesy.js`.
+
+**⚠ THIS CONSOLE'S OWN `distTo`/`azTo` ARE STILL FLAT, AND MUST STAY THAT WAY.** They have
+118 call sites — the turn geometry, the survey pattern, the readouts, the mission legs —
+and all of them live in the SAME FLAT PLANE as `toEN`/`llEN`, where the hypotenuse of an ENU
+difference IS the distance. Giving them true distances without also moving the plane would
+make the console internally inconsistent: a leg's drawn length and its stated length would
+part company by 0.278 %. The new pair is deliberately named `trueDistTo`/`trueAzTo` so that
+one name never means two quantities inside one repo — which is the exact trap the routing
+extraction spent a session documenting.
+
+**THE PLANE IS UNTOUCHED.** `toEN`/`fromEN` are still flat, the keep-out model is still
+built in them, and every clearance test still runs there. Moving the plane to the
+ellipsoidal scale is the tangent-plane divergence the core documents; it would move every
+keep-out decision by about 1.7 m, and nobody has asked for that.
+
+**⚠ SO THE PLANE AND THE METRIC NOW DISAGREE BY 0.278 %, ON PURPOSE.** A point placed r
+metres out through `fromEN` measures 0.9972·r by `frame.distTo`. Safe because of WHERE the
+router uses the metric: `legPath` filters and sorts its escape candidates, `pruneStitch`
+folds a vertex past 60°, `gateLegClear` forgives a block within 2·buf of an endpoint. All
+three are HEURISTICS. **Not one is a clearance bound** — every route is still proved by
+`legClear`, which works in the plane through `toEN` and never reads the metric.
+
+**WHAT IT MOVED: NOTHING MEASURABLE, AND THAT IS THE HONEST ANSWER.**
+
+| | |
+|---|---|
+| `legPath`, 600 legs with clear endpoints | **0 routes moved** |
+| `channelLaneRoute`, 4 runs incl. westbound | 0 moved, `lane`/`partial` unchanged |
+| `pruneStitch`, 400 paths | 0 changed vertex count |
+| the safety invariant | 250 routes, **758 legs, 0 not clear** |
+
+**The escape ring — where the metric has the most leverage — was reached 0 times in 300
+legs.** The "92 of 20,000 decisions differ" figure was measured on the DECISION in isolation;
+routed through the escalation ladder, `routeAroundSeg` or the wider retries solve almost
+everything first. The change is real and correct; surfacing it needs a genuinely tight
+basin. **Do not read the zeros as "it did not matter" — read them as "these fixtures cannot
+reach the branch where it does".**
+
+**⚠ AND ONE OF MY MEASUREMENTS WAS WRONG BEFORE IT WAS RIGHT, WHICH IS WORTH RECORDING.**
+The first safety check reported **39 of 373 legs not clear** — which reads like a serious
+regression. It was the CHECK: it drew random endpoints, most of which land inside this
+fixture's banks, and `routeAround` DELIBERATELY snaps a blocked start or goal to the nearest
+free cell (“the route's job is to lead it out”). An unclear first hop out of land is the
+designed behaviour, not a failure. Re-run with both endpoints required clear: **0 of 758.**
 
 ### THE ROUTING LAYER IS SHARED (2026-08-20)
 

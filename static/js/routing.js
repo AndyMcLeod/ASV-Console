@@ -108,15 +108,28 @@
  * differential built from ordinary legs would report it.
  *
  * THE METRIC THEREFORE TRAVELS WITH THE FRAME, exactly as the plane does. Every
- * call here is `frame.distTo(...)` / `frame.azTo(...)`, ASV's `planeFrame` and
- * WorldView's `tangentFrame` each supply their own, and neither console changes
- * behaviour on adoption — the same reason the core ships both frame
- * constructors instead of choosing between them.
+ * call here is `frame.distTo(...)` / `frame.azTo(...)`, and each console supplies
+ * its own — which is what let the divergence be seen at all.
  *
- * ⚠ WHETHER ASV'S ROUTER *SHOULD* KEEP MEASURING FLAT IS A SEPARATE QUESTION,
- * and an open one for Andy. The flat model is 0.278 % short; adopting true
- * distances would move real routes on the water, so it is not a change to make
- * as a side effect of an extraction.
+ * ✓ AND ANDY THEN RULED "standardize" (2026-08-20). Both `planeFrame` and
+ * `tangentFrame` now supply the TRUE pair, `geodesicDistanceM` and
+ * `geodesicBearingDeg` — literally the same core functions, not merely close —
+ * so a route search asks the same question in both consoles.
+ *
+ * ⚠ THE FRAME STILL CARRIES IT, AND THAT IS NOT VESTIGIAL. Two values agreeing
+ * today is not a reason to hard-wire one of them: carrying the metric is what
+ * made the divergence visible, and it is what lets tests/routing.py probe this
+ * design with a deliberately absurd metric. A frame claiming every turn is 0°
+ * must stop `pruneStitch` folding; if these calls ever became imports again,
+ * that check is the only thing in the estate that would notice.
+ *
+ * ⚠ AND ASV'S PLANE IS STILL FLAT WHILE ITS METRIC IS NOW TRUE — 0.278 % apart,
+ * on purpose. A point placed r metres out through `fromEN` measures 0.9972·r by
+ * `frame.distTo`. Safe because of WHERE the metric is used here: the escape-ring
+ * filter and sort, the 60° fold, the within-2·buf exemption. All three are
+ * HEURISTICS — which candidate to prefer, which vertex to drop, which block to
+ * excuse. NOT ONE IS A CLEARANCE BOUND: every route is still proved by
+ * `legClear`, which works in the plane through `toEN` and never reads the metric.
  *
  * ─ WHAT IS NOT HERE ─
  *

@@ -34,6 +34,7 @@
 import {
   M_PER_DEG_LAT_FLAT,
   flatDistanceM, flatBearingDeg, flatOffset,
+  geodesicDistanceM, geodesicBearingDeg,
   alignDeg as coreAlignDeg,
 } from "./core_geodesy.js";
 
@@ -60,6 +61,30 @@ export const DELEGATES_TO_CORE = Object.freeze(
 export function azTo(a, b){ return flatBearingDeg(a.lat, a.lon, b.lat, b.lon); }
 export function distTo(a, b){ return flatDistanceM(a.lat, a.lon, b.lat, b.lon); }
 export function atDA(p, dist, az){ return flatOffset(p.lat, p.lon, dist, az); }
+
+// --- THE ROUTER'S METRIC: TRUE DISTANCE, NOT THE FLAT MODEL ------------------------- //
+//
+// ANDY'S RULING, 2026-08-20: "standardize". The shared routing bodies in asv_core call
+// `frame.distTo` / `frame.azTo`, and until now this console handed them the FLAT pair while
+// WorldView handed over Vincenty -- a steady 0.278 % apart, 4.4 m at 1600 m and 22.5 m at
+// the 8100 m escalation margin, `azTo` up to 0.120 deg. Both consoles now measure with THE
+// SAME CORE FUNCTIONS, so a route search asks the same question in both.
+//
+// THESE ARE DELIBERATELY NOT CALLED `distTo`. This console's `distTo` above is the FLAT
+// model and stays that way: it has 118 call sites in the turn geometry, the survey pattern,
+// the readouts and the mission legs, and those live in the SAME FLAT PLANE as `toEN` and
+// `llEN`, where the hypotenuse of an ENU difference IS the distance. Making one name mean
+// two quantities inside one repo is exactly the trap the routing extraction spent a session
+// documenting; these names say which is which at every call site.
+//
+// WHERE THE ROUTER USES THEM, AND WHY A FLAT PLANE WITH A TRUE METRIC IS SAFE. `legPath`
+// filters and sorts its open-water escape candidates, `pruneStitch` folds a vertex past
+// 60 deg, and `gateLegClear` forgives a block within 2*buf of an endpoint. All three are
+// HEURISTICS -- which candidate to prefer, which vertex to drop, which block to excuse. Not
+// one is a clearance bound: every route is still proved by `legClear`, which works in the
+// plane through `toEN` and never touches these.
+export function trueDistTo(a, b){ return geodesicDistanceM(a.lat, a.lon, b.lat, b.lon); }
+export function trueAzTo(a, b){ return geodesicBearingDeg(a.lat, a.lon, b.lat, b.lon); }
 
 // Local ENU about a reference point: metres east / north. The survey and routing maths
 // works in this frame, because a flat plane is exact enough over a survey area and the
@@ -140,30 +165,35 @@ export function llEN(lat, lon, ref){
 // this console's own (they use `frame.toEN` throughout), the `lat`/`lon` fields stop being
 // read and can go. Until then they are what lets the interface move ahead of the bodies.
 //
-// ⚠ AND IT CARRIES THIS CONSOLE'S OWN distTo / azTo, WHICH IS NOT DECORATION.
+// ⚠ AND IT CARRIES THE ROUTER'S METRIC, WHICH IS NOT THE SAME THING AS THE PLANE.
 //
-// `distTo` IS NOT THE SAME QUANTITY IN THE TWO CONSOLES. Here it is the FLAT model;
-// WorldView's survey.js exports a `distTo` that is VINCENTY ON THE ELLIPSOID. Measured at
-// Lewes they disagree by a steady 0.278 % — 4.4 m at 1600 m and 22.5 m at 8100 m, the
-// widest margin the route search uses — and `azTo` by up to 0.120°.
+// The plane is FLAT and stays flat: `toEN`/`fromEN` are this console's own, the keep-out
+// model is built in them, and every clearance test runs there. The METRIC -- `distTo` and
+// `azTo` -- is TRUE distance as of Andy's "standardize" ruling (2026-08-20), so the shared
+// routing bodies ask the same question here as they do in WorldView. They are literally the
+// same core functions now, not merely close.
 //
-// That matters because THE SHARED ROUTING BODIES CALL BOTH. `legPath`'s open-water escape
-// ring keeps a candidate only while `distTo(p, toward) <= distTo(C, toward) + r`, then
-// sorts the survivors best-first; `pruneStitch` folds a vertex when the turn exceeds 150°.
-// Fed the two different functions those decisions genuinely part company: 92 of 20,000
-// keep/drop calls differ, 3.0 % of best-first orderings, and 11 of 20,000 fold tests.
+// WHY THE FRAME CARRIES A METRIC AT ALL, now that both sides agree. Until the ruling the two
+// consoles handed the shared bodies DIFFERENT functions -- flat here, Vincenty there, a
+// steady 0.278 % apart. Measured, that changed 92 of 20,000 escape-ring keep/drop decisions
+// and 3.0 % of best-first orderings, and every fixture still agreed at 0.000e+0 m because
+// the gap only decides anything within metres of a threshold. Carrying the metric on the
+// frame is what made that divergence VISIBLE and then fixable. It is not scaffolding to be
+// tidied away because the two values happen to match today.
 //
-// So the METRIC TRAVELS WITH THE FRAME, exactly as the plane already does. A shared body
-// writes `frame.distTo(a, b)` and each console keeps its own answer — the same reason the
-// core ships both frame constructors instead of picking one. A core module that imported
-// one of them would silently move the other console's routing.
+// ⚠ THE PLANE AND THE METRIC NOW DISAGREE BY 0.278 %, ON PURPOSE. A point placed r metres
+// out through `fromEN` measures 0.9972*r by `distTo`. That is fine everywhere the router
+// uses it -- see the note on `trueDistTo` above; all three uses are heuristics and no
+// clearance bound goes through them. It would NOT be fine to give `toEN`/`fromEN` the
+// ellipsoidal scale too: that is the tangent-plane divergence the core documents, it moves
+// every keep-out decision by about 1.7 m, and it is a separate question nobody has asked.
 export function planeFrame(ref){
   return {
     lat: ref.lat, lon: ref.lon,
     ref,
     toEN: (p) => toEN(p, ref),
     fromEN: (e, n) => fromEN(e, n, ref),
-    distTo, azTo,
+    distTo: trueDistTo, azTo: trueAzTo,
   };
 }
 
