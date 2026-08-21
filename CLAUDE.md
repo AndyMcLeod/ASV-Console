@@ -24,18 +24,66 @@ that is a data key, not branding. Standing check:
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-20, tenth refresh — the turn geometry left the page)
+## ⇒ START HERE (handoff refreshed 2026-08-20, eleventh refresh — the turn geometry is SHARED)
 
-**Tip `6dd3dd9`, tree clean + pushed, 38 suites green.** The estate around it: asv_core
-`dde1687`, WorldView `3f80a0f0`, Zboat `178dadd`, Transit `cda2773`, Fuel `1ec55f83`.
+**Tip `6dd3dd9` + this commit, tree clean + pushed, 38 suites green.** The estate around it:
+asv_core `dde1687` + its turns commit, WorldView `a5ea59ba` + its turns commit,
+Zboat `178dadd`, Transit `cda2773`, Fuel `1ec55f83`.
 
-**NEWEST (2026-08-20): THE TURNS ARE OUT OF `asv.html`.** `arcPts`, `minTurnRadiusM`,
-`shortenSeg` and `teardropTurn` are `static/js/turns.js`. That was the ONE genuine
-prerequisite left in the estate — for three sessions the handoff has recorded that nothing
-about this console's turn geometry could be imported, differentially measured or vendored
-until it came out of the 4,521-line script block. See *THE TURNS LEAVE THE PAGE* below,
-including why `punchOut` did NOT come with them and why the audit's "shared symbol" row is
-misleading about it.
+**NEWEST (2026-08-20): `static/js/turns.js` IS A SEAM — THE TURN GEOMETRY COMES FROM
+`asv_core`, AND THE MERGE FOUND A DEFECT THAT REACHED THE WATER.**
+
+The four bodies came out of `asv.html` yesterday; today they are one implementation behind
+both survey consoles. Measured before anything was written, this console's `turns.js`
+against WorldView's `mission.js`, both handed this console's flat frame and its 3 m arc
+step: **`teardropTurn` 0.000e+0 m over 3,240 cases** with R and outboard exact and all five
+outcomes reached (954 semicircle, 201 teardrop, 1,080 degenerate, 441 skew, 564 nogo);
+`arcPts` 0.000e+0 over 3,000 with identical point counts; `shortenSeg` 0.000e+0 over 6,000
+once the metric is shared. Against the finished core, the same, with `minTurnRadiusM`
+7.105e-15 m — **one ULP**, from `(rate*PI)/180` there against `rate*(PI/180)` here.
+
+**⚠ AND `teardropTurn`'s REVERSAL-PAIR GUARD WAS A BARE 60 m, WHICH IS A 4 m-BOAT
+ASSUMPTION.** Driven exactly the way `punchOut` drives it, with the 7.7 m USV profile
+(14.4 m of minimum radius at survey speed):
+
+```
+  120 m spacing  →  semicircle, R = 60.0 m     drawn
+  122 m spacing  →  why:"degenerate"           NO TURN AT ALL
+```
+
+**Above 120 m of line spacing — ordinary deep-water multibeam spacing — every reversal lost
+its generated turn** and fell back to a straight hop. And the banner told the operator the
+loop *"would enter a keep-out … it needs 61.0 m of radius there and has 14.4 m"*. **Both
+halves false**: nothing was blocked, and a 61 m semicircle is four times inside what that
+boat can hold. The advisory alongside it said WIDEN THE LINES, which makes it strictly
+worse. **Andy: "fix it in the merge."** `punchOut` now passes
+`Math.max(MAX_HALF_M, sp.spacing*1.6)` — the same 1.6 its own reversal gate uses. Below
+120 m of spacing nothing moves. See *THE TURN LAYER IS SHARED* below.
+
+**AND THE BANNER STOPPED ASSERTING A CAUSE IT HAD NEVER MEASURED.** `punchOut` counts
+`nTurnNogo` / `nTurnSkew` / `nTurnDegen` / `nKnotFold` and names them. The "it needs N m of
+radius there and has M" clause is gone: a loop exists at ANY spacing, so a radius shortfall
+is **never** the reason a reversal has no turn. `Widen the spacing to N m` is offered only
+when `sp.spacing < 2*minTurnR`, where widening can actually help.
+
+**⇒ ONE OPEN DECISION THIS MERGE LEFT, AND IT IS OPERATOR-FACING.** The SEMICIRCLE assumes
+the two line ends are ABEAM — its endpoints are a diameter, so its exit tangent is
+perpendicular to `EF`. The teardrop absorbs an along-track offset with a straight run
+before the loop; the semicircle does not. A clipped line that ends short of its neighbour
+therefore rolls the boat out **off the next line**, and `outboard` — the number the banner
+tells the operator to have clear water for — is REPORTED as `R` where the teardrop MEASURES
+it. Inside `punchOut`'s own two gates: worst **97.3°** of roll-out and worst **125.0 m**
+of understatement (reaches 285.1 m, reports 160.1 m). An ABEAM pair is exact. **This is in
+BOTH consoles and is older than the merge** — it was neither caused nor fixed here, because
+fixing the geometry moves turns on the water. `asv_core/tests/turns.py` RATCHETS both
+numbers so they cannot quietly get worse. The cheap half of the fix is three lines (measure
+`outboard` in both branches instead of assuming it in one) and cannot move a route.
+
+**PREVIOUSLY (2026-08-20): THE TURNS CAME OUT OF `asv.html`.** `arcPts`,
+`minTurnRadiusM`, `shortenSeg` and `teardropTurn` became `static/js/turns.js` — the ONE
+genuine prerequisite left in the estate, and the reason the merge above was possible at
+all. See *THE TURNS LEAVE THE PAGE* below, including why `punchOut` did NOT come with
+them and why the audit's "shared symbol" row is misleading about it.
 
 **PREVIOUSLY (2026-08-20): `static/js/passage.js` IS A SEAM TOO — THE ROUTER AND THE RULE 9
 LANE COME FROM `asv_core`.** 862 lines down to 331. See *THE ROUTING LAYER IS SHARED* below
@@ -126,6 +174,64 @@ identical (now extracted) and eleven differ by that one parameter.
 `teardropTurn`, `clipLine` and `featuresBboxRef` out of `asv.html`** — they are inline in
 the 4,521-line script block, so they cannot be imported, measured or vendored until they
 move. (`ref`-vs-`frame` was ruled: **frame**, and it is done.)
+
+### THE TURN LAYER IS SHARED (2026-08-20)
+
+`static/js/turns.js` is a **seam**: nine symbols from `asv_core`, four of them wrapped.
+`static/js/core_turns.js` is the vendored copy — **DO NOT EDIT IT**; `python tools/vendor.py`
+in the core rewrites it and `--check` fails the core's suite if it has drifted.
+
+| | |
+|---|---|
+| plain re-exports (5) | `TRACKING_MARGIN` `ANTI_PARALLEL_DEG` `SKEW_LIMIT_DEG` `MAX_HALF_M` `arcStepFor` |
+| wrapped (4) | `minTurnRadiusM` `shortenSeg` `arcPts` `teardropTurn` |
+| kept here | `ARC_STEP_M` — this console's 3 m pin |
+
+**ALL FOUR BEHAVIOURS ARE WRAPPED, AND THAT IS THE POINT OF THE SEAM.** `minTurnRadiusM`
+reads `V.SPEED_KN` and `V.MAX_TURN_RATE_DEG_S` where the core takes plain numbers;
+`teardropTurn` takes `(ref, ko, buf, minR, maxHalfM)` where the core takes a frame and an
+injected `clear`; `arcPts` and `shortenSeg` pin this console's arc step and its FLAT metric.
+Every call site in `asv.html` and in the five suites keeps its own signature, at the price
+of one closure per call. Same trade as `chart.js`.
+
+**⚠ THE METRIC IS PASSED, NOT TAKEN FROM THE FRAME, AND THAT IS LOAD-BEARING.** Every other
+shared body in this estate reads `frame.distTo`, deliberately, because the two consoles do
+not mean the same quantity by it. `shortenSeg` must NOT: `planeFrame.distTo` is
+`trueDistTo` since Andy's "standardize" ruling, while line shortening has always used the
+module-level FLAT `distTo`, **in the same flat plane the line is drawn in**. A core that
+read `frame.distTo` would move every survey line end by up to **1.113 m** — measured — and
+put the drawn length 0.131 % from the trimmed one. So it is an argument, where the choice
+is visible at the call site.
+
+**THE ARC STEP IS PINNED AT 3 m, AND THAT COST NOTHING TODAY.** The core scales the step
+with the radius (`arcStepFor`: 3 m at a 2 m radius, 12.5 m at 250 m) so a survey ship's turn
+does not emit 260 waypoints to hold a 4 mm sagitta. **The two are the SAME NUMBER below
+R = 60 m** — every radius this console's semicircle branch can produce, and every one its
+vessel profiles' minimum radii reach. Andy chose the pin so the merge stayed at 0.000e+0;
+adopting the scaling is a separate decision with its own measurement.
+
+**TWO HARDENINGS CAME WITH THE BODIES AND NEITHER IS REACHABLE FROM THIS UI.**
+`minTurnRadiusM` returns 0 rather than Infinity on a zero turn rate — this console divided
+by ω unguarded, so a vessel file with `max_turn_rate_deg_s: 0` drove `teardropTurn` straight
+to **NaN waypoints** — and `shortenSeg` refuses a zero, negative or NaN margin rather than
+**EXTENDING the line past both ends**. `applyVesselToUI` guards the first on truthiness and
+`punchOut`'s margin is `Math.max(2, …)`, so both are unreachable. **Checked, not assumed**,
+and pinned in the core's `tests/turns.py` rather than left as prose.
+
+**WHAT `tests/turns.py` IN THE CORE HAS TO DO THAT A DIFFERENTIAL CANNOT.** Once both
+consoles adopt, mutating the core moves them together and every "0.000e+0" stays green.
+Worse, **three of this console's four wrapper choices COINCIDE with the core's defaults on
+an ordinary fixture** — the pinned 3 m step IS `arcStepFor(R)` below R = 60 m, and a dropped
+`clear` or a dropped `maxHalfM` is invisible in open water at ordinary spacings. So it
+probes each where it shows and then requires the probe to have been OBSERVABLE: 991 arc
+cases where the core default differs, 117 where dropping `clear` changes the answer, 162
+where dropping `maxHalfM` does. 50 checks, 7 mutations, all caught.
+
+**AND `punchOut` STILL DOES NOT MOVE.** WorldView's `punchOut(pattern, opts)` is a pure
+assembler with injected seams; this console's `punchOut()` takes no arguments and is the
+BUTTON HANDLER — `#sp_hint`, `#sp_punch`, `encShow`, `render()`, `showBanner()`. One is UI
+and the other is algorithm. What corresponds to WorldView's is the ASSEMBLY INSIDE the
+handler, and separating those is its own job with its own decisions.
 
 ### THE TURNS LEAVE THE PAGE (2026-08-20)
 

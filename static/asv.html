@@ -608,7 +608,7 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
          ptInGeom, segSamplesEN } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
-import { arcPts, minTurnRadiusM, shortenSeg,
+import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
          teardropTurn } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
@@ -3006,8 +3006,16 @@ async function punchOut(){
     // clears that radius the turn is a semicircle; where it doesn't, teardropTurn
     // loops at minTurnR instead (wider, reaches further outboard) rather than giving up.
     const minTurnR = minTurnRadiusM(mission.speed || "survey");
+    // THE REVERSAL-PAIR CAP, FROM THE SPACING AND NOT FROM THE HULL. teardropTurn
+    // refuses a pair whose ends are more than this far apart as "not a reversal", and
+    // its default is a bare 60 m - a 4 m-USV assumption. That cost a 7.7 m USV EVERY turn
+    // above 122 m of line spacing (ordinary deep-water multibeam spacing): no loop was
+    // drawn, and the banner blamed a keep-out for it. 1.6 is the same factor the
+    // reversal gate below uses, so the "is this a reversal pair" judgement is made
+    // once instead of twice at two different scales. Below 120 m nothing moves.
+    const turnMaxHalf = Math.max(MAX_HALF_M, sp.spacing*1.6);
     // MINIMUM SURVEY LINE (per-vessel, Andy 2026-08-10: "short survey lines are
-    // inefficient and unnecessary for vessels the size of DriX... for the ZBoat this
+    // inefficient and unnecessary for vessels the size of 7.7 m USV... for the ZBoat this
     // would be fine"). A line costs two turns whatever its length, so below some length
     // the boat spends longer manoeuvring onto it than surveying it. That length belongs
     // to the HULL, so it lives in vessels/<id>.json as planning.min_survey_line_m and
@@ -3031,7 +3039,10 @@ async function punchOut(){
     // survey looks like a chart problem instead of a setting.
     const nShort = shortened.length - patClip.length;
     patTransits=[]; patRoutes=[]; patUnsafe=[];
+    // nNoTurn is the total; the three beside it are WHY, because the banner used to
+    // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
+    let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0;
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
@@ -3044,10 +3055,11 @@ async function punchOut(){
       const koHere = antiParallel ? koTurn : ko;
       let via=null;
       if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
-        const t = teardropTurn(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR);  // radius-floored + nogo-validated
+        const t = teardropTurn(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf);  // radius-floored + nogo-validated
         if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard); }
         else { nNoTurn++;  // a loop exists at ANY spacing now, so this is nogo/skew, not tightness
+          if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++; else nTurnDegen++;
           if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
             const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
             if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at}); } }
@@ -3070,7 +3082,7 @@ async function punchOut(){
         // reversal with no clear turn (it is one) instead of shipping it silently
         const inKnot=junctionKnot(patClip[k][0], Ap, via[0]||Bp);
         if(inKnot || junctionKnot(via[via.length-1]||Ap, Bp, patClip[k+1][1])){
-          nNoTurn++;
+          nNoTurn++; nKnotFold++;
           const seg=inKnot ? [Ap, via[1]||Bp] : [via[via.length-2]||Ap, Bp];  // the bridge that refused
           const fb=firstBlockAlong(seg[0], seg[1], ref, koHere, buffer);
           if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at});
@@ -3088,6 +3100,11 @@ async function punchOut(){
     // quote the actual numbers rather than just reporting the symptom.
     const spdKey = mission.speed || "survey";
     const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM("low");
+    // WIDENING ONLY HELPS WHEN THE SPACING IS THE PROBLEM. Below 2*minTurnR the
+    // reversals are teardrops, and widening turns them back into semicircles that
+    // reach less far outboard. At or above it there is nothing to widen towards, and
+    // "widen to 29 m" on a 122 m plan is exactly how the old 60 m turn cap read.
+    const canWiden = sp.spacing < needSpacing;
     // Estimated durations at the plan speed, kept SEPARATE:
     //  - SURVEY = the survey run itself (coverage lines + inter-line transits)
     //  - APPROACH = the transit from the boat to the survey start (straight-line
@@ -3113,10 +3130,10 @@ async function punchOut(){
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       (!nRoute&&!nU&&!nSemi&&!nTear?`, clear of keep-outs`:``)+
-      (nTear||nNoTurn?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
+      ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
       `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+`. Add to plan.`;
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
-    const widenTxt = `Widen the spacing to ${Math.ceil(needSpacing)} m`+
+    const widenTxt = !canWiden ? `` : `Widen the spacing to ${Math.ceil(needSpacing)} m`+
       (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
     if(nU){ const reasons=legReasons(patUnsafe); setViolations([...reasons, ...turnBlocks]);
       showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
@@ -3125,9 +3142,20 @@ async function punchOut(){
       // like open water on the chart, and widening the spacing may not cure a line
       // that already ENDS at the channel's edge - the sure remedy is standoff.
       const chanTxt = nChanTurn ? ` ${nChanTurn} of them would swing into a navigation channel the survey lines do not enter (highlighted) — turns need up to ~${Math.ceil(2.75*minTurnR)} m of clear water past the line ends, so end those lines that far from the channel, or draw the survey into the channel if it is meant to be covered.` : ``;
-      showBanner(`${nNoTurn} reversal(s) have no clear turn — the loop at the ${spdKey}-speed radius (${minTurnR.toFixed(1)} m) would enter a keep-out, so those legs fall back to a straight hop the ASV CANNOT actually track (it needs ${(sp.spacing/2).toFixed(1)} m of radius there and has ${minTurnR.toFixed(1)} m).${chanTxt} ${widenTxt}`); }
+      // WHAT ACTUALLY REFUSED IT, counted rather than assumed. This sentence used to
+      // say "the loop ... would enter a keep-out ... it needs N m of radius there and
+      // has M" for every refusal, and both halves could be false: a skew pair is not
+      // blocked by anything, and a loop exists at ANY spacing, so a radius shortfall
+      // is never the reason. It read worst where the old 60 m turn cap fired - a
+      // 7.7 m USV at 122 m spacing was told it needed 61 m of radius and had 14.4 m.
+      const whyTxt = [nTurnNogo?`${nTurnNogo} blocked by a keep-out`:``,
+                      nTurnSkew?`${nTurnSkew} more than ${SKEW_LIMIT_DEG}° off a true reversal`:``,
+                      nTurnDegen?`${nTurnDegen} with the line ends too close together to loop between`:``,
+                      nKnotFold?`${nKnotFold} folded by an obstacle the detour had to round`:``]
+                     .filter(Boolean).join(", ");
+      showBanner(`${nNoTurn} reversal(s) have no generated turn (${whyTxt}), so those legs fall back to a straight hop the ASV CANNOT actually track.${chanTxt}${widenTxt?` ${widenTxt}`:``}`); }
     else if(nTear){ clearViolation();
-      showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear. ${widenTxt}`); }
+      showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear.${widenTxt?` ${widenTxt}`:``}`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
     else { clearViolation(); showBanner("Chart-feature planning aid — ENC scale/currency varies; NOT hydrographic-certified. The operator remains responsible for the survey plan."); }
     updatePatReadout(); render();

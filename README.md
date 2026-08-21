@@ -13,12 +13,12 @@ piers/docks, and shallow water) — the console extracts a **nogo model** at sta
 and routes Go-To, RTH, search, transit and survey transits around it.
 
 Python-3 standard library only. **No pip, no build step, no bundler** — the page
-and its ES modules under `static/js/` are served exactly as written. Six of those
-modules (`core_geodesy.js`, `core_geometry.js`, `raster.js`, `keepouts.js`,
-`routing.js`, `contracts.js`) are **vendored from `asv_core`** and shared with the
-sibling planning tools — change them there, not here; a copy that has drifted from
-its source is a failed suite in that repo. The `core_` prefix marks the two whose
-natural name is already taken by a module of this console's own. Run it, a
+and its ES modules under `static/js/` are served exactly as written. Seven of those
+modules (`core_geodesy.js`, `core_geometry.js`, `core_turns.js`, `raster.js`,
+`keepouts.js`, `routing.js`, `contracts.js`) are **vendored from `asv_core`** and
+shared with the sibling planning tools — change them there, not here; a copy that
+has drifted from its source is a failed suite in that repo. The `core_` prefix marks
+the three whose natural name is already taken by a module of this console's own. Run it, a
 browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
 keep-clear buffer, short survey/search patterns).
 
@@ -444,6 +444,18 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    plainly — a straight hop between anti-parallel line ends is a 180° reversal at half
    the spacing, i.e. the radius that was just rejected, so that case is a warning to
    act on (widen the lines, slow down, or move the line ends), not a working turn.
+
+   **The banner NAMES what refused each one** — blocked by a keep-out, more than 15° off
+   a true reversal, line ends too close together, or a fold an obstacle forced on a
+   detour — because a loop exists at *any* spacing, so a shortfall of turning radius is
+   never the reason. `Widen the spacing` is offered only when the spacing is actually
+   below what a semicircle needs; above that there is nothing to widen towards.
+
+   **The "not a reversal pair" cap comes from the line spacing, not from the hull**
+   (`max(60 m, spacing × 1.6)`, the same factor the reversal gate uses). It was a bare
+   60 m until 2026-08-20, which silently threw away *every* generated turn above 122 m
+   of line spacing — ordinary deep-water spacing for a larger vessel — while the banner
+   blamed a keep-out for it.
 
    **Turn water.** The keep-out set the turns answer to is *stricter* than the one
    transits use: charted channel polygons (dredged areas + buoy-gate fairway
