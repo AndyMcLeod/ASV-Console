@@ -26,9 +26,9 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-20, eleventh refresh — the turn geometry is SHARED)
 
-**Tip `6dd3dd9` + this commit, tree clean + pushed, 38 suites green.** The estate around it:
-asv_core `dde1687` + its turns commit, WorldView `a5ea59ba` + its turns commit,
-Zboat `178dadd`, Transit `cda2773`, Fuel `1ec55f83`.
+**Tip `62457f2`, tree clean + pushed, 38 suites green.** The estate around it:
+asv_core **`4006166`**, WorldView **`75839d95`**, Zboat `178dadd`, Transit `cda2773`,
+Fuel `1ec55f83`.
 
 **NEWEST (2026-08-20): `static/js/turns.js` IS A SEAM — THE TURN GEOMETRY COMES FROM
 `asv_core`, AND THE MERGE FOUND A DEFECT THAT REACHED THE WATER.**
