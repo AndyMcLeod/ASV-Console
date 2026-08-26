@@ -782,16 +782,85 @@ def _aishub_time(s):
         return None
 
 
+class AishubStreamSource(NmeaSource):
+    """
+    AISHub's member TCP stream — `data.aishub.net:4100`.
+
+    Andy, 2026-08-25: *"host - data.aishub.net tcp port 4100."*
+
+    **NO SECOND DECODER, AND THAT IS THE WHOLE IMPLEMENTATION.** What comes down
+    that socket is NMEA AIVDM, which is exactly what `NmeaSource` already reads
+    from a local RTL-SDR or from OpenCPN. This is that class with the pool's host
+    and port on it, so a fix to the decoder reaches every consumer of the feed at
+    once. It reports under the name `aishub`, because that is whose data it is —
+    the transport is not the provenance.
+
+    ⚠ THE PORT IS GATED BY IP, NOT BY THE USERNAME. Measured 2026-08-25 from this
+    machine: DNS resolves, 80 and 443 open normally, and 4100 times out with NO
+    RST — the signature of a firewall admitting only registered addresses, not of
+    a refused login. The member username authenticates the HTTP API; the stream
+    authorises the SOURCE ADDRESS, registered at aishub.net. So a failure here is
+    reported as an authorisation problem the operator can act on, rather than as
+    "no vessels", which is what an unexplained empty sea would look like.
+    """
+
+    name = "aishub"
+    HOST = "data.aishub.net"
+    PORT = 4100
+    #: How long an unreachable port stays unexplained before the note says why.
+    HINT_AFTER_S = 45.0
+
+    def __init__(self, reg, host=None, port=None):
+        super().__init__(reg, host=host or self.HOST, port=int(port or self.PORT), udp=False)
+        self.name = "aishub"                     # provenance: whose data it is
+        self.health_name = "aishub (stream)"     # health: which socket carried it
+        self._first_err = 0.0
+
+    def _err(self, note):
+        # The bare socket error is true but useless — "timed out" on a port that
+        # is silently dropped tells an operator nothing they can do.
+        txt = str(note)[:120]
+        now = time.time()
+        if not self._first_err:
+            self._first_err = now
+        if now - self._first_err > self.HINT_AFTER_S:
+            txt += (" — port %d is authorised BY IP at aishub.net; register this "
+                    "machine's public address on the account, or the HTTP poll "
+                    "will carry the feed instead" % self.PORT)
+        super()._err(txt)
+
+    def _report(self, mmsi, **fields):
+        self._first_err = 0.0            # a report means the stream is through
+        super()._report(mmsi, **fields)
+
+
 class AishubSource(Source):
     name = "aishub"
     URL = "https://data.aishub.net/ws.php"
     POLL_S = 65.0            # AISHub's hard limit is one request per minute per account
     DENIED_S = 900.0         # an auth refusal will not heal by asking again sooner
 
-    def __init__(self, reg, user, bbox=None):
+    #: A stream that has reported this recently is carrying the feed.
+    STREAM_FRESH_S = 120.0
+
+    def __init__(self, reg, user, bbox=None, stream=None):
         super().__init__(reg)
         self.user = user
         self.bbox = bbox                     # W,S,E,N, or None for everything shared
+        self.health_name = "aishub (poll)"
+        # ⚠ THE POLL DEFERS TO THE STREAM RATHER THAN RACING IT. Both carry the
+        # same pool, and AISHub's hard limit is one request per minute per
+        # ACCOUNT — spending that quota while a live stream is already
+        # delivering would buy nothing and would leave no request in hand for
+        # the moment the stream drops.
+        self.stream = stream
+
+    def _stream_live(self):
+        st = getattr(self.stream, "status", None)
+        if not st or not st.get("reports"):
+            return False
+        return (st.get("state") == "ok"
+                and time.time() - (st.get("updated") or 0) < self.STREAM_FRESH_S)
 
     def _fetch(self):
         q = {"username": self.user, "format": "1", "output": "json", "compress": "0"}
@@ -805,6 +874,12 @@ class AishubSource(Source):
     def run(self):
         while True:
             wait = self.POLL_S
+            if self._stream_live():
+                # Standby, said out loud: an operator reading the card must be
+                # able to tell "deferring to the stream" from "not working".
+                self._ok("standby — the TCP stream is carrying the feed")
+                time.sleep(wait)
+                continue
             try:
                 d = self._fetch()
                 head = d[0] if isinstance(d, list) and d and isinstance(d[0], dict) else {}
@@ -973,7 +1048,13 @@ def make_handler(reg, sources):
                 pass
 
         def _src_status(self):
-            return {s.name: dict(s.status) for s in sources}
+            # ⚠ KEYED BY `health_name`, NOT `name`. Both AISHub transports report
+            # vessels as "aishub" — that IS the provenance, whatever socket they
+            # arrived on — so keying health by name collapsed them into one row
+            # and hid which one was carrying the feed, and with it the stream's
+            # "authorise this IP" hint. Provenance and health are different
+            # questions; only the second needs the transport.
+            return {getattr(s, "health_name", s.name): dict(s.status) for s in sources}
 
         def do_GET(self):
             path, _, qs = self.path.partition("?")
@@ -1121,7 +1202,18 @@ def build_sources(reg, args):
                       "membership requires contributing a feed - aishub.net); skipping",
                       file=sys.stderr)
                 continue
-            out.append(AishubSource(reg, hub_user, bbox=bbox))
+            # BOTH TRANSPORTS, STREAM PREFERRED. The stream is live and costs no
+            # quota; the poll stands by behind it and takes over the moment it
+            # stops — see AishubSource._stream_live. `--aishub-transport` pins
+            # one when an operator needs to.
+            mode = getattr(args, "aishub_transport", "auto") or "auto"
+            stream = None
+            if mode in ("auto", "tcp"):
+                stream = AishubStreamSource(reg, host=args.aishub_host,
+                                            port=args.aishub_port)
+                out.append(stream)
+            if mode in ("auto", "http"):
+                out.append(AishubSource(reg, hub_user, bbox=bbox, stream=stream))
         elif n == "nmea":
             specs = args.nmea or []
             if specs:
@@ -1196,6 +1288,13 @@ def main():
                     help="an NMEA AIVDM endpoint for --source nmea; repeatable, so several "
                          "receivers merge (udp:10110 binds for AIS-catcher / rtl-ais, "
                          "tcp:host:port connects to a served stream)")
+    ap.add_argument("--aishub-transport", default="auto", choices=("auto", "tcp", "http"),
+                    help="how to reach AISHub: auto (TCP stream, HTTP poll behind it), "
+                         "tcp (stream only), http (poll only). Default auto.")
+    ap.add_argument("--aishub-host", default=AishubStreamSource.HOST,
+                    help="AISHub stream host (default %s)" % AishubStreamSource.HOST)
+    ap.add_argument("--aishub-port", type=int, default=AishubStreamSource.PORT,
+                    help="AISHub stream port (default %d)" % AishubStreamSource.PORT)
     ap.add_argument("--nmea-host", default="127.0.0.1", help="NMEA AIVDM source host (legacy single endpoint)")
     ap.add_argument("--nmea-port", type=int, default=10110, help="NMEA AIVDM source port (legacy single endpoint)")
     ap.add_argument("--nmea-udp", action="store_true", help="bind UDP instead of TCP-connect (legacy single endpoint)")
