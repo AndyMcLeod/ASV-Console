@@ -164,6 +164,17 @@ class Registry:
     # polled report loses to a fresher one already held)
     POS_KEYS = ("lat", "lon", "sog", "cog", "heading", "nav")
 
+    #: Which feed's POSITION wins when several carry the same ship. Higher is
+    #: stronger; anything unlisted is 0. This is the only place "primary" is
+    #: expressed — a source list says what RUNS, not what is believed.
+    PRIORITY = {"aishub": 30, "nmea": 20, "opencpn": 20, "aisstream": 10,
+                "digitraffic": 10}
+
+    #: How long the primary holds a vessel without reporting before a
+    #: lower-priority feed may move it. A primary that stops must not freeze the
+    #: picture — that would be worse than the coin-toss this replaces.
+    PRIMARY_HOLD_S = 180.0
+
     def update(self, mmsi, src, pos_time=None, **fields):
         """Merge a report into the registry. Only overwrites keys that are present
         (so a static-data update keeps the last position and vice-versa).
@@ -188,8 +199,26 @@ class Registry:
             v.setdefault("srcs", {})[src] = now
             if fields.get("lat") is not None and fields.get("lon") is not None:
                 t = pos_time if pos_time is not None else now
-                if t < v.get("pos_time", -1e18) - 2.0:
-                    # stale position from a slower feed: keep the fresher one
+                # ⚠ PRIORITY BEFORE FRESHNESS. Two feeds carrying the same ship
+                # used to contest on time alone, so the displayed position was
+                # whichever wrote last — a coin-toss an operator cannot see and
+                # cannot influence. The member feed is the operator's OWN
+                # account and is primary: while it is holding a vessel, a
+                # lower-priority feed contributes static data (name, type,
+                # dimensions) and its provenance in `srcs`, but does not move
+                # the ship.
+                #
+                # ...UNLESS THE PRIMARY HAS GONE QUIET. A primary that stops
+                # must not freeze the picture: past PRIMARY_HOLD_S with no
+                # report, the next feed takes the position over. Coverage is the
+                # whole reason the others are still running.
+                held_by = v.get("src")
+                held_age = now - (v.get("pos_ts") or 0)
+                outranked = (self.PRIORITY.get(src, 0) < self.PRIORITY.get(held_by, 0)
+                             and held_age < self.PRIMARY_HOLD_S)
+                if outranked or t < v.get("pos_time", -1e18) - 2.0:
+                    # a lower-priority feed, or a stale position from a slower
+                    # one: keep the position we have, take the static fields
                     fields = {k: val for k, val in fields.items()
                               if k not in self.POS_KEYS}
                 else:
@@ -1177,15 +1206,23 @@ def build_sources(reg, args):
         # it only ever adds coverage). Local receivers are never auto-enabled: an
         # endpoint nobody is feeding would sit in the card as a permanent error.
         # Expanded IN PLACE so "auto,opencpn" means auto's picks PLUS OpenCPN.
+        # ⚠ AISHUB RUNS ALONGSIDE THE OTHERS, AND IS PRIMARY AMONG THEM. Andy,
+        # 2026-08-25: *"along with other sources but as the primary."* Every
+        # enabled feed still merges into the one registry — more coverage is
+        # strictly better — but when two of them report the SAME ship, the
+        # member feed's position is the one displayed. That is a registry rule,
+        # not a source list: see `Registry.PRIORITY`. Dropping the others would
+        # have thrown away coverage; leaving them equal would have made the
+        # displayed position a coin-toss on whichever wrote last.
         expanded = ["aisstream"] if key else ["digitraffic"]
         if hub_user:
             expanded.append("aishub")
         names = [x for n in names for x in (expanded if n == "auto" else [n])]
         seen = set()
         names = [n for n in names if not (n in seen or seen.add(n))]
-        print("[ais] source 'auto' -> %s%s" % (",".join(names),
-              "" if key else " (no aisstream key found; set $AISSTREAM_KEY for global coverage)"),
-              file=sys.stderr)
+        why = (" (aishub is primary)" if hub_user else
+               ("" if key else " (no aisstream key found; set $AISSTREAM_KEY for global coverage)"))
+        print("[ais] source 'auto' -> %s%s" % (",".join(names), why), file=sys.stderr)
     out = []
     for n in names:
         if n == "digitraffic":
