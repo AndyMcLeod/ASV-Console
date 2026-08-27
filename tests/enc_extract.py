@@ -250,6 +250,69 @@ check("7. the console logged NO exception while serving those requests",
       ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
       else "an answered request can still kill its handler")
 
+# --- 8: A DEPTH IS A NUMBER BY THE TIME IT LEAVES THE EXTRACT ------------------------- #
+#
+# THE TRIP-WIRE, and it is here because of what happened NEXT DOOR. WorldView drew a
+# mission that detoured around a charted rock with 5.1 m of water over it: `hazExtent` -
+# the same body this console runs - exempts a point hazard the chart has sounded by
+# testing `typeof vs === 'number'`, S-57 attributes come off a CELL as text, and the
+# string "5.1" failed that test. The rock read as unsounded and took the full assumed
+# radius, and every transit near it detoured around a rise that is not there.
+#
+# AND EVERY FIXTURE IN THIS ESTATE AGREED WITH THE BROKEN CODE. Look up: the SENTINEL
+# above feeds `DRVAL1: 3.0` and `VALSOU: 1.2` as NUMBERS, because that is what you type.
+# So does tests/wreck_clearance.js. The suites were green about a wire they had never
+# seen. These feed the STRING FORM instead - the only version that was ever in doubt.
+#
+# This console cannot have the fault today: one chart source, `f=geojson`, which types
+# its numerics (measured over this console's own cache: 629 point hazards, 48 sounded,
+# ZERO string VALSOU, ZERO wrongly kept). `_enc_keep_props` is a NO-OP now, and the whole
+# point of it is the day a second source appears - a cell off a disk, an imported file -
+# when nothing else here would notice.
+import asv_console as A                                       # noqa: E402
+
+rock = A._enc_keep_props({"OBJNAM": "sounded rock", "VALSOU": "5.1", "JUNK": "x"})
+check("8. a VALSOU that arrives as TEXT leaves the extract as a number",
+      lambda: rock.get("VALSOU") == 5.1 and isinstance(rock.get("VALSOU"), float),
+      "%r (%s)" % (rock.get("VALSOU"), type(rock.get("VALSOU")).__name__))
+# ...and the name beside it is text and must STAY text: coercing everything is the other
+# way to be wrong. `.get`, never `[...]` - a check that RAISES kills the suite instead of
+# reddening, and then nothing after it runs either.
+check("8b. ... while the name beside it is left alone, and the junk still dropped",
+      lambda: rock.get("OBJNAM") == "sounded rock" and "JUNK" not in rock,
+      "%r, keys %s" % (rock.get("OBJNAM"), sorted(rock)))
+
+band = A._enc_keep_props({"DRVAL1": "0", "DRVAL2": "1.8"})
+already = A._enc_keep_props({"VALSOU": 4.25})
+check("8c. ... and so are the depth range and the contour value, while one that was "
+      "ALREADY a number is untouched",
+      lambda: band.get("DRVAL1") == 0.0 and band.get("DRVAL2") == 1.8
+      and already.get("VALSOU") == 4.25,
+      "DRVAL1 %r, DRVAL2 %r, untouched %r"
+      % (band.get("DRVAL1"), band.get("DRVAL2"), already.get("VALSOU")))
+
+# UNREADABLE MEANS UNKNOWN, AND UNKNOWN IS THE CONSERVATIVE CASE. A depth that will not
+# parse must not reach the model as text for a `typeof` to trip over a second time;
+# dropped, the hazard is sized as unsounded - the answer the string was accidentally
+# giving, now for a stated reason.
+junk = A._enc_keep_props({"VALSOU": "unknown", "OBJNAM": "nameless"})
+blank = A._enc_keep_props({"VALSOU": ""})
+check("8d. ... and a depth that will not parse is DROPPED, not carried as text",
+      lambda: "VALSOU" not in junk and junk.get("OBJNAM") == "nameless"
+      and "VALSOU" not in blank,
+      "junk keys %s, blank keys %s" % (sorted(junk), sorted(blank)))
+
+# THE SEAM, NOT JUST THE HELPER. Testing a pure helper does not test that anything CALLS
+# it. The trimming happens inside a nested worker a test cannot reach, so this pins the
+# call site as source - and that the raw comprehension it replaced is gone, or both could
+# sit there with the old one still doing the work.
+src = open(os.path.join(APP, "asv_console.py"), "r", encoding="utf-8").read()
+CALL = '_enc_keep_props(ft.get("properties"))'
+OLD = "{k: props.get(k) for k in ENC_KEEP_PROPS"
+check("8e. ... and the extract itself goes through it - the raw comprehension is gone",
+      lambda: CALL in src and OLD not in src,
+      "call present=%s, old comprehension gone=%s" % (CALL in src, OLD not in src))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

@@ -837,6 +837,72 @@ ENC_ROLES = {
 # CATLAM = category of lateral mark (1 port-hand, 2 starboard-hand, 3 pref-chan-to-
 # stbd, 4 pref-chan-to-port); COLOUR for the buoy symbol. Kept for chan_mark use.
 ENC_KEEP_PROPS = ("DRVAL1", "DRVAL2", "VALSOU", "VALDCO", "OBJNAM", "CATLAM", "COLOUR")
+# ...and the four the nogo model does ARITHMETIC on, which have to be NUMBERS.
+ENC_NUMERIC_PROPS = frozenset(("DRVAL1", "DRVAL2", "VALSOU", "VALDCO"))
+
+
+def _enc_num(value):
+    """A numeric ENC attribute as a number, or None if it will not read as one."""
+    if isinstance(value, bool):          # True is an int in Python; it is not a depth
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _enc_keep_props(props):
+    """
+    The properties worth carrying, with the numeric ones AS NUMBERS.
+
+    A TRIP-WIRE, NOT A FIX: this console cannot have the fault today, and this
+    is here so it cannot acquire one silently.
+
+    WHAT HAPPENED NEXT DOOR, 2026-08-26. WorldView drew a mission that detoured
+    around a charted rock with 5.1 m of water over it. `hazExtent` - the same
+    body this console runs, adopted from asv_core - exempts a point hazard the
+    chart has sounded, and it tests `typeof vs === 'number'`. S-57 attributes
+    come off a CELL as text, so the value it saw was the string "5.1", the test
+    failed, the rock read as unsounded and took the full 50 m assumed radius.
+
+    WHY IT IS NOT US, MEASURED. This console has ONE chart source - `_enc_query`
+    with `f=geojson` - and ArcGIS types its numeric fields. Run over this
+    console's own cache: 629 point hazards, 48 of them sounded, ZERO with a
+    string VALSOU, and ZERO kept as a hazard despite having enough water over
+    them. There is no local S-57 reader here and no operator chart-file import;
+    both are WorldView's, and they are the only two roads the text travelled.
+
+    SO WHAT IS THIS FOR. The day a second source appears - a cell read off a
+    disk, an imported GeoJSON, a different service - the fault lands again and
+    NOTHING would catch it, because every fixture in this estate feeds VALSOU as
+    a NUMBER. That is the shape of the whole defect: the tests agreed with code
+    that could not read the wire. Coercing here makes a new source safe by
+    construction, and `tests/enc_extract.py` feeds this the string form so the
+    guarantee is checked rather than asserted.
+
+    An unreadable numeric attribute is DROPPED, not carried as text: absent
+    means unknown and unknown is the conservative case, which is the answer the
+    string was accidentally producing anyway - now for a stated reason instead
+    of a type test failing quietly.
+    """
+    kept = {}
+    for k in ENC_KEEP_PROPS:
+        v = (props or {}).get(k)
+        if v is None:
+            continue
+        if k in ENC_NUMERIC_PROPS:
+            n = _enc_num(v)
+            if n is None:
+                continue
+            kept[k] = n
+        else:
+            kept[k] = v
+    return kept
+
 
 _enc_layermaps = {}          # band -> {className: layerId}
 _enc_layermap_lock = threading.Lock()
@@ -1013,8 +1079,10 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 g = ft.get("geometry")
                 if not g:
                     continue
-                props = ft.get("properties") or {}
-                kept = {k: props.get(k) for k in ENC_KEEP_PROPS if props.get(k) is not None}
+                # Through `_enc_keep_props`, which makes the numbers numbers -
+                # a no-op for this console's one source, and the trip-wire for
+                # any second one. See its docstring.
+                kept = _enc_keep_props(ft.get("properties"))
                 out.append({"role": role, "cls": cls, "props": kept, "geometry": g})
             return out
 

@@ -30,7 +30,36 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 asv_core **`4006166`**, WorldView **`75839d95`**, Zboat `178dadd`, Transit `cda2773`,
 Fuel `1ec55f83`.
 
-**NEWEST (2026-08-20): `static/js/turns.js` IS A SEAM — THE TURN GEOMETRY COMES FROM
+**NEWEST (2026-08-26): A TRIP-WIRE ON THE ENC EXTRACT — WORLDVIEW HAD A ROCK BUG AND
+THIS CONSOLE DOES NOT, MEASURED. `_enc_keep_props` IS A NO-OP TODAY, ON PURPOSE.**
+
+WorldView drew a mission that detoured around a charted rock with **5.1 m of water over
+it**. `hazExtent` — the same body this console runs — exempts a point hazard the chart has
+sounded, and it tests `typeof vs === 'number'`. **S-57 attributes come off a CELL as
+text**, so it saw the string `"5.1"`, the test failed, and the rock took the full 50 m
+assumed radius. Its neighbouring rule hid it for as long as it existed: `depthExcluded`
+uses `<`, which COERCES, so the depth areas were right all along.
+
+**THIS CONSOLE CANNOT HAVE IT.** One chart source — `_enc_query` with `f=geojson`, and
+ArcGIS types its numerics. No local S-57 reader, no operator chart-file import; both are
+WorldView's (`s57.py`, `importKeepouts`), and they are the only two roads the text
+travelled. Measured, not reasoned — this console's own `hazExtent` run over this
+console's own cache: **629 point hazards, 48 sounded, ZERO with a string `VALSOU`, and
+ZERO kept as a hazard despite having enough water over them.**
+
+⚠ **SO WHY CHANGE ANYTHING.** Because every fixture in this estate feeds `VALSOU` as a
+NUMBER — this suite's own SENTINEL does, and so does `wreck_clearance.js`. The tests were
+green about a wire they had never seen. The day a second source appears the fault lands
+again and **nothing here would notice**. `_enc_keep_props` coerces at the one seam so a
+new source is safe by construction, and `enc_extract.py` 8–8e feed it the STRING form so
+the guarantee is checked rather than asserted. **8e pins the CALL SITE**, because testing
+a pure helper does not test that anything calls it — `?mutate=seam-reverted` reddens 8e
+alone while every direct check of the helper stays green.
+
+Four mutations, real file writes, atomic + sidecar + restored byte-for-byte:
+`no-coercion` → 3 red, `coerce-everything` → 2, `junk-kept` → 1, `seam-reverted` → 1.
+
+**(2026-08-20): `static/js/turns.js` IS A SEAM — THE TURN GEOMETRY COMES FROM
 `asv_core`, AND THE MERGE FOUND A DEFECT THAT REACHED THE WATER.**
 
 The four bodies came out of `asv.html` yesterday; today they are one implementation behind
@@ -853,7 +882,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `python tests/run_link_control.py` | transit/pause/reset/connect/disconnect: pause is NOT stop; reset refuses on real; no zombie link (21, real console) |
 | `python tests/home_spawn.py` | sethome lands where it says from BOTH sources — an explicit point, or the LIVE fix when none is given (the stale-status fix); RTH closes on home; spawn = power-cycle AT the point; and the console SURVIVES a malformed one (18, real console) |
 | `python tests/energy_chartinfo.py` | energy override: sim layer + engine layer earned separately; chartinfo served from its exact-key cache, 400 on bad bbox (13, real console) |
-| `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites (10, real console) |
+| `python tests/enc_extract.py` | /api/enc: 400 usage, the cache answers, per-request shallow retag (exclusive boundary, disk untouched); shared bbox helpers guarded from BOTH suites; **and the depth-is-a-number trip-wire, fed the STRING form an S-57 cell produces** (15, real console) |
 | `python tests/env_water.py` | env override REACHES the running boat + disable returns calm; waterlevel manual set/clear; bad input is a 400, never a dropped connection (11, real console) |
 | `python tests/log_routes.py` | logevent survives colliding data keys (renamed, flat record); /api/logs lists the live session; safe_log_path serves ONLY bare asv_*.jsonl (9, real console, logging ON) |
 | `python tests/data_routes.py` | vessel switch SAFE gate + energy-gauge flip; the comms password's THREE never-leak paths; tide answers; ROC HTTP error mapping (15, real console, logging ON) |
