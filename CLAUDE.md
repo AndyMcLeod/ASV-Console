@@ -18,7 +18,33 @@ console's identity never appears in code** — it is the thing this derivative i
 from, so refer to it as "the sibling console". A **modeled vessel's name is DATA** and
 belongs in `vessels/*.json`; the core may name a profile *id* (`DEFAULT_VESSEL_ID`) because
 that is a data key, not branding. Standing check:
-`grep -rniE "z-?boat|teledyne" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
+
+`grep -rniP "teledyne|z-?boat(?!_[a-z0-9])" --include=*.py --include=*.html --include=*.js . | grep -v vessels/`
+
+**⚠ THE LOOKAHEAD IS THE DATA-KEY ALLOWANCE, AND THE CHECK WAS WRONG WITHOUT IT
+(fixed 2026-08-26).** The rule above has always permitted a profile *id*; the
+grep did not, so it reddened on the six `zboat_1800hs` lines in `data_routes.py`
+— a check that flags what its own rule allows is one people learn to ignore, and
+this one had been ignored long enough that nine REAL prose hits were sitting
+behind the noise. `(?!_[a-z0-9])` says: the brand followed by an id tail is a
+data key; the brand standing alone is branding. **`-P`, not `-E`** — a negative
+lookahead needs PCRE. It still catches a line carrying BOTH, which is why this
+is one command rather than a second `grep -v` that would hide such a line.
+
+**⇒ AND IT IS CURRENTLY RED — NINE HITS, ALL PROSE, NONE IN LOGIC.**
+`static/js/state.js:49`, `static/asv.html:3018`, and seven in
+`tests/survey_card.js` (182, 249, 250, 252, 274, 278, 280). **Left as they are,
+deliberately, because scrubbing them is a decision about where the line falls
+and not a tidy-up.** Four of them QUOTE ANDY VERBATIM — *"short survey lines are
+inefficient and unnecessary for vessels the size of 7.7 m USV… for the ZBoat
+this would be fine"* — and a quotation of the operator's own instruction is a
+different thing from the code speaking the brand in its own voice. The rest use
+the boat as the worked example of a short hull, which is what the min-line rule
+IS about. Decide the quote question first; the scrub is mechanical after that.
+
+**⚠ AND NOTHING RUNS THIS.** It lives here as prose, so it is a check only when
+somebody types it — which is how it stayed wrong. The hook globs `tests/*.py`,
+so a suite added there runs the day it is written.
 
 **The rule is scoped to CODE.** THIS FILE deliberately names the sibling and its path — a
 maintainer has to be able to find it — which is why the check above filters by source
