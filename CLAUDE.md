@@ -31,16 +31,21 @@ data key; the brand standing alone is branding. **`-P`, not `-E`** — a negativ
 lookahead needs PCRE. It still catches a line carrying BOTH, which is why this
 is one command rather than a second `grep -v` that would hide such a line.
 
-**⇒ AND IT IS CURRENTLY RED — NINE HITS, ALL PROSE, NONE IN LOGIC.**
-`static/js/state.js:49`, `static/asv.html:3018`, and seven in
-`tests/survey_card.js` (182, 249, 250, 252, 274, 278, 280). **Left as they are,
-deliberately, because scrubbing them is a decision about where the line falls
-and not a tidy-up.** Four of them QUOTE ANDY VERBATIM — *"short survey lines are
-inefficient and unnecessary for vessels the size of 7.7 m USV… for the ZBoat
-this would be fine"* — and a quotation of the operator's own instruction is a
-different thing from the code speaking the brand in its own voice. The rest use
-the boat as the worked example of a short hull, which is what the min-line rule
-IS about. Decide the quote question first; the scrub is mechanical after that.
+**⇒ AND IT IS CLEAN AS OF 2026-08-26.** Fixing the grep surfaced NINE prose hits
+that the `zboat_1800hs` noise had been hiding — `static/js/state.js`,
+`static/asv.html`, and seven in `tests/survey_card.js`. All nine are scrubbed;
+Andy's call, quotes included.
+
+**⚠ A QUOTATION IS ALTERED IN BRACKETS, NEVER SILENTLY.** Four of them quoted
+him verbatim, and the replacement reads *"for the [small-class boat] this would
+be fine"* with a line beside it saying the brackets are a substitution.
+Reworded without saying so, a quotation stops being evidence of what was
+actually asked for — which is the only reason to keep quoting him at all.
+
+**⇒ THE HOUSE WORD IS "the small-class boat"**, matching `vessels/*.json`'s own
+`"class": "small survey ASV"`. Where a check wants to name the thing exactly,
+the PROFILE ID is the sanitized way to do it and the grep now permits it:
+`17b`'s detail line reads `drix08=80 zboat_1800hs=0`.
 
 **⚠ AND NOTHING RUNS THIS.** It lives here as prose, so it is a check only when
 somebody types it — which is how it stayed wrong. The hook globs `tests/*.py`,

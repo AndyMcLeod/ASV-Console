@@ -3015,8 +3015,10 @@ async function punchOut(){
     // once instead of twice at two different scales. Below 120 m nothing moves.
     const turnMaxHalf = Math.max(MAX_HALF_M, sp.spacing*1.6);
     // MINIMUM SURVEY LINE (per-vessel, Andy 2026-08-10: "short survey lines are
-    // inefficient and unnecessary for vessels the size of 7.7 m USV... for the ZBoat this
-    // would be fine"). A line costs two turns whatever its length, so below some length
+    // inefficient and unnecessary for vessels the size of 7.7 m USV... for the
+    // [small-class boat] this would be fine" - the brackets mark a substitution for the
+    // name this derivative is sanitized from). A line costs two turns whatever its
+    // length, so below some length
     // the boat spends longer manoeuvring onto it than surveying it. That length belongs
     // to the HULL, so it lives in vessels/<id>.json as planning.min_survey_line_m and
     // reaches here through V - never a constant in this file.

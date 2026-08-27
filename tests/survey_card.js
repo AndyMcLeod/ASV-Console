@@ -179,9 +179,13 @@ check("11. a single-line plan reports length and count, and no spacing",
 
 // --- 12-17: the per-vessel MINIMUM SURVEY LINE ---------------------------------------- //
 // Andy, 2026-08-10: "short survey lines are inefficient and unnecessary for vessels the
-// size of DriX. For the ZBoat this would be fine... If a generated plan has lines or line
-// segments of less than 80m cut them out of the plan and jump straight to the next
-// waypoint. This applies only to surveys." A line costs two turns whatever its length, so
+// size of DriX. For the [small-class boat] this would be fine... If a generated plan has
+// lines or line segments of less than 80m cut them out of the plan and jump straight to
+// the next waypoint. This applies only to surveys."
+// (The brackets mark a substitution: the original named the boat this derivative is
+// sanitized from. Marked rather than silently reworded — altering a quotation without
+// saying so is worse than either keeping it or dropping the quote marks.)
+// A line costs two turns whatever its length, so
 // the threshold is a property of the HULL - which is why it is vessel configuration
 // (planning.min_survey_line_m) and not a constant in the page.
 //
@@ -246,10 +250,10 @@ check("11. a single-line plan reports length and count, and no spacing",
         r14.kept.length === 0 && r14.dropped === 1,
         "100 m drawn − 2×15 m margin = 70 m run, under the 80 m minimum");
 
-  // 15. ZERO MEANS KEEP EVERYTHING - the Z-Boat case, and the default for any vessel file
-  // that says nothing. Andy: "For the ZBoat this would be fine."
+  // 15. ZERO MEANS KEEP EVERYTHING - the small-class case, and the default for any vessel
+  // file that says nothing. Andy: "For the [small-class boat] this would be fine."
   const r15 = punch([300, 40, 300, 12], 2, 0);
-  check("15. a minimum of 0 keeps every line - the Z-Boat / legacy-file behaviour",
+  check("15. a minimum of 0 keeps every line - the small-class / legacy-file behaviour",
         r15.kept.length === 4 && r15.dropped === 0,
         "kept " + r15.lens.join(",") + " m");
 
@@ -271,13 +275,13 @@ check("11. a single-line plan reports length and count, and no spacing",
         "the hint must name both the count and the minimum");
 
   // 17b. The three shipped hulls state their own value: the DriX at Andy's 80 m, the
-  // Z-Boat explicitly 0 (short lines are what it is for), the example in between.
+  // small-class boat explicitly 0 (short lines are what it is for), the example between.
   const vess = f => JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", f), "utf8"));
   const drix = vess("drix08.json").planning.min_survey_line_m;
-  const zb = vess("zboat_1800hs.json").planning.min_survey_line_m;
-  check("17b. each shipped hull declares its own minimum (DriX 80, Z-Boat 0)",
-        drix === 80 && zb === 0,
-        "drix=" + drix + " zboat=" + zb);
+  const small = vess("zboat_1800hs.json").planning.min_survey_line_m;
+  check("17b. each shipped hull declares its own minimum (DriX 80, small-class 0)",
+        drix === 80 && small === 0,
+        "drix08=" + drix + " zboat_1800hs=" + small);
 }
 
 // --- 18. THE SILENT CAP -------------------------------------------------------------

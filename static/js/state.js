@@ -46,8 +46,9 @@ export const V = {
   // off both ends). A survey line costs two turns whatever its length, so below some
   // length the boat spends more time manoeuvring onto the line than surveying it - and
   // that length is a property of the HULL, not of the survey. A 7.7 m DriX at survey
-  // speed needs ~20 m of turning radius, so an 80 m line is mostly turn; a 1.3 m Z-Boat
-  // turns in its own length and short lines are exactly what it is for. 0 = keep every
+  // speed needs ~20 m of turning radius, so an 80 m line is mostly turn; a 1.3 m
+  // small-class boat turns in its own length and short lines are exactly what it is
+  // for. 0 = keep every
   // line (the default, so a vessel file that says nothing behaves as it always did).
   // SURVEYS ONLY - transits, search patterns and hand-drawn lines are never filtered.
   MIN_SURVEY_LINE_M: 0,
