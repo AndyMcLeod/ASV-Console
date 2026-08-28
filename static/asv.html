@@ -268,6 +268,7 @@
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Command</div>
+    <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current centre as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
@@ -714,7 +715,12 @@ const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
 const MINZ = 3, MAXZ = 20, MAX_TRACK = 8000;   // TILE + M_PER_DEG_LAT: geodesy.js
 
 let zoom = 13;
-let center = {lat: 42.137083, lon: -80.087367}; // fallback until first fix (spawn: 42 08.225'N 80 05.242'W)
+// Chart centre until the first fix arrives. THIS USED TO BE A HARD-CODED ERIE
+// POSITION (42.137, -80.087) that belonged to no configured vessel and no operating
+// base - the console simply opened over Lake Erie every time. It is now seeded from
+// the ACTIVE PORT by loadPorts(), which runs at boot; this literal is only what the
+// first paint uses in the few ms before that resolves, so it tracks the primary port.
+let center = {lat: 43.0730, lon: -70.7100};   // New Castle, NH - overwritten by loadPorts()
 let haveFix = false, follow = true;
 // The ASV trail persists across a page refresh WITHIN a server session (mirrored to
 // localStorage + restored on load), but is DROPPED when the sim reboots: the stored
@@ -905,6 +911,73 @@ function applyVesselToUI(v){
   setDefault("sr_length",  s.parallel_length_m);
   setDefault("sr_spacing", s.parallel_spacing_m);
   setDefault("sr_lanes",   s.parallel_lanes);
+}
+// --- OPERATING PORTS: where the console opens, and where the sim boat spawns ------ //
+// Modelled deliberately on the vessel picker (Andy: "the ASV selection is a good model"):
+// a list, an active id, a switch the server gates on being SAFE. The one addition is the
+// "+ Add port here..." row - the operator's own bases are appended to the registry and
+// RETAINED, so a place typed once is in this list for good.
+//
+// THE NEW PORT'S POSITION IS THE CHART'S CURRENT CENTRE, not a typed coordinate. The
+// operator is already looking at the place; asking them to read a latitude off the screen
+// and type it back in is a transcription error waiting to happen, and this console has a
+// standing rule that the gesture should carry the point (the same reasoning that moved
+// Go-To / Set Home / Spawn onto the chart menu).
+const PORT_ADD = "__add__";
+let portList = [], portActive = null;
+function fillPortPicker(){
+  const sel = $("#portSel"); if(!sel) return;
+  sel.innerHTML = "";
+  portList.forEach(p=>{ const o=document.createElement("option");
+    o.value=p.id; o.textContent=p.name || p.id; if(p.id===portActive) o.selected=true;
+    sel.appendChild(o); });
+  const add=document.createElement("option");
+  add.value=PORT_ADD; add.textContent="+ Add port here…"; sel.appendChild(add);
+}
+async function loadPorts(){
+  try{
+    const r = await fetch("/api/ports"); const d = await r.json();
+    portList = d.ports || []; portActive = d.active || null;
+    fillPortPicker();
+    // SEED THE CHART from the active port, so the first paint is the operating area
+    // rather than a literal in this file. Only before a fix: once the boat reports a
+    // position the chart follows the boat, and re-centring then would fight the operator.
+    const p = portList.find(q=>q.id===portActive);
+    if(p && !asv){ center = {lat:p.lat, lon:p.lon}; render(); }
+  }catch(e){ /* no registry - the vessel's own spawn still drives everything */ }
+}
+async function switchPort(id){
+  if(id === PORT_ADD){ await addPortHere(); return; }
+  const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify({id})});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ flashNote("Port: " + (d.error || r.status)); fillPortPicker(); return; }
+  portList = d.ports || portList; portActive = d.active; fillPortPicker();
+  if(d.spawn){ center = {lat:d.spawn.lat, lon:d.spawn.lon}; }
+  const nm = (portList.find(q=>q.id===d.active)||{}).name || d.active;
+  flashNote("Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
+  resetForNewArea();
+}
+async function addPortHere(){
+  const name = (window.prompt("Name this port (it is added to the list and kept):", "") || "").trim();
+  if(!name){ fillPortPicker(); return; }                 // cancelled - restore the selection
+  const body = {name, lat: center.lat, lon: center.lon};
+  const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify(body)});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ flashNote("Add port: " + (d.error || r.status)); fillPortPicker(); return; }
+  portList = d.ports || portList; portActive = d.active; fillPortPicker();
+  flashNote("Port \"" + name + "\" added at " + fmtLL(body.lat, body.lon)
+            + (d.saved ? " and retained" : " (NOT saved - registry read-only)"));
+  resetForNewArea();
+}
+// A base change moves the boat to a different sea. Everything derived from the OLD area -
+// the chart extract, the plan drawn on it, the track behind the boat - describes water the
+// vessel is no longer in, so it goes rather than being left to look current.
+function resetForNewArea(){
+  track = []; runRoute = null; runUnsafe = [];
+  nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
+  updateNogoUI(); render();
 }
 function fillVesselPicker(available, activeId){
   const sel = $("#vesselSel"); if(!sel) return;
@@ -3551,6 +3624,7 @@ function setBuffer(v){
 }
 $("#c_buffer").onchange = ()=>setBuffer($("#c_buffer").value);
 $("#vesselSel").onchange = (e)=>switchVessel(e.target.value);
+if($("#portSel")) $("#portSel").onchange = (e)=>switchPort(e.target.value);
 $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
 // survey Min/Max depth = survey-only coverage window (re-clip preview only)
 ["#sp_mindepth","#sp_maxdepth"].forEach(id=>{
@@ -5037,7 +5111,10 @@ function tickClock(){ const d=new Date(), p=n=>String(n).padStart(2,"0");
 setInterval(tickClock, 1000); tickClock();
 // The controls window is a mirror only - it runs no app logic, no SSE, no chart. Only
 // the main window boots the app; both wire the UI-split bridge.
-if(UIROLE === "main"){ setFollow(); render(); loadVessel().then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
+if(UIROLE === "main"){ setFollow(); render();
+  // PORTS FIRST: it seeds the chart centre, so the first paint is the operating
+  // area rather than the literal above it.
+  loadPorts().then(loadVessel).then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
 setupUISplit();
 </script>
 </body>

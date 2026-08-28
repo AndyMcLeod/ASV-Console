@@ -50,6 +50,20 @@ drawn with a transparent background (no card, no chip) and **draggable anywhere 
 the chart**; it remembers where you put it and is clamped back into view if the
 window shrinks.
 
+**Operating port + vessel — two choices, not one.** The top bar carries two pickers.
+The **port** is *where you are*; the **ASV** is *what you are driving*. Selecting a port
+sets the chart's opening view and, in sim, where the boat spawns — switching hull no
+longer moves the boat, and switching base does. Shipped bases: **New Castle, NH**
+(primary — Piscataqua River off the UNH Judd Gregg Marine Research Complex) and
+**Lewes, DE** (the UDel Hugh R. Sharp Campus pier). `--base <port_id>` picks one at
+launch. **Ports you add are retained**: choose **“+ Add port here…”** and the chart's
+current centre is saved under a name you give it, into `ports.json`, and it is in the
+list from then on. Both pickers refuse while armed or running, for the same reason:
+moving the base under a live boat is as incoherent as swapping its physics.
+
+*Previously the console opened on a hard-coded Lake Erie position belonging to neither
+the vessel nor any base, and each hull file owned its own spawn.*
+
 **Surface current** (vessel card, `Current` row). The console also reads the surface
 current **forecast at the boat's own position**, from a NOAA **Operational Forecast
 System** — `dbofs` (Delaware Bay) by default, `--currents-ofs` for a hull working

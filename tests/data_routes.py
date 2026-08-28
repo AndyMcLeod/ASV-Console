@@ -174,12 +174,21 @@ for name in ("mission.json", "comms_config.json"):
 # card opening on 198 stale rows. It removes what it adds, but a suite that fails part
 # way through would still leave one behind, and no test should be able to reach that file.
 ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
+# SAME RULE FOR PORTS, and for the same reason. Switching or adding an operating port
+# SAVES the registry, so a suite run against the app directory would rewrite the
+# operator's own bases. It gets a COPY of the shipped file in a temp dir; the checks
+# below then add and switch freely without the real ports.json ever being reachable.
+PORTS_CFG = os.path.join(tempfile.mkdtemp(), "ports.json")
+with open(os.path.join(APP, "ports.json"), "r", encoding="utf-8") as _f:
+    _seed = _f.read()
+with open(PORTS_CFG, "w", encoding="utf-8") as _f:
+    _f.write(_seed)
 srvlog = tempfile.TemporaryFile(mode="w+")
 # Logging ON: the comms redaction check reads the session recorder's own records -
 # the same --no-log mask that hid the logevent defect would hide a redaction break.
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-ais-service",
-                         "--roc-config", ROC_CFG],
+                         "--roc-config", ROC_CFG, "--ports-config", PORTS_CFG],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -285,25 +294,38 @@ try:
     cmd(port, "/api/cmd/arm", {"on": False})
     zspawn = json.load(open(os.path.join(APP, "vessels", "zboat_1800hs.json"),
                             encoding="utf-8"))["spawn"]
+    # where the console is BASED - the position the boat must keep across a hull switch
+    _c, _pr = api(port, "/api/ports")
+    _ap = [q for q in (_pr.get("ports") or []) if q["id"] == _pr.get("active")]
+    port_lat = _ap[0]["lat"] if _ap else zspawn["lat"]
+    port_lon = _ap[0]["lon"] if _ap else zspawn["lon"]
     c9, sw2 = cmd(port, "/api/vessel", {"id": "zboat_1800hs"})
     st = wait_for(port, lambda s: (s["status"] or {}).get("energy_type") == "battery"
-                  and abs((s["status"].get("lat_deg") or 0) - zspawn["lat"]) < 0.01)
+                  and abs((s["status"].get("lat_deg") or 0) - port_lat) < 0.01)
     # The gauge flip alone is NOT proof of a respawn - energy_type reads the module
     # global POWER_TYPE at snapshot time, so the OLD boat starts reporting "battery"
     # the moment apply_vessel runs. The respawn-dropped mutation SURVIVED the
     # gauge-only version of this check. What a respawn uniquely produces is the
     # POSITION: the new boat comes up at ITS OWN spawn, a lake eight hundred
     # kilometres from Lewes.
-    check("9. disarmed, the switch takes: the gauge flips AND the boat comes up at the "
-          "NEW vessel's spawn - apply_vessel ran and the sim genuinely respawned",
+    # ⛔ THE SPAWN HALF OF THIS CHECK WAS INVERTED ON 2026-08-15 - READ BEFORE "FIXING".
+    # It used to demand the boat come up at the NEW VESSEL'S spawn, because a hull file
+    # owned its own start position. Andy changed that: "change initialization to select
+    # port and ASV" - the BASE is now where you are and the vessel is what you drive, so
+    # a vessel switch must NOT move the boat. The gauge flip still proves apply_vessel
+    # ran; the position now proves the port SURVIVED the switch, which is the new
+    # contract and the opposite of the old one. (Same shape as home_spawn check 2a.)
+    check("9. disarmed, the switch takes: the gauge flips, and the boat STAYS at the "
+          "operating port - a new hull is not a new location",
           lambda: c9 == 200 and st["status"].get("energy_type") == "battery"
           and st["status"].get("battery_v") is not None
           and st["status"].get("fuel_l") is None
-          and abs((st["status"].get("lat_deg") or 0) - zspawn["lat"]) < 0.01
-          and abs((st["status"].get("lon_deg") or 0) - zspawn["lon"]) < 0.01,
-          lambda: "energy=%s batt=%s lat=%.3f (spawn %.3f)"
+          and abs((st["status"].get("lat_deg") or 0) - port_lat) < 0.01
+          and abs((st["status"].get("lon_deg") or 0) - port_lon) < 0.01,
+          lambda: "energy=%s batt=%s lat=%.3f (port %.3f; the zboat file's own spawn is "
+                  "%.3f and must NOT be where it lands)"
                   % (st["status"].get("energy_type"), st["status"].get("battery_v"),
-                     st["status"].get("lat_deg") or 0, zspawn["lat"]))
+                     st["status"].get("lat_deg") or 0, port_lat, zspawn["lat"]))
     c9b, _sw3 = cmd(port, "/api/vessel", {"id": "atlantis"})
     check("9b. an unknown vessel id is a 400, and the working switch above is its "
           "acceptance pair",
@@ -311,6 +333,72 @@ try:
           lambda: "%s" % c9b)
     cmd(port, "/api/vessel", {"id": "drix08"})       # leave the console as found
     wait_for(port, lambda s: (s["status"] or {}).get("energy_type") == "fuel")
+
+    # --- OPERATING PORTS: the base and the boat are chosen separately ---------------
+    # Andy, 2026-08-15: "Stop spawning at Erie. change initialization to select port and
+    # ASV. the ASV selection is a good model. All entries made by user will be added to
+    # drop down selection as retained values." Until this each vessel file carried its own
+    # spawn, so choosing the DriX chose Lewes, and the chart opened on a hard-coded Erie
+    # centre that belonged to neither the vessel nor any base.
+    _c, pr = api(port, "/api/ports")
+    ids = [q["id"] for q in (pr.get("ports") or [])]
+    check("10. /api/ports lists the bases and names an active one",
+          _c == 200 and "new_castle_nh" in ids and "lewes_de" in ids and pr.get("active"),
+          "active=%s ids=%s" % (pr.get("active"), ids))
+    check("10b. New Castle NH is the PRIMARY - first in the list and the default active",
+          bool(ids) and ids[0] == "new_castle_nh" and pr.get("active") == "new_castle_nh",
+          "first=%s active=%s (Lewes second)" % (ids[0] if ids else None, pr.get("active")))
+
+    # 11. THE SPAWN FOLLOWS THE PORT. The check that would have caught "spawning at Erie":
+    # the boat comes up where the BASE says, not where the hull file says.
+    st11 = state(port).get("status") or {}
+    ncp = [q for q in pr["ports"] if q["id"] == "new_castle_nh"][0]
+    d_nc = abs((st11.get("lat_deg") or 0) - ncp["lat"]) + abs((st11.get("lon_deg") or 0) - ncp["lon"])
+    check("11. the sim boat spawns AT THE ACTIVE PORT, not at the vessel file's own spawn",
+          d_nc < 1e-4,
+          "boat %.4f,%.4f vs port %.4f,%.4f (drix08.json's own spawn is Lewes 38.79/-75.16)"
+          % ((st11.get("lat_deg") or 0), (st11.get("lon_deg") or 0), ncp["lat"], ncp["lon"]))
+
+    # 12. Switching moves the boat - proving apply_port ran AND the sim respawned.
+    c12, sw = api(port, "/api/ports", {"id": "lewes_de"})
+    st12 = wait_for(port, lambda s: ((s.get("status") or {}).get("lat_deg") or 99) < 40.0, limit=25)
+    lat12 = (st12.get("status") or {}).get("lat_deg")
+    check("12. switching the port moves the boat to the new base",
+          c12 == 200 and sw.get("active") == "lewes_de"
+          and lat12 is not None and abs(lat12 - 38.78965) < 1e-3,
+          "after the switch the boat is at lat %s (Lewes 38.78965)" % lat12)
+
+    # 12b. THE OPERATOR'S OWN ENTRY IS RETAINED - the "added to the drop down as retained
+    # values" half of the ask. Added over HTTP, it must come back from a fresh read.
+    c12b, add = api(port, "/api/ports", {"name": "Test Basin", "lat": 41.5, "lon": -71.4})
+    _c2, after = api(port, "/api/ports")
+    ids2 = [q["id"] for q in (after.get("ports") or [])]
+    check("12b. a port the operator adds is selected AND kept in the list",
+          c12b == 200 and add.get("active") == "test_basin" and "test_basin" in ids2,
+          "ids now %s" % ids2)
+    with open(PORTS_CFG, "r", encoding="utf-8") as _f:
+        on_disk = json.loads(_f.read())
+    check("12c. ... and it is PERSISTED, so it survives a restart",
+          any(q["id"] == "test_basin" for q in on_disk.get("ports") or []),
+          "registry on disk holds %s" % [q["id"] for q in on_disk.get("ports") or []])
+
+    # 12d. Malformed input is an ANSWER - never a 500, and never a silent accept that
+    # would spawn the boat off the globe.
+    codes = []
+    for bad in ({"id": "nowhere"}, {"name": "X", "lat": 999, "lon": 0},
+                {"name": "", "lat": 1, "lon": 2}, {"name": "NoPos"}):
+        c, r = api(port, "/api/ports", bad)
+        codes.append((c, (r.get("error") or "")[:30]))
+    check("12d. every malformed port is a 400 that says what is wrong",
+          all(c == 400 and e for c, e in codes),
+          "; ".join("%s %s" % (c, e) for c, e in codes))
+
+    # 12e. THE REAL REGISTRY WAS NEVER REACHED. The whole point of --ports-config.
+    with open(os.path.join(APP, "ports.json"), "r", encoding="utf-8") as _f:
+        real = json.loads(_f.read())
+    check("12e. the operator's own ports.json is untouched by this suite",
+          not any(q["id"] == "test_basin" for q in real.get("ports") or []),
+          "real registry: %s" % [q["id"] for q in real.get("ports") or []])
 
 finally:
     try:

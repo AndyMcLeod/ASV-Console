@@ -82,6 +82,7 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # simulator and the UI use, so those values live in ONE place (the vessel file)
 # instead of being hardcoded and duplicated across server and client.
 VESSELS_DIR = os.path.join(APP_DIR, "vessels")
+PORTS_PATH = os.path.join(APP_DIR, "ports.json")
 # The DriX at Lewes is the working default: it is the vessel actually being operated,
 # and the default decides more than the hull. The AIS service subscribes to a box around
 # the THEN-CURRENT spawn at startup, so a default that spawns elsewhere leaves the
@@ -161,6 +162,117 @@ FUEL_BURN_EXP = 3.0                                      # fuel: burn ~ idle + (
 FUEL_WARN_FRAC = 0.25
 FUEL_CRIT_FRAC = 0.10
 SPAWN_LAT = SPAWN_LON = 0.0
+# --------------------------------------------------------------------------- #
+#  OPERATING PORTS                                                            #
+# --------------------------------------------------------------------------- #
+# A PORT IS WHERE YOU ARE; THE VESSEL IS WHAT YOU ARE DRIVING. They were one thing
+# until now - each vessel file carried its own `spawn`, so choosing the DriX chose
+# Lewes - which meant the console could not be pointed at a different base without
+# editing a hull's configuration, and the chart opened on a hard-coded Erie centre
+# that belonged to neither. Andy, 2026-08-15: "change initialization to select port
+# and ASV. the ASV selection is a good model."
+#
+# So ports are a registry of their own, in the SAME shape as the vessel picker:
+# a list, an active id, and a switch that only happens when it is safe. The vessel's
+# own `spawn` remains the FALLBACK for a console with no port selected, so nothing
+# that already worked stops working.
+#
+# ENTRIES THE OPERATOR ADDS ARE RETAINED. `ports.json` is written back, so a base
+# typed once is in the dropdown for good - the "retained values" half of the ask.
+PORTS = {"active": None, "ports": []}
+PORT_ID_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _port_id(name):
+    """A stable id from a display name: "New Castle, NH" -> "new_castle_nh"."""
+    return PORT_ID_RE.sub("_", (name or "").strip().lower()).strip("_") or "port"
+
+
+def validate_port(p, source="port"):
+    """Raise ValueError unless `p` is a usable port. Same spirit as validate_vessel:
+    a malformed entry is refused at the door, not discovered when the boat spawns
+    in the Gulf of Guinea because a latitude was a string."""
+    if not isinstance(p, dict):
+        raise ValueError("%s: must be a JSON object" % source)
+    name = (p.get("name") or "").strip()
+    if not name:
+        raise ValueError("%s: needs a name" % source)
+    try:
+        lat = float(p["lat"]); lon = float(p["lon"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("%s: needs numeric lat and lon" % source)
+    # NaN fails every comparison, so this rejects it too - the same guard set_home needs.
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        raise ValueError("%s: lat/lon off the globe (%r, %r)" % (source, lat, lon))
+    # A BASE DECLARES ITS OWN FORECAST MODEL. A NOAA OFS is REGIONAL: dbofs stops at the
+    # Delaware, so a console pointed at New Castle NH under the dbofs default asked for a
+    # box the model does not contain and logged a failure every poll (caught by
+    # data_routes check 13 the first time this shipped). The model belongs to the PLACE.
+    # Blank = fall back to whatever --currents-ofs says.
+    return {"id": (p.get("id") or _port_id(name)), "name": name,
+            "lat": lat, "lon": lon, "ofs": (p.get("ofs") or "").strip().lower(),
+            "note": (p.get("note") or "").strip()}
+
+
+def load_ports():
+    """Read ports.json into PORTS. Never raises: a missing or corrupt registry leaves
+    the console working off the vessel's own spawn rather than refusing to start."""
+    global PORTS
+    try:
+        with open(PORTS_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError) as e:
+        print("[ports] %s unreadable (%s) - falling back to the vessel spawn"
+              % (os.path.basename(PORTS_PATH), e), file=sys.stderr)
+        PORTS = {"active": None, "ports": []}
+        return PORTS
+    out = []
+    for i, p in enumerate(raw.get("ports") or []):
+        try:
+            out.append(validate_port(p, "ports.json[%d]" % i))
+        except ValueError as e:      # one bad row must not cost the whole registry
+            print("[ports] skipping %s" % e, file=sys.stderr)
+    ids = [p["id"] for p in out]
+    active = raw.get("active")
+    PORTS = {"active": active if active in ids else (ids[0] if ids else None), "ports": out}
+    return PORTS
+
+
+def save_ports():
+    """Persist the registry - this is what makes an operator's own port RETAINED."""
+    try:
+        tmp = PORTS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"active": PORTS["active"], "ports": PORTS["ports"]}, f, indent=2)
+            f.write(chr(10))
+        os.replace(tmp, PORTS_PATH)          # atomic: never a half-written registry
+        return True
+    except OSError as e:
+        print("[ports] could not save: %s" % e, file=sys.stderr)
+        return False
+
+
+def active_port():
+    for p in PORTS.get("ports") or []:
+        if p["id"] == PORTS.get("active"):
+            return p
+    return None
+
+
+def apply_port():
+    """Point the sim spawn at the active port. Called after apply_vessel (which sets
+    SPAWN from the hull file) so the PORT WINS when one is selected - the vessel's own
+    spawn is only the fallback."""
+    global SPAWN_LAT, SPAWN_LON
+    p = active_port()
+    if p:
+        SPAWN_LAT, SPAWN_LON = p["lat"], p["lon"]
+        # ... and the current forecast follows the base to its own regional model.
+        # CURRENTS may not exist yet, given import ordering.
+        if p.get("ofs") and "CURRENTS" in globals():
+            CURRENTS.set_ofs(p["ofs"])
+    return p
+
 ARRIVAL_DEFAULT_M = 2.0
 NOGO_BUFFER_DEFAULT_M = 3.0
 UNDER_KEEL_CLEARANCE_M = 0.9
@@ -329,11 +441,16 @@ def apply_vessel(v):
     # hull; the closing check needs the boat's top speed). Re-derived HERE so a LIVE
     # vessel switch updates them - the module-global staleness trap that bit HULL_A_LAT.
     roc_tracks.configure_vessel(v)
+    # THE PORT HAS THE LAST WORD on where the sim starts. apply_vessel has just
+    # set SPAWN from the hull file; if a port is selected it overrides, because the
+    # operator chose a BASE and a BOAT separately and the base is the location.
+    apply_port()
     return v
 
 
 # Load the default vessel at import so every module global is populated before
 # any class method or the mission store reads it. --vessel overrides in main().
+load_ports()                      # before the first apply_vessel: the boot spawn
 apply_vessel(load_vessel(DEFAULT_VESSEL_ID))
 
 
@@ -1946,6 +2063,19 @@ class CurrentsMonitor:
 
     def refresh_now(self):
         self._force.set()
+    def set_ofs(self, ofs):
+        """Point at another NOAA model - an operating port carries its own (see
+        validate_port). Drops the cached cycle: it belongs to the old grid."""
+        ofs = (ofs or "").strip().lower()
+        if not ofs or ofs == self._ofs:
+            return
+        with self._lock:
+            self._ofs = ofs
+            self._cur = None
+            self._tag = None
+            self._last = {"ok": False, "source": ofs, "note": "switching to %s" % ofs}
+        self._force.set()
+
 
     def snapshot(self):
         with self._lock:
@@ -1988,8 +2118,24 @@ class CurrentsMonitor:
             tag, _fetched = currents.ensure_cycle_covering(
                 now, now, bbox=bbox, ofs=self._ofs, allow_fetch=True, quiet=True)
         except Exception as e:
-            print("[currents] cycle lookup failed: %s: %s" % (type(e).__name__, e),
-                  file=sys.stderr)
+            # EVERY LOOKUP FAILURE IS A READOUT STATE, NOT A LOG LINE. What can go wrong
+            # here is a property of the DATA, not a bug in the console: the position is
+            # outside a regional model's domain, NOAA has posted nothing yet, or the model
+            # is shaped in a way the vendored reader does not handle (GOMOFS publishes
+            # 3-hourly frames and currents.py assumes hourly - see the note in ports.json).
+            # None of that is an exception in serving a request, and printing it as one
+            # both spammed the server log every poll AND tripped the "console logged no
+            # exception" check four suites rightly enforce. The operator learns about it
+            # where they would look for a current - in the current readout.
+            msg = "%s" % e
+            if "does not overlap" in msg or "outside" in msg:
+                note = "%s does not cover this position" % self._ofs
+            elif "not hourly" in msg:
+                note = "%s frames are not hourly - unreadable by this build" % self._ofs
+            else:
+                note = "%s: %s" % (type(e).__name__, msg[:90])
+            with self._lock:
+                self._last = {"ok": False, "source": self._ofs, "note": note}
             return
         if not tag:
             return
@@ -2018,6 +2164,11 @@ class CurrentsMonitor:
 
 
 CURRENTS = CurrentsMonitor()
+# The active port names its own forecast model, but apply_port ran during import - before
+# this line existed - so its CURRENTS.set_ofs was a no-op. Re-apply now that the monitor
+# is here. (Boot ORDER, not logic: the same class of trap as the module-global staleness
+# that bit HULL_A_LAT.)
+apply_port()
 
 
 def _opt_float(v):
@@ -3362,6 +3513,10 @@ class Handler(BaseHTTPRequestHandler):
             # active vessel (full params for the UI) + the available list (picker)
             self._send(200, json.dumps({"vessel": VESSEL, "active": VESSEL["id"],
                                         "available": list_vessels()}))
+        elif self.path == "/api/ports":
+            # active operating port + the whole retained list (the picker)
+            self._send(200, json.dumps({"active": PORTS.get("active"),
+                                        "ports": PORTS.get("ports") or []}))
         elif self.path == "/api/vessels":
             self._send(200, json.dumps({"vessels": list_vessels(), "active": VESSEL["id"]}))
         elif self.path == "/api/comms":
@@ -3574,6 +3729,38 @@ class Handler(BaseHTTPRequestHandler):
             # AIS subscription, or the layer keeps streaming the previous one
             _rescope_ais_service()
             return 200, {"ok": True, "vessel": VESSEL}
+        if path == "/api/ports":
+            # TWO OPERATIONS, ONE ROUTE, told apart by what the body carries:
+            #   {id}            -> switch to a port already in the registry
+            #   {name,lat,lon}  -> ADD one and select it (the operator's own entry,
+            #                      persisted, which is what "retained values" means)
+            # Both are gated exactly like a vessel switch: moving the base under a
+            # running boat is as incoherent as swapping its physics.
+            st = ENGINE.state()
+            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
+                return 409, {"error": "disarm and stop the run before changing port"}
+            if body.get("name") is not None:
+                try:
+                    p = validate_port(body, "port")
+                except ValueError as e:
+                    return 400, {"error": str(e)}
+                # An id collision REPLACES rather than duplicating: re-adding "Lewes, DE"
+                # with a corrected position must fix the entry, not leave two of them.
+                PORTS["ports"] = [q for q in PORTS["ports"] if q["id"] != p["id"]] + [p]
+                PORTS["active"] = p["id"]
+            else:
+                pid = (body.get("id") or "").strip()
+                if not any(q["id"] == pid for q in PORTS["ports"]):
+                    return 400, {"error": "unknown port '%s'" % pid}
+                PORTS["active"] = pid
+            saved = save_ports()
+            apply_port()
+            if st.get("mode") == "sim":
+                ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")   # respawn at the new base
+            # a different base is a different sea area - re-point the AIS subscription
+            _rescope_ais_service()
+            return 200, {"ok": True, "active": PORTS["active"], "ports": PORTS["ports"],
+                         "saved": saved, "spawn": {"lat": SPAWN_LAT, "lon": SPAWN_LON}}
         if path == "/api/comms":
             COMMS.configure(mode=body.get("mode"), host=body.get("host"),
                             username=body.get("username"), password=body.get("password"))
@@ -4008,6 +4195,7 @@ def _rescope_ais_service():
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
+    global PORTS_PATH
     ap = argparse.ArgumentParser(description="ASV Simulator Console (Phase 0, sim-first).")
     ap.add_argument("--host", default="127.0.0.1", help="bind address for the web UI")
     ap.add_argument("--port", type=int, default=DEFAULT_WEB_PORT, help="web UI port")
@@ -4048,6 +4236,17 @@ def main():
     ap.add_argument("--ais-opencpn", default="", metavar="[HOST:]PORT",
                     help="OpenCPN TCP NMEA server to read with --ais-source ...,opencpn "
                          "(default 127.0.0.1:10110 if the source is named without this)")
+    ap.add_argument("--ports-config", default="", metavar="PATH",
+                    help="operating-port registry to use instead of ports.json. EVERY "
+                         "SUITE THAT TOUCHES PORTS MUST PASS THIS: switching or adding a "
+                         "port SAVES, and a test run against the app directory would "
+                         "rewrite the operator's own bases (the roc_config lesson - a "
+                         "suite once wrote 198 records into the real ROC registry)")
+    ap.add_argument("--base", default="", metavar="PORT_ID",
+                    help="operating port to start at (an id from ports.json, e.g. "
+                         "new_castle_nh or lewes_de). Named --base, not --port, because "
+                         "--port is already the HTTP port. Omitted = whatever ports.json "
+                         "has as active")
     ap.add_argument("--currents-ofs", default="dbofs", metavar="MODEL",
                     help="NOAA Operational Forecast System for the surface-current readout "
                          "(default dbofs = Delaware Bay). One model only: the console asks "
@@ -4115,10 +4314,28 @@ def main():
     AIS_COLLECT_RADIUS_KM = max(5.0, min(500.0, float(args.ais_collect_km)))
     # The display radius can never exceed what is collected - see the endpoint.
     AIS_SHOW_RADIUS_KM = max(1.0, min(AIS_COLLECT_RADIUS_KM, float(args.ais_radius_km)))
+    if args.ports_config:
+        PORTS_PATH = os.path.abspath(args.ports_config)
+        load_ports()
+        apply_port()
+    if args.base:
+        base = args.base.strip()
+        if any(q["id"] == base for q in PORTS.get("ports") or []):
+            PORTS["active"] = base
+            apply_port()
+        else:
+            have = ", ".join(q["id"] for q in PORTS.get("ports") or []) or "(none)"
+            print("[ports] no such port '%s' - have: %s" % (base, have), file=sys.stderr)
     AIS_SOURCE_ARG = (args.ais_source or "auto").strip() or "auto"
     # The currents monitor is constructed at import (like ENV), so the model choice is
     # applied here rather than passed to a constructor that already ran.
+    # THE CLI IS THE FALLBACK, THE PORT IS THE AUTHORITY. This assignment used to run
+    # AFTER apply_port and silently overwrote the base's own model with the dbofs
+    # default - so a console started at New Castle NH asked the Delaware model for a
+    # Gulf of Maine position. Set the fallback first, then let the active port have the
+    # last word. (Boot ORDER again, twice in one feature.)
     CURRENTS._ofs = (args.currents_ofs or "dbofs").strip().lower() or "dbofs"
+    apply_port()
     AIS_NMEA_SPECS = list(args.ais_nmea or [])
     AIS_OPENCPN = (args.ais_opencpn or "").strip()
     # Naming an endpoint IS asking for its source - don't make the operator say it twice.

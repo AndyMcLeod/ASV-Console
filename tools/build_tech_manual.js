@@ -85,7 +85,7 @@ const GUARDS = {
   "log_routes.py":
     "That a client event survives a data field whose name collides with the record's own - the log renames it rather than refusing, and the record stays FLAT because playback reads it - that the recording list includes the console's own live session, and that the raw-log route serves nothing but a bare session file from the log directory. The only suite that boots WITH logging on, which is what makes that branch reachable at all",
   "data_routes.py":
-    "The remaining data surfaces: that switching vessel is gated to disarmed-and-idle and, when allowed, really respawns as the new vessel (proved by the energy gauge changing type, which a renamed profile cannot fake), that the comms password leaks by none of its three paths - never stored, never echoed, never logged - and that the tide and recovery-point routes map their errors rather than failing open",
+    "The remaining data surfaces: that switching vessel is gated to disarmed-and-idle and, when allowed, really takes effect (proved by the energy gauge changing type, which a renamed profile cannot fake) while LEAVING THE BOAT WHERE IT IS - a new hull is not a new location; that the OPERATING PORT is what decides position, that the shipped bases are listed with New Castle NH primary, that switching one moves the boat and adding one is both selected and retained on disk, that a malformed base is a 400 saying what is wrong, and that a suite can never reach the operator's own registry; that the comms password leaks by none of its three paths - never stored, never echoed, never logged - and that the tide and recovery-point routes map their errors rather than failing open",
   "roc_persist.py":
     "That only the most recent few recovery points survive a restart, so the registry cannot grow until a correct Remove button LOOKS broken - the reported fault was a control smothered by 198 stale records, not a control that failed - and that no test suite can write to the operator's own registry",
   "ais_error_frames.py":
@@ -217,10 +217,24 @@ c.push(TBL(["Block", "Fields", "Drives"], [
   ["`autopilot`", "`xte_ki_deg`, `xte_i_max_deg`", "Cross-track integral term under a steady sideways push"],
   ["`power`", "`type` = `battery` (voltage sag) or `fuel` (litres, burn curve)", "Endurance, range, the console's energy gauge"],
   ["`planning`", "`nogo_buffer_m`, `under_keel_clearance_m`, optional `channel_reach_m`, optional `min_survey_line_m`, `roc`, `search`", "Keep-out buffer, depth floor, channel lane reach, shortest survey line worth running for this hull, ROC defaults, search sizes"],
-  ["`spawn`", "`lat`, `lon`", "Where the simulated vessel comes up"],
+  ["`spawn`", "`lat`, `lon`", "Where the simulated vessel comes up WHEN NO OPERATING PORT IS SELECTED - a port, if there is one, decides position (see 4.5)"],
 ], [1500, 3700, 4160]));
 c.push(SP());
 c.push(P("The minimum navigable depth is DERIVED, not declared: `draft_m + under_keel_clearance_m`. A deep-draft vessel therefore treats more water as nogo automatically, and the client re-extracts the chart on a vessel switch so the keep-out model follows."));
+c.push(H2("4.5  Operating ports (ports.json)"));
+c.push(P("A PORT IS WHERE YOU ARE; THE VESSEL IS WHAT YOU ARE DRIVING. They were one thing until the port registry existed: every vessel file carried its own spawn, so choosing a hull chose a location, and the console could not be pointed at another base without editing a vessel's configuration. Ports are now their own registry, in the same shape as the vessel picker - a list, an active id, and a switch permitted only while disarmed and idle, because moving the base under a running boat is as incoherent as swapping its physics."));
+c.push(TBL(["Field", "Value", "Drives"], [
+  ["`id`", "stable key, derived from the name when absent", "What `--base` and the picker refer to"],
+  ["`name`", "display name", "What the operator reads in the dropdown"],
+  ["`lat` / `lon`", "decimal degrees", "The chart's opening view, and where the simulated vessel spawns"],
+  ["`ofs`", "optional NOAA Operational Forecast System id", "Which regional current model covers this base. A model is REGIONAL: the wrong one answers with an error rather than a current"],
+  ["`note`", "free text", "Why this position and not another - siting, charted depth, known limits"],
+], [1500, 3700, 4160]));
+c.push(SP());
+c.push(P("The active port has the last word on the spawn: apply_port() runs at the end of apply_vessel(), so a hull's own spawn is only the fallback for a console with no port selected. A vessel switch therefore does NOT move the boat, and a port switch does."));
+c.push(P("Ports the operator adds are RETAINED. The picker's add entry saves the chart's current centre under a typed name and writes it back to the registry, so a base entered once is in the list from then on - the gesture carries the point, exactly as the chart menu's Go-To, Set Home and Spawn do, rather than asking anyone to read a latitude off the screen and type it back in."));
+c.push(P("A suite that touches ports MUST run with --ports-config pointing at its own copy. Switching or adding SAVES, so a test run against the application directory would rewrite the operator's own bases - the same accumulation that once put 198 stale records into the recovery-point registry."));
+c.push(SP());
 c.push(H2("4.4  Adding a vessel"));
 c.push(P("Write `vessels/<id>.json` with every required field, start with `--vessel <id>`, and confirm the load message. There is no code to change. If a new subsystem needs a vessel-dependent value, add the field to the schema with a SENSIBLE DERIVED FALLBACK so that vessel files written before the field existed continue to load — see the ROC recovery standoff in chapter 9 for the pattern."));
 

@@ -55,7 +55,53 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-20, eleventh refresh — the turn geometry is SHARED)
+## ⇒ START HERE (handoff refreshed 2026-08-28 — the base and the boat are chosen separately)
+
+**NEWEST (this commit): OPERATING PORTS.** Andy: "Stop spawning at Erie. change
+initialization to select port and ASV. the ASV selection is a good model. All entries made
+by user will be added to drop down selection as retained values. Start with New Castle NH
+as primary and Lewes, DE as the next."
+**WHAT WAS WRONG:** the chart opened on a HARD-CODED Lake Erie centre (`asv.html`, "fallback
+until first fix") that belonged to no vessel and no base, and each hull file owned its own
+`spawn` — so choosing the DriX chose Lewes and the console could not be pointed anywhere
+else without editing a vessel's configuration.
+**THE MODEL:** `ports.json` + `/api/ports`, deliberately the same shape as the vessel
+picker — a list, an active id, a switch the server gates on SAFE (disarmed + idle). **A
+PORT IS WHERE YOU ARE; THE VESSEL IS WHAT YOU ARE DRIVING.** `apply_port()` runs at the END
+of `apply_vessel()`, so the port has the last word on SPAWN and the hull's own spawn is only
+the fallback. **A vessel switch no longer moves the boat** — `data_routes` check 9 was
+INVERTED to say so (it demanded the new hull's spawn; read its comment before "fixing" it,
+same shape as `home_spawn` 2a).
+**RETAINED ENTRIES:** "+ Add port here…" saves the CHART'S CURRENT CENTRE under a typed
+name and persists it — the gesture carries the point, as with Go-To / Set Home / Spawn,
+rather than asking the operator to read a latitude off the screen and type it back.
+**⚠ `--ports-config` EXISTS AND EVERY SUITE THAT TOUCHES PORTS MUST PASS IT.** Switching or
+adding SAVES; a suite run against the app directory would rewrite the operator's own bases.
+This is the `roc_config` lesson (a suite once wrote 198 records into the real ROC registry)
+applied BEFORE it could bite. `data_routes` 12e asserts the real registry is untouched.
+**⚠ A PORT CARRIES ITS OWN FORECAST MODEL (`ofs`), AND THIS WAS FOUND BY A CHECK, NOT BY
+READING.** A NOAA OFS is REGIONAL: pointing the console at New Castle NH under the `dbofs`
+default asked the Delaware model for a Gulf of Maine box, and `data_routes` check 13 ("the
+console logged NO exception") caught it. New Castle declares `gomofs`, Lewes `dbofs`.
+**TWO BOOT-ORDER BUGS IN ONE FEATURE, both of the same family:** `apply_port()` ran during
+import BEFORE `CURRENTS` existed (so `set_ofs` was a no-op — re-applied after construction),
+and `main()` set `CURRENTS._ofs` from the CLI AFTER `apply_port` and clobbered the base's
+model (the CLI is now the FALLBACK, applied first, with the port having the last word).
+**⛔ NEW CASTLE HAS NO CURRENT READING, AND THAT IS NOT A BUG IN THE WIRING.** GOMOFS
+publishes **3-HOURLY** frames; the vendored `currents.py` assumes hourly — both in its
+fetch guard and in its `// 3600` frame indexing. The readout says so in words. **Fix it
+UPSTREAM in the Fuel planner and re-vendor — do NOT patch the third copy in place**; this
+is exactly the "if the three ever need to move together, make it a package" moment its own
+header warns about. Recorded in `ports.json`'s New Castle note too, where the next person
+looking at that base will find it.
+**AND A DEFECT OF MY OWN, caught by four suites at once:** currents lookup failures printed
+to stderr every poll, which spammed the server log and tripped the "console logged no
+exception" invariant in `energy_chartinfo`, `home_spawn`, `live_speed` and
+`run_link_control`. **Every lookup failure is now a READOUT STATE, never a log line** — what
+goes wrong there is a property of the DATA (outside the domain, nothing posted yet, a model
+this build cannot read), not an exception in serving a request. `data_routes` 11→23.
+
+## ⇒ (previous handoff)
 
 **Tip `62457f2`, tree clean + pushed, 38 suites green.** The estate around it:
 asv_core **`4006166`**, WorldView **`75839d95`**, Zboat `178dadd`, Transit `cda2773`,
@@ -835,8 +881,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 637 assertions** (18 JS / 326,
-20 Python / 311), derived
+turn-water hold is closed (`a548c14`). **38 regression suites / 664 assertions** (18 JS / 340,
+20 Python / 324), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -868,7 +914,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (651 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (664 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
