@@ -71,12 +71,33 @@ launch.
 * **+ Save this view as a port…** — pins the chart's current centre under a name you
   give it. This is the refinement step: once you can see the berth, put it exactly there.
 
-Either way the entry is written to `ports.json` and is in the list from then on. Both
+Either way the entry is written to `ports.json` and is in the list from then on. That file is your **live registry** and is not tracked by git — the repository ships `ports.default.json`, which is copied to it on first run, so the bases you add are yours and never show up as repository changes. Both
 pickers refuse while armed or running, for the same reason: moving the base under a live
 boat is as incoherent as swapping its physics.
 
 *Previously the console opened on a hard-coded Lake Erie position belonging to neither
 the vessel nor any base, and each hull file owned its own spawn.*
+
+**Intent (`INTENT`) — what, why, and what next.** A draggable card that answers the
+question a moving track raises: *why is it doing that?* Three sections, updated every
+telemetry frame:
+
+* **Now** — behaviour and run state, which waypoint of how many and what that waypoint
+  is, bearing and range to it, cross-track error, speed.
+* **Why this route** — the planner's own reasoning, **captured when the plan was
+  committed**: routed clear of the keep-out model via *N* waypoints, or direct because
+  the straight line was already clear; whether it rode the Rule 9 lane and whether that
+  lane was only **partial**; legs with **no clear detour** (unsafe, in red); a plan built
+  with **no nogo model loaded**, which is not the same as a clean direct run. Plus mean
+  **waypoint spacing** — the fastest way to tell a resampled smooth track (points metres
+  apart, bearings swinging between neighbours) from a genuinely erratic route.
+* **Then** — the next three waypoints with bearing, range and role, and what happens at
+  the end of the plan (return home, hold, or a return that has already been refused).
+
+The reasoning is recorded *with* the route and dropped with it — never re-derived, since
+a re-derivation would describe the console's current state rather than the route being
+flown. A plan committed before the page was loaded therefore says so outright rather than
+showing an empty section.
 
 **Surface current** (vessel card, `Current` row). The console also reads the surface
 current **forecast at the boat's own position**, from a NOAA **Operational Forecast

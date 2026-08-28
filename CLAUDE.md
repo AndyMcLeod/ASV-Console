@@ -55,7 +55,55 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-28 — the base and the boat are chosen separately)
+## ⇒ START HERE (handoff refreshed 2026-08-28 — the console explains itself)
+
+**ALSO IN THIS COMMIT, forced by the hook: `ports.json` IS NO LONGER TRACKED.** The
+shipped seed is `ports.default.json`; `ports.json` is the LIVE registry and is gitignored,
+created from the default on first run. Keeping both in one tracked file meant an operator
+simply USING the console dirtied the repo — and worse, `data_routes` seeded its own copy
+from that file, so a check on the shipped defaults FAILED the moment someone was working
+from a different base. It failed exactly that way, against a live console based in Pago
+Pago. Same separation the ROC registry needed, for the same reason. The suite seeds from
+`ports.default.json` now, so it tests the shipped contract rather than whoever's port
+happens to be active.
+
+
+**NEWEST (this commit): THE INTENT CARD.** Andy, running live in Pago Pago: "Path planning
+seems odd but workable. is it possible to generate a path planning tool that continuously
+updates status and reasoning for current and immediate future intentions".
+**THE REASONING ALREADY EXISTED AND WAS BEING THROWN AWAY.** Every plan already knew why it
+looked the way it did — routed or direct, the detour count, whether it rode the Rule 9 lane
+and whether that lane was PARTIAL, legs with no clear detour, a chart that never loaded —
+and all of it went into ONE banner at commit time and was gone by the next paint. So a
+track that looked odd on the water could not be interrogated afterwards.
+**THE RULE THAT SHAPED IT:** the rationale is CAPTURED WITH THE ROUTE at commit
+(`setPlanIntent` beside every `runRoute =`) and DROPPED WITH IT (`planIntent=null` beside
+every clear) — never re-derived, because a re-derivation describes whatever the console
+holds NOW rather than the route being flown. Same rule the lane fact already follows. Check
+23 counts the two against each other in the page source, so a new behaviour cannot ship a
+route the card is unable to explain, or leave stale reasoning behind one that ended.
+**WAYPOINT ROLES ARE LABELLED ONLY FROM WHAT IS KNOWN** — a point matching a committed plan
+waypoint IS one, the last IS the target, everything else is honestly "generated". A
+confident label that is wrong on the one occasion it matters is worse than a vague one that
+is always true.
+**THE DIAGNOSTIC THAT ANSWERS HIS ACTUAL COMPLAINT: mean waypoint spacing.** His live plan
+showed `wp 42/43/44` three METRES apart with bearings swinging 037→043→050° — that is the
+resampled smooth track, not the boat misbehaving, and the card now says so
+(`28.7 m mean over the next 40 · 528 total`).
+**A plan committed before the page loaded SAYS SO** rather than showing an empty WHY: a
+silently missing section reads as "no reasons", which is a different and wrong claim.
+`end_action.js` 16→26, 6/6 mutations caught. Check 23's first regex counted the page's own
+`let runRoute = null;` DECLARATION as a clear site and could never pass — tightened with a
+lookbehind rather than relaxed.
+**⚠ AND A PROCESS FAILURE OF MINE WORTH NOT REPEATING: I started a verification console on
+8791 WHILE ANDY'S WAS LIVE ON IT.** Windows let both bind, so my requests may have reached
+his session; I sent one `arm`, which was a no-op because his run was already armed. Check
+the port is free before starting a console — his was running a 563-waypoint survey in Pago
+Pago at the time. Verification was redone on 8795 with `--ports-config`, and `mission.json`
+was hashed before and after (byte-identical, sha `26552e0b`).
+
+
+## ⇒ (previous handoff — the base and the boat are chosen separately)
 
 **NEWEST (this commit): OPERATING PORTS.** Andy: "Stop spawning at Erie. change
 initialization to select port and ASV. the ASV selection is a good model. All entries made
@@ -896,7 +944,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 669 assertions** (18 JS / 340,
+turn-water hold is closed (`a548c14`). **38 regression suites / 679 assertions** (18 JS / 350,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -929,7 +977,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (669 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (679 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

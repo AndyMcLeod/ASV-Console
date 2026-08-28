@@ -241,6 +241,10 @@
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
   </div>
+  <div id="intentPanel" style="position:absolute;z-index:40;display:none;right:14px;top:96px;width:310px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
+    <div id="intentPanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#9678; Intent &mdash; what and why</div>
+    <div id="intentBody" style="max-height:60vh;overflow:auto;padding:8px 10px;"></div>
+  </div>
   <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
@@ -305,6 +309,7 @@
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
+    <button class="ctl small" id="intentBtn" title="Intent: what the vessel is doing right now, WHY the planner chose it, and what it intends next. The reasoning is captured WITH each plan when it is committed - not re-derived later - so it describes the route actually being flown.">INTENT</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
     <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — EVERY cell in view (the vessel's own marked), scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
   </div>
@@ -746,6 +751,136 @@ let asv = null;                              // {lat,lon,hdg}
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey", completion: "rth", buffer_m: 3};
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
+// --- INTENT: what the vessel is doing, WHY, and what it intends next ------------- //
+// Andy, 2026-08-28, running in Pago Pago: "Path planning seems odd but workable. is it
+// possible to generate a path planning tool that continuously updates status and
+// reasoning for current and immediate future intentions".
+//
+// THE REASONING ALREADY EXISTED AND WAS BEING THROWN AWAY. Every plan already knows why
+// it looks the way it does - routed or direct, how many detour waypoints the search
+// inserted, whether it rode the Rule 9 lane and whether that lane was partial, which legs
+// had no clear detour, what the chart was not able to say. All of it went into ONE banner
+// at commit time and was gone by the next paint, so a track that looked odd on the water
+// could not be interrogated afterwards.
+//
+// So the rationale is CAPTURED WITH THE ROUTE, at the moment the route is committed - the
+// same rule the lane fact already follows ("a value returned with its subject cannot drift
+// from it"). `planIntent` is written wherever `runRoute` is written and cleared wherever
+// `runRoute` is cleared; nothing re-derives it later, because a re-derivation would
+// describe whatever the console happens to hold NOW rather than the plan being flown.
+let planIntent = null;   // {kind, at, why:[...], route:[...], target, unsafe, degraded}
+function setPlanIntent(kind, plan, route){
+  planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
+                why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded)};
+  if(!plan) return planIntent;
+  const w = planIntent.why;
+  if(plan.degraded) w.push({t:"warn", s:"nogo model not loaded - driving DIRECT, unverified against the chart"});
+  else if(plan.routed) w.push({t:"route", s:"routed clear of the keep-out model via " + (route||[]).length + " waypoints"});
+  else w.push({t:"route", s:"direct - the straight line was already clear of the keep-out model"});
+  if(plan.lane){
+    w.push(plan.partial
+      ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
+      : {t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centreline to port"});
+  }
+  const un = (plan.unroutable||[]).length;
+  if(un){ planIntent.unsafe = un;
+    w.push({t:"bad", s:un + " leg(s) had NO clear detour and are flagged red - they are not safe to run"}); }
+  const r = route||[];
+  if(r.length) planIntent.target = r[r.length-1];
+  return planIntent;
+}
+// WHAT EACH WAYPOINT IS FOR. Labelled only from what is KNOWN, never guessed: a point that
+// matches a committed plan waypoint IS one, the last point IS the target, and the rest are
+// the router's or the lane's own insertions. Saying "generated" is the honest answer where
+// the console cannot distinguish a detour vertex from a lane vertex, and is far better than
+// a confident label that is wrong on the one occasion it matters.
+function wptRole(i, route){
+  if(!route || !route.length) return "";
+  if(i >= route.length-1) return "the target";
+  const p = route[i];
+  const mw = (mission.waypoints||[]).some(q => Math.abs(q.lat-p.lat)<1e-7 && Math.abs(q.lon-p.lon)<1e-7);
+  if(mw) return "a plan waypoint";
+  return "generated (detour / lane / smoothing)";
+}
+function fmtBrgRange(from, to){
+  if(!from || !to) return "--";
+  return String(Math.round(azTo(from, to))%360).padStart(3,"0") + "° · " + fmtDist(distTo(from, to));
+}
+// The live half: NOW and NEXT are DERIVED every tick from the route the boat is actually
+// following plus its reported waypoint index. Only the WHY is remembered.
+function renderIntent(){
+  const panel=$("#intentPanel"); if(!panel || panel.style.display==="none") return;
+  const el=$("#intentBody"); if(!el) return;
+  const st=(S&&S.status)||{}, run=S&&S.run;
+  const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
+  const head=(t)=>'<div style="color:var(--ink-faint);margin-top:7px;font-size:9px;letter-spacing:.08em;text-transform:uppercase">'+t+'</div>';
+  const row=(k,v,c)=>'<div style="display:flex;gap:6px;margin-top:2px"><span style="color:var(--ink-faint);min-width:74px">'+k+'</span><span style="color:'+(c||'var(--ink)')+'">'+v+'</span></div>';
+  if(!rr.length && !planIntent){
+    el.innerHTML = '<div style="color:var(--ink-faint)">No plan committed. Draw a survey, or command a Go-To / RTH / Transit — the reasoning behind it appears here.</div>';
+    return;
+  }
+  const idx = Math.min(window._wpIndex||0, Math.max(0, rr.length-1));
+  const here = asv ? {lat:asv.lat, lon:asv.lon} : null;
+  const nextWp = rr[idx] || null;
+  let html = "";
+  // ---- NOW ----
+  html += head("Now");
+  const kind = (planIntent && planIntent.kind) || (S&&S.behavior) || "—";
+  html += row("doing", kind.toUpperCase() + (run ? " · " + run : ""));
+  if(rr.length) html += row("waypoint", (idx+1) + " of " + rr.length + " — " + wptRole(idx, rr));
+  if(here && nextWp) html += row("next wp", fmtBrgRange(here, nextWp));
+  if(isFinite(activeXTE) && Math.abs(activeXTE) < 1e5)
+    html += row("off track", Math.abs(activeXTE).toFixed(1) + " m " + (activeXTE>0?"right":"left"),
+                Math.abs(activeXTE) > 25 ? "#e8b46a" : "var(--ink)");
+  if(st.sog_kn != null) html += row("speed", st.sog_kn.toFixed(1) + " kn"
+      + (st.speed_key ? " (" + st.speed_key + ")" : ""));
+  // ---- WHY (captured with the plan) ----
+  html += head("Why this route");
+  if(planIntent && planIntent.why.length){
+    const col = {warn:"#e8b46a", bad:"#d9958f", lane:"#7fd6a0", route:"var(--ink)"};
+    planIntent.why.forEach(w=>{
+      html += '<div style="margin-top:3px;color:'+(col[w.t]||"var(--ink)")+'">• '+w.s+'</div>'; });
+  } else {
+    // SAY WHY THERE IS NO WHY. The rationale is captured at COMMIT time and deliberately
+    // not re-derived - a re-derivation would describe the console's current state rather
+    // than the plan being flown. So a plan committed before this page loaded has none, and
+    // the panel has to say that outright: a silently missing section reads as "no reasons",
+    // which is a different and wrong claim.
+    html += '<div style="margin-top:3px;color:var(--ink-faint)">Not recorded — this plan was '
+          + 'committed before this page was loaded. Re-commit it (Upload / Go-To / RTH) to '
+          + 'capture the reasoning.</div>';
+  }
+  // WAYPOINT DENSITY. The single most useful number for "the path looks odd": a plan whose
+  // points sit metres apart is a resampled smooth track, and its bearings will swing wildly
+  // between neighbours without the boat doing anything strange. Reported so the operator
+  // can tell that apart from a genuinely erratic route.
+  if(rr.length > 2 && here){
+    let gaps = 0, n = 0;
+    for(let k=Math.max(1,idx); k<Math.min(rr.length, idx+40); k++){ gaps += distTo(rr[k-1], rr[k]); n++; }
+    if(n) html += row("wp spacing", (gaps/n).toFixed(1) + " m mean over the next " + n
+                                    + " · " + rr.length + " total");
+  }
+  // ---- NEXT ----
+  html += head("Then");
+  const after = [];
+  for(let k=idx+1; k<rr.length && after.length<3; k++) after.push(k);
+  if(after.length){
+    let prev = nextWp;
+    after.forEach(k=>{
+      html += row("wp " + (k+1), fmtBrgRange(prev, rr[k]) + " — " + wptRole(k, rr));
+      prev = rr[k];
+    });
+  } else if(rr.length){
+    html += row("wp " + rr.length, "last waypoint — " + wptRole(rr.length-1, rr));
+  }
+  // end-of-plan intent: the console already knows whether an RTH will chain
+  const comp = (S && (S.run_completion || S.completion)) || null;
+  if(comp) html += row("at the end", comp === "rth"
+      ? "return to home" + (rthChainFailed ? " — REFUSED, will hold instead" : "")
+      : (comp === "hold" ? "hold station" : String(comp)),
+      rthChainFailed ? "#d9958f" : "var(--ink)");
+  el.innerHTML = html;
+}
 let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
 let mode = "pan", activeLine = -1, saveTimer = null;
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
@@ -1008,7 +1143,7 @@ async function addPortHere(){
 // the chart extract, the plan drawn on it, the track behind the boat - describes water the
 // vessel is no longer in, so it goes rather than being left to look current.
 function resetForNewArea(){
-  track = []; runRoute = null; runUnsafe = [];
+  track = []; runRoute = null; planIntent=null; runUnsafe = [];
   nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
   updateNogoUI(); render();
 }
@@ -2384,7 +2519,7 @@ async function doGoTo(target){
   }
   clearViolation();
   cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
-  runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
+  runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
@@ -2449,7 +2584,7 @@ async function doRTH(opts){
   }
   clearViolation();
   cmd("/api/cmd/rth", {route:plan.route});
-  runRoute = plan.route; runUnsafe = []; updateMissionCard();   // draw the transit line + waypoints like a survey
+  runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
@@ -2596,7 +2731,7 @@ async function doTransit(){
   if(!asv){ flashNote("No position fix yet."); return; }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   const plan = routePlan({lat:asv.lat,lon:asv.lon}, transit, true);   // pure transit: keep right (Rule 9)
-  runRoute = plan.route; runUnsafe = plan.unroutable || []; updateMissionCard();   // draw the path either way
+  runRoute = plan.route; runUnsafe = plan.unroutable || []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
     const reasons=legReasons(plan.unroutable); setViolations(reasons); render();
@@ -3447,6 +3582,8 @@ $("#zin").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClien
 $("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(-1, r.left+w/2, r.top+h/2); };
 $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
 $("#clear").onclick = ()=>{ clearTrack(); render(); };
+$("#intentBtn").onclick = ()=>{ const el=$("#intentPanel"); const show=el.style.display==="none";
+  showPanel(el, show); $("#intentBtn").classList.toggle("on",show); if(show) renderIntent(); };
 $("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
   showPanel(el, show); $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
 $("#aisBtn").onclick = ()=> setAIS(!aisShow);
@@ -3674,7 +3811,7 @@ $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo nev
   nogoShow=!nogoShow; updateNogoUI(); render();
 };
 $("#ln_clr").onclick = ()=>{ mission.waypoints=[]; mission.lines=[]; resetPattern();
-  runRoute=null; runUnsafe=[]; updateXTE(); saveMission(); render(); };
+  runRoute=null; planIntent=null; runUnsafe=[]; updateXTE(); saveMission(); render(); };
 $("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
 $("#c_approach").onchange = ()=>{
   const v = Math.max(0.5, Math.min(50, parseFloat($("#c_approach").value)||1));
@@ -4198,10 +4335,14 @@ makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 const SURVPANEL_KEY  = "asv_survpanel_pos_v1";
 const LINESPANEL_KEY = "asv_linespanel_pos_v1";
 const AISPANEL_KEY   = "asv_aispanel_pos_v1";
+const INTENTPANEL_KEY = "asv_intentpanel_pos_v1";
 const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
+const intentEl    = $("#intentPanel"),    intentHead    = $("#intentPanelHead");
 makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
+// ONE drag mechanism, as panel_drag enforces - the intent card is a pop-out like the rest
+makeDraggablePanel(intentEl, intentHead, {key: INTENTPANEL_KEY, unanchor: "right"});
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
 makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
                                                 ignore: "#aisTableClose"});
@@ -4479,9 +4620,9 @@ $("#b_upload").onclick = ()=>{
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
-  if(!wps.length || !nogo.ready || !asv){ runRoute=null; cmd("/api/cmd/upload"); return; }
+  if(!wps.length || !nogo.ready || !asv){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }
   const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
-  runRoute = plan.route;                          // drawn so the operator sees the real path
+  runRoute = plan.route; setPlanIntent("survey", plan, plan.route);                          // drawn so the operator sees the real path
   runUnsafe = plan.unroutable || [];
   const added = plan.route.length - wps.length;
   if(runUnsafe.length){
@@ -4505,15 +4646,15 @@ $("#b_start").onclick = async ()=>{
   cmd("/api/cmd/start");
 };
 $("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
-$("#b_stop").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
+$("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
-$("#b_hold").onclick = ()=>{ runRoute=null; runUnsafe=[]; cmd("/api/cmd/hold"); render(); }; // station-keep: no transit to draw
+$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/hold"); render(); }; // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
   if(on && !await guiConfirm("Latch the command E-STOP",
     "This halts commanding. For a real emergency use the RC transmitter E-stop / Sw A - that is the true failsafe.")) return;
-  if(on){ runRoute=null; runUnsafe=[]; }
+  if(on){ runRoute=null; planIntent=null; runUnsafe=[]; }
   cmd("/api/cmd/estop", {on});
 };
 // Mission Reset (sim power-cycle): clear the persisted plan + trail, power-cycle the
@@ -4531,7 +4672,7 @@ $("#b_estop").onclick = async ()=>{
 // fly them from the new position.
 async function doSpawn(ll){
   clearTrack();                                   // new boot = new track
-  runRoute = null; runUnsafe = []; updateMissionCard();
+  runRoute = null; planIntent=null; runUnsafe = []; updateMissionCard();
   const r = await cmd("/api/cmd/spawn", {lat: ll.lat, lon: ll.lon});
   if(!r || !r.ok) return;                         // refused (409) or network error - cmd() already said so
   flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
@@ -4763,7 +4904,7 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); accumLineTime(); updateRunTime(); updateMissionCard(); renderLineTable(); render();
+    updateXTE(); accumLineTime(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)

@@ -83,6 +83,14 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # instead of being hardcoded and duplicated across server and client.
 VESSELS_DIR = os.path.join(APP_DIR, "vessels")
 PORTS_PATH = os.path.join(APP_DIR, "ports.json")
+# THE SHIPPED SEED, SEPARATE FROM THE LIVE REGISTRY. ports.json carries the operator's OWN
+# state - the bases they added and the one they are working from - so it is gitignored and
+# ports.default.json is what the repository ships. Keeping both in ONE tracked file meant an
+# operator simply USING the console dirtied the repo, and worse: a suite that seeded itself
+# from that file inherited whoever's base happened to be active, so a check on the shipped
+# defaults failed the moment someone worked from a different port. Same separation the ROC
+# registry needed, for the same reason.
+PORTS_DEFAULT_PATH = os.path.join(APP_DIR, "ports.default.json")
 # The DriX at Lewes is the working default: it is the vessel actually being operated,
 # and the default decides more than the hull. The AIS service subscribes to a box around
 # the THEN-CURRENT spawn at startup, so a default that spawns elsewhere leaves the
@@ -372,8 +380,11 @@ def load_ports():
     """Read ports.json into PORTS. Never raises: a missing or corrupt registry leaves
     the console working off the vessel's own spawn rather than refusing to start."""
     global PORTS
+    path = PORTS_PATH
+    if not os.path.exists(path) and os.path.exists(PORTS_DEFAULT_PATH):
+        path = PORTS_DEFAULT_PATH        # first run: start from what the repo ships
     try:
-        with open(PORTS_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
     except (OSError, ValueError) as e:
         print("[ports] %s unreadable (%s) - falling back to the vessel spawn"

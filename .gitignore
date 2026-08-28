@@ -35,3 +35,8 @@ roc_config.json
 
 # NOAA OFS current-model cache (fetched grids, megabytes - never committed)
 ofs_cache/
+
+# The LIVE operating-port registry: shipped defaults live in ports.default.json and are
+# copied here on first run. This file then carries the operator OWN state - the bases they
+# added and the one they are working from - which is not repository content.
+ports.json

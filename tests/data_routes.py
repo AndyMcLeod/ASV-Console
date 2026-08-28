@@ -179,7 +179,11 @@ ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
 # operator's own bases. It gets a COPY of the shipped file in a temp dir; the checks
 # below then add and switch freely without the real ports.json ever being reachable.
 PORTS_CFG = os.path.join(tempfile.mkdtemp(), "ports.json")
-with open(os.path.join(APP, "ports.json"), "r", encoding="utf-8") as _f:
+# SEEDED FROM WHAT THE REPO SHIPS, not from the live registry. ports.json carries the
+# OPERATOR's own bases and whichever one they are working from; seeding off it made a
+# check on the shipped defaults fail the moment someone was working from another port
+# (caught exactly that way, with a live console based in Pago Pago).
+with open(os.path.join(APP, "ports.default.json"), "r", encoding="utf-8") as _f:
     _seed = _f.read()
 with open(PORTS_CFG, "w", encoding="utf-8") as _f:
     _f.write(_seed)
@@ -453,7 +457,7 @@ try:
           "%s %s" % (cj, (gj.get("error") or "")[:60]))
 
     # 12e. THE REAL REGISTRY WAS NEVER REACHED. The whole point of --ports-config.
-    with open(os.path.join(APP, "ports.json"), "r", encoding="utf-8") as _f:
+    with open(os.path.join(APP, "ports.default.json"), "r", encoding="utf-8") as _f:
         real = json.loads(_f.read())
     # COMPARED AGAINST WHAT WAS SHIPPED, not against a list of ids this suite happens to
     # create. A named-few check only catches the strays you thought of; a stray port with
@@ -461,7 +465,7 @@ try:
     # real registry unnoticed in the first place.
     seeded_ids = [q["id"] for q in json.loads(_seed).get("ports") or []]
     real_ids = [q["id"] for q in (real.get("ports") or [])]
-    check("12e. the operator's own ports.json is EXACTLY as shipped - no suite reaches it",
+    check("12e. the SHIPPED registry is untouched - no suite reaches ports.default.json",
           real_ids == seeded_ids,
           "real=%s seeded=%s" % (real_ids, seeded_ids))
 

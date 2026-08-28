@@ -173,5 +173,91 @@ check("15. ... but HOLDING does not — including the seconds doRTH spends routi
 check("16. ... and a stopped boat does not re-arm anything either",
       rearm({ run: "idle", status: { holding: false } }, true) === true);
 
+// --- INTENT: the reasoning travels WITH the plan it describes -------------------------
+// Andy, running in Pago Pago: "Path planning seems odd but workable. is it possible to
+// generate a path planning tool that continuously updates status and reasoning for current
+// and immediate future intentions". The reasoning already existed - routed vs direct, the
+// detour count, the Rule 9 lane and whether it was partial, legs with no clear detour - and
+// was spent on ONE banner at commit time, so a track that looked odd could not be
+// interrogated afterwards.
+//
+// THE INVARIANT THESE CHECKS EXIST FOR: the rationale is CAPTURED AT COMMIT and never
+// re-derived. A re-derivation would describe whatever the console holds NOW rather than the
+// route being flown - the fault the lane flag had before it travelled with its own route.
+{
+  eval(grab("setPlanIntent") + "\n" + grab("wptRole"));
+  var planIntent = null;
+  const R = (n) => Array.from({length: n}, (_, i) => ({lat: 38.7 + i * 1e-3, lon: -75.1}));
+
+  // 17. A ROUTED plan says so, and quotes the count the operator can check on the chart.
+  let pi = setPlanIntent("goto", {routed: true, lane: false}, R(212));
+  check("17. a routed plan records THAT it was routed, and via how many waypoints",
+        pi.kind === "goto" && pi.why.some(w => /routed clear/.test(w.s) && /212/.test(w.s)),
+        pi.why.map(w => w.s.slice(0, 40)).join(" | "));
+
+  // 18. ... and its ACCEPTANCE PAIR: a direct plan must not claim to have been routed.
+  // Without this, 17 would pass for a console that said "routed" every single time.
+  pi = setPlanIntent("goto", {routed: false, lane: false}, R(2));
+  check("18. a DIRECT plan says the straight line was already clear - it claims no detour",
+        pi.why.some(w => /direct/.test(w.s)) && !pi.why.some(w => /routed clear/.test(w.s)),
+        pi.why.map(w => w.s.slice(0, 44)).join(" | "));
+
+  // 19. A PARTIAL lane must read differently from a full one - the distinction that matters
+  // on the water: a route that rode the lane over part of itself and sat on a channel
+  // centreline, the head-on position, for the rest.
+  const full = setPlanIntent("transit", {routed: true, lane: true, partial: false}, R(9));
+  const part = setPlanIntent("transit", {routed: true, lane: true, partial: true}, R(9));
+  check("19. a PARTIAL Rule 9 lane reads as partial, and a full one does not",
+        full.why.some(w => /riding the Rule 9/.test(w.s)) &&
+        !full.why.some(w => /PARTIAL/.test(w.s)) &&
+        part.why.some(w => /PARTIAL/.test(w.s)),
+        "full: " + full.why[1].s.slice(0, 30) + " | partial: " + part.why[1].s.slice(0, 30));
+
+  // 20. UNROUTABLE LEGS ARE THE LOUD CASE - not safe to run, and the count must reach the
+  // card rather than living only as a red line on the chart.
+  pi = setPlanIntent("survey", {routed: true, unroutable: [[{}, {}], [{}, {}]]}, R(40));
+  check("20. legs with no clear detour are counted and flagged unsafe",
+        pi.unsafe === 2 && pi.why.some(w => w.t === "bad" && /NO clear detour/.test(w.s)),
+        "unsafe=" + pi.unsafe);
+
+  // 21. NO CHART IS NOT A CLEAN ROUTE. A degraded plan drove direct because the keep-out
+  // model was not loaded; that must never read as "the straight line was clear".
+  pi = setPlanIntent("goto", {degraded: true, routed: false}, R(2));
+  check("21. a plan built with no nogo model WARNS rather than reporting a clear direct run",
+        pi.why.some(w => w.t === "warn" && /not loaded/.test(w.s)) &&
+        !pi.why.some(w => /already clear/.test(w.s)),
+        pi.why[0].s.slice(0, 58));
+
+  // 22. WAYPOINT ROLES ARE LABELLED ONLY FROM WHAT IS KNOWN. A confident label that is
+  // wrong on the one occasion it matters is worse than a vague one that is always true.
+  const route = R(4);
+  mission = { completion: "rth", waypoints: [route[1]] };
+  check("22. a waypoint matching the committed plan is named as one",
+        wptRole(1, route) === "a plan waypoint", wptRole(1, route));
+  check("22b. the final waypoint is the target",
+        wptRole(route.length - 1, route) === "the target", wptRole(route.length - 1, route));
+  check("22c. anything else is honestly 'generated', not guessed at",
+        /generated/.test(wptRole(2, route)), wptRole(2, route));
+
+  // 23. THE RATIONALE IS DROPPED WITH THE ROUTE IT DESCRIBES. Stale reasoning explaining a
+  // plan that is no longer being flown is worse than none at all.
+  // the DECLARATION is not a clear site - excluded, or this counts the page's own
+  // `let runRoute = null;` and the check could never be satisfied
+  const clears = (H.match(/(?<!let |var |const )runRoute\s*=\s*null;/g) || []).length;
+  const paired = (H.match(/(?<!let |var |const )runRoute\s*=\s*null;\s*planIntent\s*=\s*null;/g) || []).length;
+  check("23. every place the route is cleared drops its reasoning too",
+        clears > 0 && clears === paired,
+        paired + " of " + clears + " clear sites also clear planIntent");
+
+  // 23b. ... and every committed route captures it, so no behaviour can ship a route the
+  // card is unable to explain.
+  const commits = (H.match(/runRoute\s*=\s*plan\.route/g) || []).length;
+  const tagged = (H.match(/setPlanIntent\(/g) || []).length - 1;   // less the definition
+  check("23b. every committed route captures its reasoning",
+        commits > 0 && tagged >= commits,
+        tagged + " setPlanIntent call(s) for " + commits + " route commits");
+}
+
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);
