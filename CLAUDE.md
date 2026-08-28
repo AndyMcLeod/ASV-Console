@@ -72,9 +72,24 @@ of `apply_vessel()`, so the port has the last word on SPAWN and the hull's own s
 the fallback. **A vessel switch no longer moves the boat** — `data_routes` check 9 was
 INVERTED to say so (it demanded the new hull's spawn; read its comment before "fixing" it,
 same shape as `home_spawn` 2a).
-**RETAINED ENTRIES:** "+ Add port here…" saves the CHART'S CURRENT CENTRE under a typed
-name and persists it — the gesture carries the point, as with Go-To / Set Home / Spawn,
-rather than asking the operator to read a latitude off the screen and type it back.
+**A PORT IS FOUND BY NAME, NOT JUST BOOKMARKED.** Andy's follow-up: "The position function
+is not just to memorize a manually found spot, but to initialize a survey area from the
+name entered... identify a survey home port like Nome, Alaska and then the chart goes
+there." So `POST /api/ports {name}` with NO position geocodes it (OpenStreetMap Nominatim,
+keyless, stdlib, cached, identified User-Agent).
+**⚠ AND THEN SNAPS IT TO WATER, WHICH IS THE HALF THAT MATTERS. A GEOCODER RETURNS A TOWN
+CENTRE AND A TOWN CENTRE IS ON LAND.** "Nome, Alaska" resolves to 64.4975, -165.4062 — a
+street corner. Taken as a survey home port that spawns the boat inland and refuses every
+route out of it. `snap_to_water()` walks outward through the ENC's own depth areas for the
+nearest water at least `MIN_NAV_DEPTH_M` deep and returns a berth: Nome lands 600 m away
+in charted 3.6 m. Landlocked or off-chart, the port is still created at the place centre
+but carries `unverified: true` and the reason — never dressed up as a berth. A name that
+matches nothing is a 400. **This is the same failure the seeded New Castle position hit**
+(a pierside guess inside a charted 1.8 m area), caught twice now by asking the chart
+instead of trusting a coordinate.
+**TWO WAYS IN, deliberately:** "⊕ Find port by name…" to START somewhere, "+ Save this view
+as a port…" to REFINE once the berth is visible — the second carries the point the way
+Go-To / Set Home / Spawn do.
 **⚠ `--ports-config` EXISTS AND EVERY SUITE THAT TOUCHES PORTS MUST PASS IT.** Switching or
 adding SAVES; a suite run against the app directory would rewrite the operator's own bases.
 This is the `roc_config` lesson (a suite once wrote 198 records into the real ROC registry)
@@ -881,8 +896,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 664 assertions** (18 JS / 340,
-20 Python / 324), derived
+turn-water hold is closed (`a548c14`). **38 regression suites / 669 assertions** (18 JS / 340,
+20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -914,7 +929,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (664 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (669 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

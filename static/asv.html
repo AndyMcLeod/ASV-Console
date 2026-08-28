@@ -923,7 +923,8 @@ function applyVesselToUI(v){
 // and type it back in is a transcription error waiting to happen, and this console has a
 // standing rule that the gesture should carry the point (the same reasoning that moved
 // Go-To / Set Home / Spawn onto the chart menu).
-const PORT_ADD = "__add__";
+const PORT_FIND = "__find__";   // type a place name; the console goes there
+const PORT_ADD = "__add__";     // save the view you are already looking at
 let portList = [], portActive = null;
 function fillPortPicker(){
   const sel = $("#portSel"); if(!sel) return;
@@ -931,8 +932,13 @@ function fillPortPicker(){
   portList.forEach(p=>{ const o=document.createElement("option");
     o.value=p.id; o.textContent=p.name || p.id; if(p.id===portActive) o.selected=true;
     sel.appendChild(o); });
+  // TWO WAYS IN, because they answer different questions. "Find" is how you START
+  // somewhere - type "Nome, Alaska" and the chart goes there. "Save this view" is how you
+  // REFINE - once you can see the berth, pin it exactly.
+  const find=document.createElement("option");
+  find.value=PORT_FIND; find.textContent="⊕ Find port by name…"; sel.appendChild(find);
   const add=document.createElement("option");
-  add.value=PORT_ADD; add.textContent="+ Add port here…"; sel.appendChild(add);
+  add.value=PORT_ADD; add.textContent="+ Save this view as a port…"; sel.appendChild(add);
 }
 async function loadPorts(){
   try{
@@ -947,6 +953,7 @@ async function loadPorts(){
   }catch(e){ /* no registry - the vessel's own spawn still drives everything */ }
 }
 async function switchPort(id){
+  if(id === PORT_FIND){ await findPortByName(); return; }
   if(id === PORT_ADD){ await addPortHere(); return; }
   const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
                                        body: JSON.stringify({id})});
@@ -956,6 +963,32 @@ async function switchPort(id){
   if(d.spawn){ center = {lat:d.spawn.lat, lon:d.spawn.lon}; }
   const nm = (portList.find(q=>q.id===d.active)||{}).name || d.active;
   flashNote("Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
+  resetForNewArea();
+}
+// FIND A SURVEY BASE BY NAME. The server geocodes the name and then SNAPS the result to
+// charted water this hull can float in - a geocoder returns the centre of a town, and a
+// town centre is on land ("Nome, Alaska" resolves to a street corner 600 m inland of
+// usable water). What comes back says which of those happened, and the operator is told:
+// a base that could not be put on water is flagged rather than quietly spawning inland.
+async function findPortByName(){
+  const q = (window.prompt("Port or place to survey from — e.g. \"Nome, Alaska\":", "") || "").trim();
+  if(!q){ fillPortPicker(); return; }
+  flashNote("Looking up \"" + q + "\" and finding navigable water…");
+  const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body: JSON.stringify({name:q})});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ flashNote("Find port: " + (d.error || r.status)); fillPortPicker(); return; }
+  portList = d.ports || portList; portActive = d.active; fillPortPicker();
+  if(d.spawn){ center = {lat:d.spawn.lat, lon:d.spawn.lon}; }
+  const f = d.found || {};
+  if(f.snapped){
+    showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". " + (f.note || "")
+               + " Chart moved there; verify the berth before running.");
+  } else {
+    showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "no chart")
+               + " — this is the PLACE CENTRE, which is on land. Pan to a berth and use "
+               + "\"Save this view as a port\" before spawning here.");
+  }
   resetForNewArea();
 }
 async function addPortHere(){

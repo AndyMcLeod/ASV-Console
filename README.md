@@ -56,10 +56,24 @@ sets the chart's opening view and, in sim, where the boat spawns — switching h
 longer moves the boat, and switching base does. Shipped bases: **New Castle, NH**
 (primary — Piscataqua River off the UNH Judd Gregg Marine Research Complex) and
 **Lewes, DE** (the UDel Hugh R. Sharp Campus pier). `--base <port_id>` picks one at
-launch. **Ports you add are retained**: choose **“+ Add port here…”** and the chart's
-current centre is saved under a name you give it, into `ports.json`, and it is in the
-list from then on. Both pickers refuse while armed or running, for the same reason:
-moving the base under a live boat is as incoherent as swapping its physics.
+launch.
+
+**Ports you add are retained**, and there are two ways to add one:
+
+* **⊕ Find port by name…** — type a place (`Nome, Alaska`) and the console *goes there*.
+  The name is geocoded, and then — this is the part that matters — the result is
+  **snapped to charted water deep enough for the selected hull**. A geocoder returns the
+  centre of a *town*, and a town centre is on land: Nome resolves to a street corner, and
+  the console moves it 600 m to charted 3.6 m water before calling it a berth. If no
+  navigable water is charted nearby (somewhere landlocked, or off-chart) the port is
+  still created at the place centre but **flagged unverified with the reason**, never
+  presented as a berth. A name that matches nothing is refused outright.
+* **+ Save this view as a port…** — pins the chart's current centre under a name you
+  give it. This is the refinement step: once you can see the berth, put it exactly there.
+
+Either way the entry is written to `ports.json` and is in the list from then on. Both
+pickers refuse while armed or running, for the same reason: moving the base under a live
+boat is as incoherent as swapping its physics.
 
 *Previously the console opened on a hard-coded Lake Erie position belonging to neither
 the vessel nor any base, and each hull file owned its own spawn.*

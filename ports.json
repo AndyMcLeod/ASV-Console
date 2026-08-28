@@ -6,16 +6,16 @@
       "name": "New Castle, NH",
       "lat": 43.073,
       "lon": -70.71,
-      "note": "Piscataqua River channel ~200 m off the UNH Judd Gregg Marine Research Complex pier - ENC-verified 9.1-18.2 m (the pierside position first tried sits in a 1.8 m area, inside the DriX's floor). CURRENTS: gomofs is the right model for the Gulf of Maine, but it publishes 3-HOURLY frames and the vendored currents.py assumes hourly (both at fetch and in its frame indexing), so the readout reports the limit rather than a number. Fixing it means changing the vendored module - do it UPSTREAM in the Fuel planner and re-vendor, not here.",
-      "ofs": "gomofs"
+      "ofs": "gomofs",
+      "note": "Piscataqua River channel ~200 m off the UNH Judd Gregg Marine Research Complex pier - ENC-verified 9.1-18.2 m (the pierside position first tried sits in a 1.8 m area, inside the DriX's floor). CURRENTS: gomofs is the right model for the Gulf of Maine, but it publishes 3-HOURLY frames and the vendored currents.py assumes hourly (both at fetch and in its frame indexing), so the readout reports the limit rather than a number. Fixing it means changing the vendored module - do it UPSTREAM in the Fuel planner and re-vendor, not here."
     },
     {
       "id": "lewes_de",
       "name": "Lewes, DE",
       "lat": 38.78965,
       "lon": -75.16094,
-      "note": "Lewes-Rehoboth Canal off the UDel Hugh R. Sharp Campus pier",
-      "ofs": "dbofs"
+      "ofs": "dbofs",
+      "note": "Lewes-Rehoboth Canal off the UDel Hugh R. Sharp Campus pier"
     }
   ]
 }

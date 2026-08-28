@@ -214,6 +214,160 @@ def validate_port(p, source="port"):
             "note": (p.get("note") or "").strip()}
 
 
+# --------------------------------------------------------------------------- #
+#  Finding a port BY NAME                                                     #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-08-28: "The position function is not just to memorize a manually found
+# spot, but to initialize a survey area from the name entered. it would require
+# internet access to identify a survey home port like Nome, Alaska and then the chart
+# goes there."
+#
+# So a base can be created from a PLACE NAME. Two steps, and the second is the one that
+# matters:
+#
+#   1. GEOCODE the name (OpenStreetMap Nominatim - keyless, global, stdlib).
+#   2. SNAP THE RESULT TO CHARTED NAVIGABLE WATER, because a geocoder returns the centre
+#      of a TOWN and a town centre is on LAND. "Nome, Alaska" resolves to 64.4975,
+#      -165.4062 - a street corner. Taking that as a survey home port would spawn the
+#      boat inland and refuse every route out of it, which is exactly the failure the
+#      seeded New Castle position hit (a pierside guess that sat in a charted 1.8 m area,
+#      inside the DriX's floor).
+#
+# The snap searches the ENC's own depth areas for the nearest water deep enough for THIS
+# vessel, so the answer is a berth the boat can actually sit in rather than a coordinate
+# that merely looks coastal. Everything degrades in the open: no geocoder, no chart, or
+# no deep-enough water each come back saying so, and the un-snapped place centre is still
+# offered - the operator can drag the chart and save the view instead.
+GEOCODER = "https://nominatim.openstreetmap.org/search"
+_GEO_CACHE = {}
+
+
+def geocode_place(name, timeout=20.0):
+    """(lat, lon, display_name) for a place name, or None. Never raises.
+
+    Nominatim asks callers to identify themselves and to keep the rate modest; the
+    console asks once per port the operator adds, and caches, so it is a well-behaved
+    client by construction rather than by promise."""
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    if key in _GEO_CACHE:
+        return _GEO_CACHE[key]
+    url = GEOCODER + "?" + urllib.parse.urlencode(
+        {"q": name, "format": "json", "limit": 1})
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "asv-console/1.0 (survey ASV shore station; operating-port lookup)",
+        "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            hits = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        print("[ports] geocoder unreachable: %s: %s" % (type(e).__name__, e),
+              file=sys.stderr)
+        return None
+    if not hits:
+        _GEO_CACHE[key] = None
+        return None
+    h = hits[0]
+    try:
+        out = (float(h["lat"]), float(h["lon"]), h.get("display_name") or name)
+    except (KeyError, TypeError, ValueError):
+        return None
+    _GEO_CACHE[key] = out
+    return out
+
+
+def _rings_of(geom):
+    """Every polygon ring in a GeoJSON geometry, as [[lon,lat], ...] lists."""
+    if not isinstance(geom, dict):
+        return []
+    t, co = geom.get("type"), geom.get("coordinates") or []
+    if t == "Polygon":
+        return [r for r in co if isinstance(r, list)]
+    if t == "MultiPolygon":
+        return [r for poly in co if isinstance(poly, list)
+                for r in poly if isinstance(r, list)]
+    return []
+
+
+def _in_ring(ring, lat, lon):
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        try:
+            x1, y1 = ring[i][0], ring[i][1]
+            x2, y2 = ring[(i + 1) % n][0], ring[(i + 1) % n][1]
+        except (TypeError, IndexError):
+            return False
+        if (y1 > lat) != (y2 > lat):
+            xin = (x2 - x1) * (lat - y1) / ((y2 - y1) or 1e-12) + x1
+            if lon < xin:
+                inside = not inside
+    return inside
+
+
+def snap_to_water(lat, lon, min_depth, radius_km=12.0, timeout=90.0):
+    """Nearest charted water at least `min_depth` deep, as {lat, lon, depth_m, note},
+    or a dict explaining why not. Never raises.
+
+    Searches the ENC's depth areas around the point and walks OUTWARD in rings, so the
+    berth chosen is the closest usable water rather than the first polygon in the file.
+    """
+    d = min(0.35, max(0.05, radius_km / 111.0))
+    try:
+        data = fetch_enc_features((lon - d, lat - d, lon + d, lat + d), min_depth)
+    except Exception as e:
+        return {"ok": False, "note": "no chart here (%s)" % type(e).__name__}
+    areas = [f for f in (data.get("features") or []) if f.get("role") == "depth_area"]
+    if not areas:
+        return {"ok": False, "note": "no charted depth areas within %.0f km" % radius_km}
+    # deep-enough polygons only; DRVAL1 is the shoalest depth in the area
+    deep = []
+    for f in areas:
+        p = f.get("props") or {}
+        try:
+            drval1 = float(p.get("DRVAL1"))
+        except (TypeError, ValueError):
+            continue
+        if drval1 >= min_depth:
+            deep.append((drval1, f))
+    if not deep:
+        return {"ok": False,
+                "note": "nothing charted deeper than %.1f m within %.0f km" % (min_depth, radius_km)}
+    # the point itself may already be in deep water - check before moving anything
+    for drval1, f in deep:
+        for ring in _rings_of(f.get("geometry")):
+            if _in_ring(ring, lat, lon):
+                return {"ok": True, "lat": lat, "lon": lon, "depth_m": drval1,
+                        "moved_m": 0.0, "note": "already in charted %.1f m water" % drval1}
+    # else walk outward: sample rings of increasing radius and take the first hit
+    mlat = 111320.0
+    mlon = 111320.0 * math.cos(math.radians(lat))
+    best = None
+    for step_m in range(200, int(radius_km * 1000) + 1, 200):
+        for k in range(36):                       # every 10 degrees
+            a = math.radians(k * 10)
+            tlat = lat + (step_m * math.cos(a)) / mlat
+            tlon = lon + (step_m * math.sin(a)) / (mlon or 1e-9)
+            for drval1, f in deep:
+                for ring in _rings_of(f.get("geometry")):
+                    if _in_ring(ring, tlat, tlon):
+                        best = {"ok": True, "lat": round(tlat, 6), "lon": round(tlon, 6),
+                                "depth_m": drval1, "moved_m": float(step_m),
+                                "note": "moved %.0f m to charted %.1f m water"
+                                        % (step_m, drval1)}
+                        break
+                if best:
+                    break
+            if best:
+                break
+        if best:
+            break
+    return best or {"ok": False,
+                    "note": "no water deeper than %.1f m found within %.0f km"
+                            % (min_depth, radius_km)}
+
+
 def load_ports():
     """Read ports.json into PORTS. Never raises: a missing or corrupt registry leaves
     the console working off the vessel's own spawn rather than refusing to start."""
@@ -3739,11 +3893,45 @@ class Handler(BaseHTTPRequestHandler):
             st = ENGINE.state()
             if st.get("armed") or st.get("estop") or st.get("run") != "idle":
                 return 409, {"error": "disarm and stop the run before changing port"}
+            found = None
             if body.get("name") is not None:
+                if body.get("lat") is None or body.get("lon") is None:
+                    # NAME ONLY -> FIND THE PLACE. This is the difference between a
+                    # bookmark and a way of starting work somewhere: the operator types
+                    # "Nome, Alaska" and the console goes there, rather than requiring
+                    # them to have navigated there already.
+                    #
+                    # SYNCHRONOUS ON PURPOSE, and bounded. It is one operator-initiated
+                    # lookup (a geocode, then an ENC extract to find water), not a poll,
+                    # and the answer IS the thing being created - deferring it would mean
+                    # creating a port with no position and correcting it later.
+                    g = geocode_place(body["name"])
+                    if not g:
+                        return 400, {"error": "could not find a place called %r "
+                                              "(no geocoder, or no such place)" % body["name"]}
+                    glat, glon, disp = g
+                    # A GEOCODER RETURNS A TOWN CENTRE, WHICH IS ON LAND. Snap to charted
+                    # water this hull can float in, or say plainly that it could not.
+                    snap = snap_to_water(glat, glon, MIN_NAV_DEPTH_M)
+                    if snap.get("ok"):
+                        body = dict(body, lat=snap["lat"], lon=snap["lon"])
+                        found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
+                                 "snapped": True, "depth_m": snap.get("depth_m"),
+                                 "moved_m": snap.get("moved_m"), "note": snap.get("note")}
+                    else:
+                        # Still create it at the place centre - the operator can see the
+                        # chart and move it - but do NOT pretend it is a berth.
+                        body = dict(body, lat=glat, lon=glon)
+                        found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
+                                 "snapped": False, "note": snap.get("note")}
                 try:
                     p = validate_port(body, "port")
                 except ValueError as e:
                     return 400, {"error": str(e)}
+                if found:
+                    p["note"] = (("%s. " % found["geocoded"]) +
+                                 (found.get("note") or ""))[:400]
+                    p["unverified"] = not found["snapped"]
                 # An id collision REPLACES rather than duplicating: re-adding "Lewes, DE"
                 # with a corrected position must fix the entry, not leave two of them.
                 PORTS["ports"] = [q for q in PORTS["ports"] if q["id"] != p["id"]] + [p]
@@ -3759,8 +3947,11 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.connect("sim", "", DEFAULT_VCU_PORT, "tcp")   # respawn at the new base
             # a different base is a different sea area - re-point the AIS subscription
             _rescope_ais_service()
-            return 200, {"ok": True, "active": PORTS["active"], "ports": PORTS["ports"],
-                         "saved": saved, "spawn": {"lat": SPAWN_LAT, "lon": SPAWN_LON}}
+            out = {"ok": True, "active": PORTS["active"], "ports": PORTS["ports"],
+                   "saved": saved, "spawn": {"lat": SPAWN_LAT, "lon": SPAWN_LON}}
+            if found:
+                out["found"] = found          # what the name resolved to, and whether
+            return 200, out                   # it had to be moved to reach water
         if path == "/api/comms":
             COMMS.configure(mode=body.get("mode"), host=body.get("host"),
                             username=body.get("username"), password=body.get("password"))

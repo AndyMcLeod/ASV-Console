@@ -385,20 +385,85 @@ try:
     # 12d. Malformed input is an ANSWER - never a 500, and never a silent accept that
     # would spawn the boat off the globe.
     codes = []
+    # NOTE: {"name": ...} with NO lat/lon is NOT in this list any more - since ports can
+    # be created from a name it is a LOOKUP, and 12j covers the unfindable case. Leaving
+    # it here asserted the old contract and passed a real geocode as a failure.
     for bad in ({"id": "nowhere"}, {"name": "X", "lat": 999, "lon": 0},
-                {"name": "", "lat": 1, "lon": 2}, {"name": "NoPos"}):
+                {"name": "", "lat": 1, "lon": 2}):
         c, r = api(port, "/api/ports", bad)
         codes.append((c, (r.get("error") or "")[:30]))
     check("12d. every malformed port is a 400 that says what is wrong",
           all(c == 400 and e for c, e in codes),
           "; ".join("%s %s" % (c, e) for c, e in codes))
 
+    # 12f-12h. A PORT CAN BE FOUND BY NAME - the difference between a bookmark and a way
+    # of starting work somewhere. Andy: "not just to memorize a manually found spot, but
+    # to initialize a survey area from the name entered... identify a survey home port
+    # like Nome, Alaska and then the chart goes there."
+    #
+    # NETWORKED, so it degrades to a SKIP rather than a false failure: a suite that fails
+    # on a train is a suite people stop running. What it must never do is pass silently
+    # when the wiring is broken, so the skip is announced.
+    cf, gf = api(port, "/api/ports", {"name": "Nome, Alaska"}, timeout=420)
+    if cf == 400 and "geocoder" in (gf.get("error") or ""):
+        print("  skip 12f-12h. no geocoder reachable - name lookup not exercised")
+    else:
+        found = gf.get("found") or {}
+        check("12f. a port created from a NAME resolves the place and is selected",
+              cf == 200 and gf.get("active") == "nome_alaska"
+              and "Nome" in (found.get("geocoded") or ""),
+              "active=%s geocoded=%s" % (gf.get("active"), found.get("geocoded")))
+        # 12g. THE CHECK THAT MATTERS. A geocoder returns a TOWN CENTRE, which is on
+        # land; taking it as a survey home port spawns the boat inland and refuses every
+        # route out. The console must move it to charted water this hull can float in.
+        place = found.get("place") or {}
+        moved = found.get("moved_m")
+        check("12g. the geocoded PLACE CENTRE is snapped to charted navigable water",
+              found.get("snapped") is True and (found.get("depth_m") or 0) > 0
+              and moved is not None,
+              "place %.4f,%.4f -> berth in %.1f m, moved %.0f m (a town centre is on land)"
+              % (place.get("lat", 0), place.get("lon", 0),
+                 found.get("depth_m") or 0, moved or 0))
+        # 12h. ... and the boat actually comes up there.
+        stn = wait_for(port, lambda s: ((s.get("status") or {}).get("lat_deg") or 0) > 60.0,
+                       limit=25)
+        latn = (stn.get("status") or {}).get("lat_deg")
+        check("12h. the sim boat spawns at the found berth",
+              latn is not None and abs(latn - gf["spawn"]["lat"]) < 1e-4,
+              "boat lat %s vs berth %s" % (latn, gf["spawn"]["lat"]))
+
+    # 12i. A PLACE WITH NO NAVIGABLE WATER IS STILL HONEST. Landlocked: the port is
+    # created at the place centre so the operator can see where they asked for, but it is
+    # FLAGGED unverified with the reason - never presented as a berth.
+    ci, gi = api(port, "/api/ports", {"name": "Denver, Colorado"}, timeout=420)
+    if ci == 200:
+        fi = gi.get("found") or {}
+        ent = [q for q in gi["ports"] if q["id"] == "denver_colorado"]
+        check("12i. a landlocked place is created but FLAGGED, with the reason",
+              fi.get("snapped") is False and bool(fi.get("note"))
+              and ent and ent[0].get("unverified") is True,
+              "snapped=%s unverified=%s note=%s"
+              % (fi.get("snapped"), ent[0].get("unverified") if ent else None,
+                 (fi.get("note") or "")[:48]))
+
+    # 12j. A NAME THAT IS NOT A PLACE is a 400 that says so - not a port at 0,0.
+    cj, gj = api(port, "/api/ports", {"name": "qqzzxx not a real place 12345"}, timeout=120)
+    check("12j. an unfindable name is refused, rather than becoming a port in the Atlantic",
+          cj == 400 and "find" in (gj.get("error") or "").lower(),
+          "%s %s" % (cj, (gj.get("error") or "")[:60]))
+
     # 12e. THE REAL REGISTRY WAS NEVER REACHED. The whole point of --ports-config.
     with open(os.path.join(APP, "ports.json"), "r", encoding="utf-8") as _f:
         real = json.loads(_f.read())
-    check("12e. the operator's own ports.json is untouched by this suite",
-          not any(q["id"] == "test_basin" for q in real.get("ports") or []),
-          "real registry: %s" % [q["id"] for q in real.get("ports") or []])
+    # COMPARED AGAINST WHAT WAS SHIPPED, not against a list of ids this suite happens to
+    # create. A named-few check only catches the strays you thought of; a stray port with
+    # any other name would have sailed straight past it, which is how one got into the
+    # real registry unnoticed in the first place.
+    seeded_ids = [q["id"] for q in json.loads(_seed).get("ports") or []]
+    real_ids = [q["id"] for q in (real.get("ports") or [])]
+    check("12e. the operator's own ports.json is EXACTLY as shipped - no suite reaches it",
+          real_ids == seeded_ids,
+          "real=%s seeded=%s" % (real_ids, seeded_ids))
 
 finally:
     try:
