@@ -108,9 +108,16 @@ check("5. the grip is not drawn inside drawPattern — that is what buried it",
 
 // 6. THE FIX ITSELF. Canvas z-order is not observable without standing up a full render
 // harness, so this asserts the call ORDER in render(): the grip must be drawn after the
-// boat marker. getCSS("--asv") is the boat's own colour and anchors that block.
+// boat marker.
+//
+// ANCHORED ON THE BOAT'S DRAW CALL, NOT ON ITS COLOUR. This used to look for
+// getCSS("--asv") - the colour the marker was painted with - and went blind the day the
+// marker became a vessel-coloured triangle drawn by drawVesselGlyph(), reporting "boat@-1"
+// and failing for a reason that had nothing to do with z-order. A check anchored on an
+// incidental detail of an implementation fails when that detail changes and passes when
+// the real property breaks; the DRAW CALL is the thing this check is actually about.
 const render = grab("render");
-const boatAt = render.lastIndexOf('getCSS("--asv")');
+const boatAt = render.lastIndexOf("drawVesselGlyph(");
 const gripAt = render.indexOf("drawPatMoveGrip(");
 check("6. render() draws the grip AFTER the boat marker",
       boatAt >= 0 && gripAt >= 0 && gripAt > boatAt,

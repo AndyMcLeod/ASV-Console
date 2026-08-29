@@ -78,6 +78,18 @@ boat is as incoherent as swapping its physics.
 *Previously the console opened on a hard-coded Lake Erie position belonging to neither
 the vessel nor any base, and each hull file owned its own spawn.*
 
+**The vessel marker is an isosceles triangle** with the sharp end down the **line of
+travel** — course over ground while making way, falling back to heading when stopped
+(below ~0.3 kn the COG is fix noise, and a marker that spins with it is worse than one
+that holds). It replaced a circle, which showed where the boat was and nothing else.
+
+Its colour is **the hull's own**, carried in `vessels/<id>.json` as `display.hull_color`
+(and an optional `hull_color2` for a two-tone livery, filled across the aft third) — a
+property of the boat, so it lives with the boat rather than in a table of vessel ids in
+the page. Shipped: **yellow** for the small survey launch, **red** for the DriX. A vessel
+file that names no colour falls back to the chart's default, so older profiles are
+unchanged.
+
 **Surveying is not the same thing as being on a survey.** The vessel card carries two
 rows, and the distinction between them is a paradigm the rest of the system follows:
 

@@ -59,7 +59,20 @@ const fs = require("fs");
 const path = require("path");
 
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// the REAL vessel block, so a check leaning on a hull colour reads the shipped default
+const { V } = require("../static/js/state.js");
+// the page reads chart colours from CSS custom properties; there is no stylesheet here, so
+// the fallback has to answer with SOMETHING - a boat drawn in "" is an invisible boat.
+function getCSS(){ return "#39c0ff"; }
 
+// a module-level `const NAME = ...;` pulled out verbatim - the REAL tuning value
+function grabDecl(name) {
+  for (const kw of ["const ", "let "]) {
+    const i = H.indexOf(kw + name + " =");
+    if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
+  }
+  throw new Error("test setup: declaration " + name + " not found (renamed?)");
+}
 function grab(name) {
   const start = H.indexOf("function " + name + "(");
   if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
@@ -345,6 +358,111 @@ check("16. ... and a stopped boat does not re-arm anything either",
   check("30b. activity transitions are logged, change-only, for later segmentation",
         /kind:"activity"/.test(H) && /if\(key === lastActivity\) return;/.test(H),
         "logged as an aux stream, only when it changes");
+}
+
+
+// --- THE VESSEL GLYPH: an isosceles triangle down the line of travel -----------------
+// Andy, 2026-08-28: "it will be an isosceles triangle with the sharp end pointed toward
+// the line of travel. Color will be the common color of the given ASV."
+{
+  // ONE eval: a const inside a direct eval is lexical to it, so the function must be
+  // compiled in the same call as the constants it closes over.
+  eval([grabDecl("GLYPH_FWD"), grab("drawVesselGlyph"),
+        grab("hullColor"), grab("hullColor2")].join(String.fromCharCode(10)));
+  // the consts live inside that eval, so parse their values for the checks here
+  const _g = grabDecl("GLYPH_FWD").match(/[\d.]+/g).map(Number);  const GLYPH_FWD=_g[0], GLYPH_AFT=_g[1], GLYPH_HALF=_g[2];
+  // a canvas that records what was asked of it, so the SHAPE can be asserted
+  function recorder(){
+    const ops = [], pts = [];
+    let tx = 0, ty = 0, rot = 0;
+    return {ops, pts, fills: [],
+      save(){}, restore(){}, beginPath(){ ops.push("begin"); }, closePath(){},
+      translate(x,y){ tx = x; ty = y; }, rotate(r){ rot = r; },
+      moveTo(x,y){ pts.push([x,y]); }, lineTo(x,y){ pts.push([x,y]); },
+      fill(){ this.fills.push(this.fillStyle); }, stroke(){ ops.push("stroke"); },
+      get _rot(){ return rot; }, get _t(){ return [tx,ty]; }};
+  }
+  // 31. ISOSCELES, and pointed: the apex is further from the centre than the base corners,
+  // and the two base corners are the same distance from the centreline (that IS isosceles).
+  {
+    const g = recorder(); drawVesselGlyph(g, 100, 200, 0, "#ffd400", null);
+    const tri = g.pts.slice(0, 3);
+    const [apex, r1, r2] = tri;
+    const legA = Math.hypot(apex[0]-r1[0], apex[1]-r1[1]);
+    const legB = Math.hypot(apex[0]-r2[0], apex[1]-r2[1]);
+    const base = Math.hypot(r1[0]-r2[0], r1[1]-r2[1]);
+    check("31. the glyph is an ISOSCELES triangle - two equal sides, a different base",
+          Math.abs(legA - legB) < 1e-9 && Math.abs(legA - base) > 1e-6,
+          "legs " + legA.toFixed(2) + "/" + legB.toFixed(2) + ", base " + base.toFixed(2));
+    check("31b. ... and it is POINTED, not squat: the apex reaches further than it is wide",
+          GLYPH_FWD + GLYPH_AFT > 2 * GLYPH_HALF,
+          "length " + (GLYPH_FWD+GLYPH_AFT) + " vs width " + (2*GLYPH_HALF));
+    // the apex must be the FORWARD vertex - at rotation 0 that is -y (north, up)
+    check("31c. the sharp end leads: the apex is the forward vertex, the base is astern",
+          apex[1] < 0 && r1[1] > 0 && r2[1] > 0,
+          "apex y=" + apex[1] + ", base y=" + r1[1]);
+  }
+  // 32. IT POINTS DOWN THE LINE OF TRAVEL. The canvas is rotated by the course in radians;
+  // 90 deg true must be a quarter turn, not a degree value handed to rotate() raw.
+  {
+    const g = recorder(); drawVesselGlyph(g, 0, 0, 90, "#fff", null);
+    check("32. the glyph is rotated by the COURSE, in radians",
+          Math.abs(g._rot - Math.PI/2) < 1e-9,
+          "course 90 deg -> " + g._rot.toFixed(4) + " rad (want " + (Math.PI/2).toFixed(4) + ")");
+  }
+  // 33. THE LIVERY: one colour fills once, two colours fill twice - the second is the aft
+  // band. Its acceptance pair is the single-colour case, or "always two fills" would pass.
+  {
+    const one = recorder(); drawVesselGlyph(one, 0, 0, 0, "#ffd400", null);
+    const two = recorder(); drawVesselGlyph(two, 0, 0, 0, "#ffd400", "#101010");
+    check("33. a plain hull fills once; a two-tone livery fills twice, second colour aft",
+          one.fills.length === 1 && one.fills[0] === "#ffd400" &&
+          two.fills.length === 2 && two.fills[1] === "#101010",
+          "plain " + JSON.stringify(one.fills) + " | livery " + JSON.stringify(two.fills));
+    // the aft band's vertices must all lie behind the apex, or the "livery" would cover
+    // the pointed end and destroy the one thing the shape exists to show
+    const band = two.pts.slice(3, 7);
+    check("33b. the aft band stays ASTERN - it never reaches the pointed end",
+          band.every(p => p[1] > -GLYPH_FWD / 2),
+          "band ys: " + band.map(p => p[1].toFixed(1)).join(","));
+  }
+  // 34. THE COLOUR IS THE VESSEL'S, NOT THE PAGE'S. A table of ids here would be exactly
+  // the hardcoded-vessel-constant this console spent a refactor removing.
+  {
+    // THE SHIPPED DEFAULT, read before anything here touches it: null, so a profile
+    // written before hull colours existed is drawn exactly as it was.
+    const shipped = [V.HULL_COLOR, V.HULL_COLOR2];
+    check("34. the V default is null - an older vessel profile is unchanged",
+          shipped[0] === null && shipped[1] === null,
+          "state.js ships " + JSON.stringify(shipped));
+    // A SENTINEL, NOT A REAL HULL COLOUR. Asserting that V="#d0342c" yields "#d0342c"
+    // passes just as well for a function that returns "#d0342c" unconditionally - which
+    // is exactly the mutation that survived the first version of this check. A colour no
+    // vessel file contains can only come from V.
+    V.HULL_COLOR = "#123456"; V.HULL_COLOR2 = "#654321";
+    check("34b. the hull colour FOLLOWS the vessel block - it is not baked into the page",
+          hullColor() === "#123456" && hullColor2() === "#654321",
+          hullColor() + " / " + hullColor2());
+    V.HULL_COLOR = null; V.HULL_COLOR2 = null;
+    check("34c. ... and with none named it falls back to the chart colour, not to a hull's",
+          hullColor() === getCSS("--asv") && hullColor2() === null,
+          "fallback = " + hullColor() + " (chart --asv), livery " + hullColor2());
+    V.HULL_COLOR = shipped[0]; V.HULL_COLOR2 = shipped[1];
+    check("34d. the page holds no per-vessel colour table",
+          !/zboat_1800hs\s*:\s*["'#]/.test(H) && !/drix08\s*:\s*["'#]/.test(H),
+          "colours belong to vessels/<id>.json");
+  }
+  // 35. The shipped hulls carry the colours Andy named: yellow for the small launch, red
+  // for the DriX. Read from the FILES, so a colour changed there is a failure here.
+  {
+    const vess = f => JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", f), "utf8"));
+    const zb = (vess("zboat_1800hs.json").display || {}).hull_color || "";
+    const dx = (vess("drix08.json").display || {}).hull_color || "";
+    const yellowish = /^#f{0,1}f?d|^#ff[cd]/i.test(zb) || zb.toLowerCase() === "#ffd400";
+    check("35. the shipped hulls carry their own colours (small launch yellow, DriX red)",
+          yellowish && /^#d0342c$/i.test(dx),
+          "zboat " + zb + ", drix " + dx);
+  }
 }
 
 

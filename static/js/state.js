@@ -52,6 +52,13 @@ export const V = {
   // line (the default, so a vessel file that says nothing behaves as it always did).
   // SURVEYS ONLY - transits, search patterns and hand-drawn lines are never filtered.
   MIN_SURVEY_LINE_M: 0,
+  // THE HULL'S OWN COLOUR on the chart - "the common color of the given ASV" (Andy,
+  // 2026-08-28): yellow for the small survey launch, red for the 8 m diesel ASV, a
+  // two-tone yellow/black livery for the work-class boat. It identifies the VESSEL, so it
+  // belongs to the vessel file and not to the page; null falls back to the chart's own
+  // --asv colour, so a profile written before this existed is unchanged.
+  HULL_COLOR: null,
+  HULL_COLOR2: null,       // second livery colour, filled across the aft third; null = plain
   // Intrinsic radius for a charted point hazard of UNKNOWN extent - a wreck symbol is a
   // position, not a size, and the casualty under it can be a 100 m ship.
   WRECK_RADIUS_M: 50,

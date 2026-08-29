@@ -1039,6 +1039,12 @@ function applyVesselToUI(v){
     V.NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
   // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
   V.CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
+  // The hull's own colour on the chart (see state.js). A string or nothing - anything
+  // else is ignored rather than handed to the canvas, where a bad value paints nothing
+  // and the boat silently disappears.
+  const disp = v.display || {};
+  V.HULL_COLOR  = (typeof disp.hull_color  === "string" && disp.hull_color)  ? disp.hull_color  : null;
+  V.HULL_COLOR2 = (typeof disp.hull_color2 === "string" && disp.hull_color2) ? disp.hull_color2 : null;
   // Shortest survey line this hull is worth putting on the water (0 = keep every line).
   // Absent or non-numeric reads as 0, so an older vessel file behaves exactly as before.
   V.MIN_SURVEY_LINE_M = (v.planning && typeof v.planning.min_survey_line_m==="number"
@@ -1396,13 +1402,26 @@ function render(){
   }
   if(asv){
     const s = toScreen(asv.lat, asv.lon);
-    if(asv.hdg != null){
+    // THE VESSEL: an isosceles triangle, sharp end down the LINE OF TRAVEL (Andy,
+    // 2026-08-28). It replaced a circle, which said where the boat was and nothing else -
+    // heading came only from a separate stalk, and a circle cannot show which way a boat
+    // is facing when it is stopped.
+    //
+    // LINE OF TRAVEL, NOT HEADING. Course over ground is what the boat is actually making
+    // good, and it differs from heading by the crab angle whenever wind or current is
+    // pushing - which at this console is most of the time. Below ~0.3 kn there is no
+    // meaningful COG (the fix noise dominates), so a stopped boat falls back to its
+    // heading rather than spinning with the jitter. Same rule the line-timing uses.
+    const st0 = (S && S.status) || {};
+    const moving = (st0.sog_kn || 0) > 0.3;
+    const course = (moving && st0.cog_deg != null) ? st0.cog_deg
+                 : (asv.hdg != null ? asv.hdg : (st0.cog_deg != null ? st0.cog_deg : 0));
+    if(asv.hdg != null){                            // heading stalk, kept: it is the other angle
       const a = (asv.hdg-90)*Math.PI/180, L=26;
       ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x+Math.cos(a)*L, s.y+Math.sin(a)*L);
-      ctx.strokeStyle=getCSS("--asv"); ctx.lineWidth=2; ctx.stroke();
+      ctx.strokeStyle=hullColor(); ctx.lineWidth=2; ctx.stroke();
     }
-    ctx.beginPath(); ctx.arc(s.x,s.y,6,0,2*Math.PI); ctx.fillStyle=getCSS("--asv"); ctx.fill();
-    ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
+    drawVesselGlyph(ctx, s.x, s.y, course, hullColor(), hullColor2());
   }
   drawPatMoveGrip();                                // above the boat — it is a HANDLE, not decoration
   drawMeasure(toScreen);                            // the operator's own ruler — over everything it measures
@@ -1458,6 +1477,49 @@ function roseArm(ctx, ang, len, halfW, fill){
   ctx.save(); ctx.rotate(ang); ctx.beginPath();
   ctx.moveTo(0, -len); ctx.lineTo(halfW, 0); ctx.lineTo(0, halfW*0.55); ctx.lineTo(-halfW, 0);
   ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
+}
+// THE HULL COLOURS ARE VESSEL CONFIGURATION, not constants in this file. Andy: "Color will
+// be the common color of the given ASV. Yellow for the small ZBoat, Red for the DriX and
+// yellow/black for BEN" - which is a property of the BOAT, so it lives in vessels/<id>.json
+// as display.hull_color / display.hull_color2 and reaches here through V. A table of ids in
+// the page would be the hardcoded-vessel-constant this console spent a refactor removing.
+// Absent, it falls back to the chart's own --asv colour, so a vessel file written before
+// this existed looks exactly as it did.
+function hullColor(){ return V.HULL_COLOR || getCSS("--asv"); }
+function hullColor2(){ return V.HULL_COLOR2 || null; }
+// An ISOSCELES triangle: apex forward, base astern, longer than it is wide so the pointed
+// end is unmistakable at a glance and at any rotation. `course` is degrees true.
+//
+// A SECOND COLOUR IS A LIVERY, NOT A GRADIENT: the aft third is filled with it (BEN is
+// yellow and black). Drawn as its own polygon rather than a clip, so it survives the canvas
+// state the rest of render() leaves behind.
+const GLYPH_FWD = 12, GLYPH_AFT = 7, GLYPH_HALF = 6.5;
+function drawVesselGlyph(ctx, x, y, course, c1, c2){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(((course || 0)) * Math.PI/180);        // 0 deg = north = -y, so no -90 here
+  ctx.beginPath();                                  // apex forward (-y), base astern
+  ctx.moveTo(0, -GLYPH_FWD);
+  ctx.lineTo(GLYPH_HALF, GLYPH_AFT);
+  ctx.lineTo(-GLYPH_HALF, GLYPH_AFT);
+  ctx.closePath();
+  ctx.fillStyle = c1; ctx.fill();
+  if(c2){
+    // aft third, cut across the hull - the two-tone livery
+    const yCut = GLYPH_AFT - (GLYPH_FWD + GLYPH_AFT) / 3;
+    const t = (yCut + GLYPH_FWD) / (GLYPH_FWD + GLYPH_AFT);   // half-width at the cut
+    ctx.beginPath();
+    ctx.moveTo(-GLYPH_HALF * t, yCut); ctx.lineTo(GLYPH_HALF * t, yCut);
+    ctx.lineTo(GLYPH_HALF, GLYPH_AFT); ctx.lineTo(-GLYPH_HALF, GLYPH_AFT);
+    ctx.closePath(); ctx.fillStyle = c2; ctx.fill();
+  }
+  ctx.beginPath();                                  // one outline over both fills
+  ctx.moveTo(0, -GLYPH_FWD);
+  ctx.lineTo(GLYPH_HALF, GLYPH_AFT);
+  ctx.lineTo(-GLYPH_HALF, GLYPH_AFT);
+  ctx.closePath();
+  ctx.lineWidth = 1.6; ctx.strokeStyle = "#160d02"; ctx.stroke();
+  ctx.restore();
 }
 function drawWindRose(){
   const c = roseCentre(), R = ROSE_R;

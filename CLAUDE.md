@@ -55,7 +55,45 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-28 — surveying is not the same as being on a survey)
+## ⇒ START HERE (handoff refreshed 2026-08-28 — the vessel points where it is going)
+
+**NEWEST (this commit): THE VESSEL GLYPH.** Andy: "it will be an isosceles triangle with the
+sharp end pointed toward the line of travel. Color will be the common color of the given
+ASV. Yellow for the small ZBoat, Red for the DriX and yellow/black for BEN."
+**LINE OF TRAVEL, NOT HEADING** — course over ground while making way, falling back to
+heading below ~0.3 kn where COG is fix noise and a marker would spin with it. Same rule the
+line-timing already uses. It replaced a CIRCLE, which could not show facing at all.
+**THE COLOUR IS VESSEL CONFIGURATION:** `display.hull_color` (+ optional `hull_color2`, a
+livery filled across the AFT THIRD) in `vessels/<id>.json`, through `V.HULL_COLOR`. **No
+table of vessel ids in the page** — check 34d forbids it, and that is the hardcoded-vessel-
+constant this console spent a refactor removing. null falls back to the chart's `--asv`.
+Shipped: small launch **#ffd400**, DriX **#d0342c**.
+**⛔ BEN IS NOT IN THIS CONSOLE and its yellow/black is therefore not applied.** WorldView
+has a full BEN profile (`D:\Claude\WorldView\worldviewesselsen.json`, real operator
+figures: 5.5 kn max sustained 20 h, 0.4 m hull draft, 1.3 m survey draft) but it carries
+**NO POWER BLOCK** on purpose — "20 hours at 5.5 kn is an endurance, not a tank size and a
+burn rate, and inventing one would be worse than having none". **This console REQUIRES a
+power block**, so porting BEN means inventing fuel figures. That is Andy's call, not a
+side-effect of an icon change. When it lands: `display.hull_color` yellow,
+`hull_color2` black.
+**Verified by measuring the INK** ([[verify-the-ink-not-the-box]]): on the live canvas at
+course 090, the hull's half-width profile runs 5.5 → 4.5 → 3.5 → 2.5 → 1.5 → 0 px from
+stern to bow in the DriX's EXACT #d0342c. A first attempt measured a loose "reddish" and
+was confounded by the unsafe-leg red (217,83,79) and by the heading stalk sharing the hull
+colour — **an exact-colour filter and an along-course axis were what made the measurement
+mean anything.** The Z-Boat yellow was NOT re-measured (the pane lost layout on reload);
+its colour is proven at the config level only.
+**⚠ A CHECK I HAD TO RE-ANCHOR, and the reason matters:** `pattern_move_grip` check 6 (the
+grip must be drawn AFTER the boat, the fix for a buried handle) anchored on
+`getCSS("--asv")` — the boat's COLOUR — and went blind the moment the marker became a
+vessel-coloured triangle, reporting `boat@-1`. It anchors on `drawVesselGlyph(` now. **A
+check pinned to an incidental detail fails on correct changes and passes when the real
+property breaks.** Two colour checks were weak the same way and survived mutation until a
+SENTINEL colour replaced the real one.
+`end_action.js` 36→45, 7/7 mutations caught.
+
+
+## ⇒ (previous handoff — surveying is not the same as being on a survey)
 
 **NEWEST (this commit): ACTIVITY vs MODE.** Andy: "Status must be clarified. When
 transiting between home and survey and also between lines, the ASV is not surveying. It is
@@ -972,7 +1010,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 688 assertions** (18 JS / 359,
+turn-water hold is closed (`a548c14`). **38 regression suites / 698 assertions** (18 JS / 369,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1005,7 +1043,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (688 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (698 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
