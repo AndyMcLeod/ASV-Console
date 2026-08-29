@@ -78,12 +78,34 @@ boat is as incoherent as swapping its physics.
 *Previously the console opened on a hard-coded Lake Erie position belonging to neither
 the vessel nor any base, and each hull file owned its own spawn.*
 
+**Surveying is not the same thing as being on a survey.** The vessel card carries two
+rows, and the distinction between them is a paradigm the rest of the system follows:
+
+* **Mode** — the behaviour the *run* is in (`survey`, `goto`, `rth`, `transit`). It stays
+  the same for the whole run.
+* **Doing** — what the vessel is doing *at this moment*. **SURVEYING means it is on a
+  coverage line, and nothing else does.** The approach out of the harbour, every reversal
+  between lines, a hop between separated coverage regions, a Go-To, a Return-to-Home —
+  all **TRANSITING**: under way, but not acquiring coverage. Holding and idle are their
+  own states, and a boat holding station *on* a line is holding, not surveying.
+
+So a run can read `Mode SURVEY · Doing TRANSITING — approach to the survey area`, which is
+the honest description of a boat an hour from its first line.
+
+**Why it is drawn this sharply:** sonar is collected *continuously*, so nothing downstream
+can tell coverage from transit by looking at the data — it has to be told. Every change of
+activity is written to the session log with its time and position, so a recorded run can
+be segmented into "these pings are coverage on line 7" and "these were acquired on the way
+there" without re-deriving the classification from the track. One classifier, one answer:
+anything that needs it reads `currentActivity()` rather than deciding for itself.
+
 **Intent (`INTENT`) — what, why, and what next.** A draggable card that answers the
 question a moving track raises: *why is it doing that?* Three sections, updated every
 telemetry frame:
 
-* **Now** — behaviour and run state, which waypoint of how many and what that waypoint
-  is, bearing and range to it, cross-track error, speed.
+* **Now** — **what it is doing** (surveying or transiting, and which line or why), the
+  mode beneath that, which waypoint of how many and what that waypoint is, bearing and
+  range to it, cross-track error, speed.
 * **Why this route** — the planner's own reasoning, **captured when the plan was
   committed**: routed clear of the keep-out model via *N* waypoints, or direct because
   the straight line was already clear; whether it rode the Rule 9 lane and whether that

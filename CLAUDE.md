@@ -55,7 +55,35 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-28 — the console explains itself)
+## ⇒ START HERE (handoff refreshed 2026-08-28 — surveying is not the same as being on a survey)
+
+**NEWEST (this commit): ACTIVITY vs MODE.** Andy: "Status must be clarified. When
+transiting between home and survey and also between lines, the ASV is not surveying. It is
+transiting. This may be confusing later on as we add sonar data that is collected
+continuously. But its a paradigm to follow."
+**HE IS RIGHT AND THE CONSOLE WAS REPORTING THE WRONG THING.** `behavior` is the MODE the
+run is in and stays "survey" for the whole run — so the card said SURVEY while the boat was
+still an hour from the first line. **Mode is not activity.** Two levels now, and the top one
+is the paradigm: `activity` = SURVEYING | TRANSITING | HOLDING | IDLE, `detail` = which line,
+which turn, what the transit is for. **SURVEYING MEANS ON A COVERAGE LINE AND NOTHING ELSE
+DOES** — approach, inter-line reversal, region hop, Go-To, RTH are all transits. Holding
+wins over an on-line index (a boat stopped on a line is holding, check 29b).
+**ONE CLASSIFIER, ONE ANSWER: `currentActivity()`.** It DERIVES from `runLineIdx` / `curTurn`,
+which `accumLineTime` already maintains every tick for the per-component timing — it does not
+keep a second copy that could drift from the clock that bills the time. Check 30 asserts every
+consumer reads it rather than re-deriving, because two implementations of "is this coverage"
+will eventually disagree.
+**⇒ THE SONAR HALF, WHICH IS WHY HE RAISED IT.** Sonar is collected CONTINUOUSLY, so nothing
+downstream can tell coverage from transit by looking at the data. Every activity CHANGE is
+written to the session log (`kind:"activity"`, change-only, with time/position/line), so a
+recorded run can be segmented into "these pings are coverage on line 7" and "these were
+acquired on the way there" **without re-deriving the classification from the track**. When
+sonar lands, key off that stream; do not write a second classifier.
+`end_action.js` 26→36, 6/6 mutations caught. Verified live: mode SURVEY, doing
+**TRANSITING — approach to the survey area — under way, NOT acquiring coverage**.
+
+
+## ⇒ (previous handoff — the console explains itself)
 
 **ALSO IN THIS COMMIT, forced by the hook: `ports.json` IS NO LONGER TRACKED.** The
 shipped seed is `ports.default.json`; `ports.json` is the LIVE registry and is gitignored,
@@ -944,7 +972,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 679 assertions** (18 JS / 350,
+turn-water hold is closed (`a548c14`). **38 regression suites / 688 assertions** (18 JS / 359,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -977,7 +1005,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (679 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (688 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

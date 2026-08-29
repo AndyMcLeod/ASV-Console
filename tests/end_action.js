@@ -259,5 +259,94 @@ check("16. ... and a stopped boat does not re-arm anything either",
 }
 
 
+// --- ACTIVITY: surveying is not the same thing as being on a survey ------------------
+// Andy, 2026-08-28: "When transiting between home and survey and also between lines, the
+// ASV is not surveying. It is transiting. This may be confusing later on as we add sonar
+// data that is collected continuously. But its a paradigm to follow."
+//
+// The console reported `behavior` - the MODE the run is in - which stays "survey" for the
+// whole run, so the card said SURVEY while the boat was still an hour from the first line.
+// SURVEYING now means ON A COVERAGE LINE and nothing else does. These checks pin that,
+// because the distinction is what any continuously-collected data must be segmented by:
+// sonar cannot tell coverage from transit by looking at itself.
+{
+  eval(grab("currentActivity"));
+  var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
+  mission = { completion: "rth", lines: [{}, {}, {}, {}] };
+  const act = (over, set) => {
+    Object.assign({runLineIdx:-1, curTurn:-1, lastRunLine:-1}, set || {});
+    runLineIdx = (set && set.runLineIdx !== undefined) ? set.runLineIdx : -1;
+    curTurn    = (set && set.curTurn    !== undefined) ? set.curTurn    : -1;
+    lastRunLine= (set && set.lastRunLine!== undefined) ? set.lastRunLine: -1;
+    turnSeg    = (set && set.turnSeg) || [];
+    S = Object.assign({behavior:"survey", run:"running", status:{}}, over || {});
+    return currentActivity();
+  };
+
+  // 24. ON A COVERAGE LINE is the ONLY thing that counts as surveying.
+  let a = act({}, {runLineIdx: 2});
+  check("24. on a coverage line, the activity is SURVEYING and it says which line",
+        a.activity === "surveying" && a.surveying === true && /line 3 of 4/.test(a.detail),
+        a.activity + " - " + a.detail);
+
+  // 25. THE REPORTED CASE. Same run, same behaviour "survey", boat on its way to line 1:
+  // this used to read SURVEY and must now read TRANSITING.
+  a = act({}, {});
+  check("25. the approach to the survey area is TRANSITING, not surveying",
+        a.activity === "transiting" && a.surveying === false && /approach/.test(a.detail),
+        a.activity + " - " + a.detail);
+
+  // 26. ... and the other half he named: between lines.
+  a = act({}, {curTurn: 0, turnSeg: [{from: 1, to: -1, sec: 4}], lastRunLine: 1});
+  check("26. the reversal between two lines is TRANSITING, not surveying",
+        a.activity === "transiting" && a.surveying === false && /turning between lines/.test(a.detail),
+        a.activity + " - " + a.detail);
+
+  // 27. A hop between separated coverage regions is transiting too, and reads differently
+  // from the initial approach - the operator can tell "not started yet" from "moving on".
+  a = act({}, {lastRunLine: 2});
+  check("27. a hop between coverage regions is TRANSITING, and distinguishable from the approach",
+        a.activity === "transiting" && /between coverage regions/.test(a.detail),
+        a.detail);
+
+  // 28. The other behaviours are transits by definition - an RTH is never coverage.
+  a = act({behavior: "rth"}, {});
+  const g = act({behavior: "goto"}, {});
+  check("28. Go-To and Return-to-Home are TRANSITING - never surveying",
+        a.activity === "transiting" && !a.surveying &&
+        g.activity === "transiting" && !g.surveying,
+        "rth: " + a.detail + " | goto: " + g.detail);
+
+  // 29. Holding and idle are neither - a station-keeping boat is not acquiring coverage,
+  // and neither is a stopped one. Without this the binary would quietly call them transits.
+  const h = act({status: {holding: true}}, {runLineIdx: 2});
+  const i2 = act({run: "stopped"}, {});
+  check("29. holding and stopped are their own states, and neither is surveying",
+        h.activity === "holding" && !h.surveying &&
+        i2.activity === "idle" && !i2.surveying,
+        "holding: " + h.detail + " | stopped: " + i2.detail);
+
+  // 29b. HOLDING WINS OVER AN ON-LINE INDEX. A boat that stopped on a line is not
+  // surveying it - the check above sets runLineIdx while holding to prove the order.
+  check("29b. holding on a line is still holding, not surveying",
+        h.activity === "holding",
+        "runLineIdx was 2 and it still reported " + h.activity);
+
+  // 30. THE PARADIGM IS ONE ANSWER, NOT TWO. Everything downstream - the cards today, the
+  // sonar segmentation later - must key off this single function, or two parts of the
+  // system will disagree about which pings are coverage.
+  const usesIt = (H.match(/currentActivity\(\)/g) || []).length;
+  check("30. the cards and the log all read the ONE classifier rather than re-deriving it",
+        usesIt >= 3 && !/behavior\s*===\s*"survey"\s*\?\s*"surveying"/.test(H),
+        usesIt + " call sites of currentActivity()");
+
+  // 30b. ... and a change of activity reaches the SESSION LOG, so a recorded run can be
+  // segmented later without re-deriving the classification from the track.
+  check("30b. activity transitions are logged, change-only, for later segmentation",
+        /kind:"activity"/.test(H) && /if\(key === lastActivity\) return;/.test(H),
+        "logged as an aux stream, only when it changes");
+}
+
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

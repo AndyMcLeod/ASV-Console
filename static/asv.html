@@ -535,7 +535,8 @@
            "Run mode" row said, so that row is gone rather than repeated. -->
       <div class="vsec" id="v_mission" style="display:none;">
         <div class="vsechead">Mission</div>
-        <div class="vrow"><span class="vk">Type</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour running: survey / search / goto / rth / transit">--</span></div>
+        <div class="vrow"><span class="vk">Doing</span><span class="vv" id="mi_activity" style="text-transform:uppercase;" title="What the vessel is doing RIGHT NOW. SURVEYING means it is on a coverage line - and nothing else does. The approach from home, every reversal between lines, a hop between coverage regions, a Go-To and a Return-to-Home are all TRANSITING: the vehicle is under way but not acquiring survey coverage. This is the distinction any continuously-collected data (sonar) must be segmented by.">--</span></div>
+        <div class="vrow"><span class="vk">Mode</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour the RUN is in: survey / search / goto / rth / transit. This stays the same for the whole run - it is not what the vessel is doing at this moment (see Doing).">--</span></div>
         <div class="vrow"><span class="vk">Speed</span><span class="vv" id="mi_speed" title="The speed the VESSEL is running to, as it reports it — not merely what the selector says. They should agree; if they do not, this is the one that is moving the boat.">--</span></div>
         <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt" title="Progress along the uploaded route. Before Upload it shows the planned waypoint count.">--</span></div>
         <div class="vrow"><span class="vk">Length</span><span class="vv" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)">--</span></div>
@@ -825,8 +826,12 @@ function renderIntent(){
   let html = "";
   // ---- NOW ----
   html += head("Now");
+  const act = currentActivity();
   const kind = (planIntent && planIntent.kind) || (S&&S.behavior) || "—";
-  html += row("doing", kind.toUpperCase() + (run ? " · " + run : ""));
+  // SURVEYING or TRANSITING first, because that is the question, and the MODE second.
+  html += row("doing", act.activity.toUpperCase() + " — " + act.detail,
+              act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "var(--ink-faint)" : "#e8c07a"));
+  html += row("mode", kind.toUpperCase() + (run ? " · " + run : ""));
   if(rr.length) html += row("waypoint", (idx+1) + " of " + rr.length + " — " + wptRole(idx, rr));
   if(here && nextWp) html += row("next wp", fmtBrgRange(here, nextWp));
   if(isFinite(activeXTE) && Math.abs(activeXTE) < 1e5)
@@ -1691,6 +1696,81 @@ function accumLineTime(){
     // else: approach / inter-area transit -> neither line nor turn
   }
   lineClock = (S.run==="running") ? now : null;
+}
+// --- ACTIVITY: surveying is not the same thing as being on a survey ---------------- //
+// Andy, 2026-08-28: "Status must be clarified. When transiting between home and survey and
+// also between lines, the ASV is not surveying. It is transiting. This may be confusing
+// later on as we add sonar data that is collected continuously. But its a paradigm to
+// follow."
+//
+// He is right, and the console was reporting the WRONG THING. `behavior` is the MODE the
+// run is in - survey / goto / rth / transit - and it stays "survey" for the whole run,
+// including the approach out of the harbour and every reversal between lines. So the card
+// said SURVEY while the boat was an hour from the first line. Mode is not activity.
+//
+// TWO LEVELS, and the top one is the paradigm:
+//   activity  SURVEYING | TRANSITING | HOLDING | IDLE   - is this coverage, or is it not?
+//   detail    which line, which turn, what the transit is for
+//
+// SURVEYING means ON A COVERAGE LINE, and nothing else does. The approach is transiting,
+// the inter-line turn is transiting, a region hop is transiting, an RTH is transiting.
+//
+// WHY THE TOP LEVEL IS BINARY, and why it matters more later than it does today: sonar is
+// collected CONTINUOUSLY, so the recorder cannot use "was the vehicle running" to decide
+// what is survey coverage - it needs "was the vehicle ON LINE". Anything that segments that
+// data later must key off this one answer rather than re-deriving its own, or two parts of
+// the system will disagree about which pings are coverage.
+//
+// DERIVED, NEVER STORED. runLineIdx and curTurn are already maintained every tick by
+// accumLineTime for the per-component timing; this reads them rather than keeping a second
+// copy that could drift from the clock that bills the time.
+function currentActivity(){
+  const run = S && S.run, st = (S && S.status) || {};
+  if(st.holding) return {activity:"holding", detail:"station-keeping", surveying:false};
+  if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false};
+  const beh = (S && S.behavior) || "";
+  if(beh === "survey"){
+    if(runLineIdx >= 0)
+      return {activity:"surveying", surveying:true,
+              detail:"on coverage line " + (runLineIdx+1) + " of " + mission.lines.length};
+    if(curTurn >= 0){
+      const t = turnSeg[curTurn] || {};
+      return {activity:"transiting", surveying:false,
+              detail:"turning between lines" + (t.from>=0 ? " (off line " + (t.from+1) + ")" : "")};
+    }
+    // A survey run that is not on a line and not in a turn is on its way somewhere: the
+    // approach to the first line, or a hop between separated coverage regions.
+    return {activity:"transiting", surveying:false,
+            detail: lastRunLine >= 0 ? "between coverage regions" : "approach to the survey area"};
+  }
+  const why = {goto:"to the commanded point", rth:"returning home",
+               transit:"following the drawn transit line", search:"running a search pattern"};
+  if(beh === "search") return {activity:"surveying", surveying:true, detail:why.search};
+  return {activity:"transiting", surveying:false, detail: why[beh] || beh || "under way"};
+}
+
+// THE TRANSITIONS GO IN THE SESSION LOG, and this is the part that is really for later.
+// Sonar is collected CONTINUOUSLY, so nothing downstream can tell coverage from transit by
+// looking at the data - it has to be told. Recording every change of activity, with its
+// time and position, means a recorded run can be segmented into "these pings are coverage
+// on line 7" and "these were acquired on the way there" WITHOUT re-deriving the
+// classification from the track, which would be a second implementation free to disagree
+// with the one that billed the time.
+//
+// CHANGE-ONLY, like every other aux stream the recorder carries: a per-tick record would
+// be thousands of identical rows and would bury the transitions that matter.
+let lastActivity = null;
+function logActivityChange(){
+  const a = currentActivity();
+  const key = a.activity + "|" + a.detail;
+  if(key === lastActivity) return;
+  lastActivity = key;
+  const st = (S && S.status) || {};
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"activity", data:{
+      activity: a.activity, surveying: a.surveying, detail: a.detail,
+      behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? runLineIdx+1 : null,
+      lat: st.lat_deg, lon: st.lon_deg, sog_kn: st.sog_kn}})}).catch(()=>{});
 }
 function buildLineTable(){ const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
@@ -4904,7 +4984,7 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); accumLineTime(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    updateXTE(); accumLineTime(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)
@@ -5041,6 +5121,18 @@ function updateMissionCard(){
   let kind = S.behavior || "survey";
   if(kind==="survey" && planKind==="search") kind="search";   // a committed search runs as a survey plan
   $("#mi_type").textContent = kind.toUpperCase();
+  // DOING vs MODE. `kind` above is the mode the run is in and stays put for the whole run;
+  // this is what the boat is doing at this instant, and only "surveying" means coverage.
+  {
+    const act = currentActivity(), el = $("#mi_activity");
+    if(el){
+      el.textContent = act.activity;
+      el.title = act.detail + (act.surveying ? " — acquiring coverage"
+                                             : " — under way, NOT acquiring coverage");
+      el.style.color = act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "" : "#e8c07a");
+    }
+    const d = $("#mi_activity_detail"); if(d) d.textContent = act.detail;
+  }
   // THE SPEED THE BOAT REPORTS, not the one the selector holds. These are two values and
   // for a long time they could silently disagree - a live speed change never reached the
   // link at all, so the console showed one speed and the boat made good another. Publishing
