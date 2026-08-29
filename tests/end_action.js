@@ -367,7 +367,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
 {
   // ONE eval: a const inside a direct eval is lexical to it, so the function must be
   // compiled in the same call as the constants it closes over.
-  eval([grabDecl("GLYPH_FWD"), grab("drawVesselGlyph"),
+  // glyphOutline is a DEPENDENCY of drawVesselGlyph (it picks the edge from the fill's
+  // luminance), so it has to be compiled in the same call or the glyph throws.
+  eval([grabDecl("GLYPH_FWD"), grab("glyphOutline"), grab("drawVesselGlyph"),
         grab("hullColor"), grab("hullColor2")].join(String.fromCharCode(10)));
   // the consts live inside that eval, so parse their values for the checks here
   const _g = grabDecl("GLYPH_FWD").match(/[\d.]+/g).map(Number);  const GLYPH_FWD=_g[0], GLYPH_AFT=_g[1], GLYPH_HALF=_g[2];

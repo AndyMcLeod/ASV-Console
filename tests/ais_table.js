@@ -151,6 +151,86 @@ check("8. the row template provides the marker and name spans the patch writes t
             && /querySelector\("\.aisNm"\)/.test(RENDER) && /querySelector\("\.aisMk"\)/.test(RENDER),
       "setCellText ignores a null node, so a typo here would fail silently");
 
+// --- AIS CONTACTS: the same glyph as our own boat, in the operator's colours ----------
+// Andy, 2026-08-28: "it will be an isosceles triangle with the sharp end pointed toward
+// the line of travel. green for cargo vessels, grey for military, blue for fishing, black
+// for tug or tug and tow and pink for sailing."
+{
+  const H2 = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "asv.html"), "utf8");
+  const grabDecl2 = (name) => {
+    for (const kw of ["const ", "let "]) {
+      const i = H2.indexOf(kw + name + " =");
+      if (i >= 0) return H2.slice(i, H2.indexOf("};", i) + 2);
+    }
+    throw new Error("test setup: " + name + " not found (renamed?)");
+  };
+  // eval it as an EXPRESSION: `const` inside a direct eval is lexical to that eval,
+  // so declaring it there leaves the name here undefined (the same trap twice today).
+  const AIS_COL = eval("(" + grabDecl2("AIS_COL")
+        .replace(/^const\s+AIS_COL\s*=\s*/, "").replace(/;\s*$/, "") + ")");
+  const hex = (c) => String(c || "").toLowerCase();
+  const lum = (c) => { const n = parseInt(hex(c).slice(1), 16);
+    return (0.2126*((n>>16)&255) + 0.7152*((n>>8)&255) + 0.0722*(n&255)) / 255; };
+
+  // 10. THE FIVE THE OPERATOR NAMED. Asserted by HUE, not by matching a hex string: the
+  // requirement is "green", not "#3fbf6b", and pinning the literal would make a legibility
+  // tweak within the same colour read as a regression.
+  const isGreen = (c)=>{ const n=parseInt(hex(c).slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    return g > r + 40 && g > b + 40; };
+  const isBlue  = (c)=>{ const n=parseInt(hex(c).slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    return b > r + 40 && b >= g; };
+  const isPink  = (c)=>{ const n=parseInt(hex(c).slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    return r > 180 && b > 140 && g < r - 40; };
+  const isGrey  = (c)=>{ const n=parseInt(hex(c).slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    return Math.max(r,g,b) - Math.min(r,g,b) < 24 && lum(c) > 0.4; };
+  const isBlack = (c)=> lum(c) < 0.15;
+  check("10. cargo is GREEN, military GREY, fishing BLUE, tug BLACK, sailing PINK",
+        isGreen(AIS_COL.cargo) && isGrey(AIS_COL.military) && isBlue(AIS_COL.fishing)
+        && isBlack(AIS_COL.tug) && isPink(AIS_COL.sailing),
+        "cargo " + AIS_COL.cargo + ", military " + AIS_COL.military + ", fishing "
+        + AIS_COL.fishing + ", tug " + AIS_COL.tug + ", sailing " + AIS_COL.sailing);
+
+  // 11. NO TWO CATEGORIES SHARE A COLOUR. Two ship types the same colour on a crowded
+  // harbour is the same as having no colour scheme - and adding the operator's five DID
+  // collide with what was there (passenger held the green, hsc a pink close to sailing's).
+  {
+    const seen = new Map(), dupes = [];
+    for (const k of Object.keys(AIS_COL)) {
+      if (k === "unknown") continue;                 // deliberately shares `other`'s grey
+      const c = hex(AIS_COL[k]);
+      if (seen.has(c)) dupes.push(seen.get(c) + "/" + k); else seen.set(c, k);
+    }
+    check("11. no two ship categories are drawn the same colour",
+          dupes.length === 0, dupes.length ? dupes.join(", ") : Object.keys(AIS_COL).length + " categories");
+  }
+
+  // 12. A BLACK HULL ON A NEAR-BLACK CHART NEEDS A LIGHT EDGE, or the tug is invisible.
+  // The outline is picked from the fill's luminance rather than fixed, so this holds for
+  // any colour added later - which is why it is asserted through the real function.
+  {
+    // the eval brings its OWN `function glyphOutline` declaration into this scope,
+    // so declaring one here as well is a redeclaration - let the source provide it
+    eval((()=>{ const i=H2.indexOf("function glyphOutline(");
+      let k=H2.indexOf("{", i), d=0; for(;;){ const c=H2[k]; if(c==="{")d++; else if(c==="}"){d--; if(!d)break;} k++; }
+      return H2.slice(i, k+1); })());
+    const onTug = glyphOutline(AIS_COL.tug), onGrey = glyphOutline(AIS_COL.military);
+    check("12. a dark hull gets a LIGHT outline and a light hull a dark one",
+          lum(onTug.match(/\d+/g) ? "#ffffff" : onTug) > 0.5 || /2[0-9]{2}/.test(onTug),
+          "tug outline " + onTug + " | military outline " + onGrey);
+    check("12b. ... and they are not the same outline, or the rule is doing nothing",
+          onTug !== onGrey, onTug + " vs " + onGrey);
+  }
+
+  // 13. THE CONTACT IS DRAWN BY THE SAME GLYPH AS OUR OWN VESSEL. One shape, one idea of
+  // which way forward is; a second triangle drawn inline would be free to disagree.
+  check("13. AIS contacts use the shared vessel glyph, scaled - not their own shape",
+        /drawVesselGlyph\(ctx, s\.x, s\.y,[^)]*0\.62\)/.test(H2)
+        && !/moveTo\(0,-7\); ctx\.lineTo\(5,6\)/.test(H2),
+        "the old inline dart is gone and the shared glyph is called");
+}
+
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

@@ -55,7 +55,35 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-28 — the vessel points where it is going)
+## ⇒ START HERE (handoff refreshed 2026-08-28 — every vessel on the chart points where it is going)
+
+**NEWEST (this commit): THE AIS CONTACTS GET THE SAME GLYPH.** Andy: "green for cargo
+vessels, grey for military, blue for fishing, black for tug or tug and tow and pink for
+sailing." The dart-shaped AIS marker is gone; contacts are drawn by the SAME
+`drawVesselGlyph` as the vessel under command, at 0.62 scale. They are boats, and a second
+inline triangle would have been free to disagree about which way forward is.
+**THE FIVE COLOURS ARE THE OPERATOR'S AND ARE NOT TO BE RE-TUNED FOR CONTRAST.** Two other
+categories had to MOVE instead (passenger held the green cargo now owns; hsc held a pink
+too close to sailing's), and check 11 forbids any two categories sharing a colour.
+**⚠ THE FINDING WORTH KEEPING: A BLACK HULL ON A NEAR-BLACK CHART IS INVISIBLE, AND THE
+PIXELS ARE HOW I KNEW.** `#101418` was tried first. Measured with the AIS layer toggled off
+then on, its contribution was **−211 pixels** — NEGATIVE: the glyph's outline was erasing
+background-coloured pixels and no hull was appearing, because the fill sat six units from
+the ground colour `#0a141c`. True `#000000` measures **+23** — a real triangle. `glyphOutline`
+now picks the edge from the FILL'S LUMINANCE (light edge on a dark hull), so this holds for
+any colour added later rather than for black alone.
+**⚠ CARGO GREEN IS THE SAME GREEN THE CHART ALREADY USES FOR HOME AND REACHED WAYPOINTS**
+(`#3fbf6b`, ~830 px of it on screen before any AIS draws). Told apart by shape and place,
+not colour. Andy named the colour, so it stands — but if a cargo contact is ever mistaken
+for the home marker, that is the reason and moving one of the two is the fix.
+**MEASURING TECHNIQUE, because the first attempt was confounded twice:** count with the
+layer OFF and again with it ON and take the DIFFERENCE — a global colour count catches the
+home marker, the waypoints and the background. And do it in ONE pass over the pixels; five
+separate full-canvas scans wedged the renderer in a hidden pane.
+`ais_table.js` 9→14, 6/6 mutations caught.
+
+
+## ⇒ (previous handoff — the vessel points where it is going)
 
 **NEWEST (this commit): THE VESSEL GLYPH.** Andy: "it will be an isosceles triangle with the
 sharp end pointed toward the line of travel. Color will be the common color of the given
@@ -1010,7 +1038,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 698 assertions** (18 JS / 369,
+turn-water hold is closed (`a548c14`). **38 regression suites / 704 assertions** (18 JS / 375,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1043,7 +1071,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (698 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-EIGHT REGRESSION SUITES (704 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

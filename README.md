@@ -90,6 +90,17 @@ the page. Shipped: **yellow** for the small survey launch, **red** for the DriX.
 file that names no colour falls back to the chart's default, so older profiles are
 unchanged.
 
+**AIS contacts use the same glyph**, smaller — they are boats, and drawing them as a
+different shape would say they were a different kind of thing. Each points down its own
+line of travel and is coloured by ship type: **green** cargo, **grey** military, **blue**
+fishing, **black** tug / tug-and-tow, **pink** sailing. The remaining categories are
+chosen only so no two collide. A contact reporting neither course nor heading is drawn
+bow-north with no speed stalk — the missing stalk is what says it has no track.
+
+The outline is picked from the fill's own luminance, light on a dark hull and dark on a
+light one. That is not decoration: the chart ground is near-black, and a black tug drawn
+with a dark edge measured as *invisible* on the live canvas.
+
 **Surveying is not the same thing as being on a survey.** The vessel card carries two
 rows, and the distinction between them is a paradigm the rest of the system follows:
 

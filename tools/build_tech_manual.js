@@ -63,7 +63,7 @@ const GUARDS = {
   "panel_drag.js":
     "That ONE drag mechanism serves every floating pop-out, that none forgets where it was put, and that a restored position is CLAMPED into the chart - a position saved on a larger window used to put a card, and its own reopen control, off the screen entirely. Also the chart's wind rose, the one movable thing that is deliberately NOT a panel: that it claims a press before any editing mode can act underneath it, that it persists where it was dropped, and that its position is clamped on every read rather than on save",
   "ais_table.js":
-    "That the traffic list is PATCHED in place rather than rebuilt each poll, so an update cannot reset the card's scroll position while it is being read, nor drop a text selection part way through a copy",
+    "That the traffic list is PATCHED in place rather than rebuilt each poll, so an update cannot reset the card's scroll position while it is being read, nor drop a text selection part way through a copy. And the contact markers themselves: that the operator's ship-type colours are what is drawn, that no two categories share a colour, that a dark hull is given a light outline so a black tug is not lost against a near-black chart, and that contacts are drawn with the SAME glyph as the vessel under command rather than a shape of their own",
   "http_contract.py":
     "The two OPPOSITE handler contracts - a POST handler RETURNS (code, obj) while a GET handler commits its own response - across both servers, plus the check no client-side assertion can make: that the server logged no exception while serving them",
   "tide_note.py":
