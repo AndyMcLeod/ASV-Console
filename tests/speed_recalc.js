@@ -101,7 +101,8 @@ function check(name, cond, detail) {
 // The two shipped hulls' figures, as the turn-geometry suite uses them.
 var M_PER_DEG_LAT = 111320;
 V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 }, MAX_TURN_RATE_DEG_S = 20;
-var mission = { speed: "survey", lines: [], waypoints: [] };
+var mission = { speed: "survey", speeds: { transit: "survey", turn: "survey", survey: "survey" },
+                lines: [], waypoints: [] };
 var speedWarnShown = false;   // the page declares this beside the function; the harness must too
 // distUnit lives in units.js now - setDistUnit() is the only way in.   // fmtDist's globals - km keeps the legacy km shape here
 var asv = null;
@@ -126,6 +127,16 @@ function planNogoRoute(from, to) {
 // eslint-disable-next-line no-eval
 eval(
      grabDecl("TRANSIT_REKEY_M") + "\n" +
+     // SPEED BY ROLE (2026-08-31): recalcCommittedForSpeed reads the TURN speed for its
+     // radius check and the SURVEY / TRANSIT speeds for its two duration rows, all through
+     // these two helpers. GRABBED, not stubbed - a stub would let this suite pass against
+     // a page that had stopped honouring the roles at all.
+     grabDecl("SPEED_ROLES") + "\n" +
+     grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+     // The banner's prefix, GRABBED so check 5b tests the page's real coupling: the warning
+     // and the branch that clears it share this one string, and they did not until the
+     // rename to "Turn speed" broke the clear and this suite caught it.
+     grabDecl("SPEED_WARN_PREFIX") + "\n" +
      grab("committedPatternInfo") + "\n" +
      grab("recalcCommittedForSpeed") + "\n" +
      grab("routeLenM") + "\n" + grab("transitEstBoat") + "\n" +
@@ -143,9 +154,17 @@ function commit(n, len, sp) {
     const [p, q] = i % 2 ? [b, a] : [a, b];
     lines.push({ a: p, b: q }); wps.push(p, q);
   }
-  mission = { speed: mission.speed, lines, waypoints: wps };
+  mission = { speed: mission.speed, speeds: mission.speeds, lines, waypoints: wps };
 }
-function run(speed) { mission.speed = speed; banners = []; recalcCommittedForSpeed(); return banners.join(" "); }
+// The radius a committed reversal needs is set by the TURN speed now, not by a single
+// plan speed - so this drives all three roles together. That is exactly the state a
+// console that has never been told otherwise is in, which is what keeps every
+// expectation below unchanged by the split.
+function run(speed) {
+  mission.speed = speed;
+  mission.speeds = { transit: speed, turn: speed, survey: speed };
+  banners = []; recalcCommittedForSpeed(); return banners.join(" ");
+}
 
 // At 20 deg/s the minimum radius is 1.4 * v / omega, so a plain reversal needs 2x that:
 const need = s => 2 * minTurnRadiusM(s);
@@ -194,9 +213,11 @@ check("5b. ... and slowing back down CLEARS a warning it raised",
 // 6-8. The durations are the other half of "recalculate on input" - they were computed
 // once at Punch Out and then described whatever speed was set at the time, forever.
 commit(4, 500, 40);
-mission.speed = "survey"; banners = []; recalcCommittedForSpeed();
+mission.speed = "survey"; mission.speeds = { transit:"survey", turn:"survey", survey:"survey" };
+banners = []; recalcCommittedForSpeed();
 const atSurvey = $("#v_surveydur").textContent;
-mission.speed = "low"; recalcCommittedForSpeed();
+mission.speed = "low"; mission.speeds = { transit:"low", turn:"low", survey:"low" };
+recalcCommittedForSpeed();
 const atLow = $("#v_surveydur").textContent;
 check("6. the survey duration is recomputed when the speed changes",
       atSurvey !== atLow && atSurvey !== "--" && atLow !== "--",
@@ -216,7 +237,8 @@ check("7b. ... and each row names the speed it was computed at",
       atSurvey + "  |  " + atLow);
 // 8. Degrade safely - this runs from a UI handler, and throwing in it would take the
 // command bar down with it.
-mission = { speed: "survey", lines: [], waypoints: [] };
+mission = { speed: "survey", speeds: { transit:"survey", turn:"survey", survey:"survey" },
+            lines: [], waypoints: [] };
 check("8. an empty plan degrades to '--', it does not throw",
       (() => { try { recalcCommittedForSpeed();
                      return $("#v_surveydur").textContent === "--"; }

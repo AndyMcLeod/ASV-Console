@@ -351,6 +351,22 @@
       </span></div>
     <div class="phint" id="sp_water_note">tide station: --</div>
     <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviours (Go-To / RTH / search / survey) route clear by."/></div>
+    <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
+         console commands each as the boat moves between them. They start EQUAL, so a
+         console that has never been told otherwise behaves exactly as it always did. -->
+    <div class="prow punchsep"><label>Survey spd</label>
+      <select id="sp_spd_survey" title="Speed held on the COVERAGE LINES — the one the sensor is specified at. The per-line plan times in the LINES table are computed from it.">
+        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+      </select></div>
+    <div class="prow"><label>Turn spd</label>
+      <select id="sp_spd_turn" title="Speed through the REVERSALS between lines. It also sets the RADIUS every generated turn is built at — a hull can only hold v/ω — so a slower turn is tighter and reaches less far outboard, which is what buys clearance from a dock at the end of a line.">
+        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+      </select></div>
+    <div class="prow"><label>Transit spd</label>
+      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviours.">
+        <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+      </select></div>
+    <div class="phint" id="sp_spd_note">speeds: --</div>
     <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behaviour (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviours.">
       <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
       <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
@@ -505,9 +521,11 @@
     <input id="c_buffer" type="number" value="3" min="0" max="200" step="1"
       title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behaviour; re-routes live."
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <select id="c_speed" style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-      <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
-    </select>
+    <!-- THE SPEED SELECTOR LIVED HERE AND IS GONE (Andy, 2026-08-31: "Remove the old speed
+         selection function from the chart bar and implement in the survey card"). One
+         speed became three - survey / turn / transit - and three selects on a command bar
+         that has to stay readable at a glance is the wrong home for them. They are in the
+         SURV card, which is where the rest of the plan's parameters already are. -->
     <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behaviour (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
     </select>
@@ -778,7 +796,44 @@ let track = loadTrack();                      // restore the trail from the last
 let asv = null;                              // {lat,lon,hdg}
 
 // --- mission plan -------------------------------------------------------- //
-let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey", completion: "rth", buffer_m: 3};
+let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
+               speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3};
+// --- SPEED BY ROLE: transit, turn, survey ----------------------------------------- //
+// Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow separate
+// speed selection for transits, turns, and survey. These values may be temporarily
+// over-ridden for safety of vessel situations. Remove the old speed selection function
+// from the chart bar and implement in the survey card."
+//
+// A survey run is THREE JOBS and they do not want one speed. The coverage lines want the
+// speed the sensor is specified at; the reversals want a speed whose turn radius the hull
+// can hold - and a slower turn reaches LESS FAR outboard, which is what the wharf incident
+// earlier today was about; the transits out and home want whatever wastes least time.
+//
+// ⚠ `mission.speeds` IS THE OPERATOR'S SETTING. `mission.speed` beside it is WHAT THE BOAT
+// IS COMMANDED RIGHT NOW - two fields on purpose, because the governor below changes the
+// commanded value several times a minute and the clearance guard overrides all of it.
+// Folding that back into the setting is the "two places holding one intent" fault the
+// completion field already taught this repo, and here it would eat the operator's choice.
+//
+// THE ROLE IS NOT RE-DERIVED. It comes off `runLineIdx` and `curTurn`, the same two
+// variables accumLineTime already maintains every tick and currentActivity already reads -
+// because a second classifier would be free to disagree with the one that bills the time,
+// and then the speed the boat runs and the activity the recorder logs would describe
+// different moments. One answer, read twice.
+const SPEED_ROLES = ["transit", "turn", "survey"];
+function speedRole(){
+  if(runLineIdx >= 0) return "survey";                    // on a coverage line
+  if(curTurn >= 0) return "turn";                         // in a reversal between lines
+  return "transit";                                       // approach, region hop, goto, rth
+}
+// The speed KEY for a role, with the legacy single value as the fallback so a mission that
+// predates this - or a vessel whose profile lacks the key - still answers.
+function roleSpeed(role){
+  const s = (mission.speeds || {})[role];
+  return (s && V.SPEED_KN[s] != null) ? s : (mission.speed || "survey");
+}
+// ... and in m/s, which is what every duration estimate on this page actually wants.
+function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.survey) * 0.514444; }
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
 // --- INTENT: what the vessel is doing, WHY, and what it intends next ------------- //
 // Andy, 2026-08-28, running in Pago Pago: "Path planning seems odd but workable. is it
@@ -914,21 +969,58 @@ function clearanceGuard(){
         + (act ? "" : " Not under autonomous command — the console is not intervening."));
     }
     setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
-    if(act && c.closing && !clearance.slowed && mission.speed !== "low"){
+    if(act && c.closing && !clearance.slowed && roleSpeed(speedRole()) !== "low"){
       clearance.slowed = true;
       cmd("/api/cmd/speed", {speed:"low"});
       flashNote("Clearance " + c.m.toFixed(1) + " m and closing — SLOWED to low. "
-                + "Speed returns to " + (mission.speed || "survey") + " when clear.");
+                + "Speed returns to the " + speedRole() + " speed when clear.");
     }
   } else if(clearance.slowed && c.m > buf * 1.5){
     // HANDING IT BACK NEEDS HYSTERESIS, or the boat oscillates across the buffer edge
     // changing speed. 1.5x is the same shape of margin the nogo re-extract uses.
+    //
+    // It hands back to the ROLE's speed, not to a remembered one: by the time the boat is
+    // clear it may be doing a different job from the one it was doing when it slowed
+    // (that is often WHY it is clear - it finished the turn), and restoring the speed of a
+    // job that has ended is how a survey line gets run at transit speed.
     clearance.slowed = false;
-    if(act) cmd("/api/cmd/speed", {speed: mission.speed || "survey"});
+    commandedSpeed = null;                        // let the governor re-assert on this frame
     flashNote("Clear of the buffer (" + c.m.toFixed(1) + " m) — speed back to "
-              + (mission.speed || "survey") + ".");
+              + roleSpeed(speedRole()) + " (" + speedRole() + ").");
   }
   return c;
+}
+// --- THE SPEED GOVERNOR ------------------------------------------------------------- //
+// Commands the speed the CURRENT JOB wants, and nothing else. Runs after the clearance
+// guard on every telemetry frame, so the safety override always wins: while `slowed` is
+// set this does nothing at all, and the guard's hand-back is what releases it.
+//
+// ⚠ IT SENDS ONLY ON CHANGE. `/api/cmd/speed` is a real command that the server persists
+// and the session log records; issuing it four times a second would fill the recording
+// with noise and hammer the link for nothing. `commandedSpeed` is what this console last
+// asked for - cleared on a fresh run, and by the clearance hand-back above.
+//
+// ⚠ AND IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND, on the same gate
+// as the clearance guard: a speed sent while the operator is driving on RC is the console
+// taking a control it was never given. THE CONSOLE NEVER STEERS - this, like the guard, is
+// a speed and only ever a speed.
+let commandedSpeed = null;
+function speedGovernor(){
+  const st = (S && S.status) || {};
+  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
+  if(!act){ commandedSpeed = null; return null; }     // a stopped boat is re-governed on start
+  if(clearance.slowed) return null;                   // safety owns the throttle
+  // A TURN THE PLANNER COULD ONLY FIT AT THE SLOW RADIUS IS FLOWN AT THE SLOW SPEED. The
+  // radius that made it fit is the radius the hull holds at that speed, so running it any
+  // faster flies a turn the boat cannot track - which is the whole failure this and the
+  // clearance guard were written for. The flag is per-GAP, set by punchOut.
+  const role = speedRole();
+  const gap = role === "turn" ? (turnSeg[curTurn] || {}).from : -1;
+  const want = (role === "turn" && gap >= 0 && turnSlowAt[gap]) ? "low" : roleSpeed(role);
+  if(want === commandedSpeed) return want;
+  commandedSpeed = want;
+  cmd("/api/cmd/speed", {speed: want});
+  return want;
 }
 // OFF TRACK is displacement from the LINE OF ADVANCE THE BOAT IS ACTUALLY FLYING — the leg
 // from the waypoint it last passed to the one it is running to — and from nothing else.
@@ -1196,7 +1288,15 @@ async function loadMission(){
       boundaryClosed = !!m.boundary_closed;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
       $("#c_approach").value = mission.approach_radius_m ?? 1;
-      $("#c_speed").value = mission.speed || "survey";
+      // MIGRATE FORWARD, so an upgrade is a no-op: a mission that only has the legacy
+      // single `speed` starts all three roles there rather than at a default that would
+      // silently change what the boat does.
+      mission.speeds = {...(mission.speeds || {})};
+      SPEED_ROLES.forEach(r=>{
+        if(!mission.speeds[r]) mission.speeds[r] = mission.speed || "survey";
+        const el = $("#sp_spd_" + r); if(el) el.value = mission.speeds[r];
+      });
+      updateSpeedNote();
       $("#c_completion").value = mission.completion || "rth";
       // Apply the persisted nogo buffer to both controls + the shared model, but never
       // BELOW the active vessel's own planning.nogo_buffer_m - a plan saved against a
@@ -2118,7 +2218,7 @@ function updateLineTip(e){
   const end=(aE.e*fe+aE.n*fn) > (bE.e*fe+bE.n*fn) ? L.a : L.b;   // endpoint ahead of the boat
   const dist=distTo({lat:asv.lat,lon:asv.lon}, end);
   const sog=(S.status&&S.status.sog_kn)||0;
-  const spd=(sog>0.3?sog:(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey))*0.514444;
+  const spd=(sog>0.3?sog:roleSpeedMS("survey"));   // this is a COVERAGE line, by construction
   tip.textContent="line "+(runLineIdx+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
@@ -2287,7 +2387,7 @@ function logActivityChange(){
       behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? runLineIdx+1 : null,
       lat: st.lat_deg, lon: st.lon_deg, sog_kn: st.sog_kn}})}).catch(()=>{});
 }
-function buildLineTable(){ const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;
+function buildLineTable(){ const spd=roleSpeedMS("survey");   // a LINE is coverage, always
   return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
     return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
@@ -2383,8 +2483,8 @@ function renderLineTable(){
     return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
   }).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
-  const estSpd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;   // time from CURRENT plan speed
-  let html=`<span style="color:var(--ink-faint)">${mission.speed||"survey"} speed</span>`+
+  const estSpd=roleSpeedMS("survey");    // this table is the COVERAGE lines; turns have their own row
+  let html=`<span style="color:var(--ink-faint)">${roleSpeed("survey")} speed</span>`+
     transitRowHtml("transit → L1:", transitEst.transit, estSpd)+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
@@ -2409,7 +2509,7 @@ function renderLineTable(){
 function logLineTable(reason){ if(!mission.lines.length) return;
   const lines=buildLineTable(), turns=buildTurnTable();
   fetch("/api/logevent",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, lines, turns,
+    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, speeds:mission.speeds, lines, turns,
       total_len_m:lines.reduce((a,r)=>a+r.len_m,0), total_plan_s:lines.reduce((a,r)=>a+r.plan_s,0),
       total_actual_s:lines.reduce((a,r)=>a+r.actual_s,0),
       total_turn_s:turns.reduce((a,r)=>a+r.sec,0)}})}).catch(()=>{});
@@ -2444,7 +2544,10 @@ function updateRunTime(){
     return;
   }
   const elapsed=fmtMS(runElapsed);
-  const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444, rr=routeRemainingM();
+  // The remaining route is lines, turns and transits mixed; the honest single number is
+  // the speed of the job the boat is doing NOW, which is what it will be doing for most
+  // of what is left. Live SOG still wins below when the boat is moving.
+  const spd=roleSpeedMS(speedRole()), rr=routeRemainingM();
   if(!rr || spd<=0){ el.textContent=elapsed+(run==="paused"?" · paused":""); return; }
   if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;          // full run length captured at Start (incl. approach)
   const pct=runTotalM>0 ? Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM))) : 0;
@@ -3846,7 +3949,11 @@ async function punchOut(){
     // else it overshoots outboard into the nogo. Where half the line offset already
     // clears that radius the turn is a semicircle; where it doesn't, teardropTurn
     // loops at minTurnR instead (wider, reaches further outboard) rather than giving up.
-    const minTurnR = minTurnRadiusM(mission.speed || "survey");
+    // ⚠ THE TURN RADIUS COMES FROM THE TURN SPEED, not the survey speed. A hull holds
+    // v/omega, so the radius every generated reversal is built at belongs to the speed
+    // that reversal is FLOWN at - and a slower turn is a tighter one that reaches less
+    // far outboard, which is the clearance the wharf incident was short of.
+    const minTurnR = minTurnRadiusM(roleSpeed("turn"));
     // THE REVERSAL-PAIR CAP, FROM THE SPACING AND NOT FROM THE HULL. teardropTurn
     // refuses a pair whose ends are more than this far apart as "not a reversal", and
     // its default is a bare 60 m - a 4 m-USV assumption. That cost a 7.7 m USV EVERY turn
@@ -3967,7 +4074,7 @@ async function punchOut(){
     // teardrops that swing outboard, and if that water isn't clear they become nothing
     // at all. Both are the operator's call to make (widen the lines, or slow down), so
     // quote the actual numbers rather than just reporting the symptom.
-    const spdKey = mission.speed || "survey";
+    const spdKey = roleSpeed("turn");     // the advisory is about the TURN radius
     const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM("low");
     // WIDENING ONLY HELPS WHEN THE SPACING IS THE PROBLEM. Below 2*minTurnR the
     // reversals are teardrops, and widening turns them back into semicircles that
@@ -3984,9 +4091,13 @@ async function punchOut(){
       const pts=[patClip[k][1], ...via, patClip[k+1][0]];
       for(let i=1;i<pts.length;i++) surveyLen += distTo(pts[i-1], pts[i]); }
     const approachLen = (asv && patClip.length) ? distTo({lat:asv.lat,lon:asv.lon}, patClip[0][0]) : 0;
-    const spd=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;               // m/s
-    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${mission.speed||"survey"} (${fmtDist(surveyLen)})` : "--";
-    const approachTxt = spd>0 && approachLen>0 ? `${fmtDur(approachLen/spd)} (${fmtDist(approachLen)})` : "--";
+    // TWO SPEEDS, TWO ESTIMATES. The survey figure covers coverage lines AND the turns
+    // between them, so it is quoted at the survey speed and named as such; the approach
+    // is a transit and is timed at the transit speed. Quoting one speed for both was
+    // right only while there was one speed.
+    const spd=roleSpeedMS("survey"), spdT=roleSpeedMS("transit");                    // m/s
+    const surveyTxt = spd>0 && patClip.length ? `${fmtDur(surveyLen/spd)} @ ${roleSpeed("survey")} (${fmtDist(surveyLen)})` : "--";
+    const approachTxt = spdT>0 && approachLen>0 ? `${fmtDur(approachLen/spdT)} @ ${roleSpeed("transit")} (${fmtDist(approachLen)})` : "--";
     $("#v_surveydur").textContent = surveyTxt;                                   // vessel-card readouts
     $("#v_approach").textContent = approachTxt;
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
@@ -4487,9 +4598,16 @@ function recalcForSpeed(){
 let speedWarnShown = false;   // is the committed-plan speed warning currently ours to clear?
 // Durations + reversal feasibility for a plan that is already committed, derived from
 // mission.waypoints / mission.lines rather than from a pattern that no longer exists.
+// ⚠ THE BANNER AND THE TEST THAT CLEARS IT SHARE THIS STRING, and until 2026-08-31 they
+// shared it only by luck: the literal "Speed " was written twice, and renaming the banner
+// to say "Turn speed" (the radius comes from the TURN role now) left the clear branch
+// matching a prefix nothing produced - so a warning raised by speeding up could never be
+// cleared by slowing back down. speed_recalc check 5b caught it in the same run. One
+// constant, so the two cannot drift apart again.
+const SPEED_WARN_PREFIX = "Turn speed ";
 function recalcCommittedForSpeed(){
   const wps = mission.waypoints || [];
-  const spd = (V.SPEED_KN[mission.speed] || V.SPEED_KN.survey) * 0.514444;
+  const spd = roleSpeedMS("survey"), spdT = roleSpeedMS("transit");
   if(!wps.length || !(spd > 0)){
     ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; });
     return;
@@ -4497,19 +4615,19 @@ function recalcCommittedForSpeed(){
   let runLen = 0;
   for(let i=1;i<wps.length;i++) runLen += distTo(wps[i-1], wps[i]);
   const approachLen = asv ? distTo({lat:asv.lat,lon:asv.lon}, wps[0]) : 0;
-  $("#v_surveydur").textContent = fmtDur(runLen/spd) + " @ " + (mission.speed||"survey")
+  $("#v_surveydur").textContent = fmtDur(runLen/spd) + " @ " + roleSpeed("survey")
     + " (" + fmtDist(runLen) + ")";
-  $("#v_approach").textContent = approachLen > 0
-    ? fmtDur(approachLen/spd) + " (" + fmtDist(approachLen) + ")" : "--";
+  $("#v_approach").textContent = approachLen > 0 && spdT > 0
+    ? fmtDur(approachLen/spdT) + " @ " + roleSpeed("transit") + " (" + fmtDist(approachLen) + ")" : "--";
   // THE CHECK THAT MATTERS. The committed turn waypoints were generated at whatever speed
   // was set when the plan was punched. SLOWING DOWN only ever makes them easier - the
   // minimum radius shrinks. SPEEDING UP can make a reversal the boat can no longer hold,
   // and the plan looks exactly the same on the chart. The line spacing is derivable, so
   // say so rather than letting it be discovered on the water.
   const ci = committedPatternInfo();
-  const need = 2 * minTurnRadiusM(mission.speed || "survey");
+  const need = 2 * minTurnRadiusM(roleSpeed("turn"));   // the TURN speed sets the radius
   if(ci && ci.spacing != null && ci.spacing < need){
-    showBanner("Speed " + (mission.speed||"survey") + ": the committed plan's " + ci.spacing.toFixed(1)
+    showBanner(SPEED_WARN_PREFIX + roleSpeed("turn") + ": the committed plan's " + ci.spacing.toFixed(1)
       + " m spacing is inside the " + need.toFixed(1) + " m a plain reversal needs at this speed. "
       + "Its turn waypoints were generated for the SPEED IT WAS PUNCHED AT — re-draw and Punch Out "
       + "again to rebuild them, or drop the speed.");
@@ -4520,19 +4638,44 @@ function recalcCommittedForSpeed(){
     // caught live. Cleared only if OUR warning is still the one on screen, so an unrelated
     // banner posted in between is not wiped by this.
     const b = $("#encbanner");
-    if(b && b.textContent.indexOf("Speed ") === 0) b.style.display = "none";
+    if(b && b.textContent.indexOf(SPEED_WARN_PREFIX) === 0) b.style.display = "none";
     speedWarnShown = false;
   }
 }
-$("#c_speed").onchange = ()=>{
-  mission.speed = $("#c_speed").value; saveMission();
-  // COMMAND IT, don't just record it. The commanded speed reached the boat ONLY through
-  // upload_plan, so changing the selector mid-run recomputed every planning figure on
-  // screen while the boat carried on at the speed it was uploaded with - speed over ground
-  // never moved. Speed is a LIVE command, exactly like the approach radius beside it.
-  cmd("/api/cmd/speed", {speed: mission.speed});
-  recalcForSpeed();
-};
+// THE THREE ROLE SPEEDS. One handler for all of them, because the only thing that differs
+// is which role changed - and a per-role copy is three places to forget recalcForSpeed().
+//
+// COMMAND IT, DON'T JUST RECORD IT. The original single selector taught this: the commanded
+// speed reached the boat ONLY through upload_plan, so moving the selector mid-run recomputed
+// every planning figure on screen while the boat carried on at the uploaded speed. It is a
+// LIVE command. What changed is WHICH change is live: setting the speed for a role the boat
+// is not currently doing must not touch the throttle, so the governor is asked to re-assert
+// rather than a value being sent from here. `commandedSpeed = null` is that ask - the next
+// telemetry frame sends the new value if, and only if, it is the job the boat is doing.
+SPEED_ROLES.forEach(role=>{
+  const el = $("#sp_spd_" + role); if(!el) return;
+  el.onchange = ()=>{
+    mission.speeds = {...(mission.speeds||{}), [role]: el.value};
+    saveMission();
+    commandedSpeed = null;          // let the governor decide whether this one is live now
+    updateSpeedNote();
+    // The TURN speed is not only a throttle: it sets the radius every generated turn is
+    // built at, so changing it can make a committed plan's reversals unflyable (or make
+    // ones that were refused fit). recalcForSpeed is what re-checks and says so.
+    recalcForSpeed();
+  };
+});
+// What the three are, in one line under them - and in KNOTS, because "survey" is a label
+// and the operator is deciding about a speed. Says so out loud when they are all equal,
+// which is the state a console that has never been told otherwise is in.
+function updateSpeedNote(){
+  const el = $("#sp_spd_note"); if(!el) return;
+  const kn = r => (V.SPEED_KN[roleSpeed(r)] != null ? V.SPEED_KN[roleSpeed(r)].toFixed(1) + " kn" : "--");
+  const same = SPEED_ROLES.every(r => roleSpeed(r) === roleSpeed("survey"));
+  el.textContent = same
+    ? "all three at " + roleSpeed("survey") + " · " + kn("survey") + " — set them apart to differ"
+    : SPEED_ROLES.map(r => r + " " + roleSpeed(r) + " (" + kn(r) + ")").join(" · ");
+}
 // TWO DIFFERENT THINGS, and keeping them apart is the whole point:
 //   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,
 //                     so this reads "loiter" during a Go-To, correctly.
@@ -5555,8 +5698,11 @@ function onState(s){
     }
     // THE GUARD RUNS BEFORE THE READOUTS, so the card and the banner describe the same
     // frame the guard acted on rather than the one before it.
+    // ORDER MATTERS: accumLineTime maintains runLineIdx/curTurn, which is what the
+    // governor reads for the role - so the role describes THIS frame, not the last.
+    // The clearance guard runs first of all, because safety outranks the role.
     clearanceGuard();
-    updateActiveLine(); accumLineTime(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    updateActiveLine(); accumLineTime(); speedGovernor(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)
@@ -5715,13 +5861,17 @@ function updateMissionCard(){
     if(!k){ msp.textContent = "--"; msp.className = "vv"; }
     else {
       msp.textContent = k + (kn != null ? " · " + kn.toFixed(1) + " kn" : "");
-      const agrees = (k === (mission.speed || "survey"));
+      // Against the ROLE the boat is in, not against one setting - during a turn the
+      // right answer IS the turn speed, and flagging that as a disagreement would train
+      // the operator to ignore the one readout that catches a real one.
+      const agrees = (k === (clearance.slowed ? "low" : roleSpeed(speedRole())));
       msp.className = "vv" + (agrees ? "" : " warn");
       msp.title = agrees
         ? "The vessel is running to " + k + " (" + (kn != null ? kn.toFixed(1) + " kn" : "?")
           + "), which is what the command bar has selected."
         : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
-          + (mission.speed || "survey") + ". The vessel's value is the one moving it.";
+          + (clearance.slowed ? "low (safety override)" : roleSpeed(speedRole()) + " for the "
+             + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
     }
   }
   // Waypoint progress is the top bar's WPT pill (written in onState) once a plan is
@@ -5729,7 +5879,7 @@ function updateMissionCard(){
   if(!S.wp_total && runRoute && runRoute.length) $("#v_wpt").textContent = runRoute.length + " planned";
   const rr = routeRemainingM();
   $("#mi_len").textContent = rr ? fmtDist(rr.total) : "--";
-  const spdPlan=(V.SPEED_KN[mission.speed]||V.SPEED_KN.survey)*0.514444;
+  const spdPlan=roleSpeedMS(speedRole());
   const sog=(st.sog_kn||0)*0.514444, spd=(sog>0.15? sog : spdPlan);
   const ended = st.holding || st.drifting;
   $("#mi_toend").textContent = ended ? "arrived"

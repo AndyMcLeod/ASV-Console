@@ -55,7 +55,67 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-31 — the buffer is enforced on the boat, not only on the plan)
+## ⇒ START HERE (handoff refreshed 2026-08-31 — one speed became three, and the console governs which is live)
+
+**NEWEST (this commit): SPEED BY ROLE.** Andy: *"Vessel speed should be selectable for
+various modes. Allow separate speed selection for transits, turns, and survey. These values
+may be temporarily over-ridden for safety of vessel situations. Remove the old speed
+selection function from the chart bar and implement in the survey card."*
+
+A survey run is **three jobs** and they do not want one speed. Coverage wants the speed the
+sensor is specified at; the reversals want a speed whose radius the hull can hold; the
+transits want whatever wastes least time. `mission.speeds = {transit, turn, survey}`, three
+selects in the SURV card, and the old `#c_speed` is gone from the command bar.
+
+**THE CONSOLE GOVERNS WHICH ONE IS LIVE.** `speedGovernor()` runs every telemetry frame and
+commands the speed the current job wants. Four rules, each pinned by a check:
+* **The role is NOT re-derived** — it comes off `runLineIdx` and `curTurn`, the same two
+  variables `accumLineTime` maintains and `currentActivity` reads. A second classifier would
+  drift from the one that bills the time, and then the speed the boat runs and the activity
+  the recorder logs would describe different moments.
+* **Safety outranks the role.** While the clearance guard holds the boat slow the governor
+  stands off entirely — it does not re-assert underneath it, which would be two things
+  fighting over the throttle at 4 Hz. The guard's hand-back goes to the ROLE's speed, not to
+  a remembered one: by the time the boat is clear it may be doing a different job.
+* **It sends only on change**, and only under autonomous command (running, armed, no E-STOP,
+  not holding). **It slows and it NEVER steers.**
+* **A turn the planner could only fit at the SLOW radius is flown at the slow speed** — the
+  per-gap `turnSlowAt` flag from the wharf fix. The radius that made it fit is the radius the
+  hull holds at that speed.
+
+**⚠ `speeds` IS THE OPERATOR'S SETTING; `speed` BESIDE IT IS WHAT THE BOAT IS COMMANDED NOW.**
+Two fields on purpose. The governor changes the commanded value several times a minute and
+`Engine.set_speed` persists it; folding that back into the setting would eat the operator's
+choice every line. Exactly the completion-field lesson, one field over — and `set_speed`'s
+docstring, which used to claim the plan speed was one concept, now says so.
+
+**⚠ AND THE TURN RADIUS IS DERIVED FROM THE TURN SPEED.** This is a safety change, not a
+convenience: a hull holds v/ω, so the radius every generated reversal is BUILT at must be
+the speed it is FLOWN at. A slower turn is tighter and reaches less far outboard — the
+clearance the wharf incident was short of. Every planning figure moved to the role that
+governs it: per-line times at the survey speed, approach estimates at the transit speed,
+both turn-radius checks at the turn speed.
+
+**MIGRATION IS A NO-OP, deliberately.** A mission with only the legacy `speed` starts all
+three roles there, client and server (`_norm_speeds`), so nobody's boat changes speed
+because they pulled a build. The card says so out loud while they are equal.
+
+**⚠ AN EXISTING CHECK CAUGHT A DEFECT I INTRODUCED IN THE SAME RUN.** `recalcCommittedForSpeed`
+raises a banner and a later branch clears it — identified by the prefix `"Speed "`, written
+as a literal in BOTH places. Renaming the banner to "Turn speed" (the radius comes from the
+turn role now) left the clear branch matching a prefix nothing produced, so a warning raised
+by speeding up could never be cleared by slowing back down. `speed_recalc` check 5b went red.
+It is `SPEED_WARN_PREFIX`, one constant, now.
+
+**`tests/speed_modes.js` — 20 checks, FOURTEEN MUTATIONS.** Two survived the first pass and
+both were fixtures that could not discriminate: check 5 drove a world whose turn speed was
+already `low`, so a governor ignoring the slow-turn flag still produced `low`; and check 11b
+asserted ONE approach estimate where there are two (drawn and committed), so a mutation
+changing the first left the second matching. **Verified live:** a Go-To with transit set to
+`high` commanded `high` and the boat ran 13.78 kn while `mission.speed` still read `survey`,
+and the operator's three settings were intact afterwards.
+
+**PREVIOUS: the buffer is enforced on the boat, not only on the plan.**
 
 **⇒ ANDY'S RULING, 2026-08-31: THIS IS THE ONLY ACTIVE PROJECT.** *"stop updating other
 projects. We concentrate only on ASV Console moving forward. There may be components of
@@ -74,8 +134,7 @@ somebody otherwise:
 * **Don't "tidy up" by syncing them back.** If a change is wanted upstream, that is its own
   deliberate piece of work in that repo, not a sync in this direction.
 
-**NEWEST (this commit), AND IT IS A SAFETY FIX. A DriX PASSED A WHARF AT 0.6 m WITH A 5 m
-BUFFER SET, AND NOTHING REACTED.** Andy, with a screenshot of the recorded track:
+**A DriX PASSED A WHARF AT 0.6 m WITH A 5 m BUFFER SET, AND NOTHING REACTED.** Andy, with a screenshot of the recorded track:
 
 > *"This image shows a path line intersecting a pier without any reaction from the system.
 > This is very bad. During this sort of maneuver and when extreme close range is an issue,
@@ -1236,7 +1295,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **41 regression suites / 768 assertions** (21 JS / 439,
+turn-water hold is closed (`a548c14`). **42 regression suites / 788 assertions** (22 JS / 459,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1269,7 +1328,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-ONE REGRESSION SUITES (768 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-TWO REGRESSION SUITES (788 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1293,6 +1352,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/speed_modes.js` | SPEED BY ROLE: the three settings (transit / turn / survey), the governor that commands the one the current job wants, the safety override outranking it, and the TURN RADIUS being derived from the TURN speed (20) |
 | `node tests/clearance_guard.js` | **SAFETY.** The turn LADDER (outboard -> inboard -> slow radius -> refuse) and the RUNTIME clearance guard: the live distance to the keep-out model, the alarm, and the automatic slow-down that never steers and never acts unless the boat is under autonomous command (23) |
 | `node tests/port_slew.js` | the port change is a visible journey that always ARRIVES: the zoom-out/cross/zoom-in arc, scaled by distance, the short way over the antimeridian, elapsed-time driven so a throttled window still lands, and the new area's keep-out model fetched before the card comes down (23) |
 | `node tests/off_track.js` | off track is the SIGNED PERPENDICULAR from the leg being flown, never the range to the nearest survey line; it names its subject; and no leg means no reading (17) |

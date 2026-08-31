@@ -765,6 +765,44 @@ def _cache_plan_completion(v):
     return _PLAN_COMPLETION
 
 
+# --------------------------------------------------------------------------- #
+#  SPEED BY ROLE: transit, turn, survey                                        #
+# --------------------------------------------------------------------------- #
+# Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow
+# separate speed selection for transits, turns, and survey. These values may be
+# temporarily over-ridden for safety of vessel situations."
+#
+# A survey run is three different jobs and they do not want the same speed. The
+# coverage lines want the speed the SENSOR is specified at; the reversals between
+# them want a speed whose turn radius the hull can hold - and a slower turn reaches
+# LESS FAR outboard, which is exactly what the wharf incident earlier the same day
+# was about; the transits out and home want whatever wastes least time.
+#
+# ⚠ `speeds` IS THE OPERATOR'S SETTING, AND `speed` BESIDE IT IS WHAT THE BOAT IS
+# COMMANDED RIGHT NOW. Two fields on purpose. The console GOVERNS speed as the run
+# moves between the three jobs and the clearance guard overrides all of it, so the
+# commanded value changes several times a minute; folding that back into the
+# operator's setting is the "two places holding one intent" fault this repo already
+# learned from the completion field (see plan_completion), and here it would quietly
+# eat the operator's choice.
+SPEED_ROLES = ("transit", "turn", "survey")
+
+
+def _norm_speeds(raw, fallback="survey"):
+    """Three role speeds, each a key the active vessel actually has.
+
+    A missing or unknown role falls back - to the legacy single `speed` when the
+    mission file predates this, which is what makes the upgrade a no-op: all three
+    start exactly where the one used to be, so nobody's boat changes speed because
+    they pulled a new build.
+    """
+    out = {}
+    for role in SPEED_ROLES:
+        v = (raw or {}).get(role)
+        out[role] = v if (isinstance(v, str) and (not SPEED_KN or v in SPEED_KN)) else fallback
+    return out
+
+
 def load_mission():
     try:
         with open(MISSION_PATH, "r", encoding="utf-8") as f:
@@ -776,6 +814,7 @@ def load_mission():
                 "arrival_radius_m": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
                 "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
                 "speed": m.get("speed") or "survey",
+                "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
                 # plan-run completion semantics (Survey/search as a typed behavior):
                 # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
                 # | rth (chain the ENC-routed Return-to-Home). Default: rth.
@@ -791,7 +830,8 @@ def load_mission():
     except (OSError, ValueError):
         pass
     return {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
-            "approach_radius_m": WP_APPROACH_M, "speed": "survey", "completion": "rth",
+            "approach_radius_m": WP_APPROACH_M, "speed": "survey",
+            "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "boundary": [], "boundary_closed": False}
 
 
@@ -813,6 +853,7 @@ def save_mission(m):
         "arrival_radius_m": m.get("arrival_radius_m", 2.0),
         "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
         "speed": m.get("speed") or "survey",
+        "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
         "completion": _cache_plan_completion(m.get("completion")),
         "buffer_m": m.get("buffer_m", 3.0),
         "boundary": m.get("boundary") or [],
@@ -3018,7 +3059,13 @@ class Engine:
             wpts = self._sanitize_route(route) if route else (m.get("waypoints") or [])
             self._require(len(wpts) >= 1, "add at least one waypoint first")
             self.run_completion = plan_completion()   # a plan run honours the setting
-            link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), m.get("speed", "survey"),
+            # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
+            # console's governor re-asserts the right role on the first telemetry frame
+            # either way, but starting the boat at the survey speed for a 30-minute transit
+            # out is a real cost for the seconds before that frame arrives, and it is the
+            # value that shows on the vessel card the instant the plan is uploaded.
+            _sp = _norm_speeds(m.get("speeds"), m.get("speed", "survey"))
+            link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
                              m.get("approach_radius_m", WP_APPROACH_M), completion=self.run_completion)
             self.plan_uploaded = True
             self.wp_total = len(wpts)
@@ -3037,11 +3084,19 @@ class Engine:
                     pass
 
     def set_speed(self, key):
-        """Live speed change: command the link AND persist the operator's selection, so the
-        two cannot drift. The plan speed is one concept - what the operator wants the boat to
-        do - unlike completion, where the SETTING and the RUN genuinely differ (see
-        plan_completion). Persisting here means an Upload later re-sends the same value
-        rather than reverting the boat to whatever the mission file last held."""
+        """Live speed change: command the link AND persist what the boat is now commanded.
+
+        ⚠ WHAT IS PERSISTED HERE IS `speed`, AND `speed` IS NO LONGER THE OPERATOR'S
+        SETTING (2026-08-31). It used to be both, and this docstring used to say the plan
+        speed was one concept. It is two now: `speeds` holds the operator's three role
+        choices (transit / turn / survey) and is written only by the survey card, while
+        `speed` is what the vessel was last told - which the console's speed GOVERNOR
+        changes every time the run moves between coverage, a turn and a transit, and which
+        the clearance guard overrides for safety. Writing that stream of commanded values
+        into the operator's setting would eat their choice several times a minute; the
+        completion field is the same lesson (see plan_completion). save_mission carries
+        `speeds` through untouched, which is what keeps them apart.
+        """
         if key not in SPEED_KN:
             raise VcuProtocolError("unknown speed %r (want one of %s)" % (key, ", ".join(sorted(SPEED_KN))))
         m = load_mission()

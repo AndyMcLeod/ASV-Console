@@ -15,10 +15,20 @@ and routes Go-To, RTH, search, transit and survey transits around it.
 Python-3 standard library only. **No pip, no build step, no bundler** — the page
 and its ES modules under `static/js/` are served exactly as written. Seven of those
 modules (`core_geodesy.js`, `core_geometry.js`, `core_turns.js`, `raster.js`,
-`keepouts.js`, `routing.js`, `contracts.js`) are **vendored from `asv_core`** and
-shared with the sibling planning tools — change them there, not here; a copy that
-has drifted from its source is a failed suite in that repo. The `core_` prefix marks
-the three whose natural name is already taken by a module of this console's own. Run it, a
+`keepouts.js`, `routing.js`, `contracts.js`) began as copies **vendored from `asv_core`**.
+The `core_` prefix marks the three whose natural name is already taken by a module of this
+console's own.
+
+> **⚠ Two of them are this repository's files now** (2026-08-31): `core_turns.js` and
+> `keepouts.js` carry local safety changes — the turn that goes *away* from a dock rather
+> than being abandoned, and the live clearance measure — that `asv_core` does not have.
+> Their vendor headers still say *"DO NOT EDIT THIS COPY"* and name `tools/vendor.py`;
+> **that instruction is wrong here and running it would silently delete the fix.** Each
+> file opens with a note saying so, and `tests/clearance_guard.js` is what would catch it.
+> A drift report from that repo is correct and expected. The other five are still plain
+> copies and are still best changed at the source.
+
+Run it, a
 browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
 keep-clear buffer, short survey/search patterns).
 
@@ -539,6 +549,25 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    serpentine. At each line-to-line reversal Punch Out inserts a **generated turn**
    that rolls the boat onto the next line *aligned* with its heading instead of
    pivoting hard, and **shortens the survey lines** slightly to give the turn room.
+
+   **Speed is chosen per job, not once for the plan.** A survey run is three different
+   things and they do not want the same speed, so the SURV card carries three: **Survey**
+   (the coverage lines — the speed the sensor is specified at, and what the per-line plan
+   times are computed from), **Turn** (the reversals between them) and **Transit** (the
+   approach out, hops between regions, and Go-To / RTH / Transit). The console commands
+   whichever the boat's current job wants as the run moves between them, and hands the
+   value back when it changes. They start **equal**, so a console that has never been told
+   otherwise behaves exactly as it always did.
+
+   *The turn speed is not only a throttle.* A hull can only hold `v/ω`, so it also sets the
+   **radius every generated turn is built at** — a slower turn is a tighter one that reaches
+   less far outboard, which is what buys clearance from a dock at the end of a line. Changing
+   it re-checks the committed plan and says so if its reversals no longer fit.
+
+   Two overrides sit above the operator's choice, in this order: the **clearance guard**
+   (see the Intent card's clearance row) drops the boat to low speed when it is inside the
+   buffer and closing, and a turn the planner could **only fit at the slow radius** is flown
+   at that speed. Both are temporary; the run returns to the role's speed when clear.
 
    **A refused turn is retried, not abandoned.** The normal turn loops *outboard*,
    past the end of the line just run. Where a keep-out stands in that water the

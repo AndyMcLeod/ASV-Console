@@ -87,6 +87,14 @@ function grab(name) {
   for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
   return H.slice(start, k + 1);
 }
+// A module-level `const X = ...;` / `let X = ...;` pulled out verbatim - the REAL value.
+function grabDecl(name) {
+  for (const kw of ["const ", "let "]) {
+    const i = H.indexOf(kw + name + " =");
+    if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
+  }
+  throw new Error("test setup: declaration " + name + " not found (renamed?)");
+}
 
 console.log("Units toggle — one preference, applied at the display edge, long distances only:");
 
@@ -202,16 +210,24 @@ check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints 
     // harness pattern): a 2 km transit must read km in km mode and nm in nm mode.
     var M_PER_DEG_LAT = 111320;
     var SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 }, MAX_TURN_RATE_DEG_S = 20;
+    V.SPEED_KN = SPEED_KN;      // roleSpeed validates a key against the VESSEL block
     var speedWarnShown = false, asv = null, mission;
     var EL = {};
     var $ = sel => (EL[sel] = EL[sel] || { textContent: "", style: {} });
     var showBanner = () => {}, flashNote = () => {};
+    // SPEED BY ROLE (2026-08-31): the two duration rows are computed at the SURVEY and
+    // TRANSIT speeds now, through these helpers. Grabbed with the rest, so this check
+    // keeps exercising the page's own arithmetic rather than a stub of it.
     // eslint-disable-next-line no-eval
     eval(
+         grabDecl("SPEED_ROLES") + "\n" +
+         grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+         grabDecl("SPEED_WARN_PREFIX") + "\n" +
          grab("committedPatternInfo") + "\n" +
          grab("recalcCommittedForSpeed"));
     const wps = [{ lat: 38.7896, lon: -75.1609 }, { lat: 38.7896 + 2000 / M_PER_DEG_LAT, lon: -75.1609 }];
-    mission = { speed: "survey", lines: [], waypoints: wps };
+    mission = { speed: "survey", speeds: { transit: "survey", turn: "survey", survey: "survey" },
+                lines: [], waypoints: wps };
     setDistUnit("km"); recalcCommittedForSpeed();
     const km = EL["#v_surveydur"].textContent;
     setDistUnit("nm"); recalcCommittedForSpeed();
