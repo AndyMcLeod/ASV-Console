@@ -128,7 +128,14 @@ telemetry frame:
 
 * **Now** — **what it is doing** (surveying or transiting, and which line or why), the
   mode beneath that, which waypoint of how many and what that waypoint is, bearing and
-  range to it, cross-track error, speed.
+  range to it, **off track**, speed. Off track is the signed displacement from the leg the
+  boat is *actually flying* — the waypoint it last passed to the one it is running to —
+  **named with its subject**: `12.4 m right of line 3` while a coverage line is the active
+  leg, `12.4 m right of leg 7→8` on an approach, a reversal, a Go-To or an RTH. It is the
+  perpendicular to that line of advance, not the range to the segment, so it does not
+  decay into range-to-waypoint as the boat closes a turn; and before the first waypoint is
+  passed it reads `— no leg of advance yet` rather than a `0.0` an operator would read as
+  dead on track.
 * **Why this route** — the planner's own reasoning, **captured when the plan was
   committed**: routed clear of the keep-out model via *N* waypoints, or direct because
   the straight line was already clear; whether it rode the Rule 9 lane and whether that

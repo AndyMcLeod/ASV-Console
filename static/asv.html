@@ -807,6 +807,42 @@ function fmtBrgRange(from, to){
   if(!from || !to) return "--";
   return String(Math.round(azTo(from, to))%360).padStart(3,"0") + "° · " + fmtDist(distTo(from, to));
 }
+// OFF TRACK is displacement from the LINE OF ADVANCE THE BOAT IS ACTUALLY FLYING — the leg
+// from the waypoint it last passed to the one it is running to — and from nothing else.
+//
+// Andy, 2026-08-29: "On the Intent card the 'off track' value is measure current position
+// to the nearest survey line. This is nonsensical. 'off track' should measure displacement
+// from active planned line of advance." Then the case that IS sensible: "if the ASV is on a
+// survey line in active survey mode then it makes sense."
+//
+// Both halves are right, and the sensible one falls out of the general rule rather than
+// needing a branch of its own: while the boat is running a coverage line, the active leg IS
+// that line — currentLegLine() proves it by matching BOTH endpoints, which is why it can
+// say so rather than guess — so on line, this returns exactly the number he means. What it
+// will no longer do is answer with the NEAREST line, which was wrong in every other state
+// the boat is ever in: on the approach to the survey area, in a reversal between lines, on
+// a Go-To, on a Transit and on an RTH it described a line the boat was not following, and
+// on a lawnmower plan it hopped to a different line every time the boat crossed a midpoint
+// — the number moved because the geometry moved, not because the boat had gone anywhere.
+//
+// PERPENDICULAR TO THE INFINITE LINE, not to the clamped segment. Point-to-segment distance
+// decays into RANGE-TO-WAYPOINT as the boat closes the end of a leg, which is a different
+// quantity that already has its own row ("next wp") — and clamping is exactly what would
+// hide a boat holding its track but carried well past the turn.
+//
+// SIGNED, and the sign is real this time. The old value came out of Math.hypot, so it could
+// not be negative and the card's "left" branch was unreachable code: every reading this
+// console has ever shown said "right". Positive = the boat is to STARBOARD of the line of
+// advance, so the row reads the way the operator is looking at the chart.
+function offTrack(rr, idx){
+  if(!asv || !rr || idx < 1 || idx >= rr.length) return null;   // nothing passed yet, or done
+  const a = toEN(rr[idx-1], asv), b = toEN(rr[idx], asv);       // boat frame: the boat is the origin
+  const dx = b.e-a.e, dy = b.n-a.n, len = Math.hypot(dx, dy);
+  if(len < 0.5) return null;                                    // a leg with no length has no direction
+  const line = currentLegLine();
+  return {m: (dx*a.n - dy*a.e)/len,                             // + = boat to starboard of the leg
+          of: line >= 0 ? "line " + (line+1) : "leg " + idx + "→" + (idx+1)};
+}
 // The live half: NOW and NEXT are DERIVED every tick from the route the boat is actually
 // following plus its reported waypoint index. Only the WHY is remembered.
 function renderIntent(){
@@ -834,9 +870,16 @@ function renderIntent(){
   html += row("mode", kind.toUpperCase() + (run ? " · " + run : ""));
   if(rr.length) html += row("waypoint", (idx+1) + " of " + rr.length + " — " + wptRole(idx, rr));
   if(here && nextWp) html += row("next wp", fmtBrgRange(here, nextWp));
-  if(isFinite(activeXTE) && Math.abs(activeXTE) < 1e5)
-    html += row("off track", Math.abs(activeXTE).toFixed(1) + " m " + (activeXTE>0?"right":"left"),
-                Math.abs(activeXTE) > 25 ? "#e8b46a" : "var(--ink)");
+  // NAME WHAT IT IS MEASURED FROM. A bare distance with no subject is how the nearest-line
+  // reading survived this long: nothing on the card said which line it meant, so a number
+  // that had nothing to do with the boat's track was indistinguishable from one that did.
+  const ot = offTrack(rr, idx);
+  if(ot)
+    html += row("off track", Math.abs(ot.m).toFixed(1) + " m " + (ot.m>0?"right":"left")
+                             + " of " + ot.of,
+                Math.abs(ot.m) > 25 ? "#e8b46a" : "var(--ink)");
+  else if(here && rr.length)
+    html += row("off track", "— no leg of advance yet", "var(--ink-faint)");
   if(st.sog_kn != null) html += row("speed", st.sog_kn.toFixed(1) + " kn"
       + (st.speed_key ? " (" + st.speed_key + ")" : ""));
   // ---- WHY (captured with the plan) ----
@@ -1656,10 +1699,20 @@ function drawWindRose(){
   ctx.restore();
 }
 
-// signed cross-track distance to the nearest planned line
-let activeXTE = Infinity;                       // boat's distance to the active line (m)
-function updateXTE(){
-  activeLine = -1; activeXTE = Infinity;
+// WHICH SURVEY LINE IS NEAREST THE BOAT — for the chart's line HIGHLIGHT, and for nothing
+// else. That is a drawing question ("which line is the operator looking at"), and a
+// deliberately different one from "which line is the boat running": the LINES table keys
+// its own highlight off runLineIdx, sequence-matched, and says so where it does it.
+//
+// IT USED TO PUBLISH A DISTANCE TOO — `activeXTE`, the point-to-segment range to whichever
+// line came out nearest — and the Intent card printed that as "off track". So the card
+// answered with a line the boat was not following on every transit, turn, Go-To and RTH.
+// Off track is offTrack() now, measured against the leg being flown; nothing wants a
+// nearest-line distance any more, so nothing computes one. Keep it that way: this function
+// resolves an INDEX for the draw, and a distance re-added here is a second definition of
+// off track waiting to be mistaken for the first.
+function updateActiveLine(){
+  activeLine = -1;
   if(!asv || !mission.lines.length) return;
   let best = 1e12;
   mission.lines.forEach((L,i)=>{
@@ -1669,7 +1722,6 @@ function updateXTE(){
     const cx = a.e+t*dx, cy = a.n+t*dy, d = Math.hypot(cx, cy);
     if(d < best){ best = d; activeLine = i; }
   });
-  activeXTE = best;
 }
 // point-to-segment distance in pixels
 // nearest survey line (mission.lines index) within `tol` px of (cx,cy) map-local, or -1
@@ -2303,7 +2355,7 @@ function commitPattern(){
   // resetPattern() blanks the duration rows along with the pattern; recompute them from
   // the plan that was just committed, so they describe it instead of going to "--" at the
   // moment it becomes real. Same fault the survey card had, one row over.
-  resetPattern(); recalcCommittedForSpeed(); updateXTE(); saveMission(); render();
+  resetPattern(); recalcCommittedForSpeed(); updateActiveLine(); saveMission(); render();
 }
 
 // --- arbitrary survey-area boundary (CAMP SurveyArea) -------------------- //
@@ -2496,7 +2548,7 @@ function commitSearch(){
   route.forEach(p=> mission.waypoints.push({lat:p.lat, lon:p.lon}));
   if(searchRouted && searchRouted.unsafe.length)
     showBanner(searchRouted.unsafe.length+" search transit(s) cross a nogo zone with no detour (RED) — review the committed plan.");
-  resetSearch(); updateXTE(); saveMission(); render();
+  resetSearch(); updateActiveLine(); saveMission(); render();
 }
 
 // --- ENC chart features + Punch Out -------------------------------------- //
@@ -3596,10 +3648,10 @@ function syncLineEndpoint(oldLL, newLL){ for(const L of mission.lines){
   if(_eqLL(L.b,oldLL)) L.b={lat:newLL.lat,lon:newLL.lon}; } }
 function deleteWaypoint(i){ const p={...mission.waypoints[i]}; mission.waypoints.splice(i,1);
   mission.lines=mission.lines.filter(L=>!(_eqLL(L.a,p)||_eqLL(L.b,p)));   // drop a line whose endpoint went
-  updateXTE(); saveMission(); }
+  updateActiveLine(); saveMission(); }
 function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; mission.lines.splice(li,1);
   mission.waypoints=mission.waypoints.filter(p=>!(_eqLL(p,L.a)||_eqLL(p,L.b)));  // + its endpoint waypoints
-  updateXTE(); saveMission(); }
+  updateActiveLine(); saveMission(); }
 // --- interaction --------------------------------------------------------- //
 let dragging=false, last=null, downAt=null, wpDrag=null;
 mapEl.addEventListener("mousedown", e=>{
@@ -3732,7 +3784,7 @@ window.addEventListener("mousemove", e=>{
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
     syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
-    $("#lineTip").style.display="none"; updateXTE(); render(); return; }
+    $("#lineTip").style.display="none"; updateActiveLine(); render(); return; }
   // the pending measurement's far end follows the pointer. Deliberately does NOT return:
   // a pan may be live underneath (the chart still drags while the tool is armed), and the
   // pan branch below renders — so only render here when it will not.
@@ -3987,7 +4039,7 @@ $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo nev
   nogoShow=!nogoShow; updateNogoUI(); render();
 };
 $("#ln_clr").onclick = ()=>{ mission.waypoints=[]; mission.lines=[]; resetPattern();
-  runRoute=null; planIntent=null; runUnsafe=[]; updateXTE(); saveMission(); render(); };
+  runRoute=null; planIntent=null; runUnsafe=[]; updateActiveLine(); saveMission(); render(); };
 $("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
 $("#c_approach").onchange = ()=>{
   const v = Math.max(0.5, Math.min(50, parseFloat($("#c_approach").value)||1));
@@ -5080,7 +5132,7 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
-    updateXTE(); accumLineTime(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    updateActiveLine(); accumLineTime(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)

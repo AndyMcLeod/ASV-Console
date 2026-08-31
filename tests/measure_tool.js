@@ -264,7 +264,7 @@ function gesture() {
     originPx: () => ({ x: 0, y: 0 }),
     worldToLatLon: (x, y) => ({ lat: y / 1000, lon: x / 1000 }),
     render: () => { G.renders++; },
-    saveMission: () => {}, updateXTE: () => {}, updatePatReadout: () => {},
+    saveMission: () => {}, updateActiveLine: () => {}, updatePatReadout: () => {},
     updateSearchPanel: () => {}, updateTransitPanel: () => {}, deleteWaypoint: () => {},
     deleteLineByIndex: () => {}, surveyLineAtPx: () => -1, closeBoundary: () => {},
     doGoTo: () => {}, doSpawn: () => {}, setMode: () => {}, rocPost: () => {},

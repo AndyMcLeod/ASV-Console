@@ -55,9 +55,54 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-28 — every vessel on the chart points where it is going)
+## ⇒ START HERE (handoff refreshed 2026-08-29 — off track is measured from the leg being flown)
 
-**NEWEST (this commit): THE AIS CONTACTS GET THE SAME GLYPH.** Andy: "green for cargo
+**NEWEST (this commit): "OFF TRACK" WAS MEASURING THE DISTANCE TO THE NEAREST SURVEY LINE.**
+Andy: *"On the Intent card the 'off track' value is measure current position to the nearest
+survey line. This is nonsensical. 'off track' should measure displacement from active
+planned line of advance."* Then, on the one state where the old number was defensible:
+*"if the ASV is on a survey line in active survey mode then it makes sense."*
+
+`updateXTE()` took a **global minimum over every line in `mission.lines`** and published it
+as `activeXTE`; the card printed that. So the subject of the reading was whichever line
+happened to be closest — which is the line being flown ONLY while the boat is on coverage,
+and is a line the boat has no relationship with on the approach, in a reversal, on a Go-To,
+on a Transit and on an RTH. On a lawnmower plan it also **hopped to the neighbouring line at
+every midpoint crossing**: the number moved because the geometry moved, not because the boat
+had gone anywhere.
+
+**THE SENSIBLE CASE FALLS OUT OF THE GENERAL RULE — IT IS NOT A SECOND BRANCH.** `offTrack()`
+measures the signed perpendicular from `rr[idx-1] → rr[idx]`, the leg being flown. While the
+boat runs a coverage line that leg IS the line, and `currentLegLine()` (already shipped, and
+already what the LINES table highlights off) proves it by matching BOTH endpoints — so on
+line it returns exactly the number Andy means, and says `of line 3`; elsewhere it says
+`of leg 7→8`. **NAMING THE SUBJECT IS HALF THE FIX**: the row was a bare distance, so a
+number describing a line 35 km away was indistinguishable from one describing the boat's
+track. That is how this survived.
+
+**⚠ TWO THINGS THE OLD ONE ALSO GOT WRONG, WORTH NOT REINTRODUCING.** It came out of
+`Math.hypot`, so the card's `left` branch was **unreachable code — every reading in this
+console's life said "right"**. And it was point-to-**segment**, which decays into
+range-to-waypoint as the boat closes a leg end: a boat holding its track but carried 100 m
+past the turn read 101 m off track. Off track is now the perpendicular to the infinite line
+and is signed positive to starboard.
+
+**`updateXTE` IS NOW `updateActiveLine`, AND IT PUBLISHES NO DISTANCE.** It still resolves
+the nearest-line INDEX, which the chart highlight legitimately wants — that is a drawing
+question. A distance re-added there is a second definition of off track waiting to be
+mistaken for the first, and check 16 of the new suite forbids it.
+
+**`tests/off_track.js` — 17 checks, and TEN MUTATIONS RUN AGAINST A SIDECAR COPY**, listed
+in its docstring with the check numbers that actually went red. The wholesale
+restore-the-bug mutation is caught by twelve. **Its first version was a SPLICE that left a
+name undeclared, so the suite died with a ReferenceError and the crash guard "caught" it —
+a non-zero exit that says nothing about whether any check encodes the rule.** It is a
+whole-function swap now. **Verified live in the running console, not only in Node:** the
+card was watched through `— no leg of advance yet` at index 0, `0.1 m left of leg 3→4` on a
+routed approach, the sign flipping right→left as the boat crossed its track, and
+`2.4 m right of line 1` once a coverage line became the active leg.
+
+**PREVIOUS: THE AIS CONTACTS GET THE SAME GLYPH.** Andy: "green for cargo
 vessels, grey for military, blue for fishing, black for tug or tug and tow and pink for
 sailing." The dart-shaped AIS marker is gone; contacts are drawn by the SAME
 `drawVesselGlyph` as the vessel under command, at 0.62 scale. They are boats, and a second
@@ -1038,7 +1083,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **38 regression suites / 704 assertions** (18 JS / 375,
+turn-water hold is closed (`a548c14`). **39 regression suites / 721 assertions** (19 JS / 392,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1071,7 +1116,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-EIGHT REGRESSION SUITES (704 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**THIRTY-NINE REGRESSION SUITES (721 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1095,6 +1140,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/off_track.js` | off track is the SIGNED PERPENDICULAR from the leg being flown, never the range to the nearest survey line; it names its subject; and no leg means no reading (17) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (16) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
 | `node tests/survey_card.js` | the survey card still describes a COMMITTED plan (11) |
@@ -2018,7 +2064,8 @@ BOAT → `wps[0]`. RTH legs: `wps[last]` → HOME (the boat is deliberately NOT 
 leg — an RTH after a completed survey departs from where the survey ends).
 
 **THE CONSTRAINT THAT SHAPED THE CODE: `renderLineTable` RUNS ON EVERY TELEMETRY FRAME**
-(the `updateXTE()` tick at ~asv.html:4515). A synchronous A* there freezes the chart. So:
+(the `updateActiveLine()` tick — `updateXTE` until 2026-08-29). A synchronous A* there
+freezes the chart. So:
 `scheduleTransitEst()` computes OFF the tick (setTimeout 0, one in flight), keyed by
 `transitEstKey` — plan endpoints + home + nogo identity + the boat bucketed to
 `TRANSIT_REKEY_M` (50 m) cells, so GPS jitter never re-routes but real motion does. The
