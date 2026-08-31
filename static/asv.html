@@ -188,6 +188,21 @@
   .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
+  /* MOVING BASE. Deliberately the loudest thing on the chart while it is up (Andy: "show
+     some more obvious and overt indication that a shift of port is in process"). It is
+     bigger than the note, sits over the middle of the chart rather than at an edge, and
+     it does not go away on a timer - it clears when the new area is actually READY, which
+     is the fact the operator is waiting on. z-index 11: above every card and the drag
+     layer, below .cfmwrap (12) so a confirmation can still be read over it. */
+  .portmove{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);z-index:11;
+    font-family:var(--mono);text-align:center;display:none;pointer-events:none;
+    background:rgba(6,14,22,.93);border:1px solid var(--bronze);border-radius:5px;
+    padding:12px 20px;min-width:260px;max-width:80vw;box-shadow:0 6px 28px rgba(0,0,0,.65);}
+  .portmove b{display:block;font-size:9px;letter-spacing:.22em;color:var(--bronze);}
+  .portmove .to{display:block;font-size:15px;margin-top:5px;color:var(--ink);letter-spacing:.04em;}
+  .portmove .sub{display:block;font-size:10px;margin-top:4px;color:var(--ink-dim);}
+  .portmove .bar{margin-top:9px;height:3px;background:rgba(255,255,255,.13);border-radius:2px;overflow:hidden;}
+  .portmove .bar i{display:block;height:100%;width:0;background:var(--bronze);}
   /* in-GUI confirmation (does not depend on native confirm(), which some
      embedded browsers suppress; auto-skipped in simulator mode) */
   .cfmwrap{position:absolute;inset:0;z-index:12;display:none;align-items:center;justify-content:center;
@@ -462,6 +477,16 @@
 
   <div class="encbanner" id="encbanner"></div>
 
+  <!-- MOVING BASE. Up for the whole port change - from the moment the operator picks one
+       until the new area's keep-out model is loaded - not a flash, because the thing being
+       announced is not instantaneous. -->
+  <div class="portmove" id="portMove">
+    <b id="portMoveHead">MOVING BASE</b>
+    <span class="to" id="portMoveTo">—</span>
+    <span class="sub" id="portMoveSub">—</span>
+    <div class="bar"><i id="portMoveBar"></i></div>
+  </div>
+
   <div class="attrib">Chart: <a href="https://www.charts.noaa.gov/" target="_blank" rel="noopener">NOAA ENC</a></div>
 
   <div class="rcbanner">RC TRANSMITTER IS MASTER &mdash; Sw A &amp; the RC E-STOP are the true failsafe</div>
@@ -677,6 +702,9 @@ document.body.classList.add("ui-" + UIROLE);
   // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
   "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
   "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls #note,"+
+  // MOVING BASE belongs to the chart: it narrates a chart movement, and the port picker
+  // that starts it lives on the .topbar, which this window hides.
+  "body.ui-controls #portMove,"+
   "body.ui-controls #vReopen,body.ui-controls #helpBtn,body.ui-controls #aisTip,"+
   // the context menu belongs to the CHART: it is opened by a right-click on #map (hidden
   // here) and every row acts on a chart coordinate, so there is nothing for it to act on.
@@ -1127,6 +1155,196 @@ function applyVesselToUI(v){
 const PORT_FIND = "__find__";   // type a place name; the console goes there
 const PORT_ADD = "__add__";     // save the view you are already looking at
 let portList = [], portActive = null;
+// A port's display name from its id, falling back to the id - one place, because the slew
+// card, the leg labels and the note all name the same two bases and must agree.
+function portName(id){ return (portList.find(q=>q.id===id)||{}).name || id || ""; }
+// --- MOVING BASE: the port change is a JOURNEY, and it is shown as one ------------- //
+// Andy, 2026-08-31: "On selection of a new survey port show some more obvious and overt
+// indication that a shift of port is in process and move is happening. Perhaps a scaled
+// speed slew towards the new area."
+//
+// It used to be a teleport plus a one-line note: `center` was assigned, the next paint was
+// a different sea, and the only evidence anything had happened was a flashNote that the
+// operator may well have been looking away from. Nothing said WHERE it had gone, how far,
+// or that the work of getting there (respawn, chart, keep-out model) was still running.
+//
+// THE SLEW IS A ZOOM-OUT / PAN / ZOOM-IN ARC, NOT A STRAIGHT PAN, and that is forced by
+// the tile layer as much as by taste: `zoom` is a TILE LEVEL - it goes into the tile key
+// and the tile URL - so it cannot be interpolated fractionally, and a straight pan at
+// survey zoom across 500 km would be several thousand screens of tiles the console would
+// request and never show. Zooming out until both bases fit, crossing, and zooming back in
+// spends a bounded number of tiles and, more to the point, SHOWS THE OPERATOR THE TWO
+// PLACES IN RELATION TO EACH OTHER - which is the thing being announced.
+//
+// THAT IS ALSO WHERE "SCALED SPEED" LIVES. The pan runs at a constant SCREEN speed
+// (SLEW_PX_PER_S), so the GROUND speed scales with the distance: a 5 km hop and a 500 km
+// move look the same on the glass and take times that differ by the log of the distance,
+// because a longer move buys more zoom levels rather than more seconds of panning.
+//
+// ⚠ DRIVEN BY setTimeout ON WALL-CLOCK ELAPSED TIME, NEVER requestAnimationFrame. rAF is
+// suspended in a hidden or occluded window - the trap already documented for the window
+// -split mirror and the card-size ResizeObserver - and a slew that stops mid-flight strands
+// the chart between two places with no way back except a manual pan. setTimeout still
+// fires in a background window (clamped to ~1 s), and because every frame is computed from
+// ELAPSED TIME rather than from a frame counter, a coarsely-ticked slew draws fewer
+// intermediate frames and still lands on exactly the same spot at the same moment.
+const SLEW_STEP_MS = 150;      // per zoom level, out and back in
+const SLEW_PX_PER_S = 520;     // pan speed across the glass, once zoomed out to fit
+const SLEW_TICK_MS = 16;       // requested frame interval (the browser may give far less)
+const SLEW_FIT = 0.55;         // fraction of the smaller viewport axis the two bases fill
+let slew = null;               // {t0,from,to,z0,zOut,outMs,panMs,inMs,total} while flying
+// ⚠ TRUE FOR THE WHOLE PORT CHANGE, INCLUDING BEFORE THE SLEW EXISTS - and that window is
+// not theoretical. The server RESPAWNS the sim boat at the new base inside the /api/ports
+// request, so a telemetry frame carrying the new position can arrive BEFORE the fetch
+// promise resolves. Gating BOAT-follow on `slew` alone left that gap open: follow snapped
+// the centre to the destination first, and startPortSlew then planned a flight from the
+// new base to the new base - total 0 ms, short-circuited, no animation at all. It looked
+// exactly like the teleport it was meant to replace, and only sampling the live zoom
+// showed it (the arc never left z13). Set before the request, cleared by portMoveDone().
+let portMoving = false;
+// Where the chart should be `ms` into a slew. PURE - given the same elapsed time it returns
+// the same place however many times it is called, which is what makes a throttled tick
+// land identically to a smooth one, and what lets a test drive it without a clock.
+function slewAt(s, ms){
+  const t = Math.max(0, Math.min(s.total, ms));
+  if(t <= s.outMs){                                    // phase 1: rise, over the old base
+    const k = s.outMs ? t/s.outMs : 1;
+    return {lat:s.from.lat, lon:s.from.lon, zoom: s.z0 - Math.round((s.z0-s.zOut)*k)};
+  }
+  if(t <= s.outMs + s.panMs){                          // phase 2: cross, at the fit zoom
+    const k = s.panMs ? (t-s.outMs)/s.panMs : 1;
+    const e = k<.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2;    // ease in-out: the move has a start and a stop
+    const p = worldToLatLon(s.ax + (s.bx-s.ax)*e, s.ay + (s.by-s.ay)*e, s.zOut);
+    // NORMALISE THE LONGITUDE BACK INTO RANGE. The pan is interpolated across an UNWRAPPED
+    // x (that is what takes the short way over the dateline), so a Nome -> Kamchatka
+    // crossing comes out of the projection as -201°. The tile maths copes - `wx` wraps -
+    // but `center` is read by everything else on the page, and a cursor readout saying
+    // 201° W is a bug the operator sees. Costs one modulo per frame.
+    const lon = ((p.lon + 180) % 360 + 360) % 360 - 180;
+    return {lat:p.lat, lon:lon, zoom: s.zOut};
+  }
+  const k = s.inMs ? (t-s.outMs-s.panMs)/s.inMs : 1;    // phase 3: descend, over the new base
+  return {lat:s.to.lat, lon:s.to.lon, zoom: s.zOut + Math.round((s.z0-s.zOut)*k)};
+}
+// Plan the arc. Separated from the flying so the geometry can be checked without a timer.
+function planSlew(from, to, z0){
+  const {w,h} = viewSize();
+  const a = worldPx(from.lat, from.lon, z0), b = worldPx(to.lat, to.lon, z0);
+  // THE SHORT WAY ROUND. worldPx wraps at the antimeridian, so New Castle -> Nome is
+  // 300° of longitude one way and 60° the other; this console offers "Nome, Alaska" by
+  // name, so that is a real move and not a curiosity. Unwrap to the nearer image.
+  const span = TILE * Math.pow(2, z0);
+  let bx = b.x; if(bx-a.x >  span/2) bx -= span; if(bx-a.x < -span/2) bx += span;
+  const dpx = Math.hypot(bx-a.x, b.y-a.y);
+  const fit = Math.max(1, Math.min(w,h) * SLEW_FIT);
+  let zOut = z0;                                       // drop levels until both bases fit
+  while(zOut > MINZ && dpx * Math.pow(2, zOut-z0) > fit) zOut--;
+  const levels = z0 - zOut;
+  const A = worldPx(from.lat, from.lon, zOut), B = worldPx(to.lat, to.lon, zOut);
+  const spanOut = TILE * Math.pow(2, zOut);
+  let Bx = B.x; if(Bx-A.x >  spanOut/2) Bx -= spanOut; if(Bx-A.x < -spanOut/2) Bx += spanOut;
+  const outMs = levels*SLEW_STEP_MS, inMs = levels*SLEW_STEP_MS;
+  const panMs = Math.round(Math.hypot(Bx-A.x, B.y-A.y) / SLEW_PX_PER_S * 1000);
+  return {from:{...from}, to:{...to}, z0, zOut, ax:A.x, ay:A.y, bx:Bx, by:B.y,
+          outMs, panMs, inMs, total: outMs+panMs+inMs, km: distTo(from, to)/1000};
+}
+// Fly it. `label` names the destination on the card; the card OUTLIVES the flight - it
+// stays up saying what is still being fetched, and only portMoveDone() takes it down.
+// `from` is the departure point CAPTURED BEFORE THE REQUEST - see portMoving. Reading
+// center.lat here instead is the bug that made the whole animation a no-op.
+function startPortSlew(to, label, fromLabel, from){
+  if(!to || !isFinite(to.lat) || !isFinite(to.lon)) return;
+  endSlew(false);                                       // a second pick supersedes the first
+  const s = planSlew(from || {lat:center.lat, lon:center.lon}, to, zoom);
+  s.toLabel = label || ""; s.fromLabel = fromLabel || "";
+  portMoveShow(label, s.km);
+  // A base a few hundred metres away is not a journey - land it and say so, rather than
+  // playing a two-frame animation nobody can read.
+  if(s.total < SLEW_STEP_MS){ center = {...to}; render(); portMoveProgress(1); return; }
+  s.t0 = Date.now(); slew = s;
+  const tick = ()=>{
+    if(!slew) return;
+    const ms = Date.now() - slew.t0;
+    const at = slewAt(slew, ms);
+    center = {lat:at.lat, lon:at.lon}; zoom = at.zoom; render();
+    portMoveProgress(slew.total ? ms/slew.total : 1);
+    if(ms >= slew.total){ endSlew(true); return; }
+    slew.timer = setTimeout(tick, SLEW_TICK_MS);
+  };
+  tick();
+}
+// End the flight. `land` puts the chart exactly where the slew was going - which is what
+// EVERY exit does, including an operator cancelling it: half a journey is not a place, and
+// leaving the chart between two bases would be worse than never having animated at all.
+function endSlew(land){
+  if(!slew) return;
+  clearTimeout(slew.timer);
+  const s = slew; slew = null;
+  if(land){ center = {lat:s.to.lat, lon:s.to.lon}; zoom = s.z0; render(); portMoveProgress(1); }
+}
+// THE CROSSING, DRAWN ON THE CANVAS - because the chart underneath it is usually BLACK.
+//
+// Found by watching it rather than by reasoning about it: the tile layer fetches each tile
+// from NOAA on a cache miss, one request per tile, so the moment the arc zooms out past the
+// levels this console has ever cached it is flying over empty space. New Castle -> Lewes
+// crosses seven levels of water nobody has ever asked NOAA to render at z6. The card said
+// MOVING BASE over a black rectangle, which is not the same thing as showing a move.
+//
+// So the journey is drawn by the CANVAS, which owes nothing to the tile cache: both bases,
+// named, with the leg between them. At the top of the arc both are on the glass by
+// construction (that is what the fit zoom is for), so what the operator sees is exactly the
+// picture the animation is for - this place, that place, and the chart travelling between.
+function drawSlewLeg(toScreen){
+  if(!slew) return;
+  const a = toScreen(slew.from.lat, slew.from.lon), b = toScreen(slew.to.lat, slew.to.lon);
+  ctx.save();
+  ctx.setLineDash([6,5]); ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(200,134,43,0.85)";
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
+  // The base being LEFT: a plain ring. The base being GONE TO: a filled disc in a ring, the
+  // heavier of the two, because it is the one the operator is being told about.
+  ctx.strokeStyle = "rgba(200,134,43,0.85)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, 2*Math.PI); ctx.stroke();
+  ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, 2*Math.PI); ctx.stroke();
+  ctx.fillStyle = "#c8862b";
+  ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 2*Math.PI); ctx.fill();
+  // Labels haloed the way every other chart label here is - the ground under them is
+  // whatever the tile layer managed to fetch, which may be nothing or may be a harbour.
+  ctx.font = "11px Consolas,monospace"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,8,12,0.85)";
+  const lab = (t,p,dy)=>{ if(!t) return; ctx.strokeText(t, p.x, p.y+dy); ctx.fillText(t, p.x, p.y+dy); };
+  ctx.fillStyle = "rgba(215,227,234,0.75)"; lab(slew.fromLabel, a, -9);
+  ctx.fillStyle = "#e8c07a";                 lab(slew.toLabel,   b, -13);
+  ctx.restore();
+}
+// `km` is null while the distance is still unknown - the card goes up the instant the
+// operator picks, which is before the console has been told where the new base IS.
+function portMoveShow(label, km){
+  const el=$("#portMove"); if(!el) return;
+  $("#portMoveHead").textContent = "MOVING BASE";
+  $("#portMoveTo").textContent = "→ " + String(label||"").toUpperCase();
+  $("#portMoveSub").textContent = (km != null && km >= 0.1)
+    ? fmtDist(km*1000) + " · slewing the chart" : "slewing the chart";
+  $("#portMoveBar").style.width = "0%";
+  el.style.display = "block";
+  const sel=$("#portSel"); if(sel) sel.disabled = true;   // one move at a time
+}
+function portMoveProgress(f){
+  const b=$("#portMoveBar"); if(b) b.style.width = Math.round(Math.max(0,Math.min(1,f))*100) + "%";
+}
+// THE CARD DOES NOT COME DOWN WHEN THE CHART ARRIVES. Arriving is the quick part; the new
+// area is not usable until its keep-out model is extracted, and that is the wait the
+// operator actually has. So the card switches to naming what is outstanding and clears
+// only when the area is ready - or says plainly that it is not.
+function portMoveStage(text){
+  const el=$("#portMove"); if(!el || el.style.display==="none") return;
+  $("#portMoveSub").textContent = text;
+}
+function portMoveDone(note){
+  portMoving = false;                                    // BOAT-follow has the centre back
+  const el=$("#portMove"); if(el) el.style.display = "none";
+  const sel=$("#portSel"); if(sel) sel.disabled = false;
+  if(note) flashNote(note);
+}
 function fillPortPicker(){
   const sel = $("#portSel"); if(!sel) return;
   sel.innerHTML = "";
@@ -1156,15 +1374,22 @@ async function loadPorts(){
 async function switchPort(id){
   if(id === PORT_FIND){ await findPortByName(); return; }
   if(id === PORT_ADD){ await addPortHere(); return; }
+  // EVERYTHING ABOUT THE PLACE BEING LEFT IS CAPTURED BEFORE THE REQUEST, because the
+  // request is what destroys it: the reply overwrites portActive, and the respawn it
+  // triggers can move `center` through BOAT-follow before the promise even resolves.
+  const wasName = portName(portActive), fromLL = {lat:center.lat, lon:center.lon};
+  portMoving = true;                                  // holds follow off from here, not from the slew
+  portMoveShow(portName(id), null);                   // up the instant the operator picks - the ask
+  portMoveStage("asking the console for the new base…");
   const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
                                        body: JSON.stringify({id})});
   const d = await r.json().catch(()=>({}));
-  if(!r.ok){ flashNote("Port: " + (d.error || r.status)); fillPortPicker(); return; }
+  if(!r.ok){ portMoveDone("Port: " + (d.error || r.status)); fillPortPicker(); return; }
   portList = d.ports || portList; portActive = d.active; fillPortPicker();
-  if(d.spawn){ center = {lat:d.spawn.lat, lon:d.spawn.lon}; }
-  const nm = (portList.find(q=>q.id===d.active)||{}).name || d.active;
-  flashNote("Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
-  resetForNewArea();
+  const nm = portName(d.active);
+  if(d.spawn) startPortSlew(d.spawn, nm, wasName, fromLL);
+  await resetForNewArea(d.spawn,
+    "Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
 }
 // FIND A SURVEY BASE BY NAME. The server geocodes the name and then SNAPS the result to
 // charted water this hull can float in - a geocoder returns the centre of a town, and a
@@ -1172,15 +1397,21 @@ async function switchPort(id){
 // usable water). What comes back says which of those happened, and the operator is told:
 // a base that could not be put on water is flagged rather than quietly spawning inland.
 async function findPortByName(){
+  const wasName = portName(portActive);
   const q = (window.prompt("Port or place to survey from — e.g. \"Nome, Alaska\":", "") || "").trim();
   if(!q){ fillPortPicker(); return; }
-  flashNote("Looking up \"" + q + "\" and finding navigable water…");
+  const fromLL = {lat:center.lat, lon:center.lon};
+  portMoving = true;
+  // The card carries the LOOKUP too. A geocode plus a water snap is the longest wait in
+  // this whole flow and it used to be a flashNote, which is gone by the time it finishes.
+  portMoveShow(q, null);
+  portMoveStage("looking up \"" + q + "\" and finding navigable water…");
   const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
                                        body: JSON.stringify({name:q})});
   const d = await r.json().catch(()=>({}));
-  if(!r.ok){ flashNote("Find port: " + (d.error || r.status)); fillPortPicker(); return; }
+  if(!r.ok){ portMoveDone("Find port: " + (d.error || r.status)); fillPortPicker(); return; }
   portList = d.ports || portList; portActive = d.active; fillPortPicker();
-  if(d.spawn){ center = {lat:d.spawn.lat, lon:d.spawn.lon}; }
+  if(d.spawn) startPortSlew(d.spawn, (d.found && d.found.geocoded) || q, wasName, fromLL);
   const f = d.found || {};
   if(f.snapped){
     showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". " + (f.note || "")
@@ -1190,7 +1421,7 @@ async function findPortByName(){
                + " — this is the PLACE CENTRE, which is on land. Pan to a berth and use "
                + "\"Save this view as a port\" before spawning here.");
   }
-  resetForNewArea();
+  await resetForNewArea(d.spawn, null);
 }
 async function addPortHere(){
   const name = (window.prompt("Name this port (it is added to the list and kept):", "") || "").trim();
@@ -1201,17 +1432,45 @@ async function addPortHere(){
   const d = await r.json().catch(()=>({}));
   if(!r.ok){ flashNote("Add port: " + (d.error || r.status)); fillPortPicker(); return; }
   portList = d.ports || portList; portActive = d.active; fillPortPicker();
-  flashNote("Port \"" + name + "\" added at " + fmtLL(body.lat, body.lon)
-            + (d.saved ? " and retained" : " (NOT saved - registry read-only)"));
-  resetForNewArea();
+  // NO SLEW HERE, and that is not an omission: this port IS the view already on screen, so
+  // there is nowhere to fly to. The card still goes up, because the BASE has changed even
+  // though the chart has not - the boat respawns and the keep-out model is refetched, and
+  // that work is exactly what the card exists to make visible.
+  portMoving = true;
+  portMoveShow(name, 0);
+  await resetForNewArea(d.spawn || body,
+    "Port \"" + name + "\" added at " + fmtLL(body.lat, body.lon)
+    + (d.saved ? " and retained" : " (NOT saved - registry read-only)"));
 }
 // A base change moves the boat to a different sea. Everything derived from the OLD area -
 // the chart extract, the plan drawn on it, the track behind the boat - describes water the
 // vessel is no longer in, so it goes rather than being left to look current.
-function resetForNewArea(){
+//
+// ⚠ AND THEN IT MUST FETCH THE NEW ONE. Until 2026-08-31 it did not, and nothing else did
+// either: this function sets `nogo.ready = false`, which makes BOTH arms of the re-extract
+// test in onState() unreachable - the first is behind the one-shot `nogoInit`, already
+// spent, and the second requires `nogo.ready`, which was just cleared. So a port change
+// left the console at the new base with NO keep-out model, reading "nogo not loaded", until
+// the operator happened to press NOGO or Punch Out. Anything commanded before that planned
+// `degraded` - "driving DIRECT, unverified against the chart" - in a sea it had never read.
+// The vessel switch has always re-extracted (it is the same class of change, and a smaller
+// one); this is that, for the bigger one.
+//
+// EXTRACTS AROUND THE NEW BASE, not around the boat: the boat's respawn arrives on a later
+// telemetry frame, and the base is where the work is going to happen either way.
+async function resetForNewArea(at, note){
   track = []; runRoute = null; planIntent=null; runUnsafe = [];
   nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
   updateNogoUI(); render();
+  const ll = at || (asv ? {lat:asv.lat, lon:asv.lon} : null);
+  if(!ll){ portMoveDone(note); return; }
+  // An extract for the OLD area may still be in flight, and refreshNogo() no-ops while
+  // one is - so firing now would return instantly and leave the new base holding the old
+  // sea's keep-outs, which is worse than holding none. Wait it out, bounded.
+  portMoveStage("reading the chart for the new area…");
+  for(let i=0; i<80 && nogo.busy; i++) await new Promise(r=>setTimeout(r, 100));
+  await refreshNogo(ll);
+  portMoveDone(note);
 }
 function fillVesselPicker(available, activeId){
   const sel = $("#vesselSel"); if(!sel) return;
@@ -1482,6 +1741,7 @@ function render(){
   drawMeasure(toScreen);                            // the operator's own ruler — over everything it measures
   drawWindRose();                                   // ON the chart, transparent — not a card
   drawViolation(toScreen);                          // refusal highlight (on top)
+  drawSlewLeg(toScreen);                            // the two bases + the crossing, while moving
   $("#r_zoom").textContent = zoom; $("#r_track").textContent = track.length;
   $("#r_wpts").textContent = mission.waypoints.length;
 }
@@ -3662,7 +3922,18 @@ mapEl.addEventListener("mousedown", e=>{
   // own: the window mouseup then returns at its existing `!wasDrag || !downAt` guard, so
   // there is no second place to keep in step. (This costs middle-button panning, which was
   // never a stated feature and carried the same misfire.)
+  //
+  // ⚠ AND NOTHING GOES ABOVE THIS LINE. measure_tool's check 13 asserts the guard is the
+  // literal FIRST statement of this handler, which is how it stays true that no code path
+  // acts on a non-primary button; the slew cancel below was written above it first and that
+  // suite caught it in the same run. If you need something to happen on every button, it
+  // goes in the contextmenu handler too, not up there.
   if(e.button !== 0) return;
+  // THE OPERATOR OUTRANKS THE ANIMATION. Touching the chart mid-slew ends it AT THE
+  // DESTINATION, not where it had got to: half a journey is not a place, and a chart
+  // stranded between two bases is worse than never having animated. Same on the wheel, the
+  // zoom buttons and the right-click menu - every exit from a slew lands.
+  if(slew) endSlew(true);
   // THE ROSE IS GRABBED BEFORE ANY MODE. It sits over the chart in every mode, so if the
   // mode chain ran first a press on it would drop a waypoint / place a pattern corner /
   // anchor a measurement UNDER it - the same class of fault the right-button guard above
@@ -3799,6 +4070,7 @@ mapEl.addEventListener("mouseleave", ()=>{ $("#lineTip").style.display="none"; }
 mapEl.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1:-1, e.clientX, e.clientY); }, {passive:false});
 window.addEventListener("wheel", e=>{ if(e.ctrlKey) e.preventDefault(); }, {passive:false});
 function zoomAt(dz, sx, sy){
+  if(slew) endSlew(true);                        // land first, then apply the operator's zoom
   const nz = Math.max(MINZ, Math.min(MAXZ, zoom+dz)); if(nz===zoom) return;
   const r = mapEl.getBoundingClientRect(), o = originPx();
   const anchor = worldToLatLon(o.x+(sx-r.left), o.y+(sy-r.top), zoom);
@@ -3935,6 +4207,11 @@ function fallbackCopy(text){
 }
 mapEl.addEventListener("contextmenu", e=>{
   e.preventDefault();                              // the chart's own menu replaces the browser's
+  // LAND FIRST. Every row of this menu acts on the coordinate captured below, and mid-slew
+  // that coordinate is on a chart still moving under the pointer - the operator would pick
+  // "Go here" against a place that has already slid away. (This is also where the primary
+  // -button cancel in mousedown cannot reach: that handler returns on e.button !== 0.)
+  if(slew) endSlew(true);
   const o = originPx(), r = mapEl.getBoundingClientRect();
   openChartMenu(e.clientX, e.clientY,
     worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom));
@@ -5123,8 +5400,14 @@ function onState(s){
     if(!last || Math.hypot(last.lat-asv.lat, last.lon-asv.lon) > 5e-6){
       track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift(); saveTrack();
     }
-    if(!haveFix){ haveFix=true; center={lat:asv.lat,lon:asv.lon}; }
-    if(follow) center = {lat:asv.lat, lon:asv.lon};
+    // ⚠ THE SLEW OWNS THE CENTRE WHILE IT FLIES, and this is the line that would take it
+    // back. A port change RESPAWNS the sim boat at the new base immediately (the server
+    // reconnects the sim in the same request), so the very next telemetry frame reports a
+    // position 500 km away - and BOAT-follow would snap the chart there on frame one,
+    // making the flight a single-frame teleport with a card over it. Suspended for the
+    // few seconds of the slew, and resumed by the next frame after it lands.
+    if(!haveFix){ haveFix=true; if(!slew && !portMoving) center={lat:asv.lat,lon:asv.lon}; }
+    if(follow && !slew && !portMoving) center = {lat:asv.lat, lon:asv.lon};
     // On the first fix, establish the ENC nogo zones for the operating area; as the
     // boat transits out of that area, re-extract so behaviors stay ENC-aware.
     if(!nogoInit){ nogoInit=true; refreshNogo({lat:asv.lat,lon:asv.lon}); }

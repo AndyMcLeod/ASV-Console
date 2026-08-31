@@ -75,6 +75,21 @@ Either way the entry is written to `ports.json` and is in the list from then on.
 pickers refuse while armed or running, for the same reason: moving the base under a live
 boat is as incoherent as swapping its physics.
 
+**Changing base is shown as the journey it is.** A **MOVING BASE** card comes up the moment
+you pick — before the console has even been told where the new base is — and stays up
+through the whole change, naming what is still outstanding: the lookup, the slew, then
+reading the chart for the new area. It clears when the area is *ready*, not on a timer.
+Under it the chart **slews**: it zooms out until both bases are on screen, crosses at a
+constant speed across the glass, and zooms back in over the new one, with the two bases
+ringed and named and the leg drawn between them. That last part matters because the tiles
+for a place the console has never visited do not exist yet — the leg is drawn on the
+overlay, so the move is legible over empty chart. The pan holds a constant *screen* speed,
+so a 5 km hop and a 14,000 km one look the same and differ in time by the log of the
+distance; touching the chart at any point ends the slew immediately **on the destination**.
+Arriving is the quick part: the new area's keep-out model is extracted before the card
+comes down, so the console is never sitting at a new base with the old sea's zones — or
+with none, which is what it used to do.
+
 *Previously the console opened on a hard-coded Lake Erie position belonging to neither
 the vessel nor any base, and each hull file owned its own spawn.*
 

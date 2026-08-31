@@ -55,9 +55,72 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-29 — off track is measured from the leg being flown)
+## ⇒ START HERE (handoff refreshed 2026-08-31 — changing base is shown as the journey it is)
 
-**NEWEST (this commit): "OFF TRACK" WAS MEASURING THE DISTANCE TO THE NEAREST SURVEY LINE.**
+**NEWEST (this commit): A PORT CHANGE WAS A TELEPORT WITH A ONE-LINE NOTE OVER IT.** Andy:
+*"On selection of a new survey port show some more obvious and overt indication that a shift
+of port is in process and move is happening. Perhaps a scaled speed slew towards the new
+area."*
+
+`center` was assigned, the next paint was a different sea, and the only evidence was a
+`flashNote` the operator may well have been looking away from. Now a **MOVING BASE** card
+goes up the instant they pick — before the console has been told where the new base is — and
+stays up through the lookup, the slew and the chart read, clearing when the area is READY
+rather than on a timer. Under it the chart **slews**: zoom out until both bases fit, cross,
+zoom back in.
+
+**THE ARC IS FORCED BY THE TILE LAYER, not chosen for looks.** `zoom` is a TILE LEVEL — it
+goes in the tile key and the tile URL — so it cannot be interpolated fractionally, and a
+straight pan at survey zoom across 600 km would request thousands of screens of tiles. The
+zoom-out is also where **"scaled speed"** lives: the pan holds a constant SCREEN speed, so
+ground speed scales with distance while total time scales with its LOG (5 km → 0.7 s, z13
+untouched; 606 km → 2.7 s via z6; 14,000 km → 4.1 s via z3).
+
+**⚠ THREE THINGS THIS WOULD HAVE GOT WRONG, AND TWO WERE ONLY FOUND BY WATCHING IT RUN.**
+1. **`!slew` ALONE DID NOT HOLD BOAT-FOLLOW OFF, AND THE WHOLE FEATURE WAS A NO-OP.** The
+   server respawns the sim boat at the new base *inside* the `/api/ports` request, so its
+   telemetry frame can land **before the fetch promise resolves** — and at that instant
+   `slew` is still null, because the slew is built from the reply. Follow moved `center` to
+   the destination first; `startPortSlew` then planned a flight from the new base to the new
+   base, total 0 ms, short-circuited. A perfect teleport with a card over it, and every unit
+   check green. Found by **sampling the live zoom readout — it never left z13.** Closed by
+   `portMoving`, set BEFORE the request, plus a departure point captured before it too.
+2. **THE CHART UNDER THE CROSSING IS BLACK.** Tiles are fetched from NOAA per request on a
+   cache miss, so the moment the arc passes the levels this console has ever cached it is
+   flying over nothing. `drawSlewLeg()` draws the journey on the CANVAS instead — both bases
+   ringed and named, the leg between them — which owes nothing to the tile cache.
+3. **`measure_tool` CHECK 13 CAUGHT THE SLEW CANCEL IN THE SAME RUN.** It asserts the
+   `e.button !== 0` guard is the LITERAL FIRST STATEMENT of mapEl's mousedown; the cancel was
+   written above it. It belongs below, with the right-click case in the contextmenu handler
+   — which must land first anyway, because every menu row acts on a coordinate captured off
+   a chart that would still be moving.
+
+**AND THE MOVE IS NOT OVER WHEN THE CHART ARRIVES: `resetForNewArea()` NEVER REFETCHED THE
+KEEP-OUT MODEL.** It sets `nogo.ready = false`, which makes BOTH arms of the re-extract in
+`onState()` unreachable — the first is behind the one-shot `nogoInit`, already spent, and the
+second requires the `nogo.ready` just cleared. So a port change left the console at the new
+base reading "nogo not loaded", planning `degraded` — *"driving DIRECT, unverified against
+the chart"* — in a sea it had never read, until somebody happened to press NOGO or Punch Out.
+The vessel switch has always re-extracted; this is that, for the bigger change. It extracts
+around the NEW BASE (the boat's respawn arrives on a later frame) and waits out an extract
+still running for the old area, because `refreshNogo()` no-ops while busy and firing into it
+would leave the new base holding the old sea's keep-outs.
+
+**`tests/port_slew.js` — 23 checks, THIRTEEN MUTATIONS run against a sidecar**, listed in its
+docstring with the check numbers that actually went red. Two survived the first pass and both
+were gaps in the checks: "clamp at total-1" is invisible on a long move (its last phase pins
+the position to the destination regardless of progress), so check 1b flies a hop with no zoom
+levels where the pan IS the ending; and the ease-in-out had no check at all, so 10b measures
+it.
+
+**VERIFIED LIVE, and the live check is what found defects 1 and 2.** Ink on the canvas during
+a real crossing: **0** px of the leg's bronze before, **487–551 px throughout**, **1** after
+landing. Zoom sampled at 40 ms: 13→12→11→10→9→8→7→6→5→4→**3** (held 1.4 s for the crossing)
+→4→5→6→7→8→9→10→11→12→**13**. Also flown with the pane HIDDEN, where timers clamp to 1 Hz:
+five frames for a four-second flight, full arc, landed exactly — which is the whole reason it
+is on `setTimeout` + `Date.now()` and not `requestAnimationFrame`.
+
+**PREVIOUS: "OFF TRACK" WAS MEASURING THE DISTANCE TO THE NEAREST SURVEY LINE.**
 Andy: *"On the Intent card the 'off track' value is measure current position to the nearest
 survey line. This is nonsensical. 'off track' should measure displacement from active
 planned line of advance."* Then, on the one state where the old number was defensible:
@@ -1083,7 +1146,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **39 regression suites / 721 assertions** (19 JS / 392,
+turn-water hold is closed (`a548c14`). **40 regression suites / 744 assertions** (20 JS / 415,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1116,7 +1179,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**THIRTY-NINE REGRESSION SUITES (721 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY REGRESSION SUITES (744 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1140,6 +1203,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/port_slew.js` | the port change is a visible journey that always ARRIVES: the zoom-out/cross/zoom-in arc, scaled by distance, the short way over the antimeridian, elapsed-time driven so a throttled window still lands, and the new area's keep-out model fetched before the card comes down (23) |
 | `node tests/off_track.js` | off track is the SIGNED PERPENDICULAR from the leg being flown, never the range to the nearest survey line; it names its subject; and no leg means no reading (17) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (16) |
 | `node tests/pattern_move_grip.js` | the survey move grip is reachable AND visible (7) |
