@@ -57,7 +57,46 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-31 — one speed became three, and the console governs which is live)
 
-**NEWEST (this commit): SPEED BY ROLE.** Andy: *"Vessel speed should be selectable for
+**NEWEST (this commit): THE SPEEDS ARE ON THE INTENT CARD, AND THE TRANSIT CASES ARE
+NAMED.** Andy: *"Add speed values to the intent card. Transit speed applies to goto, rth,
+and transits to the beginning of a survey and after the survey to home."*
+
+The card carries three rows now, because one number answers none of the questions once
+there are three speeds:
+
+```
+speed     6.8 kn · told survey (7.0)                     actual, then commanded
+for       SURVEY — on coverage line 7 of 22              which ROLE, and why
+speeds    transit high 14.0 · turn low 4.0 · survey 7.0  the three, live one in bold
+```
+
+The middle row earns its place: 14 kn in the middle of a survey reads as *TRANSIT —
+approach to the survey area* rather than as a fault. When the clearance guard has the
+throttle it says **SAFETY OVERRIDE** instead, because then the role is not why the boat is
+slow and naming the role would mislead.
+
+**⚠ AND THE FOUR NAMED CASES MADE speedRole() WRONG, WHICH IS WHY IT NOW ASKS
+currentActivity().** It read `runLineIdx` and `curTurn` directly. Those give the same answer
+everywhere except one place: **`curTurn` survives a run stopped mid-reversal**, so the
+Return-to-Home that follows — Andy's *"after the survey to home"* — would have been flown at
+the TURN speed the whole way home. `currentActivity()` has always got this right because it
+asks what the BEHAVIOUR is before it looks at either variable, so the role is its output
+now. One classifier, one answer, one place; `speedRole()` is a single line. Check 16 pins
+it, and the "re-derive the role" mutation is caught by that check and by **nothing else**.
+A search pattern takes the SURVEY speed, following the same classifier, which has always
+called it surveying.
+
+**⚠ AND A REAL DATA-LOSS BUG, FOUND BY READING THE CARD IN A RUNNING CONSOLE.** `loadMission`
+rebuilds `mission` from an EXPLICIT WHITELIST of fields, and `speeds` was not in it — so it
+was dropped on every load and the migration refilled all three roles from `mission.speed`,
+which is *not the operator's setting* but the last value the governor commanded. A mission
+holding `{transit:high, turn:low, survey:survey}` came back as `{high, high, high}` the
+moment the boat had been told "high" once, and the next save wrote that over the real
+setting. **Every unit check passed throughout** — they drive `mission` directly and none of
+them goes through that rebuild. It was visible only as the card's own speeds row reading
+three identical values when the file on disk said otherwise. Checks 18/18b.
+
+**PREVIOUS: SPEED BY ROLE.** Andy: *"Vessel speed should be selectable for
 various modes. Allow separate speed selection for transits, turns, and survey. These values
 may be temporarily over-ridden for safety of vessel situations. Remove the old speed
 selection function from the chart bar and implement in the survey card."*
@@ -1295,7 +1334,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **42 regression suites / 788 assertions** (22 JS / 459,
+turn-water hold is closed (`a548c14`). **42 regression suites / 797 assertions** (22 JS / 468,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1328,7 +1367,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-TWO REGRESSION SUITES (788 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-TWO REGRESSION SUITES (797 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1352,7 +1391,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
-| `node tests/speed_modes.js` | SPEED BY ROLE: the three settings (transit / turn / survey), the governor that commands the one the current job wants, the safety override outranking it, and the TURN RADIUS being derived from the TURN speed (20) |
+| `node tests/speed_modes.js` | SPEED BY ROLE: the three settings (transit / turn / survey), the governor that commands the one the current job wants, the safety override outranking it, and the TURN RADIUS being derived from the TURN speed (25) |
 | `node tests/clearance_guard.js` | **SAFETY.** The turn LADDER (outboard -> inboard -> slow radius -> refuse) and the RUNTIME clearance guard: the live distance to the keep-out model, the alarm, and the automatic slow-down that never steers and never acts unless the boat is under autonomous command (23) |
 | `node tests/port_slew.js` | the port change is a visible journey that always ARRIVES: the zoom-out/cross/zoom-in arc, scaled by distance, the short way over the antimeridian, elapsed-time driven so a throttled window still lands, and the new area's keep-out model fetched before the card comes down (23) |
 | `node tests/off_track.js` | off track is the SIGNED PERPENDICULAR from the leg being flown, never the range to the nearest survey line; it names its subject; and no leg means no reading (17) |

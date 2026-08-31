@@ -821,11 +821,13 @@ let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m:
 // and then the speed the boat runs and the activity the recorder logs would describe
 // different moments. One answer, read twice.
 const SPEED_ROLES = ["transit", "turn", "survey"];
-function speedRole(){
-  if(runLineIdx >= 0) return "survey";                    // on a coverage line
-  if(curTurn >= 0) return "turn";                         // in a reversal between lines
-  return "transit";                                       // approach, region hop, goto, rth
-}
+// ⚠ ONE LINE, AND IT HAS TO STAY ONE LINE. currentActivity() decides what the boat is
+// doing - it is what bills the line time and what the recorder logs - and the role is its
+// answer, not a second reading of the same two variables. The first cut of this DID read
+// runLineIdx and curTurn directly and was subtly wrong: `curTurn` survives a run stopped
+// mid-reversal, so the Return-to-Home that follows would have been flown at the TURN speed
+// all the way home. Ask the classifier.
+function speedRole(){ return currentActivity().role || "transit"; }
 // The speed KEY for a role, with the legacy single value as the fallback so a mission that
 // predates this - or a vessel whose profile lacks the key - still answers.
 function roleSpeed(role){
@@ -1108,8 +1110,39 @@ function renderIntent(){
           + (clearance.closing ? " · CLOSING" : "") + (clearance.slowed ? " · SLOWED" : ""),
       tight ? "#d9958f" : (clearance.m < cbuf*3 ? "#e8b46a" : "var(--ink)"));
   }
-  if(st.sog_kn != null) html += row("speed", st.sog_kn.toFixed(1) + " kn"
-      + (st.speed_key ? " (" + st.speed_key + ")" : ""));
+  // SPEED, IN THREE LAYERS, because "6.8 kn" on its own answers none of the questions the
+  // operator actually has once one speed became three (Andy, 2026-08-31: "Add speed values
+  // to the intent card"). What it is MAKING GOOD, what it was TOLD, and why that value:
+  //
+  //   speed     6.8 kn · told survey (7.0)          — actual, then commanded
+  //   for       SURVEY — on coverage line 7 of 22    — WHICH ROLE, and what the boat is doing
+  //   speeds    transit high 14.0 · turn low 4.0 · survey 7.0   — the operator's three
+  //
+  // The middle row is the one that earns its place: it names the role AND the reason, so a
+  // boat running at 14 kn in the middle of a survey reads as "TRANSIT — approach to the
+  // survey area" rather than as a fault. And when the clearance guard has taken the
+  // throttle it says THAT instead, because then the role is not why the boat is slow.
+  const spRole = act.role || speedRole();
+  if(st.sog_kn != null){
+    const told = st.speed_key
+      ? " · told " + st.speed_key + (V.SPEED_KN[st.speed_key] != null
+          ? " (" + V.SPEED_KN[st.speed_key].toFixed(1) + ")" : "")
+      : "";
+    html += row("speed", st.sog_kn.toFixed(1) + " kn" + told);
+  }
+  if(clearance.slowed)
+    html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
+  else
+    html += row("for", spRole.toUpperCase() + " — " + act.detail,
+                spRole === "survey" ? "#7fd6a0" : (spRole === "turn" ? "#e8c07a" : "var(--ink)"));
+  // The three settings, with the live one marked. Shown always: the whole point of splitting
+  // them is that they differ, and an operator cannot check a setting they cannot see.
+  html += row("speeds", SPEED_ROLES.map(r=>{
+      const k = roleSpeed(r), kn = V.SPEED_KN[k];
+      const txt = r + " " + k + (kn != null ? " " + kn.toFixed(1) : "");
+      return (r === spRole && !clearance.slowed)
+        ? '<b style="color:var(--ink)">' + txt + '</b>' : txt;
+    }).join(" · "), "var(--ink-dim)");
   // ---- WHY (captured with the plan) ----
   html += head("Why this route");
   if(planIntent && planIntent.why.length){
@@ -1280,9 +1313,20 @@ function saveMission(){
 async function loadMission(){
   try{ const r = await fetch("/api/mission"); const m = await r.json();
     if(m && m.waypoints){
+      // ⚠ `speeds` MUST BE CARRIED THROUGH, and leaving it out of this list is a data-loss
+      // bug rather than a missing feature. This rebuild is an explicit whitelist, so a
+      // field absent from it is DROPPED - and the migration below then refilled all three
+      // roles from `mission.speed`, which is not the operator's setting at all but the last
+      // value the GOVERNOR commanded. So loading a mission that said
+      // {transit:high, turn:low, survey:survey} produced {high, high, high} the moment the
+      // boat had been told "high" once, and the next saveMission wrote that back over the
+      // real setting. Found by reading the Intent card's own speeds row in a running
+      // console - every unit check passed, because they all drive `mission` directly and
+      // never go through this rebuild.
       mission = {waypoints:m.waypoints||[], lines:m.lines||[],
                  arrival_radius_m:m.arrival_radius_m ?? 2,
                  approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
+                 speeds:m.speeds||{},
                  completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
@@ -2339,29 +2383,48 @@ function accumLineTime(){
 // DERIVED, NEVER STORED. runLineIdx and curTurn are already maintained every tick by
 // accumLineTime for the per-component timing; this reads them rather than keeping a second
 // copy that could drift from the clock that bills the time.
+// ⚠ IT EMITS THE SPEED ROLE TOO, which is why speedRole() is three lines rather than a
+// second copy of this decision. Andy, 2026-08-31, naming the transit cases outright:
+// "Transit speed applies to goto, rth, and transits to the beginning of a survey and after
+// the survey to home." All four fall out of branches that were already here - the goto/rth
+// one at the bottom, and the survey branch's own "not on a line and not in a turn", which
+// IS the approach out and the hop between regions.
+//
+// ⚠ AND READING runLineIdx / curTurn DIRECTLY WAS NOT THE SAME THING - that is what this
+// merge fixes. `curTurn` is cleared only when a line is ENTERED or a fresh run resets the
+// stats, so a survey STOPPED MID-REVERSAL leaves it set; a speedRole() that looked straight
+// at it would have called the chained Return-to-Home a TURN and run the whole way home at
+// the turn speed. This function has always got that right, because it asks what the
+// BEHAVIOUR is before it looks at either variable. One classifier, one answer, one place.
 function currentActivity(){
   const run = S && S.run, st = (S && S.status) || {};
-  if(st.holding) return {activity:"holding", detail:"station-keeping", surveying:false};
-  if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false};
+  if(st.holding) return {activity:"holding", detail:"station-keeping", surveying:false, role:"transit"};
+  if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
   const beh = (S && S.behavior) || "";
   if(beh === "survey"){
     if(runLineIdx >= 0)
-      return {activity:"surveying", surveying:true,
+      return {activity:"surveying", surveying:true, role:"survey",
               detail:"on coverage line " + (runLineIdx+1) + " of " + mission.lines.length};
     if(curTurn >= 0){
       const t = turnSeg[curTurn] || {};
-      return {activity:"transiting", surveying:false,
+      return {activity:"transiting", surveying:false, role:"turn",
               detail:"turning between lines" + (t.from>=0 ? " (off line " + (t.from+1) + ")" : "")};
     }
     // A survey run that is not on a line and not in a turn is on its way somewhere: the
-    // approach to the first line, or a hop between separated coverage regions.
-    return {activity:"transiting", surveying:false,
+    // approach to the first line, or a hop between separated coverage regions. Both are
+    // TRANSITS - Andy's "transits to the beginning of a survey", exactly.
+    return {activity:"transiting", surveying:false, role:"transit",
             detail: lastRunLine >= 0 ? "between coverage regions" : "approach to the survey area"};
   }
   const why = {goto:"to the commanded point", rth:"returning home",
                transit:"following the drawn transit line", search:"running a search pattern"};
-  if(beh === "search") return {activity:"surveying", surveying:true, detail:why.search};
-  return {activity:"transiting", surveying:false, detail: why[beh] || beh || "under way"};
+  // A SEARCH PATTERN IS COVERAGE and this function has always said so ("surveying"): its
+  // legs are sensor work, not a way of getting somewhere. So it takes the SURVEY speed -
+  // the alternative is a sensor run flown at transit speed because nobody named it.
+  if(beh === "search") return {activity:"surveying", surveying:true, detail:why.search, role:"survey"};
+  // goto · rth · transit - and the RTH that CHAINS after a survey arrives here too, which
+  // is Andy's "after the survey to home".
+  return {activity:"transiting", surveying:false, role:"transit", detail: why[beh] || beh || "under way"};
 }
 
 // THE TRANSITIONS GO IN THE SESSION LOG, and this is the part that is really for later.

@@ -161,6 +161,18 @@ telemetry frame:
   decay into range-to-waypoint as the boat closes a turn; and before the first waypoint is
   passed it reads `— no leg of advance yet` rather than a `0.0` an operator would read as
   dead on track.
+* **Speed** — three rows, because one number answers none of the questions once there are
+  three speeds. What the boat is **making good** and what it was **told** (`6.8 kn · told
+  survey (7.0)`); the **role** that value is for and why (`SURVEY — on coverage line 7 of
+  22`), so 14 kn in the middle of a survey reads as *TRANSIT — approach to the survey area*
+  rather than as a fault; and all three **settings** with the live one in bold, so a value
+  can be checked without opening the survey card. When the clearance guard has the throttle
+  the middle row says **SAFETY OVERRIDE** instead — the role is not why the boat is slow.
+
+  **Transit speed covers everything that is not coverage and not a reversal**: Go-To, RTH,
+  the transit out to the start of a survey, hops between separated coverage regions, a drawn
+  transit line, and the Return-to-Home that chains after a survey ends.
+
 * **Clearance** — beside off track, and the other half of *where is the boat*: its live
   distance to the **keep-out model**, named (`4.2 m to a dock / pier`), with `CLOSING` and
   `SLOWED` when either applies. Shown whenever the model is loaded and not only when it is
