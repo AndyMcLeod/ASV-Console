@@ -1,4 +1,27 @@
 /* ========================================================================
+ * ⚠⚠ ASV OWNS THIS FILE NOW (2026-08-31). DO NOT RE-VENDOR IT.
+ *
+ * Andy: "stop updating other projects. We concentrate only on ASV Console
+ * moving forward. There may be components of other projects that we pull over."
+ *
+ * So the flow is ONE WAY from here: asv_core is a place to pull FROM, never a
+ * place this repo writes back to. The vendor header below is kept for
+ * PROVENANCE -- it records where this body came from -- but its instruction is
+ * now wrong for this repo, and dangerously so:
+ *
+ *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+ *     THIS FILE AND SILENTLY DELETE A SAFETY FIX. This copy carries
+ *     the `side` option on teardropTurn's semicircle branch, which is
+ *     what lets a refused turn go AWAY from a dock instead of being
+ *     abandoned.
+ *     asv_core does not have it. If a `--check` there reports this copy as
+ *     DRIFTED, that is correct and expected: it has drifted, on purpose.
+ *
+ * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
+ * pre-commit hook. If it is ever wanted upstream, carry it there as its own
+ * deliberate piece of work -- never by syncing in this direction.
+ * ======================================================================== */
+/* ========================================================================
  * VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
  *
  *   source : asv_core_js/turns.js
@@ -293,13 +316,18 @@ export function arcPts(C, R, a0, sweep, minSeg, map, stepM) {
  * @param {number} hE heading of the line just run, degrees true
  * @param {number} hF heading of the next line, degrees true
  * @param {{toEN:Function, fromEN:Function}} frame local plane; anchor it AT the turn
- * @param {object} [opts] { minR, clear, arcStepM, maxHalfM }
- * @returns {{pts:Array, kind:string, R:number, outboard:number}
+ * @param {object} [opts] { minR, clear, arcStepM, maxHalfM, side }
+ *   `side: 'inboard'` sweeps a SEMICIRCLE the other way round the chord — see the note
+ *   at the semicircle branch. It has no effect on a teardrop, whose loop side is fixed
+ *   by which side the next line is on; the teardrop's lever is `minR` instead.
+ * @returns {{pts:Array, kind:string, R:number, outboard:number, side:string}
  *          | {why:'degenerate'|'skew'|'nogo', seg?:Array}}
  *   `pts` EXCLUDES E and F. `outboard` is how far past the line end the turn reaches —
  *   the water the operator has to have clear. On a `nogo` refusal `seg` is the failing
  *   chord, so the caller can ask WHAT blocked it and name it: a "keep-out" the operator
- *   is staring at can be open-looking water, such as a navigation channel.
+ *   is staring at can be open-looking water, such as a navigation channel. `side` is
+ *   which way the turn actually went, so a caller that had to fall back to the inboard
+ *   sweep can SAY so rather than shipping a turn that is not where the operator expects.
  */
 export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
   const clear = opts.clear || (() => true);
@@ -315,18 +343,36 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
   const fwd = { e: Math.sin(hE * D2R), n: Math.cos(hE * D2R) };      // exit heading = outboard
   const en2ll = (e, n) => frame.fromEN(e, n);
 
-  let pts, kind, R, outboard;
+  let pts, kind, R, outboard, side = 'outboard';
   if (half >= minRc) {
     // ── SEMICIRCLE: the offset itself supplies a radius the vessel can hold ─────────
     R = half; kind = 'semicircle'; outboard = R;
     const C = { x: (Ee.e + Fe.e) / 2, y: (Ee.n + Fe.n) / 2 };
     const a0 = Math.atan2(Ee.n - C.y, Ee.e - C.x);
+    // ⚠ TWO SWEEPS EXIST, AND THE CALLER MAY NEED THE OTHER ONE (2026-08-31).
+    // A semicircle from E to F traces the same circle whichever way it is swept; the
+    // direction only decides which SIDE of the E–F chord it bulges. Outboard — past the
+    // end of the line just run — is the default and is right almost always, because
+    // inboard sweeps back over water the plan has just surveyed.
+    //
+    // But when outboard is refused by a keep-out, inboard is not merely an alternative,
+    // it is the only turn there is. The caller's fallback for a refused reversal is a
+    // straight leg between the two line ends: clear of the model, and a 180° the vessel
+    // cannot track. It will then loop on its own, uncommanded, and that loop goes
+    // OUTBOARD — into the very feature that refused the turn. Refusing the turn removes
+    // the only geometry that was steering the boat away from it.
+    //
+    // Andy, 2026-08-31, on precisely that outcome beside a wharf in Pago Pago (measured
+    // off the recorded track: the plan cleared the pier by 14.3 m, the boat passed it at
+    // 0.6 m): "the turn should be AWAY from the shoreline or dock or other feature
+    // rather than through it."
     let dir = 1, bestProj = -Infinity;                    // pick the sweep that bulges outboard
     for (const cand of [1, -1]) {
       const am = a0 + cand * Math.PI / 2;
       const proj = Math.cos(am) * fwd.e + Math.sin(am) * fwd.n;
       if (proj > bestProj) { bestProj = proj; dir = cand; }
     }
+    if (opts.side === 'inboard') { dir = -dir; side = 'inboard'; }
     pts = arcPts(C, R, a0, dir * Math.PI, 4, en2ll, opts.arcStepM);
   } else {
     // ── TEARDROP: loop at the vessel's own minimum radius ───────────────────────────
@@ -382,5 +428,5 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
     if (!clear(prev, p)) return { why: 'nogo', seg: [prev, p] };
     prev = p;
   }
-  return { pts, kind, R, outboard };
+  return { pts, kind, R, outboard, side };
 }

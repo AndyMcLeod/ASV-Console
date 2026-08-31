@@ -151,6 +151,20 @@ telemetry frame:
   decay into range-to-waypoint as the boat closes a turn; and before the first waypoint is
   passed it reads `— no leg of advance yet` rather than a `0.0` an operator would read as
   dead on track.
+* **Clearance** — beside off track, and the other half of *where is the boat*: its live
+  distance to the **keep-out model**, named (`4.2 m to a dock / pier`), with `CLOSING` and
+  `SLOWED` when either applies. Shown whenever the model is loaded and not only when it is
+  tight, so the alarm is never the first you hear of the quantity.
+
+  **This is the buffer applied to the boat rather than only to the plan.** Every other
+  keep-out check in the console runs at *plan* time — Go-To, RTH, transit, Punch Out,
+  Upload — so until 2026-08-31 a boat wide of its own track for any reason closed on
+  charted structure unwatched. Inside the buffer the console **alarms and names the
+  feature**; inside it *and closing*, it **commands the low speed**, handing it back at
+  1.5× the buffer. It slows and it **never steers**: slowing cuts the energy of a contact
+  and buys turning room without taking a control from the RC transmitter, which is master
+  and is the true failsafe. It commands nothing at all unless the boat is running, armed,
+  not E-STOPped and not holding.
 * **Why this route** — the planner's own reasoning, **captured when the plan was
   committed**: routed clear of the keep-out model via *N* waypoints, or direct because
   the straight line was already clear; whether it rode the Rule 9 lane and whether that
@@ -525,6 +539,23 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    serpentine. At each line-to-line reversal Punch Out inserts a **generated turn**
    that rolls the boat onto the next line *aligned* with its heading instead of
    pivoting hard, and **shortens the survey lines** slightly to give the turn room.
+
+   **A refused turn is retried, not abandoned.** The normal turn loops *outboard*,
+   past the end of the line just run. Where a keep-out stands in that water the
+   console tries the same turn swept the **other way** — back over water the plan has
+   just surveyed, and so known clear — and then both sides again at the **slow-speed
+   radius**, which reaches less far. Only if every one of those is refused is there no
+   turn, and then the pair is flagged **unsafe** and Upload blocks.
+
+   *This matters more than it looks.* Until 2026-08-31 a refused reversal fell back to
+   a straight leg between the two line ends. That leg is genuinely clear of the model —
+   and it is a 180° the hull cannot track, so the boat loops on its own, uncommanded,
+   **outboard**: into the very feature that refused the turn. Refusing the turn was
+   what steered the boat at the obstacle, because it removed the only geometry keeping
+   it away. One recorded run put a DriX 0.6 m off a wharf on a plan that cleared it by
+   14.3 m. Note that *slowing* only reshapes a **teardrop**; a semicircle's radius is
+   half the line spacing and no speed changes it — there, widening the spacing is the
+   lever.
 
    **Minimum survey line (per vessel).** A survey line costs two turns whatever its
    length, so below some length the boat spends longer manoeuvring onto the line

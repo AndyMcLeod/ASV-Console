@@ -641,14 +641,14 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          ptInGeom, segSamplesEN } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
-         teardropTurn } from "/static/js/turns.js";
+         teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
          junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM,
-         WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts,
+         WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent,
          legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
          nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
@@ -835,6 +835,101 @@ function fmtBrgRange(from, to){
   if(!from || !to) return "--";
   return String(Math.round(azTo(from, to))%360).padStart(3,"0") + "° · " + fmtDist(distTo(from, to));
 }
+// --- THE CLEARANCE GUARD: the buffer enforced on the BOAT, not only on the plan ------ //
+//
+// Andy, 2026-08-31, with a screenshot of a track through a wharf: "This image shows a path
+// line intersecting a pier without any reaction from the system. This is very bad. ...
+// Speed MAY be modified temporarily to slow and reduce impact damage if a turn will not
+// resolve. This may be a buffer related situation improperly set by the user in the GUI
+// but the 5m setting in the recent instance seems to have been ignored."
+//
+// ⚠ IT WAS NOT IGNORED - IT WAS NEVER APPLIED TO THE VEHICLE. Measured off that recording:
+// the commanded route cleared the pier by 14.3 m, and the boat passed it at 0.6 m. The
+// buffer had done its job at plan time and there was nothing downstream of it. EVERY
+// keep-out check this console has - Go-To, RTH, transit, punch-out, upload - runs against
+// a PLAN. Once a plan is running, nothing compares where the boat actually IS with the
+// model, so a boat wide of its track for any reason at all (a turn it cannot hold, set and
+// drift, an overshoot) closes on charted structure unwatched and unremarked.
+//
+// This is that missing quantity, and it is deliberately measured against the SAME model the
+// planner used: clearanceM is built from `blocked`'s own three primitives, so the number
+// the operator watches cannot disagree with the rule the route was cleared against.
+//
+// WHAT IT DOES, in the order it does it:
+//   * ALWAYS reports the clearance, so the operator has the number before it is a problem.
+//   * Inside the buffer: alarms, and NAMES the feature.
+//   * Inside the buffer AND CLOSING: commands the low speed, once, and says so. Slowing is
+//     the smallest useful intervention - it cuts the energy of a contact and buys turning
+//     room - and unlike a commanded heading it does not fight the RC transmitter, which is
+//     master here and is the true failsafe. THE CONSOLE NEVER STEERS.
+//   * Clear of the buffer again: hands the speed back to the plan, once.
+//
+// ⚠ AND IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND. A slow-down sent
+// while the operator is driving on RC would be the console taking a control it was never
+// given. Gated on a running, non-holding, armed plan - the same gate the end-of-plan RTH
+// chain uses.
+const CLEAR_CAP_M = 400;            // far enough to be useful, near enough to stay cheap
+const CLEAR_CLOSING_MS = 4000;      // the window "closing" is measured over
+let clearance = {m:null, kind:null, closing:false, slowed:false, prev:null, info:null};
+function updateClearance(){
+  if(!asv || !nogo.ready || !nogo.ko || !nogo.frame){
+    clearance = {...clearance, m:null, kind:null, closing:false, prev:null, info:null};
+    return clearance;
+  }
+  const p = nogo.frame.toEN({lat:asv.lat, lon:asv.lon});
+  const m = clearanceM(p, nogo.ko, CLEAR_CAP_M);
+  const now = Date.now();
+  // CLOSING IS MEASURED OVER A WINDOW, not against the previous frame. Telemetry jitter of
+  // a few centimetres would otherwise flip "closing" on and off every second - and take an
+  // automatic speed command with it, which is the last thing that should chatter.
+  const prev = clearance.prev;
+  const closing = !!(prev && now - prev.t >= CLEAR_CLOSING_MS && m < prev.m - 0.5);
+  const keep = (prev && now - prev.t < CLEAR_CLOSING_MS) ? prev : {m, t: now};
+  const buf = nogo.buffer || 0;
+  // Only ask WHAT is close when something is: blockedInfo walks every feature, and this
+  // runs on every telemetry frame.
+  const info = m <= buf ? blockedInfo(p, nogo.ko, buf + 0.01) : null;
+  clearance = {m, kind: info ? info.kind : null, closing, slowed: clearance.slowed,
+               prev: keep, info};
+  return clearance;
+}
+// THE RESPONSE. Separated from the measurement so the number can be shown - and tested -
+// without anything being commanded, and so there is exactly ONE place that decides to
+// command. `act` is false for a boat that is not under autonomous command.
+let clearAlarmAt = 0;
+function clearanceGuard(){
+  const c = updateClearance();
+  const buf = nogo.buffer || 0;
+  const st = (S && S.status) || {};
+  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
+  if(c.m == null){ return c; }
+  if(c.m <= buf){
+    // SAY IT EVERY 8 s WHILE IT LASTS, not once. A one-shot banner scrolls away and the
+    // boat is still there; a per-frame one is unreadable.
+    if(Date.now() - clearAlarmAt > 8000){
+      clearAlarmAt = Date.now();
+      showBanner("⚠ CLEARANCE " + c.m.toFixed(1) + " m to " + (c.kind || "a keep-out")
+        + " — inside the " + buf.toFixed(1) + " m buffer"
+        + (c.closing ? " and CLOSING." : ".")
+        + (act ? "" : " Not under autonomous command — the console is not intervening."));
+    }
+    setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
+    if(act && c.closing && !clearance.slowed && mission.speed !== "low"){
+      clearance.slowed = true;
+      cmd("/api/cmd/speed", {speed:"low"});
+      flashNote("Clearance " + c.m.toFixed(1) + " m and closing — SLOWED to low. "
+                + "Speed returns to " + (mission.speed || "survey") + " when clear.");
+    }
+  } else if(clearance.slowed && c.m > buf * 1.5){
+    // HANDING IT BACK NEEDS HYSTERESIS, or the boat oscillates across the buffer edge
+    // changing speed. 1.5x is the same shape of margin the nogo re-extract uses.
+    clearance.slowed = false;
+    if(act) cmd("/api/cmd/speed", {speed: mission.speed || "survey"});
+    flashNote("Clear of the buffer (" + c.m.toFixed(1) + " m) — speed back to "
+              + (mission.speed || "survey") + ".");
+  }
+  return c;
+}
 // OFF TRACK is displacement from the LINE OF ADVANCE THE BOAT IS ACTUALLY FLYING — the leg
 // from the waypoint it last passed to the one it is running to — and from nothing else.
 //
@@ -908,6 +1003,19 @@ function renderIntent(){
                 Math.abs(ot.m) > 25 ? "#e8b46a" : "var(--ink)");
   else if(here && rr.length)
     html += row("off track", "— no leg of advance yet", "var(--ink-faint)");
+  // CLEARANCE, beside off track, because the two answer the operator's two questions about
+  // where the boat is: how far off its intended line, and how far off EVERYTHING ELSE.
+  // Shown always once the model is loaded, not only when it is tight - a number watched in
+  // open water is how an operator learns what normal looks like there, and it means the
+  // alarm is not the first they hear of the quantity.
+  if(clearance.m != null){
+    const cbuf = nogo.buffer || 0, tight = clearance.m <= cbuf;
+    html += row("clearance", clearance.m >= CLEAR_CAP_M
+        ? "> " + CLEAR_CAP_M + " m"
+        : clearance.m.toFixed(1) + " m" + (clearance.kind ? " to " + clearance.kind : "")
+          + (clearance.closing ? " · CLOSING" : "") + (clearance.slowed ? " · SLOWED" : ""),
+      tight ? "#d9958f" : (clearance.m < cbuf*3 ? "#e8b46a" : "var(--ink)"));
+  }
   if(st.sog_kn != null) html += row("speed", st.sog_kn.toFixed(1) + " kn"
       + (st.speed_key ? " (" + st.speed_key + ")" : ""));
   // ---- WHY (captured with the plan) ----
@@ -967,6 +1075,10 @@ let patClip = null;                            // Punch-Out result: clipped surv
 let patUnsafe = [];                            // transits with no clear route (flagged red)
 let patRoutes = [];                            // transits auto-routed around obstacles (amber polylines)
 let patTransits = [];                          // per-gap detour waypoints, interleaved on commit
+// Gaps whose turn only fits at the SLOW radius, keyed by gap index. The run commands the
+// slower speed for that turn and puts it back afterwards - a plan-wide drop would cost
+// the whole survey to buy one corner.
+let turnSlowAt = {};
 // Canned search patterns (Project-11 track_patterns style): datum + params ->
 // an ordered waypoint route. Purely client-side generators; committed to
 // mission.waypoints and run through the normal upload/start flow.
@@ -3774,6 +3886,12 @@ async function punchOut(){
     // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
     let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0;
+    // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
+    // silently handing back a turn that is not where the operator expects it.
+    let nTurnInboard=0, nTurnSlow=0; turnSlowAt={};
+    // The radius at the slow speed - the second lever Andy named. Computed here beside
+    // minTurnR so the two are read from the same vessel model in the same breath.
+    const minTurnRSlow = minTurnRadiusM("low");
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
@@ -3784,18 +3902,38 @@ async function punchOut(){
       // A REVERSAL and everything standing in for one answers to koTurn (the turn
       // water rule); only a genuine region-hop transit may use the channel (ko).
       const koHere = antiParallel ? koTurn : ko;
-      let via=null;
+      let via=null, reversalRefused=false;
       if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
-        const t = teardropTurn(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf);  // radius-floored + nogo-validated
+        // THE LADDER, not one attempt: outboard, then INBOARD (away from whatever refused
+        // it), then both again at the slow-speed radius. See turnWithRetry's header for
+        // the wharf this exists for - the old single attempt refused, and refusing was
+        // what put the boat on the pier.
+        const t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
         if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
-                   maxOutboard=Math.max(maxOutboard, t.outboard); }
-        else { nNoTurn++;  // a loop exists at ANY spacing now, so this is nogo/skew, not tightness
+                   maxOutboard=Math.max(maxOutboard, t.outboard);
+                   if(t.side==="inboard") nTurnInboard++;
+                   // A turn that only fits at the slower radius is a turn the boat must be
+                   // SLOWED for. Recorded against the gap so the run commands it there and
+                   // nowhere else - a plan-wide speed drop would cost the whole survey.
+                   if(t.slow){ nTurnSlow++; turnSlowAt[k]=true; } }
+        else { nNoTurn++; reversalRefused=true;  // every rung refused - the boat will improvise
           if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++; else nTurnDegen++;
           if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
             const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
             if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at}); } }
       }
       if(via){ patTransits.push(via); patRoutes.push([Ap,...via,Bp]); continue; }
+      // ⚠ A REVERSAL WITH NO TURN LEFT IS UNSAFE, AND IS NO LONGER SHIPPED AS A STRAIGHT
+      // LEG. This branch used to fall through to `legSafe(Ap,Bp)` and push an empty
+      // transit, with a comment admitting what it was: "clear of nogo, but a 180 the boat
+      // cannot track". That is exactly right, and exactly why it must not ship. The
+      // straight line IS clear - it is the loop the boat flies INSTEAD of it that is not,
+      // and by the time the ladder above has exhausted outboard, inboard and both slow
+      // radii, the console knows the water for that loop is foul on every side. Shipping
+      // it anyway hands the boat a manoeuvre it cannot perform next to the one feature
+      // that refused it. Flagged red like any other unroutable leg, so Upload blocks and
+      // the operator moves the line, widens the spacing or slows the plan.
+      if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); continue; }
       // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
       // a real leg and this is the right answer; for a reversal it is the degenerate
       // fallback the nNoTurn banner warns about - clear of nogo, but a 180 the boat
@@ -5415,6 +5553,9 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
+    // THE GUARD RUNS BEFORE THE READOUTS, so the card and the banner describe the same
+    // frame the guard acted on rather than the one before it.
+    clearanceGuard();
     updateActiveLine(); accumLineTime(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout

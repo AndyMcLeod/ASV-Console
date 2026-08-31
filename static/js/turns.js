@@ -98,7 +98,7 @@ export function arcPts(C, R, a0, sweep, minSeg, map){
 //
 // `maxHalfM` is OPTIONAL and defaults to the core's 60 - see the header. A caller that
 // knows its line spacing should pass Math.max(MAX_HALF_M, spacing * 1.6); punchOut does.
-export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM){
+export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, side){
   return coreTeardropTurn(E, F, hE, hF, ref, {
     minR,
     // `seg` on refusal = the failing chord, so the caller can ask blockedInfo/
@@ -107,5 +107,74 @@ export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM){
     clear: (a, b) => legClear(a, b, ref, ko, buf),
     arcStepM: ARC_STEP_M,
     maxHalfM,
+    side,          // 'inboard' sweeps a semicircle the other way; see turnWithRetry
   });
+}
+
+// THE TURN LADDER - what to try when the obvious turn is refused, and why it exists.
+// Andy, 2026-08-31, after a DriX passed a wharf in Pago Pago at 0.6 m:
+//
+//   "During this sort of maneuver and when extreme close range is an issue, the turn
+//    should be AWAY from the shoreline or dock or other feature rather than through it.
+//    Speed MAY be modified temporarily to slow and reduce impact damage if a turn will
+//    not resolve."
+//
+// ⚠ THE FAILURE THIS CLOSES IS NOT THAT THE TURN WAS UNSAFE - IT IS THAT THERE WAS NO
+// TURN. Measured off the recorded track: at the WEST end of that block the console
+// generated a 26-waypoint teardrop; at the EAST end, beside the pier, it generated 4 -
+// the two line ends and nothing in between. teardropTurn had refused, and punchOut's
+// fallback for a refused reversal is a STRAIGHT leg between those ends, which legClear
+// passes because the straight line genuinely is clear. What ships is a 180 in ~26 m that
+// the hull cannot track; the boat then loops on its own, uncommanded, OUTBOARD - into
+// the very feature that refused the turn. The plan cleared the pier by 14.3 m; the boat
+// passed it at 0.6 m.
+//
+// So refusing the turn is what put the boat on the pier: it removed the only geometry
+// that was steering the boat away from it. This ladder does not give up while a shape
+// remains, and each rung is one of the two things Andy named:
+//
+//   1. OUTBOARD at the plan speed - the normal turn, past the end of the line just run.
+//   2. INBOARD  at the plan speed - the SAME semicircle swept the other way round the
+//      E-F chord, back over water the plan has just surveyed and therefore knows is
+//      clear. This is "turn AWAY from the dock", exactly.
+//   3+4. Both sides again at the SLOW-SPEED radius - a tighter loop reaches less far
+//      outboard, so water that refuses the turn at survey speed may not refuse it at
+//      low. The caller is told (`slow`) and commands that speed for the turn.
+//
+// Only when every rung is refused is there genuinely no turn - and that is the case the
+// caller must flag UNSAFE rather than ship, because it is the one where the boat
+// improvises a loop of its own and nothing has said where.
+export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow){
+  const tries = [{side: undefined, minR, slow: false},
+                 {side: 'inboard', minR, slow: false}];
+  // ⚠ A SLOWER ATTEMPT ONLY RESHAPES A TEARDROP, AND THE TEST IS WHAT ESTABLISHED THAT.
+  // teardropTurn takes the SEMICIRCLE branch when half the line offset already clears the
+  // radius the hull can hold, and that semicircle's radius is `half` -- fixed by the line
+  // spacing, not by the speed. Slowing changes nothing about its shape, so on a
+  // wide-spaced plan (the Pago Pago geometry: half 13 m, minR 10 m) rungs 3 and 4 fly the
+  // IDENTICAL arc to rungs 1 and 2 and refuse for the identical reason. They are still
+  // worth having -- below 2*minR every reversal is a teardrop, which is where the tight
+  // plans and the tight water both are -- but "slow down and it will fit" is NOT true in
+  // general, and an advisory that says so on a semicircle plan would be wrong. Widening
+  // the spacing is the lever there; the run-time guard's slow-down is what reduces the
+  // energy of a contact either way.
+  //
+  // The guard below is necessary but not sufficient, and that is deliberate: skipping the
+  // rungs when they cannot differ would need this function to re-derive teardropTurn's
+  // branch condition, and two copies of that rule is how they drift apart.
+  if(minRSlow > 0 && minRSlow < minR)
+    tries.push({side: undefined, minR: minRSlow, slow: true},
+               {side: 'inboard', minR: minRSlow, slow: true});
+  let first = null;
+  for(let i = 0; i < tries.length; i++){
+    const t = tries[i];
+    const r = teardropTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, t.side);
+    if(r.pts) return {...r, slow: t.slow, rung: i + 1};
+    // THE FIRST REFUSAL IS THE ONE WORTH REPORTING, not the last: rung 1 is the turn the
+    // operator expected to see, and its `seg` names the feature that actually refused it.
+    // Reporting rung 4's refusal would name whatever blocked a tighter inboard loop, which
+    // is not the answer to "why is there no turn at the end of line 12".
+    if(!first) first = r;
+  }
+  return {...first, rung: tries.length};
 }

@@ -45,12 +45,12 @@ import { V, nogo, sea } from "./state.js";
 // THE SHARED KEEP-OUT LAYER. `blocked` is used below by snapClearLL and `firstBlockAlong`
 // by legReason; the rest pass straight through to this console's importers.
 import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
-         blocked, blockedInfo, legClear, firstBlockAlong,
+         blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
          buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
          depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind } from "./keepouts.js";
 export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
-         blocked, blockedInfo, legClear, firstBlockAlong,
+         blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys };
 
 // THE ONE SEAM WHERE THIS CONSOLE'S STATE BECOMES THE CORE'S OPTIONS. Built per call

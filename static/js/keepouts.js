@@ -1,4 +1,26 @@
 /* ========================================================================
+ * ⚠⚠ ASV OWNS THIS FILE NOW (2026-08-31). DO NOT RE-VENDOR IT.
+ *
+ * Andy: "stop updating other projects. We concentrate only on ASV Console
+ * moving forward. There may be components of other projects that we pull over."
+ *
+ * So the flow is ONE WAY from here: asv_core is a place to pull FROM, never a
+ * place this repo writes back to. The vendor header below is kept for
+ * PROVENANCE -- it records where this body came from -- but its instruction is
+ * now wrong for this repo, and dangerously so:
+ *
+ *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+ *     THIS FILE AND SILENTLY DELETE A SAFETY FIX. This copy carries
+ *     clearanceM -- the boat's LIVE distance to the keep-out
+ *     model, which is the quantity the runtime guard watches.
+ *     asv_core does not have it. If a `--check` there reports this copy as
+ *     DRIFTED, that is correct and expected: it has drifted, on purpose.
+ *
+ * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
+ * pre-commit hook. If it is ever wanted upstream, carry it there as its own
+ * deliberate piece of work -- never by syncing in this direction.
+ * ======================================================================== */
+/* ========================================================================
  * VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
  *
  *   source : asv_core_js/keepouts.js
@@ -631,6 +653,49 @@ export function blocked(p, ko, buf) {
     if (Math.hypot(p.e - pt.e, p.n - pt.n) < R) return true;
   }
   return false;
+}
+
+/**
+ * How far this point (frame metres) is from the NEAREST keep-out, capped at `cap`.
+ *
+ * `blocked` answers yes/no at ONE buffer, which is all a PLANNER needs: a leg is either
+ * clear or it is not. A RUNNING BOAT needs the number. Andy, 2026-08-31, after a DriX
+ * passed a wharf at 0.6 m with a 5 m buffer set: the buffer was honoured by the planner
+ * (the commanded path cleared the pier by 14.3 m) and then enforced on nothing, because
+ * every keep-out test in this console is a plan-time test. There was no quantity to watch.
+ *
+ * Zero means inside a keep-out. Built from the same three primitives as `blocked`, in the
+ * same order, so the two can never disagree about what a keep-out IS - and capped, so a
+ * boat in open water costs one bounding-box test per feature and nothing more.
+ */
+export function clearanceM(p, ko, cap = 500) {
+  let best = cap;
+  for (const poly of ko.polys) {
+    if (!inBB(p, poly.bb, best)) continue;
+    if (pinp(p, poly.ring)) return 0;
+    const rg = poly.ring;
+    for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
+      const d = dSeg(p, rg[j], rg[i]);
+      if (d < best) best = d;
+    }
+  }
+  for (const ln of ko.lines) {
+    if (!inBB(p, ln.bb, best)) continue;
+    for (let i = 1; i < ln.pts.length; i++) {
+      const d = dSeg(p, ln.pts[i - 1], ln.pts[i]);
+      if (d < best) best = d;
+    }
+  }
+  // Measured from the hazard's OWN EDGE, matching `blocked`'s `buf + pt.r` test: a wreck
+  // with a 20 m extent, 21 m away, is 1 m clear and not 21. Clamped at 0 rather than
+  // going negative, so "inside" reads the same whichever of the three kinds it is.
+  for (const pt of ko.points) {
+    const r = pt.r || 0;
+    if (Math.abs(p.e - pt.e) > best + r || Math.abs(p.n - pt.n) > best + r) continue;
+    const d = Math.max(0, Math.hypot(p.e - pt.e, p.n - pt.n) - r);
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 /** Like `blocked`, but returns the offending keep-out so a refusal can name it. */

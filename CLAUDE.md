@@ -55,9 +55,99 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-31 — changing base is shown as the journey it is)
+## ⇒ START HERE (handoff refreshed 2026-08-31 — the buffer is enforced on the boat, not only on the plan)
 
-**NEWEST (this commit): A PORT CHANGE WAS A TELEPORT WITH A ONE-LINE NOTE OVER IT.** Andy:
+**⇒ ANDY'S RULING, 2026-08-31: THIS IS THE ONLY ACTIVE PROJECT.** *"stop updating other
+projects. We concentrate only on ASV Console moving forward. There may be components of
+other projects that we pull over."*
+
+So the estate flow is **ONE WAY** from here: asv_core, WorldView, Zboat and Transit are
+places to pull FROM, never places this repo writes back to. Two consequences that will bite
+somebody otherwise:
+
+* **`static/js/core_turns.js` and `static/js/keepouts.js` ARE THIS REPO'S FILES NOW**, and
+  both carry local safety changes asv_core does not have. Their vendor headers still say
+  *"DO NOT EDIT THIS COPY"* and name `tools/vendor.py` — that instruction is now WRONG
+  here, and running it from the asv_core repo would **silently delete the fix behind
+  `tests/clearance_guard.js`**. Each file now opens with a loud ASV-OWNS-THIS note saying
+  exactly that; a `--check` over there reporting them DRIFTED is correct and expected.
+* **Don't "tidy up" by syncing them back.** If a change is wanted upstream, that is its own
+  deliberate piece of work in that repo, not a sync in this direction.
+
+**NEWEST (this commit), AND IT IS A SAFETY FIX. A DriX PASSED A WHARF AT 0.6 m WITH A 5 m
+BUFFER SET, AND NOTHING REACTED.** Andy, with a screenshot of the recorded track:
+
+> *"This image shows a path line intersecting a pier without any reaction from the system.
+> This is very bad. During this sort of maneuver and when extreme close range is an issue,
+> the turn should be AWAY from the shoreline or dock or other feature rather than through
+> it. Speed MAY be modified temporarily to slow and reduce impact damage if a turn will not
+> resolve. This may be a buffer related situation improperly set by the user in the GUI but
+> the 5m setting in the recent instance seems to have been ignored."*
+
+**⚠ THE BUFFER WAS NOT IGNORED. IT WAS NEVER APPLIED TO THE VEHICLE.** Measured off the
+screenshot (Pago Pago, DriX H-8, z18 = 0.5787 m/px):
+
+| | closest approach to the pier |
+|---|---|
+| the commanded ROUTE | 24.8 px = **14.3 m** |
+| the recorded TRACK | 1.0 px = **0.6 m** |
+
+The planner honoured the buffer and there was nothing downstream of it. **Every keep-out
+check this console had — Go-To, RTH, transit, punch-out, upload — is a PLAN-TIME check**
+(all six `setViolations` call sites). Once a plan was running nothing compared where the
+boat actually was with the model.
+
+**AND THE REASON THE BOAT WAS THERE IS THE SECOND MEASUREMENT FROM THE SAME IMAGE.** Route
+waypoints at the two ends of the same block: **west 26** (a full teardrop), **east, beside
+the pier, 4** — the two line ends and nothing between them. `teardropTurn` refused, and
+punchOut's fallback for a refused reversal was a STRAIGHT leg between the line ends, which
+`legSafe` passes because the straight line genuinely is clear. What shipped was a 180° in
+~26 m the hull cannot track. The boat then looped on its own, uncommanded, OUTBOARD — into
+the very feature that refused the turn. **Refusing the turn is what put the boat on the
+pier: it removed the only geometry that was steering it away.** The old code's own comment
+said as much — *"clear of nogo, but a 180 the boat cannot track"* — and shipped it anyway.
+
+**THE FIX IS IN THREE PLACES.**
+
+1. **`core_turns.js` gained `side`, and this console gained `turnWithRetry` (the ladder).**
+   A semicircle traces the same circle either way round; the sweep only decides which side
+   of the E–F chord it bulges, and only the outboard one was ever tried. The ladder is
+   outboard → **inboard** → both again at the **slow radius**, and it is exactly Andy's two
+   levers.
+2. **A refused reversal is now UNSAFE, not shipped.** Once every rung has refused, the
+   console knows the water for that loop is foul on every side and at every radius it can
+   fly. Flagged red like any other unroutable leg, so Upload blocks.
+3. **`clearanceM` + the runtime guard.** The boat's live distance to the keep-out model,
+   built from `blocked`'s own three primitives so the number the operator watches cannot
+   disagree with the rule the route was cleared against. On the Intent card beside off
+   track; alarms inside the buffer naming the feature; and **commands the low speed when
+   inside AND closing**, handing it back at 1.5× the buffer.
+
+**⚠ THE CONSOLE SLOWS. IT NEVER STEERS.** Slowing cuts the energy of a contact and buys
+turning room without fighting the RC transmitter, which is master here and is the true
+failsafe. Check 16 asserts the guard's only command is a speed; check 14 asserts it commands
+nothing at all unless the boat is running, armed, not E-STOPped and not holding.
+
+**⚠ AND "SLOW DOWN AND IT WILL FIT" IS NOT TRUE IN GENERAL — the test is what established
+that.** `teardropTurn` takes the SEMICIRCLE branch when half the line offset already clears
+the hull's radius, and that semicircle's radius is `half`, set by the SPACING and not the
+speed. On a wide-spaced plan (the Pago Pago geometry: half 13 m, minR 10 m) the slow rungs
+fly the identical arc and refuse identically. Widening the spacing is the lever there. Check
+10b pins this so nobody offers the wrong advisory, and 10a pins that `side` is inert on a
+teardrop — its loop side is fixed by which side the next line is on.
+
+**`tests/clearance_guard.js` — 23 checks, FIFTEEN MUTATIONS** run against a sidecar of the
+page and both modules. **⚠ THE FIXTURES WERE WRONG TWICE AND THE SUITE CAUGHT ITSELF BOTH
+TIMES.** `bbOf` returns `{x0,y0,x1,y1}`; the obvious guess is `{w,e,s,n}`, and with the wrong
+keys `inBB` rejected every feature — so `blocked` AND `clearanceM` skipped everything and
+check 1, which compares them, PASSED over 2,214 points of nothing. It now asserts the sweep
+actually hits something. Then the turn fixtures placed the pier by arithmetic on paper and
+the arc stopped 7 m short of it; obstacles are placed from the **measured** reach now
+(`reach()` flies the real turn in clear water first). One mutation survived the first pass —
+deleting the Intent card's clearance row — which is why check 18 exists: a guard acting on a
+quantity nobody can see is most of the way back to the defect it was written for.
+
+**PREVIOUS: A PORT CHANGE WAS A TELEPORT WITH A ONE-LINE NOTE OVER IT.** Andy:
 *"On selection of a new survey port show some more obvious and overt indication that a shift
 of port is in process and move is happening. Perhaps a scaled speed slew towards the new
 area."*
@@ -1146,7 +1236,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **40 regression suites / 744 assertions** (20 JS / 415,
+turn-water hold is closed (`a548c14`). **41 regression suites / 768 assertions** (21 JS / 439,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1179,7 +1269,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY REGRESSION SUITES (744 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-ONE REGRESSION SUITES (768 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1203,6 +1293,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/clearance_guard.js` | **SAFETY.** The turn LADDER (outboard -> inboard -> slow radius -> refuse) and the RUNTIME clearance guard: the live distance to the keep-out model, the alarm, and the automatic slow-down that never steers and never acts unless the boat is under autonomous command (23) |
 | `node tests/port_slew.js` | the port change is a visible journey that always ARRIVES: the zoom-out/cross/zoom-in arc, scaled by distance, the short way over the antimeridian, elapsed-time driven so a throttled window still lands, and the new area's keep-out model fetched before the card comes down (23) |
 | `node tests/off_track.js` | off track is the SIGNED PERPENDICULAR from the leg being flown, never the range to the nearest survey line; it names its subject; and no leg means no reading (17) |
 | `node tests/nogo_readout.js` | the Nogo row's state, incl. the stuck-on-loading bug (16) |

@@ -220,9 +220,29 @@ check("9. post-clip spanning segments forbid the crossed channel; per-poly grant
 
 // ---- the CALLER (a pure helper proves nothing about who calls it) -------- //
 const P = grab("punchOut");
+// The turn builder is `turnWithRetry` since 2026-08-31 (the ladder: outboard, inboard,
+// then both again at the slow radius). Pinned to the ARGUMENT rather than to the function
+// name, because what this check is really about is that a turn is validated against
+// koTurn - the channel-restricted turn water - and never against the looser `ko` that a
+// genuine region hop may use.
 check("10. punchOut hands the TURNS koTurn, and derives it from the CLIPPED lines",
-      () => P.includes("teardropTurn(Ap, Bp, hE, hF, ref, koTurn") &&
+      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn,/.test(P) &&
             P.includes("channelTurnKeepouts(clipped, ref, nogo.features, ko.marks)"));
+// 10b. AND EVERY RUNG OF THE LADDER GETS THE SAME MODEL. A retry that quietly fell back to
+// a looser keep-out set would be worse than no retry at all: it would find a turn exactly
+// where the first attempt had correctly refused one. turnWithRetry takes ONE ko and hands
+// it down unchanged - the only things that vary between rungs are the side and the radius.
+{
+  const T = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "static", "js", "turns.js"), "utf8");
+  const s = T.indexOf("export function turnWithRetry");
+  const body = s < 0 ? "" : T.slice(s, T.indexOf("\n}", s) + 2);
+  const calls = body.match(/teardropTurn\([^)]*\)/g) || [];
+  check("10b. every rung of the turn ladder is validated against the SAME keep-out model",
+        () => calls.length === 1 &&
+              /teardropTurn\(E, F, hE, hF, ref, ko, buf, t\.minR, maxHalfM, t\.side\)/.test(calls[0]),
+        calls.length + " teardropTurn call(s) in turnWithRetry: " + (calls[0] || "none"));
+}
 check("11. punchOut's legSafe (serpentine adjacency + the reversal straight hop) walks koTurn",
       () => /const legSafe=[\s\S]{0,500}?koTurn, buffer\)\) return false/.test(P));
 check("12. a refused REVERSAL that falls to routing stays out of the channel " +
