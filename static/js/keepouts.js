@@ -498,7 +498,15 @@ export function pairGates(marks) {
 export function channelPolys(frame, feats, marks) {
   const chans = [];
   for (const f of feats || []) {
-    if (f.role !== 'dredged') continue;
+    // A CHARTED CHANNEL IS A CHARTED OBJECT. S-57 names two that are a "narrow
+    // channel or fairway" in COLREGS Rule 9's own words: DRGARE (Dredged_Area -
+    // depth artificially maintained, so a deep-draught vessel can navigate
+    // safely only within it, which is Rule 9(b)'s own test) and FAIRWY
+    // (Fairway_area - the designated lane for larger vessels, which is the
+    // object the rule is written about). Traffic separation schemes and
+    // recommended tracks are deliberately NOT here: those are Rule 10 and good
+    // practice respectively, not Rule 9. See ENC_ROLES in asv_console.py.
+    if (f.role !== 'dredged' && f.role !== 'fairway') continue;
     eachRing(f.geometry, (rg) => {
       const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
       if (ring.length >= 3) chans.push({ ring, bb: bbOf(ring) });
@@ -588,6 +596,22 @@ export function buildKeepouts(frame, feats, opts = {}) {
       continue;
     }
 
+    // ⚠ A FAIRWAY IS NOT A KEEP-OUT — IT IS THE OPPOSITE, and it needs no guard
+    // here to stay that way. FAIRWY is the water a large vessel is DESIGNATED to
+    // use; it is carried so `channelPolys` can say where COLREGS Rule 9 is in
+    // force, and for nothing else. It reaches none of the branches below —
+    // `isLand`, `isShore`, `isHaz` and `isArea` are all false for it — so it
+    // falls out at the bottom with the depth areas and the soundings, which is
+    // what the closing comment there already says. An explicit `continue` was
+    // written here first and MUTATION PROVED IT DEAD: removing it changed
+    // nothing, because the fall-through was already the right answer. The rule
+    // lives in one place now, and rule9_scope check 3 asserts the behaviour
+    // rather than the guard.
+    //
+    // ⚠ THE REAL RISK IS `isArea`, one line down. Adding 'fairway' to it beside
+    // 'dredged' and 'restricted' looks tidy and would make the designated
+    // channel a polygon keep-out — refusing every route down the middle of a
+    // marked channel. That is the mutation the check is aimed at.
     if ((isLand || isShore) && !enf.land) continue;
     if (depthbad && !enf.depth) continue;
     if (isHaz && !enf.haz) continue;

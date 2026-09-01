@@ -80,9 +80,14 @@ export { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
 // 2. The returned `lane` / `partial` are mirrored into `sea.laneUsed` / `sea.lanePartial`.
 //    Those fields used to be how the producers TALKED to this function; now they are how
 //    this function reports, so a readout or a suite that reads them is still right.
-export function channelLaneRoute(pathLL, ref, ko, buf){
+// `lane:false` runs the SMOOTH / GATE / PRUNE pipeline without the Rule 9 offset - what a
+// survey or search PATTERN's own inter-leg hops want. See the core's own note: those three
+// stages have nothing to do with Rule 9 and a pattern needs every one of them, so the lane
+// is skipped rather than the call.
+export function channelLaneRoute(pathLL, ref, ko, buf, opts){
   const r = coreChannelLaneRoute(pathLL, ref, ko, buf,
-                                 {channelReachM: V.CHANNEL_REACH_M != null ? V.CHANNEL_REACH_M : 0});
+                                 {channelReachM: V.CHANNEL_REACH_M != null ? V.CHANNEL_REACH_M : 0,
+                                  ...(opts || {})});
   sea.laneUsed = r.lane;
   sea.lanePartial = r.partial;
   return r;
@@ -312,12 +317,23 @@ export function routePlan(start, wps, keepRightAll){
     const leg = legPath(prev, wp, ref, ko, buf);
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
     let seg = [prev, ...leg];                       // prev … wp
-    // Rule 9 keep-right applies to every TRANSIT: the approach (leg 0), any leg of
-    // a pure-transit route (keepRightAll), and any ROUTED DETOUR (leg.length>1 -
-    // routeAround inserted a transit around obstacles). A straight mission leg in
-    // between is left alone - at Upload we can't tell a survey coverage line from
-    // a plain hop, and coverage lines must stay on their planned track.
-    if(keepRightAll || i===0 || leg.length>1){
+    // Rule 9 keep-right applies to a TRANSIT: the approach out (leg 0), and every
+    // leg of a pure-transit route (keepRightAll - Go-To, RTH, a drawn transit).
+    //
+    // ⚠ ROUTED DETOURS INSIDE A PLAN NO LONGER GET IT, and dropping that clause is
+    // half of Andy's 2026-08-31 correction: "while running various survey patterns
+    // the rule should not be considered." `leg.length>1` meant only "routeAround
+    // inserted a detour here", which is as true between two coverage lines as
+    // anywhere else - so a survey pattern's own inter-line hops were being laned.
+    // The comment that stood here admitted the ambiguity it could not resolve ("at
+    // Upload we can't tell a survey coverage line from a plain hop") and then
+    // resolved it in the direction of APPLYING a rule of the road.
+    //
+    // It is resolved the other way now, and needs no new information: a plan that
+    // is not a pure transit is a PATTERN, and the only leg of a pattern that is a
+    // transit in Rule 9's sense is the approach to it. Coverage lines and the hops
+    // between them stay on their planned track.
+    if(keepRightAll || i===0){
       const kr = channelLaneRoute(seg, ref, ko, buf);
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
     }

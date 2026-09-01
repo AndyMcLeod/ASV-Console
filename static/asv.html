@@ -3015,8 +3015,11 @@ function computeSearchNogo(){
       if(distTo(A,B) > 0.5){
         if(!legClear(A,B,ref,ko,buf)){
           const via=routeAround(A,B,ref,ko,buf);
-          if(via && via.length){                    // routed search TRANSIT: Rule 9 keep-right
-            const kr=channelLaneRoute([A,...via,B], ref, ko, buf).route;   // route only: no banner here
+          if(via && via.length){
+            // ⚠ NO RULE 9 HERE either: this is a hop between the legs of a SEARCH PATTERN.
+            // `lane:false` keeps the smooth / gate / prune pipeline, which is not a Rule 9
+            // thing and which this route needs as much as any other.
+            const kr=channelLaneRoute([A,...via,B], ref, ko, buf, {lane:false}).route;
             kr.slice(1,-1).forEach(p=>out.push({lat:p.lat,lon:p.lon})); routes.push(kr);
           }
           else unsafe.push([A,B]);
@@ -4110,8 +4113,13 @@ async function punchOut(){
       // cannot track. Kept so the plan stays complete and the operator sees the flag.
       if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
       const around=routeAround(Ap,Bp,ref,koHere,buffer);
-      if(around){                                   // routed inter-line TRANSIT: Rule 9 keep-right
-        const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer).route;  // route only: no banner here
+      if(around){
+        // ⚠ NO RULE 9 ON A PATTERN'S OWN INTER-LINE HOP (Andy, 2026-08-31: "while running
+        // various survey patterns the rule should not be considered"). `lane:false` still
+        // runs the smooth / gate / prune pipeline, which this call needs for the knot
+        // prune below and for the per-leg keep-out re-check - dropping the call to drop
+        // the lane would trade a safety check for a legal correction.
+        const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer, {lane:false}).route;
         // The route meets the survey line AT Ap/Bp and the line's heading is outside
         // it, so channelLaneRoute's knot prune (interior corners) cannot unfold a
         // reversal folded at the junction - the seam that sent wpt 551 (176° in

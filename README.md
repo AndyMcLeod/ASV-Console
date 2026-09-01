@@ -718,10 +718,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    "nothing has been checked and every route is direct" both look like zero zones and mean
    opposite things, so only the second is flagged amber and says so.
 
-   **Keep right in channels (COLREGS Rule 9).** Every *transit* in **every
-   behaviour** — Go-To, RTH, the drawn Transit line, the approach leg to a survey,
-   the routed transits between survey lines (Punch Out), search-pattern transits,
-   and any obstacle detour inserted at Upload — rides a **channel lane**:
+   **Keep right in narrow channels (COLREGS Rule 9).** The rule applies **only
+   within a narrow channel or fairway, and only on a transit** — Go-To, RTH, the
+   drawn Transit line, and the approach out to a pattern. Those ride a
+   **channel lane**:
 
    > offset to **starboard of the channel centreline**, half way out to the edge on
    > that side — a **quarter of the channel width in from the edge**.
@@ -733,7 +733,45 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    travel**, so the two directions ride opposite halves of the same channel and
    opposing traffic passes **port-to-port**.
 
-   **What defines the channel.** Two sources, one rule:
+   **Where it does NOT apply**, and this is as much of the rule as the offset is:
+   an **open bay or open ocean** transit, and **anything inside a survey or search
+   pattern** — coverage lines, the reversals between them, and the routed hops that
+   join them. A pattern is positioned deliberately; a keep-right offset applied
+   inside one is neither lawful nor wanted.
+
+   *This was wrong until 2026-08-31 and is worth knowing if you are reading old
+   tracks.* There was no width test at all: the console marched perpendicular and
+   called the water a channel if anything answered within 150 m on both sides, so a
+   bay with shores 300 m apart was laned and the card reported compliance with a rule
+   of the road. Routed detours inside a plan were laned too, which laned patterns.
+
+   **A narrow channel is a charted object**, not a shape inferred from two distances.
+   Rule 9 is written about "a narrow channel or fairway", and S-57 names both:
+
+   * **FAIRWY** (`Fairway_area`) — the designated lane for larger vessels.
+   * **DRGARE** (`Dredged_Area`) — a maintained depth, so a deep-draught vessel
+     "can safely navigate only within" it, which is Rule 9(b)'s own test.
+
+   Either makes the water Rule 9 water **at any width**. Failing both, the rule still
+   applies where the water is **genuinely narrow** — under **150 m edge to edge** —
+   because Rule 9 does not require a channel to be charted, and a 100 m cut between
+   two banks is a narrow channel whether or not an ENC draws a fairway over it. That
+   150 m is a **policy number**: COLREGS defines no width, so it is named
+   (`NARROW_MAX_M`) and documented rather than buried in a comparison.
+
+   Traffic separation schemes (**TCTSBL**) are **Rule 10**, and recommended tracks
+   (**RECTRC**) are neither a narrow channel nor a fairway; neither is treated as
+   Rule 9 water.
+
+   **Rule 9(b) always binds here.** Every hull this console drives is well under
+   20 m (DriX 7.71 m, Z-Boat 1.9 m), so "shall not impede a vessel which can safely
+   navigate only within a narrow channel" is never a case to test for. Its two
+   actions are both implemented: keeping to the starboard outer limit is the lane,
+   and not obstructing by crossing is Punch Out clipping a survey line that **spans**
+   a channel — while leaving one **contained within** it alone, because surveying a
+   channel is a normal thing to be asked for.
+
+   **What defines the channel geometrically.** Two sources, one rule:
 
    * **Marked channels** — each port-hand buoy is paired with its nearest
      starboard-hand buoy; the pair midpoints, in number order, are the centreline,

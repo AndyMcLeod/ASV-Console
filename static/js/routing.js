@@ -572,6 +572,31 @@ export function legPath(A, B, frame, ko, buf, opts = {}) {
 /** How far off the centreline the lane rides, as a fraction of the half-width. */
 export const LANE_FRAC = 0.5;
 
+/**
+ * How wide the water may be and still be a NARROW CHANNEL for COLREGS Rule 9,
+ * in metres, edge to edge.
+ *
+ * ⚠ THIS IS A POLICY NUMBER AND IT IS SAID OUT LOUD, because COLREGS defines no
+ * width. Rule 9 speaks of "a narrow channel or fairway" and Rule 9(b) of a vessel
+ * "which can safely navigate only within a narrow channel or fairway" — a test
+ * about the OTHER vessel's room to manoeuvre, not a measurement. So a threshold
+ * has to be chosen, and the honest thing is to name it, state the reasoning, and
+ * let it be overridden rather than bury it in a comparison.
+ *
+ * 150 m is chosen so that a large vessel is genuinely constrained: a ship of
+ * 30-40 m beam has under four beam-widths of water and no room to manoeuvre
+ * around a small craft. Above it, a bay may be shaped like a channel without
+ * being one, and that is exactly the over-application this bound exists to stop —
+ * the previous code had NO width test at all and treated any water with edges
+ * within max(120, buf*30) on both sides as a channel, which at the shipped buffer
+ * is 300 m of open bay.
+ *
+ * A CHARTED channel (FAIRWY / DRGARE / a buoyed lateral system) is Rule 9 water
+ * whatever its width — the chart's declaration outranks this number, and this is
+ * only the test for water nothing has charted as a channel.
+ */
+export const NARROW_MAX_M = 150;
+
 
 /**
  * The centreline the lane is built on: the buoy-pair midline, extended past
@@ -819,6 +844,16 @@ export function narrowChannelLane(pathLL, frame, ko, buf, opts = {}) {
     return false;
   };
 
+  // WHERE THE CHART SAYS A CHANNEL IS. `ko.chans` is built by channelPolys from
+  // S-57 FAIRWY and DRGARE plus the buoy gates — the objects COLREGS Rule 9 is
+  // actually written about. This is the applicability test for the rule; see the
+  // note at its use below for what it replaced and why.
+  const chans = ko.chans || [];
+  const inChartedChannel = (p) => {
+    for (const c of chans) if (inBB(p, c.bb, 0) && pinp(p, c.ring)) return true;
+    return false;
+  };
+
   // INVARIANT 1. A lone buoy read as a channel edge shoved the track toward the
   // real wall opposite, then jogged it back as the buoy passed astern — seen
   // live as a loop by the breakwater on an RTH. The full `ko` is still used for
@@ -841,8 +876,40 @@ export function narrowChannelLane(pathLL, frame, ko, buf, opts = {}) {
     const tl = Math.hypot(te, tn) || 1; te /= tl; tn /= tl;
     SB.push([tn, -te]);
     if (i === 0 || i === N - 1 || inBuoyChannel(samp[i])) continue;
+    // ⚠⚠ RULE 9 APPLIES ONLY WITHIN A NARROW CHANNEL OR FAIRWAY, AND THE CHART
+    // SAYS WHERE THOSE ARE. This gate is the whole of Andy's 2026-08-31
+    // correction: "Rule 9 is being improperly applied ... It applies only within
+    // narrow channels. ... In open bay or open ocean transits and while running
+    // various survey patterns the rule should not be considered."
+    //
+    // What stood here was the ray-march below ON ITS OWN: if anything answered
+    // within CONFINE on both sides, this was called a channel. CONFINE is
+    // max(120, buf*30) — 150 m at the shipped buffer — so any water with banks
+    // 300 m apart got a keep-right lane. That is not a narrow channel, it is most
+    // of a bay, and the console was riding a lane down the middle of open water
+    // while telling the operator it was complying with a rule of the road.
+    //
+    // A narrow channel is not a shape you can infer from two distances. It is a
+    // CHARTED OBJECT — S-57's FAIRWY and DRGARE, which `channelPolys` collects,
+    // plus the buoyed lateral system that `inBuoyChannel` above already handles.
+    // So the march no longer decides WHETHER there is a channel; it only measures
+    // the edges of one the chart has already declared. Every one of the six lane
+    // invariants is untouched: this is SCOPE, not geometry.
+    //
+    // NO CHARTED CHANNEL, NO LANE — including where the chart simply has none for
+    // this area. That is the honest answer rather than the safe-looking one: the
+    // console cannot know a channel is there if nothing charts it, and inventing
+    // one from two shorelines is precisely the fault being fixed.
     const rc = march(samp[i], tn, -te), lc = march(samp[i], -tn, te);
-    if (!(rc < Infinity && lc < Infinity)) continue;   // not confined ⇒ not a channel ⇒ no lane
+    if (!(rc < Infinity && lc < Infinity)) continue;   // no measurable edges ⇒ no offset to build
+    // THE TEST IS "IS THIS A NARROW CHANNEL", AND IT HAS TWO WAYS TO BE TRUE.
+    // Either the CHART says so — FAIRWY / DRGARE / a buoyed lateral system, the
+    // objects Rule 9 is written about — or the water is genuinely narrow enough
+    // that a large vessel can navigate safely only within it, which is Rule 9(b)'s
+    // own words and does not require anything to be charted at all. A 100 m cut
+    // between two banks is a narrow channel whether or not an ENC draws a fairway
+    // over it; a 300 m bay is not, whatever its shape.
+    if (!(inChartedChannel(samp[i]) || rc + lc <= NARROW_MAX_M)) continue;
     const hw = (rc + lc) / 2, ctr = (rc - lc) / 2;
     let d = ctr + LANE_FRAC * hw;
     d = Math.min(d, rc - STANDOFF);
@@ -978,8 +1045,20 @@ export function gateLegClear(route, fallback, frame, ko, buf) {
  *   ridden but NOT over every channel this route ran along.
  */
 export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
-  const marked = buoyChannelLane(pathLL, frame, ko, buf);
-  const unmarked = narrowChannelLane(marked.path, frame, ko, buf, opts);
+  // ⚠ `opts.lane === false` RUNS THE PIPELINE WITHOUT RULE 9, and that is not the
+  // same as not calling this function. Andy, 2026-08-31: "while running various
+  // survey patterns the rule should not be considered" - but the four stages after
+  // the lane are nothing to do with Rule 9 and a pattern needs every one of them:
+  // smoothTrack thins the route, gateLegClear RE-CHECKS EVERY LEG against the
+  // keep-out model, and pruneStitch removes the reversal knots a gate splice can
+  // fold in (the seam that once sent the boat a 176-degree turn in 4.5 m). Skipping
+  // the call to avoid the lane would silently drop a safety re-check to buy a legal
+  // correction, so the lane is what gets skipped instead.
+  const laneWanted = opts.lane !== false;
+  const marked = laneWanted ? buoyChannelLane(pathLL, frame, ko, buf)
+                            : { path: pathLL, used: false };
+  const unmarked = laneWanted ? narrowChannelLane(marked.path, frame, ko, buf, opts)
+                              : { path: marked.path, used: false };
   const smoothed = smoothTrack(unmarked.path, frame, ko, buf);
   const g = gateLegClear(smoothed, pathLL, frame, ko, buf);
   const clean = pruneStitch(g.route, frame, ko, buf);

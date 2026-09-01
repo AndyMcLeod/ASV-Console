@@ -55,9 +55,67 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-31 — one speed became three, and the console governs which is live)
+## ⇒ START HERE (handoff refreshed 2026-08-31 — Rule 9 applies in a narrow channel, and nowhere else)
 
-**NEWEST (this commit): THE SPEEDS ARE ON THE INTENT CARD, AND THE TRANSIT CASES ARE
+**NEWEST (this commit): COLREGS RULE 9 WAS BEING APPLIED WHERE IT DOES NOT APPLY.** Andy:
+
+> *"Rule 9 is being improperly applied in the current ASV Console implementation. It applies
+> only within narrow channels. ... In open bay or open ocean transits and while running
+> various survey patterns the rule should not be considered. There are other rules that
+> should apply which we'll deal with later."*
+
+**⚠ THE GEOMETRY WAS NEVER THE PROBLEM - THE SCOPE WAS.** The lane itself (quarter-width to
+starboard of the centreline, the six invariants that each cost a live failure) is untouched.
+Two gates in front of it were wrong:
+
+1. **THERE WAS NO WIDTH TEST AT ALL.** `narrowChannelLane` marched perpendicular and called
+   the water a channel if anything answered within `max(120, buffer*30)` on **both** sides -
+   150 m at the shipped buffer, so **300 m of open bay was "a narrow channel"**, got a
+   keep-right lane, and the card told the operator it was complying with a rule of the road.
+2. **`routePlan` laned every ROUTED DETOUR** (`leg.length>1`), which is as true between two
+   coverage lines as anywhere else - so survey patterns were laned. The comment beside it
+   admitted the ambiguity it could not resolve (*"at Upload we can't tell a survey coverage
+   line from a plain hop"*) and resolved it toward APPLYING a rule of the road.
+
+**A NARROW CHANNEL IS A CHARTED OBJECT, AND S-57 NAMES IT** - Andy supplied the classes:
+**FAIRWY** (`Fairway_area`, the designated lane for larger vessels - what Rule 9 is written
+about) and **DRGARE** (`Dredged_Area`, a maintained depth, which is Rule 9(b)'s own test: a
+vessel "which can safely navigate only within"). `Fairway_area` is now fetched and
+`channelPolys` reads both. The gate is **charted channel OR genuinely narrow**
+(`NARROW_MAX_M`, 150 m edge to edge) - because Rule 9 does not require a channel to be
+charted, and a 100 m cut between two banks is a narrow channel whether or not an ENC draws a
+fairway over it. The march no longer decides *whether* there is a channel; it measures the
+edges of one already declared.
+
+**NOT Rule 9, deliberately: TCTSBL / `Traffic_Separation_*` is RULE 10**, and RECTRC /
+`Recommended_Track` is neither a narrow channel nor a fairway. Andy: *"other rules ... which
+we'll deal with later."*
+
+**AND ONLY A TRANSIT GETS THE LANE.** Go-To, RTH, a drawn transit, and the approach out to a
+pattern. Never the pattern: punchOut's inter-line hops and the search pattern's now pass
+`{lane:false}`. **⚠ `lane:false` SKIPS THE OFFSET, NOT THE PIPELINE** - `smoothTrack`,
+`gateLegClear` (a per-leg keep-out RE-CHECK) and `pruneStitch` are not Rule 9 and a pattern
+needs all three, so dropping the call to drop the lane would have traded a safety check for
+a legal correction.
+
+**RULE 9(b) BINDS UNCONDITIONALLY HERE**: every shipped hull is under 20 m (DriX 7.71,
+Z-Boat 1.9, example 4.0 - `hull.loa_m`), so the not-impede duty is never a case to test for.
+Both of its actions were already implemented: keeping to the starboard outer limit is the
+lane, and not obstructing by crossing is `channelSpanKeepouts`, which clips a survey line
+that SPANS a channel while leaving one contained within it alone.
+
+**`tests/rule9_scope.js` - 20 checks, FOURTEEN MUTATIONS**, graded across this suite plus
+`buoy_lane` and `turn_channel`. **Three of its own first-draft checks were broken and the
+mutations found all three**: a guard in `buildKeepouts` that was DEAD (removing it changed
+nothing - the comment gave a false reason for a line that did nothing; deleted); check 3
+running with area enforcement OFF only, which masked the tidy-looking edit that would turn a
+fairway into a no-go the moment the operator ticks "Dredged / restricted"; and check 9
+reading `length_m`, which no vessel file has, so `L == null || L < 20` could not fail. The
+length was there all along as `hull.loa_m`.
+
+**PREVIOUS: one speed became three.**
+
+**THE SPEEDS ARE ON THE INTENT CARD, AND THE TRANSIT CASES ARE
 NAMED.** Andy: *"Add speed values to the intent card. Transit speed applies to goto, rth,
 and transits to the beginning of a survey and after the survey to home."*
 
@@ -1334,7 +1392,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **42 regression suites / 797 assertions** (22 JS / 468,
+turn-water hold is closed (`a548c14`). **43 regression suites / 817 assertions** (23 JS / 488,
 20 Python / 329), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1367,7 +1425,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-TWO REGRESSION SUITES (797 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-THREE REGRESSION SUITES (817 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
@@ -1391,6 +1449,7 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 | `node tests/turn_channel.js` | turns may only use channel water the survey lines occupy (14) |
 | `node tests/chart_source_card.js` | the SRC card lists EVERY chart in view, vessel's marked (16) |
 | `node tests/end_action.js` | what the card says a run ends as (16) |
+| `node tests/rule9_scope.js` | **WHERE COLREGS RULE 9 APPLIES.** A narrow channel is a CHARTED object (S-57 FAIRWY / DRGARE / a buoyed system) or water genuinely under NARROW_MAX_M wide - never a ray-march for walls within reach; and only a TRANSIT gets the lane, never a survey or search pattern (14) |
 | `node tests/speed_modes.js` | SPEED BY ROLE: the three settings (transit / turn / survey), the governor that commands the one the current job wants, the safety override outranking it, and the TURN RADIUS being derived from the TURN speed (25) |
 | `node tests/clearance_guard.js` | **SAFETY.** The turn LADDER (outboard -> inboard -> slow radius -> refuse) and the RUNTIME clearance guard: the live distance to the keep-out model, the alarm, and the automatic slow-down that never steers and never acts unless the boat is under autonomous command (23) |
 | `node tests/port_slew.js` | the port change is a visible journey that always ARRIVES: the zoom-out/cross/zoom-in arc, scaled by distance, the short way over the antimeridian, elapsed-time driven so a throttled window still lands, and the new area's keep-out model fetched before the card comes down (23) |

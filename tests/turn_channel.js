@@ -249,7 +249,17 @@ check("12. a refused REVERSAL that falls to routing stays out of the channel " +
       "(koHere = antiParallel ? koTurn : ko), while region hops keep ko",
       () => P.includes("const koHere = antiParallel ? koTurn : ko;") &&
             P.includes("routeAround(Ap,Bp,ref,koHere,buffer)") &&
-            P.includes("channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer)"));
+            /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, buffer, \{lane:false\}\)/.test(P));
+// 12b. ⚠ AND THAT CALL NO LONGER RIDES THE RULE 9 LANE (2026-08-31). It is a hop between
+// two lines of a SURVEY PATTERN, and Andy: "while running various survey patterns the rule
+// should not be considered." The CALL stays, because the three stages after the lane -
+// smooth, the per-leg keep-out gate, and the knot prune this very loop depends on - have
+// nothing to do with Rule 9 and a pattern needs all of them. `lane:false` skips the lane,
+// not the pipeline; dropping the call instead would trade a safety re-check for a legal
+// correction, which is the wrong way round.
+check("12b. ... and it does NOT ride the Rule 9 lane, while keeping the gate and the prune",
+      () => /\{lane:false\}/.test(P) && P.includes("pruneJunctionKnots("),
+      "lane:false keeps smoothTrack / gateLegClear / pruneStitch and skips only the offset");
 check("13. the nNoTurn banner HIGHLIGHTS the blockers (setViolations, not clearViolation)",
       () => /else if\(nNoTurn\)\{ setViolations\(turnBlocks\);/.test(P));
 check("14. the banner and the hint NAME the channel (open-looking water needs naming)",

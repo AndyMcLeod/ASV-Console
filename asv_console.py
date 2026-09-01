@@ -1156,6 +1156,36 @@ ENC_ROLES = {
     "hazard_area":   ["Obstruction_area", "Wreck_area"],
     "dredged":       ["Dredged_Area"],
     "restricted":    ["Restricted_Area"],
+    # ── WHERE COLREGS RULE 9 APPLIES, READ OFF THE CHART ────────────────────
+    # Andy, 2026-08-31: "Rule 9 is being improperly applied ... It applies only
+    # within narrow channels. ... In open bay or open ocean transits and while
+    # running various survey patterns the rule should not be considered."
+    #
+    # He is right, and the old test was the reason: the lane fired wherever a
+    # perpendicular ray-march found SOMETHING within reach on both sides -
+    # max(120, buffer*30) = 150 m at the shipped buffer, so any water with banks
+    # 300 m apart was treated as a narrow channel. That is most of a bay.
+    #
+    # A narrow channel is not a shape you can infer from two distances. It is a
+    # CHARTED OBJECT, and S-57 names it. Rule 9's own words are "a narrow channel
+    # or fairway":
+    #   FAIRWY (Fairway_area)  - the designated lane for larger vessels. This IS
+    #                            the object the rule is written about.
+    #   DRGARE (Dredged_Area)  - depth artificially maintained, so a deep-draught
+    #                            vessel "can safely navigate only within" it,
+    #                            which is Rule 9(b)'s own test.
+    # Already extracted above as "dredged" for the survey depth window; named
+    # here too because the ROLE is different - one clips coverage, the other
+    # decides whether a rule of the road is in force.
+    #
+    # DELIBERATELY NOT HERE, and it is not an oversight:
+    #   TCTSBL / Traffic_Separation_* - that is RULE 10, a different rule with
+    #     different duties. Andy: "There are other rules that should apply which
+    #     we'll deal with later."
+    #   RECTRC / Recommended_Track   - a recommended route is neither a narrow
+    #     channel nor a fairway. Following one is good practice, not Rule 9.
+    #   DWRTPT / Deep_Water_Route    - a routeing measure, same reasoning.
+    "fairway":       ["Fairway_area"],
 }
 # CATLAM = category of lateral mark (1 port-hand, 2 starboard-hand, 3 pref-chan-to-
 # stbd, 4 pref-chan-to-port); COLOUR for the buoy symbol. Kept for chan_mark use.

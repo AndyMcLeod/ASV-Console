@@ -162,7 +162,11 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // asv_core's routing tuning constants, read from the module rather than
      // restated here -- a copy would drift from what the console searches with.
      grabDecl("HEURISTIC_WEIGHT") + "\n" + grabDecl("POP_CAP") + "\n"
-       + grabDecl("MAX_DIM") + "\n" +
+       + grabDecl("MAX_DIM") + "\n"
+       // NARROW_MAX_M is the COLREGS Rule 9 applicability bound (2026-08-31): how wide the
+       // water may be and still be a narrow channel. Read from the module, never restated
+       // here — a copy would let this suite agree with a threshold the console does not use.
+       + grabDecl("NARROW_MAX_M") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.
@@ -174,7 +178,13 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // function expression: the inner name binds only inside itself, so it does not
      // shadow the wrapper grabbed from passage.js below.
      "const coreChannelLaneRoute = " + grab(ROUTINGSRC, "channelLaneRoute") + ";\n" +
-     HELPERS.map((n) => grab(H, n)).join("\n"));
+     HELPERS.map((n) => grab(H, n)).join("\n") + "\n" +
+     // A `const` declared inside a direct eval stays in the EVAL's scope, so this is how
+     // the checks below read the module's OWN Rule 9 width bound rather than a number
+     // restated in this file — which would let the suite agree with a threshold the
+     // console does not use.
+     "function __narrowMax(){ return NARROW_MAX_M; }");
+const NARROW_MAX_M = __narrowMax();
 
 // --- synthetic world ------------------------------------------------------- //
 // A FRAME, not a bare point. The clearance bodies grabbed into the eval scope above are
@@ -302,8 +312,45 @@ for (const [tag, dir, base] of [
     check("UNMARKED channel " + tag + ": still rides starboard of the centreline",
           es.every((e) => e != null && e * dir > 3 && Math.abs(e) < HALF - 3),
           "e=" + es.map((e) => e == null ? "null" : e.toFixed(0)).join(",") +
-          " (want sign " + (dir > 0 ? "+" : "-") + ", inside " + HALF + ")");
+          " (want sign " + (dir > 0 ? "+" : "-") + ", inside " + HALF + "; " + (2 * HALF)
+          + " m wide, inside the " + NARROW_MAX_M + " m narrow bound)");
   }
+}
+
+// 5a. ⚠⚠ AND OPEN WATER GETS NO LANE AT ALL — THE REPORTED DEFECT. Andy, 2026-08-31:
+// "Rule 9 is being improperly applied in the current ASV Console implementation. It
+// applies only within narrow channels. ... In open bay or open ocean transits and while
+// running various survey patterns the rule should not be considered."
+//
+// There was no width test at all. `narrowChannelLane` called anything a channel if a
+// perpendicular march found SOMETHING within max(120, buf*30) on both sides — 150 m at
+// the shipped buffer — so a bay with shores 300 m apart was laned, and the console told
+// the operator it was complying with a rule of the road while riding a quarter-width
+// offset down the middle of open water.
+//
+// The SAME geometry as check 5, widened past the bound and nothing else changed: banks
+// that make a channel 100 m apart make a bay at 400 m, and width is the only thing the
+// code is allowed to respond to here.
+{
+  const bank = (e0, e1) => { const ring = [{ e: e0, n: -200 }, { e: e1, n: -200 },
+                                           { e: e1, n: 1200 }, { e: e0, n: 1200 }];
+    return { ring, bb: bbOf(ring), kind: "land" }; };
+  const wide = () => ({ polys: [bank(200, 900), bank(-200, -900)],   // 400 m apart
+                        lines: [], points: [], marks: [], sys: [], chans: [] });
+  const track = runLane(wide(), [{ e: 0, n: 0 }, { e: 0, n: 1000 }]);
+  const es = MIDS.map((n) => eAtN(track, n));
+  check("5a. OPEN BAY (400 m between shores): NO Rule 9 lane — the reported defect",
+        es.every((e) => e != null && Math.abs(e) < 3),
+        "e=" + es.map((e) => e == null ? "null" : e.toFixed(1)).join(",")
+          + " (400 m > the " + NARROW_MAX_M + " m narrow bound, and nothing charts a channel"
+          + " here — before this it read a starboard offset)");
+  // ... and the plan must not CLAIM a lane either. A banner reading "riding the Rule 9
+  // channel lane" over open water is the half of the defect the operator actually sees.
+  const r = channelLaneRoute([{ e: 0, n: 0 }, { e: 0, n: 1000 }].map((p) => enLL(p.e, p.n)),
+                             ref, wide(), 6);
+  check("5a2. ... and the plan does not CLAIM one",
+        r.lane === false && r.partial === false,
+        "lane=" + r.lane + " partial=" + r.partial);
 }
 
 // 5b. A LONE BUOY IS NOT A WALL. A mark is a point you may pass either side of, so it
@@ -583,7 +630,15 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
   {
     const bank = (e0, e1) => { const ring = [{ e: e0, n: -200 }, { e: e1, n: -200 }, { e: e1, n: 1200 }, { e: e0, n: 1200 }];
       return { ring, bb: bbOf(ring), kind: "land" }; };
-    const wide = { polys: [bank(150, 600), bank(-150, -600)], lines: [], points: [], marks: [], sys: [], chans: [] };
+    // ⚠ A CHARTED CHANNEL, because 300 m of water is NOT a narrow channel by geometry any
+    // more (NARROW_MAX_M, 2026-08-31) and without one this fixture would test nothing but
+    // the new width bound. It is also the honest shape for what the knob is FOR: reaching
+    // the far edge of a WIDE charted fairway is the whole reason channel_reach_m exists.
+    const fairway = { ring: [{ e: -150, n: -200 }, { e: 150, n: -200 },
+                             { e: 150, n: 1200 }, { e: -150, n: 1200 }] };
+    fairway.bb = bbOf(fairway.ring);
+    const wide = { polys: [bank(150, 600), bank(-150, -600)], lines: [], points: [], marks: [],
+                   sys: [], chans: [fairway] };
     const prev = V.CHANNEL_REACH_M;
     V.CHANNEL_REACH_M = 120;                       // the DriX's own value, BELOW buf*30 = 180
     const pts = [{ e: 0, n: 0 }, { e: 0, n: 1000 }].map((p) => enLL(p.e, p.n));
