@@ -55,9 +55,154 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-08-31 — Rule 9 applies in a narrow channel, and nowhere else)
+## ⇒ START HERE (handoff refreshed 2026-09-01 — a punched run can be struck off by hand, and the transits rebuild around the gap)
 
-**NEWEST (this commit): THE ENC EXTRACT WAS AUDITED AGAINST WHAT THE SERVICE PUBLISHES, AND
+**NEWEST (this commit): SELECT A PUNCHED SURVEY RUN AND DELETE IT.** Andy: *"The WorldView
+application has the ability to select and delete punched out survey lines and recalculate
+interline transits. Implement this ability in ASV Console."*
+
+Click a run on a punched plan (it highlights amber), press **Delete**. Escape or open water
+deselects. `Put them back` on the SURV card restores. Ported from WorldView's `SurveyPlan`,
+which got there the expensive way — its first build was reported as breaking the
+application and reverted undiagnosed — so this carries the three fixes that came out of
+diagnosing that, plus two defects of ASV's own that the port walked straight into.
+
+**⚠ MIDPOINTS, NOT INDICES.** Runs are rebuilt from the corners and the chart on every
+change, so an index names a different line the moment anything moves. A midpoint names the
+RUN and stops naming anything when that run ceases to exist — which is what makes a stale
+strike harmless instead of destructive. It survives `shortenSeg` (a symmetric lerp:
+`t0 = m/d`, `t1 = 1 - m/d`, so the shortened midpoint IS the parent's — measured, 0.000000 m
+drift) and `regionOrder` (orders and re-orients, never splits). So the green segment the
+operator clicks and the clipped run the filter matches are the same thing.
+
+**⚠ THE FILTER SITS AFTER THE CHART CLIP AND BEFORE THE ORDERING, AND BOTH HALVES MATTER.**
+Above the clip is what got WorldView's build reverted: one pattern line becomes several
+clipped runs, so striking a short stub took the 900 m run on the far side of an island with
+it. Below the ordering would be wrong the other way — the serpentine would stay numbered
+through a line that is not there.
+
+**⚠ THE REBUILD IS COALESCED, AND THAT IS CORRECTNESS, NOT POLISH.** `punchOut` opens with
+`if(punchBusy) return;` — a strike arriving during a rebuild would be DROPPED, leaving the
+plan on screen disagreeing with the strike list behind it. Everything now goes through
+`punchNow()`, which CHAINS. **Measured live: three strikes in a burst → ONE punch.** And
+`commitPattern` is async and awaits `flushRepunch()`, because 400 ms is longer than it takes
+to press Delete then Add to plan: verified by doing exactly that with no pause, and a
+16-run plan committed as **15**.
+
+**⚠ THE RE-PUNCH WAS 10–15 SECONDS OF FROZEN TAB, AND STILL IS ON A COLD ONE.** Measured on
+a 10-line plan over New Castle (1,318 zones), chart already cached: **15,978 ms total, the
+main thread blocked solid for 14.7 s of it** (one interval sample fired in the whole
+period). Phases: `clipLine` **4,354 ms**, the turn/transit loop **3,326 ms**, `regionOrder`
+821 ms, `buildKeepouts` 37 ms. That is pre-existing — pressing Punch Out has always cost
+this — but a Delete key that costs it is the "unusable" verdict WorldView got.
+**`clipLine` is now MEMOISED and a re-punch is 686 ms.** The memo is SOUND where
+WorldView's attempted router memo was not: `clipped` is computed BEFORE the strike filter,
+so it cannot see the strike list and cannot be invalidated by one. Keyed on
+`patStrikeKey()` — the same key that decides whether a strike is still valid, because both
+answer "would the clip come out differently?", and two keys would be two chances to forget
+an input. The routed transits below it re-solve every time, on purpose.
+
+**⚠ TWO ASV DEFECTS THE PORT WALKED INTO, BOTH PRE-EXISTING:**
+
+1. **A GAP LEFT A SILENT 180 NO HULL CAN TRACK.** The reversal gate was
+   `spacing*1.6 + 3`. Take a line out — struck, clipped by the chart, or under
+   `MIN_SURVEY_LINE_M` — and the survivors are TWO spacings apart, so the pair fell
+   through: `nNoTurn` was never incremented (it only counts inside the branch the pair
+   never entered), and the run fell to the straight-leg fallback. No turn, no count, no
+   banner. Now `GAP_LINES = 4`, `gapSpan = 4.6`, with `turnMaxHalf` sized off the same
+   figure so the "is this a reversal pair" judgement is made once. **It fires on ordinary
+   punches too** — the very first test plan reported *"1 reversal(s) swing across a gap
+   where a line is missing"* with 12 lines dropped by the hull minimum and no strike
+   involved.
+2. **A STRAY CLICK IN SURVEY MODE THREW THE PUNCH AWAY.** With A, B and C all placed the
+   branch assigned nothing and still ran `patClip=null` — any click discarded a punch that
+   had just cost an ENC extract and a full re-solve. Guarded on `placed` now. Found only
+   because the selection gesture wanted the same click, and the punch would have lost.
+
+**⚠⚠ AND THE ONE NO UNIT CHECK COULD SEE: THE HIGHLIGHT WAS INVISIBLE.** The first cut drew
+the amber halo at 5 px under the 2.5 px coverage stroke. **Counted on the live canvas,
+selecting a run changed ONE PIXEL** — while every check passed and the card read *"Selected:
+a 819 m run. Press Delete to strike it off."* For a gesture whose entire safety argument is
+"you see which run is going before it goes", that is the feature missing, not a cosmetic
+flaw. 9 px halo plus end caps now (a short run's halo is a short run's halo); **measured
+again: 1,621 amber pixels.** See [[verify-the-ink-not-the-box]].
+
+**`tests/strike_run.js` — 25 checks, 17 mutations, all as predicted.** ⚠ Two of its own
+checks were written wrong and mutation found both: 16 read `/nGapTurn\+\+/` and 18 read the
+POSITION of a call, so changing the guard to `if(false)` left both texts in place and both
+checks green while neither line could run. **A bare fragment tests the source, not the
+behaviour** — both pin the guard now.
+
+**PREVIOUS: THE EXTRACT STOPPED BEING A LIST OF CLASSES AND BECAME THE WHOLE
+CHART.** Andy: *"add obstruction_line, bridge structure and cardinal buoys. download all
+layers when entering a new area. review database and download all layers now for all sites."*
+
+**⚠ THE POINT OF DOWNLOADING EVERYTHING IS THAT A CACHE CANNOT KNOW WHAT IT DOES NOT
+CONTAIN.** Fetching only the classes the roles happened to name meant a role added later was
+invisible to every area already cached — which had just happened twice in one session
+(`fairway` shipped without a cache bump; `Restricted_Area` never resolved at all). The
+extract now fetches **every layer the band publishes**: the named classes role-tagged as
+before, and everything else carried as `extra`. Classifying a new class is now a decision
+about data already on disk instead of a refetch of every operating area. `features_v5_`, and
+**v5 should be the last bump made for a role added** — that is what it buys.
+
+**THE THREE GAPS FROM THE AUDIT ARE CLOSED**, each previously fetched by nothing:
+`Obstruction_line` (a submerged barrier or a line of piles charted as ONE object — the point
+and area forms were fetched, the line was not), bridge structure, and `Buoy_Cardinal_point`.
+
+**⚠ THE BRIDGE SPLITS IN TWO AND THE SPLIT IS THE WHOLE POINT.** The **supports** are a hard
+obstruction at the waterline and are enforced like a pier. The **span** is OVERHEAD: a
+`Bridge_area` covers the water it crosses, so enforcing it would refuse passage under every
+bridge on the chart — New Castle NH alone charts 35 of them — and it would refuse
+*plausibly*, naming a real charted object, so nobody would call it a bug. `bridge_span` is
+fetched to draw and is deliberately not a keep-out role. **A cardinal buoy is a
+`hazard_point`, NOT a `chan_mark`**: it carries no CATLAM, so filing it with the lateral
+marks would feed it to the pairing that builds the Rule 9 centreline and invent a fairway
+out of a warning.
+
+**⚠ AND A BUG I WROTE IN THE SAME HOUR, WORTH KEEPING: `bridge` WAS IN TWO DISPATCH
+BRANCHES.** `buildKeepouts` is an if/else chain on GEOMETRY — `isLand` draws rings,
+`isShore` draws paths, `isHaz` draws points, first match wins. Putting `bridge` in both
+`isLand` and `isHaz` is not belt-and-braces: the ring branch always takes it, and a pylon
+charted as a POINT yields no rings and is **dropped on the floor** — no error, no count, no
+gap. Fixed at the source: the pylon POINT class lives in `hazard_point`, the pylon AREA in
+`bridge`.
+
+**⚠⚠ AND THE CHECK I WROTE TO CATCH THAT BUG DID NOT CATCH IT — MUTATION FOUND THAT, NOT
+READING.** The first `enc_roles.js` check 8 fed poly+line+point under each role and required
+output in exactly one bucket. Crossing `bridge` into two branches **survived it**, because
+the crossed role still emits its ring; what it loses is the point, and *a bucket count cannot
+see a feature that was never emitted*. The check is inverted now: every class carries its
+geometry in its name (`Obstruction_line`, `Wreck_point`, `Bridge_area`), so for each keep-out
+role, feed one feature of each form **the server actually requests** and require it to arrive
+somewhere. That version goes red the instant the pylon point moves back. Two more holes came
+out of the same battery: `roleOf` returned the FIRST matching role, so a class named under
+two roles passed silently (now `rolesOf`, plus check 14b — one class, one role); and check 15
+read the role table with a line-anchored regex while check 8 did not, so a role declared on a
+shared line was invisible to the one check that exists to report an undecided role.
+
+**ONE MUTATION IS INERT AND IS RECORDED AS INERT, WHICH IS WORTH MORE THAN A KILL:** adding
+`bridge` to `isHaz` today changes nothing and no check fails, because the `bridge` role
+requests only `_area` classes. Crossing a role into two branches is only a defect once the
+role also requests a geometry the winning branch cannot draw — which is exactly the pairing
+check 8 tests. Claiming a catch there would be claiming teeth the file does not have.
+
+**ALL SEVEN OPERATING PORTS ARE WARMED**, via the new `tools/warm_enc.py` (`--list`
+inventories, `--base <id>` does one, `--prune` deletes superseded-version caches and **asks
+first**). Every site came back `enc_harbour` in 17–29 s. New Castle NH 5,672 features
+(4 `hazard_line`, 35 `bridge_span`, 26 `restricted`); Port of LA 5,396 (the only site with
+charted pylon AREAS, 4); Portland ME 3,959; Eastport ME 3,609 (15 `hazard_line`); Erie PA
+3,493; Pago Pago 1,280; Lewes DE 1,099. **It reports PER ROLE, not just a total**, and that
+is the whole design: ENCDirect reports failure as a normal-looking EMPTY layer, so a bare
+count cannot tell a quiet harbour from a fetch that half-failed — a coastal extract with
+soundings but no shoreline is flagged, not reported as open water.
+
+**⬜ OPEN, AND IT IS ANDY'S CALL, NOT MINE:** `charts/enc/` still holds **122 superseded
+extracts (617 MB)** at v2/v3/v4 that the console already ignores. `python tools/warm_enc.py
+--prune` deletes them. Left alone deliberately — they are his data, deletion is
+irreversible, and keeping them costs only disk.
+
+**PREVIOUS: THE ENC EXTRACT WAS AUDITED AGAINST WHAT THE SERVICE PUBLISHES, AND
 THREE CLASSES WERE NOT BEING FETCHED AT ALL.** Andy: *"confirm ENC downloads include all
 layers available for use in this application."* The answer was no, and one of the three was
 mine from an hour earlier.
@@ -89,14 +234,15 @@ coverage check that quietly reports nothing is the fault it exists to catch. And
 now reads the cache version FROM the source rather than restating it: it had `features_v3_`
 hard-coded, so my bump made five of its checks fail for a reason unrelated to what they test.
 
-**WHAT IS PUBLISHED AND STILL UNUSED** — 203 layers in the harbour band, 39 requested. The
-gaps worth a decision, none of them fetched today: `Obstruction_line` (the point and area
-forms are fetched, the line is not), bridge structure (`Bridge_area/line`,
-`Pylon_Bridge_Support_*` — pylons are a hard obstruction), `Buoy_Cardinal_point` (a cardinal
-mark IS a hazard indicator and a physical object; the lateral, isolated-danger, safe-water
-and special-purpose buoys are all fetched), `Offshore_Platform_*`, `Anchorage_Area`,
-`Caution_Area`, `Dumping_Ground_area`. The routeing layers (TSS, deep-water route,
-recommended track, two-way and ferry routes) are Rule 10 and later rules, deliberately held.
+**WHAT IS PUBLISHED AND STILL UNUSED** — this paragraph said *"203 layers in the harbour
+band, 39 requested"* and listed the gaps worth a decision. **That framing is gone: all 203
+are fetched now**, 45 role-tagged and the rest as `extra`. The three named gaps
+(`Obstruction_line`, bridge structure, `Buoy_Cardinal_point`) are classified above; the
+others it listed — `Offshore_Platform_*`, `Anchorage_Area`, `Caution_Area`,
+`Dumping_Ground_area` — are **on disk in every warmed area as `extra`**, waiting on a
+decision rather than on a download. The routeing layers (TSS, deep-water route, recommended
+track, two-way and ferry routes) are Rule 10 and later rules and remain deliberately
+unclassified — but they too are now cached, so adopting them costs a role, not a refetch.
 
 **PREVIOUS: COLREGS RULE 9 WAS BEING APPLIED WHERE IT DOES NOT APPLY.** Andy:
 
@@ -1433,8 +1579,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **43 regression suites / 821 assertions** (23 JS / 488,
-20 Python / 333), derived
+turn-water hold is closed (`a548c14`). **45 regression suites / 867 assertions** (25 JS / 531,
+20 Python / 336), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1466,7 +1612,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-THREE REGRESSION SUITES (821 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-FIVE REGRESSION SUITES (867 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

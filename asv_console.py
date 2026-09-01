@@ -1158,8 +1158,32 @@ ENC_ROLES = {
                       "Beacon_Special_Purpose_General_point",
                       "Mooring_Warping_Facility_point", "Pile_point",
                       "Shoreline_Construction_point", "Hulk_point",
+                      "Pylon_Bridge_Support_point",
+                      # A CARDINAL MARK IS BOTH A PHYSICAL OBJECT AND A HAZARD INDICATOR:
+                      # it is placed to say the safe water lies to the named side of it,
+                      # so there is something to avoid on the other. The lateral,
+                      # isolated-danger, safe-water and special-purpose buoys were all
+                      # fetched and this one was not (Andy, 2026-08-31).
+                      "Buoy_Cardinal_point",
                       "Underwater_Awash_Rock_point", "Obstruction_point", "Wreck_point"],
     "hazard_area":   ["Obstruction_area", "Wreck_area"],
+    # OBSTRUCTIONS AS LINES. The point and area forms were fetched and the line was not,
+    # so a linear obstruction - a submerged barrier, a ruined training wall, a line of
+    # piles charted as one object - was invisible to the keep-out model.
+    "hazard_line":   ["Obstruction_line"],
+    # ⚠ BRIDGES SPLIT IN TWO, AND THE SPLIT IS THE WHOLE POINT.
+    #   the SUPPORTS are a hard obstruction at the waterline - a pylon is a pier that
+    #     happens to hold something up, and hitting one is the same as hitting a pier;
+    #   the SPAN is OVERHEAD. A Bridge_area covers the water it crosses, and enforcing it
+    #     as a keep-out would refuse every passage under a bridge - which for a hull with
+    #     1 m of air draft is wrong on every bridge there is.
+    # So both are FETCHED (the span is worth having cached and drawable) and only the
+    # supports are enforced. `bridge_span` is deliberately not a keep-out role.
+    # AREA only - the pylon POINT class sits in `hazard_point` above, because the
+    # client's keep-out dispatch is an if/else chain on geometry and a role can belong to
+    # exactly one branch. A point in the ring branch yields no rings and is dropped.
+    "bridge":        ["Pylon_Bridge_Support_area"],
+    "bridge_span":   ["Bridge_area", "Bridge_line"],
     "dredged":       ["Dredged_Area"],
     # ⚠ "Restricted_Area_area", NOT "Restricted_Area" - the published layer carries the
     # geometry suffix like the rest of them. The name was wrong from the day this role was
@@ -1403,8 +1427,13 @@ def fetch_enc_features(bbox, min_depth=0.0):
     # query silently dropped) + the expanded structure classes; v3 splits lateral
     # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR; v4 adds
     # the 'fairway' role (FAIRWY, for COLREGS Rule 9) and fixes 'restricted' to the
-    # layer's real published name. Bumping the version ignores older caches that lack
-    # the new role/props.
+    # layer's real published name; v5 adds the 'hazard_line', 'bridge' and 'bridge_span'
+    # roles, cardinal buoys, and EVERY REMAINING PUBLISHED LAYER as 'extra'. Bumping the
+    # version ignores older caches that lack the new role/props.
+    #
+    # v5 SHOULD BE THE LAST BUMP FOR A ROLE ADDED, and that is the point of it: the extract
+    # now holds every layer the band publishes, so classifying one later is a decision about
+    # data already on disk rather than a refetch of every area.
     #
     # ⚠ THE BUMP IS PART OF ADDING A ROLE, NOT AN AFTERTHOUGHT. The fairway role shipped
     # without one and the omission was invisible: 110 cached v3 extracts covered every
@@ -1413,7 +1442,7 @@ def fetch_enc_features(bbox, min_depth=0.0):
     # and nothing would have said so. A cache does not know what it does not contain.
     # Found by auditing the published layer list against what the extracts actually
     # returned; tests/enc_extract.py now fails if a declared class does not resolve.
-    cache = os.path.join(ENC_DIR, "features_v4_%s.json" % key)
+    cache = os.path.join(ENC_DIR, "features_v5_%s.json" % key)
     data = None
     try:
         with open(cache, "r", encoding="utf-8") as f:
@@ -1430,6 +1459,26 @@ def fetch_enc_features(bbox, min_depth=0.0):
         lm = _enc_layer_map(band)
         jobs = [(role, cls, lm[cls]) for role, classes in ENC_ROLES.items()
                 for cls in classes if cls in lm]
+        # ── EVERY OTHER PUBLISHED LAYER, FETCHED AND CACHED (Andy, 2026-08-31: "download
+        # all layers when entering a new area") ──────────────────────────────────────────
+        #
+        # 203 layers are published for the harbour band and the roles above name 43. The
+        # rest come down too, tagged `extra` - and the reason is the defect that prompted
+        # this: a role added later cannot see an area already cached, so `fairway` shipped
+        # and would never have applied anywhere the console had already been. Holding the
+        # whole extract makes the cache COMPLETE for the area rather than complete for
+        # whatever the roles happened to be on the day it was written. Classifying a layer
+        # afterwards then becomes a client-side decision over data already on disk.
+        #
+        # ⚠ `extra` IS NOT A KEEP-OUT, AND CANNOT BECOME ONE BY ACCIDENT. buildKeepouts
+        # dispatches on the named roles and an unmatched role falls out of the bottom with
+        # the depth areas and the soundings - so an airfield, a built-up area or a territorial
+        # -sea boundary arriving in the extract changes no route. Turning one of these into an
+        # obstacle is a deliberate act: give it a role above and teach the model about it.
+        #
+        # THE COST IS PAID ONCE PER AREA, on the first extract, in parallel with the rest.
+        _named = {c for cs in ENC_ROLES.values() for c in cs}
+        jobs += [("extra", cls, lid) for cls, lid in lm.items() if cls not in _named]
 
         def _one(job):
             role, cls, lid = job

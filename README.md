@@ -610,6 +610,26 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    threshold: coverage is never removed silently. **Surveys only** — transits, search
    patterns and hand-drawn lines are never filtered. Shipped values: the 7.7 m DriX
    **80 m**, the 4 m example USV **25 m**, the 1.3 m Z-Boat **0**.
+
+   **Striking a run off by hand.** A minimum line length drops short coverage by
+   *rule*; this is the same decision one line at a time, because "not worth
+   surveying" is a judgement about this water and this vessel that no threshold
+   makes. On a punched plan, **click a survey run to select it** — it highlights
+   amber — and press **Delete** to strike it off. Escape, or a click on open water,
+   deselects. The run leaves the plan and the survey is **re-punched around the
+   gap**: the running order, the reversals and the inter-line transits are all
+   rebuilt, so nothing downstream can tell how a run left. The card counts what has
+   been struck and carries a **Put them back** button, since a struck run is not on
+   the chart to click a second time. Strikes are remembered as *midpoints*, not
+   indices, and they **evaporate** when the pattern or the chart changes — carrying
+   one across a reshape would delete a run nobody chose.
+
+   Two consequences worth knowing. A reversal onto a survivor two spacings away is
+   **wider** than a normal one and reaches further outboard; those are counted and
+   named in the readout, because whether that water is acceptable is the operator's
+   call. And the rebuild is **coalesced** — strike five runs in a row and the plan
+   is re-solved once, at the end. Anything that reads the plan as a result (Add to
+   plan) waits for that rebuild first.
    Every turn is built at a radius the boat can actually **hold** at the run speed
    (from the vessel file's `max_turn_rate_deg_s`), in one of two shapes:
 
@@ -707,6 +727,39 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    inter-line transit is routed around obstacles at **Upload** (the ENC-clear path is
    drawn green from the boat, shrinking as it goes). If there's no ENC coverage the
    console warns and routes direct — verify the plan.
+
+   **Entering a new area downloads *every* published layer.** The extract used to fetch
+   only the ~45 classes the keep-out roles named, and that was the wrong trade: a cache
+   cannot know what it doesn't contain, so a role added later was invisible to every area
+   already cached. The extract now holds all 203 layers the harbour band publishes — the
+   named ones role-tagged as before, the rest carried as `extra` — which makes
+   classifying a new class a decision about data already on disk rather than a refetch of
+   every operating area. `extra` is chart *context* and reaches the keep-out model as
+   nothing; `tests/enc_roles.js` check 7 is what keeps it that way, since a harbour where
+   those 1,556 features became obstacles would be one solid keep-out. Pre-warm the cache
+   for every port in the registry with:
+
+   ```bash
+   python tools/warm_enc.py
+   ```
+
+   It reports **per role, not just a total**, and that is deliberate: ENCDirect reports
+   failure as a normal-looking *empty* layer, so a bare feature count cannot tell a quiet
+   harbour from a fetch that half-failed. A coastal extract with soundings but no
+   shoreline is flagged rather than reported as open water. `--list` inventories what is
+   cached and at which version; `--base <id>` warms one port.
+
+   Three kinds of feature joined the model in the same pass, each previously fetched by
+   nothing: **obstruction *lines*** (a submerged barrier or a line of piles charted as
+   one object — the point and area forms were already fetched, the line was not),
+   **bridge supports** (a pylon is a pier that happens to hold something up), and
+   **cardinal buoys** (which are placed to mark a danger, so they are hazards —
+   deliberately *not* lateral marks, which would let them invent a Rule 9 fairway out of
+   a warning). The bridge **span** is fetched to draw and is *never* a keep-out: a
+   `Bridge_area` covers the water it crosses, so enforcing it would refuse passage under
+   every bridge on the chart. Also fixed here: `Restricted_Area` had never resolved to a
+   real published layer name, so the operator's "Dredged / restricted" enforcement had
+   only ever enforced the dredged half of what it said.
 
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart

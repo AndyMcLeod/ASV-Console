@@ -394,6 +394,43 @@ check("10. the feature cache version names the roles each bump added",
       "cache file is %s" % (_ver.group(0) if _ver else "NOT FOUND")
       + "; a role added without a bump is invisible to every already-cached area")
 
+# ── 11. THE WARM TOOL AND THE CONSOLE MUST AGREE ON THE CACHE FILENAME ──────────────
+#
+# ⚠ tools/warm_enc.py HAS A DELETE MODE, and it was ONE STRING MISMATCH from offering up
+# the cache the console is actually reading. Its inventory parses the version out of a
+# filename as the bare tag ("v5") while it read the version out of asv_console.py as the
+# whole prefix ("features_v5"), so nothing on disk ever compared equal to "current": every
+# version listed as *superseded, ignored by the console*, and `--prune` put the LIVE
+# extracts on the delete list beside the dead ones. Nothing threw. The listing simply said
+# the wrong thing, and only reading its output rather than trusting it caught that.
+#
+# So pin the two together the only way that means anything - require the tool to read the
+# version in the shape its own inventory parses, and to rebuild the console's exact
+# filename from it - and then require the delete path to refuse the live version anyway.
+_warm = os.path.join(APP, "tools", "warm_enc.py")
+if not os.path.exists(_warm):
+    check("11. the warm tool agrees with the console on the cache filename",
+          lambda: False,
+          "tools/warm_enc.py NOT FOUND - it is what pre-loads every operating port")
+else:
+    with open(_warm, "r", encoding="utf-8") as _f:
+        _wsrc = _f.read()
+    _wtag = "(v\\d+)_%s" in _wsrc                      # captures the TAG, not the prefix
+    _whit = 'features_%s_%s.json" % (cur, key)' in _wsrc
+    check("11. the warm tool reads the cache version as the BARE TAG its inventory parses",
+          (lambda: _wtag),
+          "cache_version() must capture (v\\d+), not the whole features_vN prefix - "
+          "otherwise every cached version reads as superseded and --prune targets the "
+          "live one")
+    check("11b. ... and rebuilds the console's exact cache filename from it",
+          (lambda: _whit),
+          "console writes %s; the tool must probe the same string"
+          % (_ver.group(0) if _ver else "features_v?_%s.json"))
+    check("11c. ... and the delete path refuses the current version outright, regardless",
+          (lambda: "dead = [v for v in dead if v != cur]" in _wsrc),
+          "no unconditional guard - one string mismatch would put the live cache back on "
+          "the delete list")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

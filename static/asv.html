@@ -380,6 +380,13 @@
       <button class="ctl small" id="ln_clr" title="Delete all waypoints and planned lines" style="flex:1">CLR&nbsp;PLAN</button>
     </div>
     <div class="phint" id="sp_hint">Click the survey start corner (A).</div>
+    <!-- STRIKING A PUNCHED RUN OFF. Its own row rather than another branch of `sp_hint`:
+         that element already has five branches writing it and a comment warning that a
+         sixth would forget to reset the warning colour. This one says what is selected,
+         what Delete will do, and — because a deletion with no way back is a trap and a
+         struck run is not on the chart to click a second time — carries the only way
+         home as a real control rather than a sentence describing one. -->
+    <div class="phint" id="sp_strike" style="display:none"></div>
   </div>
 
   <div class="panel" id="boundPanel" style="display:none">
@@ -1204,6 +1211,40 @@ let patTransits = [];                          // per-gap detour waypoints, inte
 // slower speed for that turn and puts it back afterwards - a plan-wide drop would cost
 // the whole survey to buy one corner.
 let turnSlowAt = {};
+// ── STRIKING A PUNCHED RUN OFF BY HAND ─────────────────────────────────────────────
+//
+// Andy, 2026-09-01: *"The WorldView application has the ability to select and delete
+// punched out survey lines and recalculate interline transits. Implement this ability in
+// ASV Console."* Ported from WorldView's `SurveyPlan`, which reached this design the
+// expensive way — its first build was reported as breaking the application and reverted,
+// and what follows carries the three fixes that came out of diagnosing that.
+//
+// `Min depth` and `MIN_SURVEY_LINE_M` already drop coverage by RULE. This is the same
+// decision one line at a time, because "not worth surveying" is a judgement about this
+// water and this vessel that no threshold makes for you.
+//
+// ⚠ MIDPOINTS, NOT INDICES. The runs are rebuilt from the three corners and the chart
+// every time anything changes, so an index means a different line the moment the pattern
+// does anything at all. A midpoint identifies the run ITSELF and stops identifying
+// anything the moment that run ceases to exist — which is what makes a stale strike
+// harmless rather than destructive. It survives `shortenSeg` (a symmetric lerp:
+// t0 = m/d, t1 = 1 - m/d, so the shortened midpoint IS the parent's) and it survives
+// `regionOrder`, which orders and re-orients segments but never splits one. So the
+// midpoint of the green segment the operator clicks is the midpoint of the clipped run
+// it came from.
+let patStruck = [];                            // midpoints of runs struck off by hand
+// The pattern AND the chart the strikes were made against. They evaporate when either
+// changes: reshaping the box makes different lines, re-extracting the chart re-clips them
+// into different runs, and carrying a strike across either would delete a run the
+// operator never chose — silently.
+let patStruckKey = null;
+let patSel = null;                             // {lat,lon,length} — the run awaiting Delete
+let patRepunchT = null;                        // pending coalesced re-punch (see scheduleRepunch)
+let punchInFlight = null;                      // the punch currently running — see punchNow
+// The ENC-clipped runs, keyed on everything that decides them. Striking a run re-punches,
+// and the clip is the most expensive phase of a punch by a wide margin while being the
+// one phase a strike cannot change. See the block that fills it.
+let patClipMemo = null;
 // Canned search patterns (Project-11 track_patterns style): datum + params ->
 // an ordered waypoint route. Purely client-side generators; committed to
 // mission.waypoints and run through the normal upload/start flow.
@@ -2664,6 +2705,190 @@ function patSourceLines(){
   const out = []; sp.lines.forEach(l=>clipToPoly(l[0], l[1], ring, ref).forEach(s=>out.push(s)));
   return out;
 }
+
+// ── Striking a punched run off ──────────────────────────────────────────────────────
+
+/** Midpoint of a run, which is how a struck one is remembered. */
+function runMid(seg){ return {lat:(seg[0].lat+seg[1].lat)/2, lon:(seg[0].lon+seg[1].lon)/2}; }
+
+/**
+ * Everything that decides WHICH RUNS EXIST — before any of them are struck off.
+ *
+ * The three corners and the alignment make the lines; the boundary ring clips them; the
+ * nogo model, the buffer, the enforcement toggles, the survey depth window and the live
+ * water level clip them again into the runs the operator can see. Any of those moving
+ * makes DIFFERENT runs.
+ *
+ * ⚠ ONE KEY, TWO CONSUMERS, AND THEY MUST NOT DRIFT APART. It says whether a strike still
+ * refers to a run that exists (carrying one across a reshape would delete a run nobody
+ * chose, silently), and it says whether the CLIPPED RUNS can be reused (see patClipMemo).
+ * Those are the same question — "would the clip come out differently?" — so they get the
+ * same answer from the same place. Two keys would be two chances to forget an input, and
+ * the failure mode of forgetting one is identical either way.
+ *
+ * A pure read, deliberately. WorldView's reverted build evicted stale strikes inside its
+ * coverage GETTER — i.e. it mutated on the path every redraw and every pointermove runs
+ * through, and that is the suspect its revert named. Nothing here writes: a stale list
+ * simply stops being consulted, and is replaced the next time a strike is made.
+ */
+function patStrikeKey(){
+  if(!(pat.A && pat.B && pat.C)) return null;
+  const c = p => p ? p.lat.toFixed(7)+","+p.lon.toFixed(7) : "-";
+  const dr = depthRange();
+  return [c(pat.A), c(pat.B), c(pat.C), pat.align,
+          boundaryActive() ? boundary.map(c).join(";") : "-",
+          nogo.band||"-", (nogo.features||[]).length, nogo.buffer,
+          JSON.stringify(nogo.enf||{}), dr.min, dr.max,
+          (sea.waterOffset||0).toFixed(3)].join("|");
+}
+
+/** The strikes that still apply. A read — see patStrikeKey. */
+function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() ? patStruck : []; }
+
+/**
+ * `runs` minus anything struck off.
+ *
+ * A metre of tolerance. The runs are rebuilt deterministically from the same corners and
+ * the same chart, so an untouched plan reproduces its midpoints exactly; the tolerance
+ * only stops floating point resurrecting a struck run. It is far below any usable line
+ * spacing, so it can never reach a neighbour.
+ */
+function keptRuns(runs){
+  const struck = activeStruck();
+  if(!struck.length) return runs;
+  return runs.filter(seg=>{ const m = runMid(seg);
+    return !struck.some(d=>distTo(d,m) < 1); });
+}
+
+/**
+ * The run nearest the click, or null. Punched runs only — an un-punched pattern is a grid
+ * the operator reshapes with A/B/C, and there are no runs to strike until the chart has
+ * clipped it into some.
+ *
+ * ⚠ THE TOLERANCE IS CAPPED AT 0.45 OF THE LINE SPACING. WorldView's reverted build used
+ * a bare `10 × metresPerPixel` with no cap — a sane 6 m zoomed in, and 400 m at 40 m/px,
+ * which is wider than any line spacing. A click nowhere near the survey then selected an
+ * arbitrary line and that build deleted it on the spot. Capped below half the spacing,
+ * the test can never reach past the midpoint between two lines.
+ */
+function runNear(cx, cy, tolPx){
+  if(!patClip || !patClip.length) return null;
+  const sp = currentPattern();
+  const o = originPx();
+  // Web Mercator ground resolution at this latitude, for the cap.
+  const mPerPx = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
+  const capPx = (sp && sp.spacing > 0) ? (sp.spacing*0.45)/mPerPx : Infinity;
+  let best=null, bd=Math.min(tolPx||8, capPx);
+  patClip.forEach(seg=>{
+    const a=worldPx(seg[0].lat,seg[0].lon,zoom), b=worldPx(seg[1].lat,seg[1].lon,zoom);
+    const d=distPtSegPx(cx,cy, a.x-o.x,a.y-o.y, b.x-o.x,b.y-o.y);
+    if(d<=bd){ bd=d; best=seg; } });
+  return best ? {...runMid(best), length: distTo(best[0], best[1])} : null;
+}
+
+/** Select the run under the click. Returns true if one was hit. */
+function selectRunNear(cx, cy, tolPx){
+  const hit = runNear(cx, cy, tolPx);
+  const had = !!patSel;
+  patSel = hit;
+  if(hit || had){ updatePatReadout(); render(); }
+  return !!hit;
+}
+
+/** Drop the selection. Returns false if there was none. */
+function clearRunSelection(){
+  if(!patSel) return false;
+  patSel = null; updatePatReadout(); render(); return true;
+}
+
+/**
+ * Strike the selected run off and rebuild the run around the gap.
+ *
+ * ⚠ THE RE-PUNCH IS COALESCED, AND THAT IS NOT AN OPTIMISATION — IT IS CORRECTNESS.
+ * `punchOut` opens with `if(punchBusy) return;`, so a second strike arriving while the
+ * first re-punch is in flight would be DROPPED: the strike is recorded but the run that
+ * answers to it never rebuilds, and the plan on screen quietly disagrees with the list of
+ * strikes behind it. Debouncing means five strikes in a row rebuild ONCE, at the end,
+ * from the complete list.
+ *
+ * It is also what WorldView's revert was really about. Measured there: a strike froze the
+ * tab for 6.7 s inside the click handler, 5.4 s of it the A* re-solving routed transits
+ * the strike had not touched. A router memo is NOT sound — the keep-out sets a detour is
+ * solved against are derived from the LINE SET, so a route cached before a strike can be
+ * invalid after it. Re-solving is the only correct answer; doing it once per burst is the
+ * affordable one.
+ */
+function strikeSelectedRun(){
+  if(!patSel || !patClip) return false;
+  const key = patStrikeKey();
+  if(!key) return false;
+  if(patStruckKey !== key){ patStruck = []; patStruckKey = key; }
+  patStruck.push({lat:patSel.lat, lon:patSel.lon});
+  patSel = null;
+  // The cheap, certain half NOW: the run leaves the picture it was struck from, so the
+  // gesture is visibly acknowledged. The turns around it are still the old ones for a
+  // moment — they cannot be right until the whole run is re-solved — which is what the
+  // busy hint is for.
+  patClip = keptRuns(patClip);
+  scheduleRepunch();
+  return true;
+}
+
+/** Put every struck-off run back. */
+function restoreStruckRuns(){
+  if(!activeStruck().length) return false;
+  patStruck = []; patStruckKey = null; patSel = null;
+  scheduleRepunch();
+  return true;
+}
+
+// The coalescing window. Long enough to swallow a run of Delete presses, short enough to
+// feel like part of the same action.
+const REPUNCH_DELAY_MS = 400;
+
+function scheduleRepunch(){
+  $("#sp_hint").textContent = "Rebuilding the run around the struck line(s)…";
+  updatePatReadout(); render();
+  clearTimeout(patRepunchT);
+  patRepunchT = setTimeout(flushRepunch, REPUNCH_DELAY_MS);
+}
+
+/**
+ * Every punch goes through here, SERIALISED.
+ *
+ * ⚠ `punchOut` OPENS WITH `if(punchBusy) return;` — a call arriving while one is in
+ * flight is DROPPED, not queued. That is right for a button (a second press should not
+ * stack up work) and wrong for everything here: a strike whose re-punch is dropped leaves
+ * a plan on screen that disagrees with the list of strikes behind it, with nothing saying
+ * so. Chaining means a punch asked for during a punch runs AFTER it, on the current
+ * strikes, and — because this returns the promise — that anyone reading the result can
+ * wait for the right one.
+ *
+ * `.catch` on the tail, not the head: a punch that throws must not poison the chain and
+ * leave every later one waiting on a rejected promise. punchOut has its own try/finally.
+ */
+function punchNow(){
+  punchInFlight = Promise.resolve(punchInFlight).catch(()=>{}).then(()=>punchOut());
+  return punchInFlight;
+}
+
+/**
+ * Re-punch NOW rather than when the timer says so, and RESOLVE WHEN IT IS DONE.
+ *
+ * ⚠ ANYTHING THAT READS THE PUNCH AS A RESULT MUST AWAIT THIS. 400 ms is longer than it
+ * takes to strike a line and press Add to plan, and a plan committed inside that window
+ * is the one from BEFORE the strike — it would commit a turn into a line the operator had
+ * just taken out, and every figure on the card would agree with itself.
+ *
+ * Awaiting `punchInFlight` even with no timer pending is the other half of that: the
+ * timer fires at 400 ms and the punch itself takes longer, so "nothing is scheduled" and
+ * "the answer is ready" are not the same thing.
+ */
+function flushRepunch(){
+  if(patRepunchT){ clearTimeout(patRepunchT); patRepunchT = null; return punchNow(); }
+  return Promise.resolve(punchInFlight).catch(()=>{});
+}
+
 // exact clip of segment a->b (latlon) to the interior of ring (ENU) -> sub-segs
 function clipToPoly(a,b,ring,ref){
   const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref), ts=[0,1];
@@ -2711,6 +2936,32 @@ function drawPattern(toScreen){
       if(patUnsafe.length){                        // transits with no clear route
         ctx.setLineDash([4,4]); ctx.strokeStyle="rgba(217,83,79,0.95)"; ctx.lineWidth=3; seg(patUnsafe);
         ctx.setLineDash([]);
+      }
+      // THE SELECTED RUN, RESOLVED AGAINST THE RUNS THAT EXIST NOW. The selection is a
+      // midpoint, not a remembered segment, so reshaping the box or re-extracting the
+      // chart leaves it pointing at nothing rather than at the WRONG thing — and it
+      // simply stops being drawn. The same property that makes a strike safe, applied to
+      // the thing the operator is looking at. Amber and heavy over the green: the whole
+      // point of select-then-delete is seeing which run is about to go before it goes.
+      if(patSel){
+        const hit = patClip.find(s=>distTo(runMid(s), patSel) < 1);
+        if(hit){
+          // ⚠ THE HALO IS 9 px BECAUSE 5 px WAS MEASURABLY INVISIBLE. The first cut drew
+          // amber at 5 under the 2.5 green, leaving a 1.25 px fringe — counted on the live
+          // canvas, selecting a run changed ONE pixel. Every check passed and the card read
+          // "Selected: a 819 m run"; the operator would have seen nothing. For a gesture
+          // whose entire safety argument is "you see which run is going before it goes",
+          // that is the feature missing, not a cosmetic flaw.
+          ctx.setLineDash([]);
+          ctx.strokeStyle="rgba(255,215,106,0.95)"; ctx.lineWidth=9; seg([hit]);
+          ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg([hit]);
+          // END CAPS, because the run an operator most wants rid of is a SHORT one, and a
+          // short line's halo is a short line's halo. The caps give the highlight a size
+          // floor that does not depend on the length of what is selected.
+          ctx.fillStyle="rgba(255,215,106,0.95)";
+          [hit[0], hit[1]].forEach(p=>{ const s=toScreen(p.lat,p.lon);
+            ctx.beginPath(); ctx.arc(s.x, s.y, 4.5, 0, Math.PI*2); ctx.fill(); });
+        }
       }
     } else {
       ctx.setLineDash([5,4]); ctx.strokeStyle="rgba(57,192,255,0.9)"; ctx.lineWidth=1.5; seg(src);
@@ -2826,6 +3077,36 @@ function updatePatReadout(){
   // about a pattern that now fits. Resetting here rather than in each of the
   // five branches that write this element means a new branch cannot forget.
   $("#sp_hint").style.color = "";
+  // ── THE STRIKE ROW, rendered in ONE place for every branch below ──────────────────
+  // What is selected and what Delete will do; then, separately, how many runs the
+  // operator has taken out and the way to put them back. Both are read off the same
+  // state the punch filters on, so the card cannot claim a strike the run does not have.
+  {
+    const el = $("#sp_strike"); el.textContent = ""; el.style.color = "";
+    const struck = activeStruck().length;
+    // RESOLVED AGAINST THE RUNS THAT EXIST NOW, exactly as the highlight is. A selection
+    // is a midpoint, so a re-punch that removes its run leaves it pointing at nothing —
+    // and a card still offering "press Delete to strike it off" for a run that is not on
+    // the chart any more is an instruction the next keystroke disproves.
+    if(patSel && !(patClip||[]).some(s=>distTo(runMid(s), patSel) < 1)) patSel = null;
+    if(patSel){
+      // The LENGTH is what the run was almost certainly picked for, so it is the thing
+      // named — "a 34 m run" is the reason the operator is deleting it.
+      el.appendChild(document.createTextNode(
+        `Selected: a ${patSel.length.toFixed(0)} m run. Press Delete to strike it off.`));
+      el.style.color = "var(--warn)";
+    }
+    if(struck){
+      if(patSel) el.appendChild(document.createElement("br"));
+      el.appendChild(document.createTextNode(`${struck} run(s) struck off by hand. `));
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "ctl small"; b.textContent = "Put them back";
+      b.title = "Restore every run struck off by hand and rebuild the survey around them";
+      b.onclick = ()=>{ if(restoreStruckRuns()) render(); };
+      el.appendChild(b);
+    }
+    el.style.display = (patSel || struck) ? "" : "none";
+  }
   if(sp){
     // reflect the derived spacing + direction in the inputs, but don't clobber mid-type
     if(document.activeElement !== $("#sp_spacing")) $("#sp_spacing").value = sp.spacing.toFixed(1);
@@ -2878,9 +3159,28 @@ function updatePatReadout(){
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
   patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
+  // The strikes go with the pattern they were made against, and so does any rebuild still
+  // scheduled for it — a timer left running would re-punch a pattern that no longer
+  // exists and end in a render against state this just cleared.
+  patStruck=[]; patStruckKey=null; patSel=null; patClipMemo=null;
+  clearTimeout(patRepunchT); patRepunchT=null;
   ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; }); updatePatReadout(); }
-function commitPattern(){
+async function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
+  // ⚠ THE PENDING RE-PUNCH IS SETTLED BEFORE ANY OF THIS IS READ. Striking a run
+  // schedules the rebuild 400 ms out, which is longer than it takes to press Delete and
+  // then Add to plan — and committing inside that window would commit the plan from
+  // BEFORE the strike: a turn numbered into a line the operator had just taken out, with
+  // every figure on the card agreeing with itself. `flushRepunch` also waits on a punch
+  // already in flight, because "nothing is scheduled" and "the answer is ready" are not
+  // the same thing. Disabled meanwhile: an async handler that silently does nothing for
+  // half a second is indistinguishable from one that did nothing at all.
+  if(patRepunchT || punchInFlight){
+    $("#sp_add").disabled = true;
+    try { await flushRepunch(); }
+    finally { updatePatReadout(); }
+    if(!currentPattern()) return;              // the pattern went while we waited
+  }
   planKind = "survey";                        // the committed plan is a survey (Mission card Type)
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
   const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
@@ -3988,7 +4288,31 @@ async function punchOut(){
     // internal-channel survey (no line crosses the channel edge) excludes nothing.
     const chanExcl = channelSpanKeepouts(src, ref, nogo.features, ko.marks);
     const koClip = chanExcl.length ? {...ko, polys:[...ko.polys, ...chanExcl]} : ko;
-    const clipped=[]; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
+    // ⚠ THE ENC CLIP IS MEMOISED, AND STRIKING A RUN IS THE WHOLE REASON.
+    //
+    // MEASURED on a 10-line, 949 m-wide plan over New Castle harbour (1,318 keep-out
+    // zones), with the chart already cached: clipLine 4,354 ms of a 15,978 ms punch —
+    // the single largest phase, and the tab is blocked solid for every millisecond of it.
+    // Re-punching after a strike used to pay that again for a byte-identical answer.
+    //
+    // It is SOUND, which the obvious memo one layer down is not. `clipped` is computed
+    // from the pattern, the boundary and the keep-out model, and it is computed BEFORE
+    // the strike filter — so it cannot see the strike list and cannot be invalidated by
+    // one. `patStrikeKey()` already names every input it does depend on, which is why
+    // that key serves both jobs. Contrast the routed transits below, which WorldView
+    // tried to memo and could not: they are derived from the LINE SET, so a detour cached
+    // before a strike can be invalid after it. Those re-solve, every time, on purpose.
+    let clipped;
+    const clipKey = patStrikeKey();
+    if(clipKey && patClipMemo && patClipMemo.key === clipKey){
+      // A COPY, not the cached array. The caller sorts, re-orients and filters what it is
+      // given, and handing out the memo itself would let the next punch inherit the last
+      // one's edits — a cache that answers differently the second time is worse than none.
+      clipped = patClipMemo.runs.map(s=>[s[0], s[1]]);
+    } else {
+      clipped = []; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
+      patClipMemo = clipKey ? {key: clipKey, runs: clipped.map(s=>[s[0], s[1]])} : null;
+    }
     // TURN WATER: channel polys that none of the clipped coverage lines occupy are
     // off-limits to everything that CONNECTS those lines (turns, reversal hops,
     // serpentine adjacency) - the lines' own water is the plan's declared water.
@@ -4003,7 +4327,18 @@ async function punchOut(){
       for(let i=0;i<=n;i++){ const t=i/n;
         if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, koTurn, buffer)) return false; }
       return true; };
-    const ro=regionOrder(clipped, ref, sp.direction, sp.spacing, legSafe);
+    // ⚠ THE STRIKE-OFF FILTER, AND THIS IS THE ONLY PLACE IT CAN GO. After the chart has
+    // clipped, so a struck run is the run the operator SAW and clicked — WorldView's
+    // reverted build filtered above the clip, where 16 pattern lines become 45 clipped
+    // runs, and striking one short stub took the 900 m run on the far side of the island
+    // with it. And before `regionOrder`, so the running order, the reversals and the
+    // inter-line transits are all rebuilt AROUND the gap rather than over it: nothing
+    // downstream can tell how a run left, which is the same rule that governs how one
+    // arrives. Filtering after the ordering would leave a serpentine numbered through a
+    // line that is not there.
+    const runs = keptRuns(clipped);
+    const nStruck = clipped.length - runs.length;
+    const ro=regionOrder(runs, ref, sp.direction, sp.spacing, legSafe);
     // SHORTEN each survey segment (settle on-line + leave room for the turn to loop
     // within cleared water). Sized for the SEMICIRCLE, whose radius is half the
     // spacing; a teardrop reaches further outboard than this buys, and that is
@@ -4020,14 +4355,38 @@ async function punchOut(){
     // that reversal is FLOWN at - and a slower turn is a tighter one that reaches less
     // far outboard, which is the clearance the wharf incident was short of.
     const minTurnR = minTurnRadiusM(roleSpeed("turn"));
+    // ⚠ HOW WIDE A GAP STILL COUNTS AS A REVERSAL, IN LINE SPACINGS — AND THE STRIKE-OFF
+    // WORK IS WHAT FORCED THIS OPEN.
+    //
+    // A serpentine normally reverses onto its immediate neighbour, ONE spacing across,
+    // and the gate below was `spacing*1.6 + 3`. Take a line out of the middle and the two
+    // survivors are TWO spacings apart, so the pair fell straight through it: no turn was
+    // attempted, `nNoTurn` was never incremented (it only counts inside the branch the
+    // pair never entered), and the run fell to the straight-leg fallback further down — a
+    // 180° at the line ends at zero radius, which no banner mentions and no hull can
+    // track. **A silent unflyable reversal, produced by the ordinary act of dropping a
+    // short line** — and dropping one is exactly what a strike does, what the chart clip
+    // does, and what MIN_SURVEY_LINE_M has always done. WorldView found this the same way
+    // and for the same reason; the bug was here too, waiting.
+    //
+    // `regionOrder` re-orients each segment against the previous exit, so the serpentine
+    // re-phases itself across the gap and the pair really IS a reversal — it is only
+    // WIDER. A semicircle at half of a two-spacing offset is exactly as valid as one at
+    // half of a single spacing; it just reaches further outboard, and the readout says by
+    // how much. Four spacings is a judgement: beyond it the pair is better understood as
+    // a region hop, and the router handles those, lane and all.
+    //
+    // STRICTLY WIDER THAN WHAT IT REPLACES, both here and in the cap below, so no turn
+    // that used to be produced stops being produced.
+    const GAP_LINES = 4, gapSpan = GAP_LINES + 0.6;
     // THE REVERSAL-PAIR CAP, FROM THE SPACING AND NOT FROM THE HULL. teardropTurn
-    // refuses a pair whose ends are more than this far apart as "not a reversal", and
-    // its default is a bare 60 m - a 4 m-USV assumption. That cost a 7.7 m USV EVERY turn
-    // above 122 m of line spacing (ordinary deep-water multibeam spacing): no loop was
-    // drawn, and the banner blamed a keep-out for it. 1.6 is the same factor the
-    // reversal gate below uses, so the "is this a reversal pair" judgement is made
-    // once instead of twice at two different scales. Below 120 m nothing moves.
-    const turnMaxHalf = Math.max(MAX_HALF_M, sp.spacing*1.6);
+    // refuses a pair whose ends are more than TWICE this far apart as "not a reversal"
+    // (it compares against the HALF-distance), and its default is a bare 60 m - a 4 m-USV
+    // assumption. That cost a 7.7 m USV EVERY turn above 122 m of line spacing (ordinary
+    // deep-water multibeam spacing): no loop was drawn, and the banner blamed a keep-out
+    // for it. Sized off `gapSpan` so the "is this a reversal pair" judgement is made once
+    // instead of twice at two different scales.
+    const turnMaxHalf = Math.max(MAX_HALF_M, sp.spacing*gapSpan/2 + 2);
     // MINIMUM SURVEY LINE (per-vessel, Andy 2026-08-10: "short survey lines are
     // inefficient and unnecessary for vessels the size of 7.7 m USV... for the
     // [small-class boat] this would be fine" - the brackets mark a substitution for the
@@ -4061,7 +4420,7 @@ async function punchOut(){
     let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0;
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
-    let nTurnInboard=0, nTurnSlow=0; turnSlowAt={};
+    let nTurnInboard=0, nTurnSlow=0, nGapTurn=0; turnSlowAt={};
     // The radius at the slow speed - the second lever Andy named. Computed here beside
     // minTurnR so the two are read from the same vessel model in the same breath.
     const minTurnRSlow = minTurnRadiusM("low");
@@ -4076,7 +4435,11 @@ async function punchOut(){
       // water rule); only a genuine region-hop transit may use the channel (ko).
       const koHere = antiParallel ? koTurn : ko;
       let via=null, reversalRefused=false;
-      if(antiParallel && distTo(Ap,Bp) < sp.spacing*1.6 + 3){
+      // `gapSpan`, not 1.6 — see its declaration. A pair separated by a MISSING line is
+      // still a reversal, and one that is not attempted is one that falls through to a
+      // straight 180 nothing counts and nothing reports.
+      const gapWide = distTo(Ap,Bp) > sp.spacing*1.6 + 3;
+      if(antiParallel && distTo(Ap,Bp) < sp.spacing*gapSpan + 3){
         // THE LADDER, not one attempt: outboard, then INBOARD (away from whatever refused
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
         // the wharf this exists for - the old single attempt refused, and refusing was
@@ -4084,6 +4447,12 @@ async function punchOut(){
         const t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
         if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard);
+                   // A reversal built across a MISSING line - struck off, clipped away, or
+                   // dropped as too short. It is a real turn and a valid one, it simply
+                   // reaches further outboard than a neighbour-to-neighbour reversal, and
+                   // the operator is the one who decides whether that water is acceptable.
+                   // Counted so the readout can say so instead of leaving them to notice.
+                   if(gapWide) nGapTurn++;
                    if(t.side==="inboard") nTurnInboard++;
                    // A turn that only fits at the slower radius is a turn the boat must be
                    // SLOWED for. Recorded against the gap so the run commands it there and
@@ -4174,9 +4543,19 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      // STRUCK RUNS ARE NAMED WHERE THE OTHER DROPPED COVERAGE IS NAMED. Coverage that
+      // leaves the plan is said out loud whatever took it — the depth window, the hull's
+      // minimum line, or the operator's own hand — or a thin survey reads as a chart
+      // problem instead of a decision somebody made.
+      (nStruck?`, ${nStruck} struck off by hand`:``)+
       (nShort?`, ${nShort} line(s) under ${minLine} m dropped (this hull's minimum)`:``)+
       (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
       (nTear?`, ${nTear} teardrop turn(s) @ R ${minTurnR.toFixed(1)} m (reaching ${maxOutboard.toFixed(0)} m past the line ends)`:``)+
+      // A WIDER REVERSAL IS STILL A REVERSAL, BUT IT IS NOT THE ONE THE OPERATOR DREW.
+      // It swings across a missing line, so it reaches further outboard than the spacing
+      // implies — and whether that water is acceptable is their call, which they can only
+      // make if they are told the turns are there.
+      (nGapTurn?`, ${nGapTurn} reversal(s) swing across a gap where a line is missing (wider, reaching further outboard)`:``)+
       (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight${nChanTurn?`; ${nChanTurn} refused by a navigation channel`:``})`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
@@ -4306,9 +4685,30 @@ window.addEventListener("mouseup", e=>{
   const wasDrag = dragging; dragging=false; mapEl.classList.remove("drag");
   if(!wasDrag || !downAt) return;
   const moved = Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y); downAt = null;
-  if(moved > 5 || mode === "pan") return;
+  if(moved > 5) return;
   const o = originPx(), r = mapEl.getBoundingClientRect();
   const ll = worldToLatLon(o.x+(e.clientX-r.left), o.y+(e.clientY-r.top), zoom);
+  // ⚠ SELECTING A PUNCHED RUN COMES BEFORE THE MODE CHAIN, AND ABOVE THE PAN RETURN.
+  //
+  // Andy's gesture, ported from WorldView: click a run to select it (it highlights),
+  // press Delete to strike it off. Select-then-delete rather than delete-on-click — the
+  // hit test is a tolerance, and the build that deleted on the click is the one that got
+  // reverted for taking out lines nowhere near the cursor.
+  //
+  // Above the mode chain because a punched pattern is looked at from whatever mode
+  // drew it, and `pan` is where the operator lands afterwards; below it, a click in pan
+  // mode returned before reaching anything, and — worse — a click in SURVEY mode with
+  // A, B and C already placed fell into the corner branch, assigned nothing, and still
+  // ran `patClip=null`, so a stray click threw the whole punch away. Selection claims
+  // the click first, and `patClip` now only invalidates when a corner was actually set.
+  //
+  // Clicking open water with a run selected DESELECTS and stops there, so the click that
+  // dismisses a selection cannot also drop a waypoint or place a corner underneath it.
+  if(patClip && patClip.length && !e.shiftKey){
+    if(selectRunNear(e.clientX-r.left, e.clientY-r.top, 8)) return;
+    if(clearRunSelection()) return;
+  }
+  if(mode === "pan") return;
   if(mode === "wpt"){
     // (clicking a waypoint to delete is handled by the wpDrag path above.)
     // SHIFT-click a survey LINE to delete it (+ its endpoint waypoints); a plain
@@ -4318,8 +4718,15 @@ window.addEventListener("mouseup", e=>{
     else mission.waypoints.push({lat:ll.lat, lon:ll.lon});
     saveMission(); render();
   } else if(mode === "survey"){
+    // ⚠ ONLY INVALIDATE THE PUNCH IF A CORNER WAS ACTUALLY PLACED. With A, B and C all
+    // set, none of these assignments fire — and this branch still ran `patClip=null`, so
+    // any stray click on the chart in survey mode silently threw away a punch that had
+    // just cost an ENC extract and a full re-solve. Found while giving the same click a
+    // second job (selecting a run); the two would have fought, and the punch would have
+    // lost. `placed` is what makes "the geometry changed" true rather than assumed.
+    const placed = !pat.A || !pat.B || !pat.C;
     if(!pat.A) pat.A = ll; else if(!pat.B) pat.B = ll; else if(!pat.C) pat.C = ll;
-    patClip=null;                              // geometry changed - invalidate any punch
+    if(placed) patClip=null;                   // geometry changed - invalidate any punch
     updatePatReadout(); render();
   } else if(mode === "bound"){
     if(!boundaryClosed){
@@ -4553,10 +4960,25 @@ window.addEventListener("blur", closeChartMenu);
 // more than the operator was looking at: the menu, then the leg being drawn, then the
 // completed measurements, then the tool itself.
 window.addEventListener("keydown", e=>{
-  if(e.key !== "Escape") return;
   const t = e.target;
-  if(t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;     // Esc belongs to the field
+  // ⚠ THE FIELD GUARD COMES FIRST AND COVERS BOTH KEYS. Delete inside `Spacing` or
+  // `Min depth` edits the NUMBER; without this it would strike a survey run off while
+  // the operator was typing, which is the worst kind of hidden action — the one that
+  // happens somewhere they are not looking.
+  if(t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+  // DELETE (or Backspace) STRIKES THE SELECTED RUN OFF. Andy's gesture, ported from
+  // WorldView: "click to select, Delete to strike". Refused with no selection, so the
+  // key does nothing surprising when nothing is chosen.
+  if(e.key === "Delete" || e.key === "Backspace"){
+    if(patSel && strikeSelectedRun()){ e.preventDefault(); render(); }
+    return;
+  }
+  if(e.key !== "Escape") return;
   if(chartMenuOpen()){ closeChartMenu(); return; }
+  // ESCAPE DROPS THE SELECTION FIRST. It is the most recent thing the operator armed and
+  // the one an escape most obviously means; the measurement below it survives, as does a
+  // measurement in progress, because neither is what was just clicked.
+  if(clearRunSelection()) return;
   if(measPend){ measPend = null; render(); return; }
   if(measures.length){ clearMeasures(); return; }
   if(mode === "measure") setMode("pan");
@@ -4629,7 +5051,10 @@ $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
 ["#enf_land","#enf_depth","#enf_haz","#enf_area"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };
 });
-$("#sp_punch").onclick = punchOut;
+// Through `punchNow`, not straight at `punchOut`, so the button shares the ONE chain
+// every punch is serialised on. Pressing it while a strike’s rebuild is in flight then
+// queues behind that rebuild instead of being dropped by `punchBusy`.
+$("#sp_punch").onclick = punchNow;
 $("#chrtBtn").onclick = ()=>{ encShow=!encShow; $("#chrtBtn").classList.toggle("on", encShow); render(); };
 $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo never loaded, extract it now
   if(!nogo.ready && !nogo.busy){ refreshNogo(); return; }
@@ -4656,7 +5081,7 @@ function recalcForSpeed(){
     // the new radius, durations, and the advisory reprinted - and the chart extract it
     // needs is already cached, so re-running is cheap. Only worth it if it was punched
     // before: an unpunched pattern has nothing stale to correct.
-    if(patClip){ punchOut(); return; }
+    if(patClip){ punchNow(); return; }
     updatePatReadout(); renderLineTable(); updateMissionCard();
     return;
   }

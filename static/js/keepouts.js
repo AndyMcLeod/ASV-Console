@@ -541,7 +541,9 @@ export function nogoKind(role, depthbad, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   if (depthbad) return `water shallower than ${o.minDepthM.toFixed(1)} m`;
   if (role === 'dock' || role === 'dock_line') return 'a dock / pier';
-  if (role === 'hazard_area' || role === 'hazard_point') return 'a charted hazard';
+  if (role === 'bridge') return 'a bridge support';
+  if (role === 'hazard_area' || role === 'hazard_point' || role === 'hazard_line')
+    return 'a charted hazard';
   if (role === 'chan_mark') return 'a channel buoy';
   if (role === 'dredged') return 'a dredged area';
   if (role === 'restricted') return 'a restricted area';
@@ -570,8 +572,19 @@ export function buildKeepouts(frame, feats, opts = {}) {
   const polys = [], lines = [], points = [], marks = [];
   for (const f of feats || []) {
     const g = f.geometry, r = f.role;
-    const isLand = (r === 'land' || r === 'dock' || r === 'hazard_area');
-    const isShore = (r === 'shore_line' || r === 'dock_line');
+    // ⚠ `bridge` IS THE SUPPORTS, NOT THE SPAN. A bridge pylon is a pier that happens
+    // to hold something up and is enforced exactly like one; the DECK (`bridge_span`)
+    // is overhead and is deliberately absent from every list here - enforcing it would
+    // refuse passage under every bridge, which for a hull with a metre of air draft is
+    // wrong on all of them. The span is fetched and cached for drawing, and that is all.
+    // ⚠ EACH ROLE BELONGS TO EXACTLY ONE OF THESE, because the dispatch below is an
+    // if/else chain on geometry: `isLand` draws RINGS, `isShore` draws PATHS, `isHaz`
+    // draws POINTS, and the first match wins. Putting `bridge` in both isLand and isHaz
+    // - which the first cut of this did - means the ring branch always takes it, and a
+    // pylon charted as a POINT yields no rings and is silently dropped. The pylon POINT
+    // class lives in `hazard_point` instead, where the dispatch is already right.
+    const isLand = (r === 'land' || r === 'dock' || r === 'hazard_area' || r === 'bridge');
+    const isShore = (r === 'shore_line' || r === 'dock_line' || r === 'hazard_line');
     const depthbad = depthExcluded(f, dr, o.waterOffsetM);
     const isHaz = (r === 'hazard_point');
     const isArea = (r === 'dredged' || r === 'restricted');
