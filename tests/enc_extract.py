@@ -20,7 +20,7 @@ THE ENDPOINT'S OWN CONTRACTS (read from fetch_enc_features, asserted hermeticall
   * `?bbox=W,S,E,N&min_depth=X`; anything malformed - no query, missing bbox, three
     edges, non-numeric, unparseable min_depth - is a 400 naming the ENC usage string,
     never a 502 from downstream.
-  * The extract caches to `charts/enc/features_v3_<key>.json` and is SERVED from that
+  * The extract caches to `charts/enc/features_v<N>_<key>.json` and is SERVED from that
     cache - proven with a sentinel seeded at a mid-ocean bbox that upstream would
     answer "no coverage" for, so only the cache can be the source.
   * THE RETAG IS PER-REQUEST, THE FETCH IS NOT: every depth_area feature gets
@@ -56,6 +56,7 @@ runner scores a missing anchor as SKIP and a crash separately):
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -129,7 +130,15 @@ ENC_DIR = os.path.join(APP, "charts", "enc")
 # if the response carries the sentinel band, the CACHE answered, nothing else could have.
 BBOX = (-140.0, 10.0, -139.9, 10.1)
 KEY = "%.4f_%.4f_%.4f_%.4f" % BBOX
-CACHE = os.path.join(ENC_DIR, "features_v3_%s.json" % KEY)
+# ⚠ THE CACHE VERSION IS READ FROM THE SOURCE, NEVER RESTATED. This was "features_v3_"
+# and the console moved to v4 (the `fairway` role); the suite then wrote a sentinel the
+# console would never read, and five checks failed for a reason that had nothing to do
+# with what they test. Reading it means a bump moves both together.
+_SRC = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
+_CVER = re.search(r'"(features_v\d+)_%s\.json"', _SRC)
+if not _CVER:
+    raise SystemExit("test setup: cannot find the feature cache version in asv_console.py")
+CACHE = os.path.join(ENC_DIR, _CVER.group(1) + "_%s.json" % KEY)
 SENTINEL = {
     "band": "sentinel-band",
     "features": [
@@ -312,6 +321,78 @@ OLD = "{k: props.get(k) for k in ENC_KEEP_PROPS"
 check("8e. ... and the extract itself goes through it - the raw comprehension is gone",
       lambda: CALL in src and OLD not in src,
       "call present=%s, old comprehension gone=%s" % (CALL in src, OLD not in src))
+
+# ── 9. EVERY DECLARED CLASS MUST RESOLVE TO A REAL PUBLISHED LAYER ──────────────────
+#
+# ⚠ AN UNRESOLVED CLASS IS SILENTLY SKIPPED. The fetch builds its job list with
+# `if cls in lm` — a class ENCDirect does not publish under that exact name is dropped with
+# no error, no warning, and no gap in the result. So one typo disables a whole role for
+# ever and everything downstream reports success.
+#
+# It had. "Restricted_Area" was wrong from the day the role was added — the published layer
+# is "Restricted_Area_area", carrying the geometry suffix the rest of them do — so the role
+# fetched NOTHING, ever: zero restricted features across 110 real cached extracts, while the
+# operator's "Dredged / restricted" enforcement checkbox said it was enforcing both halves.
+#
+# Checked against the CACHED LAYER MAPS, which are the service's own answer about what it
+# publishes rather than a list restated here. Harbour and approach are the bands a survey
+# ASV works in and must resolve everything; the small-scale coastal and general bands
+# legitimately omit harbour furniture, so a class missing THERE is not a fault.
+_LAYER_DIRS = [os.path.join(APP, "charts", "enc", _b) for _b in ("enc_harbour", "enc_approach")]
+_maps = []
+for _d in _LAYER_DIRS:
+    try:
+        with open(os.path.join(_d, "_layers.json"), "r", encoding="utf-8") as _f:
+            _m = json.load(_f)
+        _maps.append((os.path.basename(_d),
+                      set(_m.keys() if isinstance(_m, dict) else (x.get("name") for x in _m))))
+    except (OSError, ValueError):
+        pass
+
+_blk = src[src.index("ENC_ROLES = {"):src.index("ENC_KEEP_PROPS")]
+_blk = "\n".join(_l.split("#")[0] for _l in _blk.splitlines())      # code only, not comments
+_declared = re.findall(r'"([A-Z][A-Za-z_]+)"', _blk)
+
+if not _maps:
+    # No cached layer map means this check CANNOT RUN — and that is a stated failure, never
+    # a silent pass. A coverage check that quietly reports nothing is the same class of
+    # fault as the one it exists to catch.
+    check("9. every ENC_ROLES class resolves to a published layer", lambda: False,
+          "NO CACHED LAYER MAP under charts/enc/<band>/_layers.json — run the console once "
+          "against a real area so the bands cache, then re-run this suite")
+else:
+    for _band, _names in _maps:
+        _missing = sorted(c for c in _declared if c not in _names)
+        check("9. every ENC_ROLES class resolves in %s" % _band,
+              (lambda m=_missing: not m),
+              ("%d/%d classes resolve" % (len(_declared) - len(_missing), len(_declared)))
+              + ("" if not _missing else
+                 " — UNRESOLVED, and SILENTLY SKIPPED by the fetch: " + ", ".join(_missing)))
+    # ... and the two the Rule 9 scope work rests on, named outright: a generic "they all
+    # resolve" check passes just as well over a list they have been deleted from.
+    _h = _maps[0][1]
+    check("9b. ... including FAIRWY and DRGARE, which decide where Rule 9 applies",
+          (lambda: "Fairway_area" in _h and "Dredged_Area" in _h
+                   and "Fairway_area" in _declared and "Dredged_Area" in _declared),
+          "requested: Fairway_area=%s Dredged_Area=%s"
+          % ("Fairway_area" in _declared, "Dredged_Area" in _declared))
+
+# ── 10. THE FEATURE CACHE VERSION MOVES WITH THE ROLE SET ───────────────────────────
+#
+# ⚠ A CACHE DOES NOT KNOW WHAT IT DOES NOT CONTAIN. Adding a role without bumping the cache
+# version leaves every already-cached area serving an extract that lacks it — happily, with
+# no gap and no warning. The `fairway` role shipped exactly that way: 110 cached extracts
+# covered every operating area in use and not one held a fairway feature, so COLREGS Rule 9
+# would never have applied anywhere the console had already been.
+#
+# This check cannot know when a bump is DUE, so it pins the two together where it can: the
+# version's comment must name the roles each bump added, which puts the requirement in front
+# of the next person adding one, in the file they are already editing.
+_ver = re.search(r"features_v(\d+)_%s\.json", src)
+check("10. the feature cache version names the roles each bump added",
+      (lambda: _ver is not None and "'fairway' role" in src and "'chan_mark' role" in src),
+      "cache file is %s" % (_ver.group(0) if _ver else "NOT FOUND")
+      + "; a role added without a bump is invisible to every already-cached area")
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

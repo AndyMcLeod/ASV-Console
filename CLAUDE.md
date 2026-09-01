@@ -57,7 +57,48 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-08-31 — Rule 9 applies in a narrow channel, and nowhere else)
 
-**NEWEST (this commit): COLREGS RULE 9 WAS BEING APPLIED WHERE IT DOES NOT APPLY.** Andy:
+**NEWEST (this commit): THE ENC EXTRACT WAS AUDITED AGAINST WHAT THE SERVICE PUBLISHES, AND
+THREE CLASSES WERE NOT BEING FETCHED AT ALL.** Andy: *"confirm ENC downloads include all
+layers available for use in this application."* The answer was no, and one of the three was
+mine from an hour earlier.
+
+**⚠ AN UNRESOLVED CLASS IS SILENTLY SKIPPED.** The fetch builds its job list with
+`if cls in lm` — a class ENCDirect does not publish under that exact name is dropped with no
+error, no warning and no gap in the result. Everything downstream then reports success:
+
+1. **`Restricted_Area` was never the published name** — it is `Restricted_Area_area`, with
+   the geometry suffix the rest carry. Wrong from the day the role was added, so it fetched
+   **nothing, ever**: zero restricted features across 110 real cached extracts, while the
+   operator's *"Dredged / restricted"* checkbox said it was enforcing both halves.
+2. **`Pontoon_line` is published by no band at all.** PONTON is a real S-57 class; this
+   service does not serve it under that name. Removed — a requested class that cannot
+   resolve is worse than none, because it reads like coverage.
+3. **THE FAIRWAY ROLE SHIPPED WITHOUT A CACHE BUMP, which is mine.** `fetch_enc_features`
+   keys its cache `features_v3_<bbox>`, and the comment there says outright that adding a
+   role means bumping it. I added `fairway` and did not. **110 cached v3 extracts covered
+   every operating area in use**, every one would have served happily, and not one contained
+   a fairway feature — so Rule 9 would never have applied anywhere the console had already
+   been, and nothing would have said so. **A cache does not know what it does not contain.**
+   Now `features_v4_`.
+
+**`tests/enc_extract.py` checks 9 / 9b / 10** close it: every declared class must resolve
+against the service's OWN cached layer map, in the harbour and approach bands a survey ASV
+works in (coastal and general legitimately omit harbour furniture). Check 9 found
+`Pontoon_line` the moment it ran. A missing layer map is a stated FAILURE, not a skip — a
+coverage check that quietly reports nothing is the fault it exists to catch. And the suite
+now reads the cache version FROM the source rather than restating it: it had `features_v3_`
+hard-coded, so my bump made five of its checks fail for a reason unrelated to what they test.
+
+**WHAT IS PUBLISHED AND STILL UNUSED** — 203 layers in the harbour band, 39 requested. The
+gaps worth a decision, none of them fetched today: `Obstruction_line` (the point and area
+forms are fetched, the line is not), bridge structure (`Bridge_area/line`,
+`Pylon_Bridge_Support_*` — pylons are a hard obstruction), `Buoy_Cardinal_point` (a cardinal
+mark IS a hazard indicator and a physical object; the lateral, isolated-danger, safe-water
+and special-purpose buoys are all fetched), `Offshore_Platform_*`, `Anchorage_Area`,
+`Caution_Area`, `Dumping_Ground_area`. The routeing layers (TSS, deep-water route,
+recommended track, two-way and ferry routes) are Rule 10 and later rules, deliberately held.
+
+**PREVIOUS: COLREGS RULE 9 WAS BEING APPLIED WHERE IT DOES NOT APPLY.** Andy:
 
 > *"Rule 9 is being improperly applied in the current ASV Console implementation. It applies
 > only within narrow channels. ... In open bay or open ocean transits and while running
@@ -1392,8 +1433,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **43 regression suites / 817 assertions** (23 JS / 488,
-20 Python / 329), derived
+turn-water hold is closed (`a548c14`). **43 regression suites / 821 assertions** (23 JS / 488,
+20 Python / 333), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1425,7 +1466,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-THREE REGRESSION SUITES (817 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-THREE REGRESSION SUITES (821 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

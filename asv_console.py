@@ -1132,7 +1132,13 @@ ENC_ROLES = {
                       "Gate_area", "Dam_area", "Hulk_area"],
     # ... and the same structures as LINES - finger piers are typically charted as
     # Shoreline_Construction_line / Mooring_Warping_Facility_line / Pontoon_line.
-    "dock_line":     ["Shoreline_Construction_line", "Pontoon_line",
+    # ⚠ "Pontoon_line" IS GONE, and its absence is the point: ENCDirect publishes no such
+    # layer in any band. PONTON is a real S-57 class, but this service does not serve it
+    # under that name, so the class resolved to nothing and was silently skipped from the
+    # day it was written. A requested class that cannot resolve is worse than no class -
+    # it reads like coverage. tests/enc_extract.py check 9 is what found it, and is what
+    # will refuse the next one.
+    "dock_line":     ["Shoreline_Construction_line",
                       "Floating_Dock_line", "Mooring_Warping_Facility_line",
                       "Dyke_line", "Causeway_line", "Gate_line", "Dam_line"],
     "depth_area":    ["Depth_Area"],
@@ -1155,7 +1161,13 @@ ENC_ROLES = {
                       "Underwater_Awash_Rock_point", "Obstruction_point", "Wreck_point"],
     "hazard_area":   ["Obstruction_area", "Wreck_area"],
     "dredged":       ["Dredged_Area"],
-    "restricted":    ["Restricted_Area"],
+    # ⚠ "Restricted_Area_area", NOT "Restricted_Area" - the published layer carries the
+    # geometry suffix like the rest of them. The name was wrong from the day this role was
+    # added, and because an unresolved class is SILENTLY SKIPPED (`if cls in lm` in the
+    # fetch), the role fetched nothing, ever: ZERO restricted features across 110 real
+    # cached extracts. The operator's "Dredged / restricted" enforcement checkbox has only
+    # ever enforced the dredged half of what it says.
+    "restricted":    ["Restricted_Area_area"],
     # ── WHERE COLREGS RULE 9 APPLIES, READ OFF THE CHART ────────────────────
     # Andy, 2026-08-31: "Rule 9 is being improperly applied ... It applies only
     # within narrow channels. ... In open bay or open ocean transits and while
@@ -1389,9 +1401,19 @@ def fetch_enc_features(bbox, min_depth=0.0):
     key = _bbox_key(bbox)
     # cache version: v2 adds id-first fetch (piers/structures that the old spatial
     # query silently dropped) + the expanded structure classes; v3 splits lateral
-    # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR. Bumping
-    # the version ignores older caches that lack the new role/props.
-    cache = os.path.join(ENC_DIR, "features_v3_%s.json" % key)
+    # channel marks into their own 'chan_mark' role and keeps CATLAM/COLOUR; v4 adds
+    # the 'fairway' role (FAIRWY, for COLREGS Rule 9) and fixes 'restricted' to the
+    # layer's real published name. Bumping the version ignores older caches that lack
+    # the new role/props.
+    #
+    # ⚠ THE BUMP IS PART OF ADDING A ROLE, NOT AN AFTERTHOUGHT. The fairway role shipped
+    # without one and the omission was invisible: 110 cached v3 extracts covered every
+    # operating area in use, every one served happily, and NOT ONE contained a fairway
+    # feature - so Rule 9 would never have applied anywhere the console had already been,
+    # and nothing would have said so. A cache does not know what it does not contain.
+    # Found by auditing the published layer list against what the extracts actually
+    # returned; tests/enc_extract.py now fails if a declared class does not resolve.
+    cache = os.path.join(ENC_DIR, "features_v4_%s.json" % key)
     data = None
     try:
         with open(cache, "r", encoding="utf-8") as f:
