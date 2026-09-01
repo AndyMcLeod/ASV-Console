@@ -197,10 +197,22 @@ is the whole design: ENCDirect reports failure as a normal-looking EMPTY layer, 
 count cannot tell a quiet harbour from a fetch that half-failed — a coastal extract with
 soundings but no shoreline is flagged, not reported as open water.
 
-**⬜ OPEN, AND IT IS ANDY'S CALL, NOT MINE:** `charts/enc/` still holds **122 superseded
-extracts (617 MB)** at v2/v3/v4 that the console already ignores. `python tools/warm_enc.py
---prune` deletes them. Left alone deliberately — they are his data, deletion is
-irreversible, and keeping them costs only disk.
+**THE SUPERSEDED CACHES ARE PRUNED (2026-09-01, on his instruction).** 124 files, 617 MB,
+v2/v3/v4 gone; `charts/enc/` is 15 v5 extracts and 164 MB, and all 8 ports re-served from
+cache in 0.2–2.6 s afterwards.
+
+**⚠ AND THE PRUNE ANNOUNCED 122 AND DELETED 124, WHICH IS THE SECOND PREDICATE MISMATCH
+IN THAT ONE TOOL.** The count required a `.json` suffix; the delete matched any
+`features_v*`. The two extra were orphaned `.json.part` writes from interrupted fetches at
+dead versions — nothing was lost, and removing them was right — but a confirmation prompt
+whose number is not the number that goes is theatre. (The first mismatch compared a bare
+tag against a whole prefix and put the LIVE cache on the delete list.) There is now ONE
+enumeration: `main` prints `len(prune_targets(...))` and deletes that same list, so they
+cannot disagree. **⚠ AND THE CHECK TOOK THREE GOES TO WRITE:** the first compared
+`inventory` against `cached_files` — one built from the other, so they agreed by
+construction and two mutations of the real defect walked through; the fixture then had no
+file the strict predicate rejects, so it still could not see the divergence. It needed a
+`features_v3_z.json.bak`. enc_extract 11d/11e.
 
 **PREVIOUS: THE ENC EXTRACT WAS AUDITED AGAINST WHAT THE SERVICE PUBLISHES, AND
 THREE CLASSES WERE NOT BEING FETCHED AT ALL.** Andy: *"confirm ENC downloads include all
@@ -1579,8 +1591,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **45 regression suites / 867 assertions** (25 JS / 531,
-20 Python / 336), derived
+turn-water hold is closed (`a548c14`). **45 regression suites / 869 assertions** (25 JS / 531,
+20 Python / 338), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1612,7 +1624,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-FIVE REGRESSION SUITES (867 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-FIVE REGRESSION SUITES (869 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

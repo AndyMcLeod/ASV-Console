@@ -77,16 +77,54 @@ def load_ports(path):
         return json.load(f)
 
 
-def inventory(enc_dir, cur):
-    """What is on disk, by cache version. Anything not `cur` is dead weight the console
-    already ignores."""
-    import collections
-    byver = collections.defaultdict(lambda: [0, 0])
+def cached_files(enc_dir):
+    """Every file the feature cache owns, as (version, filename, is_part).
+
+    ⚠ ONE PREDICATE, AND BOTH THE COUNT AND THE DELETE READ IT. They used to differ: the
+    count required `.json` while the delete matched any `features_v*`, so the first real
+    prune announced 122 extracts and removed 124 files. The two extra were orphaned
+    `.json.part` writes left by interrupted fetches at dead versions - dead weight, and
+    removing them was right - but the number a human types DELETE against has to be the
+    number that goes, or the confirmation is theatre. The FIRST version of this tool got
+    the same class of thing wrong in the other direction (a bare tag compared against a
+    whole prefix, which put the LIVE cache on the delete list), so this is twice now: a
+    delete path is exactly where two ways of naming the same set stops being cosmetic.
+    """
     for fn in os.listdir(enc_dir):
-        if not fn.startswith("features_v") or not fn.endswith(".json"):
+        if not fn.startswith("features_v"):
             continue
-        ver = fn.split("_")[1]
-        byver[ver][0] += 1
+        part = fn.endswith(".json.part")
+        if not (part or fn.endswith(".json")):
+            continue
+        yield fn.split("_")[1], fn, part
+
+
+def prune_targets(enc_dir, dead):
+    """Exactly the files a prune would remove.
+
+    ⚠ THE ANNOUNCEMENT AND THE DELETE ARE THIS ONE LIST. They were two separate walks of
+    the directory with two different predicates, and the first real prune announced "122
+    extracts" then removed 124 FILES - the count required a `.json` suffix and the delete
+    matched any `features_v*`, so two orphaned `.json.part` writes went with them. Nothing
+    was lost that time; they were dead weight at dead versions. But a confirmation prompt
+    whose number is not the number that goes is theatre, and this was the SECOND predicate
+    mismatch in this one tool (the first compared a bare tag against a whole prefix and
+    put the LIVE cache on the delete list).
+
+    Two checks reading one set two ways is a hole by construction, so there is now one
+    way: `main` prints `len(prune_targets(...))` and then deletes `prune_targets(...)`.
+    They cannot disagree, which is worth more than a test that they happen to agree.
+    """
+    return [fn for ver, fn, _part in cached_files(enc_dir) if ver in dead]
+
+
+def inventory(enc_dir, cur):
+    """What is on disk, by cache version: [complete, bytes, part-writes]. Anything not
+    `cur` is dead weight the console already ignores."""
+    import collections
+    byver = collections.defaultdict(lambda: [0, 0, 0])
+    for ver, fn, part in cached_files(enc_dir):
+        byver[ver][2 if part else 0] += 1
         byver[ver][1] += os.path.getsize(os.path.join(enc_dir, fn))
     return byver
 
@@ -110,9 +148,13 @@ def main():
     print("\nCACHED EXTRACTS ON DISK")
     dead = []
     for ver in sorted(inv):
-        n, size = inv[ver]
+        n, size, part = inv[ver]
         tag = "<- CURRENT, in use" if ver == cur else "superseded, ignored by the console"
-        print("   %-5s %4d extracts %8.1f MB   %s" % (ver, n, size / 1e6, tag))
+        # Part-writes are NAMED rather than folded into the extract count, because they
+        # are exactly what made the first real prune's arithmetic disagree with itself.
+        print("   %-5s %4d extracts%s %8.1f MB   %s"
+              % (ver, n, (" + %d part-write(s)" % part) if part else "                ",
+                 size / 1e6, tag))
         if ver != cur:
             dead.append(ver)
     # ⚠ BELT AND BRACES, and it earned its place: the version comparison above was broken
@@ -126,9 +168,15 @@ def main():
         if not dead:
             print("\nnothing to prune - every cache on disk is the current version")
         else:
+            # THE LIST, NOT A COUNT DERIVED SEPARATELY. What is printed and what is
+            # removed are the same object — see prune_targets.
+            doomed = prune_targets(enc_dir, dead)
             total = sum(inv[v][1] for v in dead)
-            print("\nPRUNE would DELETE %d extracts (%.1f MB) from versions %s."
-                  % (sum(inv[v][0] for v in dead), total / 1e6, ", ".join(dead)))
+            npart = sum(inv[v][2] for v in dead)
+            print("\nPRUNE would DELETE %d file(s)%s - %.1f MB from versions %s."
+                  % (len(doomed),
+                     (" (%d of them orphaned part-write(s))" % npart) if npart else "",
+                     total / 1e6, ", ".join(dead)))
             # ⚠ ASKS, ALWAYS. These are big files that cost real time to refetch, and a
             # tool that quietly deletes 600 MB because a flag was passed is a tool nobody
             # should run on a boat. The console already ignores them, so keeping them
@@ -137,10 +185,9 @@ def main():
                 print("   left alone.")
             else:
                 gone = 0
-                for fn in os.listdir(enc_dir):
-                    if fn.startswith("features_v") and fn.split("_")[1] in dead:
-                        os.remove(os.path.join(enc_dir, fn))
-                        gone += 1
+                for fn in doomed:
+                    os.remove(os.path.join(enc_dir, fn))
+                    gone += 1
                 print("   deleted %d file(s)." % gone)
 
     if args.list:

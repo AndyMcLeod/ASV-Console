@@ -431,6 +431,67 @@ else:
           "no unconditional guard - one string mismatch would put the live cache back on "
           "the delete list")
 
+    # ── 11d. THE NUMBER ANNOUNCED IS THE NUMBER THAT GOES ────────────────────────────
+    #
+    # ⚠ RUN FOR REAL, IN A TEMP DIRECTORY, because the three checks above are source-text
+    # checks and this is the one that catches what they could not. The first real prune
+    # announced "122 extracts" and removed 124 FILES: the count required a `.json` suffix
+    # and the delete matched any `features_v*`, so two orphaned `.json.part` writes from
+    # interrupted fetches went with them. Nothing was lost that time - they were dead
+    # weight at dead versions - but a confirmation prompt whose number is not the number
+    # that goes is theatre, and this is the SECOND predicate mismatch in this one tool
+    # (the first put the LIVE cache on the delete list). Both halves now read one
+    # enumeration; this proves they agree rather than asserting that they look alike.
+    import tempfile as _tf
+    _d = _tf.mkdtemp()
+    try:
+        import importlib.util as _iu
+        _sp = _iu.spec_from_file_location("warm_enc", _warm)
+        _w = _iu.module_from_spec(_sp)
+        _sp.loader.exec_module(_w)
+        for _n in ("features_v3_a.json", "features_v3_b.json",
+                   "features_v3_c.json.part",       # orphaned interrupted write, dead ver
+                   "features_v5_a.json",
+                   "features_v5_a.json.part",       # a LIVE part-write - must survive
+                   # NEITHER .json NOR .json.part, so the strict predicate rejects it and
+                   # a loose `startswith("features_v")` accepts it. That divergence is the
+                   # whole defect, and without a file of this shape in the fixture the
+                   # check passes with the bug restored - which it did, twice, before this
+                   # line existed.
+                   "features_v3_z.json.bak",
+                   "chartinfo_v1_x.json"):          # a different cache - not ours to take
+            with open(os.path.join(_d, _n), "w", encoding="utf-8") as _f:
+                _f.write("{}")
+        _inv = _w.inventory(_d, "v5")
+        _dead = [v for v in _inv if v != "v5"]
+        # THE FUNCTION THE PRUNE ACTUALLY DELETES, called for real. An earlier version of
+        # this check compared `inventory` against `cached_files` — two functions where one
+        # is built from the other, so they agreed by construction and TWO mutations of the
+        # real defect walked straight through it. The delete is its own function now
+        # precisely so it can be called here, and `main` prints len() of the same list it
+        # then removes: they cannot disagree, which is worth more than a check that they do
+        # not happen to.
+        _doomed = _w.prune_targets(_d, _dead)
+        _announced = sum(_inv[v][0] for v in _dead) + sum(_inv[v][2] for v in _dead)
+        _all = [f for _v, f, _p in _w.cached_files(_d)]
+        check("11d. the prune deletes exactly the files its own inventory counted",
+              (lambda: _announced == len(_doomed) == 3),
+              "inventory says %d, prune_targets returns %d - a count and a delete reading "
+              "the set two ways is how 122 became 124" % (_announced, len(_doomed)))
+        check("11e. ... and it takes nothing it does not own",
+              (lambda: "features_v5_a.json.part" not in _doomed
+                       and "features_v5_a.json" not in _doomed
+                       and "features_v3_z.json.bak" not in _doomed
+                       and "chartinfo_v1_x.json" not in _all),
+              "kept the live v5 extract and its part-write: %s; left the stray .bak: %s; "
+              "ignored the chartinfo cache: %s"
+              % ("features_v5_a.json" not in _doomed and "features_v5_a.json.part" not in _doomed,
+                 "features_v3_z.json.bak" not in _doomed,
+                 "chartinfo_v1_x.json" not in _all))
+    finally:
+        import shutil as _sh
+        _sh.rmtree(_d, ignore_errors=True)
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)
