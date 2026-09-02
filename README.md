@@ -339,6 +339,35 @@ with the survey-planning and command steps below.
 
 ### AIS layer (nearby vessels)
 
+**What each contact carries.** Beyond position, course and speed, every contact carries
+the **particulars AIS itself broadcasts**: ship type, **length and beam**, **destination**,
+draught, IMO number, call sign and ETA. None of that needs a second service — message 5
+(Class A static and voyage) and messages 19 / 24B (Class B) have carried it all along, and
+the console simply had not been keeping it. All of it reads on **hover**, and the **icon is
+drawn to the hull's true size** whenever the chart is zoomed in far enough to show it,
+anchored on the **GNSS antenna** rather than centred: AIS reports the antenna's offsets
+within the hull, and on a 295 m ship with the bridge aft, centring the box would put the
+stem 77 m from where it actually is. Zoomed out, where a 300 m ship is seven pixels, it
+falls back to the standard glyph.
+
+**CPA and TCPA** — the closest the two vessels will come on present course and speed, and
+how long until that happens — are shown for every contact with a track. They are recomputed
+from the live kinematics every time they are read, so a **manoeuvre by either vessel is
+reflected immediately**; there is no cached figure to go stale. A contact already drawing
+away says so rather than showing its past closest approach as though it were ahead, and two
+vessels holding station on each other report a range with **no** time rather than an
+enormous one divided out of report jitter. CPA is a *prediction* on the assumption that both
+hold course — an input to a watch, never a substitute for one, and the console reports it
+without ever steering on it.
+
+**Tonnage is the one thing AIS does not carry.** No AIS message contains gross or deadweight
+tonnage — it is a registry fact rather than a broadcast one — so `gt`, `dwt`, `built` and
+`flag` are carried through the pipeline and stay **absent** until a licensed
+vessel-particulars source is configured. **MagicPort is not that source**: it publishes no
+API, and its terms prohibit *"the use of any robot, spider, scraper or other device,
+program, tool, algorithm, code, process or methodology"* without written permission, so
+nothing here queries it.
+
 Marine **AIS** (Automatic Identification System) is how ships broadcast their
 identity, position, course and speed — over VHF, and onto the internet via shore
 and satellite receivers. The **AIS** button is a simple on/off overlay of the vessel traffic around the boat —

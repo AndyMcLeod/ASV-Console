@@ -164,6 +164,20 @@ class Registry:
     # polled report loses to a fresher one already held)
     POS_KEYS = ("lat", "lon", "sog", "cog", "heading", "nav")
 
+    #: The STATIC / VOYAGE particulars, carried through to the console verbatim.
+    #:
+    #: These are the facts that do not change between position reports - the hull and the
+    #: voyage - so they are merged stickily (a position report never clears them) and are
+    #: what the operator's icon, hover card and any later target analysis are built from.
+    #:
+    #: `length` / `beam` / `dim` / `dest` / `draught` / `imo` / `callsign` / `eta` all come
+    #: straight out of AIS messages 5, 19 and 24B and cost nothing extra to have.
+    #: `gt` / `dwt` / `built` do NOT exist in AIS in any message - they are registry facts
+    #: and can only arrive from a vessel-particulars lookup, so they are listed here and
+    #: simply stay absent until one is configured.
+    STATIC_KEYS = ("length", "beam", "dim", "dest", "draught", "imo", "callsign", "eta",
+                   "gt", "dwt", "built", "flag", "extra_src")
+
     #: Which feed's POSITION wins when several carry the same ship. Higher is
     #: stronger; anything unlisted is 0. This is the only place "primary" is
     #: expressed — a source list says what RUNS, not what is believed.
@@ -245,7 +259,7 @@ class Registry:
                     continue
                 if bbox and not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
                     continue
-                out.append({
+                rec = {
                     "mmsi": v["mmsi"], "lat": round(lat, 6), "lon": round(lon, 6),
                     "sog": v.get("sog"), "cog": v.get("cog"), "heading": v.get("heading"),
                     "name": v.get("name"), "type": v.get("type"),
@@ -253,7 +267,19 @@ class Registry:
                     "age": round(now - v.get("pos_ts", v.get("last_ts", now)), 0),
                     "src": v.get("src"),
                     "srcs": sorted(v.get("srcs", {})),
-                })
+                }
+                # ⚠ THIS DICT IS A WHITELIST AND IT IS WHERE A NEW FIELD GOES TO DIE.
+                # The registry stores whatever a decoder reports, so a field can be parsed
+                # correctly, merged correctly, held correctly - and still never reach the
+                # console, because the serialiser below never mentioned it. Every decoder
+                # test passes; the card shows nothing. (The same shape lost `speeds` out of
+                # a mission load once already.) So the particulars are enumerated ONCE, in
+                # STATIC_KEYS, and both this serialiser and the suite that guards it read
+                # that one list - adding a field is one edit, in one place.
+                for k in self.STATIC_KEYS:
+                    if v.get(k) is not None:
+                        rec[k] = v[k]
+                out.append(rec)
         out.sort(key=lambda r: r["age"])
         if limit and len(out) > limit:
             out = out[:limit]
@@ -449,6 +475,7 @@ class AisstreamSource(Source):
         mtype = d.get("MessageType")
         body = (d.get("Message") or {}).get(mtype, {}) if mtype else {}
         sog = cog = hdg = nav = shiptype = None
+        static = {}
         if mtype in ("PositionReport", "StandardClassBPositionReport",
                      "ExtendedClassBPositionReport"):
             sog = _num(body.get("Sog"), 102.3)
@@ -461,8 +488,17 @@ class AisstreamSource(Source):
         elif mtype == "ShipStaticData":
             shiptype = body.get("Type")
             name = name or ((body.get("Name") or "").strip() or None)
+            # ⚠ THIS MESSAGE WAS ALREADY ARRIVING AND MOST OF IT WAS BEING THROWN AWAY.
+            # The subscription has asked for ShipStaticData since the day it was written,
+            # and the handler kept `Type` and `Name` and dropped the rest on the floor:
+            # the hull DIMENSIONS, the DESTINATION, the draught, the IMO number and the
+            # call sign are all in the same object. Andy asked (2026-09-02) for vessel
+            # type, length, width and destination "from other sources"; four of those five
+            # need no other source at all - they need this branch to stop discarding them.
+            # (Tonnage genuinely is not in AIS, in any message. See `extra` below.)
+            static.update(_static_from_aisstream(body))
         self._report(mmsi, lat=lat, lon=lon, sog=sog, cog=cog, heading=hdg,
-                     nav=nav, name=name, type=shiptype)
+                     nav=nav, name=name, type=shiptype, **static)
         self.status["updated"] = time.time()
 
 
@@ -539,8 +575,31 @@ def decode_aivdm_payload(payload, fill):
         hdg = _gb(bits, nb, 128, 9)
         r["heading"] = None if hdg is None or hdg == 511 else hdg
     elif mtype == 5:                        # Class A static + voyage
+        # ⚠ THE OFFSETS ARE ITU-R M.1371 AND ARE NOT NEGOTIABLE. This branch used to read
+        # the name and the type and stop, so a receiver on deck knew less about a contact
+        # than the message it had just decoded contained. Everything below was already in
+        # the bits.  imo 40(30) callsign 70(42) name 112(120) type 232(8)
+        # A 240(9) B 249(9) C 258(6) D 264(6)  draught 294(8, 0.1 m)  dest 302(120)
         r["name"] = _text(bits, nb, 112, 20)
         r["type"] = _gb(bits, nb, 232, 8)
+        imo = _gb(bits, nb, 40, 30)
+        if imo:
+            r["imo"] = imo
+        cs = _text(bits, nb, 70, 7)
+        if cs:
+            r["callsign"] = cs
+        r.update(_dims(_gb(bits, nb, 240, 9), _gb(bits, nb, 249, 9),
+                       _gb(bits, nb, 258, 6), _gb(bits, nb, 264, 6)))
+        dr = _gb(bits, nb, 294, 8)
+        if dr:
+            r["draught"] = round(dr / 10.0, 1)      # broadcast in tenths of a metre
+        dest = _text(bits, nb, 302, 20)
+        if dest:
+            r["dest"] = dest
+        mo, dy = _gb(bits, nb, 274, 4), _gb(bits, nb, 278, 5)
+        if mo and dy:                                # month/day/hour/min, no YEAR - see
+            r["eta"] = "%02d-%02d %02d:%02d" % (    # _static_from_aisstream
+                mo, dy, _gb(bits, nb, 283, 5) or 0, _gb(bits, nb, 288, 6) or 0)
     elif mtype == 18:                       # Class B position report
         sog = _gb(bits, nb, 46, 10)
         r["sog"] = None if sog is None or sog == 1023 else sog / 10.0
@@ -565,12 +624,23 @@ def decode_aivdm_payload(payload, fill):
         r["heading"] = None if hdg is None or hdg == 511 else hdg
         r["name"] = _text(bits, nb, 143, 20)
         r["type"] = _gb(bits, nb, 263, 8)
+        r.update(_dims(_gb(bits, nb, 271, 9), _gb(bits, nb, 280, 9),   # A B C D
+                       _gb(bits, nb, 289, 6), _gb(bits, nb, 295, 6)))
     elif mtype == 24:                       # Class B static (part A name / part B type)
         part = _gb(bits, nb, 38, 2)
         if part == 0:
             r["name"] = _text(bits, nb, 40, 20)
         else:
+            # Part B: type 40(8) vendor 48(42) callsign 90(42) A 132(9) B 141(9)
+            # C 150(6) D 156(6). A Class B hull broadcasts no destination and no
+            # draught - it is not required to - so those stay absent rather than
+            # being filled with a zero that would read as a real reading.
             r["type"] = _gb(bits, nb, 40, 8)
+            cs = _text(bits, nb, 90, 7)
+            if cs:
+                r["callsign"] = cs
+            r.update(_dims(_gb(bits, nb, 132, 9), _gb(bits, nb, 141, 9),
+                           _gb(bits, nb, 150, 6), _gb(bits, nb, 156, 6)))
     else:
         return None                         # type we don't map (e.g. 4/21/base stns)
     return r
@@ -1041,6 +1111,98 @@ class WSClient:
                     finally:
                         chunks = []
             # else: unknown opcode -> ignore
+
+
+# --------------------------------------------------------------------------- #
+#  Static / voyage particulars — what AIS already carries and we used to drop  #
+# --------------------------------------------------------------------------- #
+#
+# Andy, 2026-09-02: *"add to the AIS capture data the type of vessel, length, width,
+# tonnage. Add destination."*
+#
+# ⚠ FOUR OF THOSE FIVE NEED NO EXTRA SOURCE. AIS message 5 (Class A static and voyage),
+# message 24 part B (Class B static) and message 19 (Class B extended) all carry the hull
+# DIMENSIONS and the ship TYPE; message 5 also carries DESTINATION, draught, IMO and call
+# sign. Both of this service's decoders were reading `name` and `type` out of those
+# messages and discarding every other field. Nothing was missing from the feed - it was
+# being parsed and thrown away.
+#
+# ⚠ TONNAGE IS THE EXCEPTION AND IT IS NOT IN AIS AT ALL - no message carries GT or DWT.
+# It is a REGISTRY fact, not a broadcast one, so it can only come from a vessel-particulars
+# database. See `enrich.py` / the `extra` fields for how that is plugged in, and the note
+# in the README about which providers permit it.
+#
+# DIMENSIONS ARE REFERENCED TO THE GNSS ANTENNA, NOT TO THE HULL: A is the distance from
+# the antenna to the bow, B to the stern, C to port, D to starboard. So the hull is
+# A + B long and C + D wide, and the antenna's offset within it is known too - which is
+# why the parts are kept as well as the sums. A vessel that reports 0 for a dimension is
+# saying "not available", not "zero metres"; an all-zero set is no information.
+
+#: AIS "not available" for the 20-character text fields.
+_AIS_TEXT_NA = ("", "@", "UNKNOWN", "N/A", "NIL")
+
+
+def _ais_text(v):
+    """A trimmed AIS string, or None when it is the not-available filler.
+
+    AIS pads text with '@'. A destination of '@@@@@@@@' is not a destination, and a name
+    of '' is not a name - both must read as ABSENT rather than as an empty string the UI
+    would then render as a blank field beside a populated one.
+    """
+    if v is None:
+        return None
+    t = str(v).replace("@", " ").strip()
+    return None if not t or t.upper() in _AIS_TEXT_NA else t
+
+
+def _dims(a, b, c, d):
+    """{length, beam, dim} from the four antenna-referenced offsets, or {} if unknown.
+
+    All four zero is the not-available encoding, not a zero-metre ship. A partial set is
+    still worth having: a hull that reports A and B but not C and D has a known LENGTH,
+    and length alone is most of what sizing an icon and judging a CPA needs.
+    """
+    vals = [_num(x, None) for x in (a, b, c, d)]
+    a, b, c, d = [0.0 if v is None else float(v) for v in vals]
+    if a == b == c == d == 0:
+        return {}
+    out = {"dim": {"a": a, "b": b, "c": c, "d": d}}
+    if a + b > 0:
+        out["length"] = round(a + b, 1)
+    if c + d > 0:
+        out["beam"] = round(c + d, 1)
+    return out
+
+
+def _static_from_aisstream(body):
+    """Static + voyage particulars out of an aisstream ShipStaticData message.
+
+    Field names are aisstream's own (`Dimension.A`, `MaximumStaticDraught`, ...) - see
+    their published type-definition. Every one is optional here: a partial message must
+    contribute what it has rather than being dropped whole.
+    """
+    out = {}
+    dim = body.get("Dimension") or {}
+    out.update(_dims(dim.get("A"), dim.get("B"), dim.get("C"), dim.get("D")))
+    dest = _ais_text(body.get("Destination"))
+    if dest:
+        out["dest"] = dest
+    call = _ais_text(body.get("CallSign"))
+    if call:
+        out["callsign"] = call
+    imo = _num(body.get("ImoNumber"), 0)
+    if imo:
+        out["imo"] = int(imo)
+    dr = _num(body.get("MaximumStaticDraught"), 0)
+    if dr:
+        out["draught"] = round(dr, 1)
+    eta = body.get("Eta") or {}
+    # ETA is broadcast as month/day/hour/minute with no YEAR - it is a voyage field, not a
+    # timestamp, and rendering it as one would invent a year the vessel never sent.
+    if eta.get("Month") and eta.get("Day"):
+        out["eta"] = "%02d-%02d %02d:%02d" % (eta.get("Month") or 0, eta.get("Day") or 0,
+                                              eta.get("Hour") or 0, eta.get("Minute") or 0)
+    return out
 
 
 def _num(v, na):

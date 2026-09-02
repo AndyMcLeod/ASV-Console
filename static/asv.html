@@ -665,6 +665,10 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
          ptInGeom, segSamplesEN } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
+// CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
+// the numbers follow a manoeuvre by either vessel the moment the next report lands -
+// see the module header for why nothing is cached.
+import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
@@ -1341,6 +1345,42 @@ const AIS_LABEL = {cargo:"Cargo", tanker:"Tanker", passenger:"Passenger", fishin
   tug:"Tug / tow", sailing:"Sailing", pleasure:"Pleasure craft", hsc:"High-speed craft",
   special:"Pilot / SAR / gov", military:"Military", other:"Other", unknown:"Unknown type"};
 function aisTypeLabel(v){ return (AIS_LABEL[v.cat]||v.cat) + (v.type ? " (AIS "+v.type+")" : ""); }
+// A hull dimension in the operator's own distance unit is WRONG - a ship is quoted in
+// metres the world over, and converting 295 m to 0.16 NM helps nobody. Metres always.
+function fmtHullM(m){ return m >= 100 ? Math.round(m)+" m" : m.toFixed(1).replace(/\.0$/,"")+" m"; }
+// CPA/TCPA for one contact against the boat, RECOMPUTED ON EVERY CALL. Nothing is cached,
+// so a manoeuvre by either vessel is reflected as soon as the next report lands - see
+// static/js/targets.js. Null when the boat has no fix or the contact reports no track.
+function aisCpa(v){
+  // ⚠ THE BOAT'S TRACK IS ON `S.status`, NOT ON `asv`. `asv` carries the POSITION and the
+  // heading it is drawn at; the speed and course over ground live on the telemetry status
+  // as `sog_kn` / `cog_deg`. The first cut of this read `asv.sog` and `asv.cog`, which are
+  // both undefined - so every CPA was null and the row simply never appeared. It looked
+  // exactly like "no contact is closing", which is the most dangerous thing a collision
+  // readout can quietly say. Found by reading the live tip, not by any unit check.
+  const st = (S && S.status) || {};
+  if(!asv || v.sog==null || v.cog==null) return null;
+  const sog = st.sog_kn, cog = (st.cog_deg != null ? st.cog_deg : asv.hdg);
+  if(sog == null || cog == null) return null;      // no track of our own to project
+  return cpaOf({lat:asv.lat, lon:asv.lon, sog:sog, cog:cog},
+               {lat:v.lat, lon:v.lon, sog:v.sog, cog:v.cog});
+}
+// "CPA 340 m in 4m10s" / "CPA 1.2 km, opening" / "holding station". The past-CPA case is
+// SAID, not clamped to zero: a contact already drawing away is the opposite of a threat,
+// and printing its old closest approach as though it were ahead is the one wrong answer
+// that reads exactly like a working alarm.
+function cpaText(c){
+  // ⚠ fmtDist TAKES METRES. This read `fmtDist(c.cpaM/1000)` and every CPA under a
+  // kilometre rendered as "0 m" - a 434 m closest approach displayed as a collision.
+  // fmtDist keeps anything under 1000 m in metres in both unit modes, which is exactly
+  // right for a CPA: metres where it matters, the operator's own unit beyond that.
+  const d = fmtDist(c.cpaM);
+  if(c.tcpaS == null) return `CPA ${d} · holding station`;
+  if(!c.closing)      return `CPA ${d} · opening`;
+  const t = c.tcpaS < 90 ? Math.round(c.tcpaS)+"s"
+          : Math.floor(c.tcpaS/60)+"m"+String(Math.round(c.tcpaS%60)).padStart(2,"0")+"s";
+  return `CPA ${d} in ${t}`;
+}
 let nogoInit = false;                           // one-shot startup extraction guard
 
 function saveMission(){
@@ -2122,6 +2162,34 @@ function glyphOutline(fill){
 // same thing seen from different sources, and a second implementation would be free to
 // disagree about which way "forward" is. `scale` sizes it (AIS contacts are drawn smaller
 // than the vessel under command, so the operator's own boat stays the salient one).
+// A CONTACT AT ITS TRUE SIZE, in the same bow-forward shape as the glyph so the two read
+// as the same kind of object at different scales. `box` is hullBox()'s output in metres,
+// `mpp` the chart's metres-per-pixel; the shape is drawn about the ANTENNA, which is where
+// the reported position actually is, using the fore/aft and port/starboard offsets AIS
+// broadcast. A hull is a rectangle with a raked bow - not a pentagon glyph - because at
+// this zoom the operator is looking at a berth or a channel and the footprint is the point.
+function drawHullToScale(ctx, x, y, course, col, box, mpp){
+  const F = box.toBowM/mpp, A = box.toSternM/mpp, P = box.toPortM/mpp, S = box.toStbdM/mpp;
+  const bow = Math.min(F * 0.35, (P + S) * 0.8);        // rake, capped so it stays a bow
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((course || 0) * Math.PI/180);              // 0 deg = north = -y
+  ctx.beginPath();
+  ctx.moveTo(0, -F);                                    // stem
+  ctx.lineTo(S, -F + bow);
+  ctx.lineTo(S, A);
+  ctx.lineTo(-P, A);
+  ctx.lineTo(-P, -F + bow);
+  ctx.closePath();
+  ctx.fillStyle = col; ctx.globalAlpha = ctx.globalAlpha * 0.55; ctx.fill();
+  ctx.globalAlpha = ctx.globalAlpha / 0.55;
+  ctx.lineWidth = 1.2; ctx.strokeStyle = col; ctx.stroke();
+  // The antenna itself, so an operator can see WHERE the reported fix sits in the hull
+  // rather than assuming the middle.
+  ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI*2);
+  ctx.fillStyle = glyphOutline(col); ctx.fill();
+  ctx.restore();
+}
 function drawVesselGlyph(ctx, x, y, course, c1, c2, scale){
   const k = scale || 1, F = GLYPH_FWD*k, A = GLYPH_AFT*k, W = GLYPH_HALF*k;
   ctx.save();
@@ -4089,7 +4157,28 @@ function updateAisTip(e){ const tip=$("#aisTip");
   const nm = v.name ? v.name+" · " : "";
   const sog = v.sog!=null ? v.sog+" kn" : "– kn";
   const cog = v.cog!=null ? Math.round(v.cog)+"°" : "–";
-  tip.innerHTML = `<b>${nm}MMSI ${v.mmsi}</b><br>${aisTypeLabel(v)}<br>SOG ${sog} · COG ${cog} · ${Math.round(v.age)}s ago · ${v.src}`;
+  // WHAT THE HULL IS, WHAT IT IS DOING, AND WHERE IT IS GOING. Andy, 2026-09-02:
+  // "have those data attached to the icon to read on cursor hover." Every row is omitted
+  // rather than shown empty - a contact that broadcasts no destination must not display a
+  // blank "Dest" that reads as "nowhere", and a Class B hull legitimately sends neither
+  // destination nor draught.
+  const rows = [`<b>${nm}MMSI ${v.mmsi}</b>`, aisTypeLabel(v)];
+  const size = [];
+  if(v.length!=null) size.push(`${fmtHullM(v.length)} LOA`);
+  if(v.beam!=null)   size.push(`${fmtHullM(v.beam)} beam`);
+  if(v.draught!=null)size.push(`${v.draught.toFixed(1)} m draught`);
+  if(v.gt!=null)     size.push(`${v.gt} GT`);
+  if(size.length) rows.push(size.join(" · "));
+  const ident = [];
+  if(v.imo)      ident.push("IMO "+v.imo);
+  if(v.callsign) ident.push(v.callsign);
+  if(ident.length) rows.push(ident.join(" · "));
+  if(v.dest) rows.push("→ "+v.dest + (v.eta ? " · ETA "+v.eta : ""));
+  rows.push(`SOG ${sog} · COG ${cog}`);
+  const c = aisCpa(v);
+  if(c) rows.push(cpaText(c));
+  rows.push(`${Math.round(v.age)}s ago · ${v.srcs && v.srcs.length>1 ? v.srcs.join("+") : v.src}`);
+  tip.innerHTML = rows.join("<br>");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block"; }
 // --- hover tips for every [title] control ---------------------------------- //
 // Native title tooltips are drawn by the BROWSER, which on this platform parks
@@ -4152,7 +4241,23 @@ function drawAIS(toScreen){
     // operator's own vessel stays the salient one on a crowded harbour.
     // No course and no heading = no direction to point: it is drawn bow-north and the
     // absent speed stalk is what says the contact is not reporting a track.
-    drawVesselGlyph(ctx, s.x, s.y, dir != null ? dir : 0, col, null, 0.62);
+    // ⚠ DRAWN TO ITS REAL SIZE WHEN THE CHART CAN SHOW IT, AND ONLY THEN. Andy asked
+    // (2026-09-02) for the icon to "match the relative size", and AIS gives the hull box
+    // for free (message 5 / 19 / 24B). But a 300 m ship at 40 m/px is SEVEN PIXELS, and
+    // a 12 m workboat is a third of one - drawing those to scale would make most contacts
+    // vanish, which is a worse readout than a fixed glyph. So: to scale while the hull is
+    // bigger on screen than the glyph, the fixed glyph below that, and the two agree at
+    // the crossover because the glyph is what the small end looks like anyway.
+    //
+    // ⚠ AND IT IS DRAWN ABOUT THE ANTENNA, NOT ABOUT THE MIDDLE. The reported lat/lon is
+    // the GNSS antenna; AIS says where that sits in the hull (A forward, C to port). On a
+    // container ship with the bridge aft that is 150 m of difference, so a box centred on
+    // the position would put the bow where the water is. hullBox carries the offsets.
+    const box = hullBox(v);
+    const mpp = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
+    const toScale = box && (box.lengthM / mpp) > (GLYPH_FWD + GLYPH_AFT) * 0.62;
+    if(toScale) drawHullToScale(ctx, s.x, s.y, dir != null ? dir : 0, col, box, mpp);
+    else drawVesselGlyph(ctx, s.x, s.y, dir != null ? dir : 0, col, null, 0.62);
     if((v.sog||0)>0.5 && dir!=null){                 // speed stalk, ahead of the bow
       ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(dir*Math.PI/180);
       ctx.beginPath(); ctx.moveTo(0, -GLYPH_FWD*0.62); ctx.lineTo(0, -GLYPH_FWD*0.62 - 7);

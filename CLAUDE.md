@@ -55,7 +55,59 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-01 — the approach stops detouring, and a refused turn no longer inverts)
+## ⇒ START HERE (handoff refreshed 2026-09-02 — AIS contacts carry their particulars, and every one has a CPA)
+
+**NEWEST (this commit): THE PARTICULARS ANDY ASKED FOR WERE ALREADY ARRIVING AND BEING
+THROWN AWAY.**
+
+> *"AIS contacts need more data made available... add to the AIS capture data the type of
+> vessel, length, width, tonnage. Add destination. Add and recalculate CPA/TCPA as needed
+> especially after a maneuver. Build the resultant vessel icon to match the relative size...
+> Review MagicPort access rules... as compared to aisstream."*
+
+**⚠ FOUR OF THE FIVE NEEDED NO NEW SOURCE AT ALL.** AIS message 5 carries hull DIMENSIONS,
+DESTINATION, draught, IMO and call sign; messages 19 and 24B carry type and dimensions. Both
+decoders — the aisstream JSON handler and the NMEA bit-decoder — read `name` and `type` and
+discarded the rest, and **the aisstream subscription had been asking for `ShipStaticData`
+since the day it was written.** The data was arriving, being parsed, and dropped. Both
+decoders now keep it; verified against the published AIVDM conformance sentence (EVER
+DIADEM, 295 × 32 m, IMO 9134270, NEW YORK, 12.2 m).
+
+**⚠ AND THE SERIALISER WOULD HAVE SWALLOWED ALL OF IT.** `Registry.snapshot()` builds the
+served record from an EXPLICIT WHITELIST, so every field could decode, merge and be held
+correctly and still never reach the console. Same shape that lost `speeds` out of a mission
+load. Enumerated once in `Registry.STATIC_KEYS` now, and the suite reads THAT list.
+
+**⚠ MAGICPORT CANNOT BE USED, AND THAT IS A LICENSING ANSWER NOT A TECHNICAL ONE.** They
+publish no API, and their terms forbid exactly what this would need: *"Access, monitor,
+reproduce... including... the use of any robot, spider, scraper or other device, program,
+tool, algorithm, code, process or methodology... without our express written permission."*
+So nothing is wired to them. **TONNAGE IS THE ONE FIELD AIS GENUINELY DOES NOT CARRY** — no
+message has GT or DWT, it is a registry fact — so `gt`/`dwt`/`built`/`flag` are in
+STATIC_KEYS, carried when a source supplies them, and absent until Andy licenses one.
+
+**CPA / TCPA, in a new `static/js/targets.js`.** *"Recalculate after a manoeuvre"* is free
+here and deliberately so: `cpa()` is a PURE function of the present kinematics, so there is
+no cached value to go stale and no manoeuvre detector to miss one. A contact drawing away
+reports a NEGATIVE tcpa rather than having its past closest approach shown as if ahead; two
+vessels holding station get a range and no time rather than an enormous one divided out of
+jitter.
+
+**⚠⚠ THE MATHS WAS RIGHT AND THE READOUT WAS NOT — TWICE, AND NEITHER IS VISIBLE FROM THE
+MODULE'S OWN NUMBERS:** `aisCpa` read `asv.sog`/`asv.cog`, **which do not exist** (the boat's
+track is `S.status.sog_kn` / `cog_deg`), so every CPA was null and the row silently never
+rendered — which on a collision readout reads as *nothing is closing*. And `cpaText` called
+`fmtDist(cpaM/1000)` when **fmtDist takes METRES**, so a **434 m** closest approach displayed
+as **"0 m"**. Both found by reading the live tip against the computed values, not by any
+unit check.
+
+**The icon is drawn to TRUE HULL SIZE** while the hull is bigger on screen than the glyph,
+and anchored on the **GNSS antenna** rather than centred — AIS gives A forward / B aft / C
+port / D starboard, and on a 295 m ship with the bridge aft, centring puts the stem 77 m
+from where it is. Below the crossover it falls back to the glyph, because a 300 m ship at
+40 m/px is seven pixels and drawing that to scale hides more than it shows.
+
+**PREVIOUS: the approach stops detouring, and a refused turn no longer inverts
 
 **NEWEST (this commit): TWO THINGS ANDY SAW ON ONE ERIE SCREENSHOT, AND BOTH DIAGNOSES CAME
 OUT DIFFERENT FROM THE REPORT.**
@@ -1659,8 +1711,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **46 regression suites / 888 assertions** (26 JS / 550,
-20 Python / 338), derived
+turn-water hold is closed (`a548c14`). **48 regression suites / 913 assertions** (27 JS / 563,
+21 Python / 350), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1692,7 +1744,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-SIX REGRESSION SUITES (888 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-EIGHT REGRESSION SUITES (913 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
