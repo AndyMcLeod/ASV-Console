@@ -38,6 +38,26 @@
 //     vanished contacts are no longer removed                       -> 6
 //     setCellText writes unconditionally (kills a live selection)   -> 7
 //
+// AND FOR THE SORTABLE CPA COLUMN (2026-09-02), seven more mutations RUN:
+//     CPA sorted as a plain number (state rank dropped)             -> 14, 15, 16, 17b
+//     the state rank REVERSED along with the column                 -> 15, 16, 17
+//     an absent value sorted FIRST instead of last                  -> 17c
+//     the opening marker dropped from the cell                      -> 18
+//     the renderer stops writing the CPA cell                       -> 19
+//     the header repainted on every poll                            -> 20
+//     the click listener re-attached on every repaint               -> 20b
+//
+// ⚠ 17c EXISTS BECAUSE A MUTATION FOUND NOTHING TO KILL. Breaking `nullLast` so an absent
+// value sorts FIRST left every check green: in the CPA column a contact with no track is
+// caught by `cpaRank` before nullLast is ever consulted, so the null handling that actually
+// governs the brg and kn columns was not being exercised at all.
+//
+// ⚠⚠ AND THE RUN THAT FOUND IT FIRST REPORTED "SURVIVED", WRONGLY - because the mutation
+// runner's own scraper was `FAIL (\d+b?)\.`, which cannot match `FAIL 17c.`. The check was
+// failing correctly and the harness could not see it. A mutation runner that cannot parse
+// its own suite's check IDs reports false survivals, which is the most expensive kind of
+// wrong: it sends you hunting for a hole in code that does not have one.
+//
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
 // --- crash guard: a throw outside a check() must still REPORT ------------------------
@@ -228,6 +248,107 @@ check("8. the row template provides the marker and name spans the patch writes t
         /drawVesselGlyph\(ctx, s\.x, s\.y,[^)]*0\.62\)/.test(H2)
         && !/moveTo\(0,-7\); ctx\.lineTo\(5,6\)/.test(H2),
         "the old inline dart is gone and the shared glyph is called");
+}
+
+
+// ── 14-18. THE CPA COLUMN, AND WHY IT IS NOT SORTED AS A NUMBER ─────────────────────
+//
+// Andy, 2026-09-02: "add CPA as a sortable column on the AIS table."
+//
+// ⚠⚠ THE TRAP IS THAT CPA LOOKS LIKE A NUMBER AND MUST NOT BE ORDERED LIKE ONE. A contact
+// that passed 10 m astern a minute ago has a SMALLER closest approach than a ship closing
+// to 400 m, and a plain ascending sort puts it at the head of the list — which is exactly
+// backwards for the one job a collision-ordered table has. The order is by STATE first
+// (closing, then holding station, then opening, then no track) and by distance only within
+// a state; and the state rank is NOT reversed when the column is, because "sort descending"
+// must never promote a vessel that is leaving. Checks 14 and 15 are that rule from both
+// sides, and the fixture's opening contact deliberately holds the smallest CPA in the set.
+{
+  eval(grab("cpaRank"));
+  eval(grab("nullLast"));
+  eval(grab("cpaCell"));
+  // aisRowCmp closes over `aisSort` and `fmtDist`, both module state in the page. Give the
+  // eval'd body its own rather than reaching into the real ones.
+  let aisSort = { key: "cpa", dir: 1 };
+  const fmtDist = (m) => (m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(2) + " km");
+  eval(grab("aisRowCmp"));
+
+  const R = (name, cpaM, tcpaS, closing) => ({
+    v: { mmsi: name.length, name, sog: 5, cog: 90 }, rng: 100, brg: 90,
+    cpa: cpaM == null ? null : { cpaM, tcpaS, closing, rangeM: 500, bearingDeg: 0 },
+  });
+  const CLOSE_NEAR = R("closing near", 334, 100, true);
+  const CLOSE_FAR = R("closing far", 398, 260, true);
+  const HOLDING = R("holding", 879, null, false);
+  const OPENING = R("opening", 10, -40, false);        // the smallest number in the set
+  const NOTRACK = R("no track", null);
+  const order = (dir) => {
+    aisSort = { key: "cpa", dir };
+    return [OPENING, NOTRACK, HOLDING, CLOSE_FAR, CLOSE_NEAR].slice()
+      .sort(aisRowCmp).map((r) => r.v.name);
+  };
+  const asc = order(1), desc = order(-1);
+
+  check("14. a closing contact outranks one already opening, however small its CPA",
+        () => asc.indexOf("opening") > asc.indexOf("closing far"),
+        "ascending: " + asc.join(" < ") + "   (opening's CPA is 10 m, the smallest here)");
+  check("15. ... and REVERSING the column does not promote it",
+        () => desc.indexOf("opening") > desc.indexOf("closing near") && desc[0] === "closing far",
+        "descending: " + desc.join(" < ") + "   (state rank is not reversed; distance is)");
+  check("16. within the closing contacts the direction DOES reverse",
+        () => asc[0] === "closing near" && desc[0] === "closing far",
+        "asc heads with " + asc[0] + ", desc heads with " + desc[0]);
+  check("17. a contact with no track sorts LAST whichever way the column points",
+        () => asc[asc.length - 1] === "no track" && desc[desc.length - 1] === "no track",
+        "an absence is not a small number: asc ends " + asc[asc.length - 1]
+          + ", desc ends " + desc[desc.length - 1]);
+  check("17b. ... and holding-station sits between the closing and the opening",
+        () => asc.indexOf("holding") > asc.indexOf("closing far")
+              && asc.indexOf("holding") < asc.indexOf("opening"),
+        "converging on nothing, but not leaving either: " + asc.join(" < "));
+  // ⚠ 17c EXISTS BECAUSE A MUTATION FOUND NOTHING TO KILL. Breaking `nullLast` so an
+  // absent value sorts FIRST left every check above GREEN - because in the CPA column a
+  // contact with no track is caught by `cpaRank` before nullLast is ever consulted. The
+  // null handling actually governs the OTHER columns, where there is no state rank in
+  // front of it, and nothing was exercising them at all.
+  {
+    const withSog = (n, sog) => ({ v: { mmsi: n, name: n, sog }, rng: 100, brg: sog, cpa: null });
+    const rows = [withSog("none", null), withSog("fast", 12), withSog("slow", 3)];
+    const by = (key, dir) => { aisSort = { key, dir };
+      return rows.slice().sort(aisRowCmp).map((r) => r.v.name); };
+    check("17c. an absent SPEED or BEARING also sorts last, in both directions",
+          () => by("sog", 1)[2] === "none" && by("sog", -1)[2] === "none"
+                && by("brg", 1)[2] === "none" && by("brg", -1)[2] === "none",
+          "kn asc " + by("sog", 1).join(" < ") + " | kn desc " + by("sog", -1).join(" < ")
+            + "   (these columns have no state rank in front of nullLast)");
+  }
+  check("18. the cell MARKS a contact already opening, so its number is not misread",
+        () => /↗/.test(cpaCell(OPENING.cpa)) && !/↗/.test(cpaCell(CLOSE_NEAR.cpa))
+              && cpaCell(null) === "–",
+        "opening -> '" + cpaCell(OPENING.cpa) + "', closing -> '" + cpaCell(CLOSE_NEAR.cpa)
+          + "', no track -> '" + cpaCell(null) + "'");
+}
+
+// ── 19-20. THE COLUMN EXISTS, AND THE HEADER IS STILL NOT REBUILT EVERY POLL ────────
+{
+  const cells = (MAKEROW.match(/<td /g) || []).length;
+  // The template and the renderer must agree on how many cells there are, or
+  // `tr.cells[4]` is undefined, setCellText silently writes nothing, and the whole column
+  // is blank with every other check in this file still green.
+  check("19. the row template carries a cell for every column the renderer writes",
+        () => cells === 5 && /setCellText\(tr\.cells\[4\]/.test(RENDER),
+        cells + " cells in the template; renderer writes cells[4] = "
+          + /setCellText\(tr\.cells\[4\]/.test(RENDER));
+  // This card is PATCHED, never rebuilt — checks 1-9. The header is the one part that IS
+  // re-rendered, so it is gated on the sort having actually moved: repainting it every 8 s
+  // would fight the operator for the very click they are making on it.
+  const HEAD = grab("aisPaintHead");
+  check("20. the header is repainted only when the sort MOVES, not on every poll",
+        () => /!aisRebuildHead\) return;/.test(HEAD) && /aisRebuildHead = false;/.test(HEAD),
+        "gated on aisRebuildHead, which setAisSort and the skeleton builder set");
+  check("20b. ... and its click listener is bound ONCE, not re-attached on every repaint",
+        () => /row\.dataset\.bound/.test(HEAD),
+        "a listener attached per repaint leaks one handler per sort click");
 }
 
 

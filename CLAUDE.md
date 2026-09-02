@@ -107,6 +107,28 @@ port / D starboard, and on a 295 m ship with the bridge aft, centring puts the s
 from where it is. Below the crossover it falls back to the glyph, because a 300 m ship at
 40 m/px is seven pixels and drawing that to scale hides more than it shows.
 
+**CPA IS A SORTABLE COLUMN ON THE TRAFFIC TABLE** (his follow-up). Every header sorts;
+range stays the default because that is what the card has always opened as.
+
+**⚠ SORTING BY CPA IS NOT SORTING BY A NUMBER, AND THAT IS THE WHOLE DESIGN.** A contact
+that passed 10 m astern a minute ago has a SMALLER closest approach than a ship closing to
+400 m, so a plain ascending sort puts the one that is leaving at the head of a
+collision-ordered list. The order is by STATE first — closing, then holding station, then
+opening, then no track — and by distance only within a state; **the state rank is not
+reversed when the column is**, because "sort descending" must never promote a vessel that
+is drawing away. Ties inside "closing" break by TCPA. The cell marks an opening contact
+with an arrow so its number cannot be misread, and the row's tip carries the time, the hull
+and the destination.
+
+**⚠ A MUTATION FOUND NOTHING TO KILL, AND THAT WAS THE FINDING.** Breaking `nullLast` so an
+absent value sorts FIRST left every check green: in the CPA column a no-track contact is
+caught by `cpaRank` before nullLast is consulted, so the null handling that governs the brg
+and kn columns was never exercised. Check 17c covers it now. **⚠⚠ AND THE RUN THAT FOUND IT
+FIRST REPORTED "SURVIVED", WRONGLY** — the mutation runner's own scraper was
+`FAIL (\d+b?)\.`, which cannot match `FAIL 17c.`. The check was failing correctly and the
+harness could not see it. A runner that cannot parse its own suite's check IDs reports
+false survivals, and that sends you hunting for a hole in code that does not have one.
+
 **PREVIOUS: the approach stops detouring, and a refused turn no longer inverts
 
 **NEWEST (this commit): TWO THINGS ANDY SAW ON ONE ERIE SCREENSHOT, AND BOTH DIAGNOSES CAME
@@ -1711,7 +1733,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **48 regression suites / 913 assertions** (27 JS / 563,
+turn-water hold is closed (`a548c14`). **48 regression suites / 923 assertions** (27 JS / 573,
 21 Python / 350), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1744,7 +1766,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-EIGHT REGRESSION SUITES (913 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-EIGHT REGRESSION SUITES (923 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

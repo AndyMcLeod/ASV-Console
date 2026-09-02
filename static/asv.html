@@ -4047,14 +4047,97 @@ function updateAisRangeRow(){
   note.textContent = (got!=null && shown!=null && colNm!=null)
     ? shown + " of " + got + " in " + colNm + " nm" : (colNm!=null ? "collected " + colNm + " nm" : "");
 }
+// ── SORTING THE TRAFFIC LIST ────────────────────────────────────────────────────────
+//
+// Andy, 2026-09-02: *"add CPA as a sortable column on the AIS table."*
+//
+// ⚠ SORTING BY CPA IS NOT SORTING BY A NUMBER. A contact that passed 50 m astern ten
+// minutes ago has a smaller CPA than a ship closing to 500 m in three minutes, and on a
+// plain ascending sort it would head the list - which is precisely backwards for the one
+// job a collision-ordered list has. So the CPA order is by STATE first and distance
+// second:
+//
+//   1. CLOSING        - ordered by how near they will come, nearest miss first, and
+//                       tie-broken by WHEN, because two contacts converging on the same
+//                       distance are not equally urgent.
+//   2. HOLDING STATION- a range but no time; they are not converging on anything.
+//   3. OPENING        - the closest approach is BEHIND them; they are leaving.
+//   4. NO TRACK       - no course or speed reported, so nothing can be computed at all.
+//
+// The other columns are plain ascending/descending on their own value, which is what a
+// column header promises. Range stays the DEFAULT because that is what the card has
+// always opened as, and an operator's habit is worth more than a tidier default.
+const AIS_SORT_KEY = "asv_ais_sort_v1";
+const AIS_SORT_COLS = ["name", "rng", "brg", "sog", "cpa"];
+let aisSort = (function(){
+  const raw = (lsGet(AIS_SORT_KEY) || "").split(":");
+  return AIS_SORT_COLS.includes(raw[0]) ? {key: raw[0], dir: raw[1] === "-1" ? -1 : 1}
+                                        : {key: "rng", dir: 1};
+})();
+function setAisSort(key){
+  if(!AIS_SORT_COLS.includes(key)) return;
+  // Clicking the ACTIVE column reverses it; clicking another starts that one ascending -
+  // the convention every table the operator has ever used already follows.
+  aisSort = (aisSort.key === key) ? {key, dir: -aisSort.dir} : {key, dir: 1};
+  lsSet(AIS_SORT_KEY, aisSort.key + ":" + aisSort.dir);
+  aisRebuildHead = true;                      // the arrow moved
+  renderAisTable();
+}
+let aisRebuildHead = false;
+// The RANK of a CPA state - see the block comment. Lower sorts first, and it is applied
+// BEFORE the distance so a departing contact can never head a closing one.
+function cpaRank(c){
+  if(!c) return 3;                            // no track: nothing computable
+  if(c.closing) return 0;
+  if(c.tcpaS == null) return 1;               // holding station
+  return 2;                                   // opening - its closest approach is past
+}
+function aisRowCmp(a, b){
+  const d = aisSort.dir;
+  switch(aisSort.key){
+    case "name": {
+      const an = (a.v.name || String(a.v.mmsi)), bn = (b.v.name || String(b.v.mmsi));
+      return d * an.localeCompare(bn);
+    }
+    // A missing value sorts LAST whichever way the column is pointing - it is an absence,
+    // not a small number, and flipping the direction must not float it to the top.
+    case "brg": return nullLast(a.brg, b.brg, d);
+    case "sog": return nullLast(a.v.sog, b.v.sog, d);
+    case "cpa": {
+      const ra = cpaRank(a.cpa), rb = cpaRank(b.cpa);
+      if(ra !== rb) return ra - rb;                       // state first, and NOT reversed
+      if(ra === 3) return 0;
+      const c = nullLast(a.cpa.cpaM, b.cpa.cpaM, d);
+      if(c) return c;
+      return nullLast(a.cpa.tcpaS, b.cpa.tcpaS, d);       // same distance: soonest first
+    }
+    default: return nullLast(a.rng, b.rng, d);
+  }
+}
+function nullLast(x, y, d){
+  if(x == null && y == null) return 0;
+  if(x == null) return 1;
+  if(y == null) return -1;
+  return d * (x - y);
+}
+// The cell text. Distance only - the column is narrow and the TIME rides in the row's
+// hover title beside the rest of the contact's particulars.
+function cpaCell(c){
+  if(!c) return "–";
+  if(c.tcpaS == null) return fmtDist(c.cpaM);
+  return (c.closing ? "" : "↗ ") + fmtDist(c.cpaM);   // arrow = already opening
+}
 function renderAisTable(){
   const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
   updateAisRangeRow();
   const el=$("#aisTableBody"); if(!el) return;
   const c=aisCenter();
+  // CPA is computed ONCE PER ROW here, not inside the comparator: a sort calls its
+  // comparator O(n log n) times and cpa() builds a tangent frame each call.
   let rows=aisVessels.map(v=>({v, rng:c?distTo(c,{lat:v.lat,lon:v.lon}):null,
-                                  brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null}));
-  rows.sort((a,b)=>(a.rng==null?1e12:a.rng)-(b.rng==null?1e12:b.rng));   // area scoped by /api/ais
+                                  brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null,
+                                  cpa:aisCpa(v)}));
+  rows.sort(aisRowCmp);                                   // area scoped by /api/ais
   // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
   // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
   // source so a feed that cannot cover this area is obvious at a glance.
@@ -4087,6 +4170,7 @@ function renderAisTable(){
   // and contacts that drop out are removed. Nothing the operator is interacting with is
   // destroyed, so scroll position and selection simply survive.
   ensureAisSkeleton(el);
+  aisPaintHead(el);                       // no-op unless the sort moved
   const statusEl = el.querySelector("#aisStatusLine");
   if(statusEl.innerHTML !== status) statusEl.innerHTML = status;      // only when it changed
   const table = el.querySelector("#aisRowsTable"), body = el.querySelector("#aisRowsBody");
@@ -4112,8 +4196,17 @@ function renderAisTable(){
     setCellText(tr.cells[1], r.rng!=null ? fmtNm(r.rng) : "–");
     setCellText(tr.cells[2], r.brg!=null ? r.brg + "°" : "–");
     setCellText(tr.cells[3], v.sog!=null ? String(v.sog) : "–");
+    setCellText(tr.cells[4], cpaCell(r.cpa));
+    // The row's own tip carries what the narrow columns cannot: the TIME to that closest
+    // approach, the hull, and where it is bound. Same facts as the chart hover, so the
+    // two never disagree about a contact.
+    const size = [v.length!=null ? Math.round(v.length)+" m" : null,
+                  v.beam!=null ? Math.round(v.beam)+" m beam" : null].filter(Boolean).join(" · ");
     const title = aisTypeLabel(v) + " · COG "
       + (v.cog!=null ? Math.round(v.cog) + "°" : "–")
+      + (r.cpa ? " · " + cpaText(r.cpa) : "")
+      + (size ? " · " + size : "")
+      + (v.dest ? " · → " + v.dest : "")
       + " · " + Math.round(v.age) + "s ago";
     if(tr.title !== title) tr.title = title;
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
@@ -4123,20 +4216,50 @@ function renderAisTable(){
 // The card's fixed furniture, built once. Everything below it is patched, never replaced.
 function ensureAisSkeleton(el){
   if(el.querySelector("#aisRowsBody")) return;
-  const head = "padding:2px 5px;color:var(--ink-faint)";
+  const head = "padding:2px 5px;color:var(--ink-faint);cursor:pointer;user-select:none";
   el.innerHTML =
      `<div id="aisStatusLine" style="color:var(--ink);margin-bottom:3px"></div>`
     +`<table id="aisRowsTable" style="border-collapse:collapse;width:100%">`
-    +`<thead><tr><td style="${head}">vessel</td>`
-    +`<td style="${head};text-align:right">nm</td>`
-    +`<td style="${head};text-align:right">brg</td>`
-    +`<td style="${head};text-align:right">kn</td></tr></thead>`
+    +`<thead><tr id="aisHeadRow"></tr></thead>`
     +`<tbody id="aisRowsBody"></tbody></table>`;
+  aisRebuildHead = true;
+  aisPaintHead(el);
+}
+// The header, repainted only when the sort MOVES. It is the one part of the card that is
+// rebuilt rather than patched, and that is safe because nothing in it is scrollable or
+// selectable in the way the rows are - but it is still gated, because rebuilding it every
+// poll would fight the pointer for the click the operator is making.
+const AIS_HEAD_COLS = [["name","vessel","left"], ["rng","nm","right"], ["brg","brg","right"],
+                       ["sog","kn","right"], ["cpa","cpa","right"]];
+function aisPaintHead(el){
+  const row = el.querySelector("#aisHeadRow"); if(!row || !aisRebuildHead) return;
+  aisRebuildHead = false;
+  const head = "padding:2px 5px;color:var(--ink-faint);cursor:pointer;user-select:none";
+  row.innerHTML = AIS_HEAD_COLS.map(([k, label, align]) => {
+    const on = aisSort.key === k;
+    const arrow = on ? (aisSort.dir === 1 ? " ▴" : " ▾") : "";
+    const style = head + ";text-align:" + align + (on ? ";color:var(--ink)" : "");
+    const title = k === "cpa"
+      ? "Closest point of approach. Sorts CLOSING contacts first (nearest miss, then "
+        + "soonest), then those holding station, then those already opening."
+      : "Sort by " + label;
+    return `<td data-sort="${k}" style="${style}" title="${title}">${label}${arrow}</td>`;
+  }).join("");
+  // ONE delegated listener on the row, bound once - a listener per cell would be
+  // re-attached on every repaint and leak.
+  if(!row.dataset.bound){
+    row.dataset.bound = "1";
+    row.addEventListener("click", (e) => {
+      const td = e.target.closest("td[data-sort]");
+      if(td) setAisSort(td.dataset.sort);
+    });
+  }
 }
 function aisMakeRow(){
   const cell = "padding:2px 5px;white-space:nowrap";
   const tr = document.createElement("tr");
   tr.innerHTML = `<td style="${cell}"><span class="aisMk">&#9650;</span> <span class="aisNm"></span></td>`
+    +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`;

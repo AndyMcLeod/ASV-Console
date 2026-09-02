@@ -360,6 +360,14 @@ enormous one divided out of report jitter. CPA is a *prediction* on the assumpti
 hold course — an input to a watch, never a substitute for one, and the console reports it
 without ever steering on it.
 
+**The traffic table sorts on any column, including CPA.** Range is the default. Sorting by
+CPA orders by *state* first — closing contacts, then those holding station, then those
+already opening, then those reporting no track — and by distance only within a state, with
+ties broken by time-to-CPA. The state order does **not** flip when the column is reversed,
+because a plain numeric sort would put a vessel that passed 10 m astern a minute ago above
+a ship closing to 400 m, which is backwards for the one job a collision-ordered list has.
+An opening contact's CPA is marked with an arrow so the number is not misread.
+
 **Tonnage is the one thing AIS does not carry.** No AIS message contains gross or deadweight
 tonnage — it is a registry fact rather than a broadcast one — so `gt`, `dwt`, `built` and
 `flag` are carried through the pipeline and stay **absent** until a licensed
