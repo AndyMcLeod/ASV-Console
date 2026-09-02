@@ -166,7 +166,13 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
        // NARROW_MAX_M is the COLREGS Rule 9 applicability bound (2026-08-31): how wide the
        // water may be and still be a narrow channel. Read from the module, never restated
        // here — a copy would let this suite agree with a threshold the console does not use.
-       + grabDecl("NARROW_MAX_M") + "\n" +
+       + grabDecl("NARROW_MAX_M") + "\n"
+       // LANE_CAPTURE_STANDOFF_M decides HOW FAR OUTSIDE the buoys a transit still counts
+       // as using that channel (2026-09-01). Read from the module for the same reason as
+       // the line above: it was `hw * 2.5`, which on a 150 m half-width captured traffic
+       // 225 m beyond the buoy line and laned a leg that had already left the channel. A
+       // copy restated here could never have caught that.
+       + grabDecl("LANE_CAPTURE_STANDOFF_M") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.
@@ -183,8 +189,12 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // the checks below read the module's OWN Rule 9 width bound rather than a number
      // restated in this file — which would let the suite agree with a threshold the
      // console does not use.
-     "function __narrowMax(){ return NARROW_MAX_M; }");
+     "function __narrowMax(){ return NARROW_MAX_M; }\n" +
+     // Same reason, same shape: the lane's capture standoff (2026-09-01). Reading it
+     // directly from module scope is exactly how the checks below first crashed.
+     "function __laneStandoff(b){ return LANE_CAPTURE_STANDOFF_M(b); }");
 const NARROW_MAX_M = __narrowMax();
+const LANE_CAPTURE_STANDOFF_M = __laneStandoff;
 
 // --- synthetic world ------------------------------------------------------- //
 // A FRAME, not a bare point. The clearance bodies grabbed into the eval scope above are
@@ -686,6 +696,86 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
   check("28b. channelLaneRoute ships the gate's output through the knot prune",
         /pruneStitch\(g\.route/.test(MODSRC),
         "the prune must run on gateLegClear's route inside the producer, not in one caller");
+}
+
+// ── 29-31. HOW FAR OUTSIDE THE BUOYS STILL COUNTS AS USING THE CHANNEL ──────────────
+//
+// Andy, 2026-09-01: "The route taken from home to the first point of the survey pattern
+// is wildly circuitous. Through the narrow channel the ASV should stay right and then aim
+// right at the beginning of the survey."
+//
+// ⚠ THE LANE GEOMETRY WAS NEVER WRONG — THE CAPTURE RADIUS WAS. Measured on his Erie
+// plan: home to the first survey line is 681 m and the router returns it as ONE waypoint,
+// because the straight run is already clear of everything. The buoyed channel there has a
+// 150 m half-width, and the capture test was `hw * 2.5` = 375 m — 225 m BEYOND the buoy
+// line. Sampled along that straight run, only 7 of 21 points were actually inside the
+// channel (it leaves the buoys a third of the way along and ends 129 m outside them), yet
+// 21 of 21 were captured. So a leg that had left the channel was pinned to its starboard
+// edge for its whole length, arriving 196 m off the direct line and then cutting back
+// across it: 681 m of clear water became 20 waypoints and 829 m.
+//
+// Worth recording that the lane LOOKED wrong on the way to this: measured against the
+// centreline's own direction every sample read "port", which is the wrong side for Rule 9
+// — but a buoyed centreline runs in the direction of BUOYAGE and that transit was outbound
+// against it. Against the direction of travel it is 75 m to STARBOARD at exactly
+// LANE_FRAC of the half-width. Correct all along; the fix is scope, not geometry.
+{
+  const CAP = LANE_CAPTURE_STANDOFF_M(3);
+  // 29. The defect stated directly: a wider channel may not reach further out and capture
+  // traffic that is not in it. The standoff belongs to the vessel, not to the water.
+  // ⚠ ASSERTED AS AN INVARIANT, NOT A COMPARISON. The first draft was `CAP < HALF * 2.5`,
+  // which on this 50 m fixture channel is 60 < 125 — true for almost any value, including
+  // the broken one at any narrower width. What actually has to hold is that the reach past
+  // the buoys is the SAME at every channel width: it is a standoff from the buoy line, and
+  // a rule that scales is the defect however small its coefficient.
+  const reachPast = (hw) => (hw + CAP) - hw;
+  const widths = [25, 50, 150, 400];
+  check("29. the reach past the buoys is constant at every channel width",
+        widths.every((hw) => Math.abs(reachPast(hw) - CAP) < 1e-9),
+        "hw " + widths.join("/") + " m all reach " + CAP + " m past the buoys; the old "
+          + "hw*2.5 rule reached " + widths.map((h) => (h * 1.5).toFixed(0)).join("/")
+          + " m — growing with the water, which is what laned a leg that had left it");
+
+  // 30. THE REPORTED CASE at fixture scale. A leg that starts in the channel and leaves it
+  // is laned while inside and handed back to its own track after — "stay right, THEN aim
+  // at the survey". The destination sits well outside the buoy line.
+  // ⚠ A WIDE CHANNEL, AND THAT IS THE WHOLE FIXTURE. The first draft used the 50 m-half
+  // fixture channel, where the old rule captures to 125 m and the new one to 110 m — so
+  // reverting the code changed nothing this check could see, and the mutation SURVIVED a
+  // green check written to catch it. The defect is that the old radius SCALES, so it only
+  // shows on water wide enough to scale: at Erie's 150 m half-width the old rule reached
+  // 375 m and the new one reaches 210 m. The leg below ends between those two, which is
+  // the only place the two rules disagree.
+  const WHALF = 150;
+  const wideNs = [100, 300, 500, 700, 900];
+  const wport = wideNs.map((n, i) => ({ e: -WHALF, n, side: -1, num: 2 * i + 1, sys: "WD" }));
+  const wstbd = wideNs.map((n, i) => ({ e: WHALF, n, side: 1, num: 2 * (i + 1), sys: "WD" }));
+  const W = { polys: [], lines: [], points: [], marks: [...wport, ...wstbd],
+              sys: [{ sys: "WD", port: wport, stbd: wstbd }] };
+  const DEST_E = 300;                       // outside 150+60 = 210, inside 150*2.5 = 375
+  const away = runLane(W, [{ e: 0, n: 60 }, { e: DEST_E, n: 960 }]);
+  const endOff = away[away.length - 1].e;
+  const midOff = eAtN(away, 300);
+  // The tell is the LAST STRETCH: under the old rule the leg was still being held on the
+  // channel's starboard edge at n=900 and then cut across; under the new one it has left
+  // the lane and is running at its destination well before that.
+  const lateOff = eAtN(away, 900);
+  check("30. a leg that LEAVES the channel is laned inside it and runs direct after",
+        Math.abs(endOff - DEST_E) < 1 && midOff !== null && midOff > 0
+          && lateOff !== null && lateOff > DEST_E * 0.6,
+        "at n=300 (inside) it is " + (midOff === null ? "n/a" : midOff.toFixed(0))
+          + " m to starboard; by n=900 it has left the lane and is at "
+          + (lateOff === null ? "n/a" : lateOff.toFixed(0)) + " m of a " + DEST_E
+          + " m destination; finishes at " + endOff.toFixed(0) + " m");
+
+  // 31. THE ACCEPTANCE CASE, without which 29 and 30 both pass for a lane that never fires
+  // at all. A genuine transit DOWN the channel is still laned end to end, still to starboard.
+  const down = runLane(W, [{ e: 0, n: 60 }, { e: 0, n: 960 }]);
+  const offs = [200, 400, 600, 800].map((n) => eAtN(down, n)).filter((v) => v !== null);
+  check("31. ... while a transit straight down the channel is still laned throughout, to starboard",
+        offs.length === 4 && offs.every((o) => o > 1),
+        "starboard offset at n=200/400/600/800: " + offs.map((o) => o.toFixed(0)).join(", ")
+          + " m — a capture rule that stopped this firing would be worse than the bug");
 }
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");

@@ -329,6 +329,105 @@ export function arcPts(C, R, a0, sweep, minSeg, map, stepM) {
  *   which way the turn actually went, so a caller that had to fall back to the inboard
  *   sweep can SAY so rather than shipping a turn that is not where the operator expects.
  */
+/**
+ * A RACETRACK REVERSAL: two quarter-circles at the vessel's own radius, joined by a
+ * straight run across the gap. Arc - straight - arc, tangent-continuous throughout.
+ *
+ * Andy, 2026-09-01, looking at a punched plan beside the Erie shoreline: *"the turns are
+ * implemented as inverted teardrop turns. Consider a more direct, curvilinear format for
+ * this implementation."*
+ *
+ * ⚠ WHAT HE WAS LOOKING AT WAS AN INBOARD SEMICIRCLE, AND THE NUMBER THAT EXPLAINS IT IS
+ * THE RADIUS. `teardropTurn` sweeps a semicircle of radius HALF THE LINE OFFSET whenever
+ * the hull can hold it. On a Z-Boat at survey speed the hull can hold 2.06 m; at 31.5 m
+ * line spacing it was being flown round a 15.75 m half-circle - seven times wider than
+ * anything the boat needed. That arc has to bulge SOMEWHERE, it needs 15.75 m of clear
+ * water past the end of the line to bulge outboard, and when a wharf takes that water
+ * away the only rung left was the same arc swept the other way: back across the water
+ * just surveyed, 33 m of it, which is what reads on the chart as an inverted teardrop.
+ *
+ * The racetrack asks for the radius the hull actually has. Measured on that plan:
+ *
+ *     spacing   semicircle          racetrack           saving
+ *     31.5 m    49.5 m, 15.8 m out  33.9 m, 2.1 m out   32% shorter, 13.7 m less water
+ *     60 m      94.2 m, 30.0 m out  62.4 m, 2.1 m out   34% shorter, 27.9 m less water
+ *
+ * The outboard reach is the half that matters here: it does not grow with the spacing at
+ * all, so a turn that had to invert for want of 15 m of water now needs 2 m and stays
+ * outboard, away from the feature - which is what "turn away from the threat" was always
+ * trying to buy. It is the shape a boat with a tight helm actually flies; the semicircle
+ * is the shape a boat flies when its turning circle IS the line spacing.
+ *
+ * NOT a replacement for the semicircle, and deliberately not the first rung of the
+ * ladder. A lazy half-circle is gentler on a towed body and on the survey itself, and
+ * nobody has complained about the turns that are not up against something. This is what
+ * to fly when the gentle one is refused - see `turnWithRetry`.
+ *
+ * Geometry, in the same local frame the teardrop builds (origin at the abeam point, +y
+ * along the exit heading, +x toward the next line, `d` = the lateral offset):
+ *
+ *     start (0,0) heading +y
+ *       arc 1: centre (R,0), pi->pi/2      ends (R, R) heading +x
+ *       straight                            to  (d-R, R)
+ *       arc 2: centre (d-R,0), pi/2->0      ends (d, 0) heading -y
+ *
+ * Needs `d >= 2R` for the straight to exist; below that the loop has to overshoot and
+ * `teardropTurn`'s three-arc form is the right answer, so this refuses and says so.
+ */
+export function racetrackTurn(E, F, hE, hF, frame, opts = {}) {
+  const clear = opts.clear || (() => true);
+  const maxHalf = opts.maxHalfM ?? MAX_HALF_M;
+  const Ee = frame.toEN(E), Fe = frame.toEN(F);
+  const half = Math.hypot(Ee.e - Fe.e, Ee.n - Fe.n) / 2;
+  if (half > maxHalf || half < 0.25) return { why: 'degenerate' };
+  // A reversal, not a dogleg - the same gate the teardrop applies, and for the same
+  // reason: the construction below assumes the exit and entry headings are opposed, and
+  // a skew pair rolled out on this shape would miss the next line.
+  if (Math.abs(((hF - hE + 360) % 360) - 180) > SKEW_LIMIT_DEG) return { why: 'skew' };
+
+  const R = Math.max(0.75, opts.minR || 0);
+  const fwd = { e: Math.sin(hE * D2R), n: Math.cos(hE * D2R) };
+  const rgt = { e: fwd.n, n: -fwd.e };
+  const en2ll = (e, n) => frame.fromEN(e, n);
+
+  const Dv = { e: Fe.e - Ee.e, n: Fe.n - Ee.n };
+  const along = Dv.e * fwd.e + Dv.n * fwd.n;
+  const lateral = Dv.e * rgt.e + Dv.n * rgt.n;
+  const s = lateral >= 0 ? 1 : -1, d = Math.abs(lateral);
+  if (d < 2 * R) return { why: 'tight' };            // no straight fits; that is a teardrop
+
+  // Absorb the along-track offset on the line itself, exactly as the teardrop does: run
+  // out to the abeam point, or roll out early and run straight in to F.
+  const P = { e: Ee.e + (along > 0 ? along * fwd.e : 0), n: Ee.n + (along > 0 ? along * fwd.n : 0) };
+  const Q = { e: Fe.e - (along < 0 ? along * fwd.e : 0), n: Fe.n - (along < 0 ? along * fwd.n : 0) };
+  const map = (x, y) => en2ll(P.e + x * s * rgt.e + y * fwd.e, P.n + x * s * rgt.n + y * fwd.n);
+
+  const C1 = { x: R, y: 0 }, C2 = { x: d - R, y: 0 };
+  // ⚠ THE STEP HAS TO SCALE WITH THE RADIUS, and this arc is the reason the general rule
+  // was not enough. `arcStepFor` floors at 3 m, and ASV passes a flat 3 m, which is ample
+  // on a 15.75 m semicircle (49.5 m of arc, 16 chords) and useless here: a 90-degree arc
+  // at R = 2.06 m is 3.2 m long, so a 3 m step resolves it with ONE chord. Measured
+  // before this line existed - the shape was right but the vessel rolled out on 168.8
+  // degrees instead of 180, an 11-degree error walked straight into the next survey line.
+  // A chord subtending ~11 degrees keeps the secant error under R/50 at any radius.
+  const step = Math.min(opts.arcStepM ?? arcStepFor(R), Math.max(0.2, R * 0.2));
+  const pts = [];
+  if (along > 0) pts.push(en2ll(P.e, P.n));
+  pts.push(...arcPts(C1, R, Math.PI, -Math.PI / 2, 2, map, step), map(C1.x, R));
+  pts.push(map(C2.x, R));                                   // the straight across the gap
+  pts.push(...arcPts(C2, R, Math.PI / 2, -Math.PI / 2, 2, map, step));
+  if (along < 0) pts.push(en2ll(Q.e, Q.n));
+
+  let prev = E;
+  for (const p of [...pts, F]) {
+    if (!clear(prev, p)) return { why: 'nogo', seg: [prev, p] };
+    prev = p;
+  }
+  // The reach past the end of the line is the arc radius and nothing more - that is the
+  // whole point of the shape, and the caller reports it to the operator.
+  return { pts, kind: 'racetrack', R, outboard: R, side: 'outboard' };
+}
+
 export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
   const clear = opts.clear || (() => true);
   // THE REVERSAL-PAIR GUARD. Not a hull constant — see the header. A caller that knows

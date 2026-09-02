@@ -4416,7 +4416,7 @@ async function punchOut(){
     patTransits=[]; patRoutes=[]; patUnsafe=[];
     // nNoTurn is the total; the three beside it are WHY, because the banner used to
     // assert a cause it had never measured (see the nNoTurn branch below).
-    let nSemi=0, nTear=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
+    let nSemi=0, nTear=0, nRace=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
     let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0;
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
@@ -4445,7 +4445,7 @@ async function punchOut(){
         // the wharf this exists for - the old single attempt refused, and refusing was
         // what put the boat on the pier.
         const t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
-        if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : nSemi++);
+        if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : t.kind==="racetrack" ? nRace++ : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard);
                    // A reversal built across a MISSING line - struck off, clipped away, or
                    // dropped as too short. It is a real turn and a valid one, it simply
@@ -4507,7 +4507,7 @@ async function punchOut(){
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
-    const nRoute=patRoutes.length-nSemi-nTear, nU=patUnsafe.length;
+    const nRoute=patRoutes.length-nSemi-nTear-nRace, nU=patUnsafe.length;
     const nChanTurn = turnBlocks.filter(r=>r.info && r.info.kind==="a navigation channel").length;
     // Turn-radius advisory. The spacing a plain semicircle needs is twice the minimum
     // radius the boat can hold at the plan speed; below that the reversals become
@@ -4550,6 +4550,11 @@ async function punchOut(){
       (nStruck?`, ${nStruck} struck off by hand`:``)+
       (nShort?`, ${nShort} line(s) under ${minLine} m dropped (this hull's minimum)`:``)+
       (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
+      // A RACETRACK IS NOT A SEMICIRCLE AND THE CARD MUST NOT SAY IT IS. It is flown when
+      // the gentle arc was refused, so its presence is the operator's signal that the water
+      // past those line ends is tight - and its whole virtue is the number quoted here: it
+      // needs the hull's own radius of room instead of half the line spacing.
+      (nRace?`, ${nRace} direct (racetrack) turn(s) @ R ${minTurnR.toFixed(1)} m — the wide arc was refused there, so the run crosses tight instead of looping back over the survey`:``)+
       (nTear?`, ${nTear} teardrop turn(s) @ R ${minTurnR.toFixed(1)} m (reaching ${maxOutboard.toFixed(0)} m past the line ends)`:``)+
       // A WIDER REVERSAL IS STILL A REVERSAL, BUT IT IS NOT THE ONE THE OPERATOR DREW.
       // It swings across a missing line, so it reaches further outboard than the spacing
@@ -4559,7 +4564,7 @@ async function punchOut(){
       (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight${nChanTurn?`; ${nChanTurn} refused by a navigation channel`:``})`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
-      (!nRoute&&!nU&&!nSemi&&!nTear?`, clear of keep-outs`:``)+
+      (!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
       ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
       `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+`. Add to plan.`;
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.

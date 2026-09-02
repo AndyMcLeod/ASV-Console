@@ -573,6 +573,41 @@ export function legPath(A, B, frame, ko, buf, opts = {}) {
 export const LANE_FRAC = 0.5;
 
 /**
+ * How far OUTSIDE the buoy line a transit may be and still count as using that channel.
+ *
+ * ⚠ THIS IS A STANDOFF FROM THE BUOYS, NOT A MULTIPLE OF THE CHANNEL. It was
+ * `Math.max(hw * 2.5, 60)` — two and a half times the channel's own HALF-width — and that
+ * scaling is what Andy reported on 2026-09-01: *"The route taken from home to the first
+ * point of the survey pattern is wildly circuitous."*
+ *
+ * Measured on the Erie plan he was looking at. Home to the first survey line is 681 m and
+ * the router returns it as ONE waypoint — the straight run is already clear, there is no
+ * obstacle anywhere on it. The buoyed channel there has a 150 m half-width, so the old
+ * test captured anything within 375 m of the centreline: 225 m BEYOND the buoys. Sampled
+ * along that straight run, only 7 of 21 points were actually inside the channel — it
+ * leaves the buoy line about a third of the way along and ends 279 m off the centreline,
+ * 129 m outside it — yet 21 of 21 were captured. So a route that had left the channel was
+ * treated as a full channel transit and pinned to its starboard edge for the whole leg,
+ * arriving 196 m off the direct line and then cutting back across. 681 m of clear water
+ * became 20 waypoints and 829 m.
+ *
+ * The lane itself was never wrong, and that is worth recording because it looked wrong:
+ * measured against the centreline's own direction every sample read "port", which is the
+ * WRONG SIDE for Rule 9 — but a buoyed centreline runs in the direction of BUOYAGE, and
+ * this transit was outbound against it. Measured against the direction of travel, all of
+ * it is 75 m to STARBOARD at exactly LANE_FRAC of the half-width. Correct, all along.
+ *
+ * So the fix is scope, not geometry: keep right while genuinely in the channel, and let
+ * the splice hand the rest of the leg back to the routed path — which is what Andy asked
+ * for, *"stay right and then aim right at the beginning of the survey."*
+ *
+ * Scaled off the operator's BUFFER, so it tracks how much room this vessel is being given
+ * rather than how wide the water happens to be. A boat running inside this of the buoys
+ * is using the channel; one further out than this is in open water alongside it.
+ */
+export const LANE_CAPTURE_STANDOFF_M = (buf) => Math.max(60, (buf || 0) * 10);
+
+/**
  * How wide the water may be and still be a NARROW CHANNEL for COLREGS Rule 9,
  * in metres, edge to edge.
  *
@@ -685,9 +720,10 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
     let i0 = -1, i1 = -1;
     for (let i = 0; i < base.length; i++) {
       const q = proj(base[i], cl);
-      // Capture scales with the channel: a transit running just OUTSIDE the
-      // buoys is still using that channel.
-      if (q.d <= Math.max(q.hw * 2.5, 60)) { if (i0 < 0) i0 = i; i1 = i; }
+      // A transit running just outside the buoys is still using that channel — but
+      // "just outside" is a fixed standoff, NOT a multiple of the channel's own width.
+      // See LANE_CAPTURE_STANDOFF_M for the 681 m leg that became 829 m.
+      if (q.d <= q.hw + LANE_CAPTURE_STANDOFF_M(buf)) { if (i0 < 0) i0 = i; i1 = i; }
     }
     if (i0 < 0 || i1 <= i0) continue;
     const runM = (i1 - i0) * SSTEP;

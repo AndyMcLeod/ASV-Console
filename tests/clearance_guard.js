@@ -232,10 +232,28 @@ const world = (...polys) => ({ polys, lines: [], points: [], marks: [], sys: [],
   const W = world(PIERWALL);
   const t = turn(W, minR, minRSlow);
   const old = teardropTurn(E, Fp, hE, hF, F, W, BUF, minR, MAXHALF);   // one attempt, as before
-  check("8. THE REPORTED CASE: outboard is blocked by the pier, so the turn goes INBOARD",
-        () => t.pts && t.side === "inboard" && t.rung === 2,
+  // ⚠ THIS CHECK ASSERTED THE MECHANISM AND THE MECHANISM CHANGED (2026-09-01). It read
+  // `t.side === "inboard" && t.rung === 2`, i.e. "the answer is the SAME arc swept the
+  // other way, on the second rung". Andy then reported what that shape looks like on the
+  // chart - *"the turns are implemented as inverted teardrop turns"* - and the ladder grew
+  // a rung above it: a RACETRACK, which needs the hull's own radius of outboard water
+  // (2.06 m on a Z-Boat) instead of half the line spacing, and so still turns AWAY from
+  // the pier without sweeping back across the survey.
+  //
+  // What this check exists to defend is not the side and not the rung number. It is that
+  // there IS a turn, and that it does not go through the pier - refusing was what put the
+  // boat on the wharf. Asserted as those properties now, so the next better shape does not
+  // have to fight the test that guards the incident.
+  check("8. THE REPORTED CASE: outboard is blocked by the pier, and a turn is still produced",
+        () => t.pts && t.pts.length > 2 && t.rung > 1,
         "pier at " + (R_PLAN.east - 1).toFixed(1) + " m east, in the way of a turn that "
-          + "reaches " + R_PLAN.east.toFixed(1) + " -> ladder rung " + t.rung + " " + t.side);
+          + "reaches " + R_PLAN.east.toFixed(1) + " -> ladder rung " + t.rung + " "
+          + t.side + " " + t.kind);
+  // ...and the ladder prefers the DIRECT shape to inverting, which is the change itself.
+  check("8b. ... and it is the direct racetrack, NOT the inverted loop back over the survey",
+        () => t.kind === "racetrack" && t.side === "outboard",
+        "got " + t.kind + "/" + t.side + " on rung " + t.rung
+          + " (inverting is still available below it, and check 11 proves it is reached)");
   check("9. ... where the old single attempt produced NO TURN at all",
         () => !old.pts && old.why === "nogo" && t.pts && t.pts.length > 2,
         "old: refused (" + old.why + ") -> punchOut shipped a straight 180. new: "
@@ -302,7 +320,13 @@ const world = (...polys) => ({ polys, lines: [], points: [], marks: [], sys: [],
   const rung1 = teardropTurn(E, Fp, hE, hF, F, W, BUF, minR, MAXHALF);
   check("11. when every rung fails, the reason reported is the FIRST rung's",
         () => !t.pts && !rung1.pts && t.why === rung1.why &&
-              JSON.stringify(t.seg) === JSON.stringify(rung1.seg) && t.rung === 4,
+              JSON.stringify(t.seg) === JSON.stringify(rung1.seg) && t.rung >= 4,
+        // ⚠ NOT AN EXACT RUNG COUNT. It was `=== 4`, and adding the racetrack rungs broke
+        // it for a reason that has nothing to do with what it tests. The properties are
+        // that the ladder kept going (a truncated ladder is the wharf bug returning) and
+        // that what it reports is rung ONE's refusal - the turn the operator expected and
+        // the feature that actually took it away. How many shapes it tried on the way is
+        // an implementation count, and pinning it just makes the test brittle.
         "reported '" + t.why + "' with rung 1's own blocking chord, after " + t.rung + " rungs");
 }
 

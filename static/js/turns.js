@@ -62,7 +62,7 @@ import { V } from "./state.js";
 // through because both consoles already agreed on every one of them.
 import { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, arcStepFor,
          minTurnRadiusM as coreMinTurnRadiusM, shortenSeg as coreShortenSeg,
-         arcPts as coreArcPts, teardropTurn as coreTeardropTurn } from "./core_turns.js";
+         arcPts as coreArcPts, teardropTurn as coreTeardropTurn, racetrackTurn as coreRacetrackTurn} from "./core_turns.js";
 export { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, arcStepFor };
 
 // THIS CONSOLE'S ARC STEP, PINNED. The core scales the step with the radius (arcStepFor:
@@ -111,6 +111,21 @@ export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, side){
   });
 }
 
+/** The racetrack reversal - see core_turns.js. Same call shape as `teardropTurn`, minus
+ *  `side`: there is NO inboard variant and that is geometric, not an omission. The shape
+ *  reaches exactly `minR` past the end of the line and no further; mirroring it would mean
+ *  turning BACK before crossing, which from a standing exit heading is a bigger turn than
+ *  the loop it replaces. When even `minR` of outboard water is foul, the inboard
+ *  semicircle below is the rung that answers. */
+export function racetrackTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM){
+  return coreRacetrackTurn(E, F, hE, hF, ref, {
+    minR,
+    clear: (a, b) => legClear(a, b, ref, ko, buf),
+    arcStepM: ARC_STEP_M,
+    maxHalfM,
+  });
+}
+
 // THE TURN LADDER - what to try when the obvious turn is refused, and why it exists.
 // Andy, 2026-08-31, after a DriX passed a wharf in Pago Pago at 0.6 m:
 //
@@ -145,8 +160,22 @@ export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, side){
 // caller must flag UNSAFE rather than ship, because it is the one where the boat
 // improvises a loop of its own and nothing has said where.
 export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow){
-  const tries = [{side: undefined, minR, slow: false},
-                 {side: 'inboard', minR, slow: false}];
+  // ⚠ THE RACETRACK RUNGS SIT ABOVE THE INBOARD ONE, AND THAT ORDER IS THE FIX Andy
+  // ASKED FOR (2026-09-01): *"the turns are implemented as inverted teardrop turns.
+  // Consider a more direct, curvilinear format for this implementation."* What he was
+  // looking at was rung 2 of the old ladder - an INBOARD semicircle, sweeping back across
+  // 33 m of just-surveyed water, because the outboard sweep of a 15.75 m arc had been
+  // refused. The hull's own radius at survey speed is 2.06 m. So before giving up on
+  // outboard water and turning back over the survey, ask for the turn the boat can
+  // actually fly: the racetrack needs `minR` of outboard room instead of half the line
+  // spacing - 2.06 m instead of 15.75 m on that plan - and is 32% shorter.
+  //
+  // Rung 1 is untouched on purpose. A lazy half-circle is gentler on a towed body and on
+  // the survey, it is what every un-obstructed turn in every existing plan already flies,
+  // and nobody has reported a problem with those. This ladder only changes what happens
+  // AFTER the gentle turn is refused.
+  const tries = [{side: undefined, minR, slow: false, shape: 'arc'},
+                 {side: undefined, minR, slow: false, shape: 'racetrack'}];
   // ⚠ A SLOWER ATTEMPT ONLY RESHAPES A TEARDROP, AND THE TEST IS WHAT ESTABLISHED THAT.
   // teardropTurn takes the SEMICIRCLE branch when half the line offset already clears the
   // radius the hull can hold, and that semicircle's radius is `half` -- fixed by the line
@@ -162,13 +191,22 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
   // The guard below is necessary but not sufficient, and that is deliberate: skipping the
   // rungs when they cannot differ would need this function to re-derive teardropTurn's
   // branch condition, and two copies of that rule is how they drift apart.
+  // A tighter racetrack reaches less far outboard still, so it is worth asking before
+  // the run gives up on outboard water altogether.
   if(minRSlow > 0 && minRSlow < minR)
-    tries.push({side: undefined, minR: minRSlow, slow: true},
-               {side: 'inboard', minR: minRSlow, slow: true});
+    tries.push({side: undefined, minR: minRSlow, slow: true, shape: 'racetrack'});
+  // Only now, with every outboard shape refused, turn back over the survey. This is the
+  // rung the wharf incident bought and it stays - "turn AWAY from the dock" - but it is
+  // no longer the FIRST thing tried once the gentle arc is gone.
+  tries.push({side: 'inboard', minR, slow: false, shape: 'arc'});
+  if(minRSlow > 0 && minRSlow < minR)
+    tries.push({side: 'inboard', minR: minRSlow, slow: true, shape: 'arc'});
   let first = null;
   for(let i = 0; i < tries.length; i++){
     const t = tries[i];
-    const r = teardropTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, t.side);
+    const r = t.shape === 'racetrack'
+      ? racetrackTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM)
+      : teardropTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, t.side);
     if(r.pts) return {...r, slow: t.slow, rung: i + 1};
     // THE FIRST REFUSAL IS THE ONE WORTH REPORTING, not the last: rung 1 is the turn the
     // operator expected to see, and its `seg` names the feature that actually refused it.

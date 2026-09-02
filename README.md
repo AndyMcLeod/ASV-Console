@@ -647,6 +647,26 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
      readout and banner quote the excursion, the spacing a semicircle *would* need,
      and the spacing needed at low speed.
 
+   - **Racetrack (direct)** — what the ladder flies when the gentle arc has been
+     **refused**. Two quarter-circles at the boat's own minimum radius joined by a
+     straight run across the gap. It exists because a semicircle's radius is *half the
+     line spacing* and that is often far wider than the hull needs: on a Z-Boat at
+     31.5 m spacing the arc is 15.75 m against a hull radius of **2.06 m**, and it has
+     to bulge somewhere. It needs its full 15.75 m of clear water past the line end to
+     bulge outboard, and where a wharf takes that water away the old fallback was the
+     **same arc swept the other way** — back across 33 m of just-surveyed water. The
+     racetrack is **32% shorter** and reaches only `minR` past the line end **at any
+     spacing** (2.06 m instead of 15.75 m), so a turn that previously had to invert now
+     stays outboard, away from the feature. The card names these separately, because a
+     racetrack only appears where the water past those line ends is tight.
+
+   The ladder, when a reversal is refused: outboard arc → outboard racetrack →
+   racetrack at the slow-speed radius → **inboard** arc → inboard at the slow radius.
+   The gentle arc is always tried first and every unobstructed turn still flies it. The
+   inboard rungs remain at the bottom: turning *away* from a feature, even back over
+   surveyed water, beats refusing — refusing a turn is what once put a boat alongside a
+   pier at 0.6 m.
+
    Both shapes are **nogo-validated** before use. If even the teardrop can't fit clear
    of the keep-outs the reversal falls back to a straight hop, and the banner says so
    plainly — a straight hop between anti-parallel line ends is a 180° reversal at half
@@ -774,7 +794,17 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    **Keep right in narrow channels (COLREGS Rule 9).** The rule applies **only
    within a narrow channel or fairway, and only on a transit** — Go-To, RTH, the
    drawn Transit line, and the approach out to a pattern. Those ride a
-   **channel lane**:
+   **channel lane** — and only for as long as the route is genuinely *in* that channel.
+   The lane is spliced over the stretch inside the buoys plus a fixed standoff, and the
+   rest of the leg is handed back to the routed path, so the vessel keeps right
+   **through** the channel and then **aims at its destination**. That standoff is a
+   distance from the **buoy line**, never a multiple of the channel's width: it used to
+   be `2.5 × half-width`, which on a 150 m half-width reached **225 m beyond the buoys**,
+   so a 681 m approach that had left the channel a third of the way along was captured
+   whole, held on the channel edge to the end and then cut back across — turning 681 m of
+   already-clear water into **829 m and 20 waypoints**.
+
+   The lane itself:
 
    > offset to **starboard of the channel centreline**, half way out to the edge on
    > that side — a **quarter of the channel width in from the edge**.

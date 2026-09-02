@@ -55,7 +55,75 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-01 — a punched run can be struck off by hand, and the transits rebuild around the gap)
+## ⇒ START HERE (handoff refreshed 2026-09-01 — the approach stops detouring, and a refused turn no longer inverts)
+
+**NEWEST (this commit): TWO THINGS ANDY SAW ON ONE ERIE SCREENSHOT, AND BOTH DIAGNOSES CAME
+OUT DIFFERENT FROM THE REPORT.**
+
+> *"1. The route taken from home to the first point of the survey pattern is wildly
+> circuitous. Through the narrow channel the ASV should stay right and then aim right at the
+> beginning of the survey. 2. The turn away from threat functionality is working, but the
+> turns are implemented as inverted teardrop turns. Consider a more direct, curvilinear
+> format for this implementation."*
+
+**(1) THE LANE GEOMETRY WAS NEVER WRONG — THE CAPTURE RADIUS WAS.** Reproduced at Erie: home
+to the first survey line is **681 m and the router returns it as ONE waypoint**, so the
+straight run is already clear of everything. The lane turned that into **20 waypoints and
+829 m**. The buoyed channel has a 150 m half-width and the capture test was `hw * 2.5` =
+**375 m, i.e. 225 m BEYOND the buoy line**. Sampled along the straight run, **only 7 of 21
+points are actually inside the channel** — it leaves the buoys a third of the way along and
+ends 129 m outside them — yet **21 of 21 were captured**, so a leg that had left the channel
+was pinned to its starboard edge for its whole length and then cut back across. Capture is
+`hw + LANE_CAPTURE_STANDOFF_M(buf)` now: a standoff from the BUOYS, not a multiple of the
+water. The splice already hands the rest of the leg back to the routed path, which is "stay
+right, THEN aim at the survey" exactly. **681 m straight, 743 m laned (was 829).**
+
+**⚠ AND IT LOOKED LIKE A COLREGS VIOLATION ON THE WAY THERE, WHICH IT IS NOT.** Measured
+against the centreline's own direction every sample read **"port"** — the wrong side for
+Rule 9. But a buoyed centreline runs in the direction of BUOYAGE and that transit was
+outbound against it; measured against the DIRECTION OF TRAVEL it is 75 m to **starboard**, at
+exactly `LANE_FRAC` of the half-width. Correct all along. A sign convention nearly became a
+reported safety defect — check the frame before writing the finding.
+
+**(2) THEY ARE NOT TEARDROPS — THEY ARE INBOARD SEMICIRCLES, AND THE RADIUS EXPLAINS THEM.**
+`teardropTurn` sweeps an arc of **half the line offset** whenever the hull can hold it. A
+Z-Boat at survey speed holds **2.06 m**; at 31.5 m spacing it was flown round a **15.75 m**
+half-circle, seven times wider than it needs. That arc must bulge somewhere, it needs 15.75 m
+of clear water past the line end to bulge outboard, and where a wharf takes that water away
+the only rung left was **the same arc swept the other way: back across 33 m of just-surveyed
+water.** That is the shape on his chart.
+
+**THE FIX IS A RACETRACK RUNG** — two quarter-circles at the hull's own radius joined by a
+straight. **33.8 m against 49.5 m (32% shorter), and it reaches `minR` past the line end AT
+ANY SPACING** instead of half the spacing: 2.06 m instead of 15.75 m, so a turn that had to
+invert for want of 15 m of water now asks for 2 m and stays outboard, away from the feature.
+Ladder: outboard arc → outboard racetrack → slow racetrack → inboard arc → slow inboard.
+**⚠ RUNG 1 IS DELIBERATELY UNCHANGED** (check 8 holds it) — the gentle half-circle is what
+every unobstructed turn in every existing plan flies, it is kinder to a towed body, and
+nobody complained about those; only what happens AFTER a refusal changed. **⚠ AND THE
+INBOARD RUNGS STAY** (check 10): they are the wharf rung, and refusing is what put the boat
+on the pier.
+
+**⚠ A REAL DEFECT THE NEW SHAPE EXPOSED: THE ARC STEP.** `arcStepFor` floors at 3 m and ASV
+passes a flat 3 m — ample on a 15.75 m semicircle, useless on a **3.2 m** quarter-arc at
+R = 2.06 m, which it resolves with ONE chord. Measured: the vessel rolled out **11° off** the
+next line. The step is a fraction of R now (5.6° at every spacing, better than the shipped
+semicircle's 15° at tight spacing).
+
+**⚠ AND TWO HOLES MUTATION FOUND IN MY OWN NEW CHECKS.** Centring both arc centres on the
+midpoint gives a shape that **does not start at the line end** — a teleport with an arc drawn
+after it — and checks 1-5 all stayed GREEN, because every one measures the path's EXTENT and
+none measured where it is ANCHORED (check 1b exists because of that run). And buoy_lane's
+check 30 first used the 50 m-half fixture channel, where the old capture rule (125 m) and the
+new one (110 m) barely differ, so reverting the defect changed nothing the check could see;
+it needs the wide channel the bug was reported on. Ten mutations, all as predicted once the
+predictions were corrected by what the runs printed.
+
+**⚠ ALSO FIXED IN PASSING, IN THE HOOK ITSELF:** the `rule9_scope` advice line carried
+backticked text inside a double-quoted `echo`, i.e. **command substitution** — firing that
+advice would have executed it and left a stray file named `1` in the repo.
+
+**PREVIOUS: a punched run can be struck off by hand, and the transits rebuild around the gap
 
 **NEWEST (this commit): SELECT A PUNCHED SURVEY RUN AND DELETE IT.** Andy: *"The WorldView
 application has the ability to select and delete punched out survey lines and recalculate
@@ -1591,7 +1659,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **45 regression suites / 869 assertions** (25 JS / 531,
+turn-water hold is closed (`a548c14`). **46 regression suites / 888 assertions** (26 JS / 550,
 20 Python / 338), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1624,7 +1692,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-FIVE REGRESSION SUITES (869 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-SIX REGRESSION SUITES (888 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
