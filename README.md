@@ -730,6 +730,31 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    the spacing, i.e. the radius that was just rejected, so that case is a warning to
    act on (widen the lines, slow down, or move the line ends), not a working turn.
 
+   **What is AHEAD, and taking the helm in extremis.** Every telemetry frame the console
+   projects the vessel's *ground* track forward and asks what it warrants, on four rungs:
+
+   - **clear** — nothing within the look-ahead. Show the number, command nothing.
+   - **slow** — entry predicted, and taking the way off would avoid it. Buy time.
+   - **hold** — the same, but close enough that slowing alone is no longer enough.
+   - **helm** — entry predicted **and** the drift-only track enters too. The console steers.
+
+   The rung that matters is the last two, and what separates them is a **second projection
+   made with the engines notionally stopped**. If the boat would drift clear, stopping
+   answers the situation and the console has no business steering. If it would not,
+   stopping is the one thing that *certainly* fails — because the water is doing the
+   carrying. That isn't a theory: a hull lying stopped in a 2 kn stream makes 2.00 kn over
+   the ground with no force on it at all, so "take the way off" hands a boat being set onto
+   a pier to the tide with no steerage. That is why the console, which for every other
+   purpose only ever commands a **speed**, is permitted the helm at this one rung — and why
+   it is not permitted it anywhere else.
+
+   The escape is a computed **Go-To**, so the intervention rides a behaviour you can already
+   see on the card, stop, or override from the RC transmitter — which remains the true
+   failsafe throughout. It is scored *with the set in it*: a heading that is clear through
+   the water and downstream into the pier is not a way out. And if **every** heading enters
+   a keep-out within the look-ahead, the console **refuses** and says TAKE MANUAL CONTROL,
+   rather than offering a confident-looking direction that still ends at the pier.
+
    **The banner NAMES what refused each one** — blocked by a keep-out, more than 15° off
    a true reversal, line ends too close together, or a fold an obstacle forced on a
    detour — because a loop exists at *any* spacing, so a shortfall of turning radius is

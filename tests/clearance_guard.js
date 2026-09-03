@@ -350,21 +350,62 @@ const G = grab(H, "clearanceGuard");
 // 14. IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND. A slow-down sent
 // while the operator is driving on RC is the console taking a control it was never given -
 // and on this vessel the RC transmitter is master and is the true failsafe.
-check("14. the automatic slow-down is gated on running + armed + not E-STOP + not holding",
-      () => /const act = !!\(S && S\.run === "running" && S\.armed && !S\.estop && !st\.holding\)/.test(G) &&
-            /if\(act && c\.closing && !clearance\.slowed/.test(G),
-      "and it only fires while CLOSING - not merely while close");
-// 15. ... and it hands the speed back with hysteresis, or a boat sitting on the buffer
-// edge changes speed every frame.
-check("15. speed is handed back only once well clear, not at the buffer edge",
-      () => /else if\(clearance\.slowed && c\.m > buf \* 1\.5\)/.test(G),
-      "1.5x the buffer, the same shape of margin the nogo re-extract uses");
-// 16. THE CONSOLE NEVER STEERS. The whole intervention is one speed command; anything that
-// commands a heading, a waypoint or a behaviour from this guard is out of scope by design
-// and has to be a deliberate decision, not something that accretes.
-check("16. the guard's only command is a SPEED - it never steers",
-      () => (G.match(/cmd\("[^"]+"/g) || []).every(c => c === 'cmd("/api/cmd/speed"'),
-      "commands issued: " + JSON.stringify([...new Set(G.match(/cmd\("[^"]+"/g) || [])]));
+// ⚠⚠ 14-16 ASSERTED THE PRE-2026-09-02 CONTRACT AND ALL THREE ARE DELIBERATELY DIFFERENT
+// NOW. Andy, having watched a DriX trace a station-keeping loop through a pier at Eastport:
+// *"A vessel must consider what is ahead of it and modify trajectory or speed or final
+// target to ENSURE nogo areas are never entered"*, and then, asked directly, *"console
+// should take the helm in extremis."*
+//
+// What changed, and why each was not merely a rename:
+//
+//   14  THE GATE WAS THE BUG. `run === "running" && !holding` refuses to act on a boat
+//       STATION-KEEPING at the end of a run - which is exactly the boat in the photograph.
+//       The gate is now the console's actual authority: armed, not e-stopped.
+//   15  The release margin was a DISTANCE (1.5x the buffer). It is now the counterfactual:
+//       would the speed we are about to restore put the keep-out back inside the horizon?
+//       Same predicate, asked of the state being proposed. See the note in the guard.
+//   16  "IT NEVER STEERS" IS NO LONGER TRUE, ON INSTRUCTION - but only at the last rung,
+//       and only when stopping provably would not answer. 16b is the guard that keeps that
+//       narrow.
+check("14. the guard acts whenever the console HAS authority — armed and not e-stopped — " +
+      "and not only while a plan is running",
+      () => /const act = !!\(S && S\.armed && !S\.estop\)/.test(G)
+            && !/run === "running"/.test(G) && !/st\.holding/.test(G),
+      "the old gate excluded a station-keeping boat, which is the case that was reported");
+check("15. the release is the COUNTERFACTUAL, not a distance margin — it asks whether the " +
+      "speed being restored would trigger it again",
+      // ⚠ THE RULE ITSELF LIVES IN guard.js AND IS TESTED THERE (in_extremis 11b/11c). This
+      // half only pins the WIRING, because a source check cannot see reachability: the first
+      // version matched `guardAssess(p, velBack, drift` and a mutation that made the branch
+      // dead with `if(false)` left that text in place and survived.
+      () => /restoreVel\(vel, drift, back\)/.test(G) && /guardAssess\(p, velBack/.test(G)
+            && !/c\.m > buf \* 1\.5/.test(G),
+      "slowing changes the very quantity being tested, so releasing on it oscillates");
+check("16. it steers ONLY at the helm rung, and a Go-To is how it does it",
+      () => /a\.level === "helm"/.test(G) && /cmd\("\/api\/cmd\/goto"/.test(G)
+            && G.indexOf('cmd("/api/cmd/goto"') > G.indexOf('a.level === "helm"'),
+      "expressed as a Go-To so the intervention rides a behaviour the operator can already " +
+      "see, stop and override — rather than a raw heading channel");
+// ⚠ 16b IS THE ONE THAT KEEPS THE REVERSAL NARROW. Steering is authorised in extremis, not
+// generally. The helm rung is unreachable unless the DRIFT-ONLY track also enters, which is
+// the test that says stopping would not answer - and that test lives in guard.js, so this
+// check pins that the guard does not reach for the helm on its own account.
+check("16b. ... and the helm rung is unreachable unless STOPPING would not answer",
+      () => {
+        const A = require("../static/js/guard.js");
+        const wall = (n0) => { const r = [{e:-400,n:n0},{e:400,n:n0},{e:400,n:n0+300},{e:-400,n:n0+300}];
+          return {polys:[{ring:r, bb:bbOf(r), kind:"a dock / pier"}], lines:[], points:[],
+                  marks:[], sys:[], chans:[]}; };
+        const W = wall(30), P = {e:0,n:0};
+        const inShore = A.groundVel(0, 6);
+        const setOff  = {e:0, n:-1.03};        // the stream carries us AWAY
+        const setOn   = {e:0, n:+1.03};        // the stream carries us ON
+        return A.assess(P, inShore, setOff, W, 5).level === "hold"
+            && A.assess(P, inShore, setOn,  W, 5).level === "helm"
+            && A.assess(P, {e:0,n:1.03}, setOn, W, 5).level === "helm";
+      },
+      "same approach, same speed: the tide decides whether stopping is an answer — and a " +
+      "STOPPED boat being set on is the case that proves it");
 // 17. And it is actually WIRED - a guard nothing calls is worse than none, because the
 // card would still show a clearance while nothing acted on it.
 check("17. the guard runs on every telemetry frame, before the readouts are drawn",

@@ -85,13 +85,41 @@ than calling it**, so the five new checks, written as thunks out of habit, would
 permanently GREEN. They only failed loudly because `detail` was a lambda too and the string
 concatenation threw. Know which harness takes a thunk.
 
-**⬜ NEXT, AND NOT YET BUILT: THE IN-EXTREMIS LADDER.** Diagnosed this session and agreed
-with Andy: station-keeping is the ONE commanded motion not routed clear — it drifts off and
-drives **straight back on a bearing** with no keep-out check (`SimVcu`, the `_holding`
-branch), which is the loop through the Eastport pier. The fix is command-time (hold point
-snapped to clear water, re-approach routed) plus run-time (project the ground track; slow,
-then hold ONLY IF drift alone would not carry us in, else **take the helm** via a computed
-Go-To). `/api/cmd/goto` is the steering primitive — no raw heading channel is needed.
+**THE IN-EXTREMIS LADDER IS BUILT** (`static/js/guard.js`, `tests/in_extremis.js`). Four
+rungs, each answering a different question:
+
+    clear   nothing within the 45 s look-ahead. Say the number, command nothing.
+    slow    entry predicted, and taking the way off WOULD avoid it. Buy time.
+    hold    the same, but close enough that slowing alone is no longer enough.
+    helm    entry predicted AND the drift-only track enters too — so no amount of
+            slowing or stopping helps. The only rung that steers.
+
+**⚠ THE TEST THAT SEPARATES `hold` FROM `helm` IS A SECOND PROJECTION**, made with the
+engines notionally stopped using drift alone. If it is clear, stopping answers the
+situation and the console has no business steering; if it is not, stopping is the one thing
+that CERTAINLY fails. Verified: the same 6 kn approach to the same face is `hold` with the
+set carrying away and `helm` with it carrying on, and **a STOPPED boat being set onto a
+pier is `helm` with tEntry == tEntryDrift** — the Eastport case, where "hold" is already
+what it is doing.
+
+**⚠ THE GATE WAS THE BUG.** The old guard acted only when `run === "running" && !holding`,
+which excludes exactly a boat station-keeping at the end of a run. It is now the console's
+real authority: armed, not e-stopped.
+
+**⚠ THE RELEASE IS A COUNTERFACTUAL, NOT A MARGIN.** Slowing changes the very quantity the
+ladder measures, so releasing on the triggering test oscillates several times a minute.
+`restoreVel` asks the same question of the state being ENTERED: at the speed we are about
+to return to, is it still clear? No number to tune.
+
+**⚠ AND REFUSING IS A REAL ANSWER.** Boxed in on every heading, `escapeCourse` returns null
+and the console says TAKE MANUAL CONTROL rather than handing over a least-bad direction
+that still ends at the pier. The escape is scored WITH the set in it — a heading clear
+through the water and downstream into the pier is not a way out.
+
+**⬜ STILL OPEN:** the command-time half — the station-keep hold point is not yet snapped to
+clear water, and the re-approach is still a raw bearing in `SimVcu`. The run-time ladder now
+catches that case, but the boat should not be ASKED to hold somewhere unsafe in the first
+place. Also open: the respawn marker/line Andy mentioned.
 
 **NEWEST (this commit): THE PARTICULARS ANDY ASKED FOR WERE ALREADY ARRIVING AND BEING
 THROWN AWAY.**
@@ -1833,7 +1861,7 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **48 regression suites / 937 assertions** (27 JS / 573,
+turn-water hold is closed (`a548c14`). **49 regression suites / 954 assertions** (28 JS / 590,
 21 Python / 364), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
@@ -1866,7 +1894,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-EIGHT REGRESSION SUITES (937 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-NINE REGRESSION SUITES (954 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

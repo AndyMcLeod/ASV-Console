@@ -671,6 +671,10 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // the numbers follow a manoeuvre by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
 import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
+// What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
+// clearance guard below is the one place that decides and commands.
+import { assess as guardAssess, escapeCourse, groundVel, restoreVel, HORIZON_S as GUARD_HORIZON_S }
+  from "/static/js/guard.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
@@ -965,43 +969,131 @@ function updateClearance(){
 }
 // THE RESPONSE. Separated from the measurement so the number can be shown - and tested -
 // without anything being commanded, and so there is exactly ONE place that decides to
-// command. `act` is false for a boat that is not under autonomous command.
-let clearAlarmAt = 0;
+// command. The judgement itself lives in static/js/guard.js and commands nothing.
+//
+// ⚠⚠ THIS RUNG LADDER REVERSES A STANDING RULE AT ITS LAST STEP, ON ANDY'S EXPLICIT
+// INSTRUCTION (2026-09-02): *"console should take the helm in extremis."* After the Pago
+// Pago wharf the console was given the throttle and pointedly NOT the helm - it slowed, it
+// never steered, RC stayed master. That was right for the fault it answered and it is not
+// sufficient for this one, because of a fact that is now measured rather than argued: the
+// tidal stream ADVECTS the hull, so a boat lying stopped in a 2 kn stream makes 2.00 kn
+// over the ground (tests/currents.py A and E). Taking the way off a vessel being set onto
+// a pier does not hold it off the pier - it hands it to the tide with no steerage.
+//
+// ⚠ THE GATE IS NO LONGER `run === "running" && !holding`, AND THAT ALONE WAS THE REPORTED
+// BUG. The old guard refused to act unless a plan was RUNNING and the boat was not
+// HOLDING - which excludes, exactly, a boat station-keeping at the end of a run while the
+// stream sets it into a pier. That is the case Andy photographed at Eastport. The gate is
+// now the console's actual authority: armed, and not e-stopped.
+let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
+const GUARD_REASSESS_MS = 6000;     // while steering, re-solve the escape this often
 function clearanceGuard(){
   const c = updateClearance();
   const buf = nogo.buffer || 0;
   const st = (S && S.status) || {};
-  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
-  if(c.m == null){ return c; }
-  if(c.m <= buf){
-    // SAY IT EVERY 8 s WHILE IT LASTS, not once. A one-shot banner scrolls away and the
-    // boat is still there; a per-frame one is unreadable.
-    if(Date.now() - clearAlarmAt > 8000){
-      clearAlarmAt = Date.now();
-      showBanner("⚠ CLEARANCE " + c.m.toFixed(1) + " m to " + (c.kind || "a keep-out")
-        + " — inside the " + buf.toFixed(1) + " m buffer"
-        + (c.closing ? " and CLOSING." : ".")
-        + (act ? "" : " Not under autonomous command — the console is not intervening."));
+  if(c.m == null || !nogo.ready || !nogo.ko || !nogo.frame || !asv){ return c; }
+  const p = nogo.frame.toEN({lat:asv.lat, lon:asv.lon});
+  // GROUND velocity, and the drift that would REMAIN with the engines stopped. The sim and
+  // the real hull both publish the set on the telemetry, and since the tidal stream was
+  // added to the physics that set is the whole of it - leeway plus stream.
+  const vel = groundVel(st.cog_deg, st.sog_kn);
+  const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e:0, n:0};
+  const a = vel ? guardAssess(p, vel, drift, nogo.ko, buf) : {level:"clear", tEntry:null};
+  clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
+  const act = !!(S && S.armed && !S.estop);
+  const rose = a.level !== "clear" && a.level !== guardLevel;
+  const RUNG = {clear:0, slow:1, hold:2, helm:3};
+  const escalated = RUNG[a.level] > RUNG[guardLevel];
+
+  if(a.level === "clear"){
+    if(guardLevel !== "clear"){
+      // ⚠ RELEASING ON THE TEST THAT TRIGGERED WOULD OSCILLATE, because slowing changes
+      // the very quantity being tested. Slow -> the projected entry moves past the horizon
+      // -> "clear" -> speed restored -> the entry collapses back inside it -> slow again,
+      // several times a minute, with the throttle chattering. The old guard used a
+      // distance margin (1.5x the buffer) for the same reason.
+      //
+      // The margin here is not a distance and not a timer: it is the COUNTERFACTUAL. Would
+      // the speed we are about to return to put the keep-out back inside the horizon? If
+      // it would, we are not clear - we are only slow. Same predicate, asked of the state
+      // we are proposing to enter, so there is no arbitrary number to tune and it cannot
+      // chatter by construction.
+      let release = true;
+      if(clearance.slowed && vel){
+        const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
+        const velBack = restoreVel(vel, drift, back);
+        release = guardAssess(p, velBack, drift, nogo.ko, buf).level === "clear";
+      }
+      if(release){
+        flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — speed back to "
+                  + roleSpeed(speedRole()) + " (" + speedRole() + ").");
+        clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
+        guardLevel = "clear";
+      }
+      setViolations(release ? [] : (c.info ? [{mode:"leg", info:c.info,
+                                               at:{lat:asv.lat, lon:asv.lon}}] : []));
+      return c;
     }
-    setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
-    if(act && c.closing && !clearance.slowed && roleSpeed(speedRole()) !== "low"){
+    guardLevel = "clear";
+    setViolations([]);
+    return c;
+  }
+
+  // SAY IT, EVERY 8 s WHILE IT LASTS. A one-shot banner scrolls away and the boat is still
+  // standing into it; a per-frame one is unreadable.
+  if(escalated || Date.now() - clearAlarmAt > 8000){
+    clearAlarmAt = Date.now();
+    const t = a.tEntry != null ? " in " + a.tEntry.toFixed(0) + " s" : "";
+    showBanner("⚠ " + a.level.toUpperCase() + " — " + (c.kind || "a keep-out") + " ahead"
+      + t + " (" + c.m.toFixed(1) + " m off). " + a.why
+      + (act ? "" : " NOT under autonomous command — the console is not intervening."));
+  }
+  setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
+  guardLevel = a.level;
+  if(!act) return c;                       // the operator has it; alarm, do not fight
+
+  // ── RUNG 1: SLOW. Buys time and shortens the stopping distance. ───────────────────
+  if(a.level === "slow"){
+    if(!clearance.slowed && roleSpeed(speedRole()) !== "low"){
       clearance.slowed = true;
       cmd("/api/cmd/speed", {speed:"low"});
-      flashNote("Clearance " + c.m.toFixed(1) + " m and closing — SLOWED to low. "
-                + "Speed returns to the " + speedRole() + " speed when clear.");
+      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low.");
     }
-  } else if(clearance.slowed && c.m > buf * 1.5){
-    // HANDING IT BACK NEEDS HYSTERESIS, or the boat oscillates across the buffer edge
-    // changing speed. 1.5x is the same shape of margin the nogo re-extract uses.
-    //
-    // It hands back to the ROLE's speed, not to a remembered one: by the time the boat is
-    // clear it may be doing a different job from the one it was doing when it slowed
-    // (that is often WHY it is clear - it finished the turn), and restoring the speed of a
-    // job that has ended is how a survey line gets run at transit speed.
-    clearance.slowed = false;
-    commandedSpeed = null;                        // let the governor re-assert on this frame
-    flashNote("Clear of the buffer (" + c.m.toFixed(1) + " m) — speed back to "
-              + roleSpeed(speedRole()) + " (" + speedRole() + ").");
+    return c;
+  }
+  // ── RUNG 2: HOLD. Only reached when the drift-only track is CLEAR, i.e. taking the
+  // way off genuinely answers it. Never reached when the water is doing the carrying.
+  if(a.level === "hold"){
+    if(escalated){
+      guardActedAt = Date.now();
+      cmd("/api/cmd/hold");
+      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
+                + "Drift alone stays clear, so taking the way off answers it.");
+    }
+    return c;
+  }
+  // ── RUNG 3: THE HELM. In extremis: the drift-only track enters too, so no amount of
+  // slowing or stopping helps. Steer out, expressed as a Go-To so it rides the behaviour
+  // the operator can already see, stop and override.
+  if(a.level === "helm" && (escalated || Date.now() - guardEscapeAt > GUARD_REASSESS_MS)){
+    guardEscapeAt = Date.now();
+    const escKn = V.SPEED_KN.high || 6;
+    const esc = escapeCourse(p, drift, nogo.ko, buf, escKn * 0.514444);
+    if(!esc){
+      // REFUSING IS A REAL ANSWER. Every heading enters within the horizon: the boat is
+      // boxed in, and a confident-looking escape would be a lie. Say so and leave the helm
+      // to the operator, who can see things this model cannot.
+      showBanner("⚠⚠ IN EXTREMIS and BOXED IN — every heading enters a keep-out within "
+        + GUARD_HORIZON_S + " s. The console cannot find a way out; TAKE MANUAL CONTROL.");
+      return c;
+    }
+    const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
+    clearance.slowed = false; commandedSpeed = null;
+    cmd("/api/cmd/speed", {speed:"high"});      // steerage authority to beat the set
+    cmd("/api/cmd/goto", {lat:to.lat, lon:to.lon});
+    showBanner("⚠⚠ IN EXTREMIS — being set onto " + (c.kind || "a keep-out")
+      + " and stopping would not answer it. TAKING THE HELM: steering "
+      + esc.hdg + "° at high speed. Stop, Hold or the RC transmitter override this.");
   }
   return c;
 }
@@ -1017,8 +1109,10 @@ function clearanceGuard(){
 //
 // ⚠ AND IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND, on the same gate
 // as the clearance guard: a speed sent while the operator is driving on RC is the console
-// taking a control it was never given. THE CONSOLE NEVER STEERS - this, like the guard, is
-// a speed and only ever a speed.
+// taking a control it was never given. THE GOVERNOR IS A SPEED AND ONLY EVER A SPEED - it
+// has no business steering and never will. (The clearance guard now does, at its last rung
+// and only there, on Andy's instruction of 2026-09-02; this comment used to say "the
+// console never steers" on the guard's behalf and no longer speaks for it.)
 let commandedSpeed = null;
 function speedGovernor(){
   const st = (S && S.status) || {};
