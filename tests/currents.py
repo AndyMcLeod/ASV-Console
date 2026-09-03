@@ -49,8 +49,19 @@ ran = 0
 
 # --- crash guard: a throw outside a check() must still REPORT ------------------------
 def _crash_report(t, e, tb):
+    import traceback
     print("  FAIL 0. the suite itself CRASHED before finishing - %s: %s" % (t.__name__, e))
+    print("".join(traceback.format_exception(t, e, tb))[-600:])
     print("\n1 CHECK(S) FAILED (crashed before finishing)")
+    # ⚠ FLUSH BEFORE os._exit — WITHOUT THIS THE GUARD REPORTED NOTHING AT ALL. `os._exit`
+    # skips interpreter shutdown: no atexit, and NO STDOUT FLUSH, so the lines above were
+    # written into a buffer that was then discarded. The suite exited 1 with an empty tail,
+    # which is exactly the "no FAIL lines and a dead process are indistinguishable" failure
+    # this guard exists to prevent, reintroduced by the guard itself. `os._exit` is still
+    # right here — a console subprocess may be mid-teardown and a clean exit can hang on
+    # it — so flush first, then go.
+    sys.stdout.flush()
+    sys.stderr.flush()
     os._exit(1)
 
 
@@ -239,6 +250,89 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
+
+# ── THE STREAM ACTUALLY MOVES THE HULL ──────────────────────────────────────────────
+#
+# Andy, 2026-09-02: "current should absolutely drive sim drift too." Until then the reading
+# was DISPLAY ONLY — CURRENTS was polled, published on the state and drawn on the card, and
+# never once entered the physics. The boat sat in a 3 kn stream and did not move.
+#
+# ⚠⚠ IT IS ADVECTION, NOT A FORCE, AND SUMMING IT WITH THE WIND WOULD HAVE MADE IT ALL BUT
+# VANISH. Wind and waves push a hull THROUGH the water, so they reach a terminal leeway set
+# by quadratic hull drag — which is what the sim's force sum computes. A current does
+# nothing of the kind: it moves the water the hull is floating in. A vessel lying stopped in
+# a 2 kn stream makes 2 kn over the ground with NO force on it at all, and pushed through
+# that same leeway equation the same 2 kn comes out a small fraction of a knot. Check A is
+# therefore a RATE check and not a "did it move" check — the wrong model moves the boat too,
+# just barely.
+#
+# ⚠ AND THIS IS WHY "STOP THE BOAT" IS NOT A SAFE ANSWER NEAR A STRUCTURE. With way off the
+# vessel does not hold; it is set, bodily, at the stream's own rate. That measured fact is
+# what the run-time clearance ladder is built on.
+import importlib.util as _ilu
+import math as _math
+
+_spec = _ilu.spec_from_file_location("sim_under_test", os.path.join(APP, "asv_console.py"))
+_C = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_C)
+
+
+class _FakeCurrents:
+    def __init__(self, kn, set_deg):
+        self.kn, self.set_deg = kn, set_deg
+
+    def snapshot(self):
+        return {"ok": True, "speed_kn": self.kn, "set_deg": self.set_deg, "source": "test"}
+
+    def update_position(self, *a):
+        pass
+
+
+def _drift(kn, set_deg, secs=60.0):
+    """Ground track of a STOPPED boat over `secs`, in a stream of (kn, set_deg)."""
+    _C.CURRENTS = _FakeCurrents(kn, set_deg)
+    v = _C.SimVcu()
+    v.lat, v.lon = 44.906, -66.983
+    v._running, v._estop, v.sog_kn = True, False, 0.0
+    v._holding, v._plan = False, []
+    lat0, lon0 = v.lat, v.lon
+    tel = None
+    for _ in range(int(secs / 0.1)):
+        tel = v.tick(0.1)
+    dn = (v.lat - lat0) * _C.M_PER_DEG_LAT
+    de = (v.lon - lon0) * _C.M_PER_DEG_LAT * _math.cos(_math.radians(v.lat))
+    return {"m": _math.hypot(de, dn),
+            "brg": (_math.degrees(_math.atan2(de, dn)) + 360) % 360,
+            "kn": _math.hypot(de, dn) / secs / 0.514444, "tel": tel}
+
+
+# ⚠ THIS SUITE'S check() READS `cond` AND `detail` DIRECTLY — IT DOES NOT CALL THEM. Pass a
+# lambda and it is an object: always truthy, so the check is permanently GREEN. These five
+# were written as thunks out of habit from the sibling suites, and only failed loudly
+# because `detail` was a function too and the string concatenation threw. Values here.
+_a = _drift(2.0, 90.0)
+check("A. a STOPPED boat in a 2 kn stream makes 2 kn over the ground, on the set",
+      abs(_a["kn"] - 2.0) < 0.05 and abs(((_a["brg"] - 90 + 180) % 360) - 180) < 2,
+      "%.1f m on %.0f deg in 60 s = %.2f kn (want 61.7 m, 090, 2.00 kn) — summed as a FORCE "
+      "this reads a fraction of a knot" % (_a["m"], _a["brg"], _a["kn"]))
+_b = _drift(1.5, 225.0)
+check("B. ... on the SET direction, not some blend with the boat's own heading",
+      abs(((_b["brg"] - 225 + 180) % 360) - 180) < 2 and abs(_b["kn"] - 1.5) < 0.05,
+      "1.5 kn set 225 -> %.1f m on %.0f deg (%.2f kn)" % (_b["m"], _b["brg"], _b["kn"]))
+_z = _drift(0.0, 0.0)
+check("C. with no stream nothing moves — which is what says the motion above is the CURRENT "
+      "and not some new drift term",
+      _z["m"] < 0.05, "moved %.3f m in 60 s" % _z["m"])
+check("D. the card's SET reports the WHOLE set, stream included — it is labelled 'set', and "
+      "a mariner's set includes the stream",
+      abs((_a["tel"].get("env_set_kn") or 0) - 2.0) < 0.05
+      and abs(((_a["tel"].get("env_set_deg") or 0) - 90 + 180) % 360 - 180) < 2,
+      "SET %s kn @ %s deg" % (_a["tel"].get("env_set_kn"), _a["tel"].get("env_set_deg")))
+check("E. SOG over the ground is non-zero with the engines STOPPED — the number that tells "
+      "an operator they are being set down onto something",
+      abs((_a["tel"].get("sog_kn") or 0) - 2.0) < 0.1,
+      "engines stopped, SOG %s kn" % _a["tel"].get("sog_kn"))
+
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else "\nall checks passed (%d)" % ran)

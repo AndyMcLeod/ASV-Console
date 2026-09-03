@@ -2823,8 +2823,6 @@ class SimVcu(VcuLink):
             if fmag > 0.01:                                  # terminal leeway from quadratic hull drag
                 vdr = min(LEEWAY_CAP_MS, math.sqrt(fmag / (0.5 * RHO_WATER * HULL_CD * HULL_A_LAT)))
                 drift_e, drift_n = vdr * fe / fmag, vdr * fn / fmag
-                set_kn = vdr * 1.9438
-                set_dir = math.degrees(math.atan2(fe, fn)) % 360.0
             yaw = 0.0                                        # weathervane + oscillatory wave yaw
             if ws > 0.05:
                 lat_f = -math.sin(hb) * fe + math.cos(hb) * fn
@@ -2837,6 +2835,38 @@ class SimVcu(VcuLink):
         else:
             self.pitch = round(1.2 * math.sin(tt * 0.5), 1)
             self.roll = round(2.0 * math.sin(tt * 0.37 + 1.0), 1)
+
+        # ── TIDAL STREAM: ADVECTION, NOT A FORCE ─────────────────────────────────────
+        #
+        # Andy, 2026-09-02: *"current should absolutely drive sim drift too."*
+        #
+        # ⚠ IT IS ADDED TO THE GROUND VELOCITY DIRECTLY, AND SUMMING IT INTO `fe`/`fn`
+        # WITH THE WIND WOULD HAVE MADE IT ALL BUT VANISH. Wind and waves push a hull
+        # THROUGH the water, so they reach a terminal leeway set by quadratic hull drag -
+        # that is what the block above computes. A current does nothing of the kind: it
+        # moves the water the hull is floating in. A boat lying stopped in a 3 kn stream
+        # goes 3 kn over the ground with NO force on it at all, and pushed through the
+        # leeway equation that same 3 kn would come out a small fraction of a knot.
+        #
+        # This is also what makes "stop the boat" an unsafe answer near a structure, which
+        # is the whole reason the run-time guard is allowed the helm: with way off, the
+        # vessel does not hold - it is set, bodily, at the stream's own rate.
+        cur = CURRENTS.snapshot() if self._running and not self._estop else None
+        cur_e = cur_n = 0.0
+        if cur and cur.get("ok") and cur.get("speed_kn"):
+            # `set_deg` is the mariner's SET: the direction the stream flows TOWARD.
+            cv = float(cur["speed_kn"]) * 0.514444
+            ct = math.radians(float(cur.get("set_deg") or 0.0))
+            cur_e, cur_n = cv * math.sin(ct), cv * math.cos(ct)
+            drift_e += cur_e
+            drift_n += cur_n
+        # THE CARD SAYS "SET", SO IT MUST REPORT THE WHOLE SET. Reported from the summed
+        # ground drift - leeway plus stream - rather than from the wind/wave force alone,
+        # which is what it used to show under a label that promises more than that.
+        dmag = math.hypot(drift_e, drift_n)
+        if dmag > 1e-4:
+            set_kn = dmag * 1.9438
+            set_dir = math.degrees(math.atan2(drift_e, drift_n)) % 360.0
 
         # integrate position: forward thrust along heading + environmental leeway set
         p_lat, p_lon = self.lat, self.lon

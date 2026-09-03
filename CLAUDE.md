@@ -57,6 +57,42 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-09-02 — AIS contacts carry their particulars, and every one has a CPA)
 
+**NEWEST: THE TIDAL STREAM NOW MOVES THE HULL** (Andy, 2026-09-02: *"current should
+absolutely drive sim drift too"*). Until now `CURRENTS` was polled, published on the state
+and drawn on the card, and **never once entered the physics** — the boat sat in a 3 kn
+stream and did not move.
+
+**⚠ IT IS ADVECTION, NOT A FORCE, AND SUMMING IT WITH THE WIND WOULD HAVE MADE IT ALL BUT
+VANISH.** Wind and waves push a hull THROUGH the water and reach a terminal leeway set by
+quadratic hull drag — that is what the force sum computes. A current moves the water the
+hull floats in. Measured: **a stopped boat in a 2.0 kn stream setting 090 makes 61.7 m on
+090 in 60 s = 2.00 kn over the ground**, exactly; through the leeway equation the same 2 kn
+comes out a fraction of a knot. The card's SET now reports the WHOLE set (leeway + stream),
+which is what the label always promised.
+
+**⚠ AND THIS IS THE MEASURED FACT THE CLEARANCE LADDER MUST BE BUILT ON: "stop the boat" is
+NOT a safe answer near a structure.** With way off, the vessel is set bodily at the stream's
+own rate — SOG 2.0 kn with the engines stopped. That is why Andy ruled the console **may
+take the helm in extremis**, and why the guard cannot simply slow and hold.
+
+**⚠ TWO SUITE DEFECTS FOUND WHILE DOING IT, BOTH IN THE SAFETY NET ITSELF.** `currents.py`'s
+crash guard called `os._exit(1)` — which skips interpreter shutdown and therefore the
+STDOUT FLUSH — so the FAIL line it exists to print was written into a buffer and discarded:
+the suite exited 1 with an empty tail, which is precisely the "no FAIL lines and a dead
+process are indistinguishable" failure the guard exists to prevent. It flushes first now.
+And that fix immediately exposed the second: **this suite's `check()` READS `cond` rather
+than calling it**, so the five new checks, written as thunks out of habit, would have been
+permanently GREEN. They only failed loudly because `detail` was a lambda too and the string
+concatenation threw. Know which harness takes a thunk.
+
+**⬜ NEXT, AND NOT YET BUILT: THE IN-EXTREMIS LADDER.** Diagnosed this session and agreed
+with Andy: station-keeping is the ONE commanded motion not routed clear — it drifts off and
+drives **straight back on a bearing** with no keep-out check (`SimVcu`, the `_holding`
+branch), which is the loop through the Eastport pier. The fix is command-time (hold point
+snapped to clear water, re-approach routed) plus run-time (project the ground track; slow,
+then hold ONLY IF drift alone would not carry us in, else **take the helm** via a computed
+Go-To). `/api/cmd/goto` is the steering primitive — no raw heading channel is needed.
+
 **NEWEST (this commit): THE PARTICULARS ANDY ASKED FOR WERE ALREADY ARRIVING AND BEING
 THROWN AWAY.**
 
@@ -1797,8 +1833,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **48 regression suites / 932 assertions** (27 JS / 573,
-21 Python / 359), derived
+turn-water hold is closed (`a548c14`). **48 regression suites / 937 assertions** (27 JS / 573,
+21 Python / 364), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1830,7 +1866,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-EIGHT REGRESSION SUITES (932 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-EIGHT REGRESSION SUITES (937 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a
