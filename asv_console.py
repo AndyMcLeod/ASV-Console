@@ -4341,6 +4341,36 @@ def pick_browser(pref):
 TIDE_WINDOW_WAIT_S = 120.0        # give up rather than hang a thread forever
 TIDE_WINDOW_POLL_S = 2.0
 
+# --- keeping those windows CURRENT ----------------------------------------- #
+#
+# Andy, 2026-09-02: *"The weather browser tab and the tide browser tab do not update when
+# ports are changed and the displayed chart animates to the new mission area."*
+#
+# The station was always derived from the vessel's own fix - tests/station_windows.py has
+# said "move the vessel and the window follows it" since the day it was written - but only
+# the STATION followed. The WINDOW was opened once, at start-up, and then nobody ever
+# looked again. Change port from Erie to Lewes and the chart slews, the boat respawns, the
+# AIS subscription re-scopes, the water and env monitors re-resolve onto the new area's
+# stations... and two browser tabs sit there showing a buoy on the wrong lake.
+#
+# ⚠ A NEW TAB IS THE ONLY THING PYTHON CAN DO, AND IT IS WORTH SAYING WHY. `webbrowser`
+# hands a URL to the operating system; it gets no handle back, so it cannot re-point or
+# close the tab it opened. Re-pointing in place needs the PAGE to own the window (a named
+# `window.open`, whose handle can be navigated cross-origin), and the page cannot do the
+# initial open at all - that is precisely why the server opens these, to sidestep the
+# pop-up blocker, as the start-up comment already records. So a port change opens a fresh,
+# correct tab and leaves the stale one for the operator to close. Making that trade
+# silently would be worse than the bug.
+STATION_WATCH_POLL_S = 5.0        # a browser tab, not a control loop
+#: The shortest interval between re-opens of the same window.
+#:
+#: ⚠ THIS EXISTS BECAUSE THE PRIMARY STATION CAN FLAP. The monitors pick "the nearest
+#: station actually returning data", so two gauges at similar range where one drops in and
+#: out of service will hand back first one id and then the other. Without a floor here that
+#: is a browser tab per flap - an unusable console and a genuinely alarming amount of
+#: Chrome. A change must persist past this before it is worth a tab.
+STATION_REOPEN_MIN_S = 120.0
+
 
 def station_window_report(w, label, power, noun="reading", applied="value"):
     """One human line describing the reading behind an opened station page: the primary
@@ -4424,6 +4454,66 @@ def open_station_window(opener, kind, wait_s=TIDE_WINDOW_WAIT_S):
     print("  %s window: no %s resolved within %.0fs (no GPS fix, or none within "
           "%.0f km) - not opened." % (spec["label"], spec["what"], wait_s, spec["max_km"]))
     return None
+
+
+def watch_station_window(opener, kind, wait_s=TIDE_WINDOW_WAIT_S, once=False, stop=None):
+    """Open the station page, then KEEP IT ON THE RIGHT STATION for as long as we run.
+
+    The opening half is unchanged - `open_station_window` still waits for a station to
+    exist, because at process start the vessel has no fix and there is nothing to show.
+    What is new is that this does not then stop looking.
+
+    ⚠ THE TRIGGER IS THE STATION, NOT THE PORT, AND THAT IS DELIBERATE. Keying on
+    /api/ports would follow the case Andy reported and miss the one that matters more: a
+    boat that simply steams far enough that a different gauge is nearest. Both arrive here
+    as the same fact - the resolved station changed - so both are handled, and a port
+    change that happens to resolve to the SAME station correctly opens nothing, because
+    the tab is already right.
+
+    ⚠ AND A RE-OPEN IS A NEW TAB, NOT A REPLACEMENT. `webbrowser` gets no handle back from
+    the OS, so the stale tab cannot be closed from here. See STATION_WATCH_POLL_S's note.
+
+    `once=True` runs the original open-and-stop behaviour, for callers that want it and for
+    the suite to compare against. `stop` is an Event that ends the loop - the console never
+    passes one (the thread is a daemon and dies with the process), but a test that starts a
+    watcher and walks away would otherwise leave it running against whatever global state
+    the NEXT test installs, which is how one suite's threads start answering another's
+    questions.
+    """
+    last = open_station_window(opener, kind, wait_s)
+    if once:
+        return last
+    spec = STATION_WINDOWS[kind]
+    last_open = time.monotonic() if last else 0.0
+    while not (stop is not None and stop.is_set()):
+        time.sleep(STATION_WATCH_POLL_S)
+        if stop is not None and stop.is_set():
+            return last
+        try:
+            w = spec["snap"]() or {}
+            url = spec["url"](w.get("station"))
+        except Exception:                      # a monitor mid-refresh is not an error
+            continue
+        if not url or url == last:
+            continue
+        if time.monotonic() - last_open < STATION_REOPEN_MIN_S:
+            continue                           # let a flapping primary settle - see the note
+        # SAY WHAT MOVED AND WHY. A tab appearing on its own is alarming unless the console
+        # has just said it is doing it; this is the same report the start-up open prints,
+        # with the reason in front of it.
+        print("  %s window: station moved to %s - opening the new page (the old tab is "
+              "stale; this cannot close it)." % (spec["label"], w.get("station")))
+        report = station_window_report(w, spec["label"], spec["power"],
+                                       spec["noun"], spec["applied"])
+        if report:
+            print(report)
+        try:
+            opener.open(url, new=1)
+        except Exception:
+            print("  Could not re-open the %s window; the URL is %s"
+                  % (spec["label"].lower(), url))
+        last, last_open = url, time.monotonic()
+    return last
 
 
 # --- auto-started AIS provider (ais_service.py as a child process) ---------- #
@@ -4747,13 +4837,13 @@ def main():
                 # selects. On its own thread, not a Timer, because it WAITS for a station
                 # to exist - see open_tide_window. Daemon, so it can never hold shutdown.
                 if not args.no_tide_window:
-                    threading.Thread(target=open_station_window, args=(opener, "tide"),
+                    threading.Thread(target=watch_station_window, args=(opener, "tide"),
                                      daemon=True).start()
                 # FOURTH window: the NDBC page for the weather buoy nearest the vessel.
                 # Same mechanism, same reason for deferring it - the buoy is chosen by
                 # the fix, which does not exist yet at start-up.
                 if not args.no_weather_window:
-                    threading.Thread(target=open_station_window, args=(opener, "weather"),
+                    threading.Thread(target=watch_station_window, args=(opener, "weather"),
                                      daemon=True).start()
         except Exception:
             print("  Could not auto-open a browser; open the URL above manually.")

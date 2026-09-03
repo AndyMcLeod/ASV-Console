@@ -107,6 +107,37 @@ port / D starboard, and on a 295 m ship with the bridge aft, centring puts the s
 from where it is. Below the crossover it falls back to the glyph, because a 300 m ship at
 40 m/px is seven pixels and drawing that to scale hides more than it shows.
 
+**THE TIDE AND WEATHER TABS NOW FOLLOW THE PORT** (2026-09-02). Andy: *"The weather browser
+tab and the tide browser tab do not update when ports are changed and the displayed chart
+animates to the new mission area."*
+
+**⚠ THE SUITE'S OWN HEADER HAD PROMISED THIS SINCE THE DAY IT WAS WRITTEN** — *"move the
+vessel and the window follows it"* — and only half of it was true. The STATION followed (it
+is derived from the fix, and check 1 stops anyone re-pinning it); the WINDOW was opened once
+at start-up and then nobody looked again. `watch_station_window` keeps looking now.
+
+**The trigger is the STATION, not the port**, deliberately: keying on `/api/ports` would
+follow the reported case and miss the one that matters more — a boat that simply steams far
+enough that a different gauge is nearest. Both arrive as the same fact, and a port change
+that resolves to the SAME station correctly opens nothing.
+
+**⚠ A RE-OPEN IS A NEW TAB, AND THAT IS A BROWSER BOUNDARY, NOT A SHORTCUT.** `webbrowser`
+hands a URL to the OS and gets no handle back, so it cannot re-point or close the tab it
+opened. Re-pointing in place needs the PAGE to own the window (a named `window.open`, whose
+handle can be navigated cross-origin) — and the page cannot do the initial open, which is
+exactly why the server does it (to sidestep the pop-up blocker; the start-up comment has
+always said so). **Measured, not assumed: `window.open` without a gesture is BLOCKED, and an
+iframe is impossible — NDBC sends `X-Frame-Options: deny` with `frame-ancestors 'none'`, and
+NOAA Tides sends `SAMEORIGIN`.** So the console opens a fresh correct tab, says out loud
+that the old one is stale, and leaves it for the operator to close.
+
+**⚠ A FLAP FLOOR (`STATION_REOPEN_MIN_S`, 120 s) IS LOAD-BEARING.** The monitors pick "the
+nearest station actually returning data", so two gauges at similar range where one drops in
+and out hand back first one id and then the other — without a floor that is a browser tab
+per flap. **⚠ And check 28 was WEAK on its first draft:** `FakeOpener` records the call
+before it raises, so "two opens" is exactly what a thread that DIED on the first re-open
+also produces. It takes a THIRD station to prove the watcher survived.
+
 **CPA IS A SORTABLE COLUMN ON THE TRAFFIC TABLE** (his follow-up). Every header sorts;
 range stays the default because that is what the card has always opened as.
 
@@ -1733,8 +1764,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **48 regression suites / 923 assertions** (27 JS / 573,
-21 Python / 350), derived
+turn-water hold is closed (`a548c14`). **48 regression suites / 930 assertions** (27 JS / 573,
+21 Python / 357), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1766,7 +1797,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-EIGHT REGRESSION SUITES (923 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-EIGHT REGRESSION SUITES (930 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

@@ -38,12 +38,27 @@ TEETH (verified by mutation, with the checks each one produces):
     the IDW weights stop being inverse-SQUARE by distance        -> 10
     the window is opened on the main thread / not daemon         -> 12
     --no-tide-window or --browser none stops being honoured      -> 13, 14
+
+AND FOR THE WINDOW FOLLOWING THE STATION (2026-09-02), five more mutations RUN:
+    the watcher never re-opens (the reported bug restored)       -> 24, 28
+    it re-opens on EVERY poll rather than only on a change       -> 25
+    the flap floor removed                                       -> 26
+    an exception on a re-open escapes and kills the thread        -> 28
+
+...and one INERT by design: ignoring the `stop` event kills nothing, correctly. That event
+is test hygiene, not console behaviour - the real watcher is a daemon thread that dies with
+the process and never passes one.
+
+Note what the never-re-opens mutation does NOT kill: 24b stays green, correctly. It asks
+whether the opens were in a NEW window, and one open still answers that. 24 is what counts
+them. A mode check and a count check are two assertions.
 """
 
 import importlib.util
 import os
 import re
 import sys
+import threading
 import time
 
 # --- crash guard: a throw outside a check() must still REPORT ---------------------------
@@ -257,14 +272,14 @@ check("11b. no station at all -> no report (nothing to say, and nothing to open)
 # ---- 12-14. the wiring ---------------------------------------------------- #
 check("12. the window is opened on its own DAEMON thread — it waits for a fix, so on the "
       "main thread it would stall start-up, and non-daemon it would hold shutdown",
-      lambda: re.search(r"threading\.Thread\(target=open_station_window[\s\S]{0,160}?daemon=True\)", SRC)
+      lambda: re.search(r"threading\.Thread\(target=watch_station_window[\s\S]{0,160}?daemon=True\)", SRC)
       is not None)
 check("13. --no-tide-window suppresses it",
       lambda: '"--no-tide-window"' in SRC and "args.no_tide_window" in SRC)
 check("14. it is inside the browser block, so --browser none opens NOTHING (which is why "
       "every real-console harness is unaffected by it)",
       lambda: (SRC.index('if args.browser != "none":')
-               < SRC.index("threading.Thread(target=open_station_window")))
+               < SRC.index("threading.Thread(target=watch_station_window")))
 
 # 15. the page and the card must name the SAME station, or the operator is reading two
 # different answers. Both read `water.station`; assert the client does too.
@@ -325,6 +340,122 @@ check("22. the weather blend is inverse-SQUARE weighted (nearest buoy dominates)
 check("23. --no-weather-window suppresses the fourth window on its own",
       lambda: '"--no-weather-window"' in SRC and "args.no_weather_window" in SRC
       and 'args=(opener, "weather")' in SRC)
+
+# ── 24-28. THE WINDOW FOLLOWS THE STATION, NOT JUST THE FIRST ONE ──────────────────
+#
+# Andy, 2026-09-02: "The weather browser tab and the tide browser tab do not update when
+# ports are changed and the displayed chart animates to the new mission area."
+#
+# ⚠ THIS FILE'S OWN HEADER HAS PROMISED "move the vessel and the window follows it" SINCE
+# THE DAY IT WAS WRITTEN, and only half of it was true. The STATION followed — it is derived
+# from the fix, and check 1 stops anyone re-pinning it — but the WINDOW was opened once at
+# start-up and then nobody looked again. Change port and the chart slews, the boat respawns,
+# the AIS subscription re-scopes, both monitors re-resolve onto the new area's stations...
+# and two browser tabs sit there showing a buoy on the wrong lake.
+#
+# The trigger is the STATION, not the port: keying on /api/ports would follow the reported
+# case and miss the one that matters more, a boat that simply steams far enough that a
+# different gauge is nearest. Both arrive here as the same fact.
+class MovingWater:
+    """A monitor whose station CHANGES after N polls, as a port change makes it."""
+    def __init__(self, first="8557380", then="9063020", after=3):
+        self.n, self.first, self.then, self.after = 0, first, then, after
+
+    def snapshot(self):
+        self.n += 1
+        sid = self.first if self.n <= self.after else self.then
+        return {"station": sid, "name": "S" + sid, "dist_km": 3.7, "method": "single",
+                "stations": [{"id": sid, "dist_km": 3.7}]}
+
+
+def _watch_briefly(fake, opener, reopen_min=0.0, run_s=0.8):
+    """Run the watcher on a thread and stop looking after `run_s`. It loops forever by
+    design, so the suite SAMPLES it rather than waiting for it to end."""
+    olds = (C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S)
+    C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S = 0.01, 0.01, reopen_min
+    real = C.WATER
+    C.WATER = fake
+    # ⚠ STOPPED, NOT ABANDONED. Left running, each watcher keeps polling whatever global
+    # WATER the NEXT check installs - one suite's threads answering another's questions,
+    # and a wall of stray output. First run of these checks did exactly that.
+    stop = threading.Event()
+    t = threading.Thread(target=C.watch_station_window, args=(opener, "tide"),
+                         kwargs={"wait_s": 1.0, "stop": stop}, daemon=True)
+    t.start()
+    time.sleep(run_s)
+    stop.set()
+    t.join(timeout=2.0)
+    C.WATER = real
+    C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S = olds
+    return list(opener.calls)
+
+
+op24 = FakeOpener()
+calls24 = _watch_briefly(MovingWater(), op24)
+check("24. THE REPORTED FAULT: when the station moves, the window is re-opened on it",
+      lambda: len(calls24) >= 2 and calls24[0][0].endswith("id=8557380")
+      and any(c[0].endswith("id=9063020") for c in calls24),
+      lambda: "opened stations %s" % [c[0].rsplit("=", 1)[-1] for c in calls24])
+check("24b. ... in a new window, exactly as the first open was",
+      lambda: bool(calls24) and all(c[1] == 1 for c in calls24),
+      lambda: str(calls24))
+
+# THE ACCEPTANCE CASE, without which check 24 passes for a watcher that re-opens on every
+# poll: a station that has NOT moved must produce no second tab.
+op25 = FakeOpener()
+calls25 = _watch_briefly(FakeWater(), op25)
+check("25. ... and a station that has NOT moved opens nothing further",
+      lambda: len(calls25) == 1,
+      lambda: "%d open(s) over many polls — a tab per poll would be unusable"
+      % len(calls25))
+
+# ⚠ THE FLAP GUARD. The monitors pick "the nearest station actually returning data", so two
+# gauges at similar range where one drops in and out of service hand back first one id and
+# then the other. Without a floor, that is a browser tab per flap.
+op26 = FakeOpener()
+calls26 = _watch_briefly(MovingWater(first="A", then="B", after=1), op26, reopen_min=9999.0)
+check("26. a FLAPPING primary cannot open a tab per flap — the re-open has a floor",
+      lambda: len(calls26) == 1,
+      lambda: "%d open(s) with the floor at 9999 s, station changing every poll"
+      % len(calls26))
+check("26b. ... and that floor is a named constant, not a literal buried in the loop",
+      lambda: C.STATION_REOPEN_MIN_S >= 30.0 and "STATION_REOPEN_MIN_S" in SRC,
+      lambda: "STATION_REOPEN_MIN_S = %s" % C.STATION_REOPEN_MIN_S)
+
+# 27. The watcher must not have made the ORIGINAL behaviour worse.
+op27 = FakeOpener()
+url27 = with_water(FakeWater(),
+                   lambda: C.watch_station_window(op27, "tide", wait_s=1.0, once=True))
+check("27. once=True is the original open-and-stop, unchanged",
+      lambda: url27 and url27.endswith("id=8557380") and len(op27.calls) == 1,
+      lambda: "%r, %d call(s)" % (url27, len(op27.calls)))
+
+# 28. A browser that throws on a RE-open must be as survivable as one that throws on the
+# first. The watcher runs forever, so an escaping exception kills the thread silently and
+# the window never follows again — the bug restored, with no way to see it.
+#
+# ⚠ IT TAKES THREE STATIONS TO PROVE THIS, AND THE FIRST DRAFT USED TWO. FakeOpener records
+# the call BEFORE it raises, so "two opens" is exactly what a thread that died on the first
+# re-open also produces — the check passed for the failure it was written to catch. A THIRD
+# station can only be reached by a watcher that survived the second's throw.
+class SequenceWater:
+    """A monitor that walks through a LIST of stations, one per poll-group."""
+    def __init__(self, ids, every=2):
+        self.n, self.ids, self.every = 0, ids, every
+
+    def snapshot(self):
+        self.n += 1
+        sid = self.ids[min(self.n // self.every, len(self.ids) - 1)]
+        return {"station": sid, "name": "S" + sid, "dist_km": 3.7, "method": "single",
+                "stations": [{"id": sid, "dist_km": 3.7}]}
+
+
+op28 = FakeOpener(explode=True)
+calls28 = _watch_briefly(SequenceWater(["8557380", "9063020", "9414290"]), op28, run_s=1.0)
+check("28. a browser that THROWS on a re-open does not kill the watcher thread",
+      lambda: len({c[0] for c in calls28}) >= 3,
+      lambda: "reached %d distinct stations, every open raising: %s"
+      % (len({c[0] for c in calls28}), [c[0].rsplit("=", 1)[-1] for c in calls28]))
 
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)
