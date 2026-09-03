@@ -297,7 +297,10 @@ console.log("Off track - displacement from the leg being flown, not from the nea
   // actually runs - a check that flags the note explaining the fix is one people learn to
   // ignore. Stripping from `//` rightwards keeps everything to its LEFT, so a real use
   // sitting before a trailing comment is still caught.
-  const code = H.split("\n").map(l => l.replace(/\/\/.*$/, "")).join("\n");
+  // ⚠ CRLF: split("\n") leaves a trailing \r on every line, and /\/\/.*$/ (no /m) cannot
+  // reach past it - the same silent no-op as target_cpa's decomment. [^\n]* runs to the
+  // true end of `l` on its own, \r included, so no $ anchor is needed.
+  const code = H.split("\n").map(l => l.replace(/\/\/[^\n]*/, "")).join("\n");
   check("14. the nearest-line distance no longer exists in the page's CODE",
         () => !/activeXTE/.test(code) && /activeXTE/.test(H),
         "activeXTE was the value the card printed as off track; the comment that retired it stays");

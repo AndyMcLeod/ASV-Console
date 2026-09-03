@@ -175,7 +175,13 @@ console.log("CPA / TCPA — the closest two vessels will come, and when:");
   // `asv.sog` and `fmtDist(c.cpaM/1000)`, which is exactly what the check was grepping
   // for. A source-shape check whose pattern appears in its own subject's prose will match
   // the prose. Strip line comments before matching, the way enc_roles.js reads ENC_ROLES.
-  const decomment = (t) => t.replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/.*$/, ""));
+  // ⚠ THIS FILE IS CRLF (checked out with core.autocrlf=true). The OUTER match already
+  // absorbs a trailing \r into `l` (only \n is excluded from [^\n]), but the INNER
+  // .replace(/\/\/.*$/,"") could never reach past it: `.` excludes \r too, and `$` with
+  // no /m flag demands the true end of `l`, one character beyond where `.*` could stop -
+  // so the strip silently no-op'd and the comment (with its "asv.sog" prose) survived.
+  // [^\n]* in the inner pattern needs no $ at all: it already runs to the true end of `l`.
+  const decomment = (t) => t.replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/[^\n]*/, ""));
   const H = decomment(RAW);
   const fn = H.slice(H.indexOf("function aisCpa("), H.indexOf("function cpaText("));
 

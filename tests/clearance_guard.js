@@ -409,7 +409,9 @@ check("16b. ... and the helm rung is unreachable unless STOPPING would not answe
 // 17. And it is actually WIRED - a guard nothing calls is worse than none, because the
 // card would still show a clearance while nothing acted on it.
 check("17. the guard runs on every telemetry frame, before the readouts are drawn",
-      () => /clearanceGuard\(\);\n\s*updateActiveLine\(\); accumLineTime\(\)/.test(H),
+      // \r? because this file is CRLF: a literal \n here can never follow the \r that
+      // actually sits between the two statements on disk.
+      () => /clearanceGuard\(\);\r?\n\s*updateActiveLine\(\); accumLineTime\(\)/.test(H),
       "in onState, ahead of renderIntent so the card describes the frame it acted on");
 
 // 18. AND THE NUMBER REACHES THE OPERATOR. Found by mutation: every check above passed
