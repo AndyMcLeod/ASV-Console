@@ -39,19 +39,21 @@ TEETH (verified by mutation, with the checks each one produces):
     the window is opened on the main thread / not daemon         -> 12
     --no-tide-window or --browser none stops being honoured      -> 13, 14
 
-AND FOR THE WINDOW FOLLOWING THE STATION (2026-09-02), five more mutations RUN:
-    the watcher never re-opens (the reported bug restored)       -> 24, 28
-    it re-opens on EVERY poll rather than only on a change       -> 25
-    the flap floor removed                                       -> 26
-    an exception on a re-open escapes and kills the thread        -> 28
+AND FOR ONE TAB EACH, RE-POINTED IN PLACE BY THE PAGE (2026-09-02), eight mutations RUN:
+    the page opens a SECOND window instead of re-pointing        -> 24
+    it re-points on EVERY poll rather than only on a change      -> 24b
+    the follow is never called from the state poll               -> 25
+    the pill shows even when we already hold the window          -> 26
+    a stale handle is allowed to throw past the liveness test    -> 26b
+    the window flags never reach the page                        -> 23b, 27
+    a blocked pop-up fails silently                              -> 28
+    a server-side station opener comes back                      -> 8b
 
-...and one INERT by design: ignoring the `stop` event kills nothing, correctly. That event
-is test hygiene, not console behaviour - the real watcher is a daemon thread that dies with
-the process and never passes one.
-
-Note what the never-re-opens mutation does NOT kill: 24b stays green, correctly. It asks
-whether the opens were in a NEW window, and one open still answers that. 24 is what counts
-them. A mode check and a count check are two assertions.
+⚠ AND THIS SUITE SPRUNG THE SELF-MATCHING TRAP FOR THE THIRD TIME IN THIS REPO. Check 8b
+greps the reporter for `webbrowser`, and the function's own DOCSTRING explains why
+webbrowser cannot be used - so the check went red against correct code. It reads the
+function's CODE now, unparsed from the AST with the docstring dropped, which is the same
+fix check 1 has always used for hardcoded station ids.
 """
 
 import importlib.util
@@ -158,8 +160,20 @@ check("4. a DIFFERENT fix gives a DIFFERENT page — the window follows the vess
       and C.tide_station_url("9414290") != C.tide_station_url("8557380"))
 
 
-# ---- 5-8. the opener waits for a station, then opens exactly once ---------- #
+# ---- 5-8. the REPORTER: it names the station, and opens nothing --------------- #
+#
+# ⚠ THESE USED TO DRIVE AN OPENER AND THERE IS NO LONGER ONE IN THIS PROCESS. The console
+# PAGE owns the tide and weather windows (2026-09-02, "switch to one tab that re-points
+# itself"), because only a page can hold a window handle and navigate it in place -
+# `webbrowser` hands a URL to the OS and gets none back. A server-side opener kept "as a
+# fallback" would put the duplicate tab straight back at start-up, so there is exactly one
+# opener and it is not here. Checks 24-28 cover the page's side.
+#
+# What the server still owes the operator is the SENTENCE: which gauge the correction came
+# from and what it is made of. That is what these test now.
 class FakeOpener:
+    """A witness, not a collaborator. Nothing is handed it any more; check 8b is what
+    proves the console opens nothing itself."""
     def __init__(self, explode=False):
         self.calls = []
         self.explode = explode
@@ -194,47 +208,90 @@ def with_water(fake, fn):
         C.WATER = real
 
 
-# 5. it must WAIT: with no station on the first poll it may not open anything yet.
-op5 = FakeOpener()
-w5 = FakeWater(station_after=2)
-old_poll = C.TIDE_WINDOW_POLL_S
-C.TIDE_WINDOW_POLL_S = 0.01
-url5 = with_water(w5, lambda: C.open_station_window(op5, "tide", wait_s=2.0))
-check("5. it WAITS for the vessel to have a station, then opens that station's page "
-      "(the station cannot exist at process start — there is no fix yet)",
-      lambda: url5 and url5.endswith("id=8557380") and len(op5.calls) == 1
-      and w5.n > 2,
-      lambda: "opened %r after %d polls" % (op5.calls, w5.n))
-check("6. ... in a NEW window, not the console's own tab",
-      lambda: op5.calls and op5.calls[0][1] == 1,
-      lambda: str(op5.calls))
-
-# 7. no station ever -> gives up, opens nothing, and does not hang.
-op7 = FakeOpener()
-t0 = time.monotonic()
-url7 = with_water(FakeWater(station_after=10 ** 9), lambda: C.open_station_window(op7, "tide", wait_s=0.2))
-check("7. no station within the wait -> gives up quietly, opens nothing, never hangs",
-      lambda: url7 is None and not op7.calls and (time.monotonic() - t0) < 5.0,
-      lambda: "%.2fs, calls=%s" % (time.monotonic() - t0, op7.calls))
-
-
-# 8. a browser that refuses must not take the console down.
-# THE CALL IS INSIDE THE THUNK, and that is the point of the check: with it at module
-# level the mutation this exists for (the except clause narrowed so the browser's error
-# escapes) killed the whole suite instead of failing check 8 - no FAIL line printed, and
-# a mutation runner reading stdout scores that as a survivor. A harness that cannot
-# survive the fault it tests for cannot report it; third time in this repo.
-op8 = FakeOpener(explode=True)
+def _report_briefly(fake, run_s=0.5):
+    """Run the reporter against `fake`, capture what it printed, then STOP it - a watcher
+    left running polls whatever global monitor the next check installs."""
+    import contextlib
+    import io as _io
+    old = C.STATION_WATCH_POLL_S
+    C.STATION_WATCH_POLL_S = 0.01
+    real = C.WATER
+    C.WATER = fake
+    stop = threading.Event()
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        t = threading.Thread(target=C.watch_station_report, args=("tide",),
+                             kwargs={"stop": stop}, daemon=True)
+        t.start()
+        time.sleep(run_s)
+        stop.set()
+        t.join(timeout=2.0)
+    C.WATER = real
+    C.STATION_WATCH_POLL_S = old
+    return buf.getvalue()
 
 
-def browser_that_throws():
-    url = with_water(FakeWater(), lambda: C.open_station_window(op8, "tide", wait_s=1.0))
-    return url is not None and len(op8.calls) == 1
+out5 = _report_briefly(FakeWater(station_after=2))
+check("5. it WAITS for the vessel to have a station, then names that one",
+      lambda: "8557380" in out5,
+      lambda: "printed %r" % out5.strip()[:110])
+check("6. ... and says what the correction is MADE OF, not merely which gauge",
+      lambda: "8557380" in out5 and ("km off" in out5 or "single" in out5),
+      lambda: out5.strip()[:130])
+
+out7 = _report_briefly(FakeWater(station_after=10 ** 9), run_s=0.3)
+check("7. no station -> it says NOTHING rather than naming one that has not resolved",
+      lambda: out7.strip() == "",
+      lambda: "printed %r" % out7.strip()[:80])
 
 
-check("8. a browser that THROWS is a missing convenience, not a crash",
-      browser_that_throws, lambda: "opener raised; calls=%d" % len(op8.calls))
-C.TIDE_WINDOW_POLL_S = old_poll
+class ThrowingWater:
+    """A monitor caught mid-refresh. The reporter runs forever, so an escaping exception
+    kills the thread and the operator never hears of a station change again."""
+    def __init__(self):
+        self.n = 0
+
+    def snapshot(self):
+        self.n += 1
+        if self.n < 3:
+            raise RuntimeError("mid-refresh")
+        return {"station": "8557380", "name": "Lewes", "dist_km": 3.7, "method": "single",
+                "stations": [{"id": "8557380", "dist_km": 3.7}]}
+
+
+out8 = _report_briefly(ThrowingWater(), run_s=0.5)
+check("8. a monitor that THROWS does not kill the reporter thread",
+      lambda: "8557380" in out8,
+      lambda: "recovered and reported: %r" % out8.strip()[:90])
+
+# ⚠ THE FUNCTION'S CODE, NOT ITS PROSE — AND THIS IS THE THIRD TIME THIS TRAP HAS BEEN
+# SPRUNG IN THIS REPO. A plain slice went red because the docstring EXPLAINS why
+# `webbrowser` cannot be used here, and the check was grepping for the word. Unparsed from
+# the AST with the docstring dropped, so comments and documentation are not in the subject
+# at all — the same fix check 1 above already uses for hardcoded station ids.
+def _fn_code(src, name):
+    import ast
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            body = list(node.body)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)                and isinstance(body[0].value.value, str):
+                body = body[1:]                       # the docstring is documentation
+            return chr(10).join(ast.unparse(b) for b in body)
+    return ""
+
+
+_RPT = _fn_code(SRC, "watch_station_report")
+check("8b. the console opens NO station page itself — one opener, and it is the page",
+      # ⚠ NOT "no opener.open ANYWHERE" — the first draft said that and went red on the
+      # CONTROLS window, which the server still opens and correctly so: it is same-origin,
+      # the page can reach it by name, and nothing ever needs to re-point it. What must not
+      # exist is a server-side opener for a STATION page.
+      lambda: "def open_station_window" not in SRC
+      and not re.search(r"opener\.open\([^)]*station", SRC)
+      and "webbrowser" not in _RPT and ".open(" not in _RPT,
+      "a server-side opener kept as a fallback puts the duplicate tab back at start-up")
+
 
 # ---- 9-11. the blend is reported, not implied ----------------------------- #
 BLEND = {"station": "8557380", "name": "Lewes", "dist_km": 3.7, "method": "idw3",
@@ -270,16 +327,20 @@ check("11b. no station at all -> no report (nothing to say, and nothing to open)
       and C.station_window_report({"station": ""}, "Tide", 2.0) is None)
 
 # ---- 12-14. the wiring ---------------------------------------------------- #
-check("12. the window is opened on its own DAEMON thread — it waits for a fix, so on the "
-      "main thread it would stall start-up, and non-daemon it would hold shutdown",
-      lambda: re.search(r"threading\.Thread\(target=watch_station_window[\s\S]{0,160}?daemon=True\)", SRC)
+check("12. the station REPORTER runs on its own DAEMON thread — it polls forever, so on "
+      "the main thread it would never return and non-daemon it would hold shutdown",
+      lambda: re.search(r"threading\.Thread\(target=watch_station_report[\s\S]{0,120}?daemon=True\)", SRC)
       is not None)
 check("13. --no-tide-window suppresses it",
       lambda: '"--no-tide-window"' in SRC and "args.no_tide_window" in SRC)
-check("14. it is inside the browser block, so --browser none opens NOTHING (which is why "
-      "every real-console harness is unaffected by it)",
-      lambda: (SRC.index('if args.browser != "none":')
-               < SRC.index("threading.Thread(target=watch_station_window")))
+# ⚠ THE REPORTER IS DELIBERATELY *OUTSIDE* THE BROWSER BLOCK, WHICH IS THE OPPOSITE OF
+# WHAT THIS CHECK USED TO ASSERT — and the reversal is the point. It opens nothing, so
+# there is no pop-up to gate; what it prints is which gauge the depth correction came from,
+# and that correction is applied whether or not a browser was ever launched. A console run
+# with --browser none used to say nothing about the water it was correcting for.
+check("14. the reporter runs even with --browser none — the correction applies either way",
+      lambda: (SRC.index("threading.Thread(target=watch_station_report")
+               < SRC.index('if args.browser != "none":')))
 
 # 15. the page and the card must name the SAME station, or the operator is reading two
 # different answers. Both read `water.station`; assert the client does too.
@@ -305,9 +366,9 @@ check("18. NO buoy id is hardcoded either — the buoy is whichever the fix sele
       lambda: not [v for v in code_constants(SRC)
                    if isinstance(v, str) and re.fullmatch(r"[A-Z]{4}\d", v)],
       lambda: "none, as required")
-check("19. both windows are entries in ONE registry, sharing one wait/open/timeout path",
+check("19. both stations are entries in ONE registry, sharing one report path",
       lambda: set(C.STATION_WINDOWS) == {"tide", "weather"}
-      and "def open_station_window" in SRC
+      and "def watch_station_report" in SRC
       and SRC.count("def open_tide_window") == 0,
       lambda: "kinds: " + ", ".join(sorted(C.STATION_WINDOWS)))
 
@@ -337,125 +398,64 @@ wp = [float(x) for x in re.findall(r"(\d+\.\d)%", wrep or "")]
 check("22. the weather blend is inverse-SQUARE weighted (nearest buoy dominates)",
       lambda: len(wp) == 3 and 94.0 < wp[0] < 97.0 and abs(sum(wp) - 100.0) < 0.3,
       lambda: str(wp))
-check("23. --no-weather-window suppresses the fourth window on its own",
+check("23. --no-weather-window suppresses the weather window on its own",
       lambda: '"--no-weather-window"' in SRC and "args.no_weather_window" in SRC
-      and 'args=(opener, "weather")' in SRC)
+      and 'STATION_WINDOWS_ON["weather"]' in SRC)
+# ⚠ THE FLAG HAS TO REACH THE PAGE, because the page is what opens these now. A flag the
+# server honours and the client does not is a control that half works — and it would half
+# work in the direction of opening a window the operator asked not to have.
+check("23b. ... and both flags are PUBLISHED to the page, which is what owns the windows",
+      lambda: '"station_windows"' in SRC and "S.station_windows" in HTML,
+      "the server no longer opens them, so honouring the flag is the client's job")
 
-# ── 24-28. THE WINDOW FOLLOWS THE STATION, NOT JUST THE FIRST ONE ──────────────────
+# ── 24-28. ONE TAB EACH, RE-POINTED IN PLACE BY THE PAGE ──────────────────────────
 #
-# Andy, 2026-09-02: "The weather browser tab and the tide browser tab do not update when
-# ports are changed and the displayed chart animates to the new mission area."
+# Andy, 2026-09-02: first "the weather browser tab and the tide browser tab do not update
+# when ports are changed", then, shown that re-opening from the server leaves a stale tab
+# behind, "switch to one tab that re-points itself."
 #
-# ⚠ THIS FILE'S OWN HEADER HAS PROMISED "move the vessel and the window follows it" SINCE
-# THE DAY IT WAS WRITTEN, and only half of it was true. The STATION followed — it is derived
-# from the fix, and check 1 stops anyone re-pinning it — but the WINDOW was opened once at
-# start-up and then nobody looked again. Change port and the chart slews, the boat respawns,
-# the AIS subscription re-scopes, both monitors re-resolve onto the new area's stations...
-# and two browser tabs sit there showing a buoy on the wrong lake.
+# ⚠ ONLY THE PAGE CAN DO THAT. `webbrowser` hands a URL to the OS and gets no handle back,
+# so this process can open a tab and never afterwards re-point it. A handle held by a page
+# CAN be navigated cross-origin by whoever opened it. The cost is one click each, because
+# `window.open` without a gesture is blocked — measured, not assumed — and framing the
+# pages instead is impossible: NDBC sends `X-Frame-Options: deny` with
+# `frame-ancestors 'none'`, NOAA Tides sends `SAMEORIGIN`.
 #
-# The trigger is the STATION, not the port: keying on /api/ports would follow the reported
-# case and miss the one that matters more, a boat that simply steams far enough that a
-# different gauge is nearest. Both arrive here as the same fact.
-class MovingWater:
-    """A monitor whose station CHANGES after N polls, as a port change makes it."""
-    def __init__(self, first="8557380", then="9063020", after=3):
-        self.n, self.first, self.then, self.after = 0, first, then, after
-
-    def snapshot(self):
-        self.n += 1
-        sid = self.first if self.n <= self.after else self.then
-        return {"station": sid, "name": "S" + sid, "dist_km": 3.7, "method": "single",
-                "stations": [{"id": sid, "dist_km": 3.7}]}
-
-
-def _watch_briefly(fake, opener, reopen_min=0.0, run_s=0.8):
-    """Run the watcher on a thread and stop looking after `run_s`. It loops forever by
-    design, so the suite SAMPLES it rather than waiting for it to end."""
-    olds = (C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S)
-    C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S = 0.01, 0.01, reopen_min
-    real = C.WATER
-    C.WATER = fake
-    # ⚠ STOPPED, NOT ABANDONED. Left running, each watcher keeps polling whatever global
-    # WATER the NEXT check installs - one suite's threads answering another's questions,
-    # and a wall of stray output. First run of these checks did exactly that.
-    stop = threading.Event()
-    t = threading.Thread(target=C.watch_station_window, args=(opener, "tide"),
-                         kwargs={"wait_s": 1.0, "stop": stop}, daemon=True)
-    t.start()
-    time.sleep(run_s)
-    stop.set()
-    t.join(timeout=2.0)
-    C.WATER = real
-    C.TIDE_WINDOW_POLL_S, C.STATION_WATCH_POLL_S, C.STATION_REOPEN_MIN_S = olds
-    return list(opener.calls)
-
-
-op24 = FakeOpener()
-calls24 = _watch_briefly(MovingWater(), op24)
-check("24. THE REPORTED FAULT: when the station moves, the window is re-opened on it",
-      lambda: len(calls24) >= 2 and calls24[0][0].endswith("id=8557380")
-      and any(c[0].endswith("id=9063020") for c in calls24),
-      lambda: "opened stations %s" % [c[0].rsplit("=", 1)[-1] for c in calls24])
-check("24b. ... in a new window, exactly as the first open was",
-      lambda: bool(calls24) and all(c[1] == 1 for c in calls24),
-      lambda: str(calls24))
-
-# THE ACCEPTANCE CASE, without which check 24 passes for a watcher that re-opens on every
-# poll: a station that has NOT moved must produce no second tab.
-op25 = FakeOpener()
-calls25 = _watch_briefly(FakeWater(), op25)
-check("25. ... and a station that has NOT moved opens nothing further",
-      lambda: len(calls25) == 1,
-      lambda: "%d open(s) over many polls — a tab per poll would be unusable"
-      % len(calls25))
-
-# ⚠ THE FLAP GUARD. The monitors pick "the nearest station actually returning data", so two
-# gauges at similar range where one drops in and out of service hand back first one id and
-# then the other. Without a floor, that is a browser tab per flap.
-op26 = FakeOpener()
-calls26 = _watch_briefly(MovingWater(first="A", then="B", after=1), op26, reopen_min=9999.0)
-check("26. a FLAPPING primary cannot open a tab per flap — the re-open has a floor",
-      lambda: len(calls26) == 1,
-      lambda: "%d open(s) with the floor at 9999 s, station changing every poll"
-      % len(calls26))
-check("26b. ... and that floor is a named constant, not a literal buried in the loop",
-      lambda: C.STATION_REOPEN_MIN_S >= 30.0 and "STATION_REOPEN_MIN_S" in SRC,
-      lambda: "STATION_REOPEN_MIN_S = %s" % C.STATION_REOPEN_MIN_S)
-
-# 27. The watcher must not have made the ORIGINAL behaviour worse.
-op27 = FakeOpener()
-url27 = with_water(FakeWater(),
-                   lambda: C.watch_station_window(op27, "tide", wait_s=1.0, once=True))
-check("27. once=True is the original open-and-stop, unchanged",
-      lambda: url27 and url27.endswith("id=8557380") and len(op27.calls) == 1,
-      lambda: "%r, %d call(s)" % (url27, len(op27.calls)))
-
-# 28. A browser that throws on a RE-open must be as survivable as one that throws on the
-# first. The watcher runs forever, so an escaping exception kills the thread silently and
-# the window never follows again — the bug restored, with no way to see it.
-#
-# ⚠ IT TAKES THREE STATIONS TO PROVE THIS, AND THE FIRST DRAFT USED TWO. FakeOpener records
-# the call BEFORE it raises, so "two opens" is exactly what a thread that died on the first
-# re-open also produces — the check passed for the failure it was written to catch. A THIRD
-# station can only be reached by a watcher that survived the second's throw.
-class SequenceWater:
-    """A monitor that walks through a LIST of stations, one per poll-group."""
-    def __init__(self, ids, every=2):
-        self.n, self.ids, self.every = 0, ids, every
-
-    def snapshot(self):
-        self.n += 1
-        sid = self.ids[min(self.n // self.every, len(self.ids) - 1)]
-        return {"station": sid, "name": "S" + sid, "dist_km": 3.7, "method": "single",
-                "stations": [{"id": sid, "dist_km": 3.7}]}
-
-
-op28 = FakeOpener(explode=True)
-calls28 = _watch_briefly(SequenceWater(["8557380", "9063020", "9414290"]), op28, run_s=1.0)
-check("28. a browser that THROWS on a re-open does not kill the watcher thread",
-      lambda: len({c[0] for c in calls28}) >= 3,
-      lambda: "reached %d distinct stations, every open raising: %s"
-      % (len({c[0] for c in calls28}), [c[0].rsplit("=", 1)[-1] for c in calls28]))
+# MEASURED LIVE, and worth recording because these checks pin the mechanism and not the
+# behaviour: with a handle held and the port changed Erie -> Lewes, the station moved
+# 9063038 -> 8557380, `location.replace` was called EXACTLY ONCE with the new URL, the held
+# URL updated, and the pill stayed hidden because the window was still ours.
+check("24. THE FIX: the page RE-POINTS the window it holds instead of opening another",
+      lambda: "location.replace(cfg.want)" in HTML and "syncStationWindows" in HTML,
+      "navigating a window you opened is allowed cross-origin; opening a second one is "
+      "what left a stale tab behind")
+check("24b. ... and it only re-points when the URL has actually CHANGED",
+      lambda: "cfg.want !== cfg.url" in HTML,
+      "re-navigating every poll would reload the page under the operator every few seconds")
+check("25. the follow runs on the state poll, so a port change, a long transit and a gauge "
+      "going out of service are all the same event",
+      lambda: "syncStationWindows();" in HTML
+      and HTML.index("syncStationWindows();") > HTML.index("function onState("),
+      "keyed on the STATION, never on /api/ports")
+check("26. the pill is offered only when there is a station AND we do not hold its window",
+      lambda: "!stationWinAlive(k)" in HTML and "cfg.want" in HTML,
+      "an affordance for a window that is already open is noise; one for a station that "
+      "does not exist yet is a dead control")
+check("26b. a handle from a previous page life cannot throw its way past the check",
+      lambda: "try { return !!(w && !w.closed); } catch(e){ return false; }" in HTML,
+      "`closed` is readable cross-origin, but a stale handle can still raise")
+check("27. the --no-tide-window / --no-weather-window flags are honoured BY THE PAGE, "
+      "which is what opens these now",
+      lambda: "S.station_windows" in HTML and '"station_windows"' in SRC,
+      "a flag the server honours and the client ignores is a control that half works")
+# ⚠ A BLOCKED POP-UP MUST SAY SO. Failing silently leaves the operator clicking a pill that
+# appears to do nothing — worse than the stale tab this replaced. Verified live: with
+# window.open stubbed to null the banner read "The browser blocked the tide window. Allow
+# pop-ups for this console, or open it yourself: https://tidesandcurrents.noaa.gov/..."
+check("28. a blocked pop-up is REPORTED with the URL, not swallowed",
+      lambda: "blocked the " in HTML and "showBanner(" in HTML[HTML.index("function openStationWindow"):
+                                                              HTML.index("function openStationWindow") + 900],
+      "the pill would otherwise look broken")
 
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

@@ -107,7 +107,40 @@ port / D starboard, and on a 295 m ship with the bridge aft, centring puts the s
 from where it is. Below the crossover it falls back to the glyph, because a 300 m ship at
 40 m/px is seven pixels and drawing that to scale hides more than it shows.
 
-**THE TIDE AND WEATHER TABS NOW FOLLOW THE PORT** (2026-09-02). Andy: *"The weather browser
+**ONE TIDE TAB AND ONE WEATHER TAB, EACH RE-POINTING ITSELF** (2026-09-02). Andy asked
+first for the tabs to update on a port change; shown that a server re-open leaves a stale
+tab behind, he said *"switch to one tab that re-points itself."*
+
+**⚠ ONLY THE PAGE CAN DO THAT, AND THE SERVER-SIDE OPENER IS GONE RATHER THAN KEPT AS A
+FALLBACK.** `webbrowser` hands a URL to the OS and gets no handle back, so this process can
+open a tab and never afterwards re-point it. A handle held by a page CAN be navigated
+cross-origin by whoever opened it, so `STATION_WINDOWS` in `static/asv.html` owns both
+windows now and calls `location.replace` in place. Two openers would put the duplicate tab
+straight back at start-up, so there is exactly one and it is not in Python.
+
+**MEASURED, NOT ASSUMED, BOTH WAYS:** `window.open` without a user gesture is blocked, so
+each window costs one click on a top-bar pill (the `⏏ Controls` precedent); and framing
+the pages instead is impossible — **NDBC sends `X-Frame-Options: deny` with
+`frame-ancestors 'none'`, NOAA Tides sends `SAMEORIGIN`**. Verified live: holding a handle
+and changing port Erie → Lewes moved the station 9063038 → 8557380, `location.replace` fired
+**exactly once** with the new URL, and the pill stayed hidden because the window was still
+ours. A blocked pop-up raises a banner naming the URL rather than leaving a pill that looks
+broken.
+
+**What the server still owes the operator is the SENTENCE.** `watch_station_report` opens
+nothing and prints which gauge the correction came from and what it is made of, whenever
+the station changes — deliberately NOT gated on `--browser` or on the window flags, because
+the water correction is applied to charted depths whether or not anyone opens a page. A
+console run with `--browser none` used to say nothing at all about the water it was
+correcting for.
+
+**⚠ AND THE SUITE SPRUNG THE SELF-MATCHING TRAP FOR THE THIRD TIME.** Check 8b greps the
+reporter for `webbrowser`, and that function's own DOCSTRING explains why webbrowser cannot
+be used — so the check went red against correct code. It reads the function's CODE now,
+unparsed from the AST with the docstring dropped.
+
+**PREVIOUS — the tabs following the port at all** (superseded above by the single
+re-pointing tab). Andy: *"The weather browser
 tab and the tide browser tab do not update when ports are changed and the displayed chart
 animates to the new mission area."*
 
@@ -1764,8 +1797,8 @@ resides HERE. Do not port fixes back to the Z-Boat console or touch its repo unt
 redirects** — every "flows both ways" / "port to the sibling" note below predates this.
 
 **STATE: tree CLEAN, everything pushed, nothing held back.** The long-running
-turn-water hold is closed (`a548c14`). **48 regression suites / 930 assertions** (27 JS / 573,
-21 Python / 357), derived
+turn-water hold is closed (`a548c14`). **48 regression suites / 932 assertions** (27 JS / 573,
+21 Python / 359), derived
 with the one-liner below and matching the hook. If you are picking this up cold: read
 this section, then "THE SESSION JUST FINISHED" for what changed most recently, then
 OPEN / NEXT at the end of this section for what is actually open.
@@ -1797,7 +1830,7 @@ intact in `d473b5b` if he ever asks. Four things survive the event:
   (fresh key installed and equally silent — the discriminator ran); `02bacb9` means an
   upstream error frame now SHOWS instead of reading as a quiet sea.
 
-**FORTY-EIGHT REGRESSION SUITES (930 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
+**FORTY-EIGHT REGRESSION SUITES (932 assertions), all run by the pre-commit hook** (`.githooks/pre-commit`;
 enable once per clone with `git config core.hooksPath .githooks`). **The hook now DERIVES its
 run list from `tests/`** — a new suite runs from the day it is written; only the per-suite
 failure ADVICE is still hand-kept (a missing advice line is cosmetic, a missing run was a

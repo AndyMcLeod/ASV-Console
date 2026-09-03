@@ -1948,6 +1948,12 @@ class WaterLevel:
                         note="manual override (%.2f m)" % m)
         else:
             base["source"] = "station" if base.get("ok") else "none"
+        # THE STATION'S OWN PAGE, BUILT HERE AND NOWHERE ELSE. The console page opens and
+        # re-points the tide window, and it must not carry a second copy of this URL
+        # template - two spellings of the same address is how the window ends up on a page
+        # the console is not attributing its correction to. Absent when there is no
+        # station, so "no page" and "a page for nothing" are not the same value.
+        base["page"] = tide_station_url(base.get("station"))
         return base
 
     def tide_series(self, force=False):
@@ -2281,7 +2287,11 @@ class EnvMonitor:
                 "stations": base.get("stations") or []}
 
     def snapshot(self):
-        return self._effective()
+        eff = dict(self._effective())
+        # Same rule as the water monitor's `page`: the buoy's own NDBC page, built from the
+        # one URL template, so the window and the card can never name different stations.
+        eff["page"] = ndbc_station_url(eff.get("station"))
+        return eff
 
     def field(self):
         """Physics view for SimVcu: the wind + wave vectors in effect, or None when
@@ -3655,6 +3665,12 @@ class Engine:
             "wp_total": self.wp_total,
             "status": st,
             "comms": COMMS.snapshot(),
+            # WHICH STATION WINDOWS THE OPERATOR ASKED FOR. The PAGE owns those windows
+            # now (it is the only thing that can re-point one in place), so the
+            # --no-tide-window / --no-weather-window flags have to reach it - a flag the
+            # server honours and the client does not is a control that half works.
+            "station_windows": {"tide": STATION_WINDOWS_ON["tide"],
+                                "weather": STATION_WINDOWS_ON["weather"]},
             "water": WATER.snapshot(),
             "env": ENV.snapshot() if self._mode == "sim" else {"ok": False, "source": "off",
                      "enabled": False, "note": "environmental sim (sim mode only)"},
@@ -4338,38 +4354,26 @@ def pick_browser(pref):
 # contributor with its weight. `ok` is deliberately not required: a station with no data
 # still names the right page, and "which water are we in" is worth answering even when
 # the reading failed.
-TIDE_WINDOW_WAIT_S = 120.0        # give up rather than hang a thread forever
-TIDE_WINDOW_POLL_S = 2.0
-
-# --- keeping those windows CURRENT ----------------------------------------- #
+# --- WHO OPENS THESE WINDOWS, AND WHY IT IS NOT THIS PROCESS --------------- #
 #
-# Andy, 2026-09-02: *"The weather browser tab and the tide browser tab do not update when
-# ports are changed and the displayed chart animates to the new mission area."*
+# Andy, 2026-09-02: first *"the weather browser tab and the tide browser tab do not update
+# when ports are changed"*, then, on being shown that re-opening leaves a stale tab behind,
+# *"switch to one tab that re-points itself."*
 #
-# The station was always derived from the vessel's own fix - tests/station_windows.py has
-# said "move the vessel and the window follows it" since the day it was written - but only
-# the STATION followed. The WINDOW was opened once, at start-up, and then nobody ever
-# looked again. Change port from Erie to Lewes and the chart slews, the boat respawns, the
-# AIS subscription re-scopes, the water and env monitors re-resolve onto the new area's
-# stations... and two browser tabs sit there showing a buoy on the wrong lake.
+# ⚠ ONLY THE PAGE CAN DO THAT, AND THE REASON IS A BROWSER BOUNDARY. `webbrowser` hands a
+# URL to the operating system and gets NO HANDLE BACK, so this process can open a tab and
+# can never afterwards re-point or close it. A window handle held by a page CAN be
+# navigated cross-origin by whoever opened it, so the console page owns both windows now -
+# see `STATION_WINDOWS` in static/asv.html. It costs one click each, because `window.open`
+# without a user gesture is blocked (measured, not assumed), and framing the pages instead
+# is impossible: NDBC sends `X-Frame-Options: deny` with `frame-ancestors 'none'`.
 #
-# ⚠ A NEW TAB IS THE ONLY THING PYTHON CAN DO, AND IT IS WORTH SAYING WHY. `webbrowser`
-# hands a URL to the operating system; it gets no handle back, so it cannot re-point or
-# close the tab it opened. Re-pointing in place needs the PAGE to own the window (a named
-# `window.open`, whose handle can be navigated cross-origin), and the page cannot do the
-# initial open at all - that is precisely why the server opens these, to sidestep the
-# pop-up blocker, as the start-up comment already records. So a port change opens a fresh,
-# correct tab and leaves the stale one for the operator to close. Making that trade
-# silently would be worse than the bug.
-STATION_WATCH_POLL_S = 5.0        # a browser tab, not a control loop
-#: The shortest interval between re-opens of the same window.
-#:
-#: ⚠ THIS EXISTS BECAUSE THE PRIMARY STATION CAN FLAP. The monitors pick "the nearest
-#: station actually returning data", so two gauges at similar range where one drops in and
-#: out of service will hand back first one id and then the other. Without a floor here that
-#: is a browser tab per flap - an unusable console and a genuinely alarming amount of
-#: Chrome. A change must persist past this before it is worth a tab.
-STATION_REOPEN_MIN_S = 120.0
+# ⚠ SO THERE IS EXACTLY ONE OPENER, AND IT IS NOT HERE. A server-side opener kept "as a
+# fallback" would put the duplicate tab straight back at start-up - two mechanisms racing
+# to open the same window is the whole fault being fixed. What the server still owes the
+# operator is the SENTENCE about which station is in use and what the correction is made
+# of; `watch_station_report` prints that and opens nothing.
+STATION_WATCH_POLL_S = 5.0        # a report line, not a control loop
 
 
 def station_window_report(w, label, power, noun="reading", applied="value"):
@@ -4412,6 +4416,10 @@ def station_window_report(w, label, power, noun="reading", applied="value"):
 # where its reading comes from, how to turn a station id into a page, the IDW power its
 # monitor used, and how far it looks. Adding a third would be another entry, not another
 # copy of the wait loop.
+#: Whether each station window is offered at all - set from --no-tide-window /
+#: --no-weather-window at start-up and read by the console page, which owns the windows.
+STATION_WINDOWS_ON = {"tide": True, "weather": True}
+
 STATION_WINDOWS = {
     "tide":    {"label": "Tide", "url": lambda sid: tide_station_url(sid),
                 "snap": lambda: WATER.snapshot(), "power": WATER_IDW_POWER,
@@ -4424,95 +4432,40 @@ STATION_WINDOWS = {
 }
 
 
-def open_station_window(opener, kind, wait_s=TIDE_WINDOW_WAIT_S):
-    """Wait for a station of `kind`, then open its page. Never raises: a browser that
-    will not open is a missing convenience, not a reason to take the console down.
+def watch_station_report(kind, stop=None):
+    """Say which station is being used, and what the correction behind it is made of -
+    every time the resolved station CHANGES.
 
-    ONE loop for both windows. The waiting is the whole difficulty - the station is
-    derived from the vessel fix, so at process start there is nothing to open - and it is
-    the same difficulty for a tide gauge and a weather buoy."""
+    ⚠ THIS OPENS NOTHING, AND THAT IS THE POINT. The console PAGE owns the tide and
+    weather windows now (Andy, 2026-09-02: *"switch to one tab that re-points itself"*),
+    because only a page can hold a window handle and navigate it in place - `webbrowser`
+    hands a URL to the OS and gets none back, so the server could open a second tab and
+    never re-point the first. Two openers would put the duplicate straight back.
+
+    What the server still owes the operator is the SENTENCE. The applied water correction
+    may be an inverse-distance blend of up to three gauges reported under the nearest
+    one's name, and "the number on the card is not this station's own level" has to be
+    STATED rather than left to be inferred. That is worth printing whether or not anyone
+    ever opens the window, so this is not gated on --no-tide-window: the correction is
+    applied to charted depths either way.
+    """
     spec = STATION_WINDOWS[kind]
-    deadline = time.monotonic() + wait_s
-    while time.monotonic() < deadline:
+    last = None
+    while not (stop is not None and stop.is_set()):
         try:
             w = spec["snap"]() or {}
-        except Exception:
-            w = {}
-        url = spec["url"](w.get("station"))
-        if url:
+            sid = w.get("station")
+        except Exception:                      # a monitor mid-refresh is not an error
+            sid = None
+        if sid and sid != last:
+            if last is not None:
+                print("  %s station moved: %s -> %s" % (spec["label"], last, sid))
             report = station_window_report(w, spec["label"], spec["power"],
                                            spec["noun"], spec["applied"])
             if report:
                 print(report)
-            try:
-                opener.open(url, new=1)
-            except Exception:
-                print("  Could not open the %s window; the URL is %s"
-                      % (spec["label"].lower(), url))
-            return url
-        time.sleep(TIDE_WINDOW_POLL_S)
-    print("  %s window: no %s resolved within %.0fs (no GPS fix, or none within "
-          "%.0f km) - not opened." % (spec["label"], spec["what"], wait_s, spec["max_km"]))
-    return None
-
-
-def watch_station_window(opener, kind, wait_s=TIDE_WINDOW_WAIT_S, once=False, stop=None):
-    """Open the station page, then KEEP IT ON THE RIGHT STATION for as long as we run.
-
-    The opening half is unchanged - `open_station_window` still waits for a station to
-    exist, because at process start the vessel has no fix and there is nothing to show.
-    What is new is that this does not then stop looking.
-
-    ⚠ THE TRIGGER IS THE STATION, NOT THE PORT, AND THAT IS DELIBERATE. Keying on
-    /api/ports would follow the case Andy reported and miss the one that matters more: a
-    boat that simply steams far enough that a different gauge is nearest. Both arrive here
-    as the same fact - the resolved station changed - so both are handled, and a port
-    change that happens to resolve to the SAME station correctly opens nothing, because
-    the tab is already right.
-
-    ⚠ AND A RE-OPEN IS A NEW TAB, NOT A REPLACEMENT. `webbrowser` gets no handle back from
-    the OS, so the stale tab cannot be closed from here. See STATION_WATCH_POLL_S's note.
-
-    `once=True` runs the original open-and-stop behaviour, for callers that want it and for
-    the suite to compare against. `stop` is an Event that ends the loop - the console never
-    passes one (the thread is a daemon and dies with the process), but a test that starts a
-    watcher and walks away would otherwise leave it running against whatever global state
-    the NEXT test installs, which is how one suite's threads start answering another's
-    questions.
-    """
-    last = open_station_window(opener, kind, wait_s)
-    if once:
-        return last
-    spec = STATION_WINDOWS[kind]
-    last_open = time.monotonic() if last else 0.0
-    while not (stop is not None and stop.is_set()):
+            last = sid
         time.sleep(STATION_WATCH_POLL_S)
-        if stop is not None and stop.is_set():
-            return last
-        try:
-            w = spec["snap"]() or {}
-            url = spec["url"](w.get("station"))
-        except Exception:                      # a monitor mid-refresh is not an error
-            continue
-        if not url or url == last:
-            continue
-        if time.monotonic() - last_open < STATION_REOPEN_MIN_S:
-            continue                           # let a flapping primary settle - see the note
-        # SAY WHAT MOVED AND WHY. A tab appearing on its own is alarming unless the console
-        # has just said it is doing it; this is the same report the start-up open prints,
-        # with the reason in front of it.
-        print("  %s window: station moved to %s - opening the new page (the old tab is "
-              "stale; this cannot close it)." % (spec["label"], w.get("station")))
-        report = station_window_report(w, spec["label"], spec["power"],
-                                       spec["noun"], spec["applied"])
-        if report:
-            print(report)
-        try:
-            opener.open(url, new=1)
-        except Exception:
-            print("  Could not re-open the %s window; the URL is %s"
-                  % (spec["label"].lower(), url))
-        last, last_open = url, time.monotonic()
     return last
 
 
@@ -4822,6 +4775,21 @@ def main():
         print("  Recording session to %s" % LOG.path)
     print("  (Ctrl-C to stop)")
 
+    # ⚠ SET BEFORE, AND OUTSIDE, THE BROWSER BLOCK. These say whether the station windows
+    # are OFFERED at all, which is a question about the operator's flags and not about how
+    # the console happened to be launched. Inside the block, `--browser none` (every
+    # headless harness, and anyone opening the page by hand) would silently ignore
+    # --no-tide-window, and a flag the server honours only sometimes is worse than none.
+    STATION_WINDOWS_ON["tide"] = not args.no_tide_window
+    STATION_WINDOWS_ON["weather"] = not args.no_weather_window
+
+    # NAME THE STATION AND ITS BLEND, whenever it changes. Not gated on the window flags
+    # and not on --browser: the water correction is applied to charted depths whether or
+    # not anyone opens a page, so which gauge it came from is worth saying either way.
+    # Daemon threads - they can never hold shutdown.
+    for _kind in ("tide", "weather"):
+        threading.Thread(target=watch_station_report, args=(_kind,), daemon=True).start()
+
     if args.browser != "none":
         b = None if args.browser == "default" else pick_browser(args.browser)
         opener = b or webbrowser
@@ -4833,18 +4801,22 @@ def main():
                 # it sidesteps the browser pop-up blocker. Slight delay so it lands as a
                 # separate window after the first is up.
                 threading.Timer(1.0, lambda: opener.open(url + "?panel=controls", new=1)).start()
-                # THIRD window: the NOAA CO-OPS page for the station the vessel's own fix
-                # selects. On its own thread, not a Timer, because it WAITS for a station
-                # to exist - see open_tide_window. Daemon, so it can never hold shutdown.
-                if not args.no_tide_window:
-                    threading.Thread(target=watch_station_window, args=(opener, "tide"),
-                                     daemon=True).start()
-                # FOURTH window: the NDBC page for the weather buoy nearest the vessel.
-                # Same mechanism, same reason for deferring it - the buoy is chosen by
-                # the fix, which does not exist yet at start-up.
-                if not args.no_weather_window:
-                    threading.Thread(target=watch_station_window, args=(opener, "weather"),
-                                     daemon=True).start()
+                # ⚠ THE THIRD AND FOURTH WINDOWS ARE NOT OPENED FROM HERE ANY MORE, AND
+                # THE REASON IS THE WHOLE POINT OF THE CHANGE. Andy, 2026-09-02, having
+                # seen the re-open leave a stale tab behind: *"switch to one tab that
+                # re-points itself."*
+                #
+                # A tab this process opens cannot be re-pointed BY this process:
+                # `webbrowser` hands a URL to the OS and gets no handle back. Only the
+                # page can hold a window handle and navigate it in place, so the page owns
+                # these two now - see `stationWindows` in static/asv.html. The cost is one
+                # click each, because a pop-up needs a user gesture, and the console asks
+                # for it with a pill on the top bar rather than opening tabs the operator
+                # then has to close.
+                #
+                # The flags still mean what they meant; they reach the page through
+                # STATION_WINDOWS_ON in /api/state, and are set OUTSIDE this block - see
+                # just above the browser launch.
         except Exception:
             print("  Could not auto-open a browser; open the URL above manually.")
 

@@ -293,6 +293,8 @@
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
+    <div class="pill" id="tideWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Tide</div>
+    <div class="pill" id="wxWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Weather</div>
     <div class="spacer"></div>
     <div class="pill"><span class="k">POS</span><b id="p_pos">no fix</b></div>
     <div class="pill"><span class="k">SOG</span><b id="p_sog">--</b></div>
@@ -5670,6 +5672,89 @@ function syncUICards(){                                 // show a card only whil
 $("#ctlReopen").onclick = ()=> window.open(location.origin + location.pathname + "?panel=controls",
                                            "asv_controls");
 
+// ── THE TIDE AND WEATHER WINDOWS — ONE TAB EACH, RE-POINTED IN PLACE ────────────────
+//
+// Andy, 2026-09-02: *"switch to one tab that re-points itself."*
+//
+// ⚠ THE PAGE HAS TO OWN THESE, AND THAT IS NOT A PREFERENCE. The server used to open them
+// (`webbrowser`), which sidesteps the pop-up blocker but hands the URL to the operating
+// system and gets NO HANDLE BACK - so when the station moved it could only open another
+// tab and leave the stale one behind. A window handle can be navigated cross-origin by
+// whoever opened it, so re-pointing in place is possible only from here.
+//
+// The cost is one click each, and it is unavoidable: `window.open` without a user gesture
+// is blocked (measured, not assumed). Framing the pages instead is not an option either -
+// NDBC sends `X-Frame-Options: deny` with `frame-ancestors 'none'`, NOAA Tides sends
+// `SAMEORIGIN`. So the console asks for that click with a pill, once, and never again:
+// after it, the station can move as often as it likes and the same tab follows it.
+const STATION_WINDOWS = {
+  // The NAME is what makes this survive a reload of THIS page. The handle is lost when the
+  // console page reloads, but `window.open(url, name)` re-adopts an existing window with
+  // that name rather than stacking a second one - so a reload costs one click, not a tab.
+  tide:    {name: "asvTideWindow",    pill: "#tideWin", label: "Tide",
+            src: () => (S.water || {}), what: "water-level station"},
+  weather: {name: "asvWeatherWindow", pill: "#wxWin",   label: "Weather",
+            src: () => (S.env || {}),   what: "weather buoy"},
+};
+function stationWinAlive(k){
+  const w = STATION_WINDOWS[k].w;
+  // `closed` on a cross-origin handle is one of the few properties still readable, but a
+  // handle from a previous page life can throw - treat any refusal as "not ours".
+  try { return !!(w && !w.closed); } catch(e){ return false; }
+}
+/**
+ * Follow the station. Called on every state poll, so a port change, a long transit or a
+ * gauge going out of service are all the same event here: the URL we hold differs from the
+ * one the server now reports.
+ */
+function syncStationWindows(){
+  for(const k of Object.keys(STATION_WINDOWS)){
+    const cfg = STATION_WINDOWS[k];
+    cfg.want = cfg.src().page || null;                    // built server-side; see snapshot()
+    if(cfg.want && stationWinAlive(k) && cfg.want !== cfg.url){
+      // ⚠ NAVIGATING A WINDOW WE OPENED IS ALLOWED CROSS-ORIGIN; READING IT IS NOT. This
+      // is the whole mechanism - no pop-up is being created, so no blocker is involved.
+      try { cfg.w.location.replace(cfg.want); cfg.url = cfg.want; }
+      catch(e){ cfg.w = null; cfg.url = null; }           // it went away; offer it again
+    }
+  }
+  updateStationWinPills();
+}
+// The pill shows only when there is a station to show and we do NOT hold its window - the
+// same rule, and the same place on the bar, as the controls window's reopen pill.
+function updateStationWinPills(){
+  const on = (S.station_windows || {tide:true, weather:true});
+  for(const k of Object.keys(STATION_WINDOWS)){
+    const cfg = STATION_WINDOWS[k], el = $(cfg.pill);
+    if(!el) continue;
+    const offer = !!(on[k] && cfg.want && !stationWinAlive(k));
+    el.style.display = offer ? "" : "none";
+    if(offer){
+      const w = cfg.src();
+      el.title = "Open the " + cfg.label.toLowerCase() + " window for "
+        + (w.name || w.station || "the nearest " + cfg.what)
+        + (w.dist_km != null ? " (" + w.dist_km.toFixed(1) + " km off)" : "")
+        + " — it then follows the boat: change port and this same tab re-points itself.";
+    }
+  }
+}
+function openStationWindow(k){
+  const cfg = STATION_WINDOWS[k];
+  if(!cfg.want) return;
+  const w = window.open(cfg.want, cfg.name);
+  if(!w){
+    // A BLOCKED POP-UP MUST SAY SO. Failing silently here leaves the operator clicking a
+    // pill that appears to do nothing, which is worse than the stale tab this replaced.
+    showBanner("The browser blocked the " + cfg.label.toLowerCase() + " window. Allow "
+      + "pop-ups for this console, or open it yourself: " + cfg.want);
+    return;
+  }
+  cfg.w = w; cfg.url = cfg.want;
+  updateStationWinPills();
+}
+$("#tideWin").onclick = ()=> openStationWindow("tide");
+$("#wxWin").onclick   = ()=> openStationWindow("weather");
+
 // --- vessel-status card drag/persist ------------------------------------- //
 // --- RESIZABLE CARDS (chart window) --------------------------------------- //
 // ONE mechanism and ONE storage key for every card on the chart window, deliberately the
@@ -6298,6 +6383,9 @@ function onState(s){
   accumRunTime();                                // accrue whole-run elapsed (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
+  // The tide / weather windows follow the station on every poll, so a port change, a long
+  // transit and a gauge dropping out of service are all the same event to them.
+  syncStationWindows();
   syncCompletionSel(s);                          // the selector mirrors the server setting
   rearmRthChain(s, st);
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the

@@ -290,21 +290,25 @@ is an inverse-distance blend of up to 3 stations in range (`--no-tide-window` to
 skip it). A **fourth window** does the same for weather — the NDBC page for the
 nearest buoy, whose wind and waves drive the sim forcing (`--no-weather-window`).
 
-**Both of those windows follow the boat.** The station is re-derived whenever the vessel
-moves far enough — changing port, or simply steaming until a different gauge is nearest —
-and when it changes, the console opens the new station's page and says so on the console
-log. The trigger is the *station*, not the port, so a port change that happens to resolve
-to the same gauge correctly opens nothing, and a long transit that crosses into another
-gauge's range is followed even though no port changed. A brief floor between re-opens stops
-a station that is flapping in and out of service from opening a tab per flap.
+**Both of those windows follow the boat, in place.** The station is re-derived whenever the
+vessel moves far enough — changing port, or simply steaming until a different gauge is
+nearest — and when it changes, **the same tab re-points itself**. The trigger is the
+*station*, not the port, so a port change that resolves to the same gauge correctly does
+nothing, and a long transit that crosses into another gauge's range is followed even though
+no port changed.
 
-> The previous tab is left behind, and that is a browser boundary rather than an oversight:
-> the console hands a URL to the operating system and gets no handle back, so it can
-> neither re-point nor close a tab it opened. Re-pointing in place would need the page to
-> own the window, and the page cannot do the *first* open — that is precisely why the
-> server does it, to sidestep the pop-up blocker. Framing the pages instead is not an
-> option either: NDBC sends `X-Frame-Options: deny`. So a port change leaves one stale tab
-> to close.
+Each window costs **one click** the first time, from a `⏏ Tide` / `⏏ Weather` pill on the
+top bar, and never again. That click is unavoidable: a browser blocks `window.open` without
+a user gesture, and the pages cannot be framed instead (NDBC sends `X-Frame-Options: deny`).
+Only a page can hold a window handle and navigate it, which is why the console — not the
+server — opens these; the server gets no handle back from the operating system and could
+only ever open a second tab beside the stale one. If the browser blocks the pop-up anyway,
+the console says so and gives you the URL rather than leaving a pill that appears to do
+nothing.
+
+Independently of any window, the console **prints which gauge the correction came from and
+what it is made of** whenever the station changes — that correction is applied to charted
+depths whether or not a browser is open at all.
 
 ### Vessel profiles
 
