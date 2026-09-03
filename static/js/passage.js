@@ -56,7 +56,7 @@ import { azTo, distTo, llEN } from "./geodesy.js";
 import { V, nogo, sea } from "./state.js";
 import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
 // Where a boat is asked to hold, and how much water it has there (the hold DISC).
-import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM, snapClearRadial } from "./hold.js";
+import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial } from "./hold.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
@@ -296,18 +296,37 @@ export function holdTarget(to, opts){
   if(!nogo.ready) return {to:{lat:to.lat,lon:to.lon}, heldOff:null, holdClear:null, degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const holdR = Math.max(HOLD_RADIUS_MIN_M, (opts && opts.holdR) || 0);
+  // THE MARGIN IS THE ENVIRONMENT'S. A hold point must hold the boat for as long as the
+  // ladder is allowed to take deciding about it, at the set the boat is actually in - so the
+  // caller passes the live set and the number falls out of it. No set (or no telemetry yet)
+  // still gets the hull-scale floor; it never gets "not blocked" as an answer again.
+  const setMs = Math.max(0, (opts && opts.setMs) || 0);
+  const setDeg = (opts && opts.setDeg);
+  const need = holdMarginM(setMs);
+  const sr = setDeg == null ? 0 : setDeg * Math.PI / 180;
+  const setE = setMs * Math.sin(sr), setN = setMs * Math.cos(sr);
   let heldOff = null;
-  const bi = blockedInfo(llEN(to.lat,to.lon,ref), ko, buf);
-  if(bi){
-    const sn = snapClearRadial(llEN(to.lat,to.lon,ref), ko, buf, holdR);
-    if(!sn) return {error:"the target sits in "+bi.kind+" with no clear water within "
-                          +snapCapM(buf).toFixed(0)+" m of it",
+  const en = llEN(to.lat,to.lon,ref);
+  const bi = blockedInfo(en, ko, buf);
+  const tight = holdClearM(en, ko, buf) < need;
+  if(bi || tight){
+    const sn = snapClearRadial(en, ko, buf, holdR, {need, setE, setN});
+    if(!sn) return {error:(bi ? "the target sits in "+bi.kind : "the target has under "
+                            +need.toFixed(0)+" m of clear water")
+                          +" and nowhere within "+snapCapM(buf).toFixed(0)
+                          +" m of it holds a boat clear",
                     reason:{mode:"target", info:bi, at:to}};
-    const nt = ref.fromEN(sn.e, sn.n);
-    heldOff = {from:{lat:to.lat,lon:to.lon}, m:sn.moved, kind:bi.kind};
-    to = {lat:nt.lat, lon:nt.lon};
+    if(sn.moved > 0){
+      const nt = ref.fromEN(sn.e, sn.n);
+      // WHY it moved, in the words the operator needs: "it is IN the pier" and "it is not IN
+      // the pier but there is no room to sit there" are different sentences.
+      heldOff = {from:{lat:to.lat,lon:to.lon}, m:sn.moved, need,
+                 kind: bi ? bi.kind : "water too tight to hold in",
+                 tight: !bi};
+      to = {lat:nt.lat, lon:nt.lon};
+    }
   }
-  return {to:{lat:to.lat,lon:to.lon}, heldOff,
+  return {to:{lat:to.lat,lon:to.lon}, heldOff, need,
           holdClear: holdClearM(llEN(to.lat,to.lon,ref), ko, buf)};
 }
 // Plan an ENC-aware path from -> to ending at `to` - or at the nearest clear water to

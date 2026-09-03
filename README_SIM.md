@@ -280,6 +280,15 @@ keeps the run's behaviour. With no `hold_clear_m` at all (no browser, no model) 
 re-approach stays, as a Go-To with no route drives direct. While holding, `status` carries
 `hold` (the point), `off_station_m`, `hold_clear_m` and `hold_wants_route`.
 
+**A hold point needs WORKING MARGIN, not merely to be outside the buffer.** The browser
+sizes it from the live set: the water the drift moves the boat through while the guard is
+deciding (the ladder's own `HOLD_S` budget), floored at hull scale. A target with less than
+that — even one that is technically clear — is moved to the nearest berth that has it, and
+where the geometry offers a choice the berth is taken DOWN-SET of the hazard, so residual
+drift carries the boat off the structure and the station-keeping correction is made heading
+into the set. Measured at Eastport, 2026-09-03: HOME had **1.47 m** of clear water, was not
+blocked, was used as it stood, and the boat reached 1.74 m from it at 6.07 kn.
+
 **`/api/cmd/escape`** is the in-extremis clearance guard's OWN manoeuvre (the helm rung of
 the run-time ladder, `static/js/guard.js`) — never the operator's, and structurally distinct
 from `goto` for exactly one reason: it sets `behavior` to `"escape"`, not `"goto"`, so its

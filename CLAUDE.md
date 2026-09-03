@@ -55,9 +55,73 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-03 — the escape does not chain its own undoing)
+## ⇒ START HERE (handoff refreshed 2026-09-03 — a hold point needs room, and the chain asks a whitelist)
 
 ### ➤ PICK UP HERE
+
+**⬜ OPEN, AND THE NEXT THING ANDY ASKED FOR (partly done).** His words: *"The approach must
+be better managed... implement a process that estimates these close approach situations and
+either force home point away from pier on RTH or approach at an oblique rather than straight
+on. Even consider drifting in by calculating wind and current affects on set and drift. Its
+ok to come in at idle with the prop stopped, but it takes calculation to do it."*
+**FORCE-HOME-AWAY IS BUILT (below). THE DRIFT-IN APPROACH IS NOT.** What exists now is the
+enabling half: the set reaches the planner, the margin is sized from it, and the berth is
+chosen down-set so the drift carries the boat OFF the structure. What is still open is the
+approach ITSELF — cutting the prop at a computed range and letting the calculated set carry
+the boat onto station, which needs a stopping-distance model the console does not have yet
+(hull drag vs. way carried, then a release point solved backwards from the berth). Do NOT
+bolt that onto `holdTarget`; it belongs with the leg that flies the approach.
+
+**NEWEST (this commit): THE APPROACH PUT THE BOAT ON THE PIER, AND BOTH HALVES OF WHY ARE
+NOW MEASURED.** Andy, with a screenshot: *"The ASV hit the NOGO pier structure. Again."*
+Replayed from his own session log (`logs/asv_20260903-170505.jsonl`) against the real
+Eastport ENC extract — the numbers below are reproduced byte-exact from the log, not
+estimated.
+
+**⚠ HALF ONE: THE GUARD'S HOLD RUNG WAS READ AS A FINISHED PLAN, NINE TIMES IN THREE
+MINUTES.** Every one of them answered within a second by an RTH at the pier:
+
+    17:11:18  hold (disc 42.06)  ->  17:11:19  rth  (disc 1.47)
+    17:12:11  hold (disc 40.02)  ->  17:12:11  rth  (disc 1.47)
+    17:12:16  hold (disc 31.63)  ->  17:12:17  rth  (disc 1.47)   ... nine of these
+
+The escape fix from the commit before this one WORKED — no chain fired off any of the three
+escapes — **but it was a blacklist, and a blacklist is always one short.** `rth` was excluded
+first, `escape` second, `hold` never. The guard's OTHER rung ("stop, you are standing into
+it") holds the boat, and a hold that arrives looked exactly like a plan that ended. It is a
+WHITELIST now — `CHAINABLE_BEHAVIORS`, a return chains from a plan that RAN TO ITS END and
+nothing else — so the next safety behaviour is excluded by default rather than by being
+remembered. Both the predictor (`rthPending`) and the fire site in `onState` ask it.
+
+**⚠ HALF TWO: HOME HAD 1.47 m OF CLEAR WATER AND THE CONSOLE DROVE THERE ANYWAY.** The boat
+reached **1.74 m from that point at 6.07 kn** (17:11:38, straight off the telemetry). The
+gate is the finding: `holdTarget` attempted a relocation only when `blockedInfo(en, ko, buf)`
+was truthy — **the BARE buffer**. HOME's clearance was 6.47 m against a 5 m buffer, so it was
+"not blocked", so `snapClearRadial` was never consulted at all and 1.47 m went to the vessel
+as a certified hold disc. **"Not blocked" was never a statement that a boat can sit there.**
+
+A hold point now needs a WORKING MARGIN, and the number is the environment's rather than a
+taste: the water the set moves the boat through while the ladder is deciding
+(`holdMarginM = max(hull floor, setMs * HOLD_S)`, importing the ladder's own budget so the
+two agree by construction), floored at 6 m. Under it, the point is moved — and where the
+geometry offers a choice the berth is taken DOWN-SET of the hazard, so residual drift carries
+the boat off the structure and the correction is made heading INTO the set, the direction a
+boat can stop in. Replayed on the real chart: 1.47 m fails, moves 5.0 m on 070, lands with
+6.01 m. `holdOpts()` is the one definition all four call sites use, so a berth commanded from
+any button is sized against the same water.
+
+**⚠ AND AT EASTPORT NOTHING IS DOWN-SET OF THAT PIER — the set runs 340, the pier is north,
+so every available berth is up-set of it.** The preference cannot fix that geometry; the
+MARGIN is what saves the boat there, and the margin GROWS with the set (above ~0.6 kn it
+leaves the floor). Do not read the down-set preference as protection on its own.
+
+**⚠⚠ TWO OF MY OWN MUTATIONS SURVIVED, AND BOTH FOR THE SAME REASON — THE CHECKS SKIPPED THE
+GATE.** Checks 6c–6f drove `snapClearRadial` directly, so collapsing the margin rule back to
+"not blocked" left them green (Eastport's 1.47 m fails BOTH rules — they only disagree in the
+BAND between `buf+holdR` and the margin, which is where check 6c2 now stands), and deleting
+`holdTarget`'s new `|| tight` arm was invisible because nothing tested `holdTarget` with a
+tight-but-unblocked point at all. **That absent check WAS the incident.** 6g drives the real
+entry point now. 7 mutations, all caught.
 
 **⚠ OPEN, AND NEEDS ANDY BEFORE CODE:** he reported *"when respawning delete the
 initial position and the line. It's unneeded."* `resetForNewArea` ALREADY does `track = []`

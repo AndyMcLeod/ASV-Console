@@ -884,6 +884,24 @@ let planIntent = null;   // {kind, at, why:[...], route:[...], target, unsafe, d
 //                 routed way back (reapproachIfSetOff). null when there is no model, which
 //                 leaves the vessel's direct re-approach in place - an honest degrade.
 function holdRadiusM(){ return Math.max(HOLD_RADIUS_MIN_M, +(mission.approach_radius_m) || 0); }
+// THE HOLD-POINT OPTIONS, IN ONE PLACE. The radius the boat may wander, plus the LIVE SET
+// the hold point has to be chosen against - the set decides how much clear water a berth
+// needs (holdMarginM) and which side of the hazard to take (down-set, so the drift carries
+// the boat off the structure rather than onto it). Four call sites; one definition, so a
+// hold point commanded from any of them is chosen against the same water.
+function holdOpts(){
+  const st = (S && S.status) || {};
+  return {holdR: holdRadiusM(),
+          setMs: (st.env_set_kn || 0) * 0.514444,
+          setDeg: st.env_set_deg};
+}
+// Why a hold point moved, in one phrase, shared by every banner that has to say it: "it is
+// IN the pier" and "it is not in the pier but there is no room to sit there" are different
+// sentences, and the second one is the Eastport case.
+function heldOffWhy(h){
+  return h.tight ? ("had under " + fmtDist(h.need) + " of clear water - too tight to hold in this set")
+                 : ("sits in " + h.kind);
+}
 function holdClearAt(ll){
   if(!nogo.ready || !nogo.ko || !nogo.frame || !ll || ll.lat == null) return null;
   return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), nogo.ko, nogo.buffer || 0);
@@ -901,10 +919,15 @@ function setPlanIntent(kind, plan, route){
   // The hold point was MOVED: say from what, and by how much. The operator picked a point
   // they can see, and the boat is going to stop somewhere else - that must never be silent.
   if(plan.heldOff)
-    w.push({t:"warn", s:"the chosen point sits in " + plan.heldOff.kind + " - holding "
-                        + fmtDist(plan.heldOff.m) + " off it, at the nearest clear water"});
+    w.push({t:"warn", s: plan.heldOff.tight
+      ? "the chosen point had under " + fmtDist(plan.heldOff.need) + " of clear water - too "
+        + "tight to hold a boat in this set, so holding " + fmtDist(plan.heldOff.m)
+        + " off it, down-set of the hazard"
+      : "the chosen point sits in " + plan.heldOff.kind + " - holding "
+        + fmtDist(plan.heldOff.m) + " off it, at the nearest clear water"});
   else if(plan.holdClear != null && !plan.degraded)
-    w.push({t:"route", s:"hold point has " + fmtDist(plan.holdClear) + " of clear water round it"});
+    w.push({t:"route", s:"hold point has " + fmtDist(plan.holdClear) + " of clear water round it"
+                        + (plan.need != null ? " (needs " + fmtDist(plan.need) + " in this set)" : "")});
   if(plan.lane){
     w.push(plan.partial
       ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
@@ -3792,7 +3815,7 @@ async function doGoTo(target){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {holdR: holdRadiusM()});
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, holdOpts());
   if(plan.error){
     setViolation(plan.reason);
     const tip = (plan.reason && plan.reason.mode==="target")
@@ -3808,7 +3831,7 @@ async function doGoTo(target){
   cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear});
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
-  if(plan.heldOff) showBanner("Go-To: the point sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)
+  if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
@@ -3864,7 +3887,7 @@ async function doRTH(opts){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {holdR: holdRadiusM()});
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, holdOpts());
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -3877,7 +3900,7 @@ async function doRTH(opts){
   cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear});
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
-  if(plan.heldOff) showBanner("RTH: Home sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)
+  if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
@@ -4025,7 +4048,7 @@ async function doTransit(){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
   // vertex dropped in a keep-out is held OFF at the nearest clear water rather than refused.
-  const ht = holdTarget(transit[transit.length-1], {holdR: holdRadiusM()});
+  const ht = holdTarget(transit[transit.length-1], holdOpts());
   if(ht.error){
     setViolation(ht.reason); render();
     showBanner("Transit refused: "+ht.error+" — highlighted on the chart. Move the last point nearer open water.");
@@ -4044,7 +4067,7 @@ async function doTransit(){
   }
   clearViolation();
   cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
-  if(plan.heldOff) showBanner("Transit: the last point sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)+" off it, at the nearest clear water.");
+  if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
   const note = buoyageNote(plan.lane, plan.partial);   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
@@ -5602,11 +5625,25 @@ function runCompletion(){ return (S && (S.run_completion || S.completion)) || mi
 //     chain; and a run whose own completion is "rth" ends as a plain LOITER whenever the
 //     chain cannot fire. The chain, not the field, is what makes an RTH happen.
 function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="rth"; }
+// WHICH BEHAVIOURS ARE A PLAN THAT RAN TO ITS END - the only thing an end-of-plan return may
+// chain from. A WHITELIST, and that is the whole point of it.
+//
+// ⚠ IT WAS A BLACKLIST AND THE BLACKLIST WAS ALWAYS ONE SHORT. "rth" was excluded so the
+// return did not chain another; "escape" was added after the in-extremis escape chained one
+// straight back into the pier it had just steered clear of. Neither covered "hold" - and at
+// Eastport on 2026-09-03 the guard's own HOLD rung ("stop, you are standing into it") was
+// read as a finished plan NINE TIMES IN THREE MINUTES, each one answered within a second by
+// an RTH to a HOME with 1.47 m of clear water round it. The boat reached 1.74 m from that
+// point at 6.07 kn. Every one of those behaviours is a SAFETY COMMAND or a STOP, and naming
+// them one at a time was always going to lose that race - so the question is now asked the
+// other way round: a return chains from a plan that ENDED, and nothing else.
+const CHAINABLE_BEHAVIORS = ["survey", "search", "goto", "transit"];
+function chainableRun(beh){ return CHAINABLE_BEHAVIORS.indexOf(beh) >= 0; }
 function rthPending(){
-  // behavior!=="escape" too: a card that promises a return the boat is not going to make
-  // is worse than one that never mentioned it, and an escape hold never chains one - see
-  // the chain-fire condition in onState, which this predicts.
-  return !!(S && S.completion==="rth" && S.behavior!=="rth" && S.behavior!=="escape"
+  // The same whitelist the chain-fire condition uses, because this PREDICTS that condition:
+  // a card that promises a return the boat is not going to make is worse than one that never
+  // mentioned it.
+  return !!(S && S.completion==="rth" && chainableRun(S.behavior)
             && S.home && S.armed && !S.estop && !rthChainFailed && runHolds());
 }
 function endAction(){
@@ -5652,7 +5689,7 @@ async function reapproachIfSetOff(s, st){
   if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
   reapproachBusy = true; reapproachAt = Date.now();
   try{
-    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, {holdR: holdRadiusM()});
+    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, holdOpts());
     if(plan.error){
       setViolation(plan.reason);
       showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and NO clear route back — holding where it is with the way off. "+plan.error);
@@ -6608,15 +6645,17 @@ function onState(s){
   // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
   //
-  // ⚠ NOR OFF AN ESCAPE. The in-extremis guard's own manoeuvre (clearanceGuard's helm
-  // rung, behavior "escape") holds at a point chosen ONLY to be clear of the hazard - not
-  // vetted as a plan endpoint, not something the operator asked for. Chaining a return from
-  // there used to send the boat straight back toward whatever it had just been steered
-  // clear of (measured live 2026-09-03: escape, chained RTH 9 s later, a second escape 3 s
-  // after that). Taking the helm is meant to buy the operator's attention, not hand
-  // control straight back to the standing plan; the operator re-commands when ready.
-  if(s.run==="running" && st.holding && s.completion==="rth" && s.behavior!=="rth"
-     && s.behavior!=="escape" && s.armed && !s.estop && !rthChained){
+  // ⚠ NOR OFF A SAFETY COMMAND, AND THAT IS NOW A WHITELIST - see CHAINABLE_BEHAVIORS. The
+  // guard's own rungs both hold the boat: "hold" (stop, you are standing into it) and
+  // "escape" (the helm rung, at a point chosen ONLY to be clear of the hazard). Neither is a
+  // plan endpoint and neither is anything the operator asked for, but each ARRIVES and
+  // HOLDS, which is all this condition used to look at. Measured at Eastport on 2026-09-03:
+  // the HOLD rung was read as a finished plan nine times in three minutes, each answered
+  // within a second by an RTH to a HOME with 1.47 m of clear water. Taking the helm - or the
+  // throttle - is meant to buy the operator's attention, not hand control straight back to
+  // the standing plan that was driving at the pier.
+  if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior)
+     && s.armed && !s.estop && !rthChained){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");
     doRTH({chained:true});

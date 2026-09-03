@@ -39,8 +39,44 @@
 // on the card and tested without a boat moving.
 
 import { blocked, clearanceM } from "./keepouts.js";
+// The ladder's own decision margin. A hold point has to hold the boat for at least as long
+// as the guard is allowed to take deciding about it - see holdMarginM.
+import { HOLD_S } from "./guard.js";
 
 const D2R = Math.PI / 180;
+
+/**
+ * THE WORKING MARGIN A HOLD POINT NEEDS - not merely "not blocked".
+ *
+ * Measured at Eastport, 2026-09-03: HOME sat with 1.47 m of certified clear water round it,
+ * and the console drove there anyway, because nothing asked for more than "outside the
+ * buffer". At 17:11:38 the boat was 1.74 m from that point doing 6.07 kn. A hold point with
+ * no working margin is a strike waiting for the first gust.
+ *
+ * The number is the environment's, not a taste: a station-keeping boat is SET at the
+ * stream's own rate (measured - a hull lying stopped in a 2 kn stream makes 2.00 kn over the
+ * ground, tests/currents.py), so the water it needs is the water the set moves it through
+ * before anything can answer. `HOLD_S` is the ladder's own budget for that decision, so the
+ * two agree by construction rather than by coincidence.
+ *
+ * Floored at hull scale, because a dead calm is not authority to park against a wall - the
+ * boat still yaws, the fix still wanders, and the chart is not perfect.
+ */
+export const HOLD_MARGIN_MIN_M = 6.0;
+export function holdMarginM(setMs = 0, opts = {}) {
+  const react = opts.reactS ?? HOLD_S;
+  const floor = opts.minM ?? HOLD_MARGIN_MIN_M;
+  return Math.max(floor, Math.max(0, setMs || 0) * react);
+}
+
+/**
+ * How much a candidate offset direction is favoured for sitting DOWN-SET of the hazard.
+ *
+ * ⚠ THIS IS A PREFERENCE, NEVER A RULE - every candidate it chooses between has already
+ * satisfied the margin. Expressed as a fraction of the required margin so it can tip a near
+ * tie and cannot buy a materially tighter berth.
+ */
+export const SET_ALIGN_WEIGHT = 0.5;
 
 /**
  * The hold radius the vessel model uses when no approach radius is known: the floor in
@@ -56,34 +92,59 @@ export const SNAP_DEG_STEP = 10;
 export function snapCapM(buf) { return Math.max(150, buf * 20); }
 
 /**
- * The nearest clear water to `p` in ANY direction, with a margin of `buf + holdR`.
+ * The nearest water to `p` that a boat can actually be ASKED TO HOLD IN.
+ *
+ * ⚠ "NOT BLOCKED" WAS THE OLD TEST AND IT WAS NOT ENOUGH. A point one centimetre outside
+ * the buffer passes `blocked()` and is a strike waiting for the first gust; Eastport's HOME
+ * passed it with 1.47 m of clear water and the boat drove there at 6 kn. The test is now the
+ * WORKING MARGIN (`need`): the water the set moves the boat through before anything can
+ * answer. `moved: 0` still means "the point as given was fine", so a berth in open water is
+ * untouched exactly as before.
+ *
+ * ⚠ AND WHERE IT MOVES TO IS NOT ARBITRARY: among candidates that all satisfy the margin, it
+ * prefers the berth DOWN-SET of the hazard, so residual drift carries the boat AWAY from the
+ * structure rather than onto it, and the station-keeping correction is made heading INTO the
+ * set - the direction a boat can actually stop in. That is the seamanlike arrangement and it
+ * is the enabling half of coming in on the drift: keep the hard thing upwind.
  *
  * @param {{e,n}}  p      the requested point, in the model's frame
  * @param {object} ko     keep-out model
  * @param {number} buf    the operator's buffer
  * @param {number} holdR  the hold radius - the disc that must ALSO be clear around the result
- * @returns {{e,n,moved,brg,clr}|null}  `moved` 0 when `p` itself is fine; null when no clear
- *          water lies within the cap - which the caller must treat as a refusal, not as "use
- *          the point anyway".
+ * @param {object} opts   `need` (required clear water, default holdMarginM(0)), `setE`/`setN`
+ *                        (the set as a vector, m/s, for the down-set preference)
+ * @returns {{e,n,moved,brg,clr}|null}  `moved` 0 when `p` itself is fine; null when nothing
+ *          within the cap satisfies the margin - a refusal, not "use the point anyway".
  */
 export function snapClearRadial(p, ko, buf, holdR = HOLD_RADIUS_MIN_M, opts = {}) {
   if (!p || !ko) return null;
   const margin = buf + Math.max(0, holdR || 0);
-  if (!blocked(p, ko, margin)) return { e: p.e, n: p.n, moved: 0, brg: null, clr: clearanceM(p, ko) };
+  const need = opts.need ?? holdMarginM(0);
+  // The margin is measured as clear water round the point (clearance less the buffer), the
+  // same quantity the vessel is later told to re-approach within - one definition, not two.
+  const ok = (q) => !blocked(q, ko, margin) && clearanceM(q, ko) - buf >= need;
+  if (ok(p)) return { e: p.e, n: p.n, moved: 0, brg: null, clr: clearanceM(p, ko) };
   const step = opts.stepM ?? Math.max(2, buf);
   const cap = opts.capM ?? snapCapM(buf);
   const degStep = opts.degStep ?? SNAP_DEG_STEP;
+  const setE = opts.setE || 0, setN = opts.setN || 0;
+  const setMag = Math.hypot(setE, setN);
   for (let d = step; d <= cap + 1e-9; d += step) {
     let best = null;
     for (let a = 0; a < 360; a += degStep) {
       const r = a * D2R;
       const c = { e: p.e + d * Math.sin(r), n: p.n + d * Math.cos(r) };
-      if (blocked(c, ko, margin)) continue;
-      // Within the FIRST clear ring, prefer the candidate with the most water round it. The
-      // ring decides "nearest"; this decides "best of the nearest", so two equally-near
-      // candidates on either side of a pile do not pick the one hard against the next pile.
+      if (!ok(c)) continue;
+      // Within the FIRST qualifying ring, prefer the most water - the ring decides "nearest",
+      // this decides "best of the nearest", so two equally-near candidates either side of a
+      // pile do not pick the one hard against the next pile. The set tips a near tie toward
+      // the down-set berth; it is scaled by `need` so it can never buy a tighter one.
       const clr = clearanceM(c, ko);
-      if (!best || clr > best.clr) best = { e: c.e, n: c.n, moved: d, brg: a, clr };
+      const align = setMag > 1e-6
+        ? (Math.sin(r) * setE + Math.cos(r) * setN) / setMag    // +1 dead down-set
+        : 0;
+      const score = clr + SET_ALIGN_WEIGHT * need * align;
+      if (!best || score > best.score) best = { e: c.e, n: c.n, moved: d, brg: a, clr, score };
     }
     if (best) return best;
   }

@@ -151,6 +151,104 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         "cap " + H.snapCapM(BUF) + " m, nearest water 400 m");
 }
 
+// ── 6b-6e. THE WORKING MARGIN. "Not blocked" was the old test for a hold point and it is
+// not enough: Eastport's HOME passed it with 1.47 m of clear water and the boat drove there
+// at 6.07 kn (measured, session 20260903-170505). The margin a berth needs is the water the
+// SET moves the boat through while the guard is deciding - the ladder's own HOLD_S budget -
+// floored at hull scale so a dead calm is not authority to park against a wall.
+{
+  const G = require("../static/js/guard.js");
+  check("6b. the margin is the ladder's own decision budget spent at the present set, floored "
+        + "at hull scale - not a taste",
+        () => Math.abs(H.holdMarginM(0) - H.HOLD_MARGIN_MIN_M) < 1e-9
+              && Math.abs(H.holdMarginM(1.0) - 1.0 * G.HOLD_S) < 1e-9
+              && H.holdMarginM(0.17) === H.HOLD_MARGIN_MIN_M,
+        "calm " + H.holdMarginM(0) + " m; 1 m/s of set -> " + H.holdMarginM(1.0)
+          + " m (HOLD_S=" + G.HOLD_S + " s); Eastport's 0.33 kn is under the floor");
+
+  // THE REPORTED CASE, to the metre: a pier face 6.5 m off gives 1.5 m of clear water at a
+  // 5 m buffer - what HOME actually had. It is not blocked. It must still be refused as a
+  // place to leave a boat.
+  const face = [{ e: -400, n: 6.5 }, { e: 400, n: 6.5 }, { e: 400, n: 306 }, { e: -400, n: 306 }];
+  const EAST = { polys: [{ ring: face, bb: bbOf(face), kind: "a dock / pier" }],
+                 lines: [], points: [], marks: [], sys: [], chans: [] };
+  const need = H.holdMarginM(0.33 * 0.514444);
+  const sn = H.snapClearRadial({ e: 0, n: 0 }, EAST, BUF, HOLD_R, { need });
+  check("6c. EASTPORT: a point that is NOT blocked but has 1.5 m of clear water is still "
+        + "moved - the old test passed it and the boat hit the pier",
+        () => !blocked({ e: 0, n: 0 }, EAST, BUF)          // genuinely not blocked
+              && sn && sn.moved > 0 && sn.clr - BUF >= need - 1e-9,
+        sn ? "1.5 m -> moved " + sn.moved.toFixed(1) + " m on brg " + sn.brg + ", now "
+             + (sn.clr - BUF).toFixed(2) + " m clear (needs " + need.toFixed(1) + ")" : "null");
+
+  // ⚠ 6c ON ITS OWN DOES NOT ISOLATE THE MARGIN RULE, and a mutation proved it: Eastport's
+  // 1.5 m fails BOTH the old test (blocked at buf+holdR) and the new one, so collapsing the
+  // rule back to "not blocked" still relocated that point and 6c stayed green. The rules
+  // only disagree in the BAND between them - clear water above `buf+holdR` but under the
+  // working margin - so that band is where the check has to stand.
+  const band = [{ e: -400, n: 9 }, { e: 400, n: 9 }, { e: 400, n: 309 }, { e: -400, n: 309 }];
+  const BAND = { polys: [{ ring: band, bb: bbOf(band), kind: "a dock / pier" }],
+                 lines: [], points: [], marks: [], sys: [], chans: [] };
+  const bandSn = H.snapClearRadial({ e: 0, n: 0 }, BAND, BUF, HOLD_R, { need });
+  check("6c2. ... so: 4 m of clear water passes 'not blocked' at every margin the old rule "
+        + "used, and is STILL moved, because 4 m is not room to hold a boat",
+        () => !blocked({ e: 0, n: 0 }, BAND, BUF + HOLD_R)   // the old rule says fine
+              && bandSn && bandSn.moved > 0                  // the new one moves it anyway
+              && bandSn.clr - BUF >= need - 1e-9,
+        bandSn ? "4 m clear -> moved " + bandSn.moved.toFixed(1) + " m, now "
+                 + (bandSn.clr - BUF).toFixed(2) + " m (needs " + need.toFixed(1) + ")" : "null");
+  check("6d. ... and it moves AWAY from the pier, never along the face into the same trouble",
+        () => sn && sn.n < 0 && sn.brg > 90 && sn.brg < 270,
+        sn ? "brg " + sn.brg + ", n=" + sn.n.toFixed(1) + " (pier face at n=6.5)" : "null");
+  check("6e. a berth with room to spare is left EXACTLY where the operator put it",
+        () => { const far = H.snapClearRadial({ e: 0, n: -80 }, EAST, BUF, HOLD_R, { need });
+                return far && far.moved === 0 && far.e === 0 && far.n === -80; },
+        "no gratuitous relocation of a point that was already fine");
+
+  // ⚠⚠ 6g IS THE CHECK THAT WAS MISSING, AND ITS ABSENCE IS THE WHOLE INCIDENT. Everything
+  // above drives snapClearRadial directly - but the reason Eastport's HOME was used as it
+  // stood is that it never REACHED snapClearRadial: holdTarget gated the whole relocation on
+  // `blockedInfo(en, ko, buf)`, the BARE buffer. HOME's clearance was 6.5 m against a 5 m
+  // buffer, so it was "not blocked", so nothing was consulted and 1.47 m of clear water went
+  // to the vessel as a hold point. A check that skips the gate cannot see the gate.
+  const frame = planeFrame({ lat: 44.9, lon: -66.98 });
+  S.nogo.ready = true; S.nogo.frame = frame; S.nogo.ko = EAST; S.nogo.buffer = BUF;
+  const ht = P.holdTarget(frame.fromEN(0, 0), { holdR: HOLD_R });
+  const htEn = ht.to ? frame.toEN(ht.to) : null;
+  check("6g. THE GATE: holdTarget itself moves a point that is clear of the BARE buffer but "
+        + "has no room to hold in - the exact way Eastport's HOME reached the vessel",
+        () => !blocked({ e: 0, n: 0 }, EAST, BUF)      // the old gate said "fine, use it"
+              && !ht.error && ht.heldOff && ht.heldOff.tight === true
+              && htEn && htEn.n < 0 && ht.holdClear >= ht.need - 1e-9,
+        ht.error ? ht.error
+                 : "moved " + (ht.heldOff ? ht.heldOff.m.toFixed(1) : "0") + " m; holdClear "
+                   + (ht.holdClear != null ? ht.holdClear.toFixed(2) : "?") + " m, needs "
+                   + (ht.need != null ? ht.need.toFixed(1) : "?"));
+  check("6h. ... and it says WHICH reason, because 'it is in the pier' and 'there is no room "
+        + "to sit there' are different sentences to an operator",
+        () => ht.heldOff && ht.heldOff.tight === true && /too tight/.test(ht.heldOff.kind),
+        ht.heldOff ? ht.heldOff.kind : "no heldOff");
+  S.nogo.ko = KO;
+}
+
+// ── 6f. DOWN-SET, WHERE THE GEOMETRY ALLOWS A CHOICE. Two equally-near berths, one either
+// side of a pile: take the one the set carries the boat AWAY from the hazard from, so the
+// station-keeping correction is made heading INTO the set - the direction a boat can stop
+// in. A preference, never a rule: it is scaled by `need` so it cannot buy a tighter berth.
+{
+  const pile = { polys: [], lines: [],
+                 points: [{ e: 0, n: 0, r: 3, kind: "a pile" }], marks: [], sys: [], chans: [] };
+  const need = H.HOLD_MARGIN_MIN_M;
+  const setMs = 1.0;
+  const east = H.snapClearRadial({ e: 0, n: 0 }, pile, BUF, HOLD_R, { need, setE: setMs, setN: 0 });
+  const west = H.snapClearRadial({ e: 0, n: 0 }, pile, BUF, HOLD_R, { need, setE: -setMs, setN: 0 });
+  check("6f. the set decides WHICH equally-good berth: down-set of the pile, so the drift "
+        + "carries the boat off it and the correction is made into the set",
+        () => east && west && east.e > 0 && west.e < 0,
+        east && west ? "set east -> brg " + east.brg + " (e=" + east.e.toFixed(1)
+                       + "); set west -> brg " + west.brg + " (e=" + west.e.toFixed(1) + ")" : "null");
+}
+
 // ── 7-8. THE PLANNER: the target is a hold point ───────────────────────────────────
 {
   const frame = planeFrame({ lat: 44.9, lon: -66.98 });
@@ -179,7 +277,7 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   S.nogo.ko = { polys: [{ ring: r, bb: bbOf(r), kind: "land" }], lines: [], points: [], marks: [], sys: [], chans: [] };
   const boxed = P.holdTarget(frame.fromEN(0, 0), { holdR: HOLD_R });
   check("8b. boxed in, the refusal remains and names the search cap",
-        () => boxed.error && /no clear water within \d+ m/.test(boxed.error) && boxed.reason.mode === "target",
+        () => boxed.error && /nowhere within \d+ m/.test(boxed.error) && boxed.reason.mode === "target",
         boxed.error || "no error");
   S.nogo.ko = KO;
 }
@@ -201,15 +299,24 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         () => /const hp = plan\.route\[plan\.route\.length-1\]/.test(goTo)
               && /cmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear\}\)/.test(goTo)
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
-              && /planNogoRoute\([^)]*\{holdR: holdRadiusM\(\)\}\)/.test(goTo),
+              && /planNogoRoute\([^)]*holdOpts\(\)\)/.test(goTo),
         "a Go-To that names the pier as its target would hold ON the pier");
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
         () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear\}\)/.test(rth)
-              && /holdTarget\(transit\[transit\.length-1\], \{holdR: holdRadiusM\(\)\}\)/.test(tran)
+              && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
               && /cmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(noComments(PAGE.slice(PAGE.indexOf('$("#b_hold").onclick'), PAGE.indexOf('$("#b_hold").onclick') + 300))),
         "every holding command tells the vessel how much water it has");
+  // 9c. EVERY hold point is chosen against the SAME water. Four call sites reach the
+  // planner; if one of them forgets the set, a berth commanded from that button is sized by
+  // a different rule than the others - and the one that forgets is the one that hits a pier.
+  check("9c. all four hold-point call sites go through the one set-aware definition, and it "
+        + "reads the LIVE set rather than assuming calm",
+        () => (noComments(PAGE).match(/holdOpts\(\)/g) || []).length >= 5   // 4 call sites + the definition
+              && /setMs:\s*\(st\.env_set_kn \|\| 0\) \* 0\.514444/.test(noComments(grab(PAGE, "holdOpts")))
+              && /setDeg:\s*st\.env_set_deg/.test(noComments(grab(PAGE, "holdOpts"))),
+        "the margin a berth needs is the set's, so the set has to reach the planner");
   check("10. the hold radius is the vessel model's own floor, never below it",
         () => /Math\.max\(HOLD_RADIUS_MIN_M, \+\(mission\.approach_radius_m\) \|\| 0\)/.test(hr)
               && Math.abs(H.HOLD_RADIUS_MIN_M - 2.0) < 1e-9,

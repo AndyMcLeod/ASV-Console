@@ -83,7 +83,10 @@ function grab(name) {
 
 var S = null, rthChained = false, rthChainFailed = false, mission = { completion: "rth" };
 // eslint-disable-next-line no-eval
-eval(grab("runCompletion") + "\n" + grab("runHolds") + "\n" +
+// CHAINABLE_BEHAVIORS comes across VERBATIM with its helper - the real list, so a behaviour
+// added to the page is tested here rather than in a copy of it that can drift.
+eval(grabDecl("CHAINABLE_BEHAVIORS") + "\n" + grab("chainableRun") + "\n" +
+     grab("runCompletion") + "\n" + grab("runHolds") + "\n" +
      grab("rthPending") + "\n" + grab("endAction") + "\n" + grab("rearmRthChain"));
 
 let fails = 0;
@@ -144,6 +147,31 @@ check("5b. an escape hold likewise station-keeps at the escape point — it neve
       (S = state({ behavior: "escape" }), rthPending() === false),
       "behavior escape -> 'loiter', not 'rth' — a Go-To-shaped escape used to promise " +
       "(and then fire) exactly the return it had just steered clear of");
+
+// 5c. THE GUARD'S OTHER RUNG, and the one that actually put a boat on a pier. `escape` was
+// excluded when the helm rung was found chaining; `hold` was not, and it is the SAME shape -
+// the guard says "stop, you are standing into it", the boat holds, and the chain reads that
+// hold as a finished plan. Measured at Eastport, 2026-09-03 (session 20260903-170505): NINE
+// hold -> RTH chains in three minutes, every one of them answered within a second, every one
+// of them aimed at a HOME with 1.47 m of clear water round it. The boat reached 1.74 m from
+// that point at 6.07 kn.
+//
+// ⚠ SO THE QUESTION IS ASKED THE OTHER WAY ROUND NOW. A blacklist of behaviours that must
+// not chain was one short twice; the whitelist names what a chain may fire FROM - a plan that
+// ran to its end - and a new safety behaviour is excluded by default rather than by having
+// been remembered.
+check("5c. a guard HOLD is not a finished plan — the rung that says 'stop, you are standing "
+      + "into it' must never be answered by a return to the thing it stopped for",
+      endWith({ behavior: "hold", run_completion: "loiter" }) === "loiter" &&
+      (S = state({ behavior: "hold" }), rthPending() === false),
+      "nine of these in three minutes drove a boat at a pier with 1.47 m of clear water");
+check("5d. ... and the whitelist still lets a real plan end at home: survey, search, goto "
+      + "and transit all chain, and nothing else does",
+      ["survey", "search", "goto", "transit"].every(
+        (b) => (S = state({ behavior: b }), rthPending() === true)) &&
+      ["hold", "escape", "rth"].every(
+        (b) => (S = state({ behavior: b }), rthPending() === false)),
+      "a blacklist was one short twice; this is the same question asked the other way round");
 
 // 6-9. THE CHAIN'S PRECONDITIONS. Each of these makes the chain unable to fire, so the
 // promise has to be retracted - a card that says "rth" when the boat is going to sit at
@@ -218,12 +246,20 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // clearance_guard.js / in_extremis.js), so an `() => ...` wrapper here is a function
   // OBJECT - always truthy - and the check would be permanently green. Evaluated eagerly,
   // matching every other check in this file.
-  const fires = /s\.behavior\s*!==\s*"escape"/.test(fireBlock) && /doRTH\(\{chained:true\}\)/.test(fireBlock);
-  check("16b. the LITERAL chain-fire condition in onState excludes behavior \"escape\", not " +
-        "just rthPending()",
+  const fires = /chainableRun\(s\.behavior\)/.test(fireBlock) && /doRTH\(\{chained:true\}\)/.test(fireBlock);
+  check("16b. the LITERAL chain-fire condition in onState asks the WHITELIST, not just " +
+        "rthPending() and not a blacklist of its own",
         fires,
-        fireBlock.includes('s.behavior!=="escape"')
-          ? "excluded" : "MISSING — an escape hold would still chain doRTH() here");
+        /chainableRun\(s\.behavior\)/.test(fireBlock)
+          ? "chainableRun() - the same question rthPending() asks"
+          : "MISSING — a guard hold or escape would still chain doRTH() here");
+  // 16c. And the whitelist is a whitelist: naming the behaviours that MAY chain is what
+  // makes a new safety behaviour excluded by default. A blacklist was one short twice.
+  check("16c. the chainable set names plans that ended, and admits no guard command",
+        ["survey", "search", "goto", "transit"].every((b) => chainableRun(b)) &&
+        !chainableRun("hold") && !chainableRun("escape") && !chainableRun("rth") &&
+        !chainableRun("") && !chainableRun(undefined),
+        "an unknown or future behaviour is excluded until someone decides otherwise");
 }
 
 // --- INTENT: the reasoning travels WITH the plan it describes -------------------------
