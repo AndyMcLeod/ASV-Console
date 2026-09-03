@@ -216,7 +216,7 @@ check("11. no ground track means no predicted entry — and the next tick will s
   const code = fn.replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/.*$/, ""));
   check("12. every rung commands something different, and only the last one steers",
         () => /cmd\("\/api\/cmd\/speed", \{speed:"low"\}\)/.test(code)
-              && /cmd\("\/api\/cmd\/hold"\)/.test(code)
+              && /cmd\("\/api\/cmd\/hold"/.test(code)
               && /cmd\("\/api\/cmd\/goto"/.test(code)
               && code.indexOf('cmd("/api/cmd/goto"') > code.indexOf('a.level === "helm"'),
         "slow -> speed low, hold -> hold, helm -> goto");

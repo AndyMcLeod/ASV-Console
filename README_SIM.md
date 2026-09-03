@@ -269,9 +269,17 @@ curl -s -X POST localhost:8791/api/cmd/estop  -H "Content-Type: application/json
 Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
 `/api/cmd/upload` · `/api/cmd/start` · `/api/cmd/pause` · `/api/cmd/stop` ·
 `/api/cmd/estop` · `/api/cmd/rth` · `/api/cmd/goto` · `/api/cmd/transit` ·
-`/api/cmd/hold` · `/api/cmd/sethome` · `/api/cmd/approach`. The behaviour commands
-(`goto`/`rth`/`transit`) accept an ENC-aware `{route:[…]}` computed by the browser;
-`upload` accepts one too. Data: `/api/state` · `/events` (SSE) · `/api/mission` ·
+`/api/cmd/hold` · `/api/cmd/reapproach` · `/api/cmd/sethome` · `/api/cmd/approach`. The
+behaviour commands (`goto`/`rth`/`transit`) accept an ENC-aware `{route:[…]}` computed by
+the browser; `upload` accepts one too. **Every holding command also accepts
+`hold_clear_m`** — the radius round the hold point the browser certified clear of the
+keep-out model. The sim re-approaches DIRECT inside that disc (a chord of a clear disc is
+clear); set beyond it, it takes the way off and reports `hold_wants_route`, and the browser
+answers with `/api/cmd/reapproach {route, hold_clear_m}` — a routed way back that keeps the
+run's behaviour. With no `hold_clear_m` at all (no browser, no model) the direct re-approach
+stays, as a Go-To with no route drives direct. While holding, `status` carries `hold`
+(the point), `off_station_m`, `hold_clear_m` and `hold_wants_route`.
+Data: `/api/state` · `/events` (SSE) · `/api/mission` ·
 `/api/enc?bbox=…` (ENC features) · `/api/chartinfo?bbox=…` (chart-source metadata:
 ENC cells + zone-of-confidence polygons, for the Chart source card) ·
 `/api/waterlevel` · `/api/env` (sim wind/sea +

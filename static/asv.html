@@ -675,11 +675,14 @@ import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // clearance guard below is the one place that decides and commands.
 import { assess as guardAssess, escapeCourse, groundVel, restoreVel, HORIZON_S as GUARD_HORIZON_S }
   from "/static/js/guard.js";
+// Where a boat is asked to hold, and how much water it has there - the command-time half
+// of the same work: the hold DISC the vessel is told about with every holding command.
+import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
-         junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
+         holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
 import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM,
@@ -872,14 +875,36 @@ let runRoute = null;                             // last uploaded ENC-routed run
 // `runRoute` is cleared; nothing re-derives it later, because a re-derivation would
 // describe whatever the console happens to hold NOW rather than the plan being flown.
 let planIntent = null;   // {kind, at, why:[...], route:[...], target, unsafe, degraded}
+// THE HOLD DISC, two numbers the vessel is told with every holding command (hold.js):
+//   holdRadiusM   how far the boat may wander before it re-approaches - the sim's own
+//                 max(approach radius, 2 m), stated once here so both sides mean one disc
+//   holdClearAt   the water certified clear around a point at the operator's buffer; sent
+//                 as `hold_clear_m`. Inside it the boat re-approaches direct (a chord of a
+//                 clear disc is clear); beyond it, it takes the way off and asks for a
+//                 routed way back (reapproachIfSetOff). null when there is no model, which
+//                 leaves the vessel's direct re-approach in place - an honest degrade.
+function holdRadiusM(){ return Math.max(HOLD_RADIUS_MIN_M, +(mission.approach_radius_m) || 0); }
+function holdClearAt(ll){
+  if(!nogo.ready || !nogo.ko || !nogo.frame || !ll || ll.lat == null) return null;
+  return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), nogo.ko, nogo.buffer || 0);
+}
 function setPlanIntent(kind, plan, route){
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
-                why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded)};
+                why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
+                heldOff: (plan && plan.heldOff) || null,
+                holdClear: (plan && plan.holdClear != null) ? plan.holdClear : null};
   if(!plan) return planIntent;
   const w = planIntent.why;
   if(plan.degraded) w.push({t:"warn", s:"nogo model not loaded - driving DIRECT, unverified against the chart"});
   else if(plan.routed) w.push({t:"route", s:"routed clear of the keep-out model via " + (route||[]).length + " waypoints"});
   else w.push({t:"route", s:"direct - the straight line was already clear of the keep-out model"});
+  // The hold point was MOVED: say from what, and by how much. The operator picked a point
+  // they can see, and the boat is going to stop somewhere else - that must never be silent.
+  if(plan.heldOff)
+    w.push({t:"warn", s:"the chosen point sits in " + plan.heldOff.kind + " - holding "
+                        + fmtDist(plan.heldOff.m) + " off it, at the nearest clear water"});
+  else if(plan.holdClear != null && !plan.degraded)
+    w.push({t:"route", s:"hold point has " + fmtDist(plan.holdClear) + " of clear water round it"});
   if(plan.lane){
     w.push(plan.partial
       ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
@@ -1066,7 +1091,9 @@ function clearanceGuard(){
   if(a.level === "hold"){
     if(escalated){
       guardActedAt = Date.now();
-      cmd("/api/cmd/hold");
+      // Told how much water it has here, so a boat set off THIS hold point does not drive
+      // a blind bearing back towards the very feature it was holding off.
+      cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
                 + "Drift alone stays clear, so taking the way off answers it.");
     }
@@ -2603,7 +2630,14 @@ function accumLineTime(){
 // BEHAVIOUR is before it looks at either variable. One classifier, one answer, one place.
 function currentActivity(){
   const run = S && S.run, st = (S && S.status) || {};
-  if(st.holding) return {activity:"holding", detail:"station-keeping", surveying:false, role:"transit"};
+  if(st.holding){
+    // Set beyond the water certified clear round the hold point: the vessel has taken the
+    // way off rather than drive a blind bearing, and is waiting on a routed way back.
+    const off = st.hold_wants_route
+      ? " — set " + fmtDist(st.off_station_m || 0) + " off station, beyond the certified clear water; routed re-approach pending"
+      : "";
+    return {activity:"holding", detail:"station-keeping" + off, surveying:false, role:"transit"};
+  }
   if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
   const beh = (S && S.behavior) || "";
   if(beh === "survey"){
@@ -3736,20 +3770,25 @@ async function doGoTo(target){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target);
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {holdR: holdRadiusM()});
   if(plan.error){
     setViolation(plan.reason);
     const tip = (plan.reason && plan.reason.mode==="target")
-      ? "Pick a point in open water."
+      ? "Pick a point nearer open water."
       : "Try a point on the near side of it, or lower the Buf m / relax the nogo enforce toggles.";
     showBanner("Go-To refused: "+plan.error+" — highlighted on the chart. "+tip);
     flashNote("Go-To refused: "+plan.error); render(); return;
   }
   clearViolation();
-  cmd("/api/cmd/goto", {lat:target.lat, lon:target.lon, route:plan.route});
+  // The route ends at the HOLD POINT - the target itself, or the nearest clear water to it
+  // when it sits in a keep-out - and the vessel is told how much water is clear round it.
+  const hp = plan.route[plan.route.length-1] || target;
+  cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear});
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
-  if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
+  if(plan.heldOff) showBanner("Go-To: the point sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)
+    +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
+  else if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -3803,7 +3842,7 @@ async function doRTH(opts){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon});
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {holdR: holdRadiusM()});
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -3811,10 +3850,14 @@ async function doRTH(opts){
     flashNote("RTH refused: "+plan.error); render(); return;
   }
   clearViolation();
-  cmd("/api/cmd/rth", {route:plan.route});
+  // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
+  // there (holdTarget) - and the vessel is told how much water is clear round that point.
+  cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear});
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
-  if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
+  if(plan.heldOff) showBanner("RTH: Home sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)
+    +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
+  else if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -3958,7 +4001,17 @@ async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
   if(!asv){ flashNote("No position fix yet."); return; }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
-  const plan = routePlan({lat:asv.lat,lon:asv.lon}, transit, true);   // pure transit: keep right (Rule 9)
+  // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
+  // vertex dropped in a keep-out is held OFF at the nearest clear water rather than refused.
+  const ht = holdTarget(transit[transit.length-1], {holdR: holdRadiusM()});
+  if(ht.error){
+    setViolation(ht.reason); render();
+    showBanner("Transit refused: "+ht.error+" — highlighted on the chart. Move the last point nearer open water.");
+    flashNote("Transit refused: "+ht.error); return;
+  }
+  const line = [...transit.slice(0,-1), ht.to];
+  const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true);   // pure transit: keep right (Rule 9)
+  plan.heldOff = ht.heldOff; plan.holdClear = ht.holdClear;
   runRoute = plan.route; runUnsafe = plan.unroutable || []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
@@ -3968,7 +4021,8 @@ async function doTransit(){
     return;
   }
   clearViolation();
-  cmd("/api/cmd/transit", {route: plan.route});
+  cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
+  if(plan.heldOff) showBanner("Transit: the last point sits in "+plan.heldOff.kind+" — holding "+fmtDist(plan.heldOff.m)+" off it, at the nearest clear water.");
   const added = plan.route.length - transit.length;
   const note = buoyageNote(plan.lane, plan.partial);   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
@@ -5550,6 +5604,48 @@ function endAction(){
 function rearmRthChain(s, st){
   if(s.run==="running" && !(st||{}).holding){ rthChained=false; rthChainFailed=false; }
 }
+// THE ROUTED RE-APPROACH. A station-keeping vessel that has been set beyond the water the
+// console certified clear round its hold point takes the way off and says so
+// (`hold_wants_route`); it does NOT drive a bearing back, because a bearing through a pier
+// is the loop Andy photographed at Eastport. The way back is planned here, through the same
+// planner every other commanded motion uses, and sent as a re-approach - which keeps the
+// run's behaviour (a boat holding at home after an RTH stays "rth" on every card).
+//
+// One in flight at a time, and a floor between them: the tide sets a boat off a tight hold
+// every few seconds, and each re-approach is a real command the server persists and the
+// session log records. A refusal - no clear route back - is said out loud and the boat is
+// left where it is with the way off; the run-time ladder still watches it there.
+let reapproachAt = 0, reapproachBusy = false;
+const REAPPROACH_MIN_MS = 3000;
+async function reapproachIfSetOff(s, st){
+  st = st || {};
+  if(!(s && s.run==="running" && st.holding && st.hold_wants_route && st.hold)) return;
+  if(!(s.armed && !s.estop)) return;               // not under autonomous command: alarm only
+  if(s.home_following) return;                     // a moving home is re-targeted by the chase
+  if(rthPending()) return;                         // the end-of-plan RTH is about to take over
+  if(!nogo.ready || !asv) return;                  // no model now: nothing honest to send
+  if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
+  reapproachBusy = true; reapproachAt = Date.now();
+  try{
+    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, {holdR: holdRadiusM()});
+    if(plan.error){
+      setViolation(plan.reason);
+      showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and NO clear route back — holding where it is with the way off. "+plan.error);
+      return;
+    }
+    const r = await cmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
+    if(!(r && r.ok)) return;                       // cmd() already said why
+    // A committed route captures its reasoning (end_action 23b): the re-approach is one,
+    // under the run's own kind, and it says why it exists.
+    const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
+    runRoute = plan.route; runUnsafe = []; setPlanIntent(kind, plan, plan.route);
+    planIntent.why.unshift({t:"warn", s:"set "+fmtDist(st.off_station_m||0)
+      +" off station, beyond the "+fmtDist(st.hold_clear_m||0)+" certified clear — re-approaching on a routed path of "
+      +plan.route.length+" waypoint(s) rather than a bearing"});
+    flashNote("Set "+fmtDist(st.off_station_m||0)+" off station — re-approaching on a routed path ("+plan.route.length+" wpts).");
+    render();
+  } finally { reapproachBusy = false; }
+}
 // Close the loop: the selector mirrors the SERVER's setting, so the two can never drift
 // apart unnoticed. Skipped while the operator has the control open, so it can't fight a
 // selection mid-change.
@@ -6331,7 +6427,8 @@ $("#b_upload").onclick = ()=>{
   clearViolation();
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
-  cmd("/api/cmd/upload", {route: plan.route});
+  // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
+  cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])});
   render();
 };
 $("#b_start").onclick = async ()=>{
@@ -6342,7 +6439,7 @@ $("#b_start").onclick = async ()=>{
 $("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
 $("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
-$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/hold"); render(); }; // station-keep: no transit to draw
+$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
@@ -6491,6 +6588,7 @@ function onState(s){
     flashNote("End of plan — chaining Return-to-Home.");
     doRTH({chained:true});
   }
+  reapproachIfSetOff(s, st);                     // set beyond the certified water: route back
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
   $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
   $("#note").textContent = s.note || "";
@@ -6814,7 +6912,9 @@ function updateMissionCard(){
         : rthPending() ? "END OF PLAN — returning home (RTH)"
         : "LOITER — station-keeping at the last waypoint")
       + (dEnd!=null? ": "+fmtDist(dEnd)+" off" : "")
-      + " (arrival "+(mission.arrival_radius_m||2)+" m)";
+      + " (arrival "+(mission.arrival_radius_m||2)+" m)"
+      + (st.hold_wants_route ? " · SET OFF STATION — beyond the "+fmtDist(st.hold_clear_m||0)
+                               +" certified clear; way off, routed re-approach pending" : "");
   } else if(run==="running"){
     const lap=(st.laps!=null && runCompletion()==="repeat") ? " · lap "+(st.laps+1) : "";
     s = "running"+lap+((rr&&runTotalM>0)?" · "+Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM)))+"%":"");

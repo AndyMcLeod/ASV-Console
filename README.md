@@ -28,6 +28,13 @@ console's own.
 > A drift report from that repo is correct and expected. The other five are still plain
 > copies and are still best changed at the source.
 
+The console's own modules beside them include `guard.js` (what is AHEAD of the boat and
+the four-rung ladder that answers it) and `hold.js` (where a boat is asked to hold, and how
+much water it has there: a target inside a keep-out is held OFF at the nearest clear water
+in any direction, and every holding command tells the vessel the radius certified clear
+round its hold point, so a boat set off station re-approaches direct only inside that
+water and is routed back beyond it).
+
 Run it, a
 browser tab opens. Defaults are scaled for the ~2 m boat (tight turns, small
 keep-clear buffer, short survey/search patterns).

@@ -55,6 +55,8 @@
 import { azTo, distTo, llEN } from "./geodesy.js";
 import { V, nogo, sea } from "./state.js";
 import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
+// Where a boat is asked to hold, and how much water it has there (the hold DISC).
+import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM, snapClearRadial } from "./hold.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
@@ -273,14 +275,51 @@ export function pruneJunctionKnots(lineIn, Ap, via, Bp, lineOut, ref, ko, buf){
 // far bank). Endpoints are fixed; a smoothed point that would land in a keep-out is left
 // un-smoothed. Net: many waypoints, on the centreline on the straights, gently rounded
 // at the bends.
-// Plan an ENC-aware path from -> to ending at `to`. {route} on success, {error}
-// when the target sits in a nogo zone or no clear route exists (refuse + warn).
-// Keeps to the starboard side of channels (Rule 9).
-export function planNogoRoute(from, to){
+// THE END OF A COMMANDED ROUTE IS WHERE THE BOAT WILL HOLD, so a target is a HOLD POINT
+// and not merely a destination (the command-time half of the Eastport work, 2026-09-03).
+//
+// A target inside the keep-out model is no longer a refusal. It is moved to the nearest
+// clear water in ANY direction (hold.js: radial, with the whole hold DISC clear - the
+// operator's buffer plus the hold radius the boat is allowed to wander), and `heldOff`
+// says where the operator's point was and what it sits in, so the banner and the Intent
+// card can say "holding N m off it". Refusing was the old answer, and it arrived at the
+// one moment it was least useful - mid-mission, on the chained Return-to-Home to a HOME
+// that had been set at a berth. Only when there is no clear water within the search cap
+// does the refusal remain, and then it names the cap.
+//
+// `holdClear` is the radius of the clear disc around the hold point and travels to the
+// vessel as `hold_clear_m`: inside it the boat may re-approach DIRECT (a chord of a clear
+// disc is clear), beyond it the boat takes the way off and the console supplies a routed
+// re-approach (reapproachIfSetOff in asv.html). `opts.holdR` is the hold radius the disc
+// must cover; the page passes the mission's approach radius, floored at the sim's own 2 m.
+export function holdTarget(to, opts){
+  if(!nogo.ready) return {to:{lat:to.lat,lon:to.lon}, heldOff:null, holdClear:null, degraded:true};
+  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
+  const holdR = Math.max(HOLD_RADIUS_MIN_M, (opts && opts.holdR) || 0);
+  let heldOff = null;
+  const bi = blockedInfo(llEN(to.lat,to.lon,ref), ko, buf);
+  if(bi){
+    const sn = snapClearRadial(llEN(to.lat,to.lon,ref), ko, buf, holdR);
+    if(!sn) return {error:"the target sits in "+bi.kind+" with no clear water within "
+                          +snapCapM(buf).toFixed(0)+" m of it",
+                    reason:{mode:"target", info:bi, at:to}};
+    const nt = ref.fromEN(sn.e, sn.n);
+    heldOff = {from:{lat:to.lat,lon:to.lon}, m:sn.moved, kind:bi.kind};
+    to = {lat:nt.lat, lon:nt.lon};
+  }
+  return {to:{lat:to.lat,lon:to.lon}, heldOff,
+          holdClear: holdClearM(llEN(to.lat,to.lon,ref), ko, buf)};
+}
+// Plan an ENC-aware path from -> to ending at `to` - or at the nearest clear water to
+// `to` when it sits in a keep-out (see holdTarget). {route} on success, {error} when no
+// clear route exists (refuse + warn). Keeps to the starboard side of channels (Rule 9).
+export function planNogoRoute(from, to, opts){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
-  const bi = blockedInfo(llEN(to.lat,to.lon,ref), ko, buf);
-  if(bi) return {error:"the target sits in "+bi.kind, reason:{mode:"target", info:bi, at:to}};
+  const ht = holdTarget(to, opts);
+  if(ht.error) return ht;
+  to = ht.to;
+  const heldOff = ht.heldOff, holdClear = ht.holdClear;
   const leg = legPath(from, to, ref, ko, buf);
   if(!leg){ const fb=firstBlockAlong(from, to, ref, ko, buf);
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
@@ -297,7 +336,8 @@ export function planNogoRoute(from, to){
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
-  return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial};
+  return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial,
+          heldOff, holdClear};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are

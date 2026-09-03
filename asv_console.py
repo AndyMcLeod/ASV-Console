@@ -2555,7 +2555,7 @@ class VcuLink:
 
     # command surface (Engine gates these before calling)
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete"): ...
+                    completion="complete", hold_clear_m=None): ...
     def start(self): ...
     def pause(self): ...
     def stop(self): ...
@@ -2623,6 +2623,13 @@ class SimVcu(VcuLink):
         self._seg_start = {"lat": start_lat, "lon": start_lon}   # current leg origin
         self._completion = "rth"       # complete (stop) | loiter (station-keep) | repeat (loop) | rth
         self._holding = False          # currently station-keeping (loiter reached the end)
+        # THE HOLD DISC. `_hold_clear_m` is the radius around the hold point the CONSOLE
+        # certified clear of the keep-out model at the operator's buffer (hold.js), or None
+        # when no model was consulted. Inside it a straight re-approach is clear by
+        # construction; beyond it this model cannot know, so it takes the way off and asks
+        # for a routed re-approach (`_hold_wants_route`) - see the station-keep branch.
+        self._hold_clear_m = None
+        self._hold_wants_route = False # set beyond the certified water: needs a routed return
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
         self._paused = False
@@ -2639,7 +2646,7 @@ class SimVcu(VcuLink):
 
     # -- commands ---------------------------------------------------------- #
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete"):
+                    completion="complete", hold_clear_m=None):
         self._plan = [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])]
         self._arrival_m = clamp(float(arrival_radius_m or 5.0), 1.0, 50.0)
         self._approach_m = clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0)
@@ -2648,6 +2655,10 @@ class SimVcu(VcuLink):
         # completion semantics at the last waypoint (goto/rth/hold -> loiter)
         self._completion = completion if completion in ("complete", "loiter", "repeat", "rth") else "rth"
         self._holding = False
+        # None means "no model consulted" and keeps the direct re-approach - the same honest
+        # degrade as a Go-To with no route. A number is the console's certified clear disc.
+        self._hold_clear_m = None if hold_clear_m is None else max(0.0, float(hold_clear_m))
+        self._hold_wants_route = False
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
 
@@ -2763,14 +2774,32 @@ class SimVcu(VcuLink):
                         self._running = False      # complete: stop
                         target_kn = 0.0
         elif moving and self._holding and self._plan:
-            # station-keep at the last waypoint (re-approach if drifted beyond it)
+            # STATION-KEEP at the last waypoint, re-approaching when set off it.
+            #
+            # ⚠ THE RE-APPROACH USED TO BE A RAW BEARING AT ANY RANGE, and that straight
+            # return leg through a pier IS the loop Andy photographed at Eastport
+            # (2026-09-02). This model has no keep-out model of its own, so it cannot route;
+            # what it has is the CONSOLE'S word, given with the plan, on how much water is
+            # clear around the hold point (`_hold_clear_m`, hold.js). Inside that disc a
+            # straight chord back to the centre is clear by construction - every point of a
+            # disc is in the disc - so the direct drive is honest there. Beyond it the boat
+            # takes the way off and says so (`hold_wants_route`), and the console answers
+            # with a ROUTED re-approach through the same planner every other commanded
+            # motion uses (/api/cmd/reapproach). With no certified disc at all (no console,
+            # no model) the direct drive stays, exactly as a Go-To with no route drives
+            # direct: an honest degrade, not a silent one.
             hp = self._plan[-1]
             dist_h, brg_h = range_bearing(self.lat, self.lon, hp["lat"], hp["lon"])
             if dist_h <= max(self._approach_m, 2.0):
                 target_kn = 0.0                    # arrived - hold position
-            else:
+                self._hold_wants_route = False
+            elif self._hold_clear_m is None or dist_h <= self._hold_clear_m:
                 self.heading = _turn_toward(self.heading, brg_h, MAX_TURN_RATE_DEG_S * dt)
                 target_kn = SPEED_KN["low"]
+                self._hold_wants_route = False
+            else:
+                target_kn = 0.0                    # beyond the certified water: no blind drive
+                self._hold_wants_route = True
 
         # smooth speed toward target
         self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
@@ -2901,6 +2930,11 @@ class SimVcu(VcuLink):
         # heading by the crab angle when wind/waves set the boat off its bow line.
         gd, gb = range_bearing(p_lat, p_lon, self.lat, self.lon)
         sog_ground = (gd / dt) * 1.9438 if dt > 1e-6 else 0.0   # m/s -> kn
+        # Range to the hold point, measured HERE from the position just integrated rather
+        # than remembered from the station-keep branch - which on the arrival tick has not
+        # run yet, and would publish a hold with no range beside it.
+        off_station = (range_bearing(self.lat, self.lon, self._plan[-1]["lat"], self._plan[-1]["lon"])[0]
+                       if self._holding and self._plan else None)
         cog = gb if gd > 0.02 else (self.heading if self.sog_kn > 0.05 else None)
         crab = (((self.heading - cog + 180.0) % 360.0) - 180.0) if cog is not None else None
         return {
@@ -2930,6 +2964,16 @@ class SimVcu(VcuLink):
             "paused": self._paused,
             "estop": self._estop,
             "holding": self._holding,
+            # THE HOLD, STATED: where it is, how far off it the boat is, how much water the
+            # console certified around it, and whether the boat is beyond that water and
+            # waiting for a routed way back. Published so the console can act on the last
+            # of these and the operator can read all four.
+            "hold": ({"lat": self._plan[-1]["lat"], "lon": self._plan[-1]["lon"]}
+                     if self._holding and self._plan else None),
+            "off_station_m": round(off_station, 1) if off_station is not None else None,
+            "hold_clear_m": (round(self._hold_clear_m, 1)
+                             if self._hold_clear_m is not None else None),
+            "hold_wants_route": bool(self._holding and self._hold_wants_route),
             "completion": self._completion,
             "laps": self._laps,
             "env_set_kn": round(set_kn, 2),
@@ -3186,7 +3230,25 @@ class Engine:
                 self.note = "SAFE (disarmed)."
         self._push_state()
 
-    def upload(self, route=None):
+    @staticmethod
+    def _hold_clear(v):
+        """The console's certified clear radius around a hold point, or None when it sent
+        none. Validated as INPUT here, for the same reason set_home validates a coordinate:
+        a non-numeric value would otherwise become a 500 from the dispatch catch-all - the
+        handler falling over rather than refusing - and a negative or non-finite one would
+        reach the vessel's own arithmetic."""
+        if v is None or v == "":
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            raise VcuProtocolError("hold_clear_m must be numeric (metres), or absent")
+        if not math.isfinite(f) or f < 0.0:
+            raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of metres")
+        return f
+
+    def upload(self, route=None, hold_clear_m=None):
+        hold_clear_m = self._hold_clear(hold_clear_m)
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
@@ -3207,7 +3269,8 @@ class Engine:
             # value that shows on the vessel card the instant the plan is uploaded.
             _sp = _norm_speeds(m.get("speeds"), m.get("speed", "survey"))
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
-                             m.get("approach_radius_m", WP_APPROACH_M), completion=self.run_completion)
+                             m.get("approach_radius_m", WP_APPROACH_M), completion=self.run_completion,
+                             hold_clear_m=hold_clear_m)
             self.plan_uploaded = True
             self.wp_total = len(wpts)
             self.wp_index = 0
@@ -3292,9 +3355,12 @@ class Engine:
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
-    def _run_route(self, route, behavior, note):
+    def _run_route(self, route, behavior, note, hold_clear_m=None):
         """Arm-gated: push a behavior route to the link and run it, holding at the
-        end. Shared by Go-To / Return-to-Home / Hold."""
+        end. Shared by Go-To / Return-to-Home / Hold / Transit / the routed re-approach.
+        `hold_clear_m` is the console's certified clear disc around the end point (see
+        SimVcu's station-keep branch); None keeps the vessel's direct re-approach."""
+        hold_clear_m = self._hold_clear(hold_clear_m)
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
@@ -3302,7 +3368,8 @@ class Engine:
             self._require(not self.estop, "clear E-STOP first")
             m = load_mission()
             link.upload_plan(route, m.get("arrival_radius_m", 2.0), m.get("speed", "survey"),
-                             m.get("approach_radius_m", WP_APPROACH_M), completion="loiter")
+                             m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
+                             hold_clear_m=hold_clear_m)
             link.start()
             self.plan_uploaded = True
             # goto/rth/hold/transit always station-keep at their own endpoint. This is
@@ -3333,27 +3400,45 @@ class Engine:
             out.append({"lat": lat, "lon": lon})
         return out
 
-    def go_to(self, lat, lon, route=None):
+    def go_to(self, lat, lon, route=None, hold_clear_m=None):
         # route (if given) is the client's ENC-aware detour path ending at the point;
         # else drive straight to the point (honest degrade when no nogo model).
         r = self._sanitize_route(route) if route else [{"lat": float(lat), "lon": float(lon)}]
         note = ("Go-To: following the ENC-aware route to the point (%d wpts), will station-keep on arrival." % len(r)
                 if route else "Go-To: driving to point, will station-keep on arrival.")
-        self._run_route(r, "goto", note)
+        self._run_route(r, "goto", note, hold_clear_m)
 
-    def transit(self, route):
+    def transit(self, route, hold_clear_m=None):
         # Follow a single- or multi-segment transit line (ENC-aware route from the
         # client), station-keeping at the end. Independent of any survey plan.
         r = self._sanitize_route(route)
         self._run_route(r, "transit",
-                        "Transit: following the route (%d wpts), will station-keep at the end." % len(r))
+                        "Transit: following the route (%d wpts), will station-keep at the end." % len(r),
+                        hold_clear_m)
 
-    def hold(self):
+    def hold(self, hold_clear_m=None):
         st = self.status
         if st.get("lat_deg") is None:
             raise VcuProtocolError("no position fix to hold at")
         self._run_route([{"lat": st["lat_deg"], "lon": st["lon_deg"]}], "hold",
-                        "Hold: station-keeping at present position.")
+                        "Hold: station-keeping at present position.", hold_clear_m)
+
+    def reapproach(self, route, hold_clear_m=None):
+        """The ROUTED way back onto station, supplied by the console when the vessel reports
+        it has been set beyond the water certified clear around its hold point
+        (`hold_wants_route` on the telemetry - see SimVcu's station-keep branch).
+
+        IT KEEPS THE BEHAVIOUR. A Go-To would do the same driving, and would also rename a
+        boat holding at HOME after a Return-to-Home as a "goto" on every card - the run is
+        still the run it was; this is a leg of it. Gated on the vessel actually HOLDING,
+        because outside that state a route arriving here is a command nobody gave."""
+        st = self.status
+        self._require(bool(st.get("holding")), "the vessel is not station-keeping")
+        self._require(not self._rth_follow, "a moving home is re-targeted by the chase, not here")
+        r = self._sanitize_route(route)
+        self._run_route(r, self.behavior,
+                        "Set off station - re-approaching on a routed path (%d wpts)." % len(r),
+                        hold_clear_m)
 
     def set_home(self, lat=None, lon=None):
         """Set HOME at an explicit point, or at the vessel's present position.
@@ -3481,7 +3566,7 @@ class Engine:
             LOG.event("spawn" if spawn else "reset", **(spawn or {}))
         self._push_state()
 
-    def return_home(self, route=None):
+    def return_home(self, route=None, hold_clear_m=None):
         # A selected ROC owns HOME? Then RTH targets its LIVE arrival point. For a ship
         # (Mothership) that point moves, so we drive direct and let the run loop chase it
         # - an ENC detour to a moving recovery point would be stale on arrival. A static
@@ -3509,7 +3594,8 @@ class Engine:
             r = self._sanitize_route(route) if route else [{"lat": home["lat"], "lon": home["lon"]}]
             note = ("Return-to-Home: following the ENC-aware route to home (%d wpts), will station-keep on arrival." % len(r)
                     if route else "Return-to-Home: driving to home, will station-keep on arrival.")
-        self._run_route(r, "rth", note)
+        # A moving home is chased by re-targeting, so no disc is certified for it.
+        self._run_route(r, "rth", note, None if follow else hold_clear_m)
         with self._lock:
             self._rth_follow = follow
             if follow:
@@ -4265,7 +4351,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/arm":
                 ENGINE.set_armed(bool(body.get("on")))
             elif path == "/api/cmd/upload":            # optional ENC-aware run path
-                ENGINE.upload(body.get("route"))
+                ENGINE.upload(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/start":
                 ENGINE.start()
             elif path == "/api/cmd/pause":
@@ -4274,14 +4360,20 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.stop()
             elif path == "/api/cmd/estop":
                 ENGINE.set_estop(bool(body.get("on")))
+            # `hold_clear_m` on the four holding behaviours is the console's certified clear
+            # disc around the end point (hold.js) - absent means the vessel re-approaches
+            # direct, exactly as it always did.
             elif path == "/api/cmd/rth":               # optional ENC-aware detour route
-                ENGINE.return_home(body.get("route"))
+                ENGINE.return_home(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/goto":              # behavior: drive to a point + hold
-                ENGINE.go_to(body.get("lat"), body.get("lon"), body.get("route"))
+                ENGINE.go_to(body.get("lat"), body.get("lon"), body.get("route"),
+                             body.get("hold_clear_m"))
             elif path == "/api/cmd/transit":           # behavior: follow a transit line + hold
-                ENGINE.transit(body.get("route"))
+                ENGINE.transit(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/hold":              # behavior: station-keep here
-                ENGINE.hold()
+                ENGINE.hold(body.get("hold_clear_m"))
+            elif path == "/api/cmd/reapproach":        # the routed way back onto station
+                ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius

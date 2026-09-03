@@ -55,33 +55,85 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-03 — the in-extremis ladder; the console may now take the helm)
+## ⇒ START HERE (handoff refreshed 2026-09-03 — the hold point is a hold point, and the way back is routed)
 
-### ➤ PICK UP HERE (the next piece, agreed and not started)
+### ➤ PICK UP HERE
 
-**THE COMMAND-TIME HALF OF THE NOGO WORK.** Andy asked for it, the request was interrupted
-before any code was written, and NOTHING is half-done — tree clean at `f09d7ed`, pushed.
-
-Two things, both in `asv_console.py`'s `SimVcu`:
-
-1. **The station-keep hold point is not snapped to clear water.** `self._plan[-1]` is taken
-   as the hold point whatever it is, so a plan (or an RTH to a HOME set at a berth) can ask
-   the boat to hold inside a keep-out. `snapClearLL` in `static/js/routing.js` is the
-   existing tool, but it nudges along ONE axis — a hold point wants the nearest clear water
-   in ANY direction, so it needs a radial search beside it.
-2. **The re-approach is a raw bearing.** In the `_holding` branch: drift off station, then
-   `_turn_toward(brg_h)` and drive at low speed, with NO keep-out check. That straight
-   return leg through a pier IS the loop Andy photographed at Eastport. Every other
-   commanded motion in the console is routed clear; this one never was.
-
-**⚠ THE RUN-TIME LADDER ALREADY CATCHES THIS CASE** (`helm` fires on a stopped boat being
-set onto a structure — in_extremis check 6). So this is not a hole any more; it is the
-belt to that braces. The boat should not be ASKED to hold somewhere unsafe.
-
-**⚠ ALSO OPEN, AND NEEDS ANDY BEFORE CODE:** he reported *"when respawning delete the
+**⚠ OPEN, AND NEEDS ANDY BEFORE CODE:** he reported *"when respawning delete the
 initial position and the line. It's unneeded."* `resetForNewArea` ALREADY does `track = []`
 on a port change, so the leftover is something else — most likely the HOME marker at the old
 spawn, or a line drawn from the new spawn's first fix. **Ask which before building.**
+
+**⚠ OPEN, SEEN LIVE 2026-09-03 AND NOT CAUSED BY THIS COMMIT — THE HELM ESCAPE CHAINS A
+RETURN INTO THE HAZARD.** On a scratch console at Eastport (DriX, 5 m buffer, live weather
+14 kn @ 150° = 0.44 kn set toward 330°) the boat held at HOME in the spawn cove with
+5.3 m of certified water. Timeline, polled at 1 s: holding at 32 s · set 4.2 m off at
+35 s (inside the disc, direct) · **routed re-approach at 38 s, again at 47, 65, 71 s** (each
+1–2 waypoints — the new behaviour, working, at the cadence a 14 kn wind on a 5 m disc
+produces) · **74 s: `goto` at high with no disc = the in-extremis HELM rung** (the
+drift-only track enters the shore inside 45 s, exactly as designed) · **84 s: the escape
+Go-To HOLDS, so the END-OF-PLAN RTH CHAIN fires and sends the boat straight back to the
+home it was just rescued from** · 87 s: helm again. `rearmRthChain` re-arms on any new
+running run, and the escape IS a Go-To, so a safety manoeuvre chains a return into the
+very hazard, every ~10 s, each a real command. This interplay predates this commit (the
+raw re-approach fought the set at low speed and the helm fired the same way), but it is
+now MEASURED. The fix is small and deliberate — the escape must not re-arm the chain (an
+`escape` intent kind, or a flag cleared by the next operator command) and the boat should
+HOLD at the escape point and say why — but it changes what the ladder does after it
+steers, so **ask Andy first**; and a HOME in a cove that the prevailing set pushes onto
+the shore is an operator question the console can only report.
+
+**NEWEST (this commit): THE COMMAND-TIME HALF OF THE NOGO WORK** — the piece the previous
+handoff (`87282ac`) named and left untouched. Andy, 2026-09-02: *"modify trajectory or
+speed or FINAL TARGET to ENSURE nogo areas are never entered."* The run-time ladder is the
+braces; this is the belt. Two defects, both fixed, and neither was where the handoff put it.
+
+**⚠ THE HANDOFF SAID "BOTH IN `SimVcu`" AND THE FIRST ONE IS NOT.** The sim has no keep-out
+model and cannot snap anything; the hold point is decided where the model is, in the
+browser, at command time. So: `static/js/hold.js` (the console's own — pure functions of a
+point, a model and a buffer, the guard.js split) + `holdTarget` in passage.js, which
+`planNogoRoute` now runs on its target. **A target inside a keep-out is no longer a
+REFUSAL: it is held OFF, at the nearest clear water in ANY direction.** `snapClearLL`
+nudges along ONE axis because it was written to split a leg; at a pier's END that finds
+the water off the face (21 m) when the water off the end is 10 m — measured, check 3. The
+snap margin is `buf + holdR`, the whole disc the boat is allowed to wander (the sim's own
+`max(approach, 2 m)`, stated ONCE as `HOLD_RADIUS_MIN_M` and pinned by check 10), because a
+point clear only at its centre alarms the moment the tide moves it. Go-To, RTH and the last
+vertex of a drawn transit all go through it; the move is captured with the plan's
+reasoning (`heldOff`) and said on the banner. A refusal remains only when no clear water
+lies within the cap, and then it names the cap. **The RTH to a HOME set at a berth — the
+case that used to fail mid-mission on the chain — now ends at the water off the berth.**
+
+**THE SECOND DEFECT IS IN `SimVcu`, AND THE FIX IS A NUMBER THE CONSOLE GIVES IT.** The
+station-keep branch turned toward `plan[-1]` and drove, from ANY range, with no check —
+the Eastport loop. Every holding command now carries **`hold_clear_m`**: the radius round
+the hold point the console certified clear at the operator's buffer (`holdClearM` =
+clearance − buffer). **Inside that disc the direct drive is honest — a chord of a clear
+disc is clear — and beyond it the vessel cannot know, so it TAKES THE WAY OFF and reports
+`hold_wants_route`.** The console answers with **`/api/cmd/reapproach {route,
+hold_clear_m}`** (`Engine.reapproach`, `reapproachIfSetOff` in the page): routed through
+the same planner as everything else, and it **keeps the run's behaviour** — a Go-To would
+have renamed a boat holding at HOME after an RTH as "goto" on every card. Gated on the
+console's authority (armed, not e-stopped), on the vessel actually asking, off under a
+moving-home chase and a pending end-of-plan RTH, one in flight with a 3 s floor. **With no
+`hold_clear_m` at all — no console, no model — the direct drive STAYS**, the same honest
+degrade as a Go-To with no route; `None` is not zero. Telemetry while holding: `hold`,
+`off_station_m`, `hold_clear_m`, `hold_wants_route`; the cards say SET OFF STATION.
+
+**⚠ THREE OF MY OWN CHECKS WERE WRONG BEFORE THE CODE WAS, and each is a lesson kept in the
+suite:** (1) `off_station_m` was `None` on the ARRIVAL frame — remembered from the
+station-keep branch, which has not run yet on the tick that sets `_holding` — so it is now
+measured at telemetry time from the position just integrated; the check crashed instead
+of failing (a `<` on None), which the harness note in tests/hold_station.py records.
+(2) Check 3 scored the direct drive BETWEEN the hold radius and the disc edge as the fault,
+when that drive is correct: the measurement is now taken only BEYOND the disc. (3) Check
+10 polled `holding` right after the POST and read the PREVIOUS run's hold — disc 12.5 from
+check 9 — so it waits for the new plan's own telemetry. **Two existing suites went red and
+both were the page's shape, not a regression:** rule9_scope 6b keyed on the literal
+`transit, true` and the drawn line's last vertex is now held off (`line`); end_action 23b
+counts route commits against `setPlanIntent` calls, and the re-approach IS a commit, so it
+captures its own reasoning under the run's kind. `tests/hold_point.js` 19 checks,
+`tests/hold_station.py` 14 (in-process SimVcu with a fake stream, then a real console).
 
 
 **NEWEST: THE TIDAL STREAM NOW MOVES THE HULL** (Andy, 2026-09-02: *"current should
@@ -1938,6 +1990,8 @@ for f in tests/*.py; do printf "%-24s " $(basename $f); python $f | grep -cE '^ 
 
 | | guards |
 |---|---|
+| `node tests/hold_point.js` | **THE HOLD POINT IS A HOLD POINT.** A target in a keep-out is held OFF at the nearest clear water in ANY direction (radial, whole hold disc clear), not refused; the move is captured and said; every holding command carries the certified clear radius; the routed re-approach fires only with authority and only when the vessel asks (19) |
+| `python tests/hold_station.py` | **THE WAY BACK IS ROUTED.** SimVcu re-approaches direct only inside the disc the console certified clear, takes the way off beyond it and asks (`hold_wants_route`); `/api/cmd/reapproach` keeps the run's behaviour and is refused when not holding; no disc at all keeps the direct drive (honest degrade); a bad disc value is a 409, never a 500 (14) |
 | `node tests/buoy_lane.js` | Rule 9 channel lane + the lane fact travels with its route; the lane yields to the law; WHERE IT LETS GO — held at the final pair, stood on one width past, released before a separate channel, `partial` when a stretch went un-laned, a reach knob that may only widen; and NO ROUTE SHIPS A REVERSAL KNOT — the knot prune runs in the producer on the gate's own output (30) |
 | `node tests/wreck_clearance.js` | charted point-hazard extent (12) |
 | `node tests/water_trust.js` | water-level trust + depth gating (15) |

@@ -221,7 +221,9 @@ const ENF = { land: true, depth: true, haz: true, area: false };
   // Go-To / RTH / a drawn transit still pass keepRightAll, or the rule would apply nowhere.
   // A rule switched off everywhere passes every "it is not over-applied" check ever written.
   check("6b. ... and a pure transit still asks for it — the rule is not switched off",
-        () => /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, transit, true\)/.test(H),
+        // `line` is the drawn transit with its LAST vertex held off any keep-out (holdTarget,
+        // 2026-09-03) - the keepRightAll=true that this check guards is unchanged by that.
+        () => /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, (?:transit|line), true\)/.test(H),
         "the drawn-transit behaviour passes keepRightAll=true");
   const PO = grab(H, "punchOut");
   check("7. a SURVEY pattern's inter-line hop does not ride the lane",
