@@ -55,7 +55,34 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-02 — AIS contacts carry their particulars, and every one has a CPA)
+## ⇒ START HERE (handoff refreshed 2026-09-03 — the in-extremis ladder; the console may now take the helm)
+
+### ➤ PICK UP HERE (the next piece, agreed and not started)
+
+**THE COMMAND-TIME HALF OF THE NOGO WORK.** Andy asked for it, the request was interrupted
+before any code was written, and NOTHING is half-done — tree clean at `f09d7ed`, pushed.
+
+Two things, both in `asv_console.py`'s `SimVcu`:
+
+1. **The station-keep hold point is not snapped to clear water.** `self._plan[-1]` is taken
+   as the hold point whatever it is, so a plan (or an RTH to a HOME set at a berth) can ask
+   the boat to hold inside a keep-out. `snapClearLL` in `static/js/routing.js` is the
+   existing tool, but it nudges along ONE axis — a hold point wants the nearest clear water
+   in ANY direction, so it needs a radial search beside it.
+2. **The re-approach is a raw bearing.** In the `_holding` branch: drift off station, then
+   `_turn_toward(brg_h)` and drive at low speed, with NO keep-out check. That straight
+   return leg through a pier IS the loop Andy photographed at Eastport. Every other
+   commanded motion in the console is routed clear; this one never was.
+
+**⚠ THE RUN-TIME LADDER ALREADY CATCHES THIS CASE** (`helm` fires on a stopped boat being
+set onto a structure — in_extremis check 6). So this is not a hole any more; it is the
+belt to that braces. The boat should not be ASKED to hold somewhere unsafe.
+
+**⚠ ALSO OPEN, AND NEEDS ANDY BEFORE CODE:** he reported *"when respawning delete the
+initial position and the line. It's unneeded."* `resetForNewArea` ALREADY does `track = []`
+on a port change, so the leftover is something else — most likely the HOME marker at the old
+spawn, or a line drawn from the new spawn's first fix. **Ask which before building.**
+
 
 **NEWEST: THE TIDAL STREAM NOW MOVES THE HULL** (Andy, 2026-09-02: *"current should
 absolutely drive sim drift too"*). Until now `CURRENTS` was polled, published on the state
