@@ -217,9 +217,11 @@ check("11. no ground track means no predicted entry — and the next tick will s
   check("12. every rung commands something different, and only the last one steers",
         () => /cmd\("\/api\/cmd\/speed", \{speed:"low"\}\)/.test(code)
               && /cmd\("\/api\/cmd\/hold"/.test(code)
-              && /cmd\("\/api\/cmd\/goto"/.test(code)
-              && code.indexOf('cmd("/api/cmd/goto"') > code.indexOf('a.level === "helm"'),
-        "slow -> speed low, hold -> hold, helm -> goto");
+              && /cmd\("\/api\/cmd\/escape"/.test(code)
+              && !/cmd\("\/api\/cmd\/goto"/.test(code)
+              && code.indexOf('cmd("/api/cmd/escape"') > code.indexOf('a.level === "helm"'),
+        "slow -> speed low, hold -> hold, helm -> escape - a dedicated behaviour, not a " +
+        "Go-To, so its arrival can never re-chain the end-of-plan RTH (tests/end_action.js 5b/16b)");
   check("13. a refused escape ALARMS and hands the helm back rather than falling through",
         () => /BOXED IN/.test(fn) && /TAKE MANUAL CONTROL/.test(fn),
         "the one case where the console must say it cannot help");

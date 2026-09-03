@@ -3408,6 +3408,28 @@ class Engine:
                 if route else "Go-To: driving to point, will station-keep on arrival.")
         self._run_route(r, "goto", note, hold_clear_m)
 
+    def escape(self, lat, lon, hold_clear_m=None):
+        """The in-extremis clearance guard's OWN manoeuvre (guard.js escapeCourse, the helm
+        rung of clearanceGuard in the page) - never the operator's, and kept structurally
+        distinct from go_to() for exactly one reason: `behavior` is "escape", not "goto",
+        so its arrival can never be mistaken for an ordinary commanded run.
+
+        An escape that looked like a Go-To used to arrive, hold, and - because the operator's
+        standing end-of-plan setting is still "rth" - immediately re-fire the chained
+        Return-to-Home, sending the boat straight back toward whatever it had just been
+        steered clear of. Measured live, 2026-09-03, at Eastport: escape at 74.8 s, chained
+        RTH at 83.9 s, a second escape at 86.9 s - the safety intervention and its own
+        undoing, on repeat. The chain-fire condition and rthPending() in the page both
+        refuse to act on behavior "escape"; see tests/end_action.js 5b/16b and tests/escape_chain.py.
+
+        Taking the helm is meant to buy the operator's attention, not hand the console
+        straight back to whatever was already running - so this holds at the escape point
+        and waits. Nothing here re-arms automatically; the operator re-commands."""
+        r = [{"lat": float(lat), "lon": float(lon)}]
+        self._run_route(r, "escape",
+                        "In extremis: steered clear. Holding here - the end-of-plan return "
+                        "does not chain from an escape; re-command when ready.", hold_clear_m)
+
     def transit(self, route, hold_clear_m=None):
         # Follow a single- or multi-segment transit line (ENC-aware route from the
         # client), station-keeping at the end. Independent of any survey plan.
@@ -4374,6 +4396,8 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station
                 ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
+            elif path == "/api/cmd/escape":            # the in-extremis guard's OWN manoeuvre
+                ENGINE.escape(body.get("lat"), body.get("lon"), body.get("hold_clear_m"))
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius

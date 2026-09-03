@@ -55,7 +55,7 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-03 — the hold point is a hold point, and the way back is routed)
+## ⇒ START HERE (handoff refreshed 2026-09-03 — the escape does not chain its own undoing)
 
 ### ➤ PICK UP HERE
 
@@ -64,26 +64,61 @@ initial position and the line. It's unneeded."* `resetForNewArea` ALREADY does `
 on a port change, so the leftover is something else — most likely the HOME marker at the old
 spawn, or a line drawn from the new spawn's first fix. **Ask which before building.**
 
-**⚠ OPEN, SEEN LIVE 2026-09-03 AND NOT CAUSED BY THIS COMMIT — THE HELM ESCAPE CHAINS A
-RETURN INTO THE HAZARD.** On a scratch console at Eastport (DriX, 5 m buffer, live weather
-14 kn @ 150° = 0.44 kn set toward 330°) the boat held at HOME in the spawn cove with
-5.3 m of certified water. Timeline, polled at 1 s: holding at 32 s · set 4.2 m off at
-35 s (inside the disc, direct) · **routed re-approach at 38 s, again at 47, 65, 71 s** (each
-1–2 waypoints — the new behaviour, working, at the cadence a 14 kn wind on a 5 m disc
-produces) · **74 s: `goto` at high with no disc = the in-extremis HELM rung** (the
-drift-only track enters the shore inside 45 s, exactly as designed) · **84 s: the escape
-Go-To HOLDS, so the END-OF-PLAN RTH CHAIN fires and sends the boat straight back to the
-home it was just rescued from** · 87 s: helm again. `rearmRthChain` re-arms on any new
-running run, and the escape IS a Go-To, so a safety manoeuvre chains a return into the
-very hazard, every ~10 s, each a real command. This interplay predates this commit (the
-raw re-approach fought the set at low speed and the helm fired the same way), but it is
-now MEASURED. The fix is small and deliberate — the escape must not re-arm the chain (an
-`escape` intent kind, or a flag cleared by the next operator command) and the boat should
-HOLD at the escape point and say why — but it changes what the ladder does after it
-steers, so **ask Andy first**; and a HOME in a cove that the prevailing set pushes onto
-the shore is an operator question the console can only report.
+**⬜ NOTED, NOT ACTED ON:** the live reproduction below happened at a HOME the prevailing
+14 kn wind sets onto its own cove's shore. The escape/chain fix stops the console fighting
+itself over it; whether that HOME belongs somewhere the tide does not carry a stopped boat
+onto is a siting question for the operator, not something this console can decide for him.
 
-**NEWEST (this commit): THE COMMAND-TIME HALF OF THE NOGO WORK** — the piece the previous
+**NEWEST (this commit): THE ESCAPE NO LONGER CHAINS A RETURN INTO WHAT IT JUST STEERED CLEAR
+OF.** Andy: *"fix the RTH chain re-arming into the escape."* Reproduced live at Eastport the
+session before this one (DriX, 5 m buffer, 14 kn @ 150° wind = 0.44 kn set toward 330°), tied
+to the corresponding second in that trace: the boat held at HOME with 5.3 m of certified
+water · set off station and routed back at 38, 47, 65, 71 s (the reapproach mechanism,
+working) · **74 s: the in-extremis guard took the helm — a `goto` at high speed, no disc**
+· **84 s: that Go-To HOLDS, so the end-of-plan RTH chain reads it as "the plan is over" and
+sends the boat straight back toward the pier it was just steered clear of** · 87 s: helm
+again. Every ~10 s, on repeat, entirely on the console's own telemetry — the safety
+intervention undoing itself.
+
+**⚠ THE CHAIN COULD NOT TELL THE ESCAPE APART FROM AN OPERATOR'S OWN GO-TO, BECAUSE THERE
+WAS NOTHING TO TELL APART.** Both were the identical `/api/cmd/goto` call. The escape is now
+its own behaviour, `/api/cmd/escape` → `Engine.escape()` → `behavior:"escape"` — structurally
+distinct rather than flagged, because a remembered client-side "that Go-To was actually an
+escape" boolean is exactly the class of flag this console has already been bitten by
+outliving the plan that set it (the earlier `buoy_lane.js` scratch-flag note in this file
+is the same lesson). **Two independent things now
+refuse to act on it, and both needed the fix separately — they duplicate the same
+precondition by original design** (`rthPending()` predicts for the cards mid-run; the
+literal `if` in `onState` is what actually calls `doRTH()`, and it also gates the one-shot
+`rthChained` latch that the predictor has no reason to know about): `rthPending()` and the
+literal chain-fire condition in `onState` both gained `behavior!=="escape"`. The escape holds
+at the point it reaches and waits — nothing chains from it, on purpose, because taking the
+helm is meant to buy the operator's attention, not hand the console straight back to the
+standing plan it just overrode.
+
+**⚠ THE CARDS NEEDED TELLING TOO, OR "FIXED" WOULD HAVE READ AS "SILENT."** An escape hold
+that fell through to the existing labels would have shown "LOITER — station-keeping" (true,
+technically, and exactly the kind of accurate-about-itself-wrong-about-the-boat readout this
+suite's own `end_action.js` was written to eliminate the first time). It now reads "IN
+EXTREMIS — escaped, holding clear (not returning home)" on the mission card and "in-extremis
+escape — holding clear, awaiting the operator" on the Intent card's DOING row, and the
+escape's own reasoning (what it was steering clear of, at what heading, that nothing chains)
+is captured with the route exactly like every other commanded motion.
+
+**⚠⚠ MY OWN FIRST DRAFT OF THE PROOF WAS WRONG, IN A WAY THE MEMORY NOTES ALREADY NAME.**
+`tests/end_action.js`'s `check()` reads `cond` directly rather than calling it — unlike
+`clearance_guard.js` / `in_extremis.js`, which both expect a thunk. I wrote check 16b as a
+thunk out of habit copied from those files; it was a function OBJECT, always truthy, and
+reported "ok" against a mutation that had deleted the exclusion outright — the detail string
+even said "MISSING" on the same line as "ok". **Know which harness takes a thunk, every
+single time, in this codebase specifically.** Second gap, not a broken check but an absent
+one: nothing tested that `Engine.escape()` actually sets `behavior` to `"escape"` server-side
+— a page check that the CLIENT calls the right URL is silent about what the SERVER does with
+it, and a mutation reverting `Engine.escape()`'s `_run_route(r, "goto", ...)` (built by
+copying `go_to()`) survived every existing suite. New `tests/escape_chain.py` drives a real
+console for exactly that seam. All 5 mutations now caught, 0 survived.
+
+**NEWEST: THE COMMAND-TIME HALF OF THE NOGO WORK** — the piece the previous
 handoff (`87282ac`) named and left untouched. Andy, 2026-09-02: *"modify trajectory or
 speed or FINAL TARGET to ENSURE nogo areas are never entered."* The run-time ladder is the
 braces; this is the belt. Two defects, both fixed, and neither was where the handoff put it.

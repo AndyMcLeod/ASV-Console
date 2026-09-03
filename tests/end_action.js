@@ -131,6 +131,20 @@ check("5. the RTH run itself station-keeps at home — it does not chain another
       (S = state({ behavior: "rth" }), rthPending() === false),
       "behavior rth -> 'rth · loiter'");
 
+// 5b. THE IN-EXTREMIS ESCAPE, the same guard extended to a second behaviour. Andy watched
+// this live at Eastport, 2026-09-03: the clearance guard steered clear of a pier (behavior
+// "escape"), held there, and - because the operator's STANDING setting was still End of
+// Plan = RTH, which an emergency does not touch - the chain read that hold as "the plan is
+// over" and sent the boat straight back toward the pier it had just been steered clear of.
+// Nine seconds later. A second escape fired three seconds after THAT. The safety
+// intervention was undoing itself, on repeat, entirely on its own telemetry.
+check("5b. an escape hold likewise station-keeps at the escape point — it never chains a " +
+      "return, however the standing setting reads",
+      endWith({ behavior: "escape", run_completion: "loiter" }) === "loiter" &&
+      (S = state({ behavior: "escape" }), rthPending() === false),
+      "behavior escape -> 'loiter', not 'rth' — a Go-To-shaped escape used to promise " +
+      "(and then fire) exactly the return it had just steered clear of");
+
 // 6-9. THE CHAIN'S PRECONDITIONS. Each of these makes the chain unable to fire, so the
 // promise has to be retracted - a card that says "rth" when the boat is going to sit at
 // its last waypoint is worse than one that said loiter all along.
@@ -185,6 +199,32 @@ check("15. ... but HOLDING does not — including the seconds doRTH spends routi
       "the one-shot still stops the chain re-firing every telemetry frame");
 check("16. ... and a stopped boat does not re-arm anything either",
       rearm({ run: "idle", status: { holding: false } }, true) === true);
+
+// 16b. THE ACTUAL FIX, PINNED AT ITS OWN SITE. Every check above tests rthPending() and
+// rearmRthChain() in isolation - the PREDICTORS. The chain that actually COMMANDS doRTH()
+// is a separate, literal `if` inline in onState, deliberately duplicating the same
+// conditions rather than calling rthPending() (it also gates on the one-shot `rthChained`,
+// which is a firing-only concern rthPending() has no reason to know about). A predictor
+// can be fixed and its subject left untouched - which is exactly the shape of bug this
+// pins: the fire site needed its OWN "escape" exclusion, not just its predictive cousin's.
+{
+  const start = H.indexOf("function onState(");
+  let k = H.indexOf("{", start), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  const onStateSrc = H.slice(start, k + 1);
+  const fireBlock = onStateSrc.slice(onStateSrc.indexOf("End-of-Plan RTH"),
+                                      onStateSrc.indexOf("reapproachIfSetOff"));
+  // ⚠ NO THUNK: this file's check() reads `cond` directly rather than calling it (unlike
+  // clearance_guard.js / in_extremis.js), so an `() => ...` wrapper here is a function
+  // OBJECT - always truthy - and the check would be permanently green. Evaluated eagerly,
+  // matching every other check in this file.
+  const fires = /s\.behavior\s*!==\s*"escape"/.test(fireBlock) && /doRTH\(\{chained:true\}\)/.test(fireBlock);
+  check("16b. the LITERAL chain-fire condition in onState excludes behavior \"escape\", not " +
+        "just rthPending()",
+        fires,
+        fireBlock.includes('s.behavior!=="escape"')
+          ? "excluded" : "MISSING — an escape hold would still chain doRTH() here");
+}
 
 // --- INTENT: the reasoning travels WITH the plan it describes -------------------------
 // Andy, running in Pago Pago: "Path planning seems odd but workable. is it possible to

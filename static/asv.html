@@ -1100,8 +1100,16 @@ function clearanceGuard(){
     return c;
   }
   // ── RUNG 3: THE HELM. In extremis: the drift-only track enters too, so no amount of
-  // slowing or stopping helps. Steer out, expressed as a Go-To so it rides the behaviour
-  // the operator can already see, stop and override.
+  // slowing or stopping helps. Steer out.
+  //
+  // ⚠ A DEDICATED BEHAVIOUR, NOT A GO-TO. An escape shaped as an ordinary Go-To used to
+  // arrive, hold, and - because completion="rth" is the operator's STANDING setting, not
+  // something this emergency touches - immediately re-fire the end-of-plan chain, sending
+  // the boat straight back toward whatever it had just been steered clear of. Measured
+  // live, 2026-09-03, at Eastport: escape at 74.8 s, chained RTH at 83.9 s, a second
+  // escape at 86.9 s. /api/cmd/escape marks the run "escape", which the chain below and
+  // rthPending() both refuse to ever read as "the plan is over, go home" - the boat holds
+  // at the escape point and waits for the operator, which is what taking the helm is FOR.
   if(a.level === "helm" && (escalated || Date.now() - guardEscapeAt > GUARD_REASSESS_MS)){
     guardEscapeAt = Date.now();
     const escKn = V.SPEED_KN.high || 6;
@@ -1117,10 +1125,18 @@ function clearanceGuard(){
     const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
     clearance.slowed = false; commandedSpeed = null;
     cmd("/api/cmd/speed", {speed:"high"});      // steerage authority to beat the set
-    cmd("/api/cmd/goto", {lat:to.lat, lon:to.lon});
+    // Captured with the route, like every other commanded motion - so the Intent card can
+    // say why the boat is where it is, not just that it moved.
+    runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
+    setPlanIntent("escape", null, runRoute);
+    planIntent.why.push({t:"bad", s:"IN EXTREMIS: being set onto "+(c.kind||"a keep-out")
+      +" and stopping would not answer it — steered "+esc.hdg+"° at high speed, then holds "
+      +"here; does not chain a return, re-command when ready"});
+    cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)});
     showBanner("⚠⚠ IN EXTREMIS — being set onto " + (c.kind || "a keep-out")
       + " and stopping would not answer it. TAKING THE HELM: steering "
-      + esc.hdg + "° at high speed. Stop, Hold or the RC transmitter override this.");
+      + esc.hdg + "° at high speed, then HOLDING clear — not chaining any return. "
+      + "Stop, Hold or the RC transmitter override this.");
   }
   return c;
 }
@@ -2636,6 +2652,11 @@ function currentActivity(){
     const off = st.hold_wants_route
       ? " — set " + fmtDist(st.off_station_m || 0) + " off station, beyond the certified clear water; routed re-approach pending"
       : "";
+    // An escape hold is not an ordinary wait: say it was a safety intervention, and that
+    // nothing resumes on its own - see the chain-fire exclusion in onState.
+    if(S && S.behavior === "escape")
+      return {activity:"holding", detail:"in-extremis escape — holding clear, awaiting the operator" + off,
+              surveying:false, role:"transit"};
     return {activity:"holding", detail:"station-keeping" + off, surveying:false, role:"transit"};
   }
   if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
@@ -2656,7 +2677,8 @@ function currentActivity(){
             detail: lastRunLine >= 0 ? "between coverage regions" : "approach to the survey area"};
   }
   const why = {goto:"to the commanded point", rth:"returning home",
-               transit:"following the drawn transit line", search:"running a search pattern"};
+               transit:"following the drawn transit line", search:"running a search pattern",
+               escape:"in extremis — steering clear of a keep-out"};
   // A SEARCH PATTERN IS COVERAGE and this function has always said so ("surveying"): its
   // legs are sensor work, not a way of getting somewhere. So it takes the SURVEY speed -
   // the alternative is a sensor run flown at transit speed because nobody named it.
@@ -5581,8 +5603,11 @@ function runCompletion(){ return (S && (S.run_completion || S.completion)) || mi
 //     chain cannot fire. The chain, not the field, is what makes an RTH happen.
 function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="rth"; }
 function rthPending(){
-  return !!(S && S.completion==="rth" && S.behavior!=="rth" && S.home && S.armed && !S.estop
-            && !rthChainFailed && runHolds());
+  // behavior!=="escape" too: a card that promises a return the boat is not going to make
+  // is worse than one that never mentioned it, and an escape hold never chains one - see
+  // the chain-fire condition in onState, which this predicts.
+  return !!(S && S.completion==="rth" && S.behavior!=="rth" && S.behavior!=="escape"
+            && S.home && S.armed && !S.estop && !rthChainFailed && runHolds());
 }
 function endAction(){
   if(rthPending()) return "rth";
@@ -6582,8 +6607,16 @@ function onState(s){
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
   // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
+  //
+  // ⚠ NOR OFF AN ESCAPE. The in-extremis guard's own manoeuvre (clearanceGuard's helm
+  // rung, behavior "escape") holds at a point chosen ONLY to be clear of the hazard - not
+  // vetted as a plan endpoint, not something the operator asked for. Chaining a return from
+  // there used to send the boat straight back toward whatever it had just been steered
+  // clear of (measured live 2026-09-03: escape, chained RTH 9 s later, a second escape 3 s
+  // after that). Taking the helm is meant to buy the operator's attention, not hand
+  // control straight back to the standing plan; the operator re-commands when ready.
   if(s.run==="running" && st.holding && s.completion==="rth" && s.behavior!=="rth"
-     && s.armed && !s.estop && !rthChained){
+     && s.behavior!=="escape" && s.armed && !s.estop && !rthChained){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");
     doRTH({chained:true});
@@ -6908,7 +6941,12 @@ function updateMissionCard(){
     const atHome = (S.behavior==="rth");   // an RTH run's endpoint IS home, chained or hand-pressed
     // Holding at a Go-To/Transit endpoint with an RTH still to chain is a WAYPOINT, not
     // the end of the run - naming it "LOITER" read as "this is where the boat stays".
-    s = (atHome ? "RTH — home: station-keeping"
+    //
+    // ⚠ AN ESCAPE HOLD IS NAMED BEFORE EITHER, AND rthPending() ALREADY EXCLUDES IT - this
+    // branch would otherwise fall to "LOITER", which reads as an ordinary wait rather than
+    // the console having just taken the helm. Nothing chains from here; say so plainly.
+    s = (S.behavior==="escape" ? "IN EXTREMIS — escaped, holding clear (not returning home)"
+        : atHome ? "RTH — home: station-keeping"
         : rthPending() ? "END OF PLAN — returning home (RTH)"
         : "LOITER — station-keeping at the last waypoint")
       + (dEnd!=null? ": "+fmtDist(dEnd)+" off" : "")

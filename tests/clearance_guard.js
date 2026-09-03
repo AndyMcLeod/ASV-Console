@@ -381,11 +381,13 @@ check("15. the release is the COUNTERFACTUAL, not a distance margin — it asks 
       () => /restoreVel\(vel, drift, back\)/.test(G) && /guardAssess\(p, velBack/.test(G)
             && !/c\.m > buf \* 1\.5/.test(G),
       "slowing changes the very quantity being tested, so releasing on it oscillates");
-check("16. it steers ONLY at the helm rung, and a Go-To is how it does it",
-      () => /a\.level === "helm"/.test(G) && /cmd\("\/api\/cmd\/goto"/.test(G)
-            && G.indexOf('cmd("/api/cmd/goto"') > G.indexOf('a.level === "helm"'),
-      "expressed as a Go-To so the intervention rides a behaviour the operator can already " +
-      "see, stop and override — rather than a raw heading channel");
+check("16. it steers ONLY at the helm rung, and NOT as a Go-To",
+      () => /a\.level === "helm"/.test(G) && /cmd\("\/api\/cmd\/escape"/.test(G)
+            && !/cmd\("\/api\/cmd\/goto"/.test(G)
+            && G.indexOf('cmd("/api/cmd/escape"') > G.indexOf('a.level === "helm"'),
+      "a Go-To-shaped escape used to arrive, hold, and re-chain the end-of-plan RTH " +
+      "straight back toward the hazard it had just been steered clear of - see " +
+      "tests/end_action.js 5b/16b");
 // ⚠ 16b IS THE ONE THAT KEEPS THE REVERSAL NARROW. Steering is authorised in extremis, not
 // generally. The helm rung is unreachable unless the DRIFT-ONLY track also enters, which is
 // the test that says stopping would not answer - and that test lives in guard.js, so this

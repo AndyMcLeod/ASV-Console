@@ -344,6 +344,7 @@ BODIES = {
     "/api/ais/radius": {"km": 60}, "/api/cmd/approach": {"m": 8}, "/api/cmd/arm": {"on": True},
     "/api/cmd/energy": {"pct": 90}, "/api/cmd/estop": {"on": False},
     "/api/cmd/goto": {"lat": 38.79, "lon": -75.161}, "/api/cmd/speed": {"speed": "low"},
+    "/api/cmd/escape": {"lat": 38.79, "lon": -75.161},
     "/api/cmd/spawn": {"lat": 38.78965, "lon": -75.16094},
     "/api/cmd/transit": {"route": [{"lat": 38.79, "lon": -75.161}]},
     "/api/cmd/upload": {"waypoints": [{"lat": 38.79, "lon": -75.161}]},
