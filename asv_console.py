@@ -2579,6 +2579,7 @@ class VcuLink:
     # command surface (Engine gates these before calling)
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
                     completion="complete", hold_clear_m=None, coast_from_m=None): ...
+    def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run
     def start(self): ...
     def pause(self): ...
     def stop(self): ...
@@ -2696,6 +2697,54 @@ class SimVcu(VcuLink):
         self._coast_s0 = None
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
+
+    def amend_plan(self, waypoints):
+        """Replace the UNFLOWN remainder of the running plan. The run is the same run.
+
+        THE CONSOLE HAD NO WAY TO NUDGE A TRACK, and that is why its clearance guard could
+        only slow or stop. Every commanded motion here goes through `upload_plan`, which
+        resets `_wp_index` to zero - so the only way to change a running plan was to start
+        it again from waypoint one, and the only intervention cheap enough to make in
+        anger was the throttle. A hold beside a structure then took the way off a hull the
+        tide was already setting (a stopped boat in a 2 kn stream makes 2.00 kn over the
+        ground, tests/currents.py), and the survey had to be re-run from the beginning.
+
+        So: the flown prefix is history and is kept, the remainder is replaced, and the
+        index does not move. `wp_total` may change - a deviation that splices in a via
+        point really does make the plan one waypoint longer, and a card that hid that
+        would be lying about the route the boat is flying.
+
+        ⚠ `_seg_start` BECOMES THE BOAT'S PRESENT POSITION, and this is not tidiness. The
+        along-track advance test measures from `_seg_start`, so leaving it on the old
+        waypoint measures progress along a leg that no longer exists - which on a
+        deviation that shortens the leg reads as ALREADY PAST the new waypoint and skips
+        it in the same tick it arrived. The new leg starts here, because here is where
+        the boat is.
+
+        ⚠ AND IT REFUSES WHEN THERE IS NOTHING TO AMEND. A plan that is not running, or
+        one already flown to its end, has no unflown remainder; silently accepting would
+        leave the caller believing a deviation had been taken when the boat is
+        station-keeping and about to do nothing of the kind.
+        """
+        wps = [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])]
+        if not wps:
+            raise VcuProtocolError("empty amendment")
+        if not self._running or self._holding:
+            raise VcuProtocolError("no running plan to amend")
+        if self._wp_index >= len(self._plan):
+            raise VcuProtocolError("the plan has no unflown remainder")
+        self._plan = self._plan[:self._wp_index] + wps
+        self._seg_start = {"lat": self.lat, "lon": self.lon}
+        self._xte_i = 0.0              # a new leg: the old cross-track trim is not its trim
+        # ⚠ AN AMENDMENT ENDS THE DRIFT-IN, AND DOES NOT RE-ARM IT. coast.js's own rule is
+        # that the coast runs only where the safety ladder is silent - it is an optimisation
+        # for benign conditions, and the prop is off, so a coasting hull cannot take a
+        # deviation at all. An amendment is the ladder speaking. She powers the last of it
+        # under control instead, which is the same arrival every plan had before the coast
+        # existed; the console re-solves and re-issues a release range if it still wants one.
+        self._coast_from_m = None
+        self._coasting = False
+        self._coast_s0 = None
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
@@ -3566,6 +3615,43 @@ class Engine:
         self._run_route(r, self.behavior,
                         "Set off station - re-approaching on a routed path (%d wpts)." % len(r),
                         hold_clear_m)
+
+    def amend(self, route, note=None):
+        """Deviate the RUNNING plan: replace its unflown remainder, keep everything else.
+
+        The clearance guard's `edge` rung (guard.js edgeAround, clearanceGuard in the page).
+        Andy, 2026-09-04: *"Investigate forcing slight deviations in a given track to prevent
+        holds when there is still plenty of available water away from the nogo."*
+
+        IT KEEPS THE BEHAVIOUR AND THE RUN, for the same reason reapproach() does: a Go-To
+        would do the same driving and would rename a survey a "goto" on every card. This is
+        not a new command, it is the same command with a few metres taken out of it - and a
+        deviation that re-labelled the run would also re-arm the end-of-plan chain, which is
+        the trap the in-extremis escape was rebuilt to avoid.
+
+        ⚠ GATED ON A RUNNING, NON-HOLDING PLAN. A route arriving while the boat is
+        station-keeping, paused or stopped is a command nobody gave, and the vessel says so
+        rather than quietly accepting it: `amend_plan` refuses the same case a second time,
+        so the seam cannot leak if this gate is ever loosened."""
+        # ARM FIRST, THEN E-STOP, THEN THE RUN - the same order _run_route uses. Ordering
+        # matters to the OPERATOR, not to the logic: whichever gate answers is the sentence
+        # they read, and "ARM before commanding the boat" is more use to someone who has not
+        # armed than "the vessel is not running a plan" would be.
+        self._require(self.armed, "ARM before commanding the boat")
+        self._require(not self.estop, "clear E-STOP first")
+        self._require(self.run == "running", "the vessel is not running a plan")
+        st = self.status
+        self._require(not st.get("holding"), "the vessel is station-keeping, not running a plan")
+        r = self._sanitize_route(route)
+        with self._lock:
+            link = self._link
+            self._require(link is not None, "not connected")
+            link.amend_plan(r)
+            # wp_total is read back from the LINK's own state on the next tick; setting it
+            # here from the amendment alone would be a guess about a plan whose flown prefix
+            # this layer does not hold.
+            self.note = note or ("Deviation: the remaining track was amended (%d wpts) to keep clear." % len(r))
+        self._push_state()
 
     def set_home(self, lat=None, lon=None):
         """Set HOME at an explicit point, or at the vessel's present position.
@@ -4507,6 +4593,8 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/escape":            # the in-extremis guard's OWN manoeuvre
                 ENGINE.escape(body.get("lat"), body.get("lon"), body.get("hold_clear_m"))
+            elif path == "/api/cmd/amend":             # deviate the RUNNING plan, keep the run
+                ENGINE.amend(body.get("route"), body.get("note"))
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius

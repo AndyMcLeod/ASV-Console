@@ -188,6 +188,21 @@
   .encbanner{position:absolute;left:50%;transform:translateX(-50%);bottom:120px;z-index:6;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
+  /* THE GUARD BAR. Above the ENC banner and louder than it, because this one is about the
+     boat rather than about the chart, and it carries a control. Colour tracks the rung. */
+  .guardbar{position:absolute;left:50%;transform:translateX(-50%);bottom:152px;z-index:7;
+    font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);
+    border-radius:3px;padding:5px 10px;max-width:80vw;display:none;
+    box-shadow:0 2px 10px rgba(0,0,0,.5);}
+  .guardbar.edge{background:#7fd6a0;}
+  .guardbar.helm{background:#e07a6a;color:#180806;}
+  .guardbar.over{background:#9fb6c8;}
+  .guardbar .gb-row{display:flex;gap:8px;align-items:center;justify-content:center;
+    margin:2px 0;flex-wrap:wrap;}
+  .guardbar .gb-rung{font-weight:700;letter-spacing:.08em;}
+  .guardbar .gb-why{max-width:70vw;}
+  .guardbar .ctl.small{background:#160d02;color:#f2e6d8;border-color:#160d02;}
+  .guardbar .ctl.small:hover{background:#2b1a06;}
   /* MOVING BASE. Deliberately the loudest thing on the chart while it is up (Andy: "show
      some more obvious and overt indication that a shift of port is in process"). It is
      bigger than the note, sits over the middle of the chart rather than at an edge, and
@@ -502,6 +517,22 @@
 
   <div class="encbanner" id="encbanner"></div>
 
+  <!-- THE CLEARANCE GUARD'S OWN BAR, and the operator's way past it.
+       A banner scrolls a sentence at somebody and then expects them to find a control
+       somewhere else; this puts the rung, the reason and the way forward in one place,
+       and it is up for exactly as long as the guard is intervening. The PROCEED button
+       is the operator saying they have looked and it is safe - see guardOverride. -->
+  <div class="guardbar" id="guardBar">
+    <div class="gb-row">
+      <span class="gb-rung" id="gb_rung">SLOW</span>
+      <span class="gb-why" id="gb_why"></span>
+    </div>
+    <div class="gb-row">
+      <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
+      <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console.">CANCEL OVERRIDE</button>
+    </div>
+  </div>
+
   <!-- MOVING BASE. Up for the whole port change - from the moment the operator picks one
        until the new area's keep-out model is loaded - not a flash, because the thing being
        announced is not instantaneous. -->
@@ -673,8 +704,8 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
-import { assess as guardAssess, escapeCourse, groundVel, restoreVel, HORIZON_S as GUARD_HORIZON_S }
-  from "/static/js/guard.js";
+import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
+         HORIZON_S as GUARD_HORIZON_S, edgeCapM } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
 import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
@@ -741,7 +772,7 @@ document.body.classList.add("ui-" + UIROLE);
 (function(){ const s = document.createElement("style"); s.textContent =
   // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
   "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
-  "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls #note,"+
+  "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls .guardbar,body.ui-controls #note,"+
   // MOVING BASE belongs to the chart: it narrates a chart movement, and the port picker
   // that starts it lives on the .topbar, which this window hides.
   "body.ui-controls #portMove,"+
@@ -943,6 +974,12 @@ function holdClearAt(ll){
   return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), nogo.ko, nogo.buffer || 0);
 }
 function setPlanIntent(kind, plan, route){
+  // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
+  // situation on one track; carrying it into the next run would make a per-episode judgement
+  // into a standing permission, which is the one thing that override must never become. The
+  // console's own budget for moving the operator's track resets with it, for the same
+  // reason - a fresh plan has not been deviated at all yet.
+  guardOverride = null; edgeSpentM = 0; edgeCount = 0;
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
                 why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
                 heldOff: (plan && plan.heldOff) || null,
@@ -1076,8 +1113,120 @@ function updateClearance(){
 // HOLDING - which excludes, exactly, a boat station-keeping at the end of a run while the
 // stream sets it into a pier. That is the case Andy photographed at Eastport. The gate is
 // now the console's actual authority: armed, and not e-stopped.
+/**
+ * THE GUARD'S OWN BAR, and the operator's way past it.
+ *
+ * Andy, 2026-09-04: *"or generate a button that allows continued forward progress override.
+ * As if a user has confirmed its safe to proceed"*.
+ *
+ * The banner already said what was happening; what it could not do was offer a way through
+ * it. A sentence that scrolls past, with the control it refers to somewhere else on the
+ * page, is how an operator ends up power-cycling a survey. So the rung, the reason and the
+ * override live in one box that is up for exactly as long as the guard is intervening.
+ *
+ * ⚠ WHAT PROCEED DOES AND DOES NOT DO IS THE WHOLE POINT OF THE WORDING ON IT. It suppresses
+ * the two rungs that IMPEDE the boat - the slow-down and the hold - and nothing else. It
+ * does not suppress the alarm, it does not suppress the clearance readout, it does not
+ * suppress a deviation (that IS forward progress), and it does not suppress the helm. An
+ * operator saying "I can see it, keep going" has not said "steer into it", and has certainly
+ * not said "and if the tide starts carrying you in, do nothing".
+ */
+function renderGuardBar(a, c){
+  const bar = $("#guardBar"); if(!bar) return;
+  if(!a || a.level === "clear"){ bar.style.display = "none"; return; }
+  const over = !!guardOverride;
+  bar.className = "guardbar" + (over ? " over" : (a.level === "edge" ? " edge"
+                                : (a.level === "helm" ? " helm" : "")));
+  bar.style.display = "block";
+  $("#gb_rung").textContent = over ? "PROCEEDING — OPERATOR'S AUTHORITY"
+                                   : "⚠ " + a.level.toUpperCase();
+  const off = (c && c.m != null) ? c.m.toFixed(1) + " m off " + (c.kind || "a keep-out") : "";
+  $("#gb_why").textContent = (off ? off + " · " : "") + (a.why || "");
+  // The offer stands only where it MEANS anything: proceeding past a rung that is not
+  // stopping the boat is a decision with no consequence, and offering it there teaches the
+  // operator to press it out of habit before the one that matters.
+  const offerable = (a.level === "slow" || a.level === "hold") && !!(S && S.armed && !S.estop);
+  $("#gb_proceed").style.display = (!over && offerable) ? "" : "none";
+  $("#gb_cancel").style.display  = over ? "" : "none";
+}
+
+/**
+ * THE TRACK THE BOAT IS ACTUALLY BEING STEERED ALONG, in the keep-out model's frame - or
+ * null when it is not being steered along anything.
+ *
+ * Three things have to be true together, and any of them missing means the straight-line
+ * projection is the honest model rather than the lazy one:
+ *   * a RUNNING plan with waypoints still ahead of the boat (a station-keeping, paused,
+ *     stopped or RC-driven boat is following no route - and station-keeping beside a pier
+ *     is the case the in-extremis rung was written for, so it must keep the old model);
+ *   * a heading, which is the bow line the projection swings, NOT the course over ground -
+ *     the drift is added to it, and using COG would count the set twice;
+ *   * way through the water, measured as ground velocity MINUS the set rather than read off
+ *     a commanded speed. A boat that has been told 6 kn and is doing 1 is doing 1.
+ *
+ * ⚠ THE TURN RATE IS THE VESSEL'S OWN. A projection that swings faster than the hull can
+ * clears corners the boat will not clear, which is worse than no projection at all: it is a
+ * safety check that reports safe because it modelled a better boat.
+ */
+function guardTrack(p, vel, drift){
+  const st = (S && S.status) || {};
+  if(!(S && S.run === "running") || st.holding) return null;
+  if(!runRoute || !runRoute.length || !nogo.frame) return null;
+  const idx = Math.min(window._wpIndex || 0, runRoute.length);
+  const ahead = runRoute.slice(idx);
+  if(!ahead.length) return null;
+  if(st.heading_deg == null || !vel) return null;
+  const twMs = Math.hypot(vel.e - drift.e, vel.n - drift.n);
+  if(!(twMs > 0.05)) return null;                 // no way on: nothing is being steered
+  return {route: ahead.map(w=>nogo.frame.toEN(w)), idx, ahead,
+          hdgDeg: st.heading_deg, twMs,
+          turnRateDegS: V.MAX_TURN_RATE_DEG_S,
+          approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
+}
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
 const GUARD_REASSESS_MS = 6000;     // while steering, re-solve the escape this often
+// THE DEVIATION SEARCH IS NOT FREE and it does not need to run at telemetry rate. It
+// projects a candidate track for every bearing at every offset from two bases - hundreds of
+// walks of the keep-out model - where `assess` itself walks it once. Every 2 s is far
+// oftener than a boat travelling 2 m/s can invalidate an answer, and it keeps the search off
+// the frame budget the chart is drawn in.
+const EDGE_REASSESS_MS = 2000;
+let guardEdgeAt = 0, edgeSpentM = 0, edgeCount = 0;
+// THE OPERATOR'S "PROCEED". Not a switch and not a mode - a record of one decision, taken
+// while looking at one situation, and it lapses on its own three ways (see guardOverrideOk).
+// {t, level, clearM}
+let guardOverride = null;
+/**
+ * Is the operator's override still good for what is in front of the boat NOW?
+ *
+ * ⚠ AN OVERRIDE WITH NO END IS A DISABLED SAFETY, and a timer would be the wrong end - a
+ * five-minute cap re-holds a boat halfway down a channel the operator has already assessed,
+ * and a long enough one never fires. So it is bounded by WHAT CHANGED instead, which is the
+ * same shape as the guard's own release counterfactual: ask the question of the state you
+ * are actually in, not of a clock.
+ *
+ *   * the episode ended - the guard reads clear, so there is nothing left to override;
+ *   * it went IN EXTREMIS - the operator said "keep going", which was never an answer to
+ *     "the water is carrying you in and stopping will not stop it";
+ *   * the water got materially worse than the water they looked at.
+ *
+ * It also never covers `edge`. A deviation IS continued forward progress, at full speed, on
+ * a verified track - the thing the override exists to protect - so suppressing it would make
+ * PROCEED strictly worse for the operator than not pressing it.
+ */
+const OVERRIDE_GIVE_M = 5;          // how much closer than the granted clearance still counts
+function guardOverrideOk(level, clearM){
+  if(!guardOverride) return false;
+  if(level === "clear" || level === "helm"){ guardOverride = null; return false; }
+  if(clearM != null && guardOverride.clearM != null
+     && clearM < guardOverride.clearM - OVERRIDE_GIVE_M){
+    showBanner("⚠ OVERRIDE LAPSED — " + clearM.toFixed(1) + " m is more than "
+      + OVERRIDE_GIVE_M + " m closer than the " + guardOverride.clearM.toFixed(1)
+      + " m you assessed. The console has the throttle again.");
+    guardOverride = null; return false;
+  }
+  return true;
+}
 function clearanceGuard(){
   const c = updateClearance();
   const buf = nogo.buffer || 0;
@@ -1089,11 +1238,34 @@ function clearanceGuard(){
   // added to the physics that set is the whole of it - leeway plus stream.
   const vel = groundVel(st.cog_deg, st.sog_kn);
   const drift = groundVel(st.env_set_deg, st.env_set_kn) || {e:0, n:0};
-  const a = vel ? guardAssess(p, vel, drift, nogo.ko, buf) : {level:"clear", tEntry:null};
+  // THE LOOK-AHEAD FOLLOWS THE PLAN WHEN THERE IS ONE - see guard.js's header for the two
+  // reports that made this necessary and the numbers behind them. `guardTrack()` answers
+  // with the route ahead in the model's frame plus the boat's own heading and through-water
+  // speed; it answers null for a boat that is not being steered along anything, and the
+  // straight-line projection this guard was born with takes over unchanged.
+  const trk = guardTrack(p, vel, drift);
+  // ⚠ THE SEARCH IS ON A CLOCK, AND THE LADDER MUST NOT CLIMB WHILE THAT CLOCK RUNS. This
+  // was measured live at New Castle before it was written: the guard edged, then in the
+  // two seconds before the next search `assess` was asked WITHOUT the deviation, answered
+  // `hold` on the very entry the deviation had just been commanded to remove, and stopped
+  // the boat - three amendments and two holds in twenty seconds. So `settling` gates both:
+  // no search, and no escalation past the rung the search had already answered. It is the
+  // same argument as the release counterfactual - do not judge a state on the measurement
+  // the command you just issued was meant to change - and it is bounded twice over, by
+  // EDGE_REASSESS_MS and by the deviation budget.
+  //
+  // ⚠ IT NEVER GATES THE HELM. `settling` suppresses `slow` and `hold`; in extremis is a
+  // different question and a different branch, and a deviation in flight is no answer to
+  // the water carrying the boat in.
+  const settling = Date.now() - guardEdgeAt < EDGE_REASSESS_MS;
+  const wantEdge = !settling && edgeSpentM < edgeCapM(buf);
+  const a = vel ? guardAssess(p, vel, drift, nogo.ko, buf, {...(trk||{}), edge: wantEdge})
+                : {level:"clear", tEntry:null};
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
+  clearance.onPlan = !!a.onPlan;
   const act = !!(S && S.armed && !S.estop);
   const rose = a.level !== "clear" && a.level !== guardLevel;
-  const RUNG = {clear:0, slow:1, hold:2, helm:3};
+  const RUNG = {clear:0, edge:1, slow:2, hold:3, helm:4};
   const escalated = RUNG[a.level] > RUNG[guardLevel];
 
   if(a.level === "clear"){
@@ -1113,13 +1285,23 @@ function clearanceGuard(){
       if(clearance.slowed && vel){
         const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
         const velBack = restoreVel(vel, drift, back);
-        release = guardAssess(p, velBack, drift, nogo.ko, buf).level === "clear";
+        // ⚠ THE COUNTERFACTUAL IS ASKED IN THE SAME SHAPE AS THE TRIGGER. On a route the
+        // projection reads `twMs`, not `vel`, so handing it only the restored GROUND
+        // velocity would ask a route-aware question at the speed the boat is doing now -
+        // which is the speed that made it clear, and it would release every time.
+        release = guardAssess(p, velBack, drift, nogo.ko, buf,
+                              {...(trk||{}), twMs: trk ? back : undefined, edge:false}
+                             ).level === "clear";
       }
       if(release){
         flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — speed back to "
                   + roleSpeed(speedRole()) + " (" + speedRole() + ").");
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
+        // The episode is over: the operator's decision was about THIS situation, and the
+        // console's own budget for moving their track resets with it.
+        guardOverride = null; edgeSpentM = 0; edgeCount = 0;
+        renderGuardBar(null, c);
       }
       setViolations(release ? [] : (c.info ? [{mode:"leg", info:c.info,
                                                at:{lat:asv.lat, lon:asv.lon}}] : []));
@@ -1127,6 +1309,7 @@ function clearanceGuard(){
     }
     guardLevel = "clear";
     setViolations([]);
+    renderGuardBar(null, c);
     return c;
   }
 
@@ -1141,10 +1324,61 @@ function clearanceGuard(){
   }
   setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
   guardLevel = a.level;
+  const overridden = guardOverrideOk(a.level, c.m);
+  renderGuardBar(a, c);
   if(!act) return c;                       // the operator has it; alarm, do not fight
 
-  // ── RUNG 1: SLOW. Buys time and shortens the stopping distance. ───────────────────
+  // ── RUNG 1: EDGE. A few metres over, and keep going. ──────────────────────────────
+  //
+  // Andy, 2026-09-04, with a survey stopped at its own start and a Go-To put into holding:
+  // *"the recent modifications have been built to prevent the ASV from running into
+  // features. This is good. But stopping and holding the ASV on a run is a problem.
+  // Investigate forcing slight deviations in a given track to prevent holds when there is
+  // still plenty of available water away from the nogo."*
+  //
+  // ⚠ THIS IS THE PLANNER ACTING, NOT THE HELM. The console does not command a heading here
+  // - it amends the ROUTE, through the same keep-out model and the same verification every
+  // commanded motion goes through, and the vessel's own guidance flies it. That is the
+  // authority the console has always had over a route, exercised a few metres at a time.
+  // The helm rung below is still the only place a course is commanded directly.
+  //
+  // ⚠ AND IT IS NOT GATED ON THE OVERRIDE. A deviation is continued forward progress at
+  // full speed on a verified track, which is exactly what PROCEED is asking for - see
+  // guardOverrideOk.
+  if(a.level === "edge" && a.edge){
+    guardEdgeAt = Date.now();
+    const trkNow = trk;
+    if(trkNow){
+      const via = nogo.frame.fromEN(a.edge.via.e, a.edge.via.n);
+      const w = {lat:via.lat, lon:via.lon};
+      // ⚠ THE SPLICE IS AT THE INDEX THE SEARCH NAMES, NOT AT THE HEAD OF THE ROUTE. The
+      // trouble on a routed detour is usually a corner two or three waypoints ahead, and
+      // `a.edge.at` is which one; `drop` says whether that waypoint is kept (a bend) or
+      // replaced (a moved corner). Splicing at the head instead would have thrown away
+      // every waypoint between the boat and the amendment.
+      const at = Math.max(0, Math.min(a.edge.at, trkNow.ahead.length - 1));
+      const tail = [...trkNow.ahead.slice(0, at), w, ...trkNow.ahead.slice(at + a.edge.drop)];
+      cmd("/api/cmd/amend", {route: tail,
+          note: "Deviation: " + edgeText(a.edge) + " to keep clear of "
+                + (c.kind || "a keep-out") + "."});
+      // The drawn route follows the vessel's, or the chart shows a track the boat is not
+      // flying and every derived figure on the cards is measured off the wrong line.
+      runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];
+      edgeSpentM += a.edge.offsetM; edgeCount++;
+      if(planIntent) planIntent.why.push({t:"warn", s:"DEVIATED " + edgeText(a.edge)
+        + " — the projected track was entering " + (c.kind||"a keep-out") + " in "
+        + (a.tEntry||0).toFixed(0) + " s; there is " + a.edge.water.toFixed(1)
+        + " m of water there, so the console went round rather than stopping"});
+      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — DEVIATED "
+                + edgeText(a.edge) + ", " + a.edge.water.toFixed(1) + " m of water.");
+      updateMissionCard(); render();
+    }
+    return c;
+  }
+  // ── RUNG 2: SLOW. Buys time and shortens the stopping distance. ───────────────────
   if(a.level === "slow"){
+    if(settling) return c;                 // a deviation is in flight; it answers this
+    if(overridden) return c;               // the operator has said proceed; keep the speed
     if(!clearance.slowed && roleSpeed(speedRole()) !== "low"){
       clearance.slowed = true;
       cmd("/api/cmd/speed", {speed:"low"});
@@ -1152,9 +1386,16 @@ function clearanceGuard(){
     }
     return c;
   }
-  // ── RUNG 2: HOLD. Only reached when the drift-only track is CLEAR, i.e. taking the
+  // ── RUNG 3: HOLD. Only reached when the drift-only track is CLEAR, i.e. taking the
   // way off genuinely answers it. Never reached when the water is doing the carrying.
+  //
+  // ⚠ AND ONLY WHEN NO DEVIATION ANSWERED IT FIRST. A hold is the most expensive thing this
+  // guard does: it stops the survey, it cannot be resumed (the vessel's plan is replaced by
+  // the hold point, so the console's only way back is to re-run from waypoint one), and
+  // beside a structure it hands a stopped hull to the tide.
   if(a.level === "hold"){
+    if(settling) return c;                 // a deviation is in flight; it answers this
+    if(overridden) return c;               // the operator has said proceed; do not stop them
     if(escalated){
       guardActedAt = Date.now();
       // Told how much water it has here, so a boat set off THIS hold point does not drive
@@ -1165,7 +1406,7 @@ function clearanceGuard(){
     }
     return c;
   }
-  // ── RUNG 3: THE HELM. In extremis: the drift-only track enters too, so no amount of
+  // ── RUNG 4: THE HELM. In extremis: the drift-only track enters too, so no amount of
   // slowing or stopping helps. Steer out.
   //
   // ⚠ A DEDICATED BEHAVIOUR, NOT A GO-TO. An escape shaped as an ordinary Go-To used to
@@ -6555,6 +6796,37 @@ $("#b_start").onclick = async ()=>{
 $("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
 $("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
+// THE OPERATOR'S "PROCEED". One decision, recorded with the situation it was taken about,
+// and logged - because this is the operator overriding a safety intervention and a recording
+// that does not say so cannot be read afterwards. It is deliberately NOT a mode, NOT sticky
+// across runs, and NOT a way to silence the alarm; see guardOverrideOk for the three ways it
+// ends on its own.
+$("#gb_proceed").onclick = ()=>{
+  const c = clearance || {};
+  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null};
+  // Hand back anything the guard had already taken, so "proceed" means what it says. The
+  // governor re-asserts the role's speed on the next frame.
+  if(clearance.slowed){ clearance.slowed = false; commandedSpeed = null; }
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"guard_override", data:{
+      level: guardOverride.level, clearance_m: guardOverride.clearM,
+      kind_: c.kind || null, why: c.why || null, buffer_m: nogo.buffer || null}})}).catch(()=>{});
+  if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE at "
+    + (guardOverride.clearM != null ? guardOverride.clearM.toFixed(1) + " m" : "unknown range")
+    + " from " + (c.kind || "a keep-out") + " — proceeding on the operator's assessment; the "
+    + "console has stopped slowing and holding for this situation but still alarms, still "
+    + "deviates where the water allows, and still takes the helm in extremis"});
+  showBanner("PROCEEDING ON THE OPERATOR'S AUTHORITY — the console will not slow or hold for "
+    + "this situation. It is still watching, will still deviate where there is water, and "
+    + "still takes the helm in extremis. Recorded in the session log.");
+  renderGuardBar({level: guardOverride.level, why: c.why}, c);
+  updateMissionCard();
+};
+$("#gb_cancel").onclick = ()=>{
+  guardOverride = null;
+  flashNote("Override cancelled — the console has the situation again.");
+  renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
+};
 $("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 $("#b_estop").onclick = async ()=>{

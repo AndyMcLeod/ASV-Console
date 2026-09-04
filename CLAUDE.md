@@ -55,11 +55,120 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-03 — she comes in on the drift now)
+## ⇒ START HERE (handoff refreshed 2026-09-04 — she goes round it now, instead of stopping)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): THE DRIFT-IN APPROACH.** Andy: *"Even consider drifting in by
+**NEWEST (this commit): THE LOOK-AHEAD FOLLOWS THE PLAN, AND A NEAR MISS IS ANSWERED BY A
+FEW METRES OF TRACK.** Andy, with two reports from one session: *"A keep out triggered during
+the start of a survey forced a drift-only track. The punch out should have kept the run
+clear. In another situation a GOTO run was put into holding because of entering a no go
+zone. ... stopping and holding the ASV on a run is a problem. Investigate forcing slight
+deviations in a given track to prevent holds when there is still plenty of available water
+away from the nogo."* And then: *"or generate a button that allows continued forward progress
+override. As if a user has confirmed its safe to proceed"*.
+
+**⚠⚠ HE IS RIGHT THAT THE PUNCH-OUT KEPT THE RUN CLEAR, AND THAT IS THE WHOLE DEFECT.** The
+guard's look-ahead was a STRAIGHT extrapolation of the present ground velocity for up to 45 s
+— a manoeuvre nobody intends to make — while every planner here clips or routes to the buffer
+edge and then TURNS. So a plan is correct precisely when it grazes the buffer, and the guard
+alarmed 40–60 m before that same edge: **the two rules could not both be satisfied, and the
+plan lost.** Measured against a pier at buffer 5 m, **in dead calm, with no set on the boat at
+all**, on a survey line `clipLine` had trimmed exactly as it should:
+
+    4.0 kn survey line:  SLOW at 90 m of clearance,  HOLD with 33 m still to run
+    4.0 kn Go-To turn:   first alarm 90 m short of the turn,  HOLD 39 m short of it
+    6.0 kn Go-To turn:   first alarm 136 m short of the turn, HOLD 59 m short of it
+
+And a false HOLD near a structure is not a harmless pause: it takes the way off, and a hull
+lying stopped in a 2 kn stream makes 2.00 kn over the ground — so the console answered a
+correct plan by **handing the boat to the tide beside the very feature it was worried about**.
+That is the "drift-only track" in the report. It also destroys the run: a hold replaces the
+vessel's plan with a single waypoint, and there is no resume.
+
+`projectRoute` is the fix and it is **NOT "trust the plan"**: it starts at the boat's ACTUAL
+position and heading, steers toward the waypoint it is actually being steered toward at the
+**hull's own turn rate**, and adds the drift as advection at every step. A boat holding its
+track reads clear because it is; a boat being set off one still reads the entry; and **a hull
+that cannot physically make a corner still reads the entry** — a DriX holds 20°/s, so at 7 kn
+it turns in ~10 m, and routeAround puts its corners ON the buffer edge, 7 m off a pier face,
+where a 10 m turn circle reaches 3 m INSIDE the structure. ⚠ With no route to follow —
+station-keeping, paused, on the transmitter — it is exactly the projection it always was, so
+the Eastport case that earned the helm rung is untouched.
+
+**THE NEW FIRST RUNG IS `edge`: a few metres over, and keep going.** `edgeAround` searches the
+smallest amendment that puts the whole projected path clear. ⚠ **Verified at a BIGGER buffer
+than the one that triggered it** (`buf + edgeMarginM`), which is the hysteresis that makes ONE
+answer hold — measured live at New Castle before that was understood: three amendments in
+twelve seconds, then the budget was spent and the boat held anyway. ⚠ **It goes where the
+TROUBLE is, not where the boat is** — on a routed detour the foul is usually a corner two or
+three waypoints ahead, and the first cut only ever amended the first leg, found nothing, and
+went straight to hold and then to the helm (found by driving it, not by reading it). Three
+shapes: a **bend** spliced into the fouled leg, **the corner the boat is turning at** (the
+commonest answer), and the waypoint being steered toward. ⚠ **The console may move a CORNER,
+never a DESTINATION.** Authority is bounded by `edgeCapM(buf)` = max(3×buffer, 15 m), which is
+also the per-episode budget.
+
+**MEASURED LIVE at New Castle NH over 1,324 real keep-out zones**, on a routed turn 48 m off a
+charted dock: a hull that can make the turn went **slow → CLEAR** (nothing commanded at all);
+a DriX that cannot went **slow → EDGE, moving the corner 5.0 m to starboard into 12.4 m of
+water**.
+
+**⚠ THE SEARCH COST 1,060 ms OF FROZEN TAB AND NOW COSTS 175 ms.** `blocked` is ~800 µs
+against a real harbour extract (New Castle carries 34,579 ring vertices; one shoreline polygon
+has 7,034), so a projection is ~9 ms and a 15° sweep over two bases and six radii was a full
+second. It is 45° now, screened at a coarse step over a short horizon, and only the WINNER is
+re-projected at the full step and the full horizon — so nothing is ever offered on the strength
+of the coarse pass.
+
+**⚠ AND THE LADDER MUST NOT CLIMB WHILE A DEVIATION IS IN FLIGHT.** Measured live: the guard
+edged, then in the two seconds before the next search was asked WITHOUT the deviation,
+answered `hold` on the very entry the deviation had been commanded to remove, and stopped the
+boat — three amendments and two holds in twenty seconds, with the hold/re-approach chain
+churning underneath. `settling` gates the search AND the escalation, and **never the helm**.
+
+**THE VESSEL GAINED THE CAPABILITY IT HAD BEEN MISSING**: `/api/cmd/amend` replaces a running
+plan's unflown remainder and keeps the flown prefix, the index, the behaviour and the run.
+That absence is *why* the guard could only slow or stop — every commanded motion goes through
+`upload_plan`, which resets the index to zero, so the only way to change a running plan was to
+start it again from waypoint one. ⚠ `_seg_start` becomes the boat's present position, because
+the along-track advance test measures from it and a shortened amendment would otherwise read
+as already past its own new waypoint and be skipped in the tick it arrived. ⚠ An amendment
+**ends a drift-in and does not re-arm it**: the coast runs only where the ladder is silent, and
+a hull with the prop off cannot take a deviation at all.
+
+**THE PROCEED BUTTON** is on a new guard bar that carries the rung, the reason and the
+clearance, up for exactly as long as the guard is intervening. ⚠ **It suppresses the two rungs
+that IMPEDE the boat and nothing else** — not the alarm, not the readout, not a deviation
+(that IS the forward progress it is asking for), and **not the helm**: "keep going" was never
+an answer to "the water is carrying you in". It is one decision about one situation, logged as
+`guard_override`, and it lapses on its own three ways — the episode ends, the clearance falls
+`OVERRIDE_GIVE_M` below what the operator looked at, or the situation goes in extremis. **No
+timer**: a five-minute cap re-holds a boat halfway down a channel it has already assessed, and
+a long enough one never fires.
+
+**⚠ SIX OF MY OWN CHECKS WERE WRITTEN WRONG AND MUTATION FOUND ALL SIX** (25 mutations against
+the browser half, 23 killed; 11 against the vessel half, all 11 killed). Each looked exactly
+like a test and could not fail — a last waypoint 25 m off the wall, so a projection that never
+ended just orbited in open water and touched nothing; a water-gate check shadowed by the gate
+itself; a destination in CLEAR water, where the projection ends AT the waypoint and there is no
+deviation to classify at all; a source-shape check any rename would break and no defect would;
+a two-waypoint route, where there is only one corner and so nothing for a fouled-leg index to
+be wrong ABOUT; and a fixture whose hazard sat 120 m up a leg whose look-ahead reaches 93 m.
+The two surviving mutations are **recorded rather than excused**: verifying the whole amended
+track at `buf + margin` turned out to dominate both the ahead-of-the-boat test and the water
+gate on the via itself, and both lines stay with that written beside them.
+
+**⬜ ONE THING THE LIVE RUN SURFACED AND I DID NOT FIX** (it is defect (2) below, reproduced):
+sent to a berth in genuinely tight water, the boat reached the buffer, went in extremis, and
+`escapeCourse` refused every heading — **"BOXED IN — TAKE MANUAL CONTROL"** — because
+`timeToEntry` returns 0 for every candidate once the boat is inside the buffer. It then churned
+hold → re-approach → hold. All pre-existing, all in the list below, none of it caused by this
+work.
+
+---
+
+**PREVIOUS: THE DRIFT-IN APPROACH.** Andy: *"Even consider drifting in by
 calculating wind and current affects on set and drift. Its ok to come in at idle with the
 prop stopped, but it take calculation to do it."* Built. **Measured on the same berth:
 powered arrival 4.00 kn / 2,922 J, drift-in 0.73 kn / 97 J — a 30× cut in the energy that

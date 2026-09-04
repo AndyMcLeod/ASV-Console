@@ -269,8 +269,8 @@ curl -s -X POST localhost:8791/api/cmd/estop  -H "Content-Type: application/json
 Command endpoints: `/api/connect` · `/api/disconnect` · `/api/cmd/arm` ·
 `/api/cmd/upload` · `/api/cmd/start` · `/api/cmd/pause` · `/api/cmd/stop` ·
 `/api/cmd/estop` · `/api/cmd/rth` · `/api/cmd/goto` · `/api/cmd/transit` ·
-`/api/cmd/hold` · `/api/cmd/reapproach` · `/api/cmd/escape` · `/api/cmd/sethome` ·
-`/api/cmd/approach`. The behaviour commands (`goto`/`rth`/`transit`) accept an ENC-aware
+`/api/cmd/hold` · `/api/cmd/reapproach` · `/api/cmd/escape` · `/api/cmd/amend` ·
+`/api/cmd/sethome` · `/api/cmd/approach`. The behaviour commands (`goto`/`rth`/`transit`) accept an ENC-aware
 `{route:[…]}` computed by the browser; `upload` accepts one too. **Every holding command
 also accepts `hold_clear_m`** — the radius round the hold point the browser certified clear
 of the keep-out model. The sim re-approaches DIRECT inside that disc (a chord of a clear
@@ -303,6 +303,46 @@ and prose-only in the third, and the leeway constants are lateral (used fore-and
 the DriX a 1.6 m stopping distance). **A vessel with no coast block does not coast at all**,
 which is the shipped default for two of the three. The DriX's is ESTIMATED, not measured, and
 says so in its own `source` string.
+
+**`/api/cmd/amend {route, note}`** DEVIATES A RUNNING PLAN: it replaces the unflown
+remainder and keeps everything else — the flown prefix, the waypoint index, the behaviour,
+the run. It exists because every other commanded motion goes through `upload`, which resets
+the index to zero, so the only way to change a running plan was to start it again from
+waypoint one — which is why the clearance guard could only ever slow or stop. `wp_total` may
+grow: a deviation that splices in a via point really does make the plan one waypoint longer.
+Refused, in words, when there is no running plan to amend, when the vessel is
+station-keeping, or when the route is malformed. **An amendment ends a drift-in and does not
+re-arm it** — the coast runs only where the safety ladder is silent, and a hull with the prop
+off cannot take a deviation at all.
+
+**THE LOOK-AHEAD FOLLOWS THE PLAN.** The run-time ladder is now `clear → edge → slow → hold
+→ helm`, and its projection walks the ROUTE from the boat's actual position and heading, at
+the hull's own turn rate, with the drift added at every step. It used to extrapolate the
+present ground velocity in a straight line for up to 45 s — a manoeuvre nobody intends to
+make — while every planner here clips or routes to the buffer edge and then TURNS, so a plan
+was correct precisely when it grazed the buffer and the guard alarmed 40–60 m before that
+same edge. Measured at a pier, 5 m buffer, dead calm, no set at all: a correctly punched
+survey line was **stopped with 33 m of its own certified water still to run**, and a routed
+Go-To was held **39 m short of its own turn**. A false hold is not a harmless pause — it takes
+the way off a hull the tide is already setting, and it destroys the run.
+
+**`edge`** is the new first rung: where an entry is predicted and there is open water
+alongside, the console amends the track by the smallest offset that puts the whole projected
+path clear, verified by re-projecting it at a buffer LARGER than the one that triggered it
+(so one answer holds instead of chattering), into water at least the buffer plus its own
+margin. It goes where the trouble is — on a routed detour usually a corner two or three
+waypoints ahead — and **the console may move a corner, never a destination**. Its authority
+is bounded by `edgeCapM(buf)` = max(3×buffer, 15 m), which is also the per-episode budget.
+Measured live at New Castle NH over 1,324 real keep-out zones, at a corner a DriX cannot turn
+at: **slow → edge, moving the corner 5.0 m to starboard into 12.4 m of water**; for a hull
+that can make the turn, **slow → clear**, nothing commanded at all.
+
+**PROCEED** is the operator's override, on the guard bar. It suppresses exactly the two rungs
+that impede the boat — the slow-down and the hold — and nothing else: not the alarm, not the
+clearance readout, not a deviation (that IS forward progress), and not the helm. It is one
+decision about one situation, recorded in the session log, and it lapses on its own three
+ways: when the episode ends, when the clearance falls materially below what the operator
+looked at, and the moment the situation goes in extremis.
 
 **`/api/cmd/escape`** is the in-extremis clearance guard's OWN manoeuvre (the helm rung of
 the run-time ladder, `static/js/guard.js`) — never the operator's, and structurally distinct
