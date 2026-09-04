@@ -55,7 +55,56 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-04 — the console reads the chart itself now)
+## ⇒ START HERE (handoff refreshed 2026-09-04 — the cards measure what they say they measure)
+
+### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE LINES CARD AND THE RUN-PROGRESS FIGURE WERE BOTH KEYED ON A RUN
+STATE THAT A SECOND COMMAND NEVER CHANGES.** Andy: *"the lines card link to data is broken.
+perhaps the link does not survive the manual deletion of lines after a punchout and before
+'add to plan'"* and, a minute later, *"additionally under the vessel status card run time
+percentage is reading 0%. This may be associated."*
+
+**⚠⚠ IT IS ASSOCIATED — IT IS ONE CONDITION.** Both quantities reset in the same branch of
+`onState`: the **transition** into `"running"`. But every commanded motion goes through
+`Engine._run_route`, which sets `run = "running"` **unconditionally** — so a Go-To, an RTH, a
+transit or a routed re-approach issued while something is already running never leaves the
+running state, `prevRun` is still `"running"`, and **nothing resets**. Two consequences, and
+he reported both:
+
+* **THE LINES CARD.** `mission.lines` had been replaced by the new plan, but `lineActual` is
+  indexed by **position** and the only self-heal fixed its **length**. Strike one line of ten
+  and commit nine, and nine old timings were re-attached to nine DIFFERENT lines — the card
+  kept showing numbers, and they described a different survey. **Strike one and add one and
+  the length never moves at all**, so that "heal" saw nothing while being just as wrong.
+* **THE PROGRESS FIGURE.** `runTotalM` is captured once (at Start the boat is short of
+  waypoint one, so the route's own length would make the percentage negative) — but "once"
+  was `runTotalM <= 0`, cleared only by that same transition. The card then measured the NEW
+  route against the OLD run's total, remaining exceeded the total, and the percentage clamped
+  to **0% and stayed there**, on a boat 1:51 into a run.
+
+**THE FIX IS THE SAME IDEA TWICE: key each quantity on the thing it is a measure of.** The
+per-line times belong to a **LINE SET** (`lineSetKey`, checked every frame by
+`syncLineStats`); the progress fraction belongs to a **ROUTE** (its total *and* its waypoint
+count — two different routes can measure the same length). The run-state reset is kept, and
+is still the only thing that zeroes `runElapsed` and `loggedLines`.
+
+**MEASURED LIVE:** a second Go-To commanded inside a running one, `run` never leaving
+`"running"` — the figure now climbs **8 → 11 → 15 → 18 → 21 → 25%** where it used to sit at 0.
+
+**⬜ ONE THING DELIBERATELY NOT CHANGED, ANDY'S CALL: `runElapsed` still spans back-to-back
+runs** (3:48 across two Go-Tos in that test). Resetting it per commanded motion would make
+"elapsed · left · %" all describe the same leg, which is what the row claims — but it would
+also restart the clock at a survey's chained RTH, and losing a survey's whole-run elapsed is
+plausibly worse. Not reported, not guessed at.
+
+**⬜ AND A SEPARATE ONE FOUND WHILE REPRODUCING THIS: `punchOut` builds its OWN keep-out
+model from `nogo.features`, so the SURVEY CLIP DOES NOT SEE THE CHART-READ STRUCTURES.** Go-To
+/ RTH / transit all route clear of them (they read `nogo.ko`); a punched survey line does not.
+One line to fix — pass the chart-read lines and footprints into the punch's `ko` — but it
+changes what a punch produces, so it is flagged rather than done.
+
+## ⇒ EARLIER (handoff of 2026-09-04 — the console reads the chart itself now)
 
 ### ➤ PICK UP HERE
 

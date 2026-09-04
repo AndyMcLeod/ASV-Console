@@ -2858,7 +2858,39 @@ let rthChainFailed=false;          // ... and it was REFUSED (no home / nogo) - 
 let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
 let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
 function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false;
-  turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; }
+  turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; lineStatsKey=lineSetKey(); }
+/**
+ * ⚠⚠ THE PER-LINE TIMES BELONG TO A LINE SET, NOT TO A RUN STATE, AND THAT WAS THE BUG.
+ *
+ * Andy, 2026-09-04: *"the lines card link to data is broken. perhaps the link does not
+ * survive the manual deletion of lines after a punchout and before 'add to plan'."* He is
+ * right, and the mechanism is one condition in onState: the stats reset only on the
+ * TRANSITION into "running". Every commanded motion in this console goes through
+ * `Engine._run_route`, which sets `run = "running"` unconditionally - so a Go-To, an RTH, a
+ * transit or a re-approach issued while something is ALREADY running never leaves the
+ * running state, `prevRun` is still "running", and nothing resets.
+ *
+ * Meanwhile `mission.lines` had been replaced by the new plan. `lineActual` is indexed by
+ * POSITION, and the old self-heal only fixed its LENGTH - so line 3's recorded time was
+ * quietly re-attached to whatever line 3 had become after the strike. The card kept showing
+ * numbers; they described a different survey.
+ *
+ * The key is the line set itself. Stats survive exactly as long as the lines they measure.
+ */
+let lineStatsKey = null;
+function lineSetKey(){
+  return mission.lines.map(L=>L.a.lat.toFixed(6)+","+L.a.lon.toFixed(6)+","
+                            + L.b.lat.toFixed(6)+","+L.b.lon.toFixed(6)).join(";");
+}
+/** Zero the per-line stats if the lines they describe have changed. Returns whether it did. */
+function syncLineStats(){
+  const k = lineSetKey();
+  if(k === lineStatsKey) return false;
+  lineStatsKey = k;
+  lineActual = mission.lines.map(()=>0);
+  turnSeg = []; curTurn = -1; lastRunLine = -1; runLineIdx = -1;
+  return true;
+}
 // fold a heading difference to [0,90]: 0 = parallel, 90 = perpendicular (a line runs
 // in either direction, so parallel and anti-parallel both read as aligned).
 // turn-zone radius: how close to a line endpoint still counts as a between-lines
@@ -2890,7 +2922,12 @@ function currentLegLine(){
 }
 function accumLineTime(){
   const now=performance.now()/1000, dt=(lineClock!=null)?(now-lineClock):0;
-  if(lineActual.length!==mission.lines.length) lineActual=mission.lines.map((_,k)=>lineActual[k]||0);
+  // ⚠ THE WHOLE LINE SET, NOT JUST ITS LENGTH. The old guard only repaired the ARRAY LENGTH,
+  // which is exactly the case a struck line does not produce: strike one of ten and commit
+  // nine, and the length differs so it "healed" - by carrying nine old timings onto nine
+  // different lines. Striking one and adding another changes nothing at all about the
+  // length, and that healed nothing while being just as wrong.
+  syncLineStats();
   const running = S.run==="running" && S.behavior==="survey";
   runLineIdx=-1;
   if(running && dt>0 && asv){
@@ -3160,8 +3197,8 @@ function logLineTable(reason){ if(!mission.lines.length) return;
 // --- whole-run elapsed + ETA (ticks from Start, through the approach) ------
 // Elapsed accrues wall-clock ONLY while the run is running (freezes on Pause),
 // so it lines up with the distance-based ETA (remaining route / plan speed).
-let runElapsed=0, runClock=null, runTotalM=0;
-function resetRunTimer(){ runElapsed=0; runClock=null; runTotalM=0; }
+let runElapsed=0, runClock=null, runTotalM=0, runTotalKey=null;
+function resetRunTimer(){ runElapsed=0; runClock=null; runTotalM=0; runTotalKey=null; }
 function accumRunTime(){
   const now=performance.now()/1000;
   if(S && S.run==="running" && runClock!=null) runElapsed += (now-runClock);
@@ -3176,7 +3213,9 @@ function routeRemainingM(){
   let remain=distTo({lat:asv.lat,lon:asv.lon}, rr[idx]);
   for(let i=idx;i<rr.length-1;i++) remain+=distTo(rr[i],rr[i+1]);
   let total=0; for(let i=0;i<rr.length-1;i++) total+=distTo(rr[i],rr[i+1]);
-  return {remain, total: total||remain};
+  // `n` and `total` together identify the ROUTE, which is what the progress figure is a
+  // fraction of - see updateRunTime.
+  return {remain, total: total||remain, n: rr.length};
 }
 function updateRunTime(){
   const el=$("#v_runtime"); if(!el) return;
@@ -3191,7 +3230,16 @@ function updateRunTime(){
   // of what is left. Live SOG still wins below when the boat is moving.
   const spd=roleSpeedMS(speedRole()), rr=routeRemainingM();
   if(!rr || spd<=0){ el.textContent=elapsed+(run==="paused"?" · paused":""); return; }
-  if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;          // full run length captured at Start (incl. approach)
+  // ⚠⚠ THE CAPTURE IS KEYED ON THE ROUTE, AND IT USED TO BE KEYED ON NOTHING. The full run
+  // length is captured once, because at Start the boat is short of waypoint one and the
+  // route's own length would make the percentage negative. But "once" was `runTotalM <= 0`,
+  // and the only thing that cleared it was the transition into "running" - which a Go-To
+  // commanded while another run is already running never makes. The card then measured the
+  // NEW route against the OLD run's total: remaining exceeded the total, and the percentage
+  // clamped to 0 and stayed there. That is the "0%" Andy reported, on a boat 1:51 into a run.
+  const sig = rr.n + ":" + Math.round(rr.total);
+  if(sig !== runTotalKey){ runTotalKey = sig; runTotalM = rr.remain; }
+  if(runTotalM<=0 && rr.remain>0) runTotalM=rr.remain;
   const pct=runTotalM>0 ? Math.max(0,Math.min(100,Math.round(100*(runTotalM-rr.remain)/runTotalM))) : 0;
   if(run==="paused"){ el.textContent=elapsed+" · paused · "+pct+"%"; return; }
   if(runCompletion()==="repeat"){                 // is the RUN in progress lapping?
