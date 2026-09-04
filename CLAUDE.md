@@ -104,6 +104,31 @@ inside the function, so it went red at "it shows the model that was actually bui
 the REAL fold now, not a stub: a stub would keep it green while the thing it stands in for
 was broken.
 
+### ⬜ THE OPEN LIST — ANDY'S CALL, NOT MINE. Ask him before starting any of these.
+
+Gathered here so a new window does not have to hunt them out of four earlier PICK UP HERE
+blocks. Every one is deliberate: it is recorded, not forgotten.
+
+* **`runElapsed` still spans back-to-back runs** (measured: 3:48 across two Go-Tos). Resetting
+  it per commanded motion would make elapsed / left / % describe ONE leg — but it would also
+  restart the clock at a survey's chained RTH, which is arguably one job. See the note at
+  "ONE THING DELIBERATELY NOT CHANGED" further down.
+* **Three latent defects in the safety ladder**, all found while fixing the drift-in and all
+  pre-existing: the `slow` rung reads the role's speed KEY rather than actual speed;
+  `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
+  "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
+  nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
+* **The respawn marker / line** Andy mentioned. `resetForNewArea` ALREADY clears the track, so
+  whatever he is seeing is something else — this one needs him to describe it again first.
+* **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
+  report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
+  A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether
+  that is an artefact of driving the page synthetically or something real in the survey
+  path**, and I did not want to report a fault I had not isolated. Recorded because it is the
+  kind of thing that gets rediscovered expensively: if drawing a pattern ever feels sluggish
+  or locks up for HIM, this is the thread to pull, and the first question is whether a real
+  pointer reproduces it at all.
+
 ## ⇒ EARLIER (handoff of 2026-09-04 — the cards measure what they say they measure)
 
 ### ➤ PICK UP HERE
