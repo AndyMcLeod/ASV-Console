@@ -297,12 +297,12 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   check("9. Go-To commands the ROUTE'S END - the hold point - not the operator's point, and "
         + "sends the certified disc with it",
         () => /const hp = plan\.route\[plan\.route\.length-1\]/.test(goTo)
-              && /cmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear\}\)/.test(goTo)
+              && /cmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(goTo)
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
               && /planNogoRoute\([^)]*holdOpts\(\)\)/.test(goTo),
         "a Go-To that names the pier as its target would hold ON the pier");
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
-        () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear\}\)/.test(rth)
+        () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
               && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
               && /cmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
@@ -317,6 +317,15 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               && /setMs:\s*\(st\.env_set_kn \|\| 0\) \* 0\.514444/.test(noComments(grab(PAGE, "holdOpts")))
               && /setDeg:\s*st\.env_set_deg/.test(noComments(grab(PAGE, "holdOpts"))),
         "the margin a berth needs is the set's, so the set has to reach the planner");
+  // 9d. The two patterns above were loosened to admit a second field on those commands, so
+  // this names what that field has to be - otherwise "anything at all may follow the disc"
+  // is all they still assert.
+  check("9d. the solved drift-in rides the same commands as the disc, on both approaches "
+        + "that end at a berth",
+        () => /coast_from_m: gCoast \? gCoast\.groundM : null/.test(goTo)
+              && /coast_from_m: rCoast \? rCoast\.groundM : null/.test(rth)
+              && /solveCoastFor\(plan\)/.test(goTo) && /solveCoastFor\(plan\)/.test(rth),
+        "null is the honest degrade - a hull with no coast datum powers in as it always did");
   check("10. the hold radius is the vessel model's own floor, never below it",
         () => /Math\.max\(HOLD_RADIUS_MIN_M, \+\(mission\.approach_radius_m\) \|\| 0\)/.test(hr)
               && Math.abs(H.HOLD_RADIUS_MIN_M - 2.0) < 1e-9,

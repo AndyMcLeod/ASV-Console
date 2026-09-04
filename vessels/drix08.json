@@ -22,7 +22,14 @@
     "max_turn_rate_deg_s": 20,
     "approach_m": 6.0,
     "lookahead_m": 20.0,
-    "arrival_radius_m": 5.0
+    "arrival_radius_m": 5.0,
+    "coast": {
+      "from_kn": 7.0,
+      "to_kn": 2.0,
+      "distance_m": 44.0,
+      "measured": false,
+      "source": "ESTIMATED, NOT MEASURED - no coast-down trial has been flown with this hull. Four independent derivations from the published 1,380 kg and the 38 HP / 14 kn fuel curve span Lc 21-52 m; 44 m from 7 kn to 2 kn puts Lc at 35.1 m, near the centre of that bracket. TO REPLACE IT WITH A REAL NUMBER: in slack water run up to 7 kn, stop the prop, and read off the recorded track the distance to the moment she is down to 2 kn - then set measured true. A vessel with no coast block does not coast at all, which is why the other two hulls have none."
+    }
   },
   "autopilot": {
     "xte_ki_deg": 0.15,

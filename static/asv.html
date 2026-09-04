@@ -678,6 +678,8 @@ import { assess as guardAssess, escapeCourse, groundVel, restoreVel, HORIZON_S a
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
 import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
+// Coming in on the drift: where to stop the prop, and whether it is safe to.
+import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
@@ -895,6 +897,40 @@ function holdOpts(){
           setMs: (st.env_set_kn || 0) * 0.514444,
           setDeg: st.env_set_deg};
 }
+// ── COMING IN ON THE DRIFT ────────────────────────────────────────────────────────────
+// Solve where the prop should stop so the boat arrives at the berth with the way off it,
+// or return null and power in exactly as before. Called at COMMIT time, with the routed
+// plan in hand, so the reasoning travels with the plan like every other decision here.
+//
+// ⚠ v0 IS THE SPEED THE BOAT MIGHT BE DOING AT RELEASE, NOT THE ONE IT IS DOING NOW, and it
+// is deliberately the HIGHER of the two. Solving against too low a speed releases LATE and
+// the boat carries past the berth; solving against too high a speed releases EARLY and it
+// stops short, which station-keeping closes as it always has. Only one of those two errors
+// hits a pier, so the estimate is biased into the other.
+function solveCoastFor(plan){
+  if(!plan || plan.degraded || !nogo.ready || !nogo.ko || !nogo.frame || !asv) return null;
+  const lc = coastLc(((V.VESSEL && V.VESSEL.maneuvering) || {}).coast);
+  if(!lc) return null;                       // this hull has no coast datum - it does not coast
+  const route = plan.route || [];
+  const H = route.length ? route[route.length-1] : null;
+  if(!H) return null;
+  const st = (S && S.status) || {};
+  const roleKn = V.SPEED_KN[roleSpeed(speedRole())] || 0;
+  const v0Ms = Math.max(roleKn, st.sog_kn || 0) * 0.514444;
+  // The heading of the ROUTE'S OWN final leg - the coast decides where along the cleared
+  // path the prop stops, never which way the boat goes. One waypoint means the leg is the
+  // run in from where the boat is now.
+  const prev = route.length > 1 ? route[route.length-2] : {lat:asv.lat, lon:asv.lon};
+  const sol = solveCoast({
+    H: nogo.frame.toEN({lat:H.lat, lon:H.lon}), ko: nogo.ko, buf: nogo.buffer || 0,
+    frame: nogo.frame, v0Ms, lc: lc.lc,
+    setMs: (st.env_set_kn || 0) * 0.514444, setDeg: st.env_set_deg,
+    hdg: azTo(prev, H), holdClear: plan.holdClear,
+  });
+  if(!sol.ok || !coastWorthIt(sol.groundM, plan.holdClear)) return null;
+  sol.lc = lc;
+  return sol;
+}
 // Why a hold point moved, in one phrase, shared by every banner that has to say it: "it is
 // IN the pier" and "it is not in the pier but there is no room to sit there" are different
 // sentences, and the second one is the Eastport case.
@@ -928,6 +964,13 @@ function setPlanIntent(kind, plan, route){
   else if(plan.holdClear != null && !plan.degraded)
     w.push({t:"route", s:"hold point has " + fmtDist(plan.holdClear) + " of clear water round it"
                         + (plan.need != null ? " (needs " + fmtDist(plan.need) + " in this set)" : "")});
+  // THE DRIFT-IN, CAPTURED WITH THE PLAN THAT FLIES IT. An arrival under 1 kn instead of the
+  // 6.07 kn measured at Eastport is a fortyfold cut in the energy that reaches the pier, and
+  // the operator should be able to read WHY the prop is about to stop.
+  if(plan.coast)
+    w.push({t:"lane", s:"coming in on the drift - " + plan.coast.why
+                        + (plan.coast.lc && !plan.coast.lc.measured
+                           ? " (on an ESTIMATED coast length, never measured on this hull)" : "")});
   if(plan.lane){
     w.push(plan.partial
       ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
@@ -1185,6 +1228,11 @@ function speedGovernor(){
   const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
   if(!act){ commandedSpeed = null; return null; }     // a stopped boat is re-governed on start
   if(clearance.slowed) return null;                   // safety owns the throttle
+  // ⚠ A COASTING BOAT HAS NO GOVERNOR. The whole manoeuvre is the ABSENCE of a commanded
+  // speed, and this function's job is to command one every time the role changes - it would
+  // re-power the prop within a frame of it stopping and drive the boat at the berth it was
+  // gliding onto. The vessel says when it is coasting; that is the one authority here.
+  if(st.drifting){ commandedSpeed = null; return null; }
   // A TURN THE PLANNER COULD ONLY FIT AT THE SLOW RADIUS IS FLOWN AT THE SLOW SPEED. The
   // radius that made it fit is the radius the hull holds at that speed, so running it any
   // faster flies a turn the boat cannot track - which is the whole failure this and the
@@ -3828,7 +3876,10 @@ async function doGoTo(target){
   // The route ends at the HOLD POINT - the target itself, or the nearest clear water to it
   // when it sits in a keep-out - and the vessel is told how much water is clear round it.
   const hp = plan.route[plan.route.length-1] || target;
-  cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear});
+  const gCoast = solveCoastFor(plan);
+  cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
+                        coast_from_m: gCoast ? gCoast.groundM : null});
+  plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
@@ -3897,7 +3948,10 @@ async function doRTH(opts){
   clearViolation();
   // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
-  cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear});
+  const rCoast = solveCoastFor(plan);
+  cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
+                       coast_from_m: rCoast ? rCoast.groundM : null});
+  plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)

@@ -160,6 +160,8 @@ WP_APPROACH_M = WP_LOOKAHEAD_M = 0.0
 XTE_KI_DEG = XTE_I_MAX_DEG = 0.0
 BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
 WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
+# None until a vessel with a coast datum is applied. None means this hull does not coast.
+COAST_LENGTH_M = None
 MAX_TURN_RATE_DEG_S = 60.0
 # Energy model: "battery" (draining voltage) or "fuel" (diesel litres burned).
 POWER_TYPE = "battery"
@@ -570,6 +572,7 @@ def apply_vessel(v):
     global WP_APPROACH_M, WP_LOOKAHEAD_M, XTE_KI_DEG, XTE_I_MAX_DEG
     global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
     global WIND_A_SIDE, WIND_A_FRONT, HULL_A_LAT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
+    global COAST_LENGTH_M
     global SPAWN_LAT, SPAWN_LON, ARRIVAL_DEFAULT_M, NOGO_BUFFER_DEFAULT_M
     global POWER_TYPE, FUEL_CAPACITY_L, FUEL_BURN_IDLE, FUEL_BURN_FULL, FUEL_BURN_EXP
     global FUEL_WARN_FRAC, FUEL_CRIT_FRAC, UNDER_KEEL_CLEARANCE_M, MIN_NAV_DEPTH_M
@@ -598,6 +601,23 @@ def apply_vessel(v):
     WIND_A_SIDE = BOAT_LEN_M * BOAT_ABOVE_H      # beam-on windage silhouette (m^2)
     WIND_A_FRONT = BOAT_BEAM_M * BOAT_ABOVE_H    # bow/stern-on windage silhouette (m^2)
     HULL_A_LAT = BOAT_LEN_M * BOAT_DRAFT_M       # underwater lateral area (m^2), for leeway drag
+    # THE HULL'S COAST LENGTH, or None when this vessel carries no coast datum - which is the
+    # honest degrade, and the default: two of the three shipped hulls have none and so do not
+    # coast at all.
+    #
+    # ⚠ HULL_CD AND HULL_A_LAT ABOVE ARE LATERAL QUANTITIES AND ARE NOT THIS. Pressed into
+    # service fore-and-aft they give the DriX a 1.6 m stopping distance, out by a factor of
+    # fifteen. Nor can Lc be inferred from the hull box: this hull's block coefficient is
+    # 0.109 (its 2.0 m "draft" is a slender strut, not a beam of water), so loa*beam*draft
+    # overstates the displacement ninefold. It has to be a measurement, and the vessel file
+    # says so in its own `source` string.
+    _c = m.get("coast") or {}
+    try:
+        COAST_LENGTH_M = (float(_c["distance_m"]) / math.log(float(_c["from_kn"]) / float(_c["to_kn"]))
+                          if float(_c.get("from_kn", 0)) > float(_c.get("to_kn", 0)) > 0
+                          and float(_c.get("distance_m", 0)) > 0 else None)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        COAST_LENGTH_M = None
     NOGO_BUFFER_DEFAULT_M = float(pl["nogo_buffer_m"])
     UNDER_KEEL_CLEARANCE_M = float(pl["under_keel_clearance_m"])
     MIN_NAV_DEPTH_M = BOAT_DRAFT_M + UNDER_KEEL_CLEARANCE_M   # water shallower than this is nogo
@@ -2026,6 +2046,9 @@ G_ACCEL = 9.81
 # See vessels/<id>.json.
 WAVE_DRIFT_CD = 0.03          # mean wave-drift coeff (small boat, mostly wave-transparent;
                               # kept small so the gusty WIND drives the wandering, not waves)
+COAST_END_KN = 1.0            # a coast hands back to powered control here - see the speed
+                              # block in SimVcu.tick. Quadratic drag never reaches zero, so
+                              # a coast without a speed floor never ends.
 LEEWAY_CAP_MS = 0.9           # cap the set (~1.75 kn) - only bites in extreme conditions,
                               # so normal gusts still modulate the set (-> the wander)
 WAVE_YAW_DEG = 3.0            # peak oscillatory yaw (deg/s) per m Hs, beam seas
@@ -2555,7 +2578,7 @@ class VcuLink:
 
     # command surface (Engine gates these before calling)
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None): ...
+                    completion="complete", hold_clear_m=None, coast_from_m=None): ...
     def start(self): ...
     def pause(self): ...
     def stop(self): ...
@@ -2630,6 +2653,13 @@ class SimVcu(VcuLink):
         # for a routed re-approach (`_hold_wants_route`) - see the station-keep branch.
         self._hold_clear_m = None
         self._hold_wants_route = False # set beyond the certified water: needs a routed return
+        # THE DRIFT-IN. `_coast_from_m` is the range from the LAST waypoint at which the
+        # console asked for the prop to be stopped; None (the default) is today's behaviour
+        # exactly. Once inside it `_coasting` latches and the way comes off under hull drag
+        # instead of the engine-governed ramp - see the speed block in tick().
+        self._coast_from_m = None
+        self._coasting = False
+        self._coast_s0 = None          # (lat,lon) at release, for the run made good
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
         self._paused = False
@@ -2646,7 +2676,7 @@ class SimVcu(VcuLink):
 
     # -- commands ---------------------------------------------------------- #
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None):
+                    completion="complete", hold_clear_m=None, coast_from_m=None):
         self._plan = [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])]
         self._arrival_m = clamp(float(arrival_radius_m or 5.0), 1.0, 50.0)
         self._approach_m = clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0)
@@ -2659,6 +2689,11 @@ class SimVcu(VcuLink):
         # degrade as a Go-To with no route. A number is the console's certified clear disc.
         self._hold_clear_m = None if hold_clear_m is None else max(0.0, float(hold_clear_m))
         self._hold_wants_route = False
+        # A FRESH PLAN IS NEVER MID-COAST. None keeps the engine-governed approach exactly as
+        # it was; a number is the range from the last waypoint at which to stop the prop.
+        self._coast_from_m = None if coast_from_m is None else max(0.0, float(coast_from_m))
+        self._coasting = False
+        self._coast_s0 = None
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
 
@@ -2754,6 +2789,22 @@ class SimVcu(VcuLink):
                 desired -= math.degrees(math.asin(clamp(d_cross / v_thru, -0.9, 0.9)))
             desired -= self._xte_i
             self.heading = _turn_toward(self.heading, desired, MAX_TURN_RATE_DEG_S * dt)  # vessel turn-rate cap
+            # ── THE DRIFT-IN: STOP THE PROP ─────────────────────────────────────────────
+            # Latched on the LAST leg only, at the range the console solved for. It is
+            # tested HERE, before the waypoint advance below, because that advance sets
+            # `_holding` and the station-keep branch is an `elif` - entering from there
+            # would be one tick late by construction, and one tick at 4 kn is half a metre.
+            #
+            # ⚠ NEVER stop()/pause()/set_neutral() to achieve this. All three clear
+            # `_running`, which switches OFF both the wind forcing and the tidal stream in
+            # the block below - the boat would stop being SET at all, which is the exact
+            # opposite of a drift-in, and env_set_kn would read 0.00 while the truth is
+            # "the set is no longer modelled". A coast is a state inside a running link.
+            if (self._coast_from_m is not None and not self._coasting
+                    and COAST_LENGTH_M and self._wp_index == len(self._plan) - 1
+                    and dist_b <= self._coast_from_m):
+                self._coasting = True
+                self._coast_s0 = (self.lat, self.lon)
             # advance once the boat passes the waypoint along-track, or is within the
             # tight approach radius - it follows the line to ~WP_APPROACH_M of the turn
             if along >= seg_len - self._approach_m or dist_b <= self._approach_m:
@@ -2801,8 +2852,34 @@ class SimVcu(VcuLink):
                 target_kn = 0.0                    # beyond the certified water: no blind drive
                 self._hold_wants_route = True
 
-        # smooth speed toward target
-        self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
+        # ── SPEED: ENGINE-GOVERNED RAMP, OR HULL-GOVERNED DECAY WHILE COASTING ──────────
+        #
+        # The flat 1.5 kn/s ramp is what an ENGINE does to a speed change, and it stays the
+        # default for every other transition in this model. A coast is not a speed change -
+        # it is the absence of one - and the hull, not the governor, decides how the way
+        # comes off:  m dv/dt = -k v²  ->  dv = -(v²/Lc) dt, one length for the whole curve.
+        #
+        # ⚠ THE TWO ARE DISTINGUISHABLE AND A SUITE PINS IT. Under drag the distance to HALVE
+        # speed is Lc·ln2 whatever you release at; under a ramp it goes as v0², so halving
+        # from 14 kn would cost four times halving from 7. tests/coast.js check 3 is that
+        # discrimination, and it is what stops the ramp quietly standing in for the physics.
+        if self._coasting and COAST_LENGTH_M:
+            v = self.sog_kn * 0.514444
+            v = max(0.0, v - (v * v / COAST_LENGTH_M) * dt)
+            self.sog_kn = v / 0.514444
+            # ⚠ THE COAST ENDS ON A SPEED, AND WITHOUT THIS IT WOULD NEVER END AT ALL.
+            # Quadratic drag only asymptotes - the way never reaches zero - so a coast with
+            # no exit leaves a boat that has stopped short of its berth gliding for ever,
+            # never arriving, never holding, with the prop off. Below a walking pace there
+            # is no more energy worth shedding, so ordinary powered control takes back
+            # whatever distance is left. That handover is also what makes the coast robust
+            # to an ESTIMATED coast length: the error moves where this happens, never how
+            # fast she is going when it does.
+            if self.sog_kn <= COAST_END_KN:
+                self._coasting = False
+        else:
+            # smooth speed toward target
+            self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
         self._t_sim += dt
         tt = self._t_sim                                  # sim-time phase (tick-rate independent)
 
@@ -2964,6 +3041,16 @@ class SimVcu(VcuLink):
             "paused": self._paused,
             "estop": self._estop,
             "holding": self._holding,
+            # THE DRIFT-IN, STATED. `drifting` is the propulsion-off state the mission card
+            # has had a branch for since long before anything could set it - "DRIFT -
+            # propulsion off, drifting with the environment" was unreachable until this
+            # manoeuvre gave it a producer. `coast_run_m` is what she has actually made good
+            # since the prop stopped, which is the number a coast-down trial reads off.
+            "drifting": bool(self._coasting),
+            "coast_run_m": (round(range_bearing(self._coast_s0[0], self._coast_s0[1],
+                                                self.lat, self.lon)[0], 1)
+                            if self._coasting and self._coast_s0 else None),
+            "coast_length_m": (round(COAST_LENGTH_M, 1) if COAST_LENGTH_M else None),
             # THE HOLD, STATED: where it is, how far off it the boat is, how much water the
             # console certified around it, and whether the boat is beyond that water and
             # waiting for a routed way back. Published so the console can act on the last
@@ -3247,6 +3334,21 @@ class Engine:
             raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of metres")
         return f
 
+    @staticmethod
+    def _coast_from(v):
+        """The range at which to stop the prop, or None for a powered approach. Validated
+        here for the same reason as _hold_clear: a bad value must be a refusal in words, not
+        a 500 from the dispatch catch-all, and must never reach the vessel's arithmetic."""
+        if v is None or v == "":
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            raise VcuProtocolError("coast_from_m must be numeric (metres), or absent")
+        if not math.isfinite(f) or f < 0.0:
+            raise VcuProtocolError("coast_from_m must be a finite, non-negative number of metres")
+        return f
+
     def upload(self, route=None, hold_clear_m=None):
         hold_clear_m = self._hold_clear(hold_clear_m)
         with self._lock:
@@ -3355,12 +3457,15 @@ class Engine:
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
-    def _run_route(self, route, behavior, note, hold_clear_m=None):
+    def _run_route(self, route, behavior, note, hold_clear_m=None, coast_from_m=None):
         """Arm-gated: push a behavior route to the link and run it, holding at the
         end. Shared by Go-To / Return-to-Home / Hold / Transit / the routed re-approach.
         `hold_clear_m` is the console's certified clear disc around the end point (see
-        SimVcu's station-keep branch); None keeps the vessel's direct re-approach."""
+        SimVcu's station-keep branch); None keeps the vessel's direct re-approach.
+        `coast_from_m` is the range from the last waypoint at which to stop the prop and
+        come in on the drift (coast.js solved it); None powers in exactly as before."""
         hold_clear_m = self._hold_clear(hold_clear_m)
+        coast_from_m = self._coast_from(coast_from_m)
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
@@ -3369,7 +3474,7 @@ class Engine:
             m = load_mission()
             link.upload_plan(route, m.get("arrival_radius_m", 2.0), m.get("speed", "survey"),
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
-                             hold_clear_m=hold_clear_m)
+                             hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
             link.start()
             self.plan_uploaded = True
             # goto/rth/hold/transit always station-keep at their own endpoint. This is
@@ -3400,13 +3505,13 @@ class Engine:
             out.append({"lat": lat, "lon": lon})
         return out
 
-    def go_to(self, lat, lon, route=None, hold_clear_m=None):
+    def go_to(self, lat, lon, route=None, hold_clear_m=None, coast_from_m=None):
         # route (if given) is the client's ENC-aware detour path ending at the point;
         # else drive straight to the point (honest degrade when no nogo model).
         r = self._sanitize_route(route) if route else [{"lat": float(lat), "lon": float(lon)}]
         note = ("Go-To: following the ENC-aware route to the point (%d wpts), will station-keep on arrival." % len(r)
                 if route else "Go-To: driving to point, will station-keep on arrival.")
-        self._run_route(r, "goto", note, hold_clear_m)
+        self._run_route(r, "goto", note, hold_clear_m, coast_from_m)
 
     def escape(self, lat, lon, hold_clear_m=None):
         """The in-extremis clearance guard's OWN manoeuvre (guard.js escapeCourse, the helm
@@ -3588,7 +3693,7 @@ class Engine:
             LOG.event("spawn" if spawn else "reset", **(spawn or {}))
         self._push_state()
 
-    def return_home(self, route=None, hold_clear_m=None):
+    def return_home(self, route=None, hold_clear_m=None, coast_from_m=None):
         # A selected ROC owns HOME? Then RTH targets its LIVE arrival point. For a ship
         # (Mothership) that point moves, so we drive direct and let the run loop chase it
         # - an ENC detour to a moving recovery point would be stale on arrival. A static
@@ -3617,7 +3722,10 @@ class Engine:
             note = ("Return-to-Home: following the ENC-aware route to home (%d wpts), will station-keep on arrival." % len(r)
                     if route else "Return-to-Home: driving to home, will station-keep on arrival.")
         # A moving home is chased by re-targeting, so no disc is certified for it.
-        self._run_route(r, "rth", note, None if follow else hold_clear_m)
+        # A moving recovery point is chased by re-targeting, so neither a certified disc nor
+        # a solved coast means anything for it - both are computed against a fixed berth.
+        self._run_route(r, "rth", note, None if follow else hold_clear_m,
+                        None if follow else coast_from_m)
         with self._lock:
             self._rth_follow = follow
             if follow:
@@ -4386,10 +4494,11 @@ class Handler(BaseHTTPRequestHandler):
             # disc around the end point (hold.js) - absent means the vessel re-approaches
             # direct, exactly as it always did.
             elif path == "/api/cmd/rth":               # optional ENC-aware detour route
-                ENGINE.return_home(body.get("route"), body.get("hold_clear_m"))
+                ENGINE.return_home(body.get("route"), body.get("hold_clear_m"),
+                                   body.get("coast_from_m"))
             elif path == "/api/cmd/goto":              # behavior: drive to a point + hold
                 ENGINE.go_to(body.get("lat"), body.get("lon"), body.get("route"),
-                             body.get("hold_clear_m"))
+                             body.get("hold_clear_m"), body.get("coast_from_m"))
             elif path == "/api/cmd/transit":           # behavior: follow a transit line + hold
                 ENGINE.transit(body.get("route"), body.get("hold_clear_m"))
             elif path == "/api/cmd/hold":              # behavior: station-keep here

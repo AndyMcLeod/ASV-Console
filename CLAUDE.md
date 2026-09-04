@@ -55,9 +55,82 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-03 — a hold point needs room, and the chain asks a whitelist)
+## ⇒ START HERE (handoff refreshed 2026-09-03 — she comes in on the drift now)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE DRIFT-IN APPROACH.** Andy: *"Even consider drifting in by
+calculating wind and current affects on set and drift. Its ok to come in at idle with the
+prop stopped, but it take calculation to do it."* Built. **Measured on the same berth:
+powered arrival 4.00 kn / 2,922 J, drift-in 0.73 kn / 97 J — a 30× cut in the energy that
+reaches the pier**, against the 6.07 kn his own log recorded.
+
+**THE HULL IS ONE NUMBER, AND IT HAD TO BE A MEASUREMENT.** Quadratic drag is a pure
+exponential in the DISTANCE domain — `v(x) = v0·e^(−x/Lc)` — so a hull is one length and the
+distance to HALVE speed is `Lc·ln2` from any release speed whatever. **⚠ Lc CANNOT BE
+DERIVED FROM ANYTHING THE VESSEL FILES HOLD, and three separate attempts prove it:** mass is
+absent from two of the three shipped hulls entirely and lives only inside the DriX's `notes`
+prose; the hull box is no help because this hull's block coefficient is **0.109** (its "2.0 m
+draft" is a slender strut), so `loa·beam·draft` overstates displacement ninefold; and
+`HULL_CD`/`HULL_A_LAT` are LATERAL leeway quantities that, pressed into service fore-and-aft,
+give the DriX a **1.6 m** stopping distance — out by fifteen times. So the datum is
+`maneuvering.coast`, a **headreach a coxswain can actually run**: up to `from_kn` in slack
+water, stop the prop, log the distance to `to_kn`. **A hull with no coast block does not
+coast at all**, which is the shipped default for two of the three. The DriX's 44 m (Lc 35.1 m)
+is ESTIMATED, sits mid-bracket of four independent derivations spanning 21–52 m, and says so
+in its own `source` string.
+
+**⚠⚠ THE MANOEUVRE ENDS ON A SPEED, NOT ON A POSITION, AND THAT IS THE WHOLE SAFETY
+ARGUMENT.** Aiming by position cannot be made safe here and the arithmetic says so: ±⅓ on Lc
+is ±17 m over a 50 m run, against ~6 m of certified clear water at a tight berth. Aim at the
+berth and a third of the band sails through it; aim short by the band and she stops 20 m out
+and has to be driven in anyway (both were built and measured before this was understood). So
+the vessel coasts until its way is down to `COAST_END_KN` and ordinary powered control takes
+back whatever remains — the same machinery that closes any arrival today, only entered at a
+knot instead of six. **The coast-length error then moves only WHERE the handover falls, never
+how fast she is going when it happens**, and the arrival speed is the entire point.
+
+**⚠ THE HEADING IS THE ROUTE'S, NEVER THE COAST'S TO CHOOSE.** The first cut let the solver
+pick the heading that best stemmed the set, on the seamanlike argument that arriving into the
+set is gentlest — and it is, and the numbers back it (into the set 0.68 kn against 1.33 kn
+downwind, from a shorter release). But the release point then lands UP-SET of the berth,
+which is wherever the router did not go: **at Eastport it came out 40 m inside the wharf.**
+The router owns the path; the coast owns only where along it the prop stops. What the set
+still buys is collected — hold.js already berths down-set, so a route ending there is
+generally stemming the set anyway, and the more it does the gentler the arrival.
+
+**⚠ THE COAST NEVER ENDING WAS A REAL DEFECT, FOUND BY DRIVING IT.** Quadratic drag only
+asymptotes — the way never reaches zero — so the first cut left a boat that stopped short of
+its berth gliding for ever: never arriving, never holding, prop off. `COAST_END_KN` is the
+floor, and `tests/coast_sim.py` check 3 is the guard.
+
+**⚠ THE GUARD IS UNTOUCHED, DELIBERATELY, AND THE SURVEY SAYS WHY.** A parallel survey of
+guard.js found the ladder's hold/helm discriminator **collapses to HELM** once way is off
+(when `vel` and `drift` are the same vector, `assess` calls `timeToEntry` twice with
+identical arguments, so `slow` and `hold` become unreachable); that `timeToEntry` extrapolates
+CONSTANT velocity and cannot express a coast at all (a 6 kn release projects 139 m along the
+45 s horizon where the real coast covers 40–100 m); and that `HORIZON_S` = 45 s is SHORTER
+than a plausible DriX coast (57–143 s). Rather than teach a safety ladder a new state, **the
+coast simply never runs where the ladder has anything to say** — it is an optimisation in
+benign conditions, and the speed governor stands off on `st.drifting` so it cannot re-power
+the prop within a frame of it stopping.
+
+**⬜ THREE PRE-EXISTING LATENT DEFECTS THAT SURVEY UNCOVERED, NOT FIXED HERE, NOT CAUSED BY
+THIS WORK — ask Andy before touching any of them, they are all in the safety ladder:**
+(1) the `slow` rung tests the ROLE's speed key, not the boat's actual speed, so on a DriX it
+commands **4.0 kn at a boat coasting through 2** under a banner reading "SLOWED to low";
+(2) `escapeCourse` returns null for **every** geometry once the boat is inside the buffer, so
+a boat at rest inside it is always `helm` and always "BOXED IN — TAKE MANUAL CONTROL", even in
+dead calm with open water on every side; (3) nothing publishes a sample time for the wind or
+the stream, so "this release was solved from a 19-minute-old reading" is unsayable.
+
+**⬜ AND THE HONEST LIMITS OF WHAT SHIPPED:** the drag law is `v²` while this hull's own fuel
+curve implies `v^2.5`, and below about a knot real resistance goes viscous (`~v^1.83`) — the
+model over-predicts the run remaining in exactly the last stretch, which is why it ends on a
+speed. `env_set_kn` is the UNDER-WAY set (leeway from APPARENT wind on a heading-relative
+silhouette), so it is not the set a stopped hull feels, and the coast consumes it anyway
+because it is the only one published. The sim's own gust envelope is ±33% on 40–145 s periods
+— shorter than the coast itself.
 
 **⬜ OPEN, AND THE NEXT THING ANDY ASKED FOR (partly done).** His words: *"The approach must
 be better managed... implement a process that estimates these close approach situations and

@@ -289,6 +289,21 @@ drift carries the boat off the structure and the station-keeping correction is m
 into the set. Measured at Eastport, 2026-09-03: HOME had **1.47 m** of clear water, was not
 blocked, was used as it stood, and the boat reached 1.74 m from it at 6.07 kn.
 
+**COMING IN ON THE DRIFT.** A Go-To or Return-to-Home that ends at a berth also carries
+**`coast_from_m`** — the range at which to stop the prop and let hull drag plus the set carry
+her the rest of the way. The vessel then sheds way under quadratic drag (`v(x) = v0·e^(-x/Lc)`,
+one length per hull) instead of the engine's flat ramp, publishes `drifting`, and hands back
+to powered control at one knot. Measured on the same berth: powered arrival 4.00 kn / 2,922 J,
+drift-in 0.73 kn / 97 J — a **30× cut in the energy that reaches the pier**.
+
+`Lc` comes from a **measurement a mariner can take**, `maneuvering.coast` in the vessel file:
+run up to `from_kn` in slack water, stop the prop, and log the distance to `to_kn`. It cannot
+be derived from anything else the profiles hold — mass is absent from two of the three hulls
+and prose-only in the third, and the leeway constants are lateral (used fore-and-aft they give
+the DriX a 1.6 m stopping distance). **A vessel with no coast block does not coast at all**,
+which is the shipped default for two of the three. The DriX's is ESTIMATED, not measured, and
+says so in its own `source` string.
+
 **`/api/cmd/escape`** is the in-extremis clearance guard's OWN manoeuvre (the helm rung of
 the run-time ladder, `static/js/guard.js`) — never the operator's, and structurally distinct
 from `goto` for exactly one reason: it sets `behavior` to `"escape"`, not `"goto"`, so its
