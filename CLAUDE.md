@@ -55,7 +55,76 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-04 — she goes round it now, instead of stopping)
+## ⇒ START HERE (handoff refreshed 2026-09-04 — the console reads the chart itself now)
+
+### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE CONSOLE READS THE CHART IMAGE, because the ENC does not have
+everything on it.** Andy, with a Go-To drawn straight through a finger pier at New Castle:
+*"A pier feature should be impeding travel. The GOTO command drives right through it. I do
+not believe this feature is identified as a finger pier or any other structure in the ENC.
+... use an identification process that finds PERPENDICULAR features on the graphic attached
+to ENC features and include them as viable features added to NOGO."*
+
+**⚠⚠ HE IS RIGHT, AND THREE CHEAPER ANSWERS WERE RULED OUT FIRST** — a missing CLASS would
+have been one line in `ENC_ROLES` and image processing is not:
+* the console's extract already holds **every** layer ENCDirect publishes for the area, and
+  the nearest object of ANY class to that drawn pier is **4.3 m** away — which is the MAIN
+  pier's own outline, not the finger;
+* ENCDirect's own `identify` at the same point returns **seven results and every one is an
+  AREA** (depth, quality-of-data, restricted, sea-area). No structure, no line, nothing;
+* **`enc_berthing` exists — usage band 6, the finest S-57 defines, and one this console has
+  never asked for** — and it has **NO COVERAGE at New Castle**: even its `Coverage_area`
+  comes back empty. The harbour band is the finest cell there is here.
+NOAA's **renderer** draws the finger pier. NOAA's **vector service** does not carry it.
+
+**THE METHOD** (`static/js/chartink.js`, pure; the browser half is `scanChartInk` /
+`ensureChartInk` in the page): the chart's fills are all light and its strokes are grey 114
+or black, so **one luminance threshold** is the ink; everything the ENC explains is painted
+thick and subtracted (**89% of the ink at New Castle**); what is left is grouped and sieved.
+**⚠ THE SIEVE IS THE SAFETY ARGUMENT BECAUSE THIS ADDS KEEP-OUTS** — long, **THIN**,
+**ATTACHED**, **PERPENDICULAR**. Andy named the last one and it is the one that matters: a
+finger pier and a depth contour are drawn in the *same grey at the same width*, and what
+separates them is that a contour runs ALONG the shore and a pier runs OUT from it.
+**⚠ THIN IS AN ASPECT RATIO, NOT A WIDTH** — a 4.9 × 1.9 m chart symbol passed a 4 m width
+gate on the live sweep and was reported as a structure.
+
+**MEASURED, before a line of it was written and again after:** 670 × 670 m of New Castle at
+0.22 m/px → 1,825 components, **TWO kept**, both real finger piers (88° and 89° off the pier
+they stand on, attached within a metre). 715 × 715 m of Lewes → **ZERO**, no false positives.
+The JS port reproduces the Python prototype exactly, in **103 ms** over 1280 × 1280 px. Live
+end-to-end: the model went **1323 → 1325 zones**, `blockedInfo` at the drawn pier now answers
+*"a structure drawn on the chart but absent from the ENC"*, and the same Go-To that used to
+drive through it now clears it by **6.22 m**.
+
+**⚠ WHAT IS READ OFF A PICTURE IS NEVER SHOWN AS IF IT CAME FROM THE ENC** — its own `kind`,
+drawn in **magenta** with end ticks, counted separately on the Nogo row, and the tip says
+whether the chart was compared at all. **A REFUSAL IS NOT CACHED AS A CLEAN READ**: an unread
+tile is blank paper and reads exactly like open water, so below 90% tile coverage the scan
+says it did not look. **⚠ AND A TILE BUDGET IS NOT A TIME BUDGET** — 196 cold tiles froze the
+first Go-To in a new area for minutes; `CHART_INK_DEADLINE_MS` is what makes it bounded.
+
+**⬜ DETACHED INK IS DELIBERATELY NOT ENFORCED.** Five candidates at New Castle were line-like
+but stood 11–19 m off anything charted; every one was foreshore or marsh symbology. They are
+REPORTED on the readout and left alone. Andy's rule was *attached*, and attached is what is
+enforced. **His other suggestion — overhead imagery — was NOT built**: the chart/ENC
+comparison resolves this case with zero false positives at two ports, and imagery is a
+second, independent source better decided on its own merits than folded in here.
+
+**⬜ AND A SEPARATE, UNFIXED DEFECT FOUND WHILE INVESTIGATING THIS — ASK BEFORE TOUCHING IT.**
+Sweeping 475 Go-To routes from one spawn, the obstacle search never ships a fouling leg (0 of
+475) — but **one shipped route passes 0.47 m from a charted pier with a 3 m buffer set**. The
+chain is: `narrowChannelLane` (the Rule 9 offset) moves it 3.45 → 2.63 m, `smoothTrack` takes
+it to 0.47 m because it tests whether the moved VERTEX is blocked and never the legs to and
+from it, and **`gateLegClear` — whose whole job is to re-check — does not fire**: its
+exemption waives a block within 2×buffer of the route's start or goal, the block sits **5.8 m
+from the goal against a 6 m radius**, and *neither endpoint is itself inside the buffer*. The
+fix is one condition (require the ENDPOINT to be blocked, not merely the block to be near
+it), but it narrows a deliberate documented exemption AND `routing.js` carries a vendor
+`DO-NOT-EDIT` header — fixing it here takes a third file out of the asv_core sync, the way
+`core_turns.js` and `keepouts.js` already went. **Andy's call.**
+
+## ⇒ EARLIER (handoff of 2026-09-04 — she goes round it now, instead of stopping)
 
 ### ➤ PICK UP HERE
 

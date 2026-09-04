@@ -709,6 +709,12 @@ import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
 import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
+// Reading the CHART ITSELF, where the ENC has nothing to say. NOAA's renderer draws
+// structures its own vector service does not carry - a finger pier at New Castle, measured
+// 4.3 m from the nearest ENC object of any class. Pure: it takes pixels, and commands and
+// fetches nothing (see the module header for the sieve and what it deliberately will not do).
+import { scanChart, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
+  from "/static/js/chartink.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
@@ -4018,9 +4024,26 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // against the bare-ref model over a mixed extract before the switch.
   nogo.frame = planeFrame(featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center));
   nogo.ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
+  // STRUCTURES READ OFF THE CHART, folded in HERE and nowhere else.
+  //
+  // ⚠ IT HAS TO BE INSIDE rebuildNogo, NOT BESIDE IT. Every path that changes the buffer, a
+  // depth window or an enforcement toggle calls this to rebuild `ko` from scratch - so a
+  // fold done anywhere else is silently discarded the first time the operator touches a
+  // control, and the pier the console found for itself quietly stops existing.
+  //
+  // ⚠ AND THEY FOLLOW THE `land` TOGGLE, because that is what they ARE: structures. An
+  // operator who has turned structure enforcement off has said what they mean, and a
+  // keep-out that ignored that would be this module claiming an authority the ENC's own
+  // piers do not have.
+  const inkLines = (nogo.enf && nogo.enf.land === false) ? [] : (chartInk.lines || []);
+  for(const L of inkLines){
+    const pts = [nogo.frame.toEN(L.a), nogo.frame.toEN(L.b)];
+    nogo.ko.lines.push({pts, bb: bbOf(pts), kind: CHART_INK_KIND, fromChart: true});
+  }
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
   nogo.note = n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
+                    + (inkLines.length ? ` · +${inkLines.length} read off the chart` : ``)
                   : "no nogo features in this area";
   updateNogoUI();
 }
@@ -4038,6 +4061,10 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
       updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
       render(); return;
     }
+    // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
+    // it was taken over; dropping the key here means the next plan re-reads rather than
+    // carrying a previous area's findings into water they were never taken over.
+    chartInk = {key:null, lines:[], detached:[], note:null, z:null, ms:0, busy:false};
     nogo.features = (sea.enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
     nogo.band = sea.enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
@@ -4083,8 +4110,23 @@ function nogoReadout(){
     title: "The chart was read (ENC band " + band + ") and there is nothing to avoid within "
          + "the operating area - open water. This is NOT the same as having no chart data." + why};
   const brk = kinds.sort((a, b)=> counts[b] - counts[a]).map(k=> counts[k] + " × " + k).join(", ");
-  return {text: n + " zones · floor " + floor, cls: "",
-    title: "Chart read (ENC band " + band + "): " + brk + "." + why};
+  // ⚠ WHETHER THE CHART IMAGE WAS COMPARED IS ITS OWN SENTENCE, and it is on the readout
+  // rather than only in a banner because "the ENC has nothing there" and "nobody looked" are
+  // different states and only one of them is safe to plan on. A refusal says so; a clean
+  // read says so; and structures found say how many and that they came from a PICTURE.
+  const inkTxt = chartInk.note
+    ? "\n\nChart image: " + chartInk.note
+      + (chartInk.lines.length
+          ? " — these are read from the RENDERED chart, not from the ENC, and are drawn in "
+            + "magenta. NOAA's renderer carries structures its vector service does not; verify "
+            + "them by eye before relying on the plan."
+          : "")
+    : "\n\nChart image: not compared here yet — it is read over the water of each commanded "
+      + "plan, just before the route is built.";
+  return {text: n + " zones · floor " + floor
+                + (chartInk.lines.length ? " · +" + chartInk.lines.length + " chart" : ""),
+    cls: chartInk.lines.length ? "warn" : "",
+    title: "Chart read (ENC band " + band + "): " + brk + "." + inkTxt + why};
 }
 function updateNogoUI(){
   const btn=$("#nogoBtn");
@@ -4392,6 +4434,22 @@ function drawNogo(toScreen){
   for(const f of nogo.features){ const r=f.role;
     if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
       eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
+  // ⚠ WHAT WAS READ OFF THE CHART IS DRAWN DIFFERENTLY, AND THAT IS NOT DECORATION. These
+  // are keep-outs the console inferred from a PICTURE; every other line here is published
+  // vector data. Drawing them in the ENC's own red would tell the operator the console has a
+  // warrant it does not have - and the one thing they must be able to do is look at the
+  // chart and disagree. Magenta, heavier, with a tick at each end so a 10 m mark is visible
+  // at a zoom where 10 m is ten pixels.
+  if(nogo.enf.land && chartInk.lines && chartInk.lines.length){
+    ctx.strokeStyle="rgba(224,64,208,0.95)"; ctx.lineWidth=3.2; ctx.lineCap="round";
+    for(const L of chartInk.lines){
+      const a=toScreen(L.a.lat,L.a.lon), b=toScreen(L.b.lat,L.b.lon);
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1, tx=-dy/len*5, ty=dx/len*5;
+      ctx.beginPath(); ctx.moveTo(a.x+tx,a.y+ty); ctx.lineTo(a.x-tx,a.y-ty);
+      ctx.moveTo(b.x+tx,b.y+ty); ctx.lineTo(b.x-tx,b.y-ty); ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 // Lateral channel marks (buoys/beacons) the console uses to define the channel:
@@ -4949,12 +5007,202 @@ function drawViolation(toScreen){
 // Make sure the shared nogo model's fetched features cover the survey area; if
 // not (survey drawn outside the operating area), extend the fetch to their union.
 // The transit re-extract center stays the vessel so it never ping-pongs.
+// --- READING THE CHART ITSELF: structures NOAA draws but does not publish ---------- //
+//
+// Andy, 2026-09-04, with a Go-To drawn straight through a finger pier at New Castle:
+// *"I do not believe this feature is identified as a finger pier or any other structure in
+// the ENC. This is exactly the situation that requires an image capture and comparison to
+// ENC features to prevent a crash. ... use an identification process that finds
+// PERPENDICULAR features on the graphic attached to ENC features and include them as viable
+// features added to NOGO."*
+//
+// THIS WAS CHECKED THREE WAYS BEFORE ANY OF IT WAS WRITTEN, because a missing CLASS would
+// have been a one-line fix and image processing is not:
+//   * the console's own extract already holds every layer ENCDirect publishes for the area,
+//     and the NEAREST object of ANY class to that drawn pier is 4.3 m away - which is the
+//     MAIN pier's own outline, not the finger;
+//   * ENCDirect's own `identify` at the same point returns seven results and every one is an
+//     AREA (depth, quality-of-data, restricted, sea-area). No structure, no line, nothing;
+//   * `enc_berthing` - usage band 6, the finest S-57 defines, and one this console has never
+//     asked for - has NO COVERAGE at New Castle. Even its Coverage_area comes back empty.
+// The harbour band is the finest cell that exists here and the feature is not in it. NOAA's
+// RENDERER draws it; NOAA's VECTOR service does not carry it.
+//
+// So the chart image is a source of navigational fact the vector extract does not contain.
+// The judgement lives in static/js/chartink.js and is pure; this is the half that has a
+// browser - it fetches the tiles, paints what the ENC already explains, and turns what
+// survives into keep-out lines.
+//
+// WARNING: THE TILES ARE SAME-ORIGIN AND THAT IS LOAD-BEARING. They come through the
+// console's own /tiles/{z}/{x}/{y}.png cache, so the canvas is never tainted and
+// getImageData works. Painting a direct NOAA URL would look identical and then throw a
+// SecurityError on the read - the scan would be silently impossible.
+const CHART_INK_Z = 19;              // 0.22 m/px here: a 10 m finger pier is 46 px long
+const CHART_INK_MIN_Z = 17;          // below this a 3 m mark is under two pixels - refuse
+const CHART_INK_MAX_TILES = 256;     // the scan's own budget, about 4 MB of pixels
+// ⚠ A TILE BUDGET IS NOT A TIME BUDGET, AND THE FIRST CUT ONLY HAD THE FIRST. 196 tiles of
+// water the operator has never looked at are 196 COLD fetches to NOAA, and awaiting them all
+// froze the tab for minutes on the first Go-To in a new area. The deadline is what makes the
+// scan bounded in the thing that actually costs: whatever has arrived when it expires is
+// what gets read.
+const CHART_INK_DEADLINE_MS = 15000;
+// ⚠⚠ AND A MISSING TILE IS A FALSE CLEAR, WHICH IS THE DANGEROUS DIRECTION. Blank paper has
+// no ink, so an unread tile reads exactly like water with nothing in it. Under this fraction
+// the scan REFUSES to claim it read the area, because "I found nothing" and "I could not
+// look" must never be the same sentence.
+const CHART_INK_MIN_COVER = 0.9;
+const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
+let chartInk = {key:null, lines:[], detached:[], note:null, z:null, ms:0, busy:false};
+
+/** One tile as an Image, or null. A miss is a hole in the mosaic, never a rejection. */
+function loadTile(z, x, y){
+  return new Promise(res=>{
+    const im = new Image();
+    im.onload = ()=>res(im); im.onerror = ()=>res(null);
+    im.src = "/tiles/" + z + "/" + x + "/" + y + ".png";
+  });
+}
+
+/**
+ * Scan the chart image over `bb` and return the structures the ENC does not explain.
+ *
+ * THE ZOOM IS CHOSEN BY THE BUDGET, NOT BY THE VIEW, and it degrades honestly. A survey area
+ * can be a kilometre across; at CHART_INK_Z that is thousands of tiles. The scan drops a
+ * zoom at a time until it fits CHART_INK_MAX_TILES and REFUSES below CHART_INK_MIN_Z, where
+ * the smallest mark it looks for is under two pixels and a "clean" scan would mean nothing
+ * at all. Saying so is the answer; a silent empty result is not.
+ */
+async function scanChartInk(bb){
+  if(!bb || !nogo.features || !nogo.features.length) return null;
+  let z = CHART_INK_Z, x0, y0, nx, ny;
+  for(;; z--){
+    const tl = worldPx(bb.N, bb.W, z), br = worldPx(bb.S, bb.E, z);
+    x0 = Math.floor(tl.x / TILE); y0 = Math.floor(tl.y / TILE);
+    nx = Math.floor(br.x / TILE) - x0 + 1; ny = Math.floor(br.y / TILE) - y0 + 1;
+    if(nx * ny <= CHART_INK_MAX_TILES) break;
+    if(z <= CHART_INK_MIN_Z)
+      return {refused:"the area is too large to read the chart image at a useful scale ("
+                      + (nx*ny) + " tiles at z" + z + ")"};
+  }
+  const W = nx * TILE, H = ny * TILE, t0 = Date.now();
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d", {willReadFrequently:true});
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);   // a missing tile reads as blank paper
+  let got = 0;
+  const jobs = [];
+  for(let i=0;i<nx;i++) for(let j=0;j<ny;j++)
+    jobs.push(loadTile(z, x0+i, y0+j).then(im=>{ if(im){ ctx.drawImage(im, i*TILE, j*TILE); got++; } }));
+  nogoStatus("Reading the chart image over the planned water (" + (nx*ny)
+             + " tiles at z" + z + ")…");
+  await Promise.race([Promise.all(jobs),
+                      new Promise(r=>setTimeout(r, CHART_INK_DEADLINE_MS))]);
+  const cover = got / (nx * ny);
+  if(cover < CHART_INK_MIN_COVER)
+    return {refused:"only " + got + " of " + (nx*ny) + " chart tiles arrived in "
+                    + (CHART_INK_DEADLINE_MS/1000) + " s — an unread tile is blank paper and "
+                    + "would read as clear water, so the chart was NOT compared here",
+            z, tiles:nx*ny, got};
+  const PX0 = x0 * TILE, PY0 = y0 * TILE;
+  const toPx = (lat, lon)=>{ const w = worldPx(lat, lon, z); return {x: w.x - PX0, y: w.y - PY0}; };
+
+  // WHAT THE ENC ALREADY EXPLAINS, painted from the SAME feature list the keep-out model is
+  // built from - so the two can never disagree about what is charted.
+  const mv = document.createElement("canvas"); mv.width = W; mv.height = H;
+  const mc = mv.getContext("2d", {willReadFrequently:true});
+  mc.strokeStyle = "#fff"; mc.fillStyle = "#fff"; mc.lineWidth = INK_EXPLAIN_PX * 2;
+  mc.lineJoin = "round"; mc.lineCap = "round";
+  const paintPath = (cs)=>{ if(cs.length<2) return; mc.beginPath();
+    cs.forEach((c,i)=>{ const q=toPx(c[1],c[0]); i?mc.lineTo(q.x,q.y):mc.moveTo(q.x,q.y); }); mc.stroke(); };
+  // A SOUNDING'S INK IS ITS LABEL, not its position: the number is drawn beside the point and
+  // is the commonest unexplained mark on any chart. The disc has to cover the text.
+  const paintPt = (c)=>{ const q=toPx(c[1],c[0]); mc.beginPath();
+    mc.arc(q.x, q.y, 14, 0, Math.PI*2); mc.fill(); };
+  const STRUCT_ROLES = new Set(["dock", "dock_line", "land", "shore_line"]);
+  const segs = [];
+  const addSegs = (cs)=>{ for(let i=1;i<cs.length;i++)
+    segs.push({a:toPx(cs[i-1][1], cs[i-1][0]), b:toPx(cs[i][1], cs[i][0])}); };
+  for(const f of nogo.features){
+    const g = f.geometry, isStruct = STRUCT_ROLES.has(f.role);
+    eachPath(g, q=>{ paintPath(q); if(isStruct) addSegs(q); });
+    eachRing(g, r=>{ paintPath(r); if(isStruct) addSegs(r); });
+    eachPoint(g, c=>paintPt(c));
+  }
+  const rgba = ctx.getImageData(0, 0, W, H).data;
+  const md = mc.getImageData(0, 0, W, H).data;
+  const explained = new Uint8Array(W*H);
+  for(let i=0,q=3;i<explained.length;i++,q+=4) if(md[q]) explained[i] = 1;
+  const mPerPx = 156543.03392 * Math.cos((bb.S+bb.N)/2 * Math.PI/180) / Math.pow(2, z);
+  const r = scanChart(rgba, W, H, explained, segs, mPerPx);
+  const toLL = (q)=>worldToLatLon(q.x + PX0, q.y + PY0, z);
+  return {z, tiles:nx*ny, got, mPerPx, ms:Date.now()-t0,
+          inkPx:r.inkPx, unexplainedPx:r.unexplainedPx, components:r.components,
+          lines: r.structures.map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM,
+                                        angleDeg:sx.angleDeg, attachM:sx.attachM, why:sx.why})),
+          detached: r.unexplained.filter(u=>/not attached/.test(u.why))
+                                 .map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM}))};
+}
+
+/**
+ * Fold the chart-read structures into the LIVE keep-out model, once per area.
+ *
+ * THEY GO IN AS `ko.lines`, WHICH IS WHAT EVERY PLANNER AND THE RUNTIME GUARD ALREADY READ.
+ * Nothing downstream needs to know where they came from - the route search, legClear,
+ * clearanceM, the clearance guard and the deviation search all see one model. What DOES know
+ * is the operator: they carry their own `kind`, they are drawn in magenta, and the Nogo
+ * readout counts them separately - because a keep-out read off a picture is not the same
+ * warrant as one published in the ENC and must never be shown as if it were.
+ */
+async function ensureChartInk(bb){
+  if(!bb || !nogo.ready || chartInk.busy) return chartInk;
+  const key = [bb.W,bb.S,bb.E,bb.N].map(v=>v.toFixed(5)).join(",") + "|" + (nogo.band||"");
+  if(chartInk.key === key) return chartInk;
+  chartInk.busy = true;
+  try{
+    const r = await scanChartInk(bb);
+    if(!r || r.refused){
+      // ⚠ THE KEY IS NOT SET ON A REFUSAL. A refusal is "not read yet", not "read and clean",
+      // and caching it would mean the tiles finish arriving in the background and the next
+      // plan still never looks at them.
+      chartInk = {...chartInk, key:null, lines:[], detached:[], busy:false,
+                  note:(r && r.refused) || "no chart to read"};
+      rebuildNogo(); updateNogoUI();
+      if(r && r.refused) showBanner("⚠ CHART IMAGE NOT COMPARED — " + r.refused
+        + ". The plan is checked against the ENC only; command it again once the chart has "
+        + "drawn in.");
+      return chartInk;
+    }
+    // ⚠ THE DETACHED MARKS ARE SAID OUT LOUD, and they are the honest edge of this method.
+    // They are line-like ink the ENC does not explain that touches nothing charted, so the
+    // console will not enforce them - Andy's rule was ATTACHED - but "I saw something I could
+    // not classify" is information the operator is entitled to, and swallowing it would make
+    // a clean-looking scan out of an ambiguous one.
+    chartInk = {key, lines:r.lines, detached:r.detached, z:r.z, ms:r.ms, busy:false,
+      note: (r.lines.length
+        ? r.lines.length + " structure(s) read off the chart the ENC does not carry"
+        : "chart read at z" + r.z + " - nothing the ENC does not already carry")
+        + " (" + r.got + "/" + r.tiles + " tiles, " + r.ms + " ms)"
+        + (r.detached.length ? "; " + r.detached.length + " further unexplained mark(s) touch "
+            + "nothing charted and are NOT enforced - look at them" : "")};
+    rebuildNogo();                     // fold them in through the ONE builder
+    updateNogoUI(); render();
+    if(r.lines.length)
+      showBanner("\u26a0 " + r.lines.length + " STRUCTURE(S) READ OFF THE CHART that the ENC "
+        + "does not carry - added to the keep-out model and drawn in magenta ("
+        + r.lines.map(l=>l.lengthM.toFixed(0)+" m at "+l.angleDeg.toFixed(0)+"\u00b0 off a "
+            + "charted structure").join("; ") + "). Verify visually before relying on the plan.");
+  } catch(e){
+    chartInk = {...chartInk, key, lines:[], detached:[], busy:false,
+                note:"chart read failed: " + e};
+  } finally { chartInk.busy = false; }
+  return chartInk;
+}
 async function ensureNogoArea(){
   const b=encBbox(120); if(!b) return false;
-  if(nogo.ready && bboxContains(nogo.bbox, b)) return true;
+  if(nogo.ready && bboxContains(nogo.bbox, b)){ await ensureChartInk(b); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb);
+  if(nogo.ready) await ensureChartInk(b);   // the survey's own water, before it is punched
   return nogo.ready;
 }
 // COVERAGE FIX: make sure the nogo model covers a set of lat/lon points (the boat +
@@ -4970,10 +5218,16 @@ async function ensureNogoCovers(pts, padM){
   const pad=padM||300, mid=(S+N)/2;
   const dlat=pad/M_PER_DEG_LAT, dlon=pad/(M_PER_DEG_LAT*Math.cos(mid*Math.PI/180));
   const b={W:W-dlon, S:S-dlat, E:E+dlon, N:N+dlat};
-  if(nogo.ready && bboxContains(nogo.bbox, b)) return true;   // already covered
+  // ⚠ THE CHART IS READ OVER THE WATER THIS PLAN WILL USE, not over the whole operating
+  // area - Andy asked for "an image capture ... BEFORE planning was complete", and the
+  // operating box is 10 km across, which is thousands of tiles at any scale that could
+  // resolve a finger pier. `b` is the plan's own box, already padded, which is both the
+  // right water and a few dozen tiles.
+  if(nogo.ready && bboxContains(nogo.bbox, b)){ await ensureChartInk(b); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb);
+  if(nogo.ready) await ensureChartInk(b);
   return nogo.ready;
 }
 async function punchOut(){

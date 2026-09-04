@@ -89,6 +89,13 @@ const { nogoKindCounts } = require("../static/js/chart.js");
 // the function, never a load error -- which is why this suite went red at "it shows the
 // model that was actually built" rather than anywhere near the real cause.
 const { planeFrame } = require("../static/js/geodesy.js");
+// ⚠ THE READOUT NOW ALSO SPEAKS FOR THE CHART-IMAGE SCAN, so `chartInk` has to resolve in
+// the eval'd scope for the same reason planeFrame does: a free variable here is a RUNTIME
+// error INSIDE the function, so the suite goes red somewhere far from the cause. Default it
+// to the never-scanned state, which is what a fresh page has.
+let chartInk = { key: null, lines: [], detached: [], note: null, z: null, ms: 0, busy: false };
+function setInk(m){ chartInk = Object.assign(
+  { key:null, lines:[], detached:[], note:null, z:null, ms:0, busy:false }, m || {}); }
 function setNogo(m){ for (const k of Object.keys(nogo)) delete nogo[k];
                      return Object.assign(nogo, m); }
 // eslint-disable-next-line no-eval
@@ -122,9 +129,25 @@ function model(over) {
     }
   }, over || {});
 }
-const read = over => { setNogo(model(over)); return nogoReadout(); };
+const read = (over, ink) => { setNogo(model(over)); setInk(ink); return nogoReadout(); };
 
 console.log("Nogo readout — the row has to say which of four things is true:");
+
+// ── THE CHART IMAGE. Andy, 2026-09-04: NOAA's renderer carries structures its vector
+// service does not, so the console reads the picture too - and the readout has to say
+// whether it did. "The ENC has nothing there" and "nobody looked" are different states and
+// only one of them is safe to plan on.
+check("17. a chart-image scan that FOUND something is on the row and in its tip, and is " +
+      "named as coming from a PICTURE rather than from the ENC",
+      (()=>{ const r = read({}, {note:"2 structure(s) read off the chart the ENC does not carry",
+                                 lines:[{lengthM:10},{lengthM:15}]});
+             return /\+2 chart/.test(r.text) && r.cls === "warn"
+                 && /read from the RENDERED chart, not from the ENC/.test(r.title); })(),
+      "drawn in magenta, counted separately, and never presented as published vector data");
+check("18. ... and a scan that has NOT been made says so, rather than reading as clean",
+      (()=>{ const r = read({}, {note:null, lines:[]});
+             return !/chart/.test(r.text) && /not compared here yet/.test(r.title); })(),
+      "a silent absence would read exactly like open water");
 
 // 1-2. READING. The state that was stuck. It has to be visibly transient, and it has to
 // show how long it has been going: a chart service that stopped answering must not look
