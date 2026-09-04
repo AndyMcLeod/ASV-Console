@@ -104,6 +104,38 @@ tile is blank paper and reads exactly like open water, so below 90% tile coverag
 says it did not look. **⚠ AND A TILE BUDGET IS NOT A TIME BUDGET** — 196 cold tiles froze the
 first Go-To in a new area for minutes; `CHART_INK_DEADLINE_MS` is what makes it bounded.
 
+**⚠⚠ SECOND ROUND, SAME SESSION — ANDY: *"The fix applies partially. In the attached image
+the planned path cuts through these small piers attached to shore. ... consider shore attached
+linear and segmented linear features also a target for added nogo."*** Auditing the rejects
+over the west shore said why, and none of it was the sieve misjudging a pier:
+
+* **THE PERPENDICULAR TEST WAS MEASURED AGAINST THE WRONG THING.** A charted foreshore is
+  dozens of short zig-zags, so the ONE segment nearest a pier's root can lie *along* it — two
+  obvious piers came back *"runs ALONG the structure (0°)"* and *"(21°)"*. The general form of
+  Andy's rule is **REACH**: one end attached, the other out in open water. A depth contour
+  fails that by construction and needs no angle at all.
+* **THE GAP TO THE SHORE IS REAL** — a float reached by an uncharted ramp stands 6–19 m off,
+  and one flat radius cannot serve that *and* a finger on a quay. The allowance scales with
+  the mark's own length now.
+* **A MARINA IS NOT ONE LINE**: its spine is attached to the FINGERS, not to the shore. So the
+  pool **GROWS** — a mark square to an accepted mark is accepted too, and every step still
+  pays the reach/angle test, which is what stops growth walking along a contour.
+* **SEGMENTED MARKS ARE CHAINED** before anything is judged (Andy's word), which also repairs
+  a pier drawn as two strokes reaching the shore.
+* **AND 15.9% OF THE "INK" WAS MAGENTA** — aids, limits, cable runs: dark enough to pass a
+  luminance test and never a structure. A 41 m "line" the sieve had to argue with was the pink
+  anchorage-limit dashes.
+
+**MEASURED AFTER: New Castle's west shore went from 4 structures to 10, every one a real pier
+on inspection; Lewes stayed at ZERO.** 24 mutations, all killed.
+
+**⬜ THE ONE CLASS STILL NOT ENFORCED IS THE MARINA ITSELF.** Its floats form a comb that
+arrives as ONE connected component 20 × 21 m across — a line NETWORK, not a line. Two of them
+sit on that shore, filling 7% and 10% of their own bounding box, so they are trivially
+distinguishable from a filled symbol. They are **counted and named on the readout and NOT
+enforced**, because emitting an AREA from an image is a wider authority than emitting a line
+and two samples is not enough to set a threshold that would refuse water. **Andy's call.**
+
 **⬜ DETACHED INK IS DELIBERATELY NOT ENFORCED.** Five candidates at New Castle were line-like
 but stood 11–19 m off anything charted; every one was foreshore or marsh symbology. They are
 REPORTED on the readout and left alone. Andy's rule was *attached*, and attached is what is

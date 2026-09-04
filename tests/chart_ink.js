@@ -44,8 +44,28 @@
 // ZERO. The same scan ported to this module reproduces the New Castle pair exactly, in
 // 103 ms over 1280 x 1280 px.
 //
-// TEETH: FIFTEEN mutations RUN against a sidecar copy of chartink.js and the page, all
-// fifteen killed. The check numbers are the ones that actually went red.
+// ⚠⚠ SECOND ROUND, AND ANDY WAS RIGHT AGAIN: *"The fix applies partially. In the attached
+// image the planned path cuts through these small piers attached to shore. ... consider shore
+// attached linear and segmented linear features also a target for added nogo."* Auditing the
+// rejects over the west shore said exactly why, and none of it was the sieve misunderstanding
+// what a pier looks like:
+//   * THE PERPENDICULAR TEST WAS MEASURED AGAINST THE WRONG THING. A charted foreshore is
+//     dozens of short zig-zags, so the ONE segment nearest a pier's root can lie along the
+//     pier - two obvious piers came back "runs ALONG the structure (0°)" and "(21°)". The
+//     general form of Andy's rule is REACH: one end attached, the other out in open water.
+//     A contour fails it by construction, and needs no angle at all (checks 7, 7b).
+//   * THE GAP TO THE SHORE IS REAL. A float reached by an uncharted ramp stands 6-19 m off,
+//     and one flat radius cannot serve that and a finger on a quay. The allowance scales
+//     with the mark's own length now (17d).
+//   * A MARINA IS NOT ONE LINE. Its spine is attached to the FINGERS, not to the shore, so
+//     the pool GROWS: a mark square to an accepted mark is accepted too (19).
+//   * AND 15.9% OF THE "INK" WAS MAGENTA - aids, limits, cable runs. Dark enough to pass a
+//     luminance test, and never a structure (18).
+// Measured after: New Castle's west shore went from 4 structures to 10, every one a real
+// pier on inspection; Lewes stayed at ZERO.
+//
+// TEETH: TWENTY-FOUR mutations RUN against a sidecar copy of chartink.js and the page, all
+// twenty-four killed. The check numbers are the ones that actually went red.
 //   ink threshold ignored (everything is ink)                 -> 1, 2, 4, 5, 5b, 5c, 6-9, 16
 //   the explained mask is not subtracted                      -> 2, 4, 5, 5b, 5c, 8, 16
 //   components are 4-connected, not 8                         -> 3
@@ -83,6 +103,18 @@
 // version of "detached marks are enforced" produced a double `else` - invalid code, which
 // crashes the suite through its guard rather than failing a check, and a crash is not the
 // same evidence as a red check.
+//
+// ⚠ THE SECOND ROUND FOUND FOUR MORE HOLES, three in the checks and one in the CODE:
+//   * nothing tested that chaining REFUSES - deleting either the offset or the gap test left
+//     every check green. 17b (two parallel piers stay two) and 17c (two distant collinear
+//     marks stay two) are those cases.
+//   * nothing tested the proportional attachment allowance, so it could be flattened back to
+//     a constant unnoticed. 17d is a 20 m pier standing 8 m off.
+//   * and the offset test itself was written TWICE - g's centre off f's axis, then f's off
+//     g's - and mutation could not tell them apart, because inside the 20 deg direction cap
+//     the two are all but equal and whichever survived still fired. Two statements where one
+//     always implies the other is one statement nobody can test; it is a single symmetric
+//     MAX now.
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +
@@ -285,18 +317,45 @@ check("6. IT MUST BE ATTACHED — the same mark standing off in open water is re
             && r.unexplained.some(u => /not attached/.test(u.why));
       },
       "a finger pier springs from a quay; that is what makes it a finger pier");
-check("7. ⚠ THE PERPENDICULAR TEST IS WHAT TELLS A PIER FROM A CONTOUR — same grey, same " +
-      "width, and only the direction differs",
+check("7. ⚠ A CONTOUR GOES NOWHERE, AND THAT IS WHAT TELLS IT FROM A PIER — same grey, " +
+      "same width, and only where it LEADS differs",
       () => {
         const a = blank();
         stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
-        stroke(a, 60, 106, 160, 106);                  // parallel to the quay, 6 px off it
+        stroke(a, 60, 106, 160, 106);                  // parallel to the quay, 26 px off it
         const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
         return r.structures.length === 0
-            && r.unexplained.some(u => /runs ALONG/.test(u.why));
+            && r.unexplained.some(u => /goes nowhere/.test(u.why));
       },
-      "this is the confusion Andy named: the finger pier and the 11 ft contour are drawn " +
-      "identically");
+      "the confusion Andy named. ⚠ The gate is REACH, not the raw angle: asking the angle " +
+      "against the ONE nearest segment refused two real piers on a wiggly foreshore at 0° " +
+      "and 21°, because the shoreline happened to lie along them");
+// ⚠ 7b IS THE WIGGLY FORESHORE, WHICH IS THE CASE THAT MATTERS. A charted foreshore is
+// dozens of short zig-zags, so the ONE segment nearest a pier's root can lie along the pier
+// - and on the real chart that refused two obvious piers at 0° and 21°. ZIG is that zig: a
+// short charted segment parallel to the pier standing on it.
+const ZIG = { a: { x: 112, y: 84 }, b: { x: 126, y: 128 } };
+check("7b. ... so a pier whose ROOT sits on a zig of shoreline that happens to run along it " +
+      "is still a pier, because it leaves everything charted behind",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 118, 86, 150, 190);                  // out into the water, along the zig
+        const r = C.scanChart(a, W, H2, explainedOf(),
+                              SEGS.concat([{ a: ZIG.a, b: ZIG.b }]), MPP);
+        return r.structures.length === 1
+            && r.structures[0].angleDeg < C.PERP_MIN_DEG
+            && r.structures[0].reachM > r.structures[0].reachNeedM;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 118, 86, 150, 190);
+              const r = C.scanChart(a, W, H2, explainedOf(),
+                                    SEGS.concat([{ a: ZIG.a, b: ZIG.b }]), MPP);
+              const s = r.structures[0] || r.rejected[0];
+              return s ? s.angleDeg + "°, attached " + (s.attachM||0).toFixed(1)
+                         + " m, reaching " + (s.reachM||0).toFixed(1) + " m of "
+                         + (s.reachNeedM||0).toFixed(1) + " needed" : "nothing at all"; });
 check("8. a sounding's LABEL is not a structure — its ink is drawn beside the point, and " +
       "the explained mask has to cover the text, not the position",
       () => {
@@ -375,6 +434,134 @@ check("16. the nearest charted structure is SEARCHED FOR, not taken as the first
       },
       () => { const s = run().structures[0];
               return s ? "attached " + s.attachM.toFixed(1) + " m" : "nothing found"; });
+
+// ── 17-20. SEGMENTED, COLOURED, GROWN, AND THE ONE THAT IS NOT A LINE ───────────────
+// Andy, on the first cut: "The fix applies partially. ... consider shore attached linear and
+// segmented linear features also a target for added nogo."
+check("17. A PIER DRAWN IN PIECES IS ONE PIER — collinear marks with a small gap are chained " +
+      "before anything is judged",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        // the same 50 px finger, drawn as three dashes with 4 px gaps
+        stroke(a, 120, 82, 120, 96); stroke(a, 120, 101, 120, 115); stroke(a, 120, 120, 120, 133);
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.structures.length === 1 && r.structures[0].pieces >= 2
+            && r.structures[0].lengthM > 8;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 120, 82, 120, 96); stroke(a, 120, 101, 120, 115); stroke(a, 120, 120, 120, 133);
+              const s = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP).structures[0];
+              return s ? s.pieces + " pieces, " + s.lengthM.toFixed(1) + " m" : "nothing found"; });
+// ⚠ 17b AND 17c ARE THE TWO WAYS CHAINING GOES WRONG, and mutation is what asked for them:
+// deleting either the OFFSET or the GAP test left every other check green. Chaining that is
+// too eager is worse than none - it fuses separate piers into one wide shape the sieve then
+// throws away, or strings unrelated marks into an invented structure.
+check("17b. ... but two PARALLEL piers are two piers. Chaining needs a small offset from " +
+      "each other's axis, not merely the same direction",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 120, 81, 120, 131);
+        stroke(a, 133, 81, 133, 131);                   // 2.6 m to the side: a NEIGHBOUR
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.structures.length === 2 && r.structures.every(x => x.pieces === 1);
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 120, 81, 120, 131); stroke(a, 133, 81, 133, 131);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              return r.structures.length + " structure(s), widths "
+                     + r.structures.map(x => x.widthM.toFixed(1)).join("/"); });
+check("17c. ... and two collinear marks a long way apart are not one mark either",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 250, 81, 250, 93);                    // 2.4 m
+        stroke(a, 250, 133, 250, 145);                  // 2.4 m, 8 m further on
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.structures.length === 0;               // both too short to be anything
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 250, 81, 250, 93); stroke(a, 250, 133, 250, 145);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              return r.structures.length + " kept; chained into "
+                     + (r.structures[0] ? r.structures[0].pieces + " pieces" : "nothing"); });
+check("17d. THE ATTACHMENT ALLOWANCE SCALES WITH THE MARK — a 20 m pier standing 8 m off " +
+      "the charted shore is a pier reached by a ramp nobody charted",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 250, 120, 250, 220);                  // 20 m long, its near end 8 m off
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        const tight = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP, { attachFrac: 0 });
+        return r.structures.length === 1 && r.structures[0].attachM > C.ATTACH_M
+            && tight.structures.length === 0;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 250, 120, 250, 220);
+              const x = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP).structures[0];
+              return x ? "attached " + x.attachM.toFixed(1) + " m, allowed "
+                         + x.attachMaxM.toFixed(1) + " m" : "nothing found"; });
+check("18. MAGENTA IS NOT A STRUCTURE — an aid, a limit or a cable run is dark enough to be " +
+      "ink by luminance and must be refused by its COLOUR",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 120, 81, 120, 131);                       // a real grey finger, for contrast
+        // NOAA's own magenta, luminance 125 - well under the ink threshold - drawn as an
+        // identical finger. If colour were not read, this would be a second structure.
+        for (let y = 82; y < 132; y++) {
+          const p = (y * W + 200) * 4;
+          a[p] = 219; a[p + 1] = 73; a[p + 2] = 150;
+        }
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.structures.length === 1                    // the grey finger, and only it
+            && r.structures.every(x => Math.abs(x.a.x - 200) > 5);
+      },
+      "15.9% of everything the luminance test called ink at New Castle was magenta furniture");
+check("19. THE POOL GROWS: a pier HEAD square to an accepted finger is accepted too, " +
+      "though it is out of reach of anything the ENC charts",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 120, 81, 120, 131);                       // the finger: seeds at round 0
+        // the pier HEAD: square to the finger, 10.8 m off the quay - too far to attach to
+        // anything charted on its own, and reachable only through the finger.
+        stroke(a, 95, 136, 145, 136);
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        const head = r.structures.find(x => x.round >= 1);
+        // ... and with growth switched off it is NOT found, which is the whole mechanism.
+        const off = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP, { growRounds: 0 });
+        return r.structures.length === 2 && !!head && off.structures.length === 1;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 120, 81, 120, 131); stroke(a, 95, 136, 145, 136);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              return r.structures.map(x => x.lengthM.toFixed(1) + " m @ round " + x.round).join(", ")
+                     || "nothing found"; });
+check("20. A MARINA IS NOT A LINE, and is REPORTED rather than enforced — turning a picture " +
+      "into an AREA is a wider authority than turning it into a line",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 60, 140, 200, 140);                       // a spine...
+        for (let x = 70; x <= 190; x += 20) stroke(a, x, 140, x, 190);   // ...and its fingers
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        const wide = r.rejected.find(x => x.widthM > C.MAX_WIDTH_M);
+        return !!wide && r.areas.length === 1
+            && !r.structures.some(x => x.widthM > C.MAX_WIDTH_M);
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 60, 140, 200, 140);
+              for (let x = 70; x <= 190; x += 20) stroke(a, x, 140, x, 190);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              return r.areas.length + " area(s), " + r.structures.length + " structure(s)"; });
 
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));

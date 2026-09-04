@@ -5139,7 +5139,9 @@ async function scanChartInk(bb){
           lines: r.structures.map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM,
                                         angleDeg:sx.angleDeg, attachM:sx.attachM, why:sx.why})),
           detached: r.unexplained.filter(u=>/not attached/.test(u.why))
-                                 .map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM}))};
+                                 .map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM})),
+          areas: r.areas.map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM,
+                                   widthM:sx.widthM}))};
 }
 
 /**
@@ -5182,7 +5184,9 @@ async function ensureChartInk(bb){
         : "chart read at z" + r.z + " - nothing the ENC does not already carry")
         + " (" + r.got + "/" + r.tiles + " tiles, " + r.ms + " ms)"
         + (r.detached.length ? "; " + r.detached.length + " further unexplained mark(s) touch "
-            + "nothing charted and are NOT enforced - look at them" : "")};
+            + "nothing charted and are NOT enforced - look at them" : "")
+        + (r.areas.length ? "; " + r.areas.length + " unexplained line NETWORK(S) (a marina's "
+            + "floats read as one wide shape, not a line) - NOT enforced, look at them" : "")};
     rebuildNogo();                     // fold them in through the ONE builder
     updateNogoUI(); render();
     if(r.lines.length)

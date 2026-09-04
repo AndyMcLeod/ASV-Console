@@ -68,6 +68,18 @@
 
 /** Below this luminance a chart pixel is INK - a stroke or text, never a fill. */
 export const INK_LUM = 170;
+/**
+ * ... and it must be NEUTRAL. Max channel minus min channel, above which the mark is a
+ * COLOURED one and belongs to a different alphabet.
+ *
+ * ⚠ THIS IS NOT A TIDY-UP, IT REMOVED A WHOLE CLASS OF FALSE CANDIDATE. NOAA draws physical
+ * things in greys and black and reserves magenta for aids, limits, cable and pipeline runs
+ * and anchorage symbology - none of which is a structure a hull can hit. Measured over the
+ * west shore at New Castle: structure ink runs 0-26 of saturation, the magenta furniture
+ * runs 110-146, and 15.9% of everything the luminance test called ink was that furniture. A
+ * 41 m "line" the sieve had to argue with turned out to be the pink anchorage-limit dashes.
+ */
+export const INK_SAT_MAX = 60;
 /** Ink within this many pixels of a charted object is that object's own stroke. */
 export const EXPLAIN_PX = 4;
 /** A component smaller than this is noise, not a mark. */
@@ -80,8 +92,106 @@ export const MAX_WIDTH_M = 4.0;
 export const MIN_ASPECT = 5.0;
 /** How near a charted structure an end must be for the mark to be ATTACHED to it. */
 export const ATTACH_M = 6.0;
-/** Degrees off the structure it springs from. Below this it is a contour or an edge. */
+/**
+ * Degrees off the structure it springs from - REPORTED ALWAYS, and the gate only where the
+ * mark does not visibly reach away. See REACH_FRAC.
+ */
 export const PERP_MIN_DEG = 30.0;
+/**
+ * ⚠⚠ WHAT ACTUALLY SEPARATES A PIER FROM A CONTOUR IS THAT A PIER GOES SOMEWHERE.
+ *
+ * Andy's rule was PERPENDICULAR, and perpendicular is the right idea measured the wrong way:
+ * it asks the angle against the ONE nearest structure segment, and a charted foreshore is a
+ * dotted line of dozens of short wiggles whose local direction is noise. Two real piers on
+ * the west shore at New Castle - 16.9 m and 27.6 m, both plainly running out into the water
+ * off the beach - were refused at "0°" and "21°" because the shoreline segment nearest their
+ * root happened to lie along them.
+ *
+ * The general form of his rule is the one the water understands: ONE END IS ATTACHED AND THE
+ * OTHER IS OUT IN OPEN WATER. That is what a pier is. A depth contour fails it by
+ * construction - it runs at a roughly constant offset for its whole length, so neither end
+ * reaches anywhere - and it needs no angle at all.
+ *
+ * `attachM` is the near end's distance to anything charted; `reachM` is the far end's. The
+ * far end must stand off by at least this fraction of the mark's own length.
+ */
+export const REACH_FRAC = 0.5;
+/** ... and by at least this, so a very short mark still has to go somewhere. */
+export const REACH_MIN_M = 3.0;
+
+// ── SEGMENTED MARKS, AND MARKS ATTACHED TO OTHER MARKS ──────────────────────────────
+//
+// Andy, on the first cut: *"The fix applies partially. In the attached image the planned
+// path cuts through these small piers attached to shore. ... consider shore attached linear
+// and segmented linear features also a target for added nogo."*
+//
+// He is right twice, and the audit of the rejects says exactly why. Over the west shore at
+// New Castle the piers that were missed came back as:
+//
+//     detached   9.0 m x 0.6 m,  8.1 m off      detached  10.8 m x 1.4 m, 10.8 m off
+//     detached   6.1 m x 0.5 m, 10.3 m off      detached  14.2 m x 1.9 m, 34.0 m off
+//     along     13.2 m x 0.6 m,  0.1 deg        along      7.3 m x 0.6 m,  0.1 deg
+//
+// TWO DIFFERENT FAILURES, and neither is the sieve being wrong about what a pier looks like:
+//
+//   * THE GAP IS REAL. A float or a finger reached by a ramp starts in the water, and the
+//     ENC's coastline is drawn at the high-water line - so the mark genuinely stands 6-19 m
+//     off anything charted. A single 6 m allowance cannot serve both a finger growing off a
+//     charted quay and a float system off a beach.
+//   * A MARINA IS NOT ONE LINE. Its spine runs ALONG the shore and its fingers run out from
+//     it; the spine is 0.1 deg off the shoreline and is refused by the very test that keeps
+//     depth contours out. The spine is not attached to the shore at all - it is attached to
+//     the FINGERS.
+//
+// So two additions, and both are conservative:
+//
+//   CHAINING     collinear pieces separated by a small gap are ONE mark before anything is
+//                judged. That is Andy's "segmented linear", and it also repairs the first
+//                failure for free: a pier drawn as two strokes reaches the shore once its
+//                pieces are joined.
+//   GROWTH       a mark attached and perpendicular to an ALREADY-ACCEPTED mark is accepted
+//                too, and joins the pool. A finger off the shore seeds; the spine attaches to
+//                the finger at 90 deg; a further finger attaches to the spine. ⚠ EVERY STEP
+//                STILL PAYS THE PERPENDICULAR TEST, which is what stops the growth walking
+//                along a contour - a contour parallel to a pier can never attach to it.
+
+/** Collinear pieces closer than this along their own axis are one mark. */
+export const CHAIN_GAP_M = 5.0;
+/** ... and no further off each other's axis than this. A parallel neighbour is not a piece. */
+export const CHAIN_OFFSET_M = 1.6;
+/** ... and no more than this many degrees apart in direction. */
+export const CHAIN_DEG = 20.0;
+/** Only marks at least this long by this ratio are worth trying to chain. */
+export const CHAIN_MIN_ASPECT = 1.5;
+/**
+ * How far a mark may stand off the thing it belongs to, as a MULTIPLE OF ITS OWN LENGTH.
+ *
+ * ⚠ THE ALLOWANCE IS PROPORTIONAL BECAUSE THE EVIDENCE IS. A 15 m pier lying 10 m off a
+ * charted shore is a structure reached by a ramp nobody charted; a 3 m mark lying 10 m off
+ * is a symbol, and no reading of the picture makes it anything else. A flat radius big
+ * enough for the first is far too big for the second, which is how a single ATTACH_M ended
+ * up refusing every float at New Castle's west shore.
+ */
+export const ATTACH_FRAC = 1.0;
+/** How many times the accepted set may seed further marks. */
+export const GROW_ROUNDS = 3;
+
+// ── THE ONE CLASS THIS STILL WILL NOT ENFORCE ───────────────────────────────────────
+//
+// A MARINA IS NOT A LINE. Its floats form a comb - a spine with fingers - which arrives as
+// ONE connected component 20 x 21 m across, and no reading of it as a line is honest. Two of
+// them sit on the west shore at New Castle and the sieve calls them both "not a line", which
+// is correct and useless.
+//
+// They ARE structures, and they are reported: a component that is WIDE, LARGE and SPARSE is
+// a network of drawn lines, not a filled symbol - measured, the two marinas fill 7% and 10%
+// of their own bounding box. But turning one into a keep-out means emitting an AREA from an
+// image, which is a wider authority than emitting a line, and two samples is not enough
+// evidence to set a threshold that would refuse water. So they are counted and named for the
+// operator, and the console does not act on them. That is the same call the detached marks
+// get, and for the same reason.
+export const AREA_MIN_M = 10.0;
+export const AREA_MAX_FILL = 0.35;
 
 const R2D = 180 / Math.PI;
 
@@ -93,10 +203,15 @@ const R2D = 180 / Math.PI;
  * and would break the first time NOAA restyled. What every fill on this chart has in common
  * is that it is LIGHT, and that is a single number.
  */
-export function inkMask(rgba, w, h, lum = INK_LUM) {
+export function inkMask(rgba, w, h, lum = INK_LUM, sat = INK_SAT_MAX) {
   const m = new Uint8Array(w * h);
   for (let i = 0, p = 0; i < m.length; i++, p += 4) {
-    if (0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2] < lum) m[i] = 1;
+    const r = rgba[p], g = rgba[p + 1], b = rgba[p + 2];
+    if (0.299 * r + 0.587 * g + 0.114 * b >= lum) continue;
+    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    if (mx - mn > sat) continue;                  // coloured: an aid, a limit, a cable
+    m[i] = 1;
   }
   return m;
 }
@@ -175,6 +290,85 @@ export function fitAxis(xs, ys) {
            b: { x: mx + ux * a1, y: my + uy * a1 } };
 }
 
+/** Signed distance from a point to an infinite line through `c` with unit direction `u`. */
+function offAxis(p, c, ux, uy) {
+  return Math.abs(-(p.x - c.x) * uy + (p.y - c.y) * ux);
+}
+
+/** The gap between two segments' nearest ENDS, in pixels. */
+function endGap(f, g) {
+  let best = Infinity;
+  for (const a of [f.a, f.b]) for (const b of [g.a, g.b]) {
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * Are these two marks pieces of ONE line?
+ *
+ * Three tests, and all three are needed: the same DIRECTION (a cross is not a chain), a
+ * small OFFSET from each other's axis (a parallel neighbour ten metres away is a different
+ * structure, not the rest of this one), and a small GAP between their nearest ends.
+ */
+export function chainable(f, g, mPerPx, opts = {}) {
+  const gap = (opts.chainGapM ?? CHAIN_GAP_M) / mPerPx;
+  const off = (opts.chainOffsetM ?? CHAIN_OFFSET_M) / mPerPx;
+  const degMax = opts.chainDeg ?? CHAIN_DEG;
+  const dot = Math.abs(f.ux * g.ux + f.uy * g.uy);
+  if (Math.acos(Math.min(1, dot)) * R2D > degMax) return false;
+  // ⚠ ONE SYMMETRIC TEST, NOT TWO. This was written as a pair - g's centre off f's axis, and
+  // f's centre off g's - and mutation showed the pair indistinguishable: deleting either left
+  // every check green, because within the 20° direction cap the two are all but equal and
+  // the survivor always fired. Two statements where one always implies the other is one
+  // statement nobody can test. The MAX is the same rule, stated once.
+  const offset = Math.max(offAxis({ x: g.mx, y: g.my }, { x: f.mx, y: f.my }, f.ux, f.uy),
+                          offAxis({ x: f.mx, y: f.my }, { x: g.mx, y: g.my }, g.ux, g.uy));
+  if (offset > off) return false;
+  return endGap(f, g) <= gap;
+}
+
+/**
+ * Join collinear pieces into single marks - Andy's "segmented linear features".
+ *
+ * ⚠ UNION-FIND IN ONE PASS, NOT MERGE-AND-RESTART. A chart tile yields on the order of two
+ * thousand components; re-scanning the whole list after every merge is O(merges x n²) and
+ * turns a 100 ms scan into a frozen tab. One O(n²) pass over the CHAINABLE SUBSET - marks
+ * with enough elongation to be a piece of a line at all - is a few hundred squared.
+ */
+export function chainMarks(marks, mPerPx, opts = {}) {
+  const minAsp = opts.chainMinAspect ?? CHAIN_MIN_ASPECT;
+  const idx = [];
+  for (let i = 0; i < marks.length; i++) {
+    const f = marks[i].fit;
+    if (f.alongPx >= Math.max(1, f.acrossPx) * minAsp) idx.push(i);
+  }
+  const parent = marks.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  for (let a = 0; a < idx.length; a++) {
+    for (let b = a + 1; b < idx.length; b++) {
+      const i = idx[a], j = idx[b];
+      if (find(i) === find(j)) continue;
+      if (chainable(marks[i].fit, marks[j].fit, mPerPx, opts)) parent[find(i)] = find(j);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < marks.length; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  }
+  const out = [];
+  for (const members of groups.values()) {
+    if (members.length === 1) { out.push(marks[members[0]]); continue; }
+    let xs = [], ys = [];
+    for (const i of members) { xs = xs.concat(marks[i].xs); ys = ys.concat(marks[i].ys); }
+    out.push({ xs, ys, fit: fitAxis(xs, ys), pieces: members.length });
+  }
+  return out;
+}
+
 /** Distance from a point to a segment, and where along it - all in pixels. */
 function dSegPx(p, a, b) {
   const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
@@ -214,23 +408,36 @@ export function classify(fit, segs, mPerPx, opts = {}) {
   const aspect = lengthM / Math.max(widthM, mPerPx);
   if (aspect < minAsp) { r.why = "not thin enough (" + aspect.toFixed(1) + ":1)"; return r; }
   const na = nearestSeg(fit.a, segs), nb = nearestSeg(fit.b, segs);
-  const near = na.d <= nb.d ? na : nb;
+  const near = na.d <= nb.d ? na : nb, far = na.d <= nb.d ? nb : na;
   r.attachM = near.d * mPerPx;
-  if (!near.seg || r.attachM > attach) {
-    r.why = "not attached (" + r.attachM.toFixed(1) + " m off anything charted)";
+  r.reachM = far.d * mPerPx;
+  // ⚠ THE ALLOWANCE SCALES WITH THE MARK. See ATTACH_FRAC: a float system reached by an
+  // uncharted ramp stands metres off the coastline, and the longer the thing you have found
+  // the more confident you may be that the gap is a gap in the CHART rather than open water.
+  r.attachMaxM = Math.max(attach, (opts.attachFrac ?? ATTACH_FRAC) * lengthM);
+  if (!near.seg || r.attachM > r.attachMaxM) {
+    r.why = "not attached (" + r.attachM.toFixed(1) + " m off anything charted, allowed "
+          + r.attachMaxM.toFixed(1) + " m)";
     return r;
   }
   const sx = near.seg.b.x - near.seg.a.x, sy = near.seg.b.y - near.seg.a.y;
   const sl = Math.hypot(sx, sy) || 1;
   const dot = Math.abs((sx / sl) * fit.ux + (sy / sl) * fit.uy);
   r.angleDeg = Math.acos(Math.min(1, dot)) * R2D;
-  if (r.angleDeg < perpMin) {
-    r.why = "runs ALONG the structure (" + r.angleDeg.toFixed(0) + "°) — a contour or an edge";
+  // ⚠ REACH OR SQUARE, NOT REACH AND SQUARE. Either is enough evidence that the mark leaves
+  // the thing it is attached to; demanding both would refuse the two west-shore piers all
+  // over again, since their fault was an angle measured against a wiggle of foreshore.
+  r.reachNeedM = Math.max(opts.reachMinM ?? REACH_MIN_M,
+                          (opts.reachFrac ?? REACH_FRAC) * lengthM);
+  if (r.reachM < r.reachNeedM && r.angleDeg < perpMin) {
+    r.why = "goes nowhere — it lies " + r.attachM.toFixed(1) + "-" + r.reachM.toFixed(1)
+          + " m off what it touches at " + r.angleDeg.toFixed(0) + "°, so it follows a shape "
+          + "rather than leaving it (a contour, or the far side of the same object)";
     return r;
   }
   r.keep = true;
-  r.why = lengthM.toFixed(1) + " m, " + r.angleDeg.toFixed(0) + "° off a charted structure "
-        + "it touches within " + r.attachM.toFixed(1) + " m";
+  r.why = lengthM.toFixed(1) + " m, attached within " + r.attachM.toFixed(1) + " m and "
+        + "reaching " + r.reachM.toFixed(1) + " m clear at " + r.angleDeg.toFixed(0) + "°";
   return r;
 }
 
@@ -243,11 +450,12 @@ export function classify(fit, segs, mPerPx, opts = {}) {
  * @param {Array} segs               charted structure segments, {a:{x,y}, b:{x,y}}, in the
  *                                   SAME pixel frame as the image
  * @param {number} mPerPx            ground resolution
- * @returns {{structures, unexplained, rejected, inkPx, unexplainedPx, components}}
+ * @returns {{structures, unexplained, areas, rejected, inkPx, unexplainedPx, components}}
  *   `structures` are the keep-outs. `unexplained` are line-like marks that failed only the
- *   ATTACHED test - reported, never enforced. `rejected` is EVERY verdict including those,
- *   with its reason: auditing the rejects is how the aspect gate was found in the first
- *   place, and a sieve whose discards cannot be read is a sieve nobody can tune.
+ *   ATTACHED test and `areas` are line NETWORKS too wide to read as one line - both are
+ *   reported and NEITHER is enforced. `rejected` is EVERY verdict including those, with its
+ *   reason: auditing the rejects is how the aspect gate was found in the first place, and a
+ *   sieve whose discards cannot be read is a sieve nobody can tune.
  */
 export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
   const ink = inkMask(rgba, w, h, opts.inkLum);
@@ -255,17 +463,49 @@ export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
   let inkPx = 0, unPx = 0;
   for (let i = 0; i < ink.length; i++) { if (ink[i]) inkPx++; if (un[i]) unPx++; }
   const comps = components(un, w, h, opts.minPx);
-  const structures = [], unexplained = [], rejected = [];
-  for (const c of comps) {
-    const fit = fitAxis(c.xs, c.ys);
-    const v = classify(fit, segs, mPerPx, opts);
-    const rec = { a: fit.a, b: fit.b, px: c.xs.length, ...v };
-    if (v.keep) structures.push(rec);
-    else {
-      rejected.push(rec);
-      if (v.attachM != null) unexplained.push(rec);      // line-like, but standing alone
+  const marks = chainMarks(comps.map(c => ({ xs: c.xs, ys: c.ys, fit: fitAxis(c.xs, c.ys) })),
+                           mPerPx, opts);
+  // ⚠ THE POOL GROWS. Seeded with the ENC's own structures, and every mark accepted joins
+  // it, so a marina's spine can attach to a finger that attached to the shore. The
+  // perpendicular test is paid at every step, which is what keeps a contour out of the
+  // chain: a line running ALONG a pier is refused by the pier just as it was by the shore.
+  const pool = segs.slice();
+  const structures = [], unexplained = [], rejected = [], areas = [];
+  let pending = marks;
+  const rounds = opts.growRounds ?? GROW_ROUNDS;
+  // ⚠ A PASS'S WINNERS JOIN THE POOL AT THE END OF THE PASS, NOT AS THEY ARE FOUND. Pushing
+  // each acceptance immediately makes the result depend on the order components happen to be
+  // scanned in - the same mark is a round-0 find or a round-1 one depending on which pixel
+  // the flood fill reached first - and an order-dependent safety scan cannot be reasoned
+  // about or tested. Round 0 is the pass against the ENC alone; every later round is growth.
+  for (let round = 0; ; round++) {
+    const left = [], verdicts = [], won = [];
+    for (const m of pending) {
+      const v = classify(m.fit, pool, mPerPx, opts);
+      if (v.keep) won.push({ m, v });
+      else { left.push(m); verdicts.push(v); }
     }
+    for (const w of won)
+      structures.push({ a: w.m.fit.a, b: w.m.fit.b, px: w.m.xs.length,
+                        pieces: w.m.pieces || 1, round, ...w.v });
+    if (!won.length || round >= rounds || !left.length) {
+      for (let i = 0; i < left.length; i++) {
+        const f = left[i].fit;
+        const fill = left[i].xs.length / Math.max(1, f.alongPx * Math.max(1, f.acrossPx));
+        const rec = { a: f.a, b: f.b, px: left[i].xs.length, fill,
+                      pieces: left[i].pieces || 1, ...verdicts[i] };
+        rejected.push(rec);
+        if (verdicts[i].attachM != null) unexplained.push(rec);
+        // A network of drawn lines rather than one line: reported, never enforced.
+        if (!verdicts[i].keep && rec.widthM > (opts.maxWidthM ?? MAX_WIDTH_M)
+            && rec.lengthM >= (opts.areaMinM ?? AREA_MIN_M)
+            && fill <= (opts.areaMaxFill ?? AREA_MAX_FILL)) areas.push(rec);
+      }
+      break;
+    }
+    for (const w of won) pool.push({ a: w.m.fit.a, b: w.m.fit.b });
+    pending = left;
   }
-  return { structures, unexplained, rejected,
+  return { structures, unexplained, areas, rejected, marks: marks.length,
            inkPx, unexplainedPx: unPx, components: comps.length };
 }
