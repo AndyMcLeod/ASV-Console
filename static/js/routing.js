@@ -1,4 +1,28 @@
 /* ========================================================================
+ * ⚠⚠ ASV OWNS THIS FILE NOW (2026-09-04). DO NOT RE-VENDOR IT.
+ *
+ * Andy, 2026-08-31: "stop updating other projects. We concentrate only on ASV
+ * Console moving forward. There may be components of other projects that we
+ * pull over." The flow is ONE WAY: asv_core is a place to pull FROM, never a
+ * place this repo writes back to. The vendor header below is kept for
+ * PROVENANCE -- it records where this body came from -- and its instruction is
+ * now wrong for this repo, in the same dangerous way it was already wrong for
+ * keepouts.js and core_turns.js:
+ *
+ *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+ *     THIS FILE AND SILENTLY DELETE A SAFETY FIX. This copy carries
+ *     gateLegClear's ENDPOINT EXEMPTION, narrowed so it waives a block near an
+ *     endpoint only when that endpoint is ITSELF inside the buffer -- see the
+ *     note on the function. Measured before the change: across 475 Go-To routes
+ *     from one spawn at New Castle the obstacle search never shipped a fouling
+ *     leg, and ONE shipped route passed 0.47 m from a charted pier with a 3 m
+ *     buffer set, because the block happened to fall 5.8 m from a destination
+ *     that had 3.45 m of clear water round it.
+ *
+ * A `--check` over there that reports this file as DRIFTED is CORRECT, and is
+ * not something to "fix" by re-vendoring.
+ * ========================================================================
+ *
  * VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
  *
  *   source : asv_core_js/routing.js
@@ -1038,22 +1062,41 @@ export function smoothTrack(pathLL, frame, ko, buf) {
  * was router-clear by construction) and `abandoned` tells the caller the Rule 9
  * claim would be a lie.
  *
- * Endpoint exemption, the same as the router's: a block within 2·buf of the
- * route's own start or goal is tolerated — a vessel moored inside the buffer
- * must still be led out, and an arrival can end at a dock. A spliced patch is
- * the router's own product and is NOT re-checked: the gate exists to catch the
- * lane's inventions, and re-checking a patch whose ends sit in-buffer would loop.
+ * ⚠⚠ THE ENDPOINT EXEMPTION IS ABOUT THE ENDPOINT, NOT ABOUT THE BLOCK, AND IT USED TO
+ * BE THE OTHER WAY ROUND. A vessel moored inside the buffer must still be led out, and an
+ * arrival can end at a dock — so a block near such an endpoint is tolerated. But the test
+ * was only "is the block within 2·buf of an endpoint", which says nothing at all about
+ * whether that endpoint is anywhere it should not be.
+ *
+ * Measured at New Castle across 475 Go-To routes from one spawn: `legPath` never shipped a
+ * fouling leg (0 of 475), and ONE shipped route passed 0.47 m FROM A CHARTED PIER WITH A 3 m
+ * BUFFER SET. The chain was `narrowChannelLane` moving it 3.45 → 2.63 m, `smoothTrack`
+ * taking it to 0.47 m (it tests whether the moved VERTEX is blocked and never the legs to
+ * and from it), and then this gate — whose whole job is to catch exactly that — waving it
+ * through, because the block sat 5.8 m from the goal against a 6 m radius. NEITHER ENDPOINT
+ * WAS IN THE BUFFER: the destination had 3.45 m of clear water round it.
+ *
+ * So the exemption now requires the endpoint ITSELF to be blocked. The moored-boat and
+ * arrive-at-a-dock cases are untouched — those endpoints ARE in the buffer, which is the
+ * whole reason they need leading out of — and a tight pass that merely happens to fall near
+ * the end of a route is spliced like any other.
+ *
+ * A spliced patch is the router's own product and is NOT re-checked: the gate exists to
+ * catch the lane's inventions, and re-checking a patch whose ends sit in-buffer would loop.
  */
 export function gateLegClear(route, fallback, frame, ko, buf) {
   if (!route || route.length < 2) return { route, abandoned: false, splices: 0 };
   const start = route[0], goal = route[route.length - 1];
   const near = (at, P) => frame.distTo(at, P) <= buf * 2;
+  // Asked ONCE, and they are the whole of the exemption's warrant - see the note above.
+  const startIn = blocked(frame.toEN(start), ko, buf);
+  const goalIn = blocked(frame.toEN(goal), ko, buf);
   const out = route.slice();
   let splices = 0;
   for (let i = 1; i < out.length;) {
     if (legClear(out[i - 1], out[i], frame, ko, buf)) { i++; continue; }
     const hit = firstBlockAlong(out[i - 1], out[i], frame, ko, buf)?.at;
-    if (hit && (near(hit, start) || near(hit, goal))) { i++; continue; }
+    if (hit && ((startIn && near(hit, start)) || (goalIn && near(hit, goal)))) { i++; continue; }
     if (++splices > 20) return { route: fallback.slice(), abandoned: true, splices };
     let j = i;
     while (j < out.length - 1 && !legClear(out[j], out[j + 1], frame, ko, buf)) j++;

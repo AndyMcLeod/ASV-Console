@@ -4083,25 +4083,9 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // operator who has turned structure enforcement off has said what they mean, and a
   // keep-out that ignored that would be this module claiming an authority the ENC's own
   // piers do not have.
-  const inkOn = !(nogo.enf && nogo.enf.land === false);
-  const inkLines = inkOn ? (chartInk.lines || []) : [];
-  const inkAreas = inkOn ? (chartInk.areas || []) : [];
-  for(const L of inkLines){
-    const pts = [nogo.frame.toEN(L.a), nogo.frame.toEN(L.b)];
-    nogo.ko.lines.push({pts, bb: bbOf(pts), kind: CHART_INK_KIND, fromChart: true});
-  }
-  // ⚠ THE FOOTPRINTS ARE POLYGONS, NOT LINES, AND THAT IS THE POINT. `blocked` tests a ring
-  // with a point-in-polygon AND an edge distance, so the water INSIDE a marina is refused
-  // rather than merely its outline - which is what a float system actually is. A line would
-  // let the router thread between the fingers.
-  for(const A of inkAreas){
-    if(!A.ring || A.ring.length < 3) continue;
-    const ring = A.ring.map(q=>nogo.frame.toEN(q));
-    nogo.ko.polys.push({ring, bb: bbOf(ring), kind: CHART_INK_AREA_KIND, fromChart: true});
-  }
+  const inkN = foldChartInk(nogo.ko, nogo.frame);
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
-  const inkN = inkLines.length + inkAreas.length;
   nogo.note = n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
                     + (inkN ? ` · +${inkN} read off the chart` : ``)
                   : "no nogo features in this area";
@@ -5135,6 +5119,40 @@ const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
 const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in the ENC";
 let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
 
+/**
+ * Fold the chart-read structures into a keep-out model. Returns how many went in.
+ *
+ * ⚠⚠ ONE FOLD, TWO CALLERS, AND THE SECOND IS WHY THIS IS A FUNCTION. `rebuildNogo`
+ * builds the SHARED model every behaviour routes clear of - but `punchOut` builds its OWN,
+ * because a survey clip layers the operator's coverage depth window on top of the
+ * navigability floor. That second model was assembled straight from `nogo.features`, so
+ * Go-To, RTH and transit all went round the piers read off the chart while a punched SURVEY
+ * LINE was clipped straight through them. Two models disagreeing about what a keep-out is,
+ * which is the exact fault clearanceM was written to prevent one layer down.
+ *
+ * ⚠ IT FOLLOWS THE STRUCTURE TOGGLE, because that is what these are. An operator who has
+ * turned structure enforcement off has said what they mean, and a keep-out read off a
+ * picture does not get an authority the ENC's own piers lack.
+ *
+ * ⚠ THE FOOTPRINTS GO IN AS POLYGONS. `blocked` tests a ring with a point-in-polygon AND
+ * an edge distance, so the water INSIDE a marina is refused rather than merely its outline -
+ * a line would let the router thread between the floats.
+ */
+function foldChartInk(ko, frame){
+  if(!ko || !frame || (nogo.enf && nogo.enf.land === false)) return 0;
+  const lines = chartInk.lines || [], areas = chartInk.areas || [];
+  for(const L of lines){
+    const pts = [frame.toEN(L.a), frame.toEN(L.b)];
+    ko.lines.push({pts, bb: bbOf(pts), kind: CHART_INK_KIND, fromChart: true});
+  }
+  for(const A of areas){
+    if(!A.ring || A.ring.length < 3) continue;
+    const ring = A.ring.map(q=>frame.toEN(q));
+    ko.polys.push({ring, bb: bbOf(ring), kind: CHART_INK_AREA_KIND, fromChart: true});
+  }
+  return lines.length + areas.length;
+}
+
 /** One tile as an Image, or null. A miss is a hole in the mosaic, never a rejection. */
 function loadTile(z, x, y){
   return new Promise(res=>{
@@ -5345,6 +5363,12 @@ async function punchOut(){
     // vessel is allowed in, plus the operator's depth-of-interest band.
     const ref=nogo.frame, buffer=nogo.buffer, enf=nogo.enf;
     const ko=buildKeepouts(ref, enf, dr, nogo.features);
+    // ⚠ AND THE STRUCTURES READ OFF THE CHART, which this model used to be blind to. It
+    // is built fresh from `nogo.features` so it can carry the SURVEY's own depth window,
+    // and that rebuild silently dropped everything the chart scan had added - so a Go-To
+    // went round the piers at New Castle and a survey LINE was clipped through them.
+    // koClip and koTurn below are spreads of this one, so folding here covers all three.
+    foldChartInk(ko, ref);
     const src=patSourceLines();                // boundary-clipped legs (if any) feed the ENC clip
     // If the survey SPANS ACROSS a channel, exclude that channel from the coverage
     // lines only (koClip). Transits keep using `ko`, so they may still cross it; an

@@ -234,8 +234,17 @@ function buildKeepouts() { return { polys: [{ kind: "land" }], lines: [],
                                     points: [{ kind: "a charted hazard" }] }; }
 var FETCH = null;
 function fetchENCBbox() { return FETCH(); }
+// ⚠ rebuildNogo NOW FOLDS THE CHART-READ STRUCTURES, through a helper punchOut shares -
+// so foldChartInk and the two kinds it stamps have to resolve here too, for the same
+// reason planeFrame and chartInk do. THE REAL ONE, not a stub: a stub would keep this
+// suite green while the fold it stands in for was broken. `bbOf` is what it builds its
+// bounding boxes with, and `chartInk` above starts empty, so an untouched scenario
+// folds nothing.
+const { bbOf } = require("../static/js/geometry.js");
+const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
+const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in the ENC";
 // eslint-disable-next-line no-eval
-eval(grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
+eval(grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo"));
 
 async function drive(fetchResult) {

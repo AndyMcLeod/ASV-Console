@@ -411,29 +411,49 @@ check("11. the axis fit returns the LONG direction, and its ends are the mark's 
       "a minor-axis fit reports a 10 m pier as a 0 m one and every gate then misfires");
 
 // ── 12-15. THE PAGE ─────────────────────────────────────────────────────────────────
-check("12. the fold happens INSIDE rebuildNogo, so it survives a buffer or enforcement " +
+// The fold moved into `foldChartInk` when punchOut had to share it - see 12b/12c. These
+// three now slice the HELPER; slicing rebuildNogo would have gone red for the refactor
+// rather than for a fault.
+const FOLD = H.slice(H.indexOf("function foldChartInk"),
+                     H.indexOf("function foldChartInk") + 1400);
+check("12. the fold is CALLED from rebuildNogo, so it survives a buffer or enforcement " +
       "change instead of being silently discarded",
       () => {
         const rb = H.slice(H.indexOf("function rebuildNogo"),
                            H.indexOf("async function refreshNogo"));
-        return rb.length > 400 && /chartInk\.lines/.test(rb)
-            && /nogo\.ko\.lines\.push\(\{pts, bb: bbOf\(pts\), kind: CHART_INK_KIND/.test(rb);
+        return rb.length > 400 && /foldChartInk\(nogo\.ko, nogo\.frame\)/.test(rb)
+            && FOLD.length > 400
+            && /ko\.lines\.push\(\{pts, bb: bbOf\(pts\), kind: CHART_INK_KIND/.test(FOLD);
       },
       "every path that changes a control rebuilds ko from scratch");
 check("13. ... and it follows the STRUCTURE enforcement toggle, because that is what these " +
       "are",
-      () => /const inkOn = !\(nogo\.enf && nogo\.enf\.land === false\);/.test(H)
-            && /const inkLines = inkOn \? \(chartInk\.lines \|\| \[\]\) : \[\];/.test(H)
-            && /const inkAreas = inkOn \? \(chartInk\.areas \|\| \[\]\) : \[\];/.test(H),
+      () => /nogo\.enf && nogo\.enf\.land === false\)\) return 0;/.test(FOLD),
       "an operator who turned structures off has said what they mean");
+check("12b. ⚠ AND THE SURVEY CLIP SEES THEM TOO. punchOut builds its OWN keep-out model, " +
+      "so it can carry the survey's coverage depth window — and that rebuild used to drop " +
+      "every structure the chart scan had found",
+      () => {
+        const po = H.slice(H.indexOf("async function punchOut"),
+                           H.indexOf("async function punchOut") + 4000);
+        return /const ko=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
+            && /foldChartInk\(ko, ref\);/.test(po)
+            && po.indexOf("foldChartInk(ko, ref)") > po.indexOf("const ko=buildKeepouts")
+            && po.indexOf("foldChartInk(ko, ref)") < po.indexOf("channelSpanKeepouts");
+      },
+      "Go-To, RTH and transit read nogo.ko and went round the piers; a punched survey LINE " +
+      "was clipped straight through them. koClip and koTurn are spreads of this ko, so the " +
+      "fold has to happen before they are made");
+check("12c. ... and BOTH callers fold through the one helper, so they cannot disagree about " +
+      "what a chart-read keep-out is",
+      () => /function foldChartInk\(ko, frame\)\{/.test(H)
+            && /const inkN = foldChartInk\(nogo\.ko, nogo\.frame\);/.test(H)
+            && (H.match(/ko\.lines\.push\(\{pts, bb: bbOf\(pts\), kind: CHART_INK_KIND/g) || []).length === 1,
+      "two folds is two chances to drift - the same fault clearanceM was written to prevent");
 check("13b. A FOOTPRINT IS FOLDED AS A POLYGON, not as a line — `blocked` tests a ring with " +
       "a point-in-polygon, so the water INSIDE a marina is refused and not merely its edge",
-      () => {
-        const rb = H.slice(H.indexOf("function rebuildNogo"),
-                           H.indexOf("async function refreshNogo"));
-        return /nogo\.ko\.polys\.push\(\{ring, bb: bbOf\(ring\), kind: CHART_INK_AREA_KIND/.test(rb)
-            && /A\.ring\.length < 3/.test(rb);
-      },
+      () => /ko\.polys\.push\(\{ring, bb: bbOf\(ring\), kind: CHART_INK_AREA_KIND/.test(FOLD)
+            && /A\.ring\.length < 3/.test(FOLD),
       "a line would let the router thread between the fingers");
 check("14. a REFUSAL is not cached as a clean read — \"I found nothing\" and \"I could not " +
       "look\" must never be the same sentence",

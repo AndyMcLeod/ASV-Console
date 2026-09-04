@@ -55,7 +55,56 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-04 — the cards measure what they say they measure)
+## ⇒ START HERE (handoff refreshed 2026-09-04 — the gate asks about the endpoint, and the punch sees the chart)
+
+### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE TWO OPEN ITEMS FROM THE LAST HANDOFF, BOTH DONE ON ANDY'S "do
+both".**
+
+**1. `gateLegClear`'s ENDPOINT EXEMPTION ASKED THE WRONG QUESTION.** The gate is the law over
+the Rule 9 lane — no route leaves the pipeline without passing the same `legClear` the
+obstacle search obeyed — and it waives one thing: a block within 2·buf of the route's own
+start or goal, because a boat moored inside the buffer must still be led out and an arrival
+can end at a dock. But the test was only *"is the block near an endpoint"*, which says
+nothing about whether that endpoint is anywhere it should not be.
+
+**MEASURED at New Castle over 475 Go-To routes from one spawn:** `legPath` shipped a fouling
+leg **0 times**, and ONE shipped route passed **0.47 m from a charted pier with a 3 m buffer
+set**. `narrowChannelLane` moved it 3.45 → 2.63 m, `smoothTrack` took it to 0.47 m (it tests
+whether the moved VERTEX is blocked and never the legs either side of it), and the gate waved
+it through because the block sat **5.8 m from the goal against a 6 m radius** — with
+**neither endpoint in the buffer**: the destination had 3.45 m of clear water round it.
+
+It asks whether the ENDPOINT ITSELF is blocked now. Re-measured: that route ships at
+**3.45 m**, `legPath`'s own figure, lane intact, one splice — and a 159-route sweep finds
+**zero** routes with a leg inside the buffer. The moored-boat half is untouched and
+`buoy_lane` 18 still proves it.
+
+**⚠ AND `static/js/routing.js` IS ASV'S FILE NOW**, with the loud header `keepouts.js` and
+`core_turns.js` already carry. A `tools/vendor.py --check` in asv_core reporting it as
+DRIFTED is CORRECT and is not to be "fixed" by re-vendoring — that would silently delete this.
+
+**2. THE SURVEY CLIP NOW SEES THE CHART-READ STRUCTURES.** `punchOut` builds its OWN keep-out
+model, because a survey clip layers the operator's coverage depth window on the navigability
+floor — and that rebuild dropped everything the chart scan had added. So Go-To, RTH and
+transit all went round the piers at New Castle while a punched **survey line** was clipped
+straight through them. There is **one fold now** (`foldChartInk`), called by `rebuildNogo` and
+by `punchOut`; `koClip` and `koTurn` are spreads of the punch's `ko`, so folding before they
+are made covers all three.
+
+**TEETH: eight mutations across both, all eight killed.** ⚠ And a fixture lesson worth
+keeping: the exemption reads `firstBlockAlong`, so on a long head-on approach the first block
+is **never** near the goal — the first cut of checks 2 and 3 could not tell the fix from the
+fault. The world is a pile 2 m to starboard of a short final leg, which is the real geometry.
+
+**⚠ ONE SUITE BROKE FOR A GOOD REASON AND IS NOW STRONGER:** `nogo_readout` evals the real
+`rebuildNogo`, which now calls `foldChartInk` — a free variable there is a RUNTIME error
+inside the function, so it went red at "it shows the model that was actually built". It evals
+the REAL fold now, not a stub: a stub would keep it green while the thing it stands in for
+was broken.
+
+## ⇒ EARLIER (handoff of 2026-09-04 — the cards measure what they say they measure)
 
 ### ➤ PICK UP HERE
 
