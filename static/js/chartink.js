@@ -176,20 +176,29 @@ export const ATTACH_FRAC = 1.0;
 /** How many times the accepted set may seed further marks. */
 export const GROW_ROUNDS = 3;
 
-// ── THE ONE CLASS THIS STILL WILL NOT ENFORCE ───────────────────────────────────────
+// ── A MARINA IS NOT A LINE, IT IS A FOOTPRINT ───────────────────────────────────────
 //
-// A MARINA IS NOT A LINE. Its floats form a comb - a spine with fingers - which arrives as
-// ONE connected component 20 x 21 m across, and no reading of it as a line is honest. Two of
-// them sit on the west shore at New Castle and the sieve calls them both "not a line", which
-// is correct and useless.
+// Its floats form a comb - a spine with fingers - which arrives as ONE connected component
+// 20 x 21 m across, and no reading of it as a line is honest. Two of them sit on the west
+// shore at New Castle, and the line sieve calls them both "not a line": correct, and useless
+// to a hull.
 //
-// They ARE structures, and they are reported: a component that is WIDE, LARGE and SPARSE is
-// a network of drawn lines, not a filled symbol - measured, the two marinas fill 7% and 10%
-// of their own bounding box. But turning one into a keep-out means emitting an AREA from an
-// image, which is a wider authority than emitting a line, and two samples is not enough
-// evidence to set a threshold that would refuse water. So they are counted and named for the
-// operator, and the console does not act on them. That is the same call the detached marks
-// get, and for the same reason.
+// Andy, having been shown them counted but not enforced: *"enforce the marina footprints
+// too."* So they are POLYGONS - the convex hull of the mark's own ink - and they join
+// `ko.polys` beside the ENC's own docks.
+//
+// ⚠ THE HULL OVER-CLAIMS ON PURPOSE. A comb's hull fills in the water between its fingers,
+// which is water a hull could in principle thread. That is the right direction to be wrong
+// in: the gaps between floats are metres wide, they hold moored boats the chart does not
+// draw, and a survey ASV has no business in them. A concave outline would be truer to the
+// ink and falser to the place.
+//
+// ⚠ AND THE GATES ARE STRICTER THAN THE LINE'S, because an area refuses more water than a
+// line does. It must be WIDE (the line sieve already refused it), LARGE, SPARSE - a network
+// of drawn strokes, not a filled symbol; measured, the two marinas fill 7% and 10% of their
+// own bounding box against a 35% ceiling - and ATTACHED to something charted on the same
+// proportional rule as a pier. A dense blob of that size is a symbol or a block of text and
+// is refused by the fill test alone.
 export const AREA_MIN_M = 10.0;
 export const AREA_MAX_FILL = 0.35;
 
@@ -401,21 +410,27 @@ export function classify(fit, segs, mPerPx, opts = {}) {
   const lengthM = fit.alongPx * mPerPx;
   const widthM = fit.acrossPx * mPerPx;
   const r = { keep: false, lengthM, widthM, attachM: null, angleDeg: null, why: "" };
+  // ⚠ ATTACHMENT IS MEASURED FIRST NOW, FOR EVERY MARK. It used to be computed only after
+  // the shape gates, which meant a mark refused for being WIDE carried no attachment at all -
+  // and a marina footprint is exactly a wide mark that has to prove it is attached. Measuring
+  // it up front costs two nearest-segment searches per component (~10 ms over a whole tile
+  // mosaic) and lets every branch below, and every reject, speak about where the mark sits.
+  const na = nearestSeg(fit.a, segs), nb = nearestSeg(fit.b, segs);
+  const near = na.d <= nb.d ? na : nb, far = na.d <= nb.d ? nb : na;
+  r.attachM = near.d * mPerPx;
+  r.reachM = far.d * mPerPx;
+  r.attachMaxM = Math.max(attach, (opts.attachFrac ?? ATTACH_FRAC) * lengthM);
+  r.attached = !!near.seg && r.attachM <= r.attachMaxM;
   if (lengthM < minLen) { r.why = "too short (" + lengthM.toFixed(1) + " m)"; return r; }
   if (widthM > maxW) { r.why = "not a line (" + widthM.toFixed(1) + " m across)"; return r; }
   // ⚠ THE ASPECT GATE, AND THE WIDTH GATE ABOVE IS NOT A SUBSTITUTE FOR IT. A 4.9 x 1.9 m
   // chart symbol passed the width test and was reported as a structure until this was added.
   const aspect = lengthM / Math.max(widthM, mPerPx);
   if (aspect < minAsp) { r.why = "not thin enough (" + aspect.toFixed(1) + ":1)"; return r; }
-  const na = nearestSeg(fit.a, segs), nb = nearestSeg(fit.b, segs);
-  const near = na.d <= nb.d ? na : nb, far = na.d <= nb.d ? nb : na;
-  r.attachM = near.d * mPerPx;
-  r.reachM = far.d * mPerPx;
-  // ⚠ THE ALLOWANCE SCALES WITH THE MARK. See ATTACH_FRAC: a float system reached by an
+  // ⚠ THE ALLOWANCE SCALES WITH THE MARK (ATTACH_FRAC): a float system reached by an
   // uncharted ramp stands metres off the coastline, and the longer the thing you have found
   // the more confident you may be that the gap is a gap in the CHART rather than open water.
-  r.attachMaxM = Math.max(attach, (opts.attachFrac ?? ATTACH_FRAC) * lengthM);
-  if (!near.seg || r.attachM > r.attachMaxM) {
+  if (!r.attached) {
     r.why = "not attached (" + r.attachM.toFixed(1) + " m off anything charted, allowed "
           + r.attachMaxM.toFixed(1) + " m)";
     return r;
@@ -442,6 +457,31 @@ export function classify(fit, segs, mPerPx, opts = {}) {
 }
 
 /**
+ * The convex hull of a mark's ink - Andrew's monotone chain, which is the whole algorithm.
+ *
+ * Returned in the caller's pixel frame, closed (the first point is not repeated). Fewer than
+ * three distinct points has no hull and returns null rather than a degenerate ring, because
+ * a two-point "polygon" would pass straight into a keep-out model that expects an area.
+ */
+export function convexHull(xs, ys) {
+  const pts = xs.map((x, i) => ({ x, y: ys[i] }))
+                .sort((a, b) => (a.x - b.x) || (a.y - b.y));
+  if (pts.length < 3) return null;
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = (src) => {
+    const h = [];
+    for (const p of src) {
+      while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop();
+      h.push(p);
+    }
+    h.pop();
+    return h;
+  };
+  const ring = half(pts).concat(half(pts.slice().reverse()));
+  return ring.length >= 3 ? ring : null;
+}
+
+/**
  * The whole scan: pixels in, structures out.
  *
  * @param {Uint8ClampedArray} rgba   the chart image
@@ -451,11 +491,12 @@ export function classify(fit, segs, mPerPx, opts = {}) {
  *                                   SAME pixel frame as the image
  * @param {number} mPerPx            ground resolution
  * @returns {{structures, unexplained, areas, rejected, inkPx, unexplainedPx, components}}
- *   `structures` are the keep-outs. `unexplained` are line-like marks that failed only the
- *   ATTACHED test and `areas` are line NETWORKS too wide to read as one line - both are
- *   reported and NEITHER is enforced. `rejected` is EVERY verdict including those, with its
- *   reason: auditing the rejects is how the aspect gate was found in the first place, and a
- *   sieve whose discards cannot be read is a sieve nobody can tune.
+ *   `structures` are keep-out LINES and `areas` are keep-out POLYGONS - line networks too
+ *   wide to read as one line, carrying the convex `hull` of their own ink. `unexplained` are
+ *   line-like marks that failed only the ATTACHED test and are reported but never enforced.
+ *   `rejected` is EVERY verdict including those, with its reason: auditing the rejects is how
+ *   the aspect gate was found in the first place, and a sieve whose discards cannot be read
+ *   is a sieve nobody can tune.
  */
 export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
   const ink = inkMask(rgba, w, h, opts.inkLum);
@@ -496,10 +537,16 @@ export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
                       pieces: left[i].pieces || 1, ...verdicts[i] };
         rejected.push(rec);
         if (verdicts[i].attachM != null) unexplained.push(rec);
-        // A network of drawn lines rather than one line: reported, never enforced.
+        // A NETWORK of drawn lines rather than one line: a footprint, not a track. It has
+        // to be wide (the line sieve refused it), large, sparse, and ATTACHED on the same
+        // proportional rule a pier obeys - see the AREA_ constants for why each is there.
         if (!verdicts[i].keep && rec.widthM > (opts.maxWidthM ?? MAX_WIDTH_M)
             && rec.lengthM >= (opts.areaMinM ?? AREA_MIN_M)
-            && fill <= (opts.areaMaxFill ?? AREA_MAX_FILL)) areas.push(rec);
+            && fill <= (opts.areaMaxFill ?? AREA_MAX_FILL)
+            && verdicts[i].attached) {
+          const hull = convexHull(left[i].xs, left[i].ys);
+          if (hull) areas.push({ ...rec, hull });
+        }
       }
       break;
     }

@@ -144,6 +144,13 @@ check("17. a chart-image scan that FOUND something is on the row and in its tip,
              return /\+2 chart/.test(r.text) && r.cls === "warn"
                  && /read from the RENDERED chart, not from the ENC/.test(r.title); })(),
       "drawn in magenta, counted separately, and never presented as published vector data");
+// ⚠ 17b EXISTS BECAUSE THE COUNT READ THE LINES ALONE, so an enforced, drawn and
+// banner-announced marina footprint was silently missing from the one number on the card.
+check("17b. ... and FOOTPRINTS are counted with the lines",
+      (()=>{ const r = read({}, {note:"3 structure(s) read off the chart",
+                                 lines:[{lengthM:10}], areas:[{lengthM:20},{lengthM:30}]});
+             return /\+3 chart/.test(r.text) && /footprints as a filled hull/.test(r.title); })(),
+      "a readout that undercounts the model looks like an answer");
 check("18. ... and a scan that has NOT been made says so, rather than reading as clean",
       (()=>{ const r = read({}, {note:null, lines:[]});
              return !/chart/.test(r.text) && /not compared here yet/.test(r.title); })(),

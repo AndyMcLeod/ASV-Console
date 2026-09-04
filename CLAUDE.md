@@ -129,12 +129,25 @@ over the west shore said why, and none of it was the sieve misjudging a pier:
 **MEASURED AFTER: New Castle's west shore went from 4 structures to 10, every one a real pier
 on inspection; Lewes stayed at ZERO.** 24 mutations, all killed.
 
-**⬜ THE ONE CLASS STILL NOT ENFORCED IS THE MARINA ITSELF.** Its floats form a comb that
-arrives as ONE connected component 20 × 21 m across — a line NETWORK, not a line. Two of them
-sit on that shore, filling 7% and 10% of their own bounding box, so they are trivially
-distinguishable from a filled symbol. They are **counted and named on the readout and NOT
-enforced**, because emitting an AREA from an image is a wider authority than emitting a line
-and two samples is not enough to set a threshold that would refuse water. **Andy's call.**
+**⇒ THIRD ROUND, SAME SESSION: THE MARINA IS ENFORCED TOO.** Andy: *"enforce the marina
+footprints too."* A comb of floats arrives as ONE wide component that no line can honestly
+describe, so it becomes a **POLYGON** — the convex hull of its own ink — in `ko.polys` beside
+the ENC's own docks. **⚠ THE HULL OVER-CLAIMS ON PURPOSE:** it fills in the water between the
+fingers, which is the right direction to be wrong in — those gaps are metres wide and hold
+moored boats the chart does not draw, and a concave outline would be truer to the ink and
+falser to the place. The gates are **stricter than a line's**, because an area refuses more
+water: wide (the line sieve already refused it), LARGE, **SPARSE** — the two real marinas fill
+7% and 10% of their own bounding box against a 35% ceiling, so a filled symbol or a block of
+text cannot pass — and **ATTACHED** on the same proportional rule a pier obeys.
+
+**MEASURED LIVE: 11 chart-read lines + 3 footprints over that corridor, and `blockedInfo` at
+the CENTRE of a marina now answers *"a structure footprint read off the chart, not in the
+ENC"*** — the water inside is refused, which a line keep-out could never have done.
+
+**⚠ AND ONE READOUT BUG THAT ONLY LIVE DRIVING FOUND: the Nogo row counted `chartInk.lines`
+alone**, so an enforced, drawn, banner-announced footprint was silently missing from the one
+number on the card — it read "+11 chart" over a model carrying 14. A readout that undercounts
+is worse than one that says nothing, because it looks like an answer. `nogo_readout` 17b.
 
 **⬜ DETACHED INK IS DELIBERATELY NOT ENFORCED.** Five candidates at New Castle were line-like
 but stood 11–19 m off anything charted; every one was foreshore or marsh symbology. They are

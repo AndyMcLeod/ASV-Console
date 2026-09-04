@@ -4035,15 +4035,27 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // operator who has turned structure enforcement off has said what they mean, and a
   // keep-out that ignored that would be this module claiming an authority the ENC's own
   // piers do not have.
-  const inkLines = (nogo.enf && nogo.enf.land === false) ? [] : (chartInk.lines || []);
+  const inkOn = !(nogo.enf && nogo.enf.land === false);
+  const inkLines = inkOn ? (chartInk.lines || []) : [];
+  const inkAreas = inkOn ? (chartInk.areas || []) : [];
   for(const L of inkLines){
     const pts = [nogo.frame.toEN(L.a), nogo.frame.toEN(L.b)];
     nogo.ko.lines.push({pts, bb: bbOf(pts), kind: CHART_INK_KIND, fromChart: true});
   }
+  // ⚠ THE FOOTPRINTS ARE POLYGONS, NOT LINES, AND THAT IS THE POINT. `blocked` tests a ring
+  // with a point-in-polygon AND an edge distance, so the water INSIDE a marina is refused
+  // rather than merely its outline - which is what a float system actually is. A line would
+  // let the router thread between the fingers.
+  for(const A of inkAreas){
+    if(!A.ring || A.ring.length < 3) continue;
+    const ring = A.ring.map(q=>nogo.frame.toEN(q));
+    nogo.ko.polys.push({ring, bb: bbOf(ring), kind: CHART_INK_AREA_KIND, fromChart: true});
+  }
   const n = nogo.ko.polys.length + nogo.ko.lines.length + nogo.ko.points.length;
   nogo.ready = n>0;
+  const inkN = inkLines.length + inkAreas.length;
   nogo.note = n>0 ? `${n} nogo zone(s) · band ${(nogo.band||"?").replace("enc_","")}`
-                    + (inkLines.length ? ` · +${inkLines.length} read off the chart` : ``)
+                    + (inkN ? ` · +${inkN} read off the chart` : ``)
                   : "no nogo features in this area";
   updateNogoUI();
 }
@@ -4064,7 +4076,7 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
     // it was taken over; dropping the key here means the next plan re-reads rather than
     // carrying a previous area's findings into water they were never taken over.
-    chartInk = {key:null, lines:[], detached:[], note:null, z:null, ms:0, busy:false};
+    chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
     nogo.features = (sea.enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
     nogo.band = sea.enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
@@ -4114,18 +4126,23 @@ function nogoReadout(){
   // rather than only in a banner because "the ENC has nothing there" and "nobody looked" are
   // different states and only one of them is safe to plan on. A refusal says so; a clean
   // read says so; and structures found say how many and that they came from a PICTURE.
+  // ⚠ LINES **AND** FOOTPRINTS. This count read `chartInk.lines.length` alone, so a
+  // marina footprint was enforced, drawn and announced on the banner - and silently
+  // missing from the one number on the card. A readout that undercounts the model is
+  // worse than one that says nothing, because it looks like an answer.
+  const inkN = chartInk.lines.length + (chartInk.areas || []).length;
   const inkTxt = chartInk.note
     ? "\n\nChart image: " + chartInk.note
-      + (chartInk.lines.length
+      + (inkN
           ? " — these are read from the RENDERED chart, not from the ENC, and are drawn in "
-            + "magenta. NOAA's renderer carries structures its vector service does not; verify "
-            + "them by eye before relying on the plan."
+            + "magenta (footprints as a filled hull, so the water between a marina's floats "
+            + "is refused too). NOAA's renderer carries structures its vector service does "
+            + "not; verify them by eye before relying on the plan."
           : "")
     : "\n\nChart image: not compared here yet — it is read over the water of each commanded "
       + "plan, just before the route is built.";
-  return {text: n + " zones · floor " + floor
-                + (chartInk.lines.length ? " · +" + chartInk.lines.length + " chart" : ""),
-    cls: chartInk.lines.length ? "warn" : "",
+  return {text: n + " zones · floor " + floor + (inkN ? " · +" + inkN + " chart" : ""),
+    cls: inkN ? "warn" : "",
     title: "Chart read (ENC band " + band + "): " + brk + "." + inkTxt + why};
 }
 function updateNogoUI(){
@@ -4440,6 +4457,17 @@ function drawNogo(toScreen){
   // warrant it does not have - and the one thing they must be able to do is look at the
   // chart and disagree. Magenta, heavier, with a tick at each end so a 10 m mark is visible
   // at a zoom where 10 m is ten pixels.
+  // The FOOTPRINTS first, so the lines draw over them rather than under.
+  if(nogo.enf.land && chartInk.areas && chartInk.areas.length){
+    ctx.fillStyle="rgba(224,64,208,0.28)"; ctx.strokeStyle="rgba(224,64,208,0.95)";
+    ctx.lineWidth=2;
+    for(const A of chartInk.areas){
+      if(!A.ring || A.ring.length < 3) continue;
+      ctx.beginPath();
+      A.ring.forEach((q,i)=>{ const sc=toScreen(q.lat,q.lon); i?ctx.lineTo(sc.x,sc.y):ctx.moveTo(sc.x,sc.y); });
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+  }
   if(nogo.enf.land && chartInk.lines && chartInk.lines.length){
     ctx.strokeStyle="rgba(224,64,208,0.95)"; ctx.lineWidth=3.2; ctx.lineCap="round";
     for(const L of chartInk.lines){
@@ -5052,7 +5080,12 @@ const CHART_INK_DEADLINE_MS = 15000;
 // look" must never be the same sentence.
 const CHART_INK_MIN_COVER = 0.9;
 const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
-let chartInk = {key:null, lines:[], detached:[], note:null, z:null, ms:0, busy:false};
+// ⚠ A FOOTPRINT IS ITS OWN KIND, and the wording is careful. A marina's floats come off the
+// chart as one wide shape, and the keep-out is the CONVEX HULL of that shape - which fills in
+// the water between the fingers. Naming it a "footprint" rather than a pier is the honest
+// description of a thing whose exact edges the console does not know.
+const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in the ENC";
+let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
 
 /** One tile as an Image, or null. A miss is a hole in the mosaic, never a rejection. */
 function loadTile(z, x, y){
@@ -5141,7 +5174,8 @@ async function scanChartInk(bb){
           detached: r.unexplained.filter(u=>/not attached/.test(u.why))
                                  .map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM})),
           areas: r.areas.map(sx=>({a:toLL(sx.a), b:toLL(sx.b), lengthM:sx.lengthM,
-                                   widthM:sx.widthM}))};
+                                   widthM:sx.widthM, fill:sx.fill,
+                                   ring:sx.hull.map(toLL)}))};
 }
 
 /**
@@ -5165,7 +5199,7 @@ async function ensureChartInk(bb){
       // ⚠ THE KEY IS NOT SET ON A REFUSAL. A refusal is "not read yet", not "read and clean",
       // and caching it would mean the tiles finish arriving in the background and the next
       // plan still never looks at them.
-      chartInk = {...chartInk, key:null, lines:[], detached:[], busy:false,
+      chartInk = {...chartInk, key:null, lines:[], areas:[], detached:[], busy:false,
                   note:(r && r.refused) || "no chart to read"};
       rebuildNogo(); updateNogoUI();
       if(r && r.refused) showBanner("⚠ CHART IMAGE NOT COMPARED — " + r.refused
@@ -5178,24 +5212,29 @@ async function ensureChartInk(bb){
     // console will not enforce them - Andy's rule was ATTACHED - but "I saw something I could
     // not classify" is information the operator is entitled to, and swallowing it would make
     // a clean-looking scan out of an ambiguous one.
-    chartInk = {key, lines:r.lines, detached:r.detached, z:r.z, ms:r.ms, busy:false,
-      note: (r.lines.length
-        ? r.lines.length + " structure(s) read off the chart the ENC does not carry"
+    const found = r.lines.length + r.areas.length;
+    chartInk = {key, lines:r.lines, areas:r.areas, detached:r.detached, z:r.z, ms:r.ms,
+      busy:false,
+      note: (found
+        ? found + " structure(s) read off the chart the ENC does not carry ("
+          + r.lines.length + " line(s), " + r.areas.length + " footprint(s))"
         : "chart read at z" + r.z + " - nothing the ENC does not already carry")
         + " (" + r.got + "/" + r.tiles + " tiles, " + r.ms + " ms)"
         + (r.detached.length ? "; " + r.detached.length + " further unexplained mark(s) touch "
-            + "nothing charted and are NOT enforced - look at them" : "")
-        + (r.areas.length ? "; " + r.areas.length + " unexplained line NETWORK(S) (a marina's "
-            + "floats read as one wide shape, not a line) - NOT enforced, look at them" : "")};
+            + "nothing charted and are NOT enforced - look at them" : "")};
     rebuildNogo();                     // fold them in through the ONE builder
     updateNogoUI(); render();
-    if(r.lines.length)
-      showBanner("\u26a0 " + r.lines.length + " STRUCTURE(S) READ OFF THE CHART that the ENC "
-        + "does not carry - added to the keep-out model and drawn in magenta ("
-        + r.lines.map(l=>l.lengthM.toFixed(0)+" m at "+l.angleDeg.toFixed(0)+"\u00b0 off a "
-            + "charted structure").join("; ") + "). Verify visually before relying on the plan.");
+    if(found)
+      showBanner("\u26a0 " + found + " STRUCTURE(S) READ OFF THE CHART that the ENC does not "
+        + "carry - added to the keep-out model and drawn in magenta: "
+        + r.lines.map(l=>l.lengthM.toFixed(0)+" m line").join(", ")
+        + (r.lines.length && r.areas.length ? ", " : "")
+        + r.areas.map(a=>a.lengthM.toFixed(0)+"\u00d7"+a.widthM.toFixed(0)+" m footprint"
+            + " (a float system; the keep-out is its outer hull, so the water between the "
+            + "fingers is refused too)").join(", ")
+        + ". Verify visually before relying on the plan.");
   } catch(e){
-    chartInk = {...chartInk, key, lines:[], detached:[], busy:false,
+    chartInk = {...chartInk, key, lines:[], areas:[], detached:[], busy:false,
                 note:"chart read failed: " + e};
   } finally { chartInk.busy = false; }
   return chartInk;

@@ -64,8 +64,17 @@
 // Measured after: New Castle's west shore went from 4 structures to 10, every one a real
 // pier on inspection; Lewes stayed at ZERO.
 //
-// TEETH: TWENTY-FOUR mutations RUN against a sidecar copy of chartink.js and the page, all
-// twenty-four killed. The check numbers are the ones that actually went red.
+// ⚠⚠ THIRD ROUND: THE MARINA IS ENFORCED. Andy: *"enforce the marina footprints too."* A
+// comb of floats arrives as ONE wide component that no line can honestly describe, so it
+// becomes a POLYGON - the convex hull of its own ink - in `ko.polys` beside the ENC's docks.
+// The hull OVER-CLAIMS on purpose: it fills in the water between the fingers, which is the
+// right direction to be wrong in, because those gaps are metres wide and hold moored boats
+// the chart does not draw. The gates are stricter than a line's, because an area refuses more
+// water: wide, LARGE, SPARSE (the two real marinas fill 7% and 10% of their own bounding box
+// against a 35% ceiling) and ATTACHED on the same proportional rule a pier obeys.
+//
+// TEETH: THIRTY mutations RUN against a sidecar copy of chartink.js and the page, all thirty
+// killed. The check numbers are the ones that actually went red.
 //   ink threshold ignored (everything is ink)                 -> 1, 2, 4, 5, 5b, 5c, 6-9, 16
 //   the explained mask is not subtracted                      -> 2, 4, 5, 5b, 5c, 8, 16
 //   components are 4-connected, not 8                         -> 3
@@ -110,6 +119,15 @@
 //     marks stay two) are those cases.
 //   * nothing tested the proportional attachment allowance, so it could be flattened back to
 //     a constant unnoticed. 17d is a 20 m pier standing 8 m off.
+//   * the marina fixture straddled this suite's OWN charted contour, whose explained band
+//     cut the comb's fingers in two - the scan saw a short spine and seven 3 m stubs, and
+//     every number the check read was of a different shape. It sits clear of it now.
+//   * nothing tested that a footprint must be LARGE, so AREA_MIN_M could be deleted unseen
+//     (20e is a 5 x 6 m comb).
+//   * check 15 searched the WHOLE drawing function for the magenta, and passed with the LINE
+//     colour mutated back to the ENC's red - the FOOTPRINT fill a few lines above still
+//     carried the magenta. One colour standing in for the other's check. It slices each
+//     block now.
 //   * and the offset test itself was written TWICE - g's centre off f's axis, then f's off
 //     g's - and mutation could not tell them apart, because inside the 20 deg direction cap
 //     the two are all but equal and whichever survived still fired. Two statements where one
@@ -404,8 +422,19 @@ check("12. the fold happens INSIDE rebuildNogo, so it survives a buffer or enfor
       "every path that changes a control rebuilds ko from scratch");
 check("13. ... and it follows the STRUCTURE enforcement toggle, because that is what these " +
       "are",
-      () => /nogo\.enf && nogo\.enf\.land === false\) \? \[\] : \(chartInk\.lines/.test(H),
+      () => /const inkOn = !\(nogo\.enf && nogo\.enf\.land === false\);/.test(H)
+            && /const inkLines = inkOn \? \(chartInk\.lines \|\| \[\]\) : \[\];/.test(H)
+            && /const inkAreas = inkOn \? \(chartInk\.areas \|\| \[\]\) : \[\];/.test(H),
       "an operator who turned structures off has said what they mean");
+check("13b. A FOOTPRINT IS FOLDED AS A POLYGON, not as a line — `blocked` tests a ring with " +
+      "a point-in-polygon, so the water INSIDE a marina is refused and not merely its edge",
+      () => {
+        const rb = H.slice(H.indexOf("function rebuildNogo"),
+                           H.indexOf("async function refreshNogo"));
+        return /nogo\.ko\.polys\.push\(\{ring, bb: bbOf\(ring\), kind: CHART_INK_AREA_KIND/.test(rb)
+            && /A\.ring\.length < 3/.test(rb);
+      },
+      "a line would let the router thread between the fingers");
 check("14. a REFUSAL is not cached as a clean read — \"I found nothing\" and \"I could not " +
       "look\" must never be the same sentence",
       () => {
@@ -415,11 +444,19 @@ check("14. a REFUSAL is not cached as a clean read — \"I found nothing\" and \
             && /CHART_INK_MIN_COVER/.test(H) && /CHART_INK_DEADLINE_MS/.test(H);
       },
       "an unread tile is blank paper and reads exactly like clear water");
-check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC published",
+check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC published — " +
+      "both the lines and the footprints",
       () => {
+        // ⚠ SLICED TO EACH BLOCK. A file-wide search for the magenta passed with the LINE
+        // colour mutated back to the ENC's red, because the FOOTPRINT fill still carried the
+        // magenta a few lines above - one colour standing in for the other's check.
         const dn = H.slice(H.indexOf("function drawNogo"), H.indexOf("function drawMarks"));
-        return /chartInk\.lines/.test(dn) && /rgba\(224,64,208/.test(dn)
-            && dn.indexOf("rgba(224,64,208") > dn.indexOf("rgba(217,83,79,0.85)");
+        const areaBlk = dn.slice(dn.indexOf("chartInk.areas"), dn.indexOf("chartInk.lines"));
+        const lineBlk = dn.slice(dn.indexOf("chartInk.lines"));
+        return areaBlk.length > 100 && lineBlk.length > 100
+            && /rgba\(224,64,208,0\.28\)/.test(areaBlk)
+            && /rgba\(224,64,208,0\.95\)/.test(lineBlk)
+            && !/rgba\(217,83,79/.test(lineBlk);
       },
       "drawing them in the ENC's own red would claim a warrant the console does not have");
 // 16. WHETHER THE CHART WAS COMPARED is said on the Nogo readout, and it is checked in
@@ -544,24 +581,102 @@ check("19. THE POOL GROWS: a pier HEAD square to an accepted finger is accepted 
               const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
               return r.structures.map(x => x.lengthM.toFixed(1) + " m @ round " + x.round).join(", ")
                      || "nothing found"; });
-check("20. A MARINA IS NOT A LINE, and is REPORTED rather than enforced — turning a picture " +
-      "into an AREA is a wider authority than turning it into a line",
+// ── 20-20c. THE MARINA, ENFORCED. Andy: "enforce the marina footprints too." ─────────
+// ⚠ y = 100-150, CLEAR OF THE CHARTED CONTOUR AT y = 170. The first version put the comb
+// across it, and the contour's explained band (EXPLAIN_PX either side) CUT THE FINGERS IN
+// TWO - the scan then saw a short spine and seven 3 m stubs, and the "marina" it found was
+// 5 m tall instead of 10. Every number the check read was of a different shape.
+function marina() {
+  const a = blank();
+  stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+  stroke(a, 60, 100, 200, 100);                             // a spine...
+  for (let x = 70; x <= 190; x += 20) stroke(a, x, 100, x, 150);      // ...and its fingers
+  return a;
+}
+check("20. A MARINA IS A FOOTPRINT, NOT A LINE — the comb is refused by the line sieve and " +
+      "comes back as an AREA carrying the convex hull of its own ink",
+      () => {
+        const r = C.scanChart(marina(), W, H2, explainedOf(), SEGS, MPP);
+        return r.areas.length === 1 && r.areas[0].hull.length >= 3
+            && !r.structures.some(x => x.widthM > C.MAX_WIDTH_M);
+      },
+      () => { const r = C.scanChart(marina(), W, H2, explainedOf(), SEGS, MPP);
+              return r.areas.length + " area(s)"
+                     + (r.areas[0] ? ", hull " + r.areas[0].hull.length + " pts, "
+                        + r.areas[0].lengthM.toFixed(1) + "x" + r.areas[0].widthM.toFixed(1)
+                        + " m, fill " + (100*r.areas[0].fill).toFixed(0) + "%" : ""); });
+check("20b. ... and the hull ENCLOSES the water between the fingers, which is the whole " +
+      "reason it is an area and not a set of lines",
+      () => {
+        const r = C.scanChart(marina(), W, H2, explainedOf(), SEGS, MPP);
+        const ring = r.areas[0] && r.areas[0].hull;
+        if (!ring) return false;
+        // a point in the middle of a bay between two fingers
+        const q = { x: 80, y: 130 };
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          if ((ring[i].y > q.y) !== (ring[j].y > q.y) &&
+              q.x < (ring[j].x - ring[i].x) * (q.y - ring[i].y) / (ring[j].y - ring[i].y) + ring[i].x)
+            inside = !inside;
+        }
+        return inside;
+      },
+      "the gaps between floats are metres wide and hold moored boats the chart does not draw");
+check("20c. ... but a DENSE blob of the same size is a symbol or a block of text, and is " +
+      "refused by the fill test alone",
       () => {
         const a = blank();
         stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
-        stroke(a, 60, 140, 200, 140);                       // a spine...
-        for (let x = 70; x <= 190; x += 20) stroke(a, x, 140, x, 190);   // ...and its fingers
+        for (let y = 100; y <= 150; y++) stroke(a, 60, y, 200, y);      // solid, 100% filled
         const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
-        const wide = r.rejected.find(x => x.widthM > C.MAX_WIDTH_M);
-        return !!wide && r.areas.length === 1
-            && !r.structures.some(x => x.widthM > C.MAX_WIDTH_M);
+        return r.areas.length === 0 && r.structures.length === 0;
       },
       () => { const a = blank();
               stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
-              stroke(a, 60, 140, 200, 140);
-              for (let x = 70; x <= 190; x += 20) stroke(a, x, 140, x, 190);
+              for (let y = 100; y <= 150; y++) stroke(a, 60, y, 200, y);
               const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
-              return r.areas.length + " area(s), " + r.structures.length + " structure(s)"; });
+              const w = r.rejected.find(x => x.widthM > C.MAX_WIDTH_M);
+              return w ? "fill " + (100 * w.fill).toFixed(0) + "%, "
+                         + r.areas.length + " area(s)" : "no wide mark at all"; });
+check("20d. ... and a footprint that touches nothing charted is refused, on the same " +
+      "proportional rule a pier obeys",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        // a SMALL comb far from anything charted: 12 m long, so its allowance is 12 m, and
+        // the nearest charted thing is 17.6 m away.
+        stroke(a, 100, 200, 160, 200);
+        for (let x = 110; x <= 150; x += 20) stroke(a, x, 200, x, 225);
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.areas.length === 0;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 100, 200, 160, 200);
+              for (let x = 110; x <= 150; x += 20) stroke(a, x, 200, x, 225);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              const w = r.rejected.find(x => x.widthM > C.MAX_WIDTH_M);
+              return w ? "attached " + w.attachM.toFixed(1) + " of "
+                         + w.attachMaxM.toFixed(1) + " m allowed" : "none"; });
+
+check("20e. ... and a SMALL comb is not a footprint either — a keep-out area has to be big " +
+      "enough to be a place, or every cluster of chart furniture becomes one",
+      () => {
+        const a = blank();
+        stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+        stroke(a, 120, 100, 150, 100);                      // 6 m of spine...
+        for (let x = 125; x <= 145; x += 10) stroke(a, x, 100, x, 125);   // ...5 m fingers
+        const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+        return r.areas.length === 0;
+      },
+      () => { const a = blank();
+              stroke(a, QUAY.a.x, QUAY.a.y, QUAY.b.x, QUAY.b.y);
+              stroke(a, 120, 100, 150, 100);
+              for (let x = 125; x <= 145; x += 10) stroke(a, x, 100, x, 125);
+              const r = C.scanChart(a, W, H2, explainedOf(), SEGS, MPP);
+              const w = r.rejected.find(x => x.widthM > C.MAX_WIDTH_M);
+              return w ? w.lengthM.toFixed(1) + " x " + w.widthM.toFixed(1) + " m, needs "
+                         + C.AREA_MIN_M + " m" : "no wide mark"; });
 
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
