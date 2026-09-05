@@ -180,6 +180,14 @@ telemetry frame:
   the transit out to the start of a survey, hops between separated coverage regions, a drawn
   transit line, and the Return-to-Home that chains after a survey ends.
 
+  **A reversal and a region hop are told apart from the plan, not from where the boat is.**
+  The gap between two consecutive lines is a reversal when it is within four times the plan's
+  own median end-to-start gap, and a transit otherwise — so a gap where a line was struck or
+  dropped (two or three times the spacing) is still flown as the reversal it is, while a hop
+  to another region, which is many times it, is flown as a transit. The committed plan's
+  duration estimate is billed by the same rule, which is why the vessel card's **Survey** row
+  can read `@ survey/low/high`: each part of the run is timed at the speed it will be run at.
+
 * **Clearance** — beside off track, and the other half of *where is the boat*: its live
   distance to the **keep-out model**, named (`4.2 m to a dock / pier`), with `CLOSING` and
   `SLOWED` when either applies. Shown whenever the model is loaded and not only when it is

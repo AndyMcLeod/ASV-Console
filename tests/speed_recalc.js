@@ -138,6 +138,16 @@ eval(
      // rename to "Turn speed" broke the clear and this suite caught it.
      grabDecl("SPEED_WARN_PREFIX") + "\n" +
      grab("committedPatternInfo") + "\n" +
+     // ROLE-BILLED ESTIMATE (2026-09-05): recalcCommittedForSpeed no longer divides the
+     // whole chain by one speed - it totals it BY ROLE through committedRoleLengths, which
+     // tells a reversal from a region hop with isReversalGap. GRABBED, all three, for the
+     // same reason as the helpers above: a stub would hold this suite green while the
+     // estimate and the boat disagreed about what a leg is. When this suite went red at
+     // "committedRoleLengths is not defined" it was reporting a real new dependency in
+     // the function it drives, and that is the suite working.
+     grabDecl("LINE_MATCH_M") + "\n" +
+     grab("reversalScaleM") + "\n" + grab("isReversalGap") + "\n" +
+     grab("committedRoleLengths") + "\n" +
      grab("recalcCommittedForSpeed") + "\n" +
      grab("routeLenM") + "\n" + grab("transitEstBoat") + "\n" +
      grab("transitEstKey") + "\n" + grab("transitEstCompute") + "\n" +

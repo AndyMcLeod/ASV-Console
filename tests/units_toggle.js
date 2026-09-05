@@ -224,6 +224,11 @@ check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints 
          grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
          grabDecl("SPEED_WARN_PREFIX") + "\n" +
          grab("committedPatternInfo") + "\n" +
+         // ROLE-BILLED ESTIMATE (2026-09-05): the survey row totals the chain BY ROLE now,
+         // so its three helpers are grabbed with it rather than stubbed.
+         grabDecl("LINE_MATCH_M") + "\n" +
+         grab("reversalScaleM") + "\n" + grab("isReversalGap") + "\n" +
+         grab("committedRoleLengths") + "\n" +
          grab("recalcCommittedForSpeed"));
     const wps = [{ lat: 38.7896, lon: -75.1609 }, { lat: 38.7896 + 2000 / M_PER_DEG_LAT, lon: -75.1609 }];
     mission = { speed: "survey", speeds: { transit: "survey", turn: "survey", survey: "survey" },

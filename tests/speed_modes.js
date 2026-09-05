@@ -86,7 +86,13 @@ const fs = require("fs");
 const path = require("path");
 const { V } = require("../static/js/state.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Without it the only way to
+// mutate what this suite reads is to edit static/asv.html itself - and a runner killed
+// mid-flight then leaves the operator's real source mutated, which has happened twice in
+// this estate. The header below claims mutation results; this is what makes them safe to
+// reproduce.
+const H = fs.readFileSync(process.env.ASV_HTML ||
+                          path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   const start = H.indexOf("function " + name + "(");
@@ -160,8 +166,20 @@ console.log("Speed by mode - three settings, and the console governs which one i
   inTurn();
   check("2. in a reversal between lines the role is TURN", () => speedRole() === "turn", speedRole());
   onTransit();
-  check("2b. anywhere else - approach, region hop, Go-To, RTH - it is TRANSIT",
-        () => speedRole() === "transit", speedRole());
+  // ⚠ THIS CHECK NAMED A CASE IT DOES NOT REACH, AND THE CONSOLE WAS WRONG ABOUT IT FOR AS
+  // LONG AS THE CHECK EXISTED. It used to read "approach, REGION HOP, Go-To, RTH", and it
+  // passed throughout - because onTransit() sets `runLineIdx = -1, curTurn = -1` BY HAND and
+  // asks currentActivity() what that state means. currentActivity() was never wrong. What
+  // was wrong is that accumLineTime could not PRODUCE that state on a region hop: `curTurn`
+  // was cleared only when a line was entered, so the whole 618 m hop came through as a turn
+  // and was flown at 4.0 kn instead of 14.0. A check that hand-builds its subject's input
+  // tests the half downstream of it and nothing else. The hop is now driven end to end
+  // through the real accumLineTime in tests/survey_transit_roles.js; what THIS one still
+  // says - and all it says - is that the classifier maps that state to `transit`.
+  check("2b. off a line and out of a turn - approach, Go-To, RTH - the role is TRANSIT",
+        () => speedRole() === "transit",
+        speedRole() + " (the REGION HOP is survey_transit_roles.js 7/7b: this check cannot "
+        + "reach it, because it sets the state rather than flying to it)");
 }
 // 3. ... and each role resolves to ITS OWN key, which is the whole point of the feature.
 {
@@ -289,6 +307,16 @@ console.log("Speed by mode - three settings, and the console governs which one i
               approaches.length === 2 && approaches.every(a => /spdT\)$/.test(a)),
         approaches.length + " approach estimate(s): " + approaches.join(", ")
           + " - drawn and committed, both timed as the transit they are");
+  // ⚠ "EVERY" WAS TWO OF FOUR. The Lines card carries two more transit rows - the approach
+  // to L1 and the RTH home, the exact pair Andy names - and they do not go through
+  // `approachLen` at all, so this check never looked at them. They were being divided by
+  // the SURVEY speed while the row said "transit": on a DriX, 7.0 kn where the boat runs
+  // 14.0, so both figures read double. Now named here so the count is the whole set.
+  check("11c. ... INCLUDING the Lines card's own two transit rows",
+        () => /const trSpd=roleSpeedMS\("transit"\)/.test(H) &&
+              (H.match(/transitRowHtml\((?!label)[^)]*\)/g) || []).every(r => /trSpd/.test(r)),
+        "transit → L1 and RTH → home are transits, and the table they sit in is headed "
+        + "with the SURVEY speed - see survey_transit_roles.js 14");
 }
 // 12-13. THE UI MOVED, WHICH IS HALF OF WHAT WAS ASKED FOR. One selector on the command bar
 // became three, and three selects on a bar that has to stay readable at a glance is the

@@ -2931,6 +2931,34 @@ function turnZoneM(){
   return Math.max(20, (mission.arrival_radius_m||2)*8, sp*0.9);
 }
 function nearestEndpointM(){ let d=1e12; for(const L of mission.lines){ d=Math.min(d, distTo(asv,L.a), distTo(asv,L.b)); } return d; }
+// THE REVERSAL SCALE: how far apart consecutive lines actually are END TO START — which is
+// the distance a reversal has to cross, and the thing that tells a reversal apart from a
+// transit to a DIFFERENT COVERAGE REGION.
+//
+// ⚠ NOT turnZoneM()'s `sp`, which measures a→a and is therefore ~the LINE LENGTH on a
+// boustrophedon plan (consecutive lines alternate direction, so their `a` ends are at
+// opposite ends of the pattern). That is fine for "am I manoeuvring near a line end", which
+// is all turnZoneM is asked, and useless for "is this gap a reversal".
+function reversalScaleM(){
+  const L = mission.lines; if(!L || L.length < 2) return 0;
+  const g = []; for(let k=1;k<L.length;k++) g.push(distTo(L[k-1].b, L[k].a));
+  g.sort((x,y)=>x-y); return g[Math.floor(g.length/2)] || 0;
+}
+// Is the gap from line k to line k+1 a REVERSAL (the boat swinging round onto the next
+// line), or a TRANSIT to the next coverage region? Andy, 2026-09-05: "Lines from home to
+// the first survey line waypoint and from the last survey waypoint to home OR THE NEXT
+// SURVEY are transit lines and accept transit speed inputs."
+//
+// FOUR TIMES the plan's own median reversal, so the answer comes from the pattern rather
+// than from a constant: a gap where a struck or dropped line has doubled or trebled the
+// spacing is still a reversal (and the card already names those - "reversal(s) swing across
+// a gap where a line is missing"), while a hop to another region is many times it. The last
+// line has no next line, so nothing after it is ever a reversal.
+function isReversalGap(k){
+  const L = mission.lines; if(!L || k < 0 || k+1 >= L.length) return false;
+  const scale = reversalScaleM();
+  return distTo(L[k].b, L[k+1].a) <= Math.max(4*scale, (mission.arrival_radius_m||2)*8, 40);
+}
 // SEQUENCE KEY: which coverage line IS the boat's current route leg? The uploaded
 // route interleaves approach/detour/turn points between the line endpoints, so a
 // leg either matches one committed line (both endpoints, either direction) or it
@@ -2980,13 +3008,26 @@ function accumLineTime(){
         if(curTurn>=0){ turnSeg[curTurn].to=seqLine; curTurn=-1; }   // the open turn led INTO this line
         lastRunLine=seqLine;
       }
-    } else if(lastRunLine>=0 && nearestEndpointM()<=turnZoneM()){
-      // no line leg active, but a line was just run and we're near a line end:
-      // a between-lines maneuver (teardrop / routed turn) = a turn component
+    } else if(lastRunLine>=0 && isReversalGap(lastRunLine) && nearestEndpointM()<=turnZoneM()){
+      // no line leg active, but a line was just run, the NEXT line is a reversal away, and
+      // we're near a line end: a between-lines maneuver (teardrop / routed turn) = a turn
       if(curTurn<0){ curTurn=turnSeg.length; turnSeg.push({from:lastRunLine, to:-1, sec:0}); }
       turnSeg[curTurn].sec+=dt;
+    } else if(curTurn>=0){
+      // ⚠⚠ AND THIS IS THE BRANCH THAT WAS MISSING. `curTurn` was cleared ONLY when a line
+      // was ENTERED, so the first frame near a line end opened a turn that then survived
+      // the ENTIRE leg to wherever the boat was actually going. On a plan with two coverage
+      // regions that is the hop between them: MEASURED at Lewes over a 613 m hop, the boat
+      // flew all 304 s of it at the TURN speed (4.0 kn) instead of the transit speed
+      // (14.0 kn) - 219 s of survey-endurance spent going nowhere, on a leg Andy names
+      // outright as a transit. It also made currentActivity()'s "between coverage regions"
+      // detail UNREACHABLE in practice, because reaching it required curTurn < 0.
+      //
+      // A turn that ends without a line was not a reversal. It keeps its `to:-1` and the
+      // table already draws that as "k→·".
+      curTurn = -1;
     }
-    // else: approach / inter-area transit -> neither line nor turn
+    // else: approach / inter-region transit -> neither line nor turn
   }
   lineClock = (S.run==="running") ? now : null;
 }
@@ -3168,14 +3209,18 @@ function scheduleTransitEst(){
     renderLineTable();                       // paint the fresh answer
   }, 0);
 }
-function transitRowHtml(label, est, spd){
+function transitRowHtml(label, est, spd, spdKey){
   // One row of honest text: routed time (distance), "direct" when un-modeled, the
   // planner's own refusal when it refused, "--" when an input is missing.
+  // NAMES ITS SPEED, because the table it sits in is headed with a different one: these
+  // rows are transits and the rows between them are coverage, so a bare time on a card
+  // headed "survey speed" reads as having been computed at the survey speed - which is
+  // exactly the fault this argument was added to fix.
   let txt;
   if(!est) txt = `<span style="color:var(--ink-faint)">--</span>`;
   else if(est.err) txt = `<span class="warn" style="color:#d9958f">unroutable — ${est.err}</span>`;
   else { const t = (spd>0) ? fmtMS(Math.round(est.m/spd)) : "--";
-    txt = `${t} <span style="color:var(--ink-faint)">(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
+    txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
   return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}</div>`;
 }
 function renderLineTable(){
@@ -3194,8 +3239,14 @@ function renderLineTable(){
   }).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
   const estSpd=roleSpeedMS("survey");    // this table is the COVERAGE lines; turns have their own row
+  // ⚠ THE TWO TRANSIT ROWS ARE TRANSITS, AND THEY WERE TIMED AT THE SURVEY SPEED. They are
+  // the exact two legs Andy names - "Lines from home to the first survey line waypoint and
+  // from the last survey waypoint to home ... are transit lines and accept transit speed
+  // inputs" - and the row said "transit" while dividing by the coverage speed. On a DriX
+  // that is 7.0 kn where the boat will actually run 14.0, so both figures read DOUBLE.
+  const trSpd=roleSpeedMS("transit");
   let html=`<span style="color:var(--ink-faint)">${roleSpeed("survey")} speed</span>`+
-    transitRowHtml("transit → L1:", transitEst.transit, estSpd)+
+    transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit"))+
     `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
     `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
   // TURNS - independent components between lines, timed separately from the lines.
@@ -3213,7 +3264,7 @@ function renderLineTable(){
       `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
       `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${TT?fmtMS(TT):'--'}</td></tr></table>`;
   }
-  html+=transitRowHtml(`RTH L${t.length} → home:`, transitEst.rth, estSpd);
+  html+=transitRowHtml(`RTH L${t.length} → home:`, transitEst.rth, trSpd, roleSpeed("transit"));
   el.innerHTML=html;
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
@@ -6224,6 +6275,35 @@ let speedWarnShown = false;   // is the committed-plan speed warning currently o
 // cleared by slowing back down. speed_recalc check 5b caught it in the same run. One
 // constant, so the two cannot drift apart again.
 const SPEED_WARN_PREFIX = "Turn speed ";
+// THE PLAN-TIME TWIN OF accumLineTime's CLASSIFICATION: total the committed waypoint chain
+// BY ROLE, using the same isReversalGap() the run-time one does, so the estimate cannot
+// disagree with the boat about what a leg is.
+//
+// The chain commitPattern builds is [L1.a, L1.b, (turn vertices…), L2.a, L2.b, …], so the
+// lines are found by walking it in order rather than by geometry. Returns null - NOT zeros -
+// when the chain is not that shape (a hand-placed plan, a mission from an older build), and
+// the caller falls back to the single-speed figure. A silent zero would read as "no survey".
+function committedRoleLengths(){
+  const wps = mission.waypoints || [], L = mission.lines || [];
+  if(wps.length < 2 || !L.length) return null;
+  const near = (p,q)=> p && q && distTo(p,q) <= LINE_MATCH_M;
+  const idx = []; let at = 0;
+  for(let k=0;k<L.length;k++){
+    let ia = -1;
+    for(let i=at;i<wps.length;i++){ if(near(wps[i], L[k].a)){ ia = i; break; } }
+    if(ia < 0 || ia+1 >= wps.length || !near(wps[ia+1], L[k].b)) return null;
+    idx.push(ia); at = ia + 2;
+  }
+  const R = {survey:0, turn:0, transit:0};
+  for(let k=0;k<L.length;k++){
+    R.survey += distTo(wps[idx[k]], wps[idx[k]+1]);
+    if(k+1 < L.length){
+      const role = isReversalGap(k) ? "turn" : "transit";      // ← the one rule, shared
+      for(let i=idx[k]+2; i<=idx[k+1]; i++) R[role] += distTo(wps[i-1], wps[i]);
+    }
+  }
+  return R;
+}
 function recalcCommittedForSpeed(){
   const wps = mission.waypoints || [];
   const spd = roleSpeedMS("survey"), spdT = roleSpeedMS("transit");
@@ -6234,7 +6314,20 @@ function recalcCommittedForSpeed(){
   let runLen = 0;
   for(let i=1;i<wps.length;i++) runLen += distTo(wps[i-1], wps[i]);
   const approachLen = asv ? distTo({lat:asv.lat,lon:asv.lon}, wps[0]) : 0;
-  $("#v_surveydur").textContent = fmtDur(runLen/spd) + " @ " + roleSpeed("survey")
+  // ⚠ EVERY METRE OF THE COMMITTED CHAIN USED TO BE DIVIDED BY THE SURVEY SPEED - the
+  // coverage lines, the reversals between them, and the hop to the next coverage region
+  // alike. The governor has flown those three at three different speeds since the roles
+  // were split, so the estimate and the boat disagreed by construction. Each part is
+  // billed at the speed its own role will actually be run at now.
+  const R = committedRoleLengths();
+  const parts = R ? [[R.survey, spd, "survey"], [R.turn, roleSpeedMS("turn"), "turn"],
+                     [R.transit, spdT, "transit"]] : null;
+  const runSec = parts ? parts.reduce((a,[m,v])=>a + (v>0 ? m/v : 0), 0) : runLen/spd;
+  // Name the speeds that actually contributed, so a figure that is not simply
+  // "length ÷ survey speed" does not look like one that is.
+  const mix = parts ? parts.filter(([m])=>m>0.5).map(([,,k])=>roleSpeed(k)) : [roleSpeed("survey")];
+  const uniq = [...new Set(mix)];
+  $("#v_surveydur").textContent = fmtDur(runSec) + " @ " + uniq.join("/")
     + " (" + fmtDist(runLen) + ")";
   $("#v_approach").textContent = approachLen > 0 && spdT > 0
     ? fmtDur(approachLen/spdT) + " @ " + roleSpeed("transit") + " (" + fmtDist(approachLen) + ")" : "--";

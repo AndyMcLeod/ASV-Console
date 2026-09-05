@@ -55,7 +55,124 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-05 — the trail belongs to a boot, and a respawn ends the boot)
+## ⇒ START HERE (handoff refreshed 2026-09-05 — a region hop is a transit, not a very long turn)
+
+### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE HOP TO THE NEXT COVERAGE REGION WAS BEING FLOWN AT THE TURN
+SPEED.** Andy:
+
+> *"The lines within a survey (survey pattern) are not transit lines. They should be defined
+> as survey lines and accept survey speed inputs. Lines from home to the first survey line
+> waypoint and from the last survey waypoint to home or the next survey are transit lines and
+> accept transit speed inputs."*
+
+**THREE OF THE FOUR CASES ALREADY HELD, AND I MEASURED ALL FOUR BEFORE TOUCHING ANYTHING** —
+a real two-region survey at Lewes, live console, the commanded key read back off `/api/state`:
+
+```
+approach home -> L1     high    (transit)    correct
+LINE 1..5               survey               correct
+reversals in-region     low     (turn)       correct
+HOP region A -> B       low     (turn)       >>> 304.2 s of it, and WRONG
+RTH -> home             high    (transit)    correct
+```
+
+618 m at 4.0 kn on a leg he names outright as a transit. **After the fix the same hop is
+84.9 s at 14.0 kn** — 219 seconds of survey endurance, per hop, on every multi-region plan
+this console has ever run, and every other segment measured identical before and after.
+
+**⚠⚠ THE CLASSIFIER WAS NEVER WRONG. THE STATE HANDED TO IT COULD NOT HAPPEN.**
+`currentActivity()` has always mapped "off a line, out of a turn, a line already run" to
+`transit` with the detail *"between coverage regions"*. `accumLineTime` could not produce it:
+`curTurn` was cleared ONLY when a line was ENTERED, so the first frame near a line end opened
+a turn that then survived the entire leg to wherever the boat was actually going. That detail
+string was **unreachable in practice** for as long as it has existed.
+
+**THE RULE IS NOW DECIDED FROM THE PLAN, NOT FROM WHERE THE BOAT IS.** `isReversalGap(k)`: the
+gap between consecutive lines is a reversal within **4× the plan's own median end-to-start
+gap**, a transit beyond it. Four times, so a gap where a line was struck or dropped — two or
+three times the spacing, and the card already names those — is still flown as the reversal it
+is. **⚠ NOT `turnZoneM()`'s scale, which measures a-to-a: consecutive lines of a
+boustrophedon alternate direction, so their `a` ends are at OPPOSITE ends of the pattern and
+that number is ~the LINE LENGTH** (145 m against a 60 m spacing in the fixture). Fine for
+"am I manoeuvring near a line end", useless for "is this gap a reversal". Check 8 pins it.
+
+**TWO ESTIMATES WERE WRONG THE SAME WAY, and one of them by a factor of two.** The Lines
+card's two transit rows — `transit → L1` and `RTH → home`, the exact pair he names — were
+divided by the **survey** speed while the row said "transit": on a DriX that is 7.0 kn where
+the boat runs 14.0. And `recalcCommittedForSpeed` billed the whole committed chain at the
+survey speed, region hops and reversals included, so the estimate and the governor disagreed
+by construction. `committedRoleLengths()` totals the chain by role using the same
+`isReversalGap`, and the card now reads e.g. `6m @ survey/low/high (1.55 km)`.
+
+**TEETH: `tests/survey_transit_roles.js`, 22 checks, 10 mutations, all 10 killed.** It drives
+the REAL `accumLineTime` tick by tick along a real two-region plan rather than hand-setting
+its output.
+
+**⚠⚠ AND THAT IS THE POINT OF IT, BECAUSE `speed_modes.js` CHECK 2b ALREADY CLAIMED THIS CASE
+BY NAME** — *"anywhere else - approach, REGION HOP, Go-To, RTH - it is TRANSIT"* — and passed
+throughout. It sets `runLineIdx = -1, curTurn = -1` **by hand** and asks the classifier what
+that means. **A check that hand-builds its subject's input tests the half downstream of it and
+nothing else.** Check 11b was the same shape: *"EVERY approach estimate at the TRANSIT speed"*
+covered two of four, because the Lines card's rows do not go through `approachLen`. Both are
+corrected to say what they actually cover, and 11c now covers the other two.
+
+**⚠ THREE OF MY OWN MUTATIONS SURVIVED THE FIRST CUT, and each was a real hole** — the full
+account is in the suite's TEETH block, but the shape worth carrying: the mutation that
+restores the REPORTED DEFECT survived, because the gap test stops a turn from ever opening on
+a hop and the close branch is then unreachable along that path. The suite was testing one of
+the two halves of the fix and scoring it as both.
+
+**⚠ AND `speed_modes.js` COULD NOT BE MUTATION-TESTED AT ALL.** It read `static/asv.html` by a
+fixed path, so the only way to mutate what it reads was to edit the operator's real source —
+the thing that has left this estate's source mutated twice. It takes `ASV_HTML` now, like the
+two new suites.
+
+### ⬜ THE OPEN LIST — ANDY'S CALL, NOT MINE. Ask him before starting any of these.
+
+Gathered here so a new window does not have to hunt them out of six earlier PICK UP HERE
+blocks. Every one is deliberate: it is recorded, not forgotten.
+
+* **`runElapsed` still spans back-to-back runs** (measured: 3:48 across two Go-Tos). Resetting
+  it per commanded motion would make elapsed / left / % describe ONE leg — but it would also
+  restart the clock at a survey's chained RTH, which is arguably one job. See the note at
+  "ONE THING DELIBERATELY NOT CHANGED" further down.
+* **Three latent defects in the safety ladder**, all found while fixing the drift-in and all
+  pre-existing: the `slow` rung reads the role's speed KEY rather than actual speed;
+  `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
+  "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
+  nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
+* **NEW — no `--mission` flag, so the plan is protected by fourteen hand-written backups
+  rather than by construction.** The leak found on 2026-09-05 is fixed (`amend_plan.py`, which
+  had been flipping his plan speed on every commit), but the shape of the problem is the one
+  `--roc-config` was added for after 198 stale ROCs piled up in his registry: a suite that
+  drives a real console in the app directory writes the operator's real files, and the only
+  thing stopping it is that somebody remembered. **Six other suites start a console with no
+  backup** — measured clean today, which is not the same as safe. A `--mission PATH` flag
+  would make it structural. Until then: **copy and hash `mission.json` before pointing any
+  harness at the app directory**, because it is gitignored and `git status` will never warn
+  anybody.
+* **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
+  report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
+  A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether
+  that is an artefact of driving the page synthetically or something real in the survey
+  path**, and I did not want to report a fault I had not isolated. Recorded because it is the
+  kind of thing that gets rediscovered expensively: if drawing a pattern ever feels sluggish
+  or locks up for HIM, this is the thread to pull, and the first question is whether a real
+  pointer reproduces it at all.
+  **2026-09-05, one data point toward it:** the in-app Browser pane went unresponsive to
+  `javascript_tool` for several calls in a row — including a purely SYNCHRONOUS one — and
+  came back only on a fresh tab. Nothing to do with the survey path, which weakens the "real
+  fault in the survey UI" reading and strengthens "an artefact of driving the pane".
+* **`saveTrack` is a DEBOUNCE, not the throttle its comment claims.** Every push re-arms the
+  800 ms timer, and pushes run at 4 Hz while the boat moves — so the localStorage mirror is
+  only ever written once the boat has been still for 800 ms. Harmless today (the mirror only
+  has to be right when the page reloads, and a reload after a moving boat loses at most the
+  last few seconds of trail), and NOT changed here because it is not what he reported. Noted
+  because it cost me twenty minutes reading a stale mirror as if it were the live trail.
+
+## ⇒ EARLIER (handoff of 2026-09-05 — the trail belongs to a boot, and a respawn ends the boot)
 
 ### ➤ PICK UP HERE
 
@@ -124,49 +241,6 @@ full run. The remaining structural gap is on the open list.
 **VERIFIED VISUALLY, because the report is visual.** Live console, real browser, ink counted on
 the canvas rather than numbers read off a card: **34 track pixels before the respawn, 0 after**,
 with the stored trail a single point at the new spawn under the new boot id.
-
-### ⬜ THE OPEN LIST — ANDY'S CALL, NOT MINE. Ask him before starting any of these.
-
-Gathered here so a new window does not have to hunt them out of five earlier PICK UP HERE
-blocks. Every one is deliberate: it is recorded, not forgotten.
-
-* **`runElapsed` still spans back-to-back runs** (measured: 3:48 across two Go-Tos). Resetting
-  it per commanded motion would make elapsed / left / % describe ONE leg — but it would also
-  restart the clock at a survey's chained RTH, which is arguably one job. See the note at
-  "ONE THING DELIBERATELY NOT CHANGED" further down.
-* **Three latent defects in the safety ladder**, all found while fixing the drift-in and all
-  pre-existing: the `slow` rung reads the role's speed KEY rather than actual speed;
-  `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
-  "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
-  nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
-* **NEW — no `--mission` flag, so the plan is protected by fourteen hand-written backups
-  rather than by construction.** The leak found on 2026-09-05 is fixed (`amend_plan.py`, which
-  had been flipping his plan speed on every commit), but the shape of the problem is the one
-  `--roc-config` was added for after 198 stale ROCs piled up in his registry: a suite that
-  drives a real console in the app directory writes the operator's real files, and the only
-  thing stopping it is that somebody remembered. **Six other suites start a console with no
-  backup** — measured clean today, which is not the same as safe. A `--mission PATH` flag
-  would make it structural. Until then: **copy and hash `mission.json` before pointing any
-  harness at the app directory**, because it is gitignored and `git status` will never warn
-  anybody.
-* **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
-  report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
-  A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether
-  that is an artefact of driving the page synthetically or something real in the survey
-  path**, and I did not want to report a fault I had not isolated. Recorded because it is the
-  kind of thing that gets rediscovered expensively: if drawing a pattern ever feels sluggish
-  or locks up for HIM, this is the thread to pull, and the first question is whether a real
-  pointer reproduces it at all.
-  **2026-09-05, one data point toward it:** the in-app Browser pane went unresponsive to
-  `javascript_tool` for several calls in a row — including a purely SYNCHRONOUS one — and
-  came back only on a fresh tab. Nothing to do with the survey path, which weakens the "real
-  fault in the survey UI" reading and strengthens "an artefact of driving the pane".
-* **`saveTrack` is a DEBOUNCE, not the throttle its comment claims.** Every push re-arms the
-  800 ms timer, and pushes run at 4 Hz while the boat moves — so the localStorage mirror is
-  only ever written once the boat has been still for 800 ms. Harmless today (the mirror only
-  has to be right when the page reloads, and a reload after a moving boat loses at most the
-  last few seconds of trail), and NOT changed here because it is not what he reported. Noted
-  because it cost me twenty minutes reading a stale mirror as if it were the live trail.
 
 ## ⇒ EARLIER (handoff of 2026-09-04 — the gate asks about the endpoint, and the punch sees the chart)
 
