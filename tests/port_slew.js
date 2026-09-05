@@ -388,6 +388,16 @@ function render(){}
 function portMoveStage(){ __staged++; }
 function portMoveDone(){ __done++; }
 function refreshNogo(ll){ __asked = ll; return Promise.resolve(); }
+// ⚠ THE TRAIL IS DROPPED THROUGH THE PAGE'S OWN clearTrack NOW, not a bare `track = []` -
+// the assignment left the localStorage mirror and the armed 800 ms save alive to write the
+// trail back (see tests/spawn_trail.js). So the REAL clearTrack is eval'd here with its two
+// dependencies, NOT stubbed: a stub would hold check 12b green while the thing it stands in
+// for was broken, which is exactly the trap nogo_readout fell into with foldChartInk. When
+// this suite went red at "clearTrack is not defined" it was reporting a genuine new
+// dependency in the function it drives, and that is the suite working.
+var trackSaveTimer;
+globalThis.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
+eval(grabDecl("TRACK_KEY") + "\n" + grab("lsDel") + "\n" + grab("clearTrack"));
 eval(grabAsync("resetForNewArea"));
 
 const NEWBASE = { lat: 38.7800, lon: -75.1400 };

@@ -55,7 +55,120 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-04 — the gate asks about the endpoint, and the punch sees the chart)
+## ⇒ START HERE (handoff refreshed 2026-09-05 — the trail belongs to a boot, and a respawn ends the boot)
+
+### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE RESPAWN LINE. It was on the open list as "needs him to describe it
+again first"; he did, and the last handoff's reasoning about it was WRONG.**
+
+> *"When respawning, do not inscribe the blue line. If I respawn it means the initial placement
+> was sub-optimal and is therefore unnecessary to remember."*
+> (and, five days earlier: *"when respawning delete the initial position and the line."*)
+
+**⚠ THE OPEN-LIST ENTRY SAID "`resetForNewArea` ALREADY clears the track, so whatever he is
+seeing is something else". IT IS NOT SOMETHING ELSE — IT IS THAT CLEAR, AND THE FAULT IS
+*WHEN* IT RUNS.** Three call sites cleared the trail PRE-EMPTIVELY, before the command that
+reboots the sim: `doSpawn`, `resetForNewArea` (port change) and `switchVessel`. Each was
+racing the frames it was trying to get ahead of. **MEASURED on a live console over `/events`,
+not reasoned about:**
+
+```
++0.028 s  boot A  43.07300,-70.71000   <- the OLD link, still ticking at 4 Hz, AFTER the
++0.030 s  boot A  43.07300,-70.71000      click and after the page cleared the trail
++0.038 s  boot B  (no fix)                new boot; connect() clears status, so no position
++0.295 s  boot B  43.09300,-70.76600   <- the new placement
+```
+
+Two points survive → `track.length > 1` → the chart strokes `--track` (#39c0ff) between them:
+**a 5,066 m blue line from the placement he was moving away from to the one he chose.** That
+is "the initial position and the line" — one defect, both symptoms.
+
+**⚠⚠ THE MECHANISM EVERYTHING ELSE WAS LEANING ON DID NOT RUN.** `checkBoot` opened with
+`if(bootChecked) return`, so the boot-id rule was a ONCE-PER-PAGE-LOAD test. Both the server
+(`connect()`: *"the browser sees the id change and drops the previous trail"*) and `doSpawn`
+(*"a new boot_id, which is what drops the old trail"*) were written against a rule that only
+fired across a refresh. **A comment asserting a mechanism is not the mechanism.** It now
+compares on every frame — `prev` is the STORED id on the first frame and the LIVE id after
+that, one comparison serving both cases — so the clear lands on the frame that *reports* the
+new boot, which is the earliest thing that can also wipe a stale fix already pushed. A
+pre-emptive clear cannot do that, by construction.
+
+**⚠ AND A REFUSED SPAWN USED TO COST HIM THE TRAIL AND THE DRAWN ROUTE.** `doSpawn` threw
+them away before the POST, then returned on a 409. That is the client half of the rule
+`home_spawn.py` check 6b holds the server to — *"a REFUSED spawn must power-cycle NOTHING"* —
+so it now clears only past the ok gate. `resetForNewArea`'s bare `track = []` became
+`clearTrack()`: the assignment left the localStorage mirror and the armed 800 ms save alive,
+so the trail it meant to drop could be written back and restored on the next load.
+
+**TEETH: `tests/spawn_trail.js`, 15 checks, 10 mutations, all 10 killed.** The fixture is the
+verbatim capture above. Two mutation results were NOT what I predicted and both are worth
+keeping: restoring `if(bootChecked) return` also takes out check 14, because a `checkBoot`
+that never fires never calls `render()` either — 14 is a second independent witness that the
+clear ran at all; and dropping `clearTrack`'s `lsDel` takes out 13 as well as 12, because 13
+asks whether the store is empty AFTER the throttle window and both halves feed that (13 still
+catches the `clearTimeout` mutation ALONE).
+
+**⚠ AND THE HASH CAUGHT SOMETHING BIGGER THAN MY OWN HARNESS.** The browser verification drove
+a real console in the app directory and **wrote the operator's real `mission.json`** (`speed`
+low→high). Restored from a pre-run copy, hash confirmed — and then **the pre-commit run did
+exactly the same thing**, which is not my harness at all. Twenty-one suites start a console in
+the app directory; fourteen already back the plan up. Bisected by hashing across the other
+seven: **`tests/amend_plan.py` was the one**, so every commit anybody has ever made through
+this hook has been flipping his plan speed and leaving it that way. `mission.json` is
+gitignored, so `git status` never said a word. Fixed here, the way the other fourteen do it —
+in BYTES, because the file is CRLF on disk and a text-mode round trip would rewrite every line
+ending of a file the suite is only meant to leave alone. Re-measured: byte-identical after a
+full run. The remaining structural gap is on the open list.
+
+**VERIFIED VISUALLY, because the report is visual.** Live console, real browser, ink counted on
+the canvas rather than numbers read off a card: **34 track pixels before the respawn, 0 after**,
+with the stored trail a single point at the new spawn under the new boot id.
+
+### ⬜ THE OPEN LIST — ANDY'S CALL, NOT MINE. Ask him before starting any of these.
+
+Gathered here so a new window does not have to hunt them out of five earlier PICK UP HERE
+blocks. Every one is deliberate: it is recorded, not forgotten.
+
+* **`runElapsed` still spans back-to-back runs** (measured: 3:48 across two Go-Tos). Resetting
+  it per commanded motion would make elapsed / left / % describe ONE leg — but it would also
+  restart the clock at a survey's chained RTH, which is arguably one job. See the note at
+  "ONE THING DELIBERATELY NOT CHANGED" further down.
+* **Three latent defects in the safety ladder**, all found while fixing the drift-in and all
+  pre-existing: the `slow` rung reads the role's speed KEY rather than actual speed;
+  `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
+  "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
+  nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
+* **NEW — no `--mission` flag, so the plan is protected by fourteen hand-written backups
+  rather than by construction.** The leak found on 2026-09-05 is fixed (`amend_plan.py`, which
+  had been flipping his plan speed on every commit), but the shape of the problem is the one
+  `--roc-config` was added for after 198 stale ROCs piled up in his registry: a suite that
+  drives a real console in the app directory writes the operator's real files, and the only
+  thing stopping it is that somebody remembered. **Six other suites start a console with no
+  backup** — measured clean today, which is not the same as safe. A `--mission PATH` flag
+  would make it structural. Until then: **copy and hash `mission.json` before pointing any
+  harness at the app directory**, because it is gitignored and `git status` will never warn
+  anybody.
+* **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
+  report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
+  A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether
+  that is an artefact of driving the page synthetically or something real in the survey
+  path**, and I did not want to report a fault I had not isolated. Recorded because it is the
+  kind of thing that gets rediscovered expensively: if drawing a pattern ever feels sluggish
+  or locks up for HIM, this is the thread to pull, and the first question is whether a real
+  pointer reproduces it at all.
+  **2026-09-05, one data point toward it:** the in-app Browser pane went unresponsive to
+  `javascript_tool` for several calls in a row — including a purely SYNCHRONOUS one — and
+  came back only on a fresh tab. Nothing to do with the survey path, which weakens the "real
+  fault in the survey UI" reading and strengthens "an artefact of driving the pane".
+* **`saveTrack` is a DEBOUNCE, not the throttle its comment claims.** Every push re-arms the
+  800 ms timer, and pushes run at 4 Hz while the boat moves — so the localStorage mirror is
+  only ever written once the boat has been still for 800 ms. Harmless today (the mirror only
+  has to be right when the page reloads, and a reload after a moving boat loses at most the
+  last few seconds of trail), and NOT changed here because it is not what he reported. Noted
+  because it cost me twenty minutes reading a stale mirror as if it were the live trail.
+
+## ⇒ EARLIER (handoff of 2026-09-04 — the gate asks about the endpoint, and the punch sees the chart)
 
 ### ➤ PICK UP HERE
 
@@ -103,31 +216,6 @@ fault. The world is a pile 2 m to starboard of a short final leg, which is the r
 inside the function, so it went red at "it shows the model that was actually built". It evals
 the REAL fold now, not a stub: a stub would keep it green while the thing it stands in for
 was broken.
-
-### ⬜ THE OPEN LIST — ANDY'S CALL, NOT MINE. Ask him before starting any of these.
-
-Gathered here so a new window does not have to hunt them out of four earlier PICK UP HERE
-blocks. Every one is deliberate: it is recorded, not forgotten.
-
-* **`runElapsed` still spans back-to-back runs** (measured: 3:48 across two Go-Tos). Resetting
-  it per commanded motion would make elapsed / left / % describe ONE leg — but it would also
-  restart the clock at a survey's chained RTH, which is arguably one job. See the note at
-  "ONE THING DELIBERATELY NOT CHANGED" further down.
-* **Three latent defects in the safety ladder**, all found while fixing the drift-in and all
-  pre-existing: the `slow` rung reads the role's speed KEY rather than actual speed;
-  `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
-  "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
-  nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
-* **The respawn marker / line** Andy mentioned. `resetForNewArea` ALREADY clears the track, so
-  whatever he is seeing is something else — this one needs him to describe it again first.
-* **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
-  report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
-  A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether
-  that is an artefact of driving the page synthetically or something real in the survey
-  path**, and I did not want to report a fault I had not isolated. Recorded because it is the
-  kind of thing that gets rediscovered expensively: if drawing a pattern ever feels sluggish
-  or locks up for HIM, this is the thread to pull, and the first question is whether a real
-  pointer reproduces it at all.
 
 ## ⇒ EARLIER (handoff of 2026-09-04 — the cards measure what they say they measure)
 

@@ -835,8 +835,29 @@ let center = {lat: 43.0730, lon: -70.7100};   // New Castle, NH - overwritten by
 let haveFix = false, follow = true;
 // The ASV trail persists across a page refresh WITHIN a server session (mirrored to
 // localStorage + restored on load), but is DROPPED when the sim reboots: the stored
-// trail is tagged with the server's boot id, and a mismatch on reconnect clears it
-// (the run is in the session logs, recoverable from there).
+// trail is tagged with the server's boot id, and a mismatch clears it (the run is in
+// the session logs, recoverable from there).
+//
+// ⚠ THE BOOT ID HAS TO BE CHECKED ON EVERY FRAME, NOT JUST THE FIRST. Two other places
+// were written against that rule while `bootChecked` made it a ONCE-PER-PAGE-LOAD test:
+// the server's connect() ("the browser sees the id change and drops the previous trail")
+// and doSpawn ("a new boot_id, which is what drops the old trail"). Neither was true. A
+// mid-session reboot - Spawn, Reset, a port change, a vessel switch - never fired it, so
+// every one of those call sites was leaning on its own PRE-EMPTIVE clearTrack(), fired
+// BEFORE the command that reboots the sim. That races the very frames it is trying to get
+// ahead of, AND IT LOSES: measured on a live console, the old link's next telemetry frame
+// lands 160 ms AFTER the Spawn POST is issued and the new boot's first fix at 449 ms. The
+// trail came back as exactly TWO points - the sub-optimal placement the operator was
+// moving away from, and the new one - drawn as a 5 km blue line between them. Andy, twice:
+// "when respawning delete the initial position and the line. It's unneeded." and "When
+// respawning, do not inscribe the blue line. If I respawn it means the initial placement
+// was sub-optimal and is therefore unnecessary to remember."
+//
+// The clear now happens on the frame that REPORTS the new boot - the first frame that can
+// carry the new position - so a stale fix that landed in between is wiped rather than
+// joined. ONE mechanism covers every path that reboots the sim, and it rests on a server
+// contract already under test both ways (tests/home_spawn.py: an accepted spawn mints a
+// new boot_id, check 7; a REFUSED one leaves it alone, check 6b).
 const TRACK_KEY = "asv_track_v1";
 let savedBootId = null, sessionBootId = null, bootChecked = false;
 function loadTrack(){ const raw = lsGet(TRACK_KEY, null);
@@ -847,10 +868,14 @@ let trackSaveTimer=null;
 function saveTrack(){ clearTimeout(trackSaveTimer);      // throttle writes (trail grows fast)
   trackSaveTimer=setTimeout(()=>lsSet(TRACK_KEY, {bootId:sessionBootId, track}), 800); }
 function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); lsDel(TRACK_KEY); }
-// On the first state after load, drop the restored trail if the server rebooted.
-function checkBoot(id){ sessionBootId = id || null;
-  if(bootChecked) return; bootChecked = true;
-  if(savedBootId && sessionBootId && savedBootId !== sessionBootId){ clearTrack(); render(); } }
+// Drop the trail whenever the boot it belongs to is gone. `prev` is what the trail ON
+// SCREEN was drawn under: the RESTORED trail's stored id on the first frame after load,
+// and the live id on every frame after that. One comparison serves both - a page refresh
+// into a rebooted server, and a reboot under a page that never reloaded.
+function checkBoot(id){
+  const prev = bootChecked ? sessionBootId : savedBootId;
+  sessionBootId = id || null; bootChecked = true;
+  if(prev && sessionBootId && prev !== sessionBootId){ clearTrack(); render(); } }
 let track = loadTrack();                      // restore the trail from the last session
 let asv = null;                              // {lat,lon,hdg}
 
@@ -2253,7 +2278,13 @@ async function addPortHere(){
 // EXTRACTS AROUND THE NEW BASE, not around the boat: the boat's respawn arrives on a later
 // telemetry frame, and the base is where the work is going to happen either way.
 async function resetForNewArea(at, note){
-  track = []; runRoute = null; planIntent=null; runUnsafe = [];
+  // clearTrack(), not `track = []`: the bare assignment left the localStorage mirror and
+  // the throttled save timer alive, so the trail this line meant to drop could be written
+  // back 800 ms later and restored on the next load. (checkBoot() would then clear it on
+  // the first frame - but only because the boot id had moved on too, which is luck, not a
+  // rule.) The boot-id clear is still what actually covers the respawn race here; this is
+  // the immediate one, same as doSpawn's.
+  clearTrack(); runRoute = null; planIntent=null; runUnsafe = [];
   nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
   updateNogoUI(); render();
   const ll = at || (asv ? {lat:asv.lat, lon:asv.lon} : null);
@@ -7219,10 +7250,17 @@ $("#b_estop").onclick = async ()=>{
 // for the current sim boot. The drawn mission/lines stay in the browser; re-Upload to
 // fly them from the new position.
 async function doSpawn(ll){
-  clearTrack();                                   // new boot = new track
-  runRoute = null; planIntent=null; runUnsafe = []; updateMissionCard();
   const r = await cmd("/api/cmd/spawn", {lat: ll.lat, lon: ll.lon});
   if(!r || !r.ok) return;                         // refused (409) or network error - cmd() already said so
+  // ⚠ NOTHING IS THROWN AWAY BEFORE THE REPLY. This block used to run FIRST, so a spawn
+  // the server REFUSED still cost the operator their trail and their drawn route - the
+  // client half of the rule home_spawn.py check 6b holds the server to ("a REFUSED spawn
+  // must power-cycle NOTHING"). It is not the mechanism either way: checkBoot() drops the
+  // trail on the new boot id, which is the only thing that can also wipe a stale fix that
+  // arrives between the click and the respawn. This is here so the screen answers the
+  // click at once rather than a quarter-second later.
+  clearTrack();
+  runRoute = null; planIntent=null; runUnsafe = []; updateMissionCard();
   flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
   render();
 }

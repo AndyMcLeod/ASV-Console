@@ -372,10 +372,14 @@ disarmed, not e-stopped, and idle (otherwise **409**), and it respawns the sim
 boat with the new physics.
 
 **Click-to-spawn:** `POST /api/cmd/spawn {"lat":…,"lon":…}` places the sim boat at a
-point (the **Spawn** button arms this, and the next chart click sends it). The server
+point (**Spawn here** on the chart's right-click menu, at the point the menu was opened
+over — there is no longer a toolbar button to arm first). The server
 runs the *same* power-cycle as Reset with a spawn override, so a fresh `SimVcu` comes
-up there — full energy, SAFE, no plan or home, and a new `boot_id` (which drops the
-trail). The boat is never teleported while live; placing it is a re-boot, which is why
+up there — full energy, SAFE, no plan or home, and a new `boot_id`. **That id is what
+drops the trail**, and the browser now tests it on *every* frame rather than once per page
+load: the clear lands on the frame reporting the new boot, so a stale fix from the old
+link — one arrives ~160 ms after the command, measured — is wiped instead of being joined
+to the new position by a line. The boat is never teleported while live; placing it is a re-boot, which is why
 a real link refuses it (**409**), as it does for a bad or out-of-range lat/lon. The
 active vessel's configured spawn (`vessels/<id>.json` — Erie for `zboat_1800hs`, Lewes
 for `drix08`) is untouched and comes back on the next start or vessel switch.

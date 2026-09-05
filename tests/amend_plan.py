@@ -259,6 +259,18 @@ def _free_port():
 
 PORT = _free_port()
 LOGDIR = tempfile.mkdtemp(prefix="asv_amend_")
+# THIS SUITE AMENDS A PLAN AGAINST A LIVE CONSOLE RUNNING IN THE APP DIRECTORY, so it
+# writes the OPERATOR'S OWN mission.json - measured 2026-09-05: every run of the hook
+# flipped his plan speed from `low` to `high` and left it that way. mission.json is
+# gitignored, so `git status` never says a word about it. Fourteen of the twenty-one
+# suites that start a console already back it up; this was one of the seven that did not.
+# BYTES, not text mode: this file is CRLF on disk and a text-mode round trip rewrites
+# every line ending of a file the suite is only meant to leave alone.
+MPATH = os.path.join(APP, "mission.json")
+MISSION_BAK = None
+if os.path.exists(MPATH):
+    with open(MPATH, "rb") as _f:
+        MISSION_BAK = _f.read()
 proc = subprocess.Popen(
     [sys.executable, os.path.join(APP, "asv_console.py"), "--port", str(PORT),
      "--sim", "--browser", "none", "--no-log", "--no-ais-service"],
@@ -385,6 +397,9 @@ finally:
         proc.wait(timeout=5)
     except Exception:
         proc.kill()
+    if MISSION_BAK is not None:              # never leave the operator's plan changed
+        with open(MPATH, "wb") as _f:
+            _f.write(MISSION_BAK)
 
 print("")
 print(("%d CHECK(S) FAILED" % fails) if fails else "all checks pass")
