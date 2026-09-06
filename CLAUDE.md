@@ -55,9 +55,45 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-05 — a region hop is a transit, not a very long turn)
+## ⇒ START HERE (handoff refreshed 2026-09-05 — a region hop is a transit, and the vessel card stops repeating the status bar)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): EIGHT ROWS OFF THE VESSEL STATUS CARD.** Andy: *"From Vessel Status
+card remove: Speed, Heading, Course, From Home, Pitch, Roll, Battery, Autonomy. These are
+repeated elsewhere."* All eight are on the **persistent top status bar**, which is always up
+while this card can be closed — and six of them were written by the *same statement* as their
+`p_` twin, so they were two views of one value and this was the closable one. What is left is
+what the bar does not carry: the environment (wind / sea / set / current / water level), the
+keep-out model, the Mission block and comms.
+
+**⚠ ONE OF THE EIGHT WAS NOT PURELY A REPEAT, AND DELETING IT OUTRIGHT WOULD HAVE COST A REAL
+READOUT.** The BATT/FUEL pill shows the headline — `100%` or `12.4 V` — but the card's row also
+carried **litres, endurance (h) and range (nm)**, and `endurance_h` / `range_nm` appeared
+**nowhere else in the page**. On a diesel vessel that is the boat's remaining hours and miles,
+which is not what "repeated elsewhere" covers. They are the pill's **tooltip** now
+(`Fuel: 250 L (100%) · 52.1 h · 567.9 nm`), so nothing was lost with the row. Verified live:
+all eight pills updating, the Mission block intact, no console errors.
+
+**⬜ AND TWO THINGS I COULD NOT EXPLAIN, BOTH RECORDED RATHER THAN GUESSED AT:**
+
+* **A `POST /api/cmd/speed` returned 500** — `[WinError 5] Access is denied:
+  'mission.json.part' -> 'mission.json'`. `save_mission` is already atomic and locked
+  in-process, so this is a TRANSIENT external lock (indexer / AV) on `os.replace`, and no
+  other console was running (checked: one PID, one port). It self-cleared on the next frame.
+  **The part that matters is not the lock, it is that a persistence failure fails the
+  COMMAND**: the governor's speed for the current role was simply lost. On the water that is
+  the boat not getting its survey speed because a file was busy. On the open list.
+* **`mission.json` AND `ports.json` were both altered during this session, and I did not
+  isolate what did it.** His plan came back as a 94-waypoint Eastport survey where he had a
+  122-waypoint New Castle one, and the active base had moved to `eastport_me`. Both restored —
+  the plan from a copy hashed before any console ran this session, the base to
+  `new_castle_nh` (**an inference from the first screenshot of the session, not a record**).
+  **The committed suites are NOT the cause and that is measured, not assumed:** a full 61-suite
+  hook run leaves `mission.json` byte-identical, and the only two suites that POST `/api/ports`
+  leave the active base unchanged. So it came from something in my own tooling window, and
+  saying which would be a guess. Recorded because the next person to lose his plan should know
+  the suites have already been cleared.
 
 **NEWEST (this commit): THE HOP TO THE NEXT COVERAGE REGION WAS BEING FLOWN AT THE TURN
 SPEED.** Andy:
@@ -153,6 +189,20 @@ blocks. Every one is deliberate: it is recorded, not forgotten.
   would make it structural. Until then: **copy and hash `mission.json` before pointing any
   harness at the app directory**, because it is gitignored and `git status` will never warn
   anybody.
+  **⚠ AND HASH `ports.json` TOO — it is the same class and I learned it the expensive way the
+  same day.** Both files were altered during the session and the ACTIVE OPERATING BASE had
+  moved from New Castle to Eastport; because only `mission.json` was being hashed, the change
+  was invisible until a console opened over the wrong water. `ports.json` is gitignored as
+  well. The console has `--ports-config` for exactly this and no harness of mine was using it.
+  The rule to carry: **hash every gitignored file in the app directory before and after, not
+  the one you remembered.**
+* **NEW — a persistence failure fails the COMMAND.** `POST /api/cmd/speed` returned **500** on
+  `[WinError 5] Access is denied: 'mission.json.part' -> 'mission.json'` — a transient external
+  lock on `os.replace` (`save_mission` is already atomic and in-process locked; no second
+  console was running). The command's *effect* was lost with it, so the governor's speed for
+  the current role never reached the boat. Two separable questions, both Andy's: should the
+  save RETRY on a Windows lock, and should a command whose action succeeded report 500 because
+  the plan could not be persisted?
 * **⚠ A TAB HANG I COULD NOT EXPLAIN, AND SAID SO.** While trying to reproduce the Lines-card
   report through the survey UI on 2026-09-04, I wedged the browser tab several times placing
   A / B / C with SYNTHETIC clicks (and zooming the same way). **I never established whether

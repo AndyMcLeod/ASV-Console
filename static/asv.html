@@ -593,18 +593,21 @@
   <div class="vcard" id="vcard">
     <div class="vhead" id="vcardHead"><span>VESSEL STATUS</span><span class="vclose" id="vcardClose" title="Hide (click VESSEL to bring back)">&times;</span></div>
     <div class="vbody">
-      <div class="vrow"><span class="vk">Autonomy</span><span class="vv" id="v_auto">--</span></div>
-      <div class="vrow"><span class="vk">Speed</span><span class="vv" id="v_sog">--</span></div>
-      <div class="vrow"><span class="vk">Heading</span><span class="vv" id="v_hdg">--</span></div>
-      <div class="vrow"><span class="vk">Course (COG)</span><span class="vv" id="v_cog" title="Course over ground — actual track direction (heading minus crab)">--</span></div>
-      <div class="vrow"><span class="vk">From home</span><span class="vv" id="v_home" title="Bearing and range from Home to the ASV">--</span></div>
-      <div class="vrow"><span class="vk">Pitch</span><span class="vv" id="v_pitch">--</span></div>
-      <div class="vrow"><span class="vk">Roll</span><span class="vv" id="v_roll">--</span></div>
+      <!-- ⚠ EIGHT ROWS WERE REMOVED FROM HERE (Andy, 2026-09-05: "remove: Speed, Heading,
+           Course, From Home, Pitch, Roll, Battery, Autonomy. These are repeated elsewhere.")
+           Every one of them is on the PERSISTENT TOP STATUS BAR, which is always visible
+           while this card can be closed: SOG, HDG, COG, HOME→, PITCH, ROLL, BATT and the
+           autonomy pill. Six were written by the same statement as their p_ twin, so they
+           could not disagree; they were two views of one value and this was the closable one.
+           What is left here is what the top bar does NOT carry: the environment the boat is
+           in (wind / sea / set / current / water level), the keep-out model, the mission
+           block and comms. Don't re-add a row here that a pill already shows.
+           THE ONE THING THAT WAS NOT A DUPLICATE went to the BATT pill's tooltip - see the
+           energy gauge in onState. -->
       <div class="vrow"><span class="vk">Wind</span><span class="vv" id="v_wind" title="Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Sea</span><span class="vv" id="v_sea" title="Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only.">--</span></div>
       <div class="vrow"><span class="vk">Set / crab</span><span class="vv" id="v_set" title="Environmental set (leeway) the boat is fighting, and the crab angle (heading minus course made good).">--</span></div>
       <div class="vrow"><span class="vk">Current</span><span class="vv" id="v_current" title="Surface current FORECAST at the vessel's own position, from a NOAA Operational Forecast System (dbofs by default). Set is where the water GOES, degrees true. This is a model prediction for real water — not a measurement, and not the same thing as the Set/crab row above, which is the leeway the boat is actually fighting.">--</span></div>
-      <div class="vrow"><span class="vk" id="v_batt_k">Battery</span><span class="vv" id="v_batt">--</span></div>
       <div class="vrow"><span class="vk">Water lvl</span><span class="vv" id="v_water" title="Live water level above chart datum, added to charted depths">--</span></div>
       <!-- Nogo: text + tooltip are both written by updateNogoUI() -> nogoReadout(), which
            names the STATE (reading / n zones / clear water / no chart) rather than a bare
@@ -7495,53 +7498,57 @@ function onState(s){
   const auto = (s.autonomy||"safe").toUpperCase();
   const ap = $("#p_autonomy");
   ap.className = "pill state " + (s.estop?"estop":(s.autonomy==="auto"?"auto":(s.armed?"armed":"safe")));
+  // ONE WRITE PER VALUE NOW. The vessel card's Autonomy / Speed / Heading / Course /
+  // From-home / Pitch / Roll rows are gone (see the card markup): they were the same value
+  // written twice in the same statement, on the card the operator can close, beside a pill
+  // that is always up.
   $("#autonomy").textContent = s.estop ? "E-STOP" : auto;
-  $("#v_auto").textContent = s.estop ? "E-STOP" : auto;
 
   $("#p_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
   $("#p_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
   // (the TIME pill is driven by tickClock() every second — local · UTC)
-  $("#v_sog").textContent = st.sog_kn!=null ? st.sog_kn+" kn" : "--";
-  $("#v_hdg").textContent = st.heading_deg!=null ? st.heading_deg+"°" : "--";
-  const pitchTxt = st.pitch_deg!=null ? st.pitch_deg+"°" : "--";
-  const rollTxt = st.roll_deg!=null ? st.roll_deg+"°" : "--";
-  $("#v_pitch").textContent = pitchTxt; $("#p_pitch").textContent = pitchTxt;
-  $("#v_roll").textContent = rollTxt; $("#p_roll").textContent = rollTxt;
+  $("#p_pitch").textContent = st.pitch_deg!=null ? st.pitch_deg+"°" : "--";
+  $("#p_roll").textContent  = st.roll_deg!=null  ? st.roll_deg+"°"  : "--";
 
   // course over ground + bearing / range from home to the ASV
-  const cogTxt = st.cog_deg!=null ? Math.round(st.cog_deg)+"°" : "--";
-  $("#p_cog").textContent = cogTxt; $("#v_cog").textContent = cogTxt;
+  $("#p_cog").textContent = st.cog_deg!=null ? Math.round(st.cog_deg)+"°" : "--";
   let homeTxt = "--";
   if(S.home && st.lat_deg!=null && st.lon_deg!=null){
     const brg = azTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
     const rng = distTo({lat:S.home.lat,lon:S.home.lon}, {lat:st.lat_deg,lon:st.lon_deg});
     homeTxt = String(Math.round(brg)%360).padStart(3,"0")+"° · "+fmtDist(rng);
   }
-  $("#p_home").textContent = homeTxt; $("#v_home").textContent = homeTxt;
+  $("#p_home").textContent = homeTxt;
 
   // battery
   // Energy gauge: diesel vessels show FUEL (% · endurance · range); electric
   // vessels show BATT (V · %). Which one is driven by the vessel's power.type.
-  const pbk = $("#p_batt_k"), vbk = $("#v_batt_k");
-  const pb = $("#p_batt"), vb = $("#v_batt");
+  // ⚠ THE VESSEL CARD'S ENERGY ROW IS GONE, AND IT WAS THE ONLY ONE OF THE EIGHT THAT WAS
+  // NOT PURELY A DUPLICATE. The pill shows the headline - FUEL % or BATT V - but the row
+  // also carried the LITRES, the ENDURANCE and the RANGE, and `endurance_h` / `range_nm`
+  // appeared NOWHERE else in the page. Deleting the row outright would have taken a diesel
+  // vessel's remaining hours and miles off the console altogether, which is not what
+  // "repeated elsewhere" covers. They are the pill's TOOLTIP now, so the long form is one
+  // hover from the short one and nothing was lost with the row.
+  const pbk = $("#p_batt_k"), pb = $("#p_batt"), pill = $("#battPill");
+  const OVR_TIP = "Click to toggle the energy-full override (report the battery/fuel as full "
+                + "and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode.";
   if(st.energy_type==="fuel" || st.fuel_l!=null){
     const fstate = st.fuel_state || "unknown";
     const fcls = fstate==="critical"?"critical":fstate==="warn"?"warn":fstate==="ok"?"ok":"";
     if(pbk) pbk.textContent = "FUEL";
-    if(vbk) vbk.textContent = "Fuel";
     pb.textContent = (st.fuel_pct!=null ? st.fuel_pct+"%" : "--"); pb.className = fcls;
     let vtxt = (st.fuel_l!=null ? st.fuel_l+" L" : "--") + (st.fuel_pct!=null ? " ("+st.fuel_pct+"%)" : "");
     if(st.endurance_h!=null) vtxt += " · " + st.endurance_h + " h";
     if(st.range_nm!=null)    vtxt += " · " + st.range_nm + " nm";
-    vb.textContent = vtxt; vb.className = "vv " + fcls;
+    if(pill) pill.title = "Fuel: " + vtxt + "\n" + OVR_TIP;
   } else {
     const bstate = st.battery_state || "unknown";
     const bcls = bstate==="critical"?"critical":bstate==="warn"?"warn":bstate==="ok"?"ok":"";
     if(pbk) pbk.textContent = "BATT";
-    if(vbk) vbk.textContent = "Battery";
     const btxt = st.battery_v!=null ? (st.battery_v+" V" + (st.battery_pct!=null?" ("+st.battery_pct+"%)":"")) : "on RC";
     pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
-    vb.textContent = btxt; vb.className = "vv " + bcls;
+    if(pill) pill.title = "Battery: " + btxt + "\n" + OVR_TIP;
   }
   // energy-override: the energy pill turns MAGENTA while the override is on (click it to toggle)
   $("#battPill").classList.toggle("ovr", !!st.unlimited_energy);
