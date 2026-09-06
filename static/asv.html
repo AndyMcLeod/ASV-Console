@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>ASV Command</title>
+<title>ASV Status</title>
 <style>
   :root{
     --abyss:#05080c; --hull:#0a1119; --line:#16222e; --line2:#22323f;
@@ -313,7 +313,7 @@
   <div class="vminipill" id="aisReopen" title="Show AIS traffic table" style="display:none;right:14px;top:120px;">AIS &#10287;</div>
 
   <div class="topbar">
-    <div class="brand"><b>ASV</b> Command</div>
+    <div class="brand"><b>ASV</b> Status</div>
     <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current centre as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
@@ -601,8 +601,18 @@
     <button class="cbtn reset" id="b_reset" title="Sim power-cycle: full energy, boat back at spawn, all plans/lines cleared, SAFE — then reloads the page fresh (cache-busting). As if shut down and restarted.">Reset</button>
   </div>
 
+  <!-- MISSION STATUS (Andy, 2026-09-06: "Rename Vessel status Card to Mission Status").
+       ⚠ THE NAME NOW COLLIDES WITH THE CARD'S OWN "Mission" SECTION HEAD below - the card is
+       MISSION STATUS and one of its three sections is Mission. That is a readout an operator
+       has to disambiguate by position, which is the kind of thing this console has otherwise
+       been careful about, so it is flagged rather than silently resolved: renaming the inner
+       section (to "Run", say) is a second decision and belongs to Andy, not to the rename he
+       actually asked for. The ELEMENT ids are unchanged (#vcard / .vcard / #vReopen): they
+       are referenced from CSS, the resize registry, the drag registry, the controls-window
+       hide rule and four suites, and churning them to chase a label is how a rename becomes
+       a regression. -->
   <div class="vcard" id="vcard">
-    <div class="vhead" id="vcardHead"><span>VESSEL STATUS</span><span class="vclose" id="vcardClose" title="Hide (click VESSEL to bring back)">&times;</span></div>
+    <div class="vhead" id="vcardHead"><span>MISSION STATUS</span><span class="vclose" id="vcardClose" title="Hide (click MISSION to bring back)">&times;</span></div>
     <div class="vbody">
       <!-- ⚠ EIGHT ROWS WERE REMOVED FROM HERE (Andy, 2026-09-05: "remove: Speed, Heading,
            Course, From Home, Pitch, Roll, Battery, Autonomy. These are repeated elsewhere.")
@@ -670,7 +680,7 @@
       </div>
     </div>
   </div>
-  <div class="vminipill" id="vReopen" title="Show vessel status">VESSEL</div>
+  <div class="vminipill" id="vReopen" title="Show mission status">MISSION</div>
 
   <div class="cfmwrap" id="confirm">
     <div class="cfmbox">
@@ -819,7 +829,9 @@ document.body.classList.add("ui-" + UIROLE);
   // the context menu belongs to the CHART: it is opened by a right-click on #map (hidden
   // here) and every row acts on a chart coordinate, so there is nothing for it to act on.
   "body.ui-controls #chartMenu{display:none!important;}"+
-  // THE V.VESSEL-STATUS CARD BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02).
+  // THE #vcard BELONGS TO THE CHART WINDOW AND STAYS THERE (Andy, 2026-08-02). It reads
+  // MISSION STATUS now (renamed 2026-09-06); the header quoted below is what it read then,
+  // and is left as it was said rather than back-dated to the current name.
   // It used to be bridged, so the SAME card appeared in BOTH windows - as "V.VESSEL STATUS"
   // on the chart and as a "Vessel" uicard here, with nine rows trimmed out to stop it
   // duplicating the top status bar. Two copies of one card is not a second view, it is a

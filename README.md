@@ -154,7 +154,7 @@ be segmented into "these pings are coverage on line 7" and "these were acquired 
 there" without re-deriving the classification from the track. One classifier, one answer:
 anything that needs it reads `currentActivity()` rather than deciding for itself.
 
-**Intent — what, why, and what next.** The bottom section of the **Vessel Status** card,
+**Intent — what, why, and what next.** The bottom section of the **Mission Status** card,
 answering the question a moving track raises: *why is it doing that?* Three parts, updated
 every telemetry frame. It was its own draggable pop-out behind an `INTENT` chip until
 2026-09-05; the chip and the pop-out are gone, and it sits under the Mission block on the
@@ -222,7 +222,7 @@ a re-derivation would describe the console's current state rather than the route
 flown. A plan committed before the page was loaded therefore says so outright rather than
 showing an empty section.
 
-**Surface current** (vessel card, `Current` row). The console also reads the surface
+**Surface current** (Mission Status card, `Current` row). The console also reads the surface
 current **forecast at the boat's own position**, from a NOAA **Operational Forecast
 System** — `dbofs` (Delaware Bay) by default, `--currents-ofs` for a hull working
 elsewhere. Set is **where the water goes**, degrees true. Unlike the wind rows this is
@@ -295,7 +295,7 @@ window runs all the logic and owns the chart, the controls window mirrors its co
 and forwards your clicks and edits back. You still draw on the main window's chart. In
 the controls window the buttons become a vertical column on the left and each panel or
 table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
-and restored next session. The **vessel-status card stays on the chart window** — it is
+and restored next session. The **Mission Status card stays on the chart window** — it is
 not mirrored, because two copies of one card is a second place to look rather than a
 second view; the chart window has the card, the top bar has the quick read, and the
 controls window is the toolbar. **Every card on the chart window is resizable** —

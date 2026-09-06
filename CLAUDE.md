@@ -55,9 +55,37 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-05 — the Intent card is now a section of the Vessel Status card)
+## ⇒ START HERE (handoff refreshed 2026-09-06 — MISSION STATUS and ASV STATUS)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): TWO RENAMES.** Andy: *"Rename Vessel status Card to Mission Status.
+Rename the top status bar from ASV Command to ASV Status."* Done, and followed through every
+surface the old names reached rather than only the two he could see:
+
+* the card header, **and** the close button's tooltip (*"Hide (click MISSION to bring back)"*)
+  **and** the mini-pill that brings it back, which used to read `VESSEL` — a pill still saying
+  VESSEL for a card called MISSION STATUS is the rename half-done. Close→reopen re-verified.
+* the `.brand` label, and the `<title>` beside it (only what shows before `document.title` is
+  set per window role, but it is the same string and would have been the last place anyone
+  looked for it).
+* `README.md` (three references) and `tools/build_tech_manual.js`'s section index.
+
+**⚠ THE ELEMENT IDs ARE UNCHANGED — `#vcard`, `.vcard`, `#vReopen`, `#vcardHead`.** They are
+referenced from CSS, the resize registry, the drag registry, the controls-window hide rule and
+four suites. Churning ids to chase a label is how a rename becomes a regression; the id is not
+the name.
+
+**⚠ AND THE NEW NAME COLLIDES WITH THE CARD'S OWN "Mission" SECTION HEAD.** The card is
+MISSION STATUS and one of its three sections is *Mission* (the other two being the environment
+rows and *Intent*). That is a readout an operator has to disambiguate by position. It is
+FLAGGED, in the markup and here, and not silently resolved: renaming the inner section (to
+*Run*, say) is a second decision and belongs to Andy, not to the rename he asked for.
+
+**⬜ TWO HISTORICAL MENTIONS DELIBERATELY LEFT SAYING "VESSEL STATUS":** the comment beside the
+controls-window hide rule quotes the header as it read in 2026-08, and the Intent section's
+markup quotes Andy's own words from 2026-09-05. **A quotation is altered in brackets, never
+silently** — the first now carries a line saying what the card is called today.
 
 **NEWEST (this commit): INTENT MERGED INTO THE VESSEL STATUS CARD.** Andy: *"Merge the Intent
 card with the Vessel Status card creating an Intent section in the lower section of the Vessel
