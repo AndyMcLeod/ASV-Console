@@ -118,6 +118,19 @@
   .vcard .vbar{height:5px;border-radius:2px;background:var(--line2);margin:4px 0 3px;overflow:hidden;}
   .vcard .vbar i{display:block;height:100%;background:var(--ink-faint);width:0%;}
   .vcard .vdetail{font-family:var(--sans);font-size:9px;color:var(--ink-faint);line-height:1.3;white-space:normal;word-break:break-word;}
+  /* INTENT, moved in from its own 310px pop-out. THAT PANEL CARRIED `font:11px Consolas` ON
+     ITSELF, and renderIntent's rows set only colours - so in a card that declares a
+     font-size nowhere except on .vrow, the whole section inherited the DOCUMENT's 16px and
+     rendered enormous. The card is also 196px against the pop-out's 310, so the rows stack
+     key-over-value here rather than sitting side by side: at this width a 74px label column
+     left about 100px for "TRANSITING - to the commanded point". Overriding the inline
+     min-width needs !important, which is why these three rules are shaped the way they are -
+     the alternative was editing renderIntent's markup, and its rows are what four checks in
+     speed_modes and clearance_guard read. */
+  .vcard #v_intent{font-size:11px;line-height:1.35;}
+  .vcard #v_intent > div > div{flex-direction:column;gap:0!important;margin-top:3px;}
+  .vcard #v_intent > div > div > span:first-child{min-width:0!important;font-size:9px;
+    text-transform:uppercase;letter-spacing:.06em;}
   /* RESIZABLE CARDS - ONE mechanism for the chart window, the same shape the controls
      window already uses for its .uicard wrappers. `resize` needs a non-visible overflow to
      take effect; the card becomes a flex COLUMN so a nominated body absorbs the dragged
@@ -271,10 +284,9 @@
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
   </div>
-  <div id="intentPanel" style="position:absolute;z-index:40;display:none;right:14px;top:96px;width:310px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
-    <div id="intentPanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#9678; Intent &mdash; what and why</div>
-    <div id="intentBody" style="max-height:60vh;overflow:auto;padding:8px 10px;"></div>
-  </div>
+<!-- The INTENT pop-out and its INTENT chip are gone: Intent is now a section at the foot of
+       #vcard (Andy, 2026-09-05), the same move the Mission readout made for the same reason -
+       the operator was reading the boat on one card and what it intends on another. -->
   <div id="lineTablePanel" style="position:absolute;z-index:40;display:none;left:14px;bottom:44px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
@@ -341,7 +353,6 @@
     <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
-    <button class="ctl small" id="intentBtn" title="Intent: what the vessel is doing right now, WHY the planner chose it, and what it intends next. The reasoning is captured WITH each plan when it is committed - not re-derived later - so it describes the route actually being flown.">INTENT</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
     <button class="ctl small" id="srcBtn" title="Chart source: the ENC's title block — EVERY cell in view (the vessel's own marked), scale band, sounding units and datum (with the live water-level correction), and the ZONE OF CONFIDENCE + survey dates under the vessel right now.">SRC</button>
   </div>
@@ -632,6 +643,25 @@
         <div class="vrow"><span class="vk">Survey</span><span class="vv" id="v_surveydur" title="Estimated survey run time (coverage lines + inter-line transits) at the plan speed, from the last Punch Out">--</span></div>
         <div class="vrow"><span class="vk">Approach</span><span class="vv" id="v_approach" title="Estimated transit time from the boat to the survey start (straight-line; the real approach is ENC-routed at Upload)">--</span></div>
         <div class="vdetail" id="mi_status">--</div>
+      </div>
+      <!-- INTENT: what the vessel is doing, WHY the planner chose it, and what it intends
+           next. It was its own draggable pop-out with an INTENT chip on the control strip;
+           Andy, 2026-09-05: "Merge the Intent card with the Vessel Status card creating an
+           Intent section in the lower section of the Vessel Status card. Remove the Intent
+           chip." Same move the Mission block made above, for the same reason - the boat and
+           what it intends were on two cards the operator had to keep apart on the chart.
+           The BODY is untouched: renderIntent() still writes #intentBody and still styles
+           its own rows, so the reasoning reads exactly as it did. Unlike Mission this
+           section is always present, because its empty state is a useful sentence rather
+           than a blank ("No plan committed. Draw a survey, or command a Go-To..."). -->
+      <div class="vsec" id="v_intent">
+        <div class="vsechead">Intent — what and why</div>
+        <!-- NO max-height/overflow of its own. The pop-out had 60vh because it WAS the
+             scroller; in the card the .vcard is already one (it scrolls whenever a Mission
+             block is up), and nesting a second scroller inside it gives the operator two
+             bars and a section that can be scrolled to its end while the card below it is
+             still hidden. One scroller: the card. -->
+        <div id="intentBody"></div>
       </div>
       <div class="vcomms">
         <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
@@ -1559,7 +1589,10 @@ function offTrack(rr, idx){
 // The live half: NOW and NEXT are DERIVED every tick from the route the boat is actually
 // following plus its reported waypoint index. Only the WHY is remembered.
 function renderIntent(){
-  const panel=$("#intentPanel"); if(!panel || panel.style.display==="none") return;
+  // The gate is the CARD's visibility now, not a pop-out's: Intent is a section of #vcard.
+  // Kept rather than dropped because this builds a page of HTML every telemetry frame, and
+  // the vessel card is closable - there is no point paying for it while nothing can read it.
+  const card=$("#vcard"); if(!card || card.style.display==="none") return;
   const el=$("#intentBody"); if(!el) return;
   const st=(S&&S.status)||{}, run=S&&S.run;
   const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
@@ -5986,8 +6019,6 @@ $("#zin").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClien
 $("#zout").onclick = ()=>{ const {w,h}=viewSize(); const r=mapEl.getBoundingClientRect(); zoomAt(-1, r.left+w/2, r.top+h/2); };
 $("#follow").onclick = ()=>{ follow=!follow; setFollow(); if(follow && asv){ center={lat:asv.lat,lon:asv.lon}; render(); } };
 $("#clear").onclick = ()=>{ clearTrack(); render(); };
-$("#intentBtn").onclick = ()=>{ const el=$("#intentPanel"); const show=el.style.display==="none";
-  showPanel(el, show); $("#intentBtn").classList.toggle("on",show); if(show) renderIntent(); };
 $("#linesBtn").onclick = ()=>{ const el=$("#lineTablePanel"); const show=el.style.display==="none";
   showPanel(el, show); $("#linesBtn").classList.toggle("on",show); if(show) renderLineTable(); };
 $("#aisBtn").onclick = ()=> setAIS(!aisShow);
@@ -6978,14 +7009,10 @@ makeCardsResizable();      // chart-window cards: one resize mechanism, one key
 const SURVPANEL_KEY  = "asv_survpanel_pos_v1";
 const LINESPANEL_KEY = "asv_linespanel_pos_v1";
 const AISPANEL_KEY   = "asv_aispanel_pos_v1";
-const INTENTPANEL_KEY = "asv_intentpanel_pos_v1";
 const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
-const intentEl    = $("#intentPanel"),    intentHead    = $("#intentPanelHead");
 makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
-// ONE drag mechanism, as panel_drag enforces - the intent card is a pop-out like the rest
-makeDraggablePanel(intentEl, intentHead, {key: INTENTPANEL_KEY, unanchor: "right"});
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
 makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
                                                 ignore: "#aisTableClose"});

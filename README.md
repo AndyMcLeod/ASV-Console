@@ -154,9 +154,14 @@ be segmented into "these pings are coverage on line 7" and "these were acquired 
 there" without re-deriving the classification from the track. One classifier, one answer:
 anything that needs it reads `currentActivity()` rather than deciding for itself.
 
-**Intent (`INTENT`) — what, why, and what next.** A draggable card that answers the
-question a moving track raises: *why is it doing that?* Three sections, updated every
-telemetry frame:
+**Intent — what, why, and what next.** The bottom section of the **Vessel Status** card,
+answering the question a moving track raises: *why is it doing that?* Three parts, updated
+every telemetry frame. It was its own draggable pop-out behind an `INTENT` chip until
+2026-09-05; the chip and the pop-out are gone, and it sits under the Mission block on the
+card that already carries the boat, for the same reason the Mission readout moved there —
+the boat and what it intends were on two cards the operator had to keep apart on the chart.
+It is a long readout in a narrow card, so **the card scrolls** (its header sticks, and the
+card is resizable and remembers its size):
 
 * **Now** — **what it is doing** (surveying or transiting, and which line or why), the
   mode beneath that, which waypoint of how many and what that waypoint is, bearing and

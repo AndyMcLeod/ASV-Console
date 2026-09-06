@@ -55,9 +55,44 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-05 — a region hop is a transit, and the vessel card stops repeating the status bar)
+## ⇒ START HERE (handoff refreshed 2026-09-05 — the Intent card is now a section of the Vessel Status card)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): INTENT MERGED INTO THE VESSEL STATUS CARD.** Andy: *"Merge the Intent
+card with the Vessel Status card creating an Intent section in the lower section of the Vessel
+Status card. Remove the Intent chip."* Done — the pop-out, the `INTENT` chip, its toggle
+handler, its drag registration and its stored position (`asv_intentpanel_pos_v1`) are all
+gone; `#intentBody` now lives in a `.vsec` under the Mission block. **`renderIntent()`'s body
+is untouched on purpose** — four checks in `speed_modes` and `clearance_guard` read its
+markup, and the reasoning reads exactly as it did. Only its GATE changed: it was keyed on the
+pop-out's visibility, and is keyed on the card's now (kept, not dropped — it builds a page of
+HTML every telemetry frame and the card is closable).
+
+**⚠ IT LOOKED WRONG THE FIRST TIME AND THE CAUSE WAS INHERITED STYLING, WHICH IS WORTH
+KNOWING BEFORE MOVING THE NEXT PANEL IN.** The pop-out carried `font:11px Consolas` **on
+itself**, and `renderIntent`'s rows set only colours. `.vcard` declares a font-size **nowhere
+except on `.vrow`** — so the whole section inherited the DOCUMENT's 16px and rendered
+enormous. Three scoped rules fix it (`!important` on two, because the row styles are inline).
+
+**AND THE LAYOUT WAS CHOSEN BY MEASUREMENT, NOT BY EYE** — see [[verify-the-ink-not-the-box]]
+in spirit:
+
+* **Stacked key-over-value, because it is SHORTER.** Measured in the live card: stacked
+  660 px, side-by-side 727 px. The pop-out was 310 px wide and the card is 196 px, so a 74 px
+  label column left ~100 px for *"TRANSITING — to the commanded point"*.
+* **The card was NOT widened, because widening barely pays.** 196 → 310 px moves the section
+  only 660 → 526 px and still leaves 352 px below the fold, while costing chart width. The
+  content is long because it has many rows, not because the column is narrow.
+* **One scroller, not two.** My first cut gave `#intentBody` its own `max-height:34vh` copied
+  from the pop-out's 60vh — but `.vcard` is already a scroller, and nesting a second one lets
+  a section be scrolled to its end while the card below it is still hidden.
+
+**⬜ THE COST, SAID PLAINLY: the card now has ~549 px below its fold with a run up**, so COMMS
+sits under the scroll. That is the card's documented behaviour (*"the body scrolls rather than
+running off the bottom of the chart"*) and it is resizable with a persisted size — but if he
+wants COMMS visible at a glance, the options are to trim what Intent prints or to put Intent
+last, and both are his call.
 
 **NEWEST (this commit): EIGHT ROWS OFF THE VESSEL STATUS CARD.** Andy: *"From Vessel Status
 card remove: Speed, Heading, Course, From Home, Pitch, Roll, Battery, Autonomy. These are
@@ -195,7 +230,19 @@ blocks. Every one is deliberate: it is recorded, not forgotten.
   was invisible until a console opened over the wrong water. `ports.json` is gitignored as
   well. The console has `--ports-config` for exactly this and no harness of mine was using it.
   The rule to carry: **hash every gitignored file in the app directory before and after, not
-  the one you remembered.**
+  the one you remembered.** (`git ls-files --others --ignored --exclude-standard` enumerates
+  exactly the files nothing else will warn you about.)
+  **⚠⚠ AND IT HAPPENED A SECOND TIME THE SAME DAY, WITH NO CONSOLE RUNNING.** `mission.json`
+  was replaced by an EMPTY plan (281 bytes) at 22:59, ten minutes after a commit, during a
+  stretch in which nothing but greps, file edits and pure-JS suites ran. Restored from the
+  pre-session copy. **The suites are cleared, and that is measured rather than assumed:** all
+  21 console-starting suites bisected individually leave it byte-identical (including the
+  three — `data_routes`, `log_routes`, `roc_persist` — that MENTION `mission.json` without
+  ever restoring it, which the first bisect had wrongly taken as proof they back it up), every
+  suite that does restore terminates its console BEFORE restoring, and two full 61-suite hook
+  runs left the file untouched. **So something outside the suites is doing it and I could not
+  identify what.** Treat any session in this directory as capable of eating the plan: copy it
+  first, hash it after, and do not assume a clean `git status` means anything here.
 * **NEW — a persistence failure fails the COMMAND.** `POST /api/cmd/speed` returned **500** on
   `[WinError 5] Access is denied: 'mission.json.part' -> 'mission.json'` — a transient external
   lock on `os.replace` (`save_mission` is already atomic and in-process locked; no second
