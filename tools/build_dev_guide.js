@@ -39,10 +39,10 @@ c.push(P("Three deliberate constraints shape everything, and each one buys somet
 c.push(TBL(["Constraint", "Buys"], [
   ["Python STANDARD LIBRARY ONLY on the server", "Runs anywhere Python does. No dependency resolution on a field laptop, no supply chain, no version drift."],
   ["NO BUILD STEP for the client", "No bundler, no transpile, no install. The page and its modules are served as written — and a harness can call the real shipping functions, not a copy of them."],
-  ["Every vessel parameter in a DATA FILE", "The console studies behaviour across vessel types. Adding a vessel is a data change; no code knows a hull's numbers."],
+  ["Every vessel parameter in a DATA FILE", "The console studies behavior across vessel types. Adding a vessel is a data change; no code knows a hull's numbers."],
 ], [3000, 6360]));
 c.push(P("These are not stylistic preferences. They are the reason the console can be deployed to an operating area by copying a directory, and the reason a regression harness can exercise browser code in plain Node with no toolchain."));
-c.push(NOTE("THE COST, STATED HONESTLY", "The client page is large, and it will keep growing. The trade is accepted deliberately: no build step and directly testable shipping code, against file size. Do not introduce a bundler to solve a problem that is really about organisation."));
+c.push(NOTE("THE COST, STATED HONESTLY", "The client page is large, and it will keep growing. The trade is accepted deliberately: no build step and directly testable shipping code, against file size. Do not introduce a bundler to solve a problem that is really about organization."));
 c.push(H2("1.1  The client's modules"));
 c.push(P("The page began as one file in one global scope. Its lowest layer now lives in `static/js/` as ES modules, loaded by the page with `<script type=\"module\">` and served by a whitelisted route — a basename from one directory with one extension, guarded exactly like the session-log route, because both turn a URL into a file read."));
 c.push(TBL(["Module", "Holds", "Depends on"], [
@@ -72,7 +72,7 @@ c.push(P("Where a capability is not implemented, the code says so and refuses. T
 c.push(H1("3  The development loop"));
 c.push(CODE([
   "1.  Read the maintainer notes' START HERE section. It is the authoritative handoff.",
-  "2.  Reproduce the behaviour. If it came from an operator, reproduce THEIR case.",
+  "2.  Reproduce the behavior. If it came from an operator, reproduce THEIR case.",
   "3.  Find the shape, not the instance (chapter 6).",
   "4.  Fix it structurally where you can, so the whole class dies.",
   "5.  Write the test. Then MUTATE the code and confirm the test fails.",
@@ -93,7 +93,7 @@ c.push(NOTE("TREAT A CRASHED HARNESS AS LOUDLY AS A FAILED CHECK", "A suite that
 // 4 ---------------------------------------------------------------------------
 c.push(H1("4  Testing — and what makes a test worth having"));
 c.push(H2("4.1  Tests with teeth"));
-c.push(P("A check that cannot fail is not a check. EVERY suite here has been verified by MUTATION: deliberately break the behaviour under test, run the suite, and confirm the specific assertions fail. The mutation results are recorded in each suite's header, naming which checks die for which break — so a future reader can tell whether a check is doing work without re-deriving it."));
+c.push(P("A check that cannot fail is not a check. EVERY suite here has been verified by MUTATION: deliberately break the behavior under test, run the suite, and confirm the specific assertions fail. The mutation results are recorded in each suite's header, naming which checks die for which break — so a future reader can tell whether a check is doing work without re-deriving it."));
 c.push(P("This is not ceremony. It has repeatedly caught tests that passed for the wrong reason, and at least one suite that printed “all checks passed” while exercising code nothing called any more."));
 c.push(H2("4.2  Pair every refusal with an acceptance"));
 c.push(P("Where a test asserts that something is REFUSED, it must be paired with a case proving the same input is ACCEPTED under valid conditions. Otherwise a function that refused everything would pass — and “refuses everything” is a real and easy regression in a system built around keep-outs and gates."));
@@ -118,7 +118,7 @@ c.push(H2("5.1  Drive the real thing"));
 c.push(P("Start a headless console on a spare port and drive it over the API. The state endpoint and the event stream tell you what the server believes; that is the ground truth for anything the server owns."));
 c.push(NOTE("THE CLIENT DOES THE ROUTING", "Route planning, keep-out avoidance and channel handling are all BROWSER code. Driving the raw command API with no route bypasses every one of them, and a scripted run will cross keep-outs that the interface would have routed around. Rehearse through the interface, or place raw-API waypoints in open water only."));
 c.push(H2("5.2  Look at the pixels"));
-c.push(P("The chart is an animating canvas, so screenshots time out. Read the CANVAS DIRECTLY instead: sample a small box of image data at a known screen point and count pixels matching the feature's own colour. One call, no screenshot, immune to the animation."));
+c.push(P("The chart is an animating canvas, so screenshots time out. Read the CANVAS DIRECTLY instead: sample a small box of image data at a known screen point and count pixels matching the feature's own color. One call, no screenshot, immune to the animation."));
 c.push(P("This is how a control that was live, correct and completely invisible was found — after a byte-identical diff had said there was nothing wrong. Traps: the vessel marker is drawn late and lands on top of several handles, so put synthetic geometry AWAY from it unless burial is the thing under test; long waits belong in a sampler read back by a later call; and a hidden browser pane throttles timers heavily, so trust the outcome rather than the sample density."));
 c.push(H2("5.3  Verify against real data, not only fixtures"));
 c.push(P("Chart-facing changes are checked against the REAL cached chart for a real operating area, not only synthetic features. That is what turned an abstract clearance fix into a concrete statement: this many charted hazards are now sized, these ones remain passable for this vessel's floor, and here is why that is correct."));
@@ -144,8 +144,8 @@ c.push(H2("6.4  A check that cannot tell the bug from the fix"));
 c.push(P("The most expensive shape, because it does not merely fail to help — it actively tells you to stop looking. Three instances, all found by deliberately breaking the code and watching the check stay green:"));
 c.push(B("COMPARING OUTPUT AGAINST ITSELF. A generated document was verified by confirming it came out byte-identical to the previous build. It did. It had also never been openable. A hash proves stability, not correctness."));
 c.push(B("TESTING A FILTER WITH NOTHING TO FILTER. A check that a range parameter was honoured compared two responses from a registry that happened to be empty, so “filtered” and “unfiltered” were the same bytes. It passed with the fix reverted."));
-c.push(B("ASSERTING THE SHAPE INSTEAD OF THE VALUE. A check that a request carried a field named for kilometres passed just as happily when the field held nautical miles — a factor of 1.852 wrong, with a plausible number on screen."));
-c.push(P("The common root: the check was written against what the code DOES rather than against what would be different if it were wrong. The discipline that catches all three is the same one described in chapter 4 — break the behaviour on purpose, confirm the SPECIFIC assertion fails, and record which. A check that has never been seen to fail is not yet evidence of anything."));
+c.push(B("ASSERTING THE SHAPE INSTEAD OF THE VALUE. A check that a request carried a field named for kilometers passed just as happily when the field held nautical miles — a factor of 1.852 wrong, with a plausible number on screen."));
+c.push(P("The common root: the check was written against what the code DOES rather than against what would be different if it were wrong. The discipline that catches all three is the same one described in chapter 4 — break the behavior on purpose, confirm the SPECIFIC assertion fails, and record which. A check that has never been seen to fail is not yet evidence of anything."));
 c.push(H2("6.5  The unguarded branch before the safety net"));
 c.push(P("The command dispatcher wraps its main handler chain in a try/except that turns a refusal into a clean HTTP error. But branches ADDED ABOVE that try get no net at all: an exception there unwinds the dispatcher, drops the client’s connection with NO response, and kills the handler thread with a traceback. Three routes shipped this way — a numeric cast fed “abc”, and a keyword-unpack fed a client dict whose keys collided with the receiving function’s own parameter names — each reachable by a perfectly legal request body."));
 c.push(P("The family resembles the earlier defect in which a handler answered correctly and THEN raised, but is worse for the client: there is no response at all, just a closed socket. And it is invisible to every client-side assertion that inspects only successful answers."));
@@ -163,7 +163,7 @@ c.push(P("The instructive part is how easily the WRONG symptom gets fixed. A ran
 // 7 ---------------------------------------------------------------------------
 c.push(H1("7  Documentation discipline"));
 c.push(H2("7.1  Same change, not later"));
-c.push(P("When a change alters user-facing behaviour, the relevant documents are updated in the SAME change. Documentation that lags is documentation nobody trusts, and untrusted documentation gets ignored rather than fixed."));
+c.push(P("When a change alters user-facing behavior, the relevant documents are updated in the SAME change. Documentation that lags is documentation nobody trusts, and untrusted documentation gets ignored rather than fixed."));
 c.push(H2("7.2  The generated set"));
 c.push(P("Every document in the output directory is GENERATED from a build script that shares one formatting module. NEVER hand-edit a generated document: edit the script and rebuild. If one is hand-edited in a word processor anyway, diff the text against the generated version, fold the edits back into the script marked as the author's, and rebuild."));
 c.push(CODE([
@@ -173,15 +173,15 @@ c.push(CODE([
 c.push(H2("7.3  The maintainer notes are the authoritative log"));
 c.push(P("The START HERE handoff at the top carries the current commit, the suite inventory, what changed this session, the recurring defect shapes and the open threads. Refresh it when it drifts. Two habits earn their keep: cite code by CONTENT rather than line number, because line numbers rot; and record a DIVERGENCE from the sibling console explicitly, because a future port will otherwise undo it silently."));
 c.push(H2("7.4  Write down where a rule's line falls"));
-c.push(P("A flag sat open for weeks because the rule it referenced had never had its boundary written down, so nobody could tell what would satisfy it. When a rule generates recurring judgement calls, record the boundary and — where possible — a command that checks it."));
+c.push(P("A flag sat open for weeks because the rule it referenced had never had its boundary written down, so nobody could tell what would satisfy it. When a rule generates recurring judgment calls, record the boundary and — where possible — a command that checks it."));
 
 // 8 ---------------------------------------------------------------------------
 c.push(H1("8  Case studies"));
 c.push(P("Real defects from this repository. Each is kept because it is a CLASS."));
 c.push(H2("8.1  The setting that a command overwrote"));
-c.push(P("SYMPTOM: the operator selected a return-home end-of-plan behaviour; the console acted on a loiter. Confirmed live — the stored mission said one thing, the reported state another."));
-c.push(P("CAUSE: one field doing two jobs. It was both the operator's persistent END-OF-PLAN SETTING and the completion of the RUN CURRENTLY IN PROGRESS. Direct behaviours legitimately station-keep at their own endpoint, so commanding one set the field to “loiter” — and thereby overwrote the setting with it."));
-c.push(P("FIX: one field per concept, plus the invariant that no method on the engine writes the setting. That invariant, not the split, is what kills the class — every future endpoint-holding behaviour would otherwise have to remember not to touch a field it has every reason to touch."));
+c.push(P("SYMPTOM: the operator selected a return-home end-of-plan behavior; the console acted on a loiter. Confirmed live — the stored mission said one thing, the reported state another."));
+c.push(P("CAUSE: one field doing two jobs. It was both the operator's persistent END-OF-PLAN SETTING and the completion of the RUN CURRENTLY IN PROGRESS. Direct behaviors legitimately station-keep at their own endpoint, so commanding one set the field to “loiter” — and thereby overwrote the setting with it."));
+c.push(P("FIX: one field per concept, plus the invariant that no method on the engine writes the setting. That invariant, not the split, is what kills the class — every future endpoint-holding behavior would otherwise have to remember not to touch a field it has every reason to touch."));
 c.push(P("LESSON: when the same value is written by both a user action and a system action, it is two values."));
 c.push(H2("8.2  The hazard with no size"));
 c.push(P("SYMPTOM: a planned route ran straight over a charted wreck."));
@@ -189,18 +189,18 @@ c.push(P("CAUSE: the chart handling was fine — the wreck was fetched, classifi
 c.push(P("FIX: hazards whose extent the chart does not give carry an intrinsic radius, with the buffer added ON TOP as the margin it always was. A charted sounding over the hazard, tide-corrected, collapses it back to a point — and NO sounding means UNKNOWN, which takes the full berth rather than the benefit of the doubt."));
 c.push(P("LESSON: both clearance paths had to learn it. Fixing only the exact check would have made the search plan through the hazard and the leg then fail validation — a refusal instead of a detour."));
 c.push(H2("8.3  The tide from another coast"));
-c.push(P("SYMPTOM: a water level from hundreds of kilometres away, displayed exactly as authoritatively as a local one."));
-c.push(P("CAUSE: not a fault. The reading was correctly labelled and the position logic did force a refetch — but the tide service polls on its own cadence, so the previous station's value stands in the gap and looks entirely normal."));
+c.push(P("SYMPTOM: a water level from hundreds of kilometers away, displayed exactly as authoritatively as a local one."));
+c.push(P("CAUSE: not a fault. The reading was correctly labeled and the position logic did force a refetch — but the tide service polls on its own cadence, so the previous station's value stands in the gap and looks entirely normal."));
 c.push(P("FIX: band the reading by distance to the NEAREST contributing station, and show that GRAPHICALLY — translucency reads as low confidence at a glance, so the operator never has to inspect a station name on a number that is usually fine. Beyond a threshold the reading is shown but NOT APPLIED to charted depths."));
 c.push(P("LESSON: the nearest station decides, not the average. Averaging would discredit a good local reading with one distant contributor, and would let two distant stations either side average into a falsely local one."));
 c.push(H2("8.4  The readout that was right about itself"));
 c.push(P("SYMPTOM: an end-of-plan return home worked, but every readout said the run would loiter, right up until the moment the vessel turned for home."));
 c.push(P("CAUSE: the field said what the run was UPLOADED with, which was accurate. What happened next was a separate mechanism the readouts knew nothing about. Each field was accurate about itself and wrong about the vessel."));
 c.push(P("FIX: a third value answering the question actually being asked — where does this run leave the vessel — and it is the only one the cards show. It reports the return only when the return can actually happen."));
-c.push(P("LESSON, AND THE MORE VALUABLE HALF: verifying the display found a real behavioural bug. The mechanism was a one-shot guard re-armed on a state edge that a second command issued mid-run never crosses, so that run inherited a spent guard and held at its endpoint indefinitely. Invisible until a readout started making a promise about it."));
+c.push(P("LESSON, AND THE MORE VALUABLE HALF: verifying the display found a real behavioral bug. The mechanism was a one-shot guard re-armed on a state edge that a second command issued mid-run never crosses, so that run inherited a spent guard and held at its endpoint indefinitely. Invisible until a readout started making a promise about it."));
 c.push(H2("8.5  The control that was drawn, live, and invisible"));
 c.push(P("SYMPTOM: an operator reported a control as missing and asked for it to be ported from the sibling console."));
-c.push(P("CAUSE: it had already been ported, completely and byte-identically, and it worked — the hit test answered and a drag did the right thing. It was drawn EARLY, and the vessel marker is drawn LATE and lands exactly where that control sits in the commonest case there is. Measured on the running page: zero control-coloured pixels when it coincided with the vessel, seventy when it did not."));
+c.push(P("CAUSE: it had already been ported, completely and byte-identically, and it worked — the hit test answered and a drag did the right thing. It was drawn EARLY, and the vessel marker is drawn LATE and lands exactly where that control sits in the commonest case there is. Measured on the running page: zero control-colored pixels when it coincided with the vessel, seventy when it did not."));
 c.push(P("FIX: draw it last, with a halo. And the actual gap in the port was the HINT TEXT — the sibling's string names the control and this one's did not, so nothing on screen ever said it existed."));
 c.push(P("LESSON: a control the operator cannot see is a control they do not have. The diff was clean, the logic was right, the feature was missing."));
 
@@ -217,7 +217,7 @@ c.push(P("FIX: flatten in the writer rather than spreading at each of the six ca
 c.push(P("And a CONTENT check beside the validity ones, because validity alone is not enough here. Filtering the arrays away instead of flattening them yields four perfectly valid documents with every code block still missing — the same silent loss, now wearing a clean bill of health. That check compares against the code lines PARSED OUT OF THE GENERATORS, so a block added tomorrow is covered without anyone remembering to list it."));
 c.push(P("Confirmed against real Word at both ends: the committed documents were refused with “Word experienced an error trying to open the file”; the rebuilt ones open at 15, 14, 8 and 3 pages. The suite is the cheap stand-in, since Word cannot run in a commit hook."));
 c.push(H2("8.7  The coverage campaign — auditing by consequence"));
-c.push(P("SYMPTOM: none, and that is the point. The question that started it was “does anything prove the emergency stop actually stops the vessel?” — and the answer was no. Twenty of the console’s thirty-three API routes had no behavioural test, because every suite before then had been written REACTIVELY, the day something broke. A net shaped by history guards the code that has already failed; the most safety-critical control in the console had never been on that list."));
+c.push(P("SYMPTOM: none, and that is the point. The question that started it was “does anything prove the emergency stop actually stops the vessel?” — and the answer was no. Twenty of the console’s thirty-three API routes had no behavioral test, because every suite before then had been written REACTIVELY, the day something broke. A net shaped by history guards the code that has already failed; the most safety-critical control in the console had never been on that list."));
 c.push(P("The campaign covered the remainder in eight suites, picked by CONSEQUENCE — the safety chain first, data plumbing last — each driving one real console through one arc in mission order. GROUNDING came before every suite: read the handler and its seams, write down what the contract actually is, and only then write checks. That order found five live defects before a single assertion existed for them, including a stale-telemetry home capture and the whole family of section 6.5."));
 c.push(P("The mutation discipline grew four rules along the way, each earned by a run that surprised its author:"));
 c.push(B("A mutation of SHARED code must be caught from BOTH its consumers — being watched from two suites is the payoff a deduplication has to demonstrate, not assume."));
@@ -227,7 +227,7 @@ c.push(B("Pick the observable only the mechanism under test can produce. An ener
 c.push(P("The arithmetic at the end: eight suites, five defects fixed, and no route whose failure mode is unwatched. The stability guarantee the campaign set out to earn is now a property of the commit hook, not a hope."));
 
 c.push(H2("8.8  The tool that damaged the thing it was testing"));
-c.push(P("Mutation testing here is not a framework. It is a short script that REWRITES A REAL SOURCE FILE in the working tree, runs a suite against the damage, and puts the original back. That last step is the whole safety of the method, and it is the step that does not always happen: a runner stopped by a timeout, a cancelled command or a closed session is killed outright, and a killed process does not run its cleanup. Twice now that has left the console's main source file altered on disk — once emptied, and once far worse, left silently MUTATED with one branch of a command quietly doing nothing. Everything still parsed. Most checks still passed. It was one commit away from shipping, and what caught it was not a test but an insert count being off by one in a routine diff."));
+c.push(P("Mutation testing here is not a framework. It is a short script that REWRITES A REAL SOURCE FILE in the working tree, runs a suite against the damage, and puts the original back. That last step is the whole safety of the method, and it is the step that does not always happen: a runner stopped by a timeout, a canceled command or a closed session is killed outright, and a killed process does not run its cleanup. Twice now that has left the console's main source file altered on disk — once emptied, and once far worse, left silently MUTATED with one branch of a command quietly doing nothing. Everything still parsed. Most checks still passed. It was one commit away from shipping, and what caught it was not a test but an insert count being off by one in a routine diff."));
 c.push(P("The lesson is not \"be careful\". A cleanup step that only runs when the process exits normally is not a safeguard, because the case it must cover is the process not exiting normally. The recovery has to be durable and it has to be visible:"));
 c.push(B("Write the pristine copy to a SIDECAR FILE before the first mutation, and restore from that sidecar on START if one is already there. A killed run then heals itself on the next run instead of quietly persisting, and the sidecar's presence at rest is a standing signal that the source is suspect."));
 c.push(B("Write each mutation ATOMICALLY — to a temporary file, then rename over the target — so a process killed mid-write cannot leave a half-written source."));
@@ -247,7 +247,7 @@ c.push(B("Put it in the profile. Never in code."));
 c.push(B("Publish it where the profile is applied, so a LIVE SWITCH re-derives it. This is the single most repeated bug in this system."));
 c.push(B("If the client needs it, mirror it through the vessel endpoint so both sides agree."));
 c.push(B("Add a test that switches vessel and asserts the value MOVED."));
-c.push(H2("9.3  Add a behaviour"));
+c.push(H2("9.3  Add a behavior"));
 c.push(B("Gate it behind arming and the emergency stop, like every other."));
 c.push(B("Route it clear of the keep-out model, and REFUSE with a named reason where it cannot be."));
 c.push(B("Decide what it does at its own end, and make sure it does not write the operator's persistent setting (8.1)."));

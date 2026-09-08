@@ -39,13 +39,13 @@ c.push(TBL(["Where", "What it is"], [
   ["Bottom bar", "Run parameters and the commands"],
   ["`?` bottom-left", "The built-in quick start card"],
 ], [1800, 7560]));
-c.push(P("Zoom with `+` / `−`, drag to pan, `BOAT` re-centres on the vessel. Turn on `NOGO` to see the keep-out zones the vessel will refuse to cross — that overlay is the single most useful thing on screen while you are learning. (Ops manual 4)"));
+c.push(P("Zoom with `+` / `−`, drag to pan, `BOAT` re-centers on the vessel. Turn on `NOGO` to see the keep-out zones the vessel will refuse to cross — that overlay is the single most useful thing on screen while you are learning. (Ops manual 4)"));
 
 // ------------------------------------------------------------------
 c.push(H1("3  Your first command — a Go-To"));
 c.push(P("Nothing moves until you arm. That is the whole safety model in one sentence."));
 c.push(B("Press `Arm`. The safety pill changes from SAFE."));
-c.push(B("RIGHT-CLICK a point on open water a few hundred metres away and choose GO-TO HERE. The chart's right-click menu is where the point commands live — Go-To, Set Home, Spawn, and the measuring tool. Until you arm, the Go-To row is greyed and tells you why."));
+c.push(B("RIGHT-CLICK a point on open water a few hundred meters away and choose GO-TO HERE. The chart's right-click menu is where the point commands live — Go-To, Set Home, Spawn, and the measuring tool. Until you arm, the Go-To row is grayed and tells you why."));
 c.push(B("Read the BANNER across the chart. It says whether the route went direct or was routed around obstacles, and how many waypoints it used."));
 c.push(P("The vessel drives there, around anything charted in the way, and station-keeps on arrival. Now try clicking a point on the far side of a pier or a shoal — the console will route a way round it, or REFUSE and pulse the offending feature with a cross. A refusal is a result, not a failure. (Ops manual 8.1, 2.4)"));
 
@@ -56,7 +56,7 @@ c.push(P("Press `SURV` and click three times:"));
 c.push(B("The START CORNER of the area you want covered."));
 c.push(B("The OPPOSITE (diagonal) corner."));
 c.push(B("A third point — its DISTANCE from the start sets the line spacing, its BEARING sets the line direction."));
-c.push(P("Parallel lines fill the box immediately. Drag any of the three points to adjust; drag the CROSSHAIR GRIP at the centre to move the whole pattern without changing its shape. (Ops manual 9.1)"));
+c.push(P("Parallel lines fill the box immediately. Drag any of the three points to adjust; drag the CROSSHAIR GRIP at the center to move the whole pattern without changing its shape. (Ops manual 9.1)"));
 c.push(H2("4.2  Punch it out"));
 c.push(P("Press `Punch Out`. The console fetches the chart for the survey area and trims every line out of land, structures, hazards and water outside your depth limits. THIS IS THE STEP THAT MAKES THE PLAN TRUSTWORTHY — read what it reports."));
 c.push(NOTE("IF IT SAYS “UNTRACKABLE”", "Your line spacing is tighter than the vessel can turn in at the plan speed. Widen the spacing or drop the speed and punch out again. (Ops manual 9.5.1)"));

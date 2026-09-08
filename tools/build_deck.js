@@ -286,7 +286,7 @@ function note(s, t) { s.addNotes(t); }
     s.addText(head, { x: 7.1, y, w: 5.6, h: 0.32, fontFace: BODY, fontSize: 13.5, bold: true, color: DEEP, margin: 0 });
     s.addText(body, { x: 7.1, y: y + 0.32, w: 5.6, h: 0.62, fontFace: BODY, fontSize: 11, color: MUT, margin: 0 });
   });
-  s.addText("Outcome of the route-coverage campaign: every route whose failure mode matters has a behavioural suite — and writing those suites found five live defects on the way.", { x: 0.6, y: 5.95, w: 12.1, h: 0.75, fontFace: BODY, fontSize: 13, italic: true, color: PRIM, margin: 0 });
+  s.addText("Outcome of the route-coverage campaign: every route whose failure mode matters has a behavioral suite — and writing those suites found five live defects on the way.", { x: 0.6, y: 5.95, w: 12.1, h: 0.75, fontFace: BODY, fontSize: 13, italic: true, color: PRIM, margin: 0 });
   note(s, "This is where the graduate audience should push: the schema's verification slot, at this scale, becomes an engineering discipline of its own. Mutation testing is applied to the tests, not the code — a test is an instrument, and instruments get calibrated. The campaign numbers: the audit found 20 of 33 HTTP routes untested; eight suites later the thread closed with five live defects found, all of the same family (an unguarded branch before the dispatch safety net).");
 }
 

@@ -84,14 +84,51 @@ follow that pattern in the future."** So he has been hand-correcting BRITISH spe
 a GENERATED document — which means **every `build_docs.js` run silently throws that work away
 and he has to do it again.** The fix is not in the .docx, it is in the builders.
 
-**⬜ OPEN, AND MEASURED: the four doc builders still hold ~100 British spellings in prose** —
-`behaviour` ×33, `centre`/`centreline`/`centred` ×20, `metres`/`metre` ×19, `kilometres` ×9,
-`colour` ×9, `manoeuvre` ×5, `labelled` ×4, `modelled` ×3, `grey` ×3, and a few singles.
-(The 126 `color` hits are the CSS property and are already American — do not touch those, and
-do not blind-replace anything that names a CODE IDENTIFIER, since the API field is already
-`behavior`.) Converting them is what stops his corrections being overwritten, and it is a big
-prose diff across four files, so it is his call rather than a tidy-up to slip into another
-commit. **From here on, new prose in this repo is written in AMERICAN ENGLISH.**
+**⇒ DONE on his "convert the builders to american english": 114 conversions across five
+builders**, so the generated set no longer needs hand-correcting. `behaviour`→`behavior` ×29,
+`centre*`→`center*` ×20, `metre*`→`meter*` ×18, `kilometre*` ×9, `colour*` ×12, `manoeuvre` ×5,
+`labelled` ×4, `modelled`/`unmodelled` ×3, `greyed` ×3, plus `cancelled` `recognises`
+`organisation` `neighbour(s)` `judgement` `harbour` `defence`.
+
+**⚠ THE THINGS THAT MADE IT NOT A BLIND REPLACE, all of which bit or nearly bit:**
+* **`color:` is the CSS property** — 126 hits, already American. Any sweep that treats
+  "colour|color" as one target corrupts the stylesheet.
+* **`programme` appears ONLY inside `programmer`.** `programme`→`program` would have produced
+  `programr`. Excluded entirely; there are no real British uses.
+* **`unmodelled` is invisible to a `\bmodelled\b` rule** — the `n` before `m` kills the word
+  boundary. Found by scanning for the stems INSIDE longer words, which turned up exactly that
+  one plus `kilometre(s)`.
+* **Nothing British sits inside backticks**, checked before converting: no hit was naming a
+  code identifier. The API field was already `behavior`, so the prose had been contradicting
+  the code it described.
+
+**VERIFIED AT THE ARTIFACT, NOT THE SOURCE.** The builders were run into a THROWAWAY tree
+(`tools/_buildcheck/tools` + its own `docs/`, so `docx_kit`'s script-relative `../docs` wrote
+there and never near his files — node finds `node_modules` by walking up). All four documents
+built, and their `word/document.xml` holds **138 American spellings and zero British ones**.
+Temp tree deleted.
+
+**REBUILT AND SHIPPED, on his explicit go-ahead** — the four `docs/*.docx` in this commit are
+the regenerated set, so builders and output are back in step. His hand-edited operations manual
+was overwritten, which is why he was asked first; a byte-identical copy of his version was
+taken before the rebuild and its hash recorded, and the new manual carries the same spellings
+he was adding by hand, so the corrections are now automatic rather than his job.
+
+**⚠⚠ AND THE REBUILD SURFACED A GAP THAT HAD BEEN HIDDEN BY NOT REBUILDING.** `docs_valid`
+check 7 went red: the technical manual shipped `"(undocumented — add an entry to GUARDS…)"`
+**five times**. That table is DERIVED from `tests/`, so a suite with no `GUARDS` entry
+self-reports into a document written for a reader — and **two of the five were suites I added
+this session** (`spawn_trail.js`, `survey_transit_roles.js`), with `chart_ink.js`,
+`gate_endpoint.js` and `line_stats.js` from the sessions before. All five have entries now:
+61 suites, 61 entries, 0 missing.
+
+**THE LESSON IS ABOUT THE HABIT, NOT THE TABLE:** the check that catches this can only fire on
+a REBUILD, and the docs had not been rebuilt since 09-03. **Adding a suite without an entry is
+invisible until someone regenerates**, so a run of commits that each skip the rebuild banks the
+debt silently. Add the `GUARDS` entry in the same commit as the suite.
+
+**From here on, new prose in this repo is AMERICAN ENGLISH** ([[american-english]] in the estate
+memory).
 
 **NEWEST (this commit): THE FLOATING NOTE NO LONGER COVERS THE STATUS BAR.** Andy: *"There's
 a floating message on the top status bar that says 'Simulator connected. No hardware in the
