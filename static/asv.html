@@ -159,7 +159,20 @@
   body.ui-controls .uicard .rszbody{overflow:auto!important;}
   .vminipill{display:none;position:absolute;z-index:7;font-family:var(--mono);font-size:10px;padding:4px 9px;
     border-radius:2px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink-dim);cursor:pointer;}
-  .note{position:absolute;left:50%;transform:translateX(-50%);top:52px;z-index:6;font-family:var(--mono);font-size:10.5px;
+  /* TRANSIENT ALERTS ONLY, AND NOT OVER THE STATUS BAR. This box used to sit at top:52px -
+     centred, directly on top of the status bar's second row - and it carried the SERVER'S
+     STANDING NOTE, which on a simulator connection reads "Simulator connected. No hardware in
+     the loop." and never changes. So a permanent string covered live readouts for the whole
+     session (Andy, 2026-09-06: "There's a floating message on the top status bar ... Remove
+     this from the Chart GUI ... it covers the status bar lower center").
+     The standing note is no longer painted here at all. What is left is flashNote(), which
+     has 35 call sites and is the surface for "Keep-out 12 s ahead - HOLDING", "DEVIATED",
+     "SLOWED to low", "Go-To refused", "Upload blocked" and every other refusal - deleting the
+     element outright would have taken those with it. It is `display:none` until something is
+     flashed, and it now sits at the FOOT of the chart with the other message surfaces
+     (encbanner bottom:120px, guardbar bottom:152px) rather than over the bar. */
+  .note{position:absolute;left:50%;transform:translateX(-50%);bottom:88px;z-index:6;display:none;
+    font-family:var(--mono);font-size:10.5px;
     color:var(--ink-dim);background:rgba(10,17,25,.85);border:1px solid var(--line);border-radius:3px;padding:3px 10px;max-width:70vw;text-align:center;}
   /* quick-start help card */
   .qsback{position:absolute;inset:0;z-index:8;background:rgba(3,6,10,.55);}
@@ -336,7 +349,10 @@
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
 
-  <div class="note" id="note">Not connected.</div>
+  <!-- Transient alerts only (flashNote). Starts EMPTY and hidden: it used to open with
+       "Not connected." and was then overwritten by the server's standing note, which is
+       what left a permanent box sitting on the status bar. -->
+  <div class="note" id="note"></div>
 
   <div class="controls">
     <button class="ctl" id="zin" title="Zoom in">+</button>
@@ -7270,9 +7286,15 @@ async function cmd(path, body){
   }catch(e){ flashNote("network error"); return {}; }
 }
 let noteTimer = null;
+// SHOWS AND THEN HIDES. It used to only fade the COLOUR back after 4 s, because the box was
+// always on screen anyway carrying the server's standing note. With that gone the element is
+// hidden by default, so a flash has to put it up and take it down again - otherwise the last
+// refusal of the session stays on the chart for ever.
 function flashNote(msg){
   const el = $("#note"); el.textContent = msg; el.style.color = "var(--warn)";
-  clearTimeout(noteTimer); noteTimer = setTimeout(()=>{ el.style.color = ""; }, 4000);
+  el.style.display = "block";
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(()=>{ el.style.color = ""; el.style.display = "none"; el.textContent = ""; }, 4000);
 }
 
 let S = {};   // latest server state
@@ -7531,7 +7553,13 @@ function onState(s){
   reapproachIfSetOff(s, st);                     // set beyond the certified water: route back
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
   $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
-  $("#note").textContent = s.note || "";
+  // ⚠ THE SERVER'S STANDING NOTE IS DELIBERATELY NOT PAINTED. `s.note` is a STATE, not an
+  // event: on a sim connection it reads "Simulator connected. No hardware in the loop." and
+  // never changes, so mirroring it here parked a permanent box over the status bar's second
+  // row. What it says is already on the bar - the link pill reads `sim · ok` - and the notes
+  // worth acting on (arm, upload, refusals) all reach the operator through flashNote or
+  // showBanner at the moment they happen. It is still in /api/state and still recorded, so
+  // the playback page keeps showing it per frame; this is the CHART GUI only.
 
   // autonomy pill
   const auto = (s.autonomy||"safe").toUpperCase();

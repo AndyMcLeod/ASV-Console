@@ -55,9 +55,47 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-06 — MISSION STATUS and ASV STATUS)
+## ⇒ START HERE (handoff refreshed 2026-09-07 — the floating note is off the status bar)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE FLOATING NOTE NO LONGER COVERS THE STATUS BAR.** Andy: *"There's
+a floating message on the top status bar that says 'Simulator connected. No hardware in the
+loop.' Remove this from the Chart GUI"*, and then the detail that names the real problem:
+*"it covers the status bar lower center"*.
+
+`.note` was `position:absolute; top:52px`, centred — sitting **on** the status bar's second
+row — and `onState` painted the server's `s.note` into it every frame. **`s.note` is a STATE,
+not an event:** on a sim connection it reads *"Simulator connected. No hardware in the loop."*
+and never changes again, so a permanent box covered live readouts for the whole session.
+
+**THE STANDING NOTE IS NO LONGER PAINTED ON THE CHART AT ALL.** What it says is already on the
+bar — the link pill reads `sim · ok` — and it is still in `/api/state` and still recorded, so
+`playback.html`'s own per-frame note pane is untouched. This is the chart GUI only.
+
+**⚠ THE ELEMENT SURVIVES, AND DELETING IT WOULD HAVE BEEN THE WRONG READING OF "remove".**
+`flashNote()` writes to the same box and has **35 call sites**, including *"Keep-out 12 s ahead
+— HOLDING"*, *"DEVIATED"*, *"SLOWED to low"*, *"Go-To refused"*, *"RTH refused"*, *"No position
+fix yet"* and *"Upload blocked"*. Removing the div takes the safety ladder's own messages with
+it. So: the box is `display:none` until something is flashed, it flashes and then **hides
+itself** (it used to only fade its colour back, which was fine only because the box was
+permanently on screen anyway), and it now lives at `bottom:88px` with the other message
+surfaces instead of over the bar. Measured live: flash at y 612–632 against a status bar
+ending at 69, and the `encbanner` at 581–600 — **12 px clear, no overlap**.
+
+**⚠⚠ AND A CORRECTION TO YESTERDAY'S HANDOFF, WHICH THE FILE TIMES SETTLE.** The entry below
+records `mission.json` and `ports.json` changing twice with "no console running" and the suites
+"cleared by measurement", and concludes *something outside the suites is doing it and I could
+not identify what*. **The likeliest answer is the obvious one: ANDY USES THE CONSOLE HIMSELF
+BETWEEN SESSIONS.** Today the last commit is 09-06 08:14 and `mission.json` is stamped 08:22,
+`ports.json` 08:33 — both AFTER it, with the active base moved to `erie_pa` and the plan grown
+to 212 waypoints over 9 lines. That is his work, not a fault.
+
+**THE OPERATIONAL RULE THAT FOLLOWS IS THE IMPORTANT PART: DO NOT "RESTORE" HIS FILES FROM A
+STALE COPY.** Yesterday I restored the plan from a session-start copy several times on the
+assumption that a change I could not explain was damage. If any of those changes were his, the
+restore was the damage. **Check the MTIME against your own last commit before deciding
+anything is corruption**, and when it is newer, leave it alone and say so.
 
 **NEWEST (this commit): TWO RENAMES.** Andy: *"Rename Vessel status Card to Mission Status.
 Rename the top status bar from ASV Command to ASV Status."* Done, and followed through every
