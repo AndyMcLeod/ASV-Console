@@ -411,6 +411,24 @@
         <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
       </select></div>
     <div class="phint" id="sp_spd_note">speeds: --</div>
+    <!-- LEAD-IN / LEAD-OUT. The first stretch of a survey line is not usable data: the
+         steering is still settling onto the track after the reversal, and the IMU is
+         still settling with it. So the RUN is made longer than the COVERAGE — the boat
+         rolls out, steadies, and the coverage the operator drew starts exactly where
+         they drew it. The lead-out is the same argument at the far end.
+         DISTANCE OR DURATION, because settling is specified both ways: a steering
+         settle is a distance (boat lengths), an IMU settle is a time. A duration is
+         converted at the SURVEY speed, which is the speed the lead is flown at —
+         flying it at anything else is what the settling is there to avoid. -->
+    <div class="prow punchsep"><label>Lead in/out</label>
+      <span style="display:flex;gap:3px;align-items:center;">
+        <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+        <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
+        <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in metres or a DURATION in seconds. A duration is converted at the survey speed.">
+          <option value="m" selected>m</option><option value="s">s</option>
+        </select>
+      </span></div>
+    <div class="phint" id="sp_lead_note">lead: none</div>
     <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behaviour (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviours.">
       <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
       <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
@@ -965,7 +983,8 @@ let asv = null;                              // {lat,lon,hdg}
 
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
-               speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3};
+               speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3,
+               lead_mode: "m", lead_in: 0, lead_out: 0};
 // --- SPEED BY ROLE: transit, turn, survey ----------------------------------------- //
 // Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow separate
 // speed selection for transits, turns, and survey. These values may be temporarily
@@ -1004,6 +1023,61 @@ function roleSpeed(role){
 }
 // ... and in m/s, which is what every duration estimate on this page actually wants.
 function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.survey) * 0.514444; }
+// --- LEAD-IN / LEAD-OUT: the RUN is longer than the COVERAGE ---------------------- //
+// Andy, 2026-09-08: "implement lead in and lead out extensions to survey lines ... They
+// are meant to extend lines to accommodate settling of vessel steering onto path and
+// settling of IMU stability after a turn. The user should have options ... to select
+// distance or duration."
+//
+// Every consumer wants METRES, so the conversion lives here and only here. A duration is
+// converted at the SURVEY speed and at no other: the lead exists so the boat is settled
+// AT THE SPEED IT SURVEYS AT by the first usable ping, so timing it at any other speed
+// gives a lead of the wrong length by construction.
+//
+// ⚠ THE STORED VALUE IS THE ONE THE OPERATOR TYPED, in the unit they chose - never the
+// converted metres. Storing metres would freeze a settling TIME into a distance, and the
+// next survey-speed change would leave a lead that no longer settles anything, silently.
+// That is the "remembered snapshot drifts from the plan" shape committedPatternInfo
+// exists to avoid, one card over.
+const LEAD_MAX_M = 2000;                         // matches the inputs' max; a sanity clamp
+function leadMetres(v){
+  const n = Number(v);
+  if(!isFinite(n) || n <= 0) return 0;
+  const m = (mission.lead_mode === "s") ? n * roleSpeedMS("survey") : n;
+  return Math.min(LEAD_MAX_M, m);
+}
+function leadInM(){  return leadMetres(mission.lead_in);  }
+function leadOutM(){ return leadMetres(mission.lead_out); }
+/** Along-track distance of `p` from L.a, in metres, signed along a→b. */
+function alongLineM(L, p){
+  if(!L || !p) return 0;
+  const ref = L.a, a = llEN(L.a.lat, L.a.lon, ref), b = llEN(L.b.lat, L.b.lon, ref),
+        q = llEN(p.lat, p.lon, ref);
+  const ex = b.e-a.e, en = b.n-a.n, len = Math.hypot(ex, en);
+  if(!(len > 0)) return 0;
+  return ((q.e-a.e)*ex + (q.n-a.n)*en) / len;
+}
+/**
+ * Which PART of committed line `k` the boat is on: its lead-in, its coverage, or its
+ * lead-out. A line with no leads is all coverage, which is what every plan committed
+ * before this feature existed answers - so nothing changes for one.
+ *
+ * ⚠ IT IS READ OFF THE COMMITTED LINE, not off the survey card. The card holds what the
+ * operator would punch NEXT; the boat is flying what was committed, and those are two
+ * different numbers the moment anyone touches the control mid-run.
+ */
+function linePhase(k, p){
+  const L = (mission.lines || [])[k];
+  const none = {phase:"coverage", toCoverM:0, li:0, lo:0};
+  if(!L || !p) return none;
+  const li = Math.max(0, L.lead_in_m || 0), lo = Math.max(0, L.lead_out_m || 0);
+  if(!li && !lo) return none;
+  const runLen = distTo(L.a, L.b), s = alongLineM(L, p);
+  if(!(runLen > 0)) return none;
+  if(li > 0 && s < li)          return {phase:"lead-in",  toCoverM: li - s, li, lo};
+  if(lo > 0 && s > runLen - lo) return {phase:"lead-out", toCoverM: 0, li, lo};
+  return {phase:"coverage", toCoverM:0, li, lo};
+}
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
 // --- INTENT: what the vessel is doing, WHY, and what it intends next ------------- //
 // Andy, 2026-08-28, running in Pago Pago: "Path planning seems odd but workable. is it
@@ -1776,7 +1850,14 @@ let mode = "pan", saveTimer = null;   // no `activeLine`: the chart highlights r
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
 let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
-let patClip = null;                            // Punch-Out result: clipped survey lines [[p0,p1]..]
+let patClip = null;                            // Punch-Out result: the RUNS, lead included [[p0,p1]..]
+// Per-run lead ACTUALLY APPLIED, in metres: {in, out}, parallel to patClip. It is what the
+// chart allowed, not what was asked for - a lead is trimmed where the extra water is not
+// clear - so it is the only honest source for "which part of this run is coverage".
+// ⚠ EVERY READ MUST TOLERATE A MISSING ENTRY. patClip is assigned from several places and
+// an un-punched commit has no leads at all; `patLead[k] || NO_LEAD` everywhere.
+let patLead = [];
+const NO_LEAD = {in:0, out:0};
 let patUnsafe = [];                            // transits with no clear route (flagged red)
 let patRoutes = [];                            // transits auto-routed around obstacles (amber polylines)
 let patTransits = [];                          // per-gap detour waypoints, interleaved on commit
@@ -1978,7 +2059,12 @@ async function loadMission(){
                  approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
                  speeds:m.speeds||{},
                  completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3,
-                 min_depth_m:m.min_depth_m ?? 2};
+                 min_depth_m:m.min_depth_m ?? 2,
+                 // The lead settings are the operator's, in the unit they chose - so all
+                 // three travel together or none of them mean anything (a stored 20 that
+                 // loses its "s" becomes 20 m instead of ~41 m, quietly).
+                 lead_mode:(m.lead_mode === "s" ? "s" : "m"),
+                 lead_in:m.lead_in ?? 0, lead_out:m.lead_out ?? 0};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
@@ -2006,6 +2092,13 @@ async function loadMission(){
       // small boat must not quietly narrow a big one's clearance.
       nogo.buffer = bufferFloor(mission.buffer_m);
       $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer;
+      // The lead controls, restored onto the card. The MODE first: the two numbers mean
+      // different lengths depending on it, and a mode restored after them would leave the
+      // note quoting metres for a duration until the next keystroke.
+      if($("#sp_lead_mode")) $("#sp_lead_mode").value = mission.lead_mode || "m";
+      if($("#sp_lead_in"))   $("#sp_lead_in").value   = mission.lead_in  ?? 0;
+      if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out ?? 0;
+      updateLeadNote();
       // The plan just came back from the server, so the survey card can describe it
       // again - without this, a committed plan reads blank after every page refresh.
       updatePatReadout(); render(); } }catch(e){}
@@ -2562,7 +2655,24 @@ function render(){
   ctx.font = "10px Consolas,monospace";
   mission.lines.forEach((L,i)=>{
     const a = toScreen(L.a.lat,L.a.lon), b = toScreen(L.b.lat,L.b.lon), act = (i===runLineIdx);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    // WHERE THE COVERAGE STARTS, drawn rather than described. A lead makes the run longer
+    // than the survey, and the operator watching the boat run this line needs to see the
+    // point where data starts counting — that is the question a lead creates, and a
+    // uniform line answers it wrongly by omission. The waypoint dots stay on the RUN ends,
+    // because that is where the waypoints are.
+    const li = Math.max(0, L.lead_in_m||0), lo = Math.max(0, L.lead_out_m||0);
+    const run = distTo(L.a, L.b);
+    const hasLead = run > 0 && (li > 0 || lo > 0) && (li + lo) < run;
+    const at = t => ({lat:L.a.lat+(L.b.lat-L.a.lat)*t, lon:L.a.lon+(L.b.lon-L.a.lon)*t});
+    const s0 = hasLead ? toScreen(at(li/run).lat, at(li/run).lon) : a;
+    const s1 = hasLead ? toScreen(at(1-lo/run).lat, at(1-lo/run).lon) : b;
+    if(hasLead){                                   // the lead stubs: run, not coverage
+      ctx.setLineDash([2,3]); ctx.lineWidth = 1;
+      ctx.strokeStyle = act ? "rgba(255,215,106,0.60)" : "rgba(255,215,106,0.28)";
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(s0.x,s0.y);
+      ctx.moveTo(s1.x,s1.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.beginPath(); ctx.moveTo(s0.x,s0.y); ctx.lineTo(s1.x,s1.y);
     ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a" : "rgba(255,215,106,0.55)";
     ctx.lineWidth = act?2.5:1.5; ctx.stroke(); ctx.setLineDash([]);
     for(const p of [a,b]){ ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,2*Math.PI); ctx.fillStyle="#ffd76a"; ctx.fill(); }
@@ -3185,9 +3295,27 @@ function currentActivity(){
   if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
   const beh = (S && S.behavior) || "";
   if(beh === "survey"){
-    if(runLineIdx >= 0)
-      return {activity:"surveying", surveying:true, role:"survey",
-              detail:"on coverage line " + (runLineIdx+1) + " of " + mission.lines.length};
+    if(runLineIdx >= 0){
+      const of = " line " + (runLineIdx+1) + " of " + mission.lines.length;
+      // ⚠ BEING ON A LINE IS NOT THE SAME AS ACQUIRING COVERAGE, and `surveying` means the
+      // second one — it is the flag that paints this readout green and titles it
+      // "acquiring coverage". A lead-in is deliberately NOT coverage: the boat is settling
+      // its steering and its IMU onto the track, which is the whole reason the extension
+      // was asked for. Claiming coverage there would be this console asserting data the
+      // operator has just told it not to trust.
+      //
+      // The ROLE stays "survey" regardless, and that is not an oversight: the lead has to
+      // be flown at the speed the coverage is flown at, or it settles the boat onto the
+      // wrong one and buys nothing. Two fields, two questions — which is why they are two.
+      const ph = linePhase(runLineIdx, asv);
+      if(ph.phase === "lead-in")
+        return {activity:"lead-in", surveying:false, role:"survey",
+                detail:"settling onto" + of + " — " + fmtDist(ph.toCoverM) + " to coverage"};
+      if(ph.phase === "lead-out")
+        return {activity:"lead-out", surveying:false, role:"survey",
+                detail:"running out past the coverage on" + of};
+      return {activity:"surveying", surveying:true, role:"survey", detail:"on coverage" + of};
+    }
     if(curTurn >= 0){
       const t = turnSeg[curTurn] || {};
       return {activity:"transiting", surveying:false, role:"turn",
@@ -3234,9 +3362,17 @@ function logActivityChange(){
       behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? runLineIdx+1 : null,
       lat: st.lat_deg, lon: st.lon_deg, sog_kn: st.sog_kn}})}).catch(()=>{});
 }
-function buildLineTable(){ const spd=roleSpeedMS("survey");   // a LINE is coverage, always
-  return mission.lines.map((L,k)=>{ const len=distTo(L.a,L.b);
-    return {line:k+1, len_m:Math.round(len), plan_s:Math.round(spd>0?len/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
+function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flown at it too
+  return mission.lines.map((L,k)=>{
+    const run = distTo(L.a, L.b);
+    // `len` STAYS COVERAGE — "a LINE is coverage, always" — but `plan` is the whole RUN,
+    // because `actual` is clocked over the whole run (the boat is on the line from the
+    // first metre of lead-in) and two columns measuring different water cannot be
+    // compared. The lead column is what reconciles them; without it the plan would read
+    // long against a coverage length for no visible reason.
+    const lead = Math.min(run, Math.max(0, L.lead_in_m||0) + Math.max(0, L.lead_out_m||0));
+    return {line:k+1, len_m:Math.round(run - lead), lead_m:Math.round(lead),
+            plan_s:Math.round(spd>0?run/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
 // --- transit-to-survey + RTH-home estimates (Lines card; Andy's ask 2026-08-10) ------- //
 // ENC-ROUTED, deliberately. The vessel card's #v_approach is a straight-line estimate with
@@ -3327,13 +3463,21 @@ function renderLineTable(){
   scheduleTransitEst();                          // off-tick; re-renders when it lands
   const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
   const runningSurvey = S && S.run==="running" && S.behavior==="survey";
+  // THE LEAD COLUMN APPEARS ONLY WHEN THERE IS A LEAD. A plan with none is the plan every
+  // committed mission before this feature was, and its table must look exactly as it did —
+  // an always-on column of zeros is a question the operator has to answer every time they
+  // read a survey that never asked one.
+  const anyLead = t.some(r=>r.lead_m>0);
   const rows=t.map(r=>{
     const active = runningSurvey && (r.line-1)===runLineIdx;   // highlight the line being RUN (not merely nearest)
     const tr = active ? ' style="background:rgba(63,192,255,.14)"' : '';
     const mark = active ? '<span style="color:#39c0ff">▸</span>' : '';   // ▸ line under way
-    return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td><td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
+    return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td>`+
+      (anyLead?`<td style="${cell};color:var(--ink-faint)">${r.lead_m||''}</td>`:``)+
+      `<td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
   }).join("");
-  const T={len:t.reduce((a,r)=>a+r.len_m,0),plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
+  const T={len:t.reduce((a,r)=>a+r.len_m,0),lead:t.reduce((a,r)=>a+r.lead_m,0),
+           plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
   const estSpd=roleSpeedMS("survey");    // this table is the COVERAGE lines; turns have their own row
   // ⚠ THE TWO TRANSIT ROWS ARE TRANSITS, AND THEY WERE TIMED AT THE SURVEY SPEED. They are
   // the exact two legs Andy names - "Lines from home to the first survey line waypoint and
@@ -3343,8 +3487,12 @@ function renderLineTable(){
   const trSpd=roleSpeedMS("transit");
   let html=`<span style="color:var(--ink-faint)">${roleSpeed("survey")} speed</span>`+
     transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit"))+
-    `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
-    `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td><td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
+    `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td>`+
+    (anyLead?`<td style="${head}" title="Lead-in + lead-out on this line: run distance that is NOT coverage. The plan column times the whole run; the len column is the coverage inside it.">lead m</td>`:``)+
+    `<td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
+    `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td>`+
+    (anyLead?`<td style="${cell};color:var(--ink-faint)">${T.lead}</td>`:``)+
+    `<td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
   // TURNS - independent components between lines, timed separately from the lines.
   const tt=buildTurnTable();
   if(tt.length){
@@ -3476,6 +3624,36 @@ function patSourceLines(){
 function runMid(seg){ return {lat:(seg[0].lat+seg[1].lat)/2, lon:(seg[0].lon+seg[1].lon)/2}; }
 
 /**
+ * The COVERAGE sub-segment of punched run `k` - the run with its lead-in and lead-out
+ * taken back off.
+ *
+ * ⚠ AND EVERY MIDPOINT THAT IDENTIFIES A RUN MUST COME THROUGH HERE. A strike is
+ * remembered as a midpoint and matched against one, and the strike list is built BEFORE
+ * the leads are added (`keptRuns(clipped)`), so it holds COVERAGE midpoints. Match a
+ * struck coverage midpoint against a RUN midpoint and a symmetric lead still agrees -
+ * which is exactly what makes the fault invisible in the ordinary case - while an
+ * asymmetric one (a different lead-in and lead-out, or either end trimmed by the chart)
+ * shifts it by half the difference and the strike silently stops applying, or applies to
+ * the wrong run. Coverage midpoints on both sides, always.
+ */
+function patCoverSeg(k){
+  const seg = patClip && patClip[k]; if(!seg) return null;
+  const L = patLead[k] || NO_LEAD;
+  const len = distTo(seg[0], seg[1]);
+  if(!(len > 0) || (!L.in && !L.out)) return seg;
+  const t0 = Math.min(1, Math.max(0, (L.in  || 0) / len));
+  const t1 = Math.min(1, Math.max(0, 1 - (L.out || 0) / len));
+  if(!(t1 > t0)) return seg;                     // a lead longer than the run: report it whole
+  const at = t => ({lat: seg[0].lat + (seg[1].lat-seg[0].lat)*t,
+                    lon: seg[0].lon + (seg[1].lon-seg[0].lon)*t});
+  return [at(t0), at(t1)];
+}
+/** Midpoint of run `k`'s COVERAGE - the value a strike is stored and matched as. */
+function patCoverMid(k){ const s = patCoverSeg(k); return s ? runMid(s) : null; }
+/** Total lead metres actually applied across the punched runs. */
+function patLeadTotal(){ return patLead.reduce((a,L)=>a + (L?(L.in||0)+(L.out||0):0), 0); }
+
+/**
  * Everything that decides WHICH RUNS EXIST — before any of them are struck off.
  *
  * The three corners and the alignment make the lines; the boundary ring clips them; the
@@ -3542,12 +3720,18 @@ function runNear(cx, cy, tolPx){
   // Web Mercator ground resolution at this latitude, for the cap.
   const mPerPx = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
   const capPx = (sp && sp.spacing > 0) ? (sp.spacing*0.45)/mPerPx : Infinity;
-  let best=null, bd=Math.min(tolPx||8, capPx);
-  patClip.forEach(seg=>{
+  let best=-1, bd=Math.min(tolPx||8, capPx);
+  // HIT-TESTED ON THE WHOLE RUN, IDENTIFIED BY ITS COVERAGE. Clicking a lead-in is
+  // clicking that run - it is the same drawn line - but what comes back is the coverage
+  // midpoint and the coverage length, because that is what a strike is stored as and what
+  // the card is about to quote to the operator ("a 819 m run" must be 819 m of survey).
+  patClip.forEach((seg,k)=>{
     const a=worldPx(seg[0].lat,seg[0].lon,zoom), b=worldPx(seg[1].lat,seg[1].lon,zoom);
     const d=distPtSegPx(cx,cy, a.x-o.x,a.y-o.y, b.x-o.x,b.y-o.y);
-    if(d<=bd){ bd=d; best=seg; } });
-  return best ? {...runMid(best), length: distTo(best[0], best[1])} : null;
+    if(d<=bd){ bd=d; best=k; } });
+  if(best < 0) return null;
+  const cov = patCoverSeg(best);
+  return cov ? {...runMid(cov), length: distTo(cov[0], cov[1])} : null;
 }
 
 /** Select the run under the click. Returns true if one was hit. */
@@ -3593,9 +3777,35 @@ function strikeSelectedRun(){
   // gesture is visibly acknowledged. The turns around it are still the old ones for a
   // moment — they cannot be right until the whole run is re-solved — which is what the
   // busy hint is for.
-  patClip = keptRuns(patClip);
+  dropStruckFromPunch();
   scheduleRepunch();
   return true;
+}
+
+/**
+ * Drop the struck runs out of the PUNCHED set, keeping `patLead` in step with it.
+ *
+ * ⚠ TWO PARALLEL ARRAYS, FILTERED IN ONE PASS OR NOT AT ALL. `patLead[k]` describes
+ * `patClip[k]` and nothing else, so filtering one and leaving the other re-points every
+ * lead after the gap at the wrong run — and the only symptom is coverage measured from
+ * the wrong end of a line, on plans that have both a strike and a lead.
+ *
+ * ...and matched on COVERAGE midpoints, because that is what the strike list holds (it is
+ * built by `keptRuns(clipped)` inside the punch, before any lead is added). `keptRuns`
+ * compares whatever midpoint it is handed, and handed a RUN midpoint it agrees with the
+ * stored one only while the lead-in and the lead-out happen to be equal — which is the
+ * default, which is exactly why this would not have shown up until it mattered.
+ */
+function dropStruckFromPunch(){
+  const struck = activeStruck();
+  if(!patClip || !struck.length) return;
+  const keepC = [], keepL = [];
+  for(let k=0;k<patClip.length;k++){
+    const m = patCoverMid(k);
+    if(m && struck.some(d=>distTo(d, m) < 1)) continue;
+    keepC.push(patClip[k]); keepL.push(patLead[k] || NO_LEAD);
+  }
+  patClip = keepC; patLead = keepL;
 }
 
 /** Put every struck-off run back. */
@@ -3690,7 +3900,18 @@ function drawPattern(toScreen){
     ctx.save();
     if(patClip){
       ctx.setLineDash([2,4]); ctx.strokeStyle="rgba(57,192,255,0.22)"; ctx.lineWidth=1; seg(src);
-      ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(patClip);
+      // COVERAGE HEAVY, LEAD LIGHT. The run and its coverage stopped being the same line
+      // the moment a lead was set, and telling them apart is the operator's whole reason
+      // for setting one — so the run is laid down thin and dashed first and the coverage
+      // drawn solid over it. Solid 2.5 px green keeps meaning exactly what it always
+      // meant: water that gets surveyed.
+      if(patLeadTotal() > 0){
+        const cov = patClip.map((s,k)=>patCoverSeg(k)).filter(Boolean);
+        ctx.setLineDash([3,3]); ctx.strokeStyle="rgba(63,191,107,0.55)"; ctx.lineWidth=1.4; seg(patClip);
+        ctx.setLineDash([]);    ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(cov);
+      } else {
+        ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(patClip);
+      }
       if(patRoutes.length){                        // transits auto-routed around obstacles
         ctx.setLineDash([6,4]); ctx.strokeStyle="rgba(217,154,60,0.95)"; ctx.lineWidth=1.8;
         patRoutes.forEach(rt=>{ ctx.beginPath(); rt.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon);
@@ -3708,7 +3929,11 @@ function drawPattern(toScreen){
       // the thing the operator is looking at. Amber and heavy over the green: the whole
       // point of select-then-delete is seeing which run is about to go before it goes.
       if(patSel){
-        const hit = patClip.find(s=>distTo(runMid(s), patSel) < 1);
+        // Matched on COVERAGE midpoints, which is what patSel holds - see patCoverSeg.
+        let hit = null;
+        for(let k=0;k<patClip.length;k++){
+          const m = patCoverMid(k);
+          if(m && distTo(m, patSel) < 1){ hit = patClip[k]; break; } }
         if(hit){
           // ⚠ THE HALO IS 9 px BECAUSE 5 px WAS MEASURABLY INVISIBLE. The first cut drew
           // amber at 5 under the 2.5 green, leaving a 1.25 px fringe — counted on the live
@@ -3809,7 +4034,11 @@ function committedPatternInfo(){
     if(!(el > 0)) return null;
     // parallel test, direction-agnostic: a boustrophedon alternates end for end
     if(Math.abs((ex*uy - ey*ux) / el) > 0.035) return null;   // ~2 deg
-    legLength = Math.max(legLength, el);          // longest: a clipped plan has short end lines
+    // COVERAGE, not run. "Line len" on this card is the length the operator drew and the
+    // sensor covers; a lead makes the RUN longer without covering another metre, so
+    // reporting the run here would quietly inflate the survey by twice the lead.
+    const lead = Math.min(el, Math.max(0, l.lead_in_m||0) + Math.max(0, l.lead_out_m||0));
+    legLength = Math.max(legLength, el - lead);   // longest: a clipped plan has short end lines
     const off = (a.e-a0.e)*uy - (a.n-a0.n)*ux;    // signed perpendicular offset from line 0
     offMin = Math.min(offMin, off); offMax = Math.max(offMax, off);
   }
@@ -3852,7 +4081,10 @@ function updatePatReadout(){
     // is a midpoint, so a re-punch that removes its run leaves it pointing at nothing —
     // and a card still offering "press Delete to strike it off" for a run that is not on
     // the chart any more is an instruction the next keystroke disproves.
-    if(patSel && !(patClip||[]).some(s=>distTo(runMid(s), patSel) < 1)) patSel = null;
+    // ...on COVERAGE midpoints, which is what patSel is (see patCoverSeg). A run midpoint
+    // here would drop the selection on every render of a plan with an uneven lead.
+    if(patSel && !(patClip||[]).some((s,k)=>{ const m = patCoverMid(k);
+                                             return m && distTo(m, patSel) < 1; })) patSel = null;
     if(patSel){
       // The LENGTH is what the run was almost certainly picked for, so it is the thing
       // named — "a 34 m run" is the reason the operator is deleting it.
@@ -3948,8 +4180,16 @@ async function commitPattern(){
   planKind = "survey";                        // the committed plan is a survey (Mission card Type)
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
   const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
+  // ⚠ LEADS ONLY EXIST ON A PUNCHED PLAN, and committing an un-punched one must carry
+  // NONE. The lead is the one part of the geometry whose safety argument is the chart
+  // check that produced it (see extendLead); a lead attached to lines that were never
+  // clipped would be an extension into water nobody looked at, wearing the same field
+  // name as one that was. `patLead` is parallel to `patClip` and to nothing else.
+  const leads = patClip ? patLead : null;
   lines.forEach((l,k)=>{
-    mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon}});
+    const ld = (leads && leads[k]) || NO_LEAD;
+    mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon},
+                        lead_in_m: ld.in || 0, lead_out_m: ld.out || 0});
     mission.waypoints.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon});
     if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
       transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
@@ -5576,7 +5816,12 @@ async function ensureChartInk(bb){
   return chartInk;
 }
 async function ensureNogoArea(){
-  const b=encBbox(120); if(!b) return false;
+  // ⚠ THE PAD MUST COVER THE LEAD, or the lead is validated against water nobody fetched.
+  // The extension is clipped against the keep-out model, and outside the extract that
+  // model is EMPTY — which reads as "clear" rather than as "unknown", so a 200 m lead-out
+  // past a 120 m pad would be certified over 80 m of chart that was never asked for. The
+  // fetch is bbox-cached and contained-checked, so a bigger box costs one extract, once.
+  const b=encBbox(120 + Math.max(leadInM(), leadOutM())); if(!b) return false;
   if(nogo.ready && bboxContains(nogo.bbox, b)){ await ensureChartInk(b); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
@@ -5609,6 +5854,30 @@ async function ensureNogoCovers(pts, padM){
   if(nogo.ready) await ensureChartInk(b);
   return nogo.ready;
 }
+/**
+ * Push `from` OUTWARD along the line, away from `toward`, by up to `want` metres of
+ * water that is actually clear. Returns the new end point and how much was bought.
+ *
+ * ⚠ A LEAD IS FLOWN WATER, SO IT IS CLIPPED LIKE FLOWN WATER. The clipped run ends where
+ * it does for one of two reasons - the operator's box ran out, or the chart said stop -
+ * and only the first is safe to extend past. Nothing here can tell those apart from the
+ * endpoint alone, so it does not try: it asks the keep-out model, sample by sample, the
+ * same way clipLine builds the runs themselves. A lead into a pier comes back SHORT, and
+ * the card says by how much.
+ *
+ * Only the sub-run that STARTS at `from` counts. clipLine will happily report clear water
+ * further out with a rock in between, and that water is not reachable along this line.
+ */
+function extendLead(from, toward, want, ref, ko, buf){
+  // clipLine returns nothing under a metre of segment, so a sub-metre lead is no lead.
+  if(!(want >= 1)) return {p: from, m: 0};
+  const tip = atDA(from, want, azTo(toward, from));
+  const segs = clipLine(from, tip, ref, ko, buf) || [];
+  const first = segs[0];
+  if(!first || distTo(first[0], from) > 1) return {p: from, m: 0};
+  return {p: first[1], m: distTo(from, first[1])};
+}
+
 async function punchOut(){
   if(punchBusy) return;
   const sp=currentPattern();
@@ -5770,6 +6039,38 @@ async function punchOut(){
     // thing that must be said out loud, with the number and the threshold, or a thin
     // survey looks like a chart problem instead of a setting.
     const nShort = shortened.length - patClip.length;
+    // ── LEAD-IN / LEAD-OUT ────────────────────────────────────────────────────────────
+    // Applied LAST, and every word of that is load-bearing:
+    //
+    //  • AFTER the chart clip, so the coverage extent is the one the chart allowed and a
+    //    lead cannot buy back water the depth window or a pier took out.
+    //  • AFTER the strike filter, so a struck run is matched on the COVERAGE midpoint it
+    //    was stored as (see patCoverSeg).
+    //  • AFTER `minLine`, so the hull's minimum survey line still measures COVERAGE. A
+    //    40 m run with a 30 m lead at each end is a 40 m survey line, not a 100 m one,
+    //    and it must still be dropped for the same reason it always was.
+    //  • BEFORE the turns below, so every reversal is built from the ends the boat will
+    //    actually turn at. That is the point of the whole feature: the turn happens past
+    //    the coverage, and the boat is straight and settled by the time coverage starts.
+    //
+    // Against koTurn, not koClip: a lead is not coverage, it is the water that CONNECTS
+    // coverage to a turn, and koTurn is exactly that water — the same model the turn it
+    // leads into is validated against. Using koClip would refuse a lead for the survey
+    // reason (a channel the operator chose not to survey) rather than a navigation one.
+    const wantIn = leadInM(), wantOut = leadOutM();
+    patLead = patClip.map(()=>({in:0, out:0}));
+    let nLeadCut = 0, leadGot = 0;
+    const leadWant = (wantIn + wantOut) * patClip.length;
+    if(wantIn > 0 || wantOut > 0){
+      patClip = patClip.map((seg,k)=>{
+        const gi = extendLead(seg[0], seg[1], wantIn,  ref, koTurn, buffer);
+        const go = extendLead(seg[1], seg[0], wantOut, ref, koTurn, buffer);
+        patLead[k] = {in: gi.m, out: go.m};
+        leadGot += gi.m + go.m;
+        if(gi.m < wantIn - 0.5 || go.m < wantOut - 0.5) nLeadCut++;
+        return [gi.p, go.p];
+      });
+    }
     patTransits=[]; patRoutes=[]; patUnsafe=[];
     // nNoTurn is the total; the three beside it are WHY, because the banner used to
     // assert a cause it had never measured (see the nNoTurn branch below).
@@ -5900,6 +6201,13 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      // THE LEAD IS QUOTED AS RUN, NOT AS COVERAGE, and says so. Every other number on
+      // this line is coverage the operator is getting or losing; this one is distance
+      // they are paying for and will not be surveying, which is the opposite kind of
+      // fact and would be read as the first kind if it were not named.
+      (leadWant>0?`, lead ${wantIn.toFixed(0)} m in / ${wantOut.toFixed(0)} m out `+
+        `(+${leadGot.toFixed(0)} m of ${leadWant.toFixed(0)} m asked, run only — not coverage)`+
+        (nLeadCut?`, ${nLeadCut} run(s) cut short of the full lead by the chart`:``):``)+
       // STRUCK RUNS ARE NAMED WHERE THE OTHER DROPPED COVERAGE IS NAMED. Coverage that
       // leaves the plan is said out loud whatever took it — the depth window, the hull's
       // minimum line, or the operator's own hand — or a thin survey reads as a chart
@@ -6423,6 +6731,43 @@ $("#c_mindepth").onchange  = ()=>setMinDepth($("#c_mindepth").value);
 $("#sp_mindepth").onchange = ()=>setMinDepth($("#sp_mindepth").value);
 // Max depth is still survey-only: a COVERAGE ceiling, not a keep-out. Deep water is water.
 $("#sp_maxdepth").onchange = ()=>{ patClip=null; updatePatReadout(); render(); };
+// --- LEAD-IN / LEAD-OUT controls ---------------------------------------------------- //
+// One writer per control, mirroring setBuffer / setMinDepth above: clamp, write the model,
+// persist, throw the punch away, re-read the card. The punch MUST go: a lead is geometry,
+// so a changed lead is a different plan, and leaving `patClip` alive would let Add to plan
+// commit runs built to the previous setting while the card described the new one.
+function setLead(which, v){
+  const n = Math.max(0, Math.min(LEAD_MAX_M, parseFloat(v)||0));
+  if(which === "in"){ mission.lead_in  = n; $("#sp_lead_in").value  = n; }
+  else              { mission.lead_out = n; $("#sp_lead_out").value = n; }
+  saveMission(); patClip = null; updateLeadNote(); updatePatReadout(); render();
+}
+function setLeadMode(m){
+  mission.lead_mode = (m === "s") ? "s" : "m";
+  $("#sp_lead_mode").value = mission.lead_mode;
+  saveMission(); patClip = null; updateLeadNote(); updatePatReadout(); render();
+}
+/**
+ * What the two figures come to in METRES, at the speed they will be flown at.
+ *
+ * A DURATION is not a length until something names the speed it was converted at, so the
+ * note names it — the same discipline the punch readout follows when it quotes the turn
+ * radius beside the turn count. Without it "20" on the card and 41 m on the water are two
+ * numbers with no visible relationship, and the operator cannot check either one.
+ */
+function updateLeadNote(){
+  const el = $("#sp_lead_note"); if(!el) return;
+  const i = leadInM(), o = leadOutM();
+  if(!(i > 0 || o > 0)){ el.textContent = "lead: none — the run is the coverage"; return; }
+  const dur = mission.lead_mode === "s";
+  const conv = dur ? ` (${mission.lead_in||0} s / ${mission.lead_out||0} s at ${roleSpeed("survey")} `
+                     + `${roleSpeedMS("survey").toFixed(2)} m/s)` : ``;
+  el.textContent = `lead: ${fmtDist(i)} in / ${fmtDist(o)} out${conv}`
+    + ` — +${fmtDist(i+o)} of RUN per line, not coverage. Punch Out applies it.`;
+}
+$("#sp_lead_in").onchange   = ()=>setLead("in",  $("#sp_lead_in").value);
+$("#sp_lead_out").onchange  = ()=>setLead("out", $("#sp_lead_out").value);
+$("#sp_lead_mode").onchange = ()=>setLeadMode($("#sp_lead_mode").value);
 // enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
 ["#enf_land","#enf_depth","#enf_haz","#enf_area"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };
@@ -6580,6 +6925,11 @@ function setRoleSpeed(role, v){
   saveMission();
   commandedSpeed = null;            // let the governor decide whether this one is live now
   updateSpeedNote();
+  // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
+  // speed moving moves it. The note is what tells the operator their 20 s just became a
+  // different number of metres; without this it would keep quoting the old one until the
+  // next keystroke in a field they have no reason to touch.
+  if(role === "survey" && mission.lead_mode === "s") updateLeadNote();
   // The TURN speed is not only a throttle: it sets the radius every generated turn is
   // built at, so changing it can make a committed plan's reversals unflyable (or make
   // ones that were refused fit). recalcForSpeed is what re-checks and says so.

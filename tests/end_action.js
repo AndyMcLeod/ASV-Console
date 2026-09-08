@@ -61,6 +61,13 @@ const path = require("path");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 // the REAL vessel block, so a check leaning on a hull colour reads the shipped default
 const { V } = require("../static/js/state.js");
+// currentActivity now asks linePhase whether the boat is on a line's LEAD or its COVERAGE,
+// and linePhase measures with the real geodesy. Given here rather than stubbed - a stub
+// would let this suite pass against a page whose phase test had drifted from the one the
+// boat is flown by. The fixtures below carry NO lead, so every line here is all coverage
+// and the phase branches are never entered; they are driven in tests/survey_lead.js.
+const { distTo, llEN } = require("../static/js/geodesy.js");
+function fmtDist(m){ return Math.round(m) + " m"; }
 // the page reads chart colours from CSS custom properties; there is no stylesheet here, so
 // the fallback has to answer with SOMETHING - a boat drawn in "" is an invisible boat.
 function getCSS(){ return "#39c0ff"; }
@@ -359,8 +366,12 @@ check("16. ... and a stopped boat does not re-arm anything either",
 // because the distinction is what any continuously-collected data must be segmented by:
 // sonar cannot tell coverage from transit by looking at itself.
 {
-  eval(grab("currentActivity"));
+  eval(grab("alongLineM") + "\n" + grab("linePhase") + "\n" + grab("currentActivity"));
   var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
+  // A real position rather than null: currentActivity asks linePhase where on the line the
+  // boat is, and a null boat would answer "coverage" for the trivial reason that it cannot
+  // measure. These lines carry no lead, so the answer is coverage on the real reason.
+  var asv = { lat: 43.0718, lon: -70.7626 };
   mission = { completion: "rth", lines: [{}, {}, {}, {}] };
   const act = (over, set) => {
     Object.assign({runLineIdx:-1, curTurn:-1, lastRunLine:-1}, set || {});

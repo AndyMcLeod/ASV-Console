@@ -848,6 +848,21 @@ def load_mission():
                 # narrow its clearance. There is no max here on purpose: deep water is not a
                 # keep-out, and the survey Max depth stays a coverage window.
                 "min_depth_m": m.get("min_depth_m", 2.0),
+                # LEAD-IN / LEAD-OUT (2026-09-08) - how far the boat runs ON a survey
+                # line before the coverage starts, and past where it ends, so steering
+                # and IMU are settled through the coverage. The stored value is the one
+                # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (metres) or
+                # "s" (seconds, converted client-side at the survey speed). All three
+                # travel together or none of them mean anything - a 20 that loses its
+                # "s" is 20 m instead of ~41 m, silently.
+                #
+                # The per-line lengths ACTUALLY APPLIED ride in "lines" as lead_in_m /
+                # lead_out_m, which pass through untouched: they are what the chart
+                # allowed, not what was asked for, and only the client's Punch Out can
+                # know the difference.
+                "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
+                "lead_in": m.get("lead_in", 0),
+                "lead_out": m.get("lead_out", 0),
                 # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
                 # plan drawn at the dock survives a reload / a session at sea.
                 "boundary": m.get("boundary") or [],
@@ -859,6 +874,7 @@ def load_mission():
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
+            "lead_mode": "m", "lead_in": 0, "lead_out": 0,
             "boundary": [], "boundary_closed": False}
 
 
@@ -884,6 +900,9 @@ def save_mission(m):
         "completion": _cache_plan_completion(m.get("completion")),
         "buffer_m": m.get("buffer_m", 3.0),
         "min_depth_m": m.get("min_depth_m", 2.0),
+        "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
+        "lead_in": m.get("lead_in", 0),
+        "lead_out": m.get("lead_out", 0),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
     }, indent=1)

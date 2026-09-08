@@ -58,7 +58,10 @@ const fs = require("fs");
 const path = require("path");
 const HTML = process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html");
 const H = fs.readFileSync(HTML, "utf8");
-const { toEN, distTo, azTo, alignDeg, M_PER_DEG_LAT } = require("../static/js/geodesy.js");
+// llEN and fmtDist join the list for check 15: linePhase measures the boat's along-track
+// position with the real geodesy, and the lead-in detail quotes the distance still to run.
+const { toEN, llEN, distTo, azTo, alignDeg, M_PER_DEG_LAT } = require("../static/js/geodesy.js");
+function fmtDist(m) { return Math.round(m) + " m"; }
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -102,8 +105,17 @@ eval([
   grab("lineSetKey"), grab("syncLineStats"), grab("turnZoneM"), grab("nearestEndpointM"),
   grab("reversalScaleM"), grab("isReversalGap"),
   grab("currentLegLine"), grab("accumLineTime"),
+  // linePhase splits a committed line into lead-in / coverage / lead-out; currentActivity
+  // asks it before reporting coverage. The fixtures here carry no lead, so every line is
+  // all coverage and the answer is the one it always was — which is the point: adding the
+  // feature must not move a single role on a plan that does not use it.
+  grab("alongLineM"), grab("linePhase"),
   grab("currentActivity"), grab("speedRole"), grab("roleSpeed"), grab("roleSpeedMS"),
   grab("committedRoleLengths"),
+  // A `const` declared inside a direct eval stays in the EVAL's scope; only the function
+  // declarations bind out here. This is how check 15e reads the page's OWN tolerance
+  // instead of restating 5 in this file, where it could drift from what ships.
+  "function __matchM(){ return LINE_MATCH_M; }",
   "function __zone(){ return turnZoneM(); }",
   "function __scale(){ return reversalScaleM(); }",
 ].join("\n"));
@@ -344,6 +356,88 @@ plan();
               /const trSpd\s*=\s*roleSpeedMS\("transit"\)/.test(H),
         () => rows.length + " row(s): " + rows.map(r=>r.slice(0,46)).join(" | ")
               + " — they are the two legs Andy names, and they used estSpd (survey)");
+}
+
+// --- 15. A LEAD-CARRYING LINE IS STILL A LINE, AND ITS SPEED NEVER CHANGES -- //
+// The lead extension (tests/survey_lead.js) makes the RUN longer than the COVERAGE, and
+// the two things that must survive it are exactly the two this suite is about:
+//
+//   * currentLegLine matches a leg on BOTH endpoints within LINE_MATCH_M. The committed
+//     endpoints are the EXTENDED ones, and the waypoints pushed beside them are the same
+//     points, so the match should be untouched — but "should be" is how the region hop got
+//     flown at the turn speed for 304 s, so it is driven here rather than argued.
+//   * the SPEED must not change at the coverage boundary. The whole purpose of a lead is
+//     to arrive at the first usable ping already settled at the survey speed; a governor
+//     that changed speed on entering the coverage would undo the feature at the exact
+//     moment it is meant to be paying off.
+{
+  const LEAD_IN = 30, LEAD_OUT = 20;
+  // The waypoints are COPIES of the endpoints, the way commitPattern writes them — not the
+  // same objects. Sharing identity would make distTo exactly zero and leave check 15d
+  // unable to feel any error at all, which is how it first passed against a mutated
+  // LINE_MATCH_M of a ten-thousandth of a metre.
+  const cp = p => ({ lat: p.lat, lon: p.lon });
+  plan({
+    lines: LINES.map(([a, b]) => ({ a: cp(a), b: cp(b), lead_in_m: LEAD_IN, lead_out_m: LEAD_OUT })),
+    waypoints: LINES.flatMap(([a, b]) => [cp(a), cp(b)]),
+  });
+  // Fly line 1 end to end (150 m, wp index 1 = the leg a→b), reading the ACTIVITY.
+  const phases = [], roles = [];
+  for (let i = 0; i <= 30; i++) {
+    const de = (150 * i) / 30;
+    tick(0, de, 90, 1);
+    const a = currentActivity();
+    if (!phases.length || phases[phases.length - 1].act !== a.activity)
+      phases.push({ act: a.activity, at: Math.round(de), surveying: a.surveying });
+    if (!roles.length || roles[roles.length - 1] !== a.role) roles.push(a.role);
+  }
+  check("15. flying a lead-carrying line reports lead-in, then coverage, then lead-out",
+        () => phases.length === 3 && phases[0].act === "lead-in"
+              && phases[1].act === "surveying" && phases[2].act === "lead-out",
+        () => phases.map(p => p.act + "@" + p.at + "m").join(" → ")
+              + " on a 150 m run with a " + LEAD_IN + " m lead-in and a " + LEAD_OUT
+              + " m lead-out — driven through accumLineTime and currentLegLine, not asserted");
+  check("15b. ... and only the middle stretch is acquiring coverage",
+        () => phases[0].surveying === false && phases[1].surveying === true
+              && phases[2].surveying === false,
+        () => phases.map(p => p.act + ":" + p.surveying).join(" ")
+              + " — `surveying` is the flag that titles the readout \"acquiring coverage\"");
+  check("15c. ... and the SPEED ROLE never changes across either boundary",
+        () => roles.length === 1 && roles[0] === "survey",
+        () => roles.length + " role(s) over the whole run: " + roles.join(" → ")
+              + ". A change here would have the boat settling onto one speed and "
+              + "surveying at another, which is the fault the lead exists to prevent");
+
+  // ...and the line is still FOUND. A lead moves both committed endpoints outboard, and
+  // currentLegLine matches on both of them.
+  const found = LINES.map((_, k) => { window._wpIndex = 2 * k + 1; _legLine = { key: "", line: -1 };
+                                      return currentLegLine(); });
+  check("15d. every lead-carrying line is still matched by its own route leg",
+        () => found.every((v, k) => v === k),
+        () => "legs 1,3,5,7,9 → lines " + found.map(v => v + 1).join(", ")
+              + " (all " + LINES.length + " found; -1 anywhere means the boat would fly "
+              + "that line reported as an approach transit)");
+
+  // ⚠ AND WHAT 15d IS ACTUALLY GUARDING AGAINST, shown rather than described. If a commit
+  // wrote the COVERAGE ends as waypoints while the line kept its RUN ends — the obvious
+  // way to get this wrong, since the coverage is what the operator drew — the endpoints
+  // would be a lead apart and NOTHING would match. That is a whole survey flown and
+  // reported as an approach transit, at the transit speed, with no error anywhere.
+  const covWps = LINES.flatMap(([a, b]) => {
+    const len = distTo(a, b);
+    const at = (p, q, t) => ({ lat: p.lat + (q.lat - p.lat) * t, lon: p.lon + (q.lon - p.lon) * t });
+    return [at(a, b, LEAD_IN / len), at(a, b, 1 - LEAD_OUT / len)];
+  });
+  const err = distTo(covWps[0], LINES[0][0]);
+  mission.waypoints = covWps;
+  const foundCov = LINES.map((_, k) => { window._wpIndex = 2 * k + 1; _legLine = { key: "", line: -1 };
+                                         return currentLegLine(); });
+  check("15e. ... and coverage ends written as waypoints would match NOTHING",
+        () => foundCov.every(v => v === -1) && err > __matchM(),
+        () => "coverage-end waypoints sit " + err.toFixed(0) + " m from the committed line "
+              + "ends against a " + __matchM() + " m tolerance → lines "
+              + foundCov.join(", ") + ". This is why the RUN ends are what is committed.");
+  mission.waypoints = LINES.flatMap(([a, b]) => [cp(a), cp(b)]);
 }
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));

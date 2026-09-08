@@ -707,6 +707,37 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    patterns and hand-drawn lines are never filtered. Shipped values: the 7.7 m DriX
    **80 m**, the 4 m example USV **25 m**, the 1.3 m Z-Boat **0**.
 
+   **Lead-in and lead-out (the run is longer than the coverage).** The first stretch of
+   a survey line is not usable data: coming out of the reversal the steering is still
+   settling onto the track and the IMU is still settling with it. The SURV card takes a
+   **lead-in** and a **lead-out**, and a **unit** — metres or seconds. Punch Out extends
+   every run by that much past both ends of the coverage, so the boat rolls out, steadies,
+   and the coverage the operator drew starts exactly where they drew it. A duration is
+   converted at the **survey** speed, because that is the speed the lead is flown at;
+   flying it at anything else is what the settling is there to avoid. The value stored is
+   the one typed, in the unit chosen — so a lead set as *20 s* stays 20 s and re-derives
+   its metres when the survey speed changes, rather than freezing into a distance that no
+   longer settles anything.
+
+   *A lead is flown water, so it is clipped like flown water.* A punched run ends either
+   where the operator's box ran out or where the chart said stop, and nothing can tell
+   those apart from the endpoint alone — so the extension is checked against the same
+   keep-out model the turn it leads into uses, sample by sample. Where it will not fit it
+   comes back **short**, and the readout says by how much against how much was asked
+   (`lead 40 m in / 25 m out (+409 m of 455 m asked, run only — not coverage), 3 run(s)
+   cut short of the full lead by the chart`). The ENC extract is padded by the lead for
+   the same reason: outside the fetched chart the keep-out model is *empty*, which reads
+   as clear rather than as unknown.
+
+   *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
+   coverage and adds a `lead m` column beside it — the `plan` column times the whole run,
+   because `actual` is clocked over the whole run — and the survey card's **Line len**
+   stays coverage. The chart draws the lead stubs thin and dashed, so the point where data
+   starts counting is visible on the water. The Mission card reads **LEAD-IN** — *settling
+   onto line 3 of 9 — 18 m to coverage* — and is **not** acquiring coverage, while the
+   commanded speed stays the survey speed across both boundaries. Measured on a real
+   7-line punch: coverage 1316 m before the lead and 1316 m after, run 1316 → 1725 m.
+
    **Striking a run off by hand.** A minimum line length drops short coverage by
    *rule*; this is the same decision one line at a time, because "not worth
    surveying" is a judgement about this water and this vessel that no threshold
@@ -1284,6 +1315,20 @@ node tests/survey_card.js
 blanking the moment its pattern anchors are dropped, and that the figures are derived from
 the committed lines rather than remembered (so they cannot drift from the plan, survive a
 refresh, and follow a plan edited in WPT mode).
+
+```
+node tests/survey_lead.js
+```
+
+**Lead-in / lead-out** — the seam the extension opens: that a lead is *distance or
+duration* and a duration converts at the **survey** speed and no other; that it is clipped
+against the chart like any other flown water, comes back short rather than crossing a
+keep-out, and only counts the stretch reachable along the line; that it is applied after
+the minimum-line and strike filters and before the turns; and that a lead is never counted
+as coverage — the line lengths, the card's line length and the `surveying` flag all still
+mean coverage, while the speed role stays `survey` across both boundaries. The seam is
+driven end to end in `survey_transit_roles.js` (15–15e) and at the strike midpoint in
+`strike_run.js` (24b–24e).
 
 ```
 node tests/speed_recalc.js

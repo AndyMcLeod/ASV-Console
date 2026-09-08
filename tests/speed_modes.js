@@ -85,6 +85,13 @@ process.on("unhandledRejection", __crash);
 const fs = require("fs");
 const path = require("path");
 const { V } = require("../static/js/state.js");
+// currentActivity now asks linePhase which PART of a line the boat is on. Real geodesy,
+// not a stub, for the same reason currentActivity itself is grabbed rather than stubbed.
+// The fixtures here carry no lead, so the phase branches are never entered — but the ROLE
+// they return is "survey" either way, which is the property this suite is about, and
+// tests/survey_lead.js drives it.
+const { distTo, llEN } = require("../static/js/geodesy.js");
+function fmtDist(m){ return Math.round(m) + " m"; }
 
 // ASV_HTML points this at a SIDECAR copy for a mutation run. Without it the only way to
 // mutate what this suite reads is to edit static/asv.html itself - and a runner killed
@@ -130,7 +137,8 @@ function cmd(path, body) { sent.push({ path, body }); }
 // whose recorded activity had drifted apart, which is the exact failure the single
 // classifier exists to prevent.
 // eslint-disable-next-line no-eval
-eval(grabDecl("SPEED_ROLES") + "\n" + grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
+eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
+     grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +

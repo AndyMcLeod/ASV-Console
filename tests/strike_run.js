@@ -91,7 +91,12 @@ const { regionOrder } = require("../static/js/passage.js");
 // to say "these two things are near each other", and a CRLF checkout adds one character
 // per line — which is how a check passes for whoever wrote it and fails on a fresh
 // Windows clone, for a reason unrelated to the code it tests.
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8")
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Without it the only way to
+// mutate what this suite reads is to edit static/asv.html itself — and a suite that ignores
+// the override reports every mutation as SURVIVED, which is a broken instrument rather than
+// weak checks (ais_table.js, 2026-09-08, twelve of them in one sweep).
+const H = fs.readFileSync(process.env.ASV_HTML ||
+                          path.join(__dirname, "..", "static", "asv.html"), "utf8")
   .split("\r\n").join("\n");
 
 function grab(name) {
@@ -127,6 +132,13 @@ eval(grab("runMid"));
 eval(grab("activeStruck"));
 // eslint-disable-next-line no-eval
 eval(grab("keptRuns"));
+// A LEAD-IN / LEAD-OUT splits the run the boat flies from the coverage it surveys, and
+// every midpoint that identifies a run has to come off the coverage half. Real bodies for
+// the same reason as the three above - these are the exact functions the strike path calls.
+let patLead = [];
+const NO_LEAD = { in: 0, out: 0 };
+// eslint-disable-next-line no-eval
+eval(grab("patCoverSeg") + "\n" + grab("patCoverMid") + "\n" + grab("dropStruckFromPunch"));
 
 const P = (lat, lon) => ({ lat, lon });
 // A tidy east-west serpentine at ~43 N: five runs, 200 m apart, 1 km long.
@@ -388,9 +400,62 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   const readout = grab("updatePatReadout");
   const draw = grab("drawPattern");
   check("24. the highlight and the card both resolve the selection against current runs",
-        () => /patClip\|\|\[\]\)\.some\(s=>distTo\(runMid\(s\), patSel\) < 1\)/.test(readout)
-              && /patClip\.find\(s=>distTo\(runMid\(s\), patSel\) < 1\)/.test(draw),
-        "neither draws nor offers a run that is no longer there");
+        () => /patClip\|\|\[\]\)\.some\(\(s,k\)=>\{[\s\S]{0,160}?patCoverMid\(k\)[\s\S]{0,120}?distTo\(m, patSel\) < 1/.test(readout)
+              && /for\(let k=0;k<patClip\.length;k\+\+\)\{[\s\S]{0,160}?patCoverMid\(k\)[\s\S]{0,120}?distTo\(m, patSel\) < 1/.test(draw),
+        "neither draws nor offers a run that is no longer there — and both ask "
+        + "patCoverMid, because patSel is a COVERAGE midpoint (see 24b)");
+}
+
+// ── 24b-24e. A LEAD MOVES THE RUN'S MIDPOINT, AND THE STRIKE MUST NOT FOLLOW IT ─────
+// Check 2 above pins the property the strike design rests on: shortenSeg is a SYMMETRIC
+// lerp, so the drawn segment keeps its parent run's midpoint. A lead-in and a lead-out are
+// NOT symmetric — the operator sets them independently and the chart can trim either one —
+// so the RUN's midpoint moves by half their difference while the strike list still holds
+// the COVERAGE midpoint it was recorded from (the punch filters `keptRuns(clipped)` before
+// any lead is added). Every comparison must be coverage-to-coverage, or a strike lands on
+// the wrong run or on none at all.
+//
+// ⚠ AND AN EVEN LEAD HIDES ALL OF IT. in === out moves nothing, and that is the default a
+// first operator will type — which is why 24b prints the drift per run rather than
+// asserting a boolean: run 5 has no lead, does not move, and would pass either way.
+{
+  const LEADS = [{in:40,out:5}, {in:40,out:5}, {in:40,out:5}, {in:12,out:60}, {in:0,out:0}];
+  patClip = runs.map(r => [r[0], r[1]]);
+  patLead = LEADS.map(l => ({ ...l }));
+  const drift = patClip.map((s, k) => distTo(runMid(s), patCoverMid(k)));
+  check("24b. an uneven lead moves the RUN midpoint off the COVERAGE midpoint",
+        () => drift[0] > 15 && drift[3] > 20 && drift[4] < 0.001,
+        "drift: " + drift.map((d, k) => "run" + (k+1) + " " + d.toFixed(1) + " m").join(", ")
+        + " — against a 1 m match tolerance. Run 5 has no lead and does not move.");
+
+  // The coverage a strike is stored as, and the length the card quotes, are the same
+  // segment — so it is worth saying what it actually measures.
+  const cov = patCoverSeg(0), full = distTo(patClip[0][0], patClip[0][1]);
+  check("24c. the coverage of a run is the run minus both leads",
+        () => Math.abs(distTo(cov[0], cov[1]) - (full - 45)) < 0.5,
+        "run " + full.toFixed(0) + " m, lead 40 + 5 → coverage "
+        + distTo(cov[0], cov[1]).toFixed(0) + " m");
+
+  currentKey = "k"; patStruckKey = "k";
+  patStruck = [patCoverMid(2)];                 // recorded the way the punch records it
+  const before = patClip.length;
+  dropStruckFromPunch();
+  check("24d. striking a run that carries a lead removes exactly that run",
+        () => patClip.length === before - 1
+              && !patClip.some((s, k) => distTo(patCoverMid(k), patStruck[0]) < 1),
+        before + " runs → " + patClip.length + ", and none of the survivors is the struck one");
+
+  // ⚠ THE PARALLEL ARRAY. patLead[k] describes patClip[k] and nothing else; filter one and
+  // not the other and every lead after the gap re-points at the wrong run — coverage
+  // measured from the wrong end, silently, on any plan with both a strike and a lead.
+  check("24e. ... and patLead is filtered in the same pass, so the two stay in step",
+        () => patLead.length === patClip.length
+              && patLead[2].in === 12 && patLead[2].out === 60
+              && patLead[3].in === 0 && patLead[3].out === 0,
+        patClip.length + " runs, " + patLead.length + " leads: "
+        + patLead.map(l => l.in + "/" + l.out).join(" ")
+        + " (was 40/5 40/5 40/5 12/60 0/0 — index 2 removed)");
+  patStruck = []; patStruckKey = null; patClip = null; patLead = [];
 }
 
 // ── 25. DELETE BELONGS TO A FOCUSED FIELD FIRST ────────────────────────────────────

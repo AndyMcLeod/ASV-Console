@@ -55,11 +55,104 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-08 — the AIS card holds still, and TCPA has a column)
+## ⇒ START HERE (handoff refreshed 2026-09-08 — survey lines have a lead-in and a lead-out)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): THE AIS TRAFFIC CARD IS STABLE BETWEEN UPDATES, AND TCPA IS ITS OWN
+**NEWEST (this commit): LEAD-IN / LEAD-OUT — THE RUN IS NOW LONGER THAN THE COVERAGE.** Andy:
+*"implement lead in and lead out extensions to survey lines a selection on the survey card.
+They are meant to extend lines to accommodate settling of vessel steering onto path and
+settling of IMU stability after a turn. The user should have options in the survey card to
+select distance or duration."*
+
+The SURV card takes a lead-in, a lead-out and a unit (`m` / `s`); Punch Out extends every run
+past both ends of the coverage. **From this commit onward "the survey line" is two different
+lengths of two different water, and every figure has to say which one it means.** That is the
+whole design, and it is where every fault found while building this lived.
+
+**⚠ A LEAD IS FLOWN WATER, SO IT IS CLIPPED LIKE FLOWN WATER.** A punched run ends either
+because the operator's box ran out or because the chart said stop, and **nothing can tell
+those apart from the endpoint alone** — so `extendLead` does not try: it asks the keep-out
+model sample by sample through the real `clipLine`, takes only the stretch that STARTS at the
+line's end, and reports what it bought. Against `koTurn`, not `koClip`: a lead is not
+coverage, it is the water that connects coverage to a turn. **The ENC fetch pad grew to
+`120 + max(leadInM(), leadOutM())`** — outside the extract the keep-out model is *empty*,
+which reads as clear rather than as unknown, so a 200 m lead past a 120 m pad would be
+certified over 80 m of chart nobody asked for.
+
+**WHERE IT IS APPLIED IS THE DESIGN, and each wrong answer looks right on a plan with no
+lead.** AFTER the min-line filter (a 40 m run with a 30 m lead at each end is a 40 m *survey*
+line and must still be dropped); AFTER the strike filter (a strike is remembered as a
+COVERAGE midpoint); BEFORE the turn loop (the turn happening past the coverage is the point).
+
+**⚠⚠ THE STRIKE SEAM WAS A REAL BUG, CAUGHT BEFORE SHIPPING, AND IT WOULD HAVE BEEN
+INVISIBLE.** `strikeSelectedRun` did `patClip = keptRuns(patClip)`, comparing the stored
+coverage midpoint against the RUN midpoint — **which agree exactly while the lead-in equals
+the lead-out**, the first thing anyone would type. With 40 in / 5 out the run midpoint moves
+**17.5 m** against a 1 m tolerance. And `patLead` is parallel to `patClip`, so filtering one
+without the other re-points every lead after the gap. Both are fixed in one pass in
+`dropStruckFromPunch()`, and `strike_run.js` 24b-24e drive it — 24b prints the drift per run,
+because an even lead hides all of it.
+
+**A LEAD IS NOT COVERAGE, BUT IT IS THE SURVEY SPEED.** Two fields, two questions, and the
+console already had both: `currentActivity()` returns `surveying:false` (the flag that titles
+the readout *"acquiring coverage"*) with `role:"survey"` — flying the lead at any other speed
+settles the boat onto the wrong one, which is the fault the lead exists to prevent. The
+activity words are **LEAD-IN** / **LEAD-OUT**, Andy's own vocabulary. Coverage figures stay
+coverage: `len m` in the LINES table (with a new `lead m` column beside it, shown only when
+there is one — `plan` times the whole RUN because `actual` is clocked over the whole run), the
+card's **Line len**, and the chart draws the lead stubs thin and dashed so the point where
+data starts counting is visible.
+
+**MEASURED ON A LIVE CONSOLE (spare port 8795, sim), same 7-line punch over a harbour:**
+
+| | no lead | lead 40 in / 25 out |
+|---|---|---|
+| coverage | 1316.2 m | **1316 m** (every line within 0.08 m) |
+| run | 1316 m | **1725 m** |
+| lead bought | — | 409 m of 455 m asked, **3 runs cut short by the chart** |
+| turns | 5 semicircle + 1 racetrack | **6 semicircle** |
+
+The racetrack became a semicircle: the run ends moved outboard and the reversal found room.
+The three short leads are real ENC obstructions — the safety clip firing on live data, and
+said out loud on the card.
+
+**TEETH: 36 checks in the new `tests/survey_lead.js`, 28 mutations, all 28 killed** (six of
+them graded by `strike_run.js` 24b-24e and `survey_transit_roles.js` 15-15e, because that is
+where the seam is driven). **Two survived the first sweep and both were checks standing in for
+behaviour**: the lead-out probe sat at 390 m of a 400 m run, past BOTH ends' boundaries, so a
+phase test reading the lead-IN at the far end passed (24c probes 375 m now, the metre that
+separates a 30 m lead-in from a 20 m lead-out); and check 25 matched a bare `lead_mode:` and
+passed against a rebuild that hard-coded `"m"` — the field present, the whitelist "complete",
+and every stored duration coming back as metres.
+
+**⚠ AND A THIRD MUTATION SURVIVED *CORRECTLY*, WHICH IS ALSO WORTH KNOWING.** Shrinking
+`LINE_MATCH_M` to 0.0001 killed nothing, because check 15d's waypoints were the SAME OBJECTS
+as the line endpoints — distTo exactly zero, so no tolerance can matter. They are copies now,
+as `commitPattern` writes them, and **15e drives what that tolerance is actually for**:
+coverage ends written as waypoints sit 30 m from the committed line ends and match NOTHING —
+a whole survey flown and reported as an approach transit, at the transit speed, with no error
+anywhere. That is why the RUN ends are what gets committed.
+
+**⚠ AND ONE THING THE LIVE RUN DID *NOT* PROVE.** Watching the sim, the activity never
+reached LEAD-IN: the clearance guard replaced the run behavior with `hold` in that cramped
+harbour (`behavior: "hold"` at 13.8 kn on `/api/state`), so `currentActivity()` never entered
+its survey branch at all. **That is the guard, not this feature** — proved by driving the real
+`currentLegLine()` over the committed lead-carrying plan headlessly (all 6 lines matched
+their own route legs) and then by `survey_transit_roles.js` 15, which flies the real
+`accumLineTime` down a lead-carrying line: `lead-in@0m → surveying@35m → lead-out@135m`, one
+speed role throughout. **If a lead-carrying run is ever watched on the water, watch it
+somewhere the guard is not firing.**
+
+**Persistence is the usual four places** (client `loadMission`, server `load_mission`, its
+empty-file default, `save_mission`) for `lead_mode` / `lead_in` / `lead_out`. **The stored
+value is the one the operator TYPED, in the unit they chose** — storing converted metres would
+freeze a settling TIME into a distance, and the next survey-speed change would leave a lead
+that settles nothing. The per-line `lead_in_m` / `lead_out_m` ride inside `lines`, which the
+server passes through wholesale, and are written **only for a punched plan**: a lead's whole
+safety argument is the chart check that produced it.
+
+**Before that (`60903c45`): THE AIS TRAFFIC CARD IS STABLE BETWEEN UPDATES, AND TCPA IS ITS OWN
 COLUMN.** Andy: *"The entire AIS traffic card blinks and resets data with each update. Make it
 visually stable and update values independently. Place the closest AIS target at the top and
 sequence down with distance. Add TCPA after the CPA column."*
@@ -209,6 +302,10 @@ pinning the guarded statement and by isolating each function body. **That second
 
 **⇒ AND THE GUARDS ENTRY WENT IN WITH THE SUITE THIS TIME** (62 suites, 62 entries), which is
 the habit the last commit's rebuild forced out. The docs are rebuilt in this commit.
+**(2026-09-08: `survey_lead.js` makes it 63 and 63, entry and docs rebuild in the same
+commit. Standing check, one command, no rebuild needed — it reads GUARDS out of
+`tools/build_tech_manual.js` and `tests/` off the filesystem and prints both counts:*
+`node -e 'const t=require("fs").readFileSync("tools/build_tech_manual.js","utf8");const k=[...t.match(/const GUARDS = \{[\s\S]*?\n\};/)[0].matchAll(/^\s{2}"([a-z0-9_]+\.(?:js|py))":/gm)].map(x=>x[1]);const f=require("fs").readdirSync("tests").filter(n=>/\.(js|py)$/.test(n));console.log(k.length+" entries, "+f.length+" suites; missing: "+(f.filter(n=>!k.includes(n)).join(", ")||"none"))'`*)*
 
 **NEWEST (this commit): THE CARD'S INNER SECTION IS HEADED "Run".** Andy: *"Rename the Mission
 section inside the card to Run."* This is him settling the collision flagged on 09-06 — the
