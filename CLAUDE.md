@@ -55,9 +55,60 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-07 — the chart highlights the line being RUN)
+## ⇒ START HERE (handoff refreshed 2026-09-08 — the AIS card holds still, and TCPA has a column)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE AIS TRAFFIC CARD IS STABLE BETWEEN UPDATES, AND TCPA IS ITS OWN
+COLUMN.** Andy: *"The entire AIS traffic card blinks and resets data with each update. Make it
+visually stable and update values independently. Place the closest AIS target at the top and
+sequence down with distance. Add TCPA after the CPA column."*
+
+**⚠ THE CARD ALREADY CLAIMED TO BE PATCHED IN PLACE, AND `ais_table.js` HAD NINE CHECKS SAYING
+SO.** Reading it found nothing wrong, so it was reproduced instead — `window.fetch` stubbed in
+the live page to serve a feed whose behaviour I control, with a MutationObserver counting what
+actually changes in the DOM per update. That found three things the checks could not:
+
+* **A contact absent from ONE update was deleted and re-added.** AIS is intermittent and the
+  show-radius filter runs on the server, so a ship near the range edge drops out of one
+  snapshot and is back in the next — it blinked in and out every 8 s. It is **held for one
+  update, dimmed to 0.45 and saying so in its title**, then removed on the second consecutive
+  miss. Held, never refreshed: the numbers are the ones it last reported and the row is
+  visibly faded, so stale data is never shown as live.
+* **`setCellText` was replacing every cell's text node instead of editing it.** `textContent =`
+  destroys the node and makes a new one, so the row was correctly reused while its text was
+  rebuilt. **Measured: 51 node insertions and 51 removals per three updates, and ZERO
+  characterData mutations. After: 6 and 6, with 71 in-place edits.**
+* **The status line was the one part still rebuilt on a timer.** It carries "nearest 0.2 nm",
+  which changes every update, so its `innerHTML !== status` guard never held. Three fixed
+  spans now, painted through the same setCellText.
+
+**ORDERING: closest-first was ALREADY the default — what was overriding it was the REMEMBERED
+CLICK.** `aisSort` persists, so a card clicked onto CPA months ago still opened on CPA. The
+storage key is bumped to `_v2`, retiring the stored choice once; every column stays sortable.
+**Reading the code alone would never have found this**, because the code's default was right.
+
+**TCPA sits after CPA, and the sign is carried rather than clamped** — closing counts down
+(`2m16s`), already-opening reads negative (`-1m37s`) to match the arrow one column over, and
+holding station is an en dash because there is no moment of closest approach to name.
+
+**TEETH: 31 checks, 12 mutations, all 12 killed** — and the run is worth reading twice:
+
+* **The first run reported 0 of 12 killed, which was the RUNNER.** `ais_table.js` read
+  `static/asv.html` by a fixed path, so a sidecar pointed at by `ASV_HTML` was a file it never
+  opened. **Twelve of twelve surviving is not twelve weak checks, it is a harness fault** —
+  the same shape as this suite's own note about a mutation scraper that could not parse
+  `FAIL 17c.`. It honours `ASV_HTML` now, like the other suites.
+* **Then two survived honestly, and both were source-shape checks standing in for behaviour.**
+  Setting `miss = 2` walked past checks 6, 6b and 6c with every line they look for still
+  present and doing the wrong thing — **that is the reported fault, unguarded**. Check 6d
+  lifts the real sweep out of `renderAisTable` and drives it over two updates. And 7b asserted
+  `nodeValue === "1.5"` after an unchanged write, which is true whether or not it was written;
+  it spies on the setter now.
+* **Check 19 was hard-coded to five columns** (`cells === 5`, `tr.cells[4]`), so adding a sixth
+  turned it red for no fault. It derives the count from `AIS_HEAD_COLS` and requires the
+  renderer to write EVERY data cell, so what goes red now is a column added to the header and
+  forgotten in the renderer.
 
 **NEWEST (this commit): THE CHART'S LINE HIGHLIGHT IS `runLineIdx`, AND THE NEAREST-LINE NOTION
 IS GONE.** Andy: *"Do not highlight survey lines in the active survey pattern when merely

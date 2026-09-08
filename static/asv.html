@@ -304,7 +304,7 @@
     <div id="lineTablePanelHead" title="Drag to move" style="cursor:move;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;">&#10287; Survey lines</div>
     <div id="lineTableBody" style="max-height:44vh;overflow:auto;padding:8px 10px;"></div>
   </div>
-  <div id="aisTablePanel" style="position:absolute;z-index:41;display:none;right:14px;top:120px;width:264px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
+  <div id="aisTablePanel" style="position:absolute;z-index:41;display:none;right:14px;top:120px;width:300px;background:rgba(10,20,28,0.95);border:1px solid #24506a;border-radius:6px;font:11px Consolas,monospace;color:var(--ink-dim);box-shadow:0 3px 12px rgba(0,0,0,0.5);">
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
     <div id="aisRangeRow" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #24506a;">
       <span style="font-size:9px;letter-spacing:.06em;color:var(--ink-faint);text-transform:uppercase;">Range</span>
@@ -4865,8 +4865,15 @@ function updateAisRangeRow(){
 // The other columns are plain ascending/descending on their own value, which is what a
 // column header promises. Range stays the DEFAULT because that is what the card has
 // always opened as, and an operator's habit is worth more than a tidier default.
-const AIS_SORT_KEY = "asv_ais_sort_v1";
-const AIS_SORT_COLS = ["name", "rng", "brg", "sog", "cpa"];
+// ⚠ _v2 ON PURPOSE: THE STORED SORT OUTLIVED THE ASK. The chosen column persists, so a
+// card clicked onto CPA months ago still opened on CPA - and Andy, 2026-09-08, asked for
+// "the closest AIS target at the top and sequence down with distance". Bumping the key
+// retires the stored choice ONCE so the card opens the way he asked; every column stays
+// sortable, and the new choice sticks from then on. Range-ascending was already the
+// DEFAULT - it was the remembered click, not the default, that was showing him something
+// else, which is why reading the code alone would not have found this.
+const AIS_SORT_KEY = "asv_ais_sort_v2";
+const AIS_SORT_COLS = ["name", "rng", "brg", "sog", "cpa", "tcpa"];
 let aisSort = (function(){
   const raw = (lsGet(AIS_SORT_KEY) || "").split(":");
   return AIS_SORT_COLS.includes(raw[0]) ? {key: raw[0], dir: raw[1] === "-1" ? -1 : 1}
@@ -4909,6 +4916,12 @@ function aisRowCmp(a, b){
       if(c) return c;
       return nullLast(a.cpa.tcpaS, b.cpa.tcpaS, d);       // same distance: soonest first
     }
+    // TIME, on its own, is a plain ascending column - what its header promises. It does NOT
+    // borrow the CPA column's state ranking: that ranking exists so a departing contact can
+    // never head a list ordered by MISS DISTANCE, and here the sign already carries the same
+    // information (a past CPA is negative, so it sorts below every future one on its own).
+    // Holding station has no time at all and sorts last either way, being an absence.
+    case "tcpa": return nullLast(a.cpa && a.cpa.tcpaS, b.cpa && b.cpa.tcpaS, d);
     default: return nullLast(a.rng, b.rng, d);
   }
 }
@@ -4925,6 +4938,24 @@ function cpaCell(c){
   if(c.tcpaS == null) return fmtDist(c.cpaM);
   return (c.closing ? "" : "↗ ") + fmtDist(c.cpaM);   // arrow = already opening
 }
+// TIME to that closest approach, its own column since 2026-09-08 (Andy: "Add TCPA after the
+// CPA column"). It rode only in the row's hover title before, so the one number that says HOW
+// LONG YOU HAVE was the one you had to hover to read.
+//
+// ⚠ THE SIGN IS CARRIED, NOT CLAMPED, exactly as cpaOf documents it: tcpaS is NEGATIVE when
+// the closest approach is already PAST. A past CPA printed as though it were ahead is the one
+// wrong answer that reads like a working alarm, so an opening contact shows `-2m05s` rather
+// than a countdown. Holding station has no time at which it happens - inventing one would be
+// a fiction - so that is an en dash, the same as no track at all.
+function tcpaFmt(sec){
+  const a = Math.abs(sec);
+  return a < 90 ? Math.round(a) + "s"
+                : Math.floor(a/60) + "m" + String(Math.round(a%60)).padStart(2,"0") + "s";
+}
+function tcpaCell(c){
+  if(!c || c.tcpaS == null) return "–";                // no track of our own, or holding
+  return (c.closing ? "" : "-") + tcpaFmt(c.tcpaS);
+}
 function renderAisTable(){
   const panel=$("#aisTablePanel"); if(!panel || panel.style.display==="none") return;
   updateAisRangeRow();
@@ -4939,13 +4970,20 @@ function renderAisTable(){
   // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
   // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
   // source so a feed that cannot cover this area is obvious at a glance.
-  const dot=(c)=>`<span style="color:${c}">&#9679;</span> `;
-  const srcTxt = aisSrcLabel() ? ` &middot; <span style="color:var(--ink-faint)">${aisSrcLabel()}</span>` : "";
+  // ⚠ NO innerHTML HERE ANY MORE. This line carries "nearest 0.2 nm", which changes on EVERY
+  // update, so `statusEl.innerHTML = status` rebuilt the whole line - at the top of the card -
+  // eight seconds apart, for ever. The rows underneath were carefully patched in place while
+  // the headline above them was thrown away and re-parsed. It is three fixed spans now (dot,
+  // main, faint note) and only their TEXT is written, through the same setCellText that edits
+  // a text node instead of replacing it.
+  const srcLbl = aisSrcLabel() || "";
   const nearest = rows.length && rows[0].rng!=null ? fmtNm(rows[0].rng)+" nm" : null;
-  let status;
-  if(aisState==="offline")         status = dot("#d9534f")+"AIS service offline"+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
-  else if(aisState==="error")      status = dot("#d9534f")+"AIS feed error"+srcTxt+(aisNote?` &middot; <span style="color:var(--ink-faint)">${aisNote}</span>`:"");
-  else if(aisState==="connecting") status = dot("#e8a13f")+`connecting to AIS${srcTxt} &middot; <span style="color:var(--ink-faint)">warming up${aisArea?" over "+aisAreaLabel():""}...</span>`;
+  let stDot, stMain, stNote = "";
+  if(aisState==="offline"){        stDot="#d9534f"; stMain="AIS service offline"; stNote=aisNote||""; }
+  else if(aisState==="error"){     stDot="#d9534f"; stMain="AIS feed error";
+                                   stNote=[srcLbl, aisNote].filter(Boolean).join(" · "); }
+  else if(aisState==="connecting"){stDot="#e8a13f"; stMain="connecting to AIS";
+                                   stNote=[srcLbl, "warming up"+(aisArea?" over "+aisAreaLabel():"")+"..."].filter(Boolean).join(" · "); }
   // AN EMPTY CARD MUST SAY WHICH KIND OF EMPTY. "no vessels in 27 nm yet" reads like a dead
   // feed, and at Lewes it was wrong in the way that matters: aisstream was healthy and
   // tracking 94 contacts, the closest of them 44 nm off, so the honest answer was "widen the
@@ -4955,11 +4993,13 @@ function renderAisTable(){
   else if(aisState==="empty" || !rows.length){
     const col = aisArea && aisArea.collected, near = aisArea && aisArea.nearest_km;
     const inner = (col > 0 && near != null)
-      ? `none within ${aisAreaLabel()} &middot; nearest ${nmRound(near)} nm of ${col} tracked`
+      ? `none within ${aisAreaLabel()} · nearest ${nmRound(near)} nm of ${col} tracked`
       : `no vessels in ${aisAreaLabel()} yet`;
-    status = dot("#e8a13f")+`connected${srcTxt} &middot; <span style="color:var(--ink-faint)">${inner}</span>`;
+    stDot="#e8a13f"; stMain="connected"; stNote=[srcLbl, inner].filter(Boolean).join(" · ");
   }
-  else status = dot("#3fbf6b")+`${rows.length} vessel${rows.length!=1?"s":""} &middot; ${aisAreaLabel()}`+srcTxt+(nearest?` &middot; nearest ${nearest}`:"");
+  else { stDot="#3fbf6b";
+         stMain=`${rows.length} vessel${rows.length!=1?"s":""} · ${aisAreaLabel()}`;
+         stNote=[srcLbl, nearest?("nearest "+nearest):""].filter(Boolean).join(" · "); }
   // PATCHED IN PLACE, NOT REBUILT. This used to assign el.innerHTML every poll, so every
   // 8 s the entire body was destroyed and re-created. The list SCROLLS (max-height:46vh),
   // so that reset the scroll position while you were reading it, dropped any text selection
@@ -4969,8 +5009,10 @@ function renderAisTable(){
   // destroyed, so scroll position and selection simply survive.
   ensureAisSkeleton(el);
   aisPaintHead(el);                       // no-op unless the sort moved
-  const statusEl = el.querySelector("#aisStatusLine");
-  if(statusEl.innerHTML !== status) statusEl.innerHTML = status;      // only when it changed
+  const stDotEl = el.querySelector("#aisStDot");
+  if(stDotEl.style.color !== stDot) stDotEl.style.color = stDot;
+  setCellText(el.querySelector("#aisStMain"), stMain);
+  setCellText(el.querySelector("#aisStNote"), stNote ? " · " + stNote : "");
   const table = el.querySelector("#aisRowsTable"), body = el.querySelector("#aisRowsBody");
   table.style.display = rows.length ? "" : "none";
   if(!rows.length){ body.textContent = ""; return; }
@@ -4995,6 +5037,9 @@ function renderAisTable(){
     setCellText(tr.cells[2], r.brg!=null ? r.brg + "°" : "–");
     setCellText(tr.cells[3], v.sog!=null ? String(v.sog) : "–");
     setCellText(tr.cells[4], cpaCell(r.cpa));
+    setCellText(tr.cells[5], tcpaCell(r.cpa));
+    // A contact that reported in THIS update is not stale, however it looked a moment ago.
+    if(tr.dataset.miss !== "0"){ tr.dataset.miss = "0"; tr.style.opacity = ""; }
     // The row's own tip carries what the narrow columns cannot: the TIME to that closest
     // approach, the hull, and where it is bound. Same facts as the chart hover, so the
     // two never disagree about a contact.
@@ -5009,14 +5054,35 @@ function renderAisTable(){
     if(tr.title !== title) tr.title = title;
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
   });
-  for(const tr of existing.values()) tr.remove();       // contacts that left the range
+  // ⚠ A CONTACT MISSING FROM ONE UPDATE IS NOT A CONTACT THAT HAS GONE. AIS is intermittent
+  // by nature and the show-radius filter runs on the server, so a ship sitting near the range
+  // edge drops out of one snapshot and returns in the next. Removing its row the instant it
+  // missed made it BLINK in and out every 8 s, which is half of what Andy reported
+  // (2026-09-08: "The entire AIS traffic card blinks and resets data with each update").
+  // Reproduced with a synthetic feed dropping one contact on alternate polls.
+  //
+  // It is held for ONE update, DIMMED and saying so in its title, then removed on the second
+  // consecutive miss. Held - not refreshed: its numbers are the ones it last reported and the
+  // row is visibly faded, so this never shows stale data as though it were live. One update of
+  // grace is the smallest thing that stops the flicker; two consecutive misses is a contact
+  // that really has stopped reporting, and it goes.
+  for(const tr of existing.values()){
+    const miss = (parseInt(tr.dataset.miss || "0", 10) || 0) + 1;
+    if(miss >= 2){ tr.remove(); continue; }
+    tr.dataset.miss = String(miss);
+    tr.style.opacity = "0.45";
+    const base = (tr.title || "").split(" · no report")[0];
+    tr.title = base + " · no report in this update — holding the last one";
+  }
 }
 // The card's fixed furniture, built once. Everything below it is patched, never replaced.
 function ensureAisSkeleton(el){
   if(el.querySelector("#aisRowsBody")) return;
   const head = "padding:2px 5px;color:var(--ink-faint);cursor:pointer;user-select:none";
   el.innerHTML =
-     `<div id="aisStatusLine" style="color:var(--ink);margin-bottom:3px"></div>`
+     `<div id="aisStatusLine" style="color:var(--ink);margin-bottom:3px">`
+    +`<span id="aisStDot">&#9679;</span> <span id="aisStMain"></span>`
+    +`<span id="aisStNote" style="color:var(--ink-faint)"></span></div>`
     +`<table id="aisRowsTable" style="border-collapse:collapse;width:100%">`
     +`<thead><tr id="aisHeadRow"></tr></thead>`
     +`<tbody id="aisRowsBody"></tbody></table>`;
@@ -5028,7 +5094,7 @@ function ensureAisSkeleton(el){
 // selectable in the way the rows are - but it is still gated, because rebuilding it every
 // poll would fight the pointer for the click the operator is making.
 const AIS_HEAD_COLS = [["name","vessel","left"], ["rng","nm","right"], ["brg","brg","right"],
-                       ["sog","kn","right"], ["cpa","cpa","right"]];
+                       ["sog","kn","right"], ["cpa","cpa","right"], ["tcpa","tcpa","right"]];
 function aisPaintHead(el){
   const row = el.querySelector("#aisHeadRow"); if(!row || !aisRebuildHead) return;
   aisRebuildHead = false;
@@ -5060,11 +5126,25 @@ function aisMakeRow(){
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`
+    +`<td style="${cell};text-align:right"></td>`
     +`<td style="${cell};text-align:right"></td>`;
   return tr;
 }
 // Writing an identical string still collapses a selection inside that node, so check first.
-function setCellText(node, s){ if(node && node.textContent !== s) node.textContent = s; }
+//
+// ⚠ AND IT EDITS THE TEXT NODE RATHER THAN REPLACING IT. `node.textContent = s` DESTROYS the
+// existing text node and creates a new one, so every changed cell was a remove-plus-add in the
+// DOM even though the row itself was correctly reused. Measured on a six-contact feed: 51 node
+// removals and 51 insertions across three updates, and ZERO characterData mutations - the card
+// was rebuilding its text on every poll, one cell at a time. Writing `nodeValue` mutates the
+// same node in place, which is what lets a selection inside a cell survive and what stops the
+// browser re-laying-out that cell for nothing.
+function setCellText(node, s){
+  if(!node) return;
+  const t = node.firstChild;
+  if(t && t.nodeType === 3){ if(t.nodeValue !== s) t.nodeValue = s; }
+  else if(node.textContent !== s) node.textContent = s;
+}
 function aisAt(clientX, clientY){ if(!aisShow || !aisVessels.length) return null;
   const o=originPx(), r=mapEl.getBoundingClientRect(), cx=clientX-r.left, cy=clientY-r.top;
   let best=null, bd=11;

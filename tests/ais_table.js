@@ -47,6 +47,35 @@
 //     the header repainted on every poll                            -> 20
 //     the click listener re-attached on every repaint               -> 20b
 //
+// AND FOR THE STABILITY PASS + TCPA COLUMN (2026-09-08), twelve more mutations RUN, all
+// twelve killed. Andy: "The entire AIS traffic card blinks and resets data with each update.
+// Make it visually stable and update values independently... Add TCPA after the CPA column."
+//     a contact missing ONE update is removed again (the blink)   -> 6d
+//     a contact gone for good is never removed                    -> 6, 6d
+//     a held contact is not dimmed, so stale data looks live      -> 6b, 6d
+//     a contact that reports again stays faded for ever           -> 6c
+//     setCellText replaces the text node instead of editing it    -> 7b
+//     setCellText writes unconditionally (kills a selection)      -> 7b
+//     the status line goes back to a rebuilt innerHTML            -> 1, 1b
+//     the TCPA column is declared but never written               -> 19
+//     TCPA placed BEFORE cpa                                      -> 17d
+//     a PAST cpa printed as a countdown                           -> 17e
+//     holding station given an invented time of zero              -> 17f
+//     the row template loses a cell (last column silently blank)  -> 19
+//
+// ⚠⚠ AND THE FIRST RUN OF THOSE TWELVE REPORTED 0 KILLED, WHICH WAS THE RUNNER AND NOT THE
+// CHECKS. This suite read static/asv.html by a FIXED PATH, so a runner pointing ASV_HTML at a
+// sidecar mutated a file the suite never opened and every mutation "survived". Twelve of
+// twelve surviving is not twelve weak checks, it is a harness fault - the same shape as the
+// `FAIL 17c.` scraper note above. It honors ASV_HTML now.
+//
+// ⚠ TWO OF THE TWELVE THEN SURVIVED HONESTLY, and both were source-shape checks standing in
+// for behaviour. Setting `miss = 2` walked past 6, 6b and 6c with every line they look for
+// still present and doing the wrong thing - that is the REPORTED FAULT, unguarded - so 6d
+// lifts the real sweep out of renderAisTable and drives it over two updates. And 7b asserted
+// `nodeValue === "1.5"` after an unchanged write, which is true whether or not it was
+// written; it spies on the setter now.
+//
 // ⚠ 17c EXISTS BECAUSE A MUTATION FOUND NOTHING TO KILL. Breaking `nullLast` so an absent
 // value sorts FIRST left every check green: in the CPA column a contact with no track is
 // caught by `cpaRank` before nullLast is ever consulted, so the null handling that actually
@@ -79,7 +108,13 @@ process.on("unhandledRejection", __crash);
 const fs = require("fs");
 const path = require("path");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Without it the only way to
+// mutate what this suite reads is to edit static/asv.html itself, and a runner killed
+// mid-flight then leaves the operator's real source mutated. Worse, a runner that sets
+// ASV_HTML against a suite that ignores it reports every mutation as SURVIVED - twelve of
+// twelve on 2026-09-08, which is a runner fault wearing the costume of twelve weak checks.
+const ASV_HTML = process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html");
+const H = fs.readFileSync(ASV_HTML, "utf8");
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -104,6 +139,13 @@ function grab(name) {
 const RENDER = grab("renderAisTable");
 const SKELETON = grab("ensureAisSkeleton");
 const MAKEROW = grab("aisMakeRow");
+// The column list itself, so the column checks are derived from what the page declares
+// rather than from a number written here that goes stale the day a column is added.
+const HEADCOLS = (() => {
+  const i = H.indexOf("const AIS_HEAD_COLS");
+  if (i < 0) throw new Error("anchor gone: AIS_HEAD_COLS (renamed?)");
+  return H.slice(i, H.indexOf(";", i) + 1);
+})();
 
 console.log("AIS traffic list — patched in place, so nothing you are reading is destroyed:");
 
@@ -115,11 +157,25 @@ check("1. THE REPORTED FAULT: renderAisTable does not assign innerHTML to the li
       () => !renderInnerHtml,
       "rebuilding the body every 8 s is what reset the scroll and dropped selections");
 
-// The status LINE may be rewritten - it is one short element with nothing selectable to
-// lose - but only when it actually changed, or it churns for no reason.
-check("1b. ... and the status line is only rewritten when it has CHANGED",
-      () => /if\s*\(\s*statusEl\.innerHTML\s*!==\s*status\s*\)/.test(RENDER),
-      "an unconditional write would churn the one element that is rebuilt");
+// THE STATUS LINE IS NOT REWRITTEN AT ALL ANY MORE. It used to be one guarded innerHTML
+// assignment, on the argument that it is short and has nothing selectable to lose - but it
+// carries "nearest 0.2 nm", which changes on EVERY update, so the guard never held and the
+// headline at the top of the card was re-parsed every 8 s while the rows beneath it were
+// being carefully patched. It is three fixed spans now (dot, main, faint note), painted
+// through the same setCellText the cells use. Andy, 2026-09-08: "The entire AIS traffic card
+// blinks and resets data with each update."
+// ⚠ SCOPED TO CODE. Two traps in one line here. A bare /innerHTML/ matched the comment that
+// explains what used to be there; narrowing to `.innerHTML =` was not enough either, because
+// that comment QUOTES the retired statement verbatim - `statusEl.innerHTML = status` - which
+// is exactly what a maintainer needs it to say. So the comments come off first, the way
+// off_track does it. `[^\n]*` runs to the true end of the line, \r included: this file is
+// CRLF and /\/\/.*$/ without /m cannot reach past the \r.
+const RENDER_CODE = RENDER.split("\n").map(l => l.replace(/\/\/[^\n]*/, "")).join("\n");
+check("1b. ... and the status line is PATCHED too, never re-parsed",
+      () => !/\.innerHTML\s*=/.test(RENDER_CODE)
+            && /#aisStMain/.test(RENDER) && /#aisStNote/.test(RENDER)
+            && /setCellText\(el\.querySelector\("#aisStMain"\)/.test(RENDER),
+      "the one part of the card that was still rebuilt on a timer");
 
 // 2. The furniture is built ONCE, guarded by an existence test - not re-created per poll.
 check("2. the skeleton is built once, guarded by a check that it is already there",
@@ -146,9 +202,54 @@ check("5. re-sorting MOVES the existing node rather than rebuilding it",
 
 // 6. The other half of a patch: rows for contacts that are gone must go, or the list grows
 // forever and shows traffic that is no longer there.
-check("6. contacts that dropped out of range are removed",
-      () => /for\s*\(\s*const tr of existing\.values\(\)\s*\)\s*tr\.remove\(\)/.test(RENDER),
-      "whatever was not claimed this cycle is stale");
+//
+// ⚠ BUT NOT ON THE FIRST MISS, since 2026-09-08. AIS is intermittent and the show-radius
+// filter runs on the server, so a ship near the range edge drops out of one snapshot and is
+// back in the next; removing its row the instant it missed made it BLINK in and out every
+// 8 s. Reproduced with a feed dropping one contact on alternate polls. It is held for ONE
+// update - dimmed, and saying so in its title, so stale data is never shown as live - and
+// removed on the SECOND consecutive miss. Both halves are asserted: a list that never
+// forgets is the fault this check was written for in the first place.
+check("6. a contact gone for two updates is removed...",
+      () => /if\(miss >= 2\)\{\s*tr\.remove\(\); continue; \}/.test(RENDER),
+      "whatever has stopped reporting is stale, and must not sit there looking live");
+
+check("6b. ...but ONE missed update only dims it, keeping the row and its node",
+      () => /tr\.dataset\.miss = String\(miss\)/.test(RENDER)
+            && /tr\.style\.opacity = "0\.45"/.test(RENDER)
+            && /no report in this update/.test(RENDER),
+      "AIS is intermittent: a single gap is not a contact that has gone");
+
+check("6c. ...and a contact that reports again is un-dimmed in the same pass",
+      () => /if\(tr\.dataset\.miss !== "0"\)\{ tr\.dataset\.miss = "0"; tr\.style\.opacity = ""; \}/.test(RENDER),
+      "or the first gap would leave it faded for the rest of the session");
+
+// 6d. BEHAVIOURAL, AND IT IS THE ONE THAT GUARDS THE REPORTED FAULT. 6-6c are source shape,
+// and a mutation that simply set `miss = 2` walked straight past all three: every line they
+// look for was still there, doing the wrong thing. So the real sweep is lifted out of
+// renderAisTable and driven over two updates against fake rows.
+{
+  const at = RENDER.indexOf("for(const tr of existing.values()){");
+  if (at < 0) throw new Error("anchor gone: the stale-row sweep in renderAisTable");
+  let k = RENDER.indexOf("{", at), depth = 0, end = -1;
+  for (;;) { const c = RENDER[k];
+    if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
+  const sweep = new Function("existing", RENDER.slice(at, end));
+  const mkRow = () => ({ dataset: {}, style: {}, title: "DELTA · tug",
+                         gone: false, remove() { this.gone = true; } });
+
+  const tr = mkRow();
+  sweep(new Map([["444", tr]]));                       // update 1: no report
+  const afterOne = { gone: tr.gone, miss: tr.dataset.miss, opacity: tr.style.opacity,
+                     saysSo: /no report/.test(tr.title) };
+  sweep(new Map([["444", tr]]));                       // update 2: still no report
+  const afterTwo = { gone: tr.gone };
+
+  check("6d. DRIVEN: one missed update holds the row, two removes it",
+        () => afterOne.gone === false && afterOne.miss === "1"
+              && afterOne.opacity === "0.45" && afterOne.saysSo && afterTwo.gone === true,
+        () => "after 1 miss " + JSON.stringify(afterOne) + ", after 2 gone=" + afterTwo.gone);
+}
 
 // 7. BEHAVIOURAL. Writing an identical string to a text node still collapses a selection
 // inside it, so the guard is not an optimisation - it is the reason a selection survives a
@@ -164,6 +265,36 @@ check("7. a cell is written ONLY when its text changed",
       () => writes.length === 1 && writes[0] === "6.9" && fakeNode.textContent === "6.9",
       () => "writes: " + JSON.stringify(writes) + " (an identical write still kills a selection)");
 
+// 7b. BEHAVIOURAL, and the other half of "update values independently". `textContent = s`
+// DESTROYS the cell's text node and creates a new one, so every changed cell was a
+// remove-plus-add in the DOM even though the ROW was correctly reused. Measured on a
+// six-contact feed before the fix: 51 node removals and 51 insertions across three updates,
+// with ZERO characterData mutations. After it: 6 and 6, with 71 characterData edits - the
+// same values, written in place. This drives the real function against a node that HAS a
+// text child, which is the case the shipped page always presents.
+{
+  // ⚠ nodeValue IS SPIED ON, not merely read back. Asserting `tnode.nodeValue === "1.5"`
+  // after an unchanged write proves nothing - writing the same string leaves it looking
+  // identical - so a mutation dropping the guard on THIS branch survived. The setter records
+  // every write, which is the only way to see a write that changed nothing.
+  const replaced = [], nvWrites = [];
+  const tnode = { nodeType: 3, _v: "1.5",
+                  get nodeValue() { return this._v; },
+                  set nodeValue(v) { nvWrites.push(v); this._v = v; } };
+  const cell = { firstChild: tnode, _t: "1.5",
+                 get textContent() { return this._t; },
+                 set textContent(v) { replaced.push(v); this._t = v; } };
+  setCellText(cell, "1.5");                          // unchanged - nothing at all
+  const untouched = nvWrites.length === 0 && replaced.length === 0;
+  setCellText(cell, "6.9");                          // changed - EDIT, do not replace
+  check("7b. ...and it EDITS the text node rather than replacing it",
+        () => untouched && tnode.nodeValue === "6.9"
+              && nvWrites.length === 1 && replaced.length === 0,
+        () => "nodeValue writes: " + JSON.stringify(nvWrites)
+              + ", textContent assignments: " + replaced.length
+              + " (a textContent write is a node remove + add, and the browser relays out the cell)");
+}
+
 // 8. The row template must carry the two spans the patch addresses, or the cell writes
 // silently target nothing - setCellText tolerates a missing node, so this would not throw.
 check("8. the row template provides the marker and name spans the patch writes to",
@@ -176,8 +307,7 @@ check("8. the row template provides the marker and name spans the patch writes t
 // the line of travel. green for cargo vessels, grey for military, blue for fishing, black
 // for tug or tug and tow and pink for sailing."
 {
-  const H2 = require("fs").readFileSync(
-    require("path").join(__dirname, "..", "static", "asv.html"), "utf8");
+  const H2 = require("fs").readFileSync(ASV_HTML, "utf8");   // the same page as above
   const grabDecl2 = (name) => {
     for (const kw of ["const ", "let "]) {
       const i = H2.indexOf(kw + name + " =");
@@ -322,6 +452,33 @@ check("8. the row template provides the marker and name spans the patch writes t
           "kn asc " + by("sog", 1).join(" < ") + " | kn desc " + by("sog", -1).join(" < ")
             + "   (these columns have no state rank in front of nullLast)");
   }
+  // 17d-17f. THE TCPA COLUMN (Andy, 2026-09-08: "Add TCPA after the CPA column"). The time
+  // to closest approach used to ride only in the row's hover title, so the one number that
+  // says HOW LONG YOU HAVE was the one you had to hover to read.
+  {
+    eval(grab("tcpaFmt"));
+    eval(grab("tcpaCell"));
+    check("17d. TCPA is its own column, placed AFTER cpa",
+          () => { const cols = (HEADCOLS.match(/\["(\w+)"/g) || []).map(s => s.slice(2, -1));
+                  return cols.indexOf("tcpa") === cols.indexOf("cpa") + 1; },
+          () => "columns: " + (HEADCOLS.match(/\["(\w+)"/g) || []).map(s => s.slice(2, -1)).join(" "));
+
+    // ⚠ THE SIGN IS CARRIED, NOT CLAMPED - cpaOf documents tcpaS as NEGATIVE when the closest
+    // approach is already past. Printing a past CPA as a countdown is the one wrong answer
+    // that reads exactly like a working alarm, which is the same rule check 18 keeps for the
+    // distance cell one column over.
+    check("17e. a CLOSING contact counts down, an OPENING one reads negative",
+          () => tcpaCell({cpaM: 300, tcpaS: 136, closing: true}) === "2m16s"
+                && tcpaCell({cpaM: 300, tcpaS: -84, closing: false}) === "-84s",
+          () => "closing -> '" + tcpaCell({cpaM:300,tcpaS:136,closing:true}) + "', opening -> '"
+                + tcpaCell({cpaM:300,tcpaS:-84,closing:false}) + "'");
+
+    check("17f. holding station has NO time, and says so rather than inventing one",
+          () => tcpaCell({cpaM: 500, tcpaS: null, closing: false}) === "–"
+                && tcpaCell(null) === "–",
+          "a vessel converging on nothing has no moment of closest approach");
+  }
+
   check("18. the cell MARKS a contact already opening, so its number is not misread",
         () => /↗/.test(cpaCell(OPENING.cpa)) && !/↗/.test(cpaCell(CLOSE_NEAR.cpa))
               && cpaCell(null) === "–",
@@ -332,13 +489,24 @@ check("8. the row template provides the marker and name spans the patch writes t
 // ── 19-20. THE COLUMN EXISTS, AND THE HEADER IS STILL NOT REBUILT EVERY POLL ────────
 {
   const cells = (MAKEROW.match(/<td /g) || []).length;
-  // The template and the renderer must agree on how many cells there are, or
-  // `tr.cells[4]` is undefined, setCellText silently writes nothing, and the whole column
+  // The template, the renderer and the HEADER must all agree on how many columns there are,
+  // or `tr.cells[n]` is undefined, setCellText silently writes nothing, and the whole column
   // is blank with every other check in this file still green.
-  check("19. the row template carries a cell for every column the renderer writes",
-        () => cells === 5 && /setCellText\(tr\.cells\[4\]/.test(RENDER),
-        cells + " cells in the template; renderer writes cells[4] = "
-          + /setCellText\(tr\.cells\[4\]/.test(RENDER));
+  //
+  // ⚠ DERIVED FROM AIS_HEAD_COLS, NOT HARD-CODED. This read `cells === 5` and asserted
+  // `tr.cells[4]` by name, so adding the TCPA column on 2026-09-08 turned it red for a reason
+  // that had nothing to do with a fault - and the column after that would have done the same.
+  // It counts the DECLARED columns and requires the renderer to write every data cell, so
+  // what goes red now is a column added to the header and forgotten in the renderer.
+  const declared = (HEADCOLS.match(/\["/g) || []).length;
+  const written = [];
+  for (let i = 1; i < declared; i++)
+    if (new RegExp("setCellText\\(tr\\.cells\\[" + i + "\\]").test(RENDER)) written.push(i);
+  check("19. the row template, the header and the renderer agree on the columns",
+        () => cells === declared && written.length === declared - 1,
+        declared + " columns declared, " + cells + " cells in the template, renderer writes "
+          + (written.length ? "cells[" + written.join("], cells[") + "]" : "none")
+          + "  (cell 0 is the name, written through .aisNm)");
   // This card is PATCHED, never rebuilt — checks 1-9. The header is the one part that IS
   // re-rendered, so it is gated on the sort having actually moved: repainting it every 8 s
   // would fight the operator for the very click they are making on it.

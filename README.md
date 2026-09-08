@@ -400,13 +400,31 @@ enormous one divided out of report jitter. CPA is a *prediction* on the assumpti
 hold course — an input to a watch, never a substitute for one, and the console reports it
 without ever steering on it.
 
-**The traffic table sorts on any column, including CPA.** Range is the default. Sorting by
+**TCPA has its own column, beside CPA** (2026-09-08). It used to ride only in the row's
+hover title, which put the one number that says *how long you have* behind a hover. The
+sign is carried rather than clamped: a closing contact counts down (`2m16s`), one already
+opening reads negative (`-1m37s`) to match the arrow on its CPA, and two vessels holding
+station show an en dash because there is no moment of closest approach to name.
+
+**The traffic table sorts on any column, including CPA and TCPA.** Range is the default,
+and the card opens closest-first. Sorting by
 CPA orders by *state* first — closing contacts, then those holding station, then those
 already opening, then those reporting no track — and by distance only within a state, with
 ties broken by time-to-CPA. The state order does **not** flip when the column is reversed,
 because a plain numeric sort would put a vessel that passed 10 m astern a minute ago above
 a ship closing to 400 m, which is backwards for the one job a collision-ordered list has.
 An opening contact's CPA is marked with an arrow so the number is not misread.
+
+**The card is stable between updates, and each value moves on its own.** Rows are keyed
+by MMSI and reused, cells are EDITED rather than replaced, and the status line is three
+fixed spans rather than a rebuilt one — so a poll writes only the characters that
+changed. Measured on a six-contact feed: 51 DOM node insertions and removals per three
+updates became 6, with the writes landing as in-place text edits instead. And **a
+contact missing from a single update is no longer deleted** — AIS is intermittent and
+the range filter runs on the server, so a ship near the edge dropped out of one snapshot
+and returned in the next, blinking every 8 s. It is held for one update, dimmed and
+saying so on hover, then removed on the second consecutive miss; held, never refreshed,
+so stale numbers are never shown as live.
 
 **Tonnage is the one thing AIS does not carry.** No AIS message contains gross or deadweight
 tonnage — it is a registry fact rather than a broadcast one — so `gt`, `dwt`, `built` and
@@ -423,7 +441,8 @@ the **whole lake** when you're on an enclosed lake (e.g. a Great Lake), or **wit
 50 km** at sea: a triangle pointing along each vessel's course, coloured by ship type
 (cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
 and full details on hover — **and** in an **AIS traffic table** (each vessel by
-range / bearing / speed, sorted nearest-first) that opens with the layer and can be
+range / bearing / speed / CPA / TCPA, sorted nearest-first) that opens with the layer and
+can be
 closed to a chip / reopened at will. The table always carries a **status line naming
 the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
 50 km yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
