@@ -413,7 +413,10 @@ check("16b. ... and the helm rung is unreachable unless STOPPING would not answe
 check("17. the guard runs on every telemetry frame, before the readouts are drawn",
       // \r? because this file is CRLF: a literal \n here can never follow the \r that
       // actually sits between the two statements on disk.
-      () => /clearanceGuard\(\);\r?\n\s*updateActiveLine\(\); accumLineTime\(\)/.test(H),
+      // updateActiveLine() used to sit between these two and was removed on 2026-09-07 with
+      // the nearest-line highlight; accumLineTime is what the ordering was ever about, since
+      // it is what maintains runLineIdx for everything drawn after it.
+      () => /clearanceGuard\(\);\r?\n\s*accumLineTime\(\)/.test(H),
       "in onState, ahead of renderIntent so the card describes the frame it acted on");
 
 // 18. AND THE NUMBER REACHES THE OPERATOR. Found by mutation: every check above passed

@@ -1771,7 +1771,7 @@ function renderIntent(){
   el.innerHTML = html;
 }
 let runUnsafe = [];                              // uploaded legs that still cross a nogo (flagged red)
-let mode = "pan", activeLine = -1, saveTimer = null;
+let mode = "pan", saveTimer = null;   // no `activeLine`: the chart highlights runLineIdx
 // CAMP-style 3-click survey pattern: A=start, B=diagonal end, C=spacing/direction
 let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finish
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
@@ -2561,7 +2561,7 @@ function render(){
   }
   ctx.font = "10px Consolas,monospace";
   mission.lines.forEach((L,i)=>{
-    const a = toScreen(L.a.lat,L.a.lon), b = toScreen(L.b.lat,L.b.lon), act = (i===activeLine);
+    const a = toScreen(L.a.lat,L.a.lon), b = toScreen(L.b.lat,L.b.lon), act = (i===runLineIdx);
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
     ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a" : "rgba(255,215,106,0.55)";
     ctx.lineWidth = act?2.5:1.5; ctx.stroke(); ctx.setLineDash([]);
@@ -2908,30 +2908,30 @@ function drawWindRose(){
   ctx.restore();
 }
 
-// WHICH SURVEY LINE IS NEAREST THE BOAT — for the chart's line HIGHLIGHT, and for nothing
-// else. That is a drawing question ("which line is the operator looking at"), and a
-// deliberately different one from "which line is the boat running": the LINES table keys
-// its own highlight off runLineIdx, sequence-matched, and says so where it does it.
+// THE CHART'S LINE HIGHLIGHT IS runLineIdx, AND THERE IS NO SECOND NOTION OF "ACTIVE".
 //
-// IT USED TO PUBLISH A DISTANCE TOO — `activeXTE`, the point-to-segment range to whichever
-// line came out nearest — and the Intent card printed that as "off track". So the card
-// answered with a line the boat was not following on every transit, turn, Go-To and RTH.
-// Off track is offTrack() now, measured against the leg being flown; nothing wants a
-// nearest-line distance any more, so nothing computes one. Keep it that way: this function
-// resolves an INDEX for the draw, and a distance re-added here is a second definition of
-// off track waiting to be mistaken for the first.
-function updateActiveLine(){
-  activeLine = -1;
-  if(!asv || !mission.lines.length) return;
-  let best = 1e12;
-  mission.lines.forEach((L,i)=>{
-    const a = toEN(L.a, asv), b = toEN(L.b, asv);
-    const dx = b.e-a.e, dy = b.n-a.n, len2 = dx*dx+dy*dy || 1;
-    const t = Math.max(0, Math.min(1, -(a.e*dx+a.n*dy)/len2));
-    const cx = a.e+t*dx, cy = a.n+t*dy, d = Math.hypot(cx, cy);
-    if(d < best){ best = d; activeLine = i; }
-  });
-}
+// There used to be a `updateActiveLine()` here that picked the NEAREST line by
+// point-to-segment distance, on the argument that the highlight was a drawing question
+// ("which line is the operator looking at") deliberately different from "which line is the
+// boat running". Andy, 2026-09-07: "Do not highlight survey lines in the active survey
+// pattern when merely crossing said line in a transit or turn or some such. Only highlight
+// the line when actually running said line."
+//
+// He is right, and the argument was already half-refuted in this very function: it USED to
+// publish a distance too - `activeXTE`, the range to whichever line came out nearest - and
+// the Intent card printed that as "off track", so the card answered with a line the boat was
+// not following on every transit, turn, Go-To and RTH. That half was fixed by measuring
+// against the leg being flown. The HIGHLIGHT had the identical fault and was left: crossing a
+// line during a reversal, or on the hop to the next region, lit it as though it were being
+// surveyed - and it lit one when the boat was not running at all.
+//
+// runLineIdx is the console's one answer to "which line is being run": accumLineTime sets it
+// from currentLegLine(), which matches BOTH endpoints of the route leg, so being near a line
+// never activates it. The LINES table (check "highlight the line being RUN, not merely
+// nearest") and the line-end hover tip were already keyed off it; the chart stroke was the
+// last consumer still guessing. Nothing computes a nearest line any more - keep it that way,
+// because a nearest-line index re-added here is a second definition of "active" waiting to
+// disagree with the timings, the table and the tip.
 // point-to-segment distance in pixels
 // nearest survey line (mission.lines index) within `tol` px of (cx,cy) map-local, or -1
 function surveyLineAtPx(cx, cy, tol){ const o=originPx(); let best=-1, bd=tol||8;
@@ -3957,7 +3957,7 @@ async function commitPattern(){
   // resetPattern() blanks the duration rows along with the pattern; recompute them from
   // the plan that was just committed, so they describe it instead of going to "--" at the
   // moment it becomes real. Same fault the survey card had, one row over.
-  resetPattern(); recalcCommittedForSpeed(); updateActiveLine(); saveMission(); render();
+  resetPattern(); recalcCommittedForSpeed(); saveMission(); render();
 }
 
 // --- arbitrary survey-area boundary (CAMP SurveyArea) -------------------- //
@@ -4153,7 +4153,7 @@ function commitSearch(){
   route.forEach(p=> mission.waypoints.push({lat:p.lat, lon:p.lon}));
   if(searchRouted && searchRouted.unsafe.length)
     showBanner(searchRouted.unsafe.length+" search transit(s) cross a nogo zone with no detour (RED) — review the committed plan.");
-  resetSearch(); updateActiveLine(); saveMission(); render();
+  resetSearch(); saveMission(); render();
 }
 
 // --- ENC chart features + Punch Out -------------------------------------- //
@@ -5889,10 +5889,10 @@ function syncLineEndpoint(oldLL, newLL){ for(const L of mission.lines){
   if(_eqLL(L.b,oldLL)) L.b={lat:newLL.lat,lon:newLL.lon}; } }
 function deleteWaypoint(i){ const p={...mission.waypoints[i]}; mission.waypoints.splice(i,1);
   mission.lines=mission.lines.filter(L=>!(_eqLL(L.a,p)||_eqLL(L.b,p)));   // drop a line whose endpoint went
-  updateActiveLine(); saveMission(); }
+  saveMission(); }
 function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; mission.lines.splice(li,1);
   mission.waypoints=mission.waypoints.filter(p=>!(_eqLL(p,L.a)||_eqLL(p,L.b)));  // + its endpoint waypoints
-  updateActiveLine(); saveMission(); }
+  saveMission(); }
 // --- interaction --------------------------------------------------------- //
 let dragging=false, last=null, downAt=null, wpDrag=null;
 mapEl.addEventListener("mousedown", e=>{
@@ -6064,7 +6064,7 @@ window.addEventListener("mousemove", e=>{
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
     syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
-    $("#lineTip").style.display="none"; updateActiveLine(); render(); return; }
+    $("#lineTip").style.display="none"; render(); return; }
   // the pending measurement's far end follows the pointer. Deliberately does NOT return:
   // a pan may be live underneath (the chart still drags while the tool is armed), and the
   // pan branch below renders — so only render here when it will not.
@@ -6357,7 +6357,7 @@ $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo nev
   nogoShow=!nogoShow; updateNogoUI(); render();
 };
 $("#ln_clr").onclick = ()=>{ mission.waypoints=[]; mission.lines=[]; resetPattern();
-  runRoute=null; planIntent=null; runUnsafe=[]; updateActiveLine(); saveMission(); render(); };
+  runRoute=null; planIntent=null; runUnsafe=[]; saveMission(); render(); };
 $("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
 $("#c_approach").onchange = ()=>{
   const v = Math.max(0.5, Math.min(50, parseFloat($("#c_approach").value)||1));
@@ -7754,7 +7754,7 @@ function onState(s){
     // governor reads for the role - so the role describes THIS frame, not the last.
     // The clearance guard runs first of all, because safety outranks the role.
     clearanceGuard();
-    updateActiveLine(); accumLineTime(); speedGovernor(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    accumLineTime(); speedGovernor(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)

@@ -55,9 +55,56 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-07 — a bare Go-To can be given a speed and a depth)
+## ⇒ START HERE (handoff refreshed 2026-09-07 — the chart highlights the line being RUN)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE CHART'S LINE HIGHLIGHT IS `runLineIdx`, AND THE NEAREST-LINE NOTION
+IS GONE.** Andy: *"Do not highlight survey lines in the active survey pattern when merely
+crossing said line in a transit or turn or some such. Only highlight the line when actually
+running said line."*
+
+`updateActiveLine()` picked the nearest line by point-to-segment distance, unconditionally —
+no notion of running at all. So a reversal that crossed a line lit it, the hop to the next
+region lit whatever it passed, and a line stayed lit with the boat stopped.
+
+**⚠ THE ARGUMENT FOR IT WAS WRITTEN DOWN, AND IT WAS ALREADY HALF-REFUTED IN THE SAME
+FUNCTION.** The comment called the highlight "a drawing question (which line is the operator
+looking at), deliberately different from which line is the boat running". But that function
+*used to* publish a distance too — `activeXTE`, the range to whichever line came out nearest —
+and the Intent card printed it as "off track", answering with a line the boat was not
+following on every transit, turn, Go-To and RTH. **That half was fixed; the highlight had the
+identical fault and was left.** Three of the four consumers (the per-line timings, the LINES
+table, the line-end hover tip) were already keyed off `runLineIdx`; the chart stroke was the
+last one still guessing.
+
+**⇒ HE ASKED ME TO LOOK AT WORLDVIEW FOR THE RESOLUTION. IT IS NOT THERE, AND SAYING SO IS THE
+USEFUL PART:** WorldView is pre-planning and has no live vessel — its only line highlight is
+mouse SELECTION for strike-off. The rule he is remembering is **ASV's own** `currentLegLine()`,
+whose comment reads *"Being NEAR a line never activates it — only actually running its leg
+does."* It was applied to the table, the tip and off-track, and never to the chart.
+
+**MEASURED ON THE RENDERED PIXELS over a real running survey** (three 200 m lines, 60 m apart,
+zoomed so a line is not two pixels): while the console said SURVEYING, 342–372 highlight pixels
+on every one of 20 samples; while it said TRANSITING — the approach and both reversals — **0 of
+22 samples had a single lit pixel.** And 0 with the boat idle, where the old code lit the
+nearest line.
+
+**TEETH:** `survey_transit_roles.js` 6d puts the boat EXACTLY on line 2's midpoint, aligned with
+it, and varies only the route leg: on its own leg `runLineIdx=1`, merely crossing it
+`runLineIdx=-1`. 6e pins the wiring. Both mutation-checked — restoring the nearest-line stroke
+is caught by 6e, and making `currentLegLine` match by proximity is caught by 6d and five
+others. Three suites referenced the deleted function and were updated rather than deleted:
+`off_track` 16 now asserts the STRONGER invariant (no nearest-line index exists at all),
+`clearance_guard` 17's onState ordering lost a statement, and `measure_tool` had a stub for it.
+
+**⚠⚠ AND I DESTROYED HIS PLAN DOING THE VISUAL CHECK — SEE THE OPEN LIST.** `mission.json` held
+a 212-waypoint, 9-line plan of his; I POSTed a 3-line test mission over it to drive the
+measurement. **A hash is not a backup:** I had been hashing that file before and after every
+console so I could detect a change, and had never COPIED it, so detection worked perfectly and
+bought nothing. The session logs do not carry plan geometry — command records are written with
+empty payloads — so it is unrecoverable. His 122-waypoint New Castle plan from 09-06 (the
+newest copy I actually hold) is what is in the file now.
 
 **NEWEST (this commit): SPEED AND DEPTH ARE REACHABLE WITHOUT A SURVEY, AND MIN DEPTH IS NOW A
 ROUTING FLOOR FOR EVERY BEHAVIOR.** Andy: *"On GOTO selection without survey in place there is
@@ -404,6 +451,18 @@ blocks. Every one is deliberate: it is recorded, not forgotten.
   `escapeCourse` returns null for EVERY heading once the boat is inside the buffer (so
   "BOXED IN — TAKE MANUAL CONTROL" is reachable from geometry that has an answer); and
   nothing timestamps the wind / stream readings, so a stale one is used as if it were fresh.
+* **⚠⚠ NEW, AND THE MOST IMPORTANT ONE HERE: A HASH IS NOT A BACKUP. I lost a plan of his on 2026-09-07.**
+  `mission.json` held a 212-waypoint, 9-line plan; a visual check needed a survey running, and
+  I POSTed a 3-line test mission straight over it. I had been hashing that file around every
+  console run precisely so I would notice a change - and I had never COPIED it, so the
+  detection worked and bought nothing. **The session logs do not carry plan geometry**
+  (`command` records are written with empty payloads, `client:survey_lines` came through
+  empty), so there is no recovery path. The file now holds his 122-waypoint 09-06 plan, the
+  newest copy that existed anywhere.
+  **The rule: COPY every gitignored file to a scratch path before the FIRST write, and again
+  immediately before any run that WRITES rather than reads. Treat "I will just POST a test
+  mission" as the destructive act it is** - and prefer a temp path over writing at all, which
+  is what the missing `--mission` flag below would give.
 * **NEW — no `--mission` flag, so the plan is protected by fourteen hand-written backups
   rather than by construction.** The leak found on 2026-09-05 is fixed (`amend_plan.py`, which
   had been flipping his plan speed on every commit), but the shape of the problem is the one

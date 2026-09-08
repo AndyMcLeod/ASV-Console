@@ -235,6 +235,33 @@ check("7d. ... and the reversal INSIDE region B is a turn like any other",
         () => "opened as " + inRev + ", then " + wide.join(" -> ") + " as it went wide");
 }
 
+// --- 6d. ON a line is not RUNNING it: the chart highlight ------------------- //
+// Andy, 2026-09-07: "Do not highlight survey lines in the active survey pattern when merely
+// crossing said line in a transit or turn or some such. Only highlight the line when actually
+// running said line." The chart used to stroke whichever line was NEAREST, so crossing one in
+// a reversal or on the hop to the next region lit it as though it were being surveyed. It
+// strokes `runLineIdx` now - the same value the LINES table, the line-end hover tip and the
+// per-line timings read - so this is the check that holds the highlight as well as the clock.
+//
+// The boat is put EXACTLY on line 2, aligned with it, and only the route leg is varied. That
+// is the whole distinction: geometry says "on the line", the leg says whether it is being run.
+{
+  plan();
+  fly([0, 5], [0, 145], 1);                       // run line 1 first, so a reversal is possible
+  const L2mid = [60, 75];                         // dead centre of line 2, which runs 150 -> 0 m east
+  const onL2Leg  = (tick(L2mid[0], L2mid[1], 270, 3), runLineIdx);   // wp 3 IS line 2's own leg
+  const crossing = (tick(L2mid[0], L2mid[1], 270, 6), runLineIdx);   // wp 6 is the region HOP
+  check("6d. THE REPORT: sitting ON a line while running a different leg highlights nothing",
+        () => onL2Leg === 1 && crossing === -1,
+        () => "same position and heading, dead centre of line 2 - on its own leg runLineIdx="
+              + onL2Leg + ", merely crossing it runLineIdx=" + crossing
+              + " (-1 = no line highlighted)");
+
+  check("6e. ...and the chart stroke reads that value, with no nearest-line notion left",
+        () => /act = \(i===runLineIdx\)/.test(H) && !/function updateActiveLine\(/.test(H),
+        "one answer to 'which line is being run' - timings, table, tip and stroke all read it");
+}
+
 // --- 8. the two scales are not the same number ----------------------------- //
 plan();
 check("8. turnZoneM's scale is NOT the reversal scale, and must not be used as one",

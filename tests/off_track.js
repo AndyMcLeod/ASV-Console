@@ -288,8 +288,11 @@ console.log("Off track - displacement from the leg being flown, not from the nea
 }
 
 // 14-16. THE PAGE ITSELF. The old global is gone, the row is fed by offTrack, and nothing
-// has quietly re-grown a nearest-line distance beside the nearest-line INDEX (which the
-// chart highlight still legitimately needs - the index is a drawing question).
+// has quietly re-grown a nearest-line distance - NOR a nearest-line INDEX. When these were
+// written the chart highlight still picked the nearest line, and that was argued to be a
+// legitimate drawing question; Andy overruled it on 2026-09-07 ("Only highlight the line
+// when actually running said line"), so the whole nearest-line notion is gone and check 16
+// asserts the stronger thing: nobody computes one at all.
 {
   // SCOPED TO CODE, deliberately, and for the same reason CLAUDE.md's brand grep is: the
   // comment above updateActiveLine NAMES activeXTE, because a maintainer has to be able to
@@ -308,10 +311,11 @@ console.log("Off track - displacement from the leg being flown, not from the nea
   check("15. every off-track row is fed by offTrack() or says there is no leg",
         () => rows.length > 0 && rows.every(l => /ot\.m|no leg of advance/.test(l)),
         rows.length + " row(s) built");
-  check("16. updateActiveLine resolves an INDEX for the draw and publishes no distance",
-        () => { const f = grab("updateActiveLine");
-                return !/activeXTE|best;\s*$/m.test(f) && /activeLine\s*=\s*i/.test(f); },
-        "a distance re-added there is a second definition of off track");
+  check("16. no nearest-line INDEX either - the chart highlight is runLineIdx",
+        () => !/function updateActiveLine\(/.test(H) && !/activeLine/.test(code)
+              && /act = \(i===runLineIdx\)/.test(code),
+        "one answer to \"which line is being run\": the timings, the table, the tip and the "
+        + "chart stroke all read it, so none of them can disagree with the others");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
