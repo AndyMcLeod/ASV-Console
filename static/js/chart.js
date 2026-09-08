@@ -217,4 +217,23 @@ export function buildKeepouts(ref, enf, dr, feats){
                            {...koOpts(), depthRange: dr, enforce: enf});
 }
 // --- app-level ENC NOGO: build once, every behavior routes clear of it ---- //
-export function nogoDR(){ return {min: V.NOGO_MIN_DEPTH_M, max: 0}; }
+//
+// THE FLOOR IS THE DEEPER OF TWO: the hull's own navigability limit (draft + under-keel
+// clearance, from the vessel profile) and the OPERATOR's Min depth. Andy, 2026-09-07, on a
+// Go-To with no survey drawn: the depth setting should apply to it too, not only to survey
+// coverage. Taking the max means the operator can only ever ask for MORE water than the hull
+// needs - a Min depth below the hull's floor cannot quietly narrow its clearance, which is the
+// same rule bufferFloor() enforces for the keep-clear buffer one control over.
+//
+// ⚠ `max` STAYS 0, AND THAT IS DELIBERATE: deep water is not a hazard. The survey Max depth is
+// a COVERAGE window - "don't survey deeper than this" - and enforcing it here would make a
+// Go-To across a deep channel unroutable. punchOut still layers the operator's full min/max
+// window on top of this floor for the survey lines themselves.
+//
+// Re-classification is CLIENT-SIDE (depthExcluded reads each feature's own DRVAL1/DRVAL2), so
+// raising the floor needs a rebuildNogo() and NOT a re-fetch - the server tags 'shallow' per
+// request precisely so one fetch serves any depth limit.
+export function nogoDR(){
+  const oper = (typeof V.OPER_MIN_DEPTH_M === "number") ? V.OPER_MIN_DEPTH_M : 0;
+  return {min: Math.max(V.NOGO_MIN_DEPTH_M, oper), max: 0};
+}

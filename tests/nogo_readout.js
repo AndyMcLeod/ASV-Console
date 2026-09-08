@@ -83,7 +83,11 @@ const { nogo, sea } = require("../static/js/state.js");
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
-const { nogoKindCounts } = require("../static/js/chart.js");
+// nogoDR comes from the same module, and is imported for the same reason: the readout prints
+// the EFFECTIVE depth floor now (the deeper of the hull's own and the operator's Min depth), so
+// a stub here would let this suite stay green while the row printed a floor the keep-out model
+// had not been built at - which is the exact fault that change was made to fix.
+const { nogoKindCounts, nogoDR } = require("../static/js/chart.js");
 // rebuildNogo() builds a FRAME now (Andy, 2026-08-20: "use frame"), so planeFrame has
 // to resolve in the eval'd scope below. A free variable there is a RUNTIME error inside
 // the function, never a load error -- which is why this suite went red at "it shows the
@@ -217,7 +221,12 @@ var S = {}, center = { lat: 38.7896, lon: -75.1609 }, NOGO_RADIUS_M = 5000;
 var encShow = false, nogoShow = true, banners = [], painted = [];
 function bboxAround() { return { W: 0, S: 0, E: 1, N: 1 }; }
 function featuresBboxRef() { return { lat: 38.7896, lon: -75.1609 }; }
-function nogoDR() { return {}; }
+// nogoDR WAS STUBBED HERE as `() => ({})`, which was harmless only while nothing read its
+// result. The readout prints the EFFECTIVE depth floor now, so the stub crashed the suite on
+// `undefined.toFixed` - loudly, which is the good kind of stub failure, but a stub returning a
+// plausible number would instead have kept this green while the row printed a floor the model
+// was never built at. It is the REAL one, imported at the top, for the same reason foldChartInk
+// is: this suite evals the shipped nogoReadout and must not be shown a different world.
 function render() {}
 function showBanner(t) { banners.push(t); }
 // The row element records EVERY paint, so the test can assert both what was shown during

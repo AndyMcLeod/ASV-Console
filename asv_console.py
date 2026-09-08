@@ -842,6 +842,12 @@ def load_mission():
                 # keep-clear buffer (m) around every nogo zone - the tightness the
                 # ASV threads between piers; smaller for tight marinas.
                 "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
+                # operator MIN DEPTH (m) - a routing floor for EVERY behavior, not just
+                # survey coverage (2026-09-07). The client takes the deeper of this and the
+                # hull's own navigability limit, so a value below what the hull needs cannot
+                # narrow its clearance. There is no max here on purpose: deep water is not a
+                # keep-out, and the survey Max depth stays a coverage window.
+                "min_depth_m": m.get("min_depth_m", 2.0),
                 # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
                 # plan drawn at the dock survives a reload / a session at sea.
                 "boundary": m.get("boundary") or [],
@@ -852,7 +858,8 @@ def load_mission():
     return {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
-            "buffer_m": NOGO_BUFFER_DEFAULT_M, "boundary": [], "boundary_closed": False}
+            "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
+            "boundary": [], "boundary_closed": False}
 
 
 # The operator's END-OF-PLAN setting, cached so the 4 Hz telemetry loop never touches
@@ -876,6 +883,7 @@ def save_mission(m):
         "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
         "completion": _cache_plan_completion(m.get("completion")),
         "buffer_m": m.get("buffer_m", 3.0),
+        "min_depth_m": m.get("min_depth_m", 2.0),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
     }, indent=1)

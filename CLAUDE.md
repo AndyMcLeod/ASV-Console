@@ -55,9 +55,62 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-07 — the note is off the bar, and the inner section is RUN)
+## ⇒ START HERE (handoff refreshed 2026-09-07 — a bare Go-To can be given a speed and a depth)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): SPEED AND DEPTH ARE REACHABLE WITHOUT A SURVEY, AND MIN DEPTH IS NOW A
+ROUTING FLOOR FOR EVERY BEHAVIOR.** Andy: *"On GOTO selection without survey in place there is
+no option for speed selection or depth buffers."*
+
+**MEASURED FIRST, and he was right about speed and half-right about depth.** The always-visible
+command bar carried `Arr m`, `Appr m`, **`Buf m`** and End-of-plan; the three speed selects,
+Min/Max depth, a duplicate Buffer and the enforce toggles were all inside `#linePanel`, which
+is `display:none` until you open SURV. So the buffer was already there, but **the speed that
+governs a Go-To — TRANSIT — could not be set at all without opening a survey card.**
+
+**TWO CONTROLS ADDED TO THE BAR, both following the `setBuffer` precedent exactly** (one writer,
+both surfaces mirrored, persisted, shared model rebuilt — the comment on `setBuffer` had been
+describing this pattern for a month and speed simply never got it): `#c_mindepth` and
+`#c_spd_transit`. Turn and Survey speeds stay in SURV, where they are survey concepts.
+
+**⚠⚠ HE CHOSE THE BEHAVIOR CHANGE, AND I IMPLEMENTED HALF OF IT DELIBERATELY.** Asked what
+"depth buffers" meant, he picked *"Min/Max depth should apply to Go-To as well"*. **Min** now
+does: `nogoDR()` returns `max(hull floor, operator Min depth)`, so every behavior routes
+against it. **MAX DOES NOT, and must not be "finished" later** — deep water is not a hazard,
+the survey Max depth is a COVERAGE window, and enforcing it in the shared model would make a
+Go-To across a deep channel unroutable. The console's own tooltip has always said so. Check 5
+of the new suite is what goes red if someone wires it through.
+
+**Taking the MAX means the operator can only ever ask for MORE water than the hull needs** — a
+Min depth below the hull's own floor cannot quietly narrow its clearance, the same rule
+`bufferFloor()` keeps one control over.
+
+**A REBUILD, NOT A RE-FETCH:** `depthExcluded` re-reads each feature's own DRVAL1/DRVAL2, and
+the server tags 'shallow' per request precisely so one fetch serves any limit. Raising the
+floor costs nothing on the wire.
+
+**MEASURED LIVE at New Castle: 1148 keep-out zones at the 2.3 m hull floor, 1561 at an 8 m
+operator floor**, set from the command bar with SURV never opened, mirrored to the panel copy,
+and still 8 after a reload — which is the whole four-whitelist chain (client rebuild, server
+load, server save, empty-file default) working end to end.
+
+**⚠ AND THE READOUT HAD TO FOLLOW.** With the model built at 8 m the nogo row still printed
+*"1561 zones · floor 2.3 m"* — a count the operator cannot reconcile with the number beside it.
+It prints the EFFECTIVE floor now, and when the operator's value is the one in force it says
+so: *"water shallower than 8.0 m - YOUR Min depth setting, which is deeper than this vessel's
+own floor of 2.3 m"*.
+
+**TEETH: `tests/min_depth_floor.js`, 15 checks, 16 mutations, all 16 killed.** Two of my own
+checks were too weak on the first run and both were the same shape — **a source-shape assertion
+matching an IDENTIFIER where the meaning is in the STATEMENT**: `/rebuildNogo\(\)/` was
+satisfied by a mutation that had changed the guard to `if(false)`, and a single regex over the
+whole Python file for "load, save AND default" was satisfied by any one of the three. Fixed by
+pinning the guarded statement and by isolating each function body. **That second one is the
+`speed_modes` 11b "every" trap again, three days later in a different file.**
+
+**⇒ AND THE GUARDS ENTRY WENT IN WITH THE SUITE THIS TIME** (62 suites, 62 entries), which is
+the habit the last commit's rebuild forced out. The docs are rebuilt in this commit.
 
 **NEWEST (this commit): THE CARD'S INNER SECTION IS HEADED "Run".** Andy: *"Rename the Mission
 section inside the card to Run."* This is him settling the collision flagged on 09-06 — the

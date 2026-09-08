@@ -588,11 +588,27 @@
     <input id="c_buffer" type="number" value="3" min="0" max="200" step="1"
       title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behaviour; re-routes live."
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
-    <!-- THE SPEED SELECTOR LIVED HERE AND IS GONE (Andy, 2026-08-31: "Remove the old speed
-         selection function from the chart bar and implement in the survey card"). One
-         speed became three - survey / turn / transit - and three selects on a command bar
-         that has to stay readable at a glance is the wrong home for them. They are in the
-         SURV card, which is where the rest of the plan's parameters already are. -->
+    <!-- MIN DEPTH, and it is a ROUTING FLOOR for every behavior now, not a survey setting.
+         Andy, 2026-09-07: "On GOTO selection without survey in place there is no option for
+         speed selection or depth buffers." Both of those lived only in the SURV card, which
+         is closed unless you are planning a survey - so a bare Go-To could be given neither.
+         Mirrored with the SURV panel's Min depth through setMinDepth(), exactly as Buf m is
+         mirrored with the panel's Buffer. The effective floor is the DEEPER of this and the
+         hull's own (see nogoDR in chart.js); Max depth stays survey-coverage-only, because
+         deep water is not a hazard and enforcing it would make a deep channel unroutable. -->
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Minimum water the ASV will route through, for EVERY behaviour (Go-To / RTH / search / survey) — not just survey coverage. The floor actually used is the deeper of this and the hull's own navigability limit (draft + under-keel clearance), so setting it lower than the hull needs cannot narrow its clearance. Shared with the SURV panel Min depth; re-routes live.">Min dep m</label>
+    <input id="c_mindepth" type="number" value="2" min="0" max="500" step="0.5"
+      title="Minimum water depth to route through (m) — SHARED by every behaviour. The hull's own floor is the lower bound; ask for more water here and every route respects it. Max depth is survey-coverage only (deep water is never a keep-out)."
+      style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+    <!-- TRANSIT SPEED. The other two roles (survey, turn) are survey concepts and stay in the
+         SURV card; TRANSIT is the one that governs Go-To, RTH and a drawn Transit, so it is
+         the one an operator needs with no survey drawn. Mirrored with #sp_spd_transit through
+         setRoleSpeed(). (The single #c_speed selector removed on 2026-08-31 was the OLD
+         one-speed-for-everything control; this is not that coming back.) -->
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Speed for everything that is not survey coverage and not a reversal: Go-To, RTH, a drawn Transit, the approach out to a survey and hops between coverage regions. Shared with the SURV panel's Transit spd.">Transit</label>
+    <select id="c_spd_transit" title="TRANSIT speed — governs Go-To, RTH, Transit, the approach to a survey and region hops. Shared with the SURV panel's Transit spd; applies live, mid-run included." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+      <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
+    </select>
     <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behaviour (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
     </select>
@@ -1961,7 +1977,8 @@ async function loadMission(){
                  arrival_radius_m:m.arrival_radius_m ?? 2,
                  approach_radius_m:m.approach_radius_m ?? 1, speed:m.speed||"survey",
                  speeds:m.speeds||{},
-                 completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3};
+                 completion:m.completion||"rth", buffer_m:m.buffer_m ?? 3,
+                 min_depth_m:m.min_depth_m ?? 2};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
@@ -1974,6 +1991,14 @@ async function loadMission(){
         if(!mission.speeds[r]) mission.speeds[r] = mission.speed || "survey";
         const el = $("#sp_spd_" + r); if(el) el.value = mission.speeds[r];
       });
+      // ... and the command bar's TRANSIT copy, the same value on a second control (see
+      // setRoleSpeed). Missed here it would open showing the markup default while the panel
+      // showed the truth - the two-controls-one-value trap, on the load path.
+      if($("#c_spd_transit")) $("#c_spd_transit").value = mission.speeds.transit;
+      // The operator MIN DEPTH is a routing floor now, so it is restored the same way the
+      // buffer is below: onto both controls AND into V, which is what nogoDR() reads.
+      V.OPER_MIN_DEPTH_M = mission.min_depth_m ?? 2;
+      $("#sp_mindepth").value = V.OPER_MIN_DEPTH_M; $("#c_mindepth").value = V.OPER_MIN_DEPTH_M;
       updateSpeedNote();
       $("#c_completion").value = mission.completion || "rth";
       // Apply the persisted nogo buffer to both controls + the shared model, but never
@@ -4280,13 +4305,25 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
 }
 function nogoStatus(t){ showBanner(t); }
 function nogoReadout(){
-  const floor = (typeof V.NOGO_MIN_DEPTH_M === "number" ? V.NOGO_MIN_DEPTH_M.toFixed(1)+" m" : "?");
+  // ⚠ THE EFFECTIVE FLOOR, WHICH IS NOT ALWAYS THE HULL'S. Since the operator's Min depth
+  // became a routing floor (2026-09-07) this row read the vessel's own figure while the model
+  // beside it had been built at a deeper one - raising Min depth to 8 m took the zone count
+  // from 1148 to 1561 and the card still said "floor 2.3 m". A count the operator cannot
+  // reconcile with the number printed next to it reads as a fault in the console.
+  const hull = (typeof V.NOGO_MIN_DEPTH_M === "number") ? V.NOGO_MIN_DEPTH_M : 0;
+  const eff = nogoDR().min;
+  const floor = eff.toFixed(1) + " m";
+  const byOperator = eff > hull + 1e-9;
   // The shared tail: what a nogo IS. The operator should never have to remember that the
-  // shallow-water part of it is derived from THIS vessel's draft.
+  // shallow-water part of it is derived from THIS vessel's draft - or, when they have asked
+  // for more water than the hull needs, that it is THEIR number doing the work.
   const why = "\n\nThe keep-out model every commanded motion routes clear of: charted land and "
-    + "shoreline, docks and manmade features, charted hazards, and water shallower than this "
-    + "vessel's own floor (" + floor + " = draft + under-keel clearance), corrected for the live "
-    + "water level. Press NOGO to show the zones on the chart.";
+    + "shoreline, docks and manmade features, charted hazards, and water shallower than "
+    + floor + (byOperator
+        ? " - YOUR Min depth setting, which is deeper than this vessel's own floor of "
+          + hull.toFixed(1) + " m (draft + under-keel clearance), so it is the one in force"
+        : " = this vessel's own floor (draft + under-keel clearance)")
+    + ", corrected for the live water level. Press NOGO to show the zones on the chart.";
   if(nogo.busy){
     const s = nogo.since ? Math.max(0, Math.round((Date.now() - nogo.since)/1000)) : 0;
     return {text: "reading chart… " + s + " s", cls: "warn",
@@ -6286,10 +6323,26 @@ $("#c_buffer").onchange = ()=>setBuffer($("#c_buffer").value);
 $("#vesselSel").onchange = (e)=>switchVessel(e.target.value);
 if($("#portSel")) $("#portSel").onchange = (e)=>switchPort(e.target.value);
 $("#sp_buffer").onchange = ()=>setBuffer($("#sp_buffer").value);
-// survey Min/Max depth = survey-only coverage window (re-clip preview only)
-["#sp_mindepth","#sp_maxdepth"].forEach(id=>{
-  $(id).onchange = ()=>{ patClip=null; updatePatReadout(); render(); };
-});
+// MIN DEPTH — a routing floor for EVERY behavior, edited from either the command bar
+// (#c_mindepth, always accessible) or the SURV panel (#sp_mindepth). Same shape as
+// setBuffer above, and for the same reason: one writer, both controls mirrored, persisted,
+// and the shared model rebuilt so Go-To / RTH / search / survey all re-route live.
+//
+// A REBUILD, NOT A RE-FETCH: depthExcluded re-reads each feature's own DRVAL1/DRVAL2 against
+// the new floor, and the server applies its 'shallow' tag per request so one fetch already
+// serves any limit. Raising the floor therefore costs nothing on the wire.
+function setMinDepth(v){
+  v = Math.max(0, Math.min(500, parseFloat(v)||0));
+  V.OPER_MIN_DEPTH_M = v;                                    // read by nogoDR()
+  $("#sp_mindepth").value = v; $("#c_mindepth").value = v;
+  mission.min_depth_m = v; saveMission();
+  if(nogo.features && nogo.features.length) rebuildNogo();    // re-route every behavior
+  patClip = null; updateNogoUI(); updatePatReadout(); render();
+}
+$("#c_mindepth").onchange  = ()=>setMinDepth($("#c_mindepth").value);
+$("#sp_mindepth").onchange = ()=>setMinDepth($("#sp_mindepth").value);
+// Max depth is still survey-only: a COVERAGE ceiling, not a keep-out. Deep water is water.
+$("#sp_maxdepth").onchange = ()=>{ patClip=null; updatePatReadout(); render(); };
 // enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
 ["#enf_land","#enf_depth","#enf_haz","#enf_area"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };
@@ -6433,19 +6486,30 @@ function recalcCommittedForSpeed(){
 // is not currently doing must not touch the throttle, so the governor is asked to re-assert
 // rather than a value being sent from here. `commandedSpeed = null` is that ask - the next
 // telemetry frame sends the new value if, and only if, it is the job the boat is doing.
+//
+// ⚠ TRANSIT HAS TWO CONTROLS AND ONE WRITER. It is the role that governs Go-To, RTH and a
+// drawn Transit, so it also sits on the always-visible command bar (#c_spd_transit) for the
+// operator who never opens the SURV card - Andy, 2026-09-07: "On GOTO selection without survey
+// in place there is no option for speed selection". Both mirror through setRoleSpeed, the way
+// Buf m and the panel Buffer mirror through setBuffer; a second handler writing `mission.speeds`
+// on its own is exactly the "two places holding one value" fault this console keeps re-learning.
+function setRoleSpeed(role, v){
+  mission.speeds = {...(mission.speeds||{}), [role]: v};
+  const panel = $("#sp_spd_" + role); if(panel) panel.value = v;
+  if(role === "transit" && $("#c_spd_transit")) $("#c_spd_transit").value = v;
+  saveMission();
+  commandedSpeed = null;            // let the governor decide whether this one is live now
+  updateSpeedNote();
+  // The TURN speed is not only a throttle: it sets the radius every generated turn is
+  // built at, so changing it can make a committed plan's reversals unflyable (or make
+  // ones that were refused fit). recalcForSpeed is what re-checks and says so.
+  recalcForSpeed();
+}
 SPEED_ROLES.forEach(role=>{
   const el = $("#sp_spd_" + role); if(!el) return;
-  el.onchange = ()=>{
-    mission.speeds = {...(mission.speeds||{}), [role]: el.value};
-    saveMission();
-    commandedSpeed = null;          // let the governor decide whether this one is live now
-    updateSpeedNote();
-    // The TURN speed is not only a throttle: it sets the radius every generated turn is
-    // built at, so changing it can make a committed plan's reversals unflyable (or make
-    // ones that were refused fit). recalcForSpeed is what re-checks and says so.
-    recalcForSpeed();
-  };
+  el.onchange = ()=>setRoleSpeed(role, el.value);
 });
+if($("#c_spd_transit")) $("#c_spd_transit").onchange = ()=>setRoleSpeed("transit", $("#c_spd_transit").value);
 // What the three are, in one line under them - and in KNOTS, because "survey" is a label
 // and the operator is deciding about a speed. Says so out loud when they are all equal,
 // which is the state a console that has never been told otherwise is in.
