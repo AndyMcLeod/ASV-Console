@@ -306,7 +306,7 @@ c.push(TBL(["Card", "Purpose"], [
   ["Survey area (`BND`)", "Arbitrary boundary polygon that clips the pattern"],
   ["Search (`SRCH`)", "Canned search patterns: expanding box, sector, parallel track"],
   ["Transit (`TRAN`)", "Draw and follow a route with no survey plan"],
-  ["Mission status", "Live telemetry, water level, nogo, comms — and the MISSION block: one readout for every commanded run (type, waypoint progress, routed length, time to end, end mode, run time, status), shown only while there is a run to describe"],
+  ["Mission status", "Live telemetry, water level, nogo, comms — and the RUN block: one readout for every commanded run (type, waypoint progress, routed length, time to end, end mode, run time, status), shown only while there is a run to describe"],
   ["ROC · HOME", "Remote Operations Centers, recovery offsets, and HOME selection"],
   ["Chart source (`SRC`)", "Every ENC cell in view + the zone-of-confidence under the vessel"],
   ["Survey lines (`LINES`)", "Per-line planned versus actual run times"],

@@ -157,8 +157,8 @@ anything that needs it reads `currentActivity()` rather than deciding for itself
 **Intent — what, why, and what next.** The bottom section of the **Mission Status** card,
 answering the question a moving track raises: *why is it doing that?* Three parts, updated
 every telemetry frame. It was its own draggable pop-out behind an `INTENT` chip until
-2026-09-05; the chip and the pop-out are gone, and it sits under the Mission block on the
-card that already carries the boat, for the same reason the Mission readout moved there —
+2026-09-05; the chip and the pop-out are gone, and it sits under the Run section on the
+card that already carries the boat, for the same reason that readout moved there —
 the boat and what it intends were on two cards the operator had to keep apart on the chart.
 It is a long readout in a narrow card, so **the card scrolls** (its header sticks, and the
 card is resizable and remembers its size):

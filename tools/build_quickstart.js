@@ -34,7 +34,7 @@ c.push(NOTE("WATCH THIS FIRST", "The vessel-status card's Nogo row tells you whe
 c.push(H1("2  Get your bearings"));
 c.push(TBL(["Where", "What it is"], [
   ["Top bar", "Position, speed, heading, energy, and the SAFETY STATE — it reads SAFE until you arm"],
-  ["Right-hand card", "The detailed vessel state, plus a MISSION block once anything is planned"],
+  ["Right-hand card", "The detailed vessel state, plus a RUN block once anything is planned"],
   ["Button column", "Chart layers and planning modes"],
   ["Bottom bar", "Run parameters and the commands"],
   ["`?` bottom-left", "The built-in quick start card"],
@@ -64,12 +64,12 @@ c.push(H2("4.3  Commit and run"));
 c.push(B("`Add to plan` — commits the lines and waypoints."));
 c.push(B("`Upload` — pushes the plan to the vessel, routing the approach clear of obstacles."));
 c.push(B("`Start` — the run begins."));
-c.push(P("Watch the MISSION block: type, waypoint progress, distance and time to the end, percent complete. `LINES` opens a per-line table showing planned against actual time as the run proceeds."));
+c.push(P("Watch the RUN block: type, waypoint progress, distance and time to the end, percent complete. `LINES` opens a per-line table showing planned against actual time as the run proceeds."));
 
 // ------------------------------------------------------------------
 c.push(H1("5  Know where it will end up"));
 c.push(P("The `End of plan` selector in the command bar decides what happens when the plan finishes — RTH (return home and station-keep), Complete (stop), Loiter (hold at the last waypoint), or Repeat (loop until you stop it)."));
-c.push(P("The MISSION block's `End mode` row tells you where THIS run will leave the vessel, from the moment it starts. With RTH selected it says so throughout — and it only says RTH when the return can actually happen. (Ops manual 11.5)"));
+c.push(P("The RUN block's `End mode` row tells you where THIS run will leave the vessel, from the moment it starts. With RTH selected it says so throughout — and it only says RTH when the return can actually happen. (Ops manual 11.5)"));
 
 // ------------------------------------------------------------------
 c.push(H1("6  Stopping"));

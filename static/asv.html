@@ -104,7 +104,7 @@
     justify-content:space-between;font-size:10px;letter-spacing:.08em;color:var(--bronze);text-transform:uppercase;}
   .vcard .vhead .vclose{cursor:pointer;color:var(--ink-faint);padding:0 3px;}
   .vcard .vhead .vclose:hover{color:var(--bad);}
-  /* The Mission block pushed the card past a laptop viewport when a run is up, so the
+  /* The Run block pushed the card past a laptop viewport when a run is up, so the
      body scrolls rather than running off the bottom of the chart. */
   .vcard .vbody{padding:7px 9px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;}
   .vcard .vrow{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
@@ -650,14 +650,21 @@
            names the STATE (reading / n zones / clear water / no chart) rather than a bare
            count. This title is only what shows before the first paint. -->
       <div class="vrow"><span class="vk">Nogo</span><span class="vv" id="v_nogo" title="The charted keep-out model every commanded motion routes clear of. Not read yet.">--</span></div>
-      <!-- MISSION block: one readout for every commanded run (survey / search / go-to /
+      <!-- RUN block: one readout for every commanded run (survey / search / go-to /
            RTH / transit), fed by updateMissionCard() from runRoute + the reported state.
            It was a separate pop-out card; the operator was reading the boat on one card
            and its run on another, so it now lives here as a section that appears only
            while there is a run to describe. Type + End mode together are what the old
-           "Run mode" row said, so that row is gone rather than repeated. -->
+           "Run mode" row said, so that row is gone rather than repeated.
+           HEADED "Run" SINCE 2026-09-07, and the rename settles a collision rather than
+           being cosmetic: the CARD became MISSION STATUS on 09-06, which left a section
+           called Mission inside a card called Mission Status for the operator to tell apart
+           by position. Andy's call, asked for outright. The IDS ARE UNTOUCHED - #v_mission,
+           mi_*, updateMissionCard() - for the same reason the card's were: they are
+           referenced from CSS, the suites and the controls-window rules, and the id is not
+           the name. -->
       <div class="vsec" id="v_mission" style="display:none;">
-        <div class="vsechead">Mission</div>
+        <div class="vsechead">Run</div>
         <div class="vrow"><span class="vk">Doing</span><span class="vv" id="mi_activity" style="text-transform:uppercase;" title="What the vessel is doing RIGHT NOW. SURVEYING means it is on a coverage line - and nothing else does. The approach from home, every reversal between lines, a hop between coverage regions, a Go-To and a Return-to-Home are all TRANSITING: the vehicle is under way but not acquiring survey coverage. This is the distinction any continuously-collected data (sonar) must be segmented by.">--</span></div>
         <div class="vrow"><span class="vk">Mode</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour the RUN is in: survey / search / goto / rth / transit. This stays the same for the whole run - it is not what the vessel is doing at this moment (see Doing).">--</span></div>
         <div class="vrow"><span class="vk">Speed</span><span class="vv" id="mi_speed" title="The speed the VESSEL is running to, as it reports it — not merely what the selector says. They should agree; if they do not, this is the one that is moving the boat.">--</span></div>
@@ -674,7 +681,7 @@
            next. It was its own draggable pop-out with an INTENT chip on the control strip;
            Andy, 2026-09-05: "Merge the Intent card with the Vessel Status card creating an
            Intent section in the lower section of the Vessel Status card. Remove the Intent
-           chip." Same move the Mission block made above, for the same reason - the boat and
+           chip." Same move the Run block made above, for the same reason - the boat and
            what it intends were on two cards the operator had to keep apart on the chart.
            The BODY is untouched: renderIntent() still writes #intentBody and still styles
            its own rows, so the reasoning reads exactly as it did. Unlike Mission this
@@ -7624,7 +7631,7 @@ function onState(s){
   const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");
   $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
 
-  // (Run mode used to live here as "behaviour · completion". It is now the Mission block's
+  // (Run mode used to live here as "behaviour · completion". It is now the Run block's
   // Type + End mode rows, driven by updateMissionCard() - one place, not two.)
 
   // comms
@@ -7800,7 +7807,7 @@ function updateCurrentUI(cur){
            + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : "")
            + (proj ? ". ~ = " + cur.note : "");
 }
-// --- MISSION block (inside the vessel-status card) ------------------------- //
+// --- RUN block (inside the Mission Status card) ---------------------------- //
 // One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit
 // all set `runRoute` (the ENC-routed path) and the server reports behavior +
 // holding/drifting, so one derivation covers them all: type, routed length, live to-end,

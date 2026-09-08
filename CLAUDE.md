@@ -55,9 +55,43 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-07 — the floating note is off the status bar)
+## ⇒ START HERE (handoff refreshed 2026-09-07 — the note is off the bar, and the inner section is RUN)
 
 ### ➤ PICK UP HERE
+
+**NEWEST (this commit): THE CARD'S INNER SECTION IS HEADED "Run".** Andy: *"Rename the Mission
+section inside the card to Run."* This is him settling the collision flagged on 09-06 — the
+card became MISSION STATUS and still had a section called *Mission* inside it, for the operator
+to tell apart by position. The card now reads **MISSION STATUS** over **Run** and **Intent**.
+
+**The ids are untouched** — `#v_mission`, `mi_*`, `updateMissionCard()` — for the same reason
+the card's were: they are referenced from CSS, the suites and the controls-window rules, and
+the id is not the name. Verified live with a run up: heads read `Run` / `Intent — what and
+why`, the block still renders every row, no console errors.
+
+**⚠ THE GENERATED MANUALS ARE NOT REBUILT IN THIS COMMIT, AND THAT IS DELIBERATE.** The four
+doc BUILDERS are updated (`build_ops_manual.js` §4.3.1 and six more references,
+`build_quickstart.js`, `build_tech_manual.js`, plus `README.md`), so the next
+`cd tools && node build_docs.js` produces manuals that say RUN block. **The .docx were left
+alone because `docs/asv-simulator-operations-manual.docx` is MODIFIED IN HIS WORKING TREE and
+has been since 09-06 08:05** — he hand-edits that generated file in Word, and a rebuild would
+overwrite his edits with no way back. This breaks the usual "docs land in the same commit as
+the work" rule on purpose; **rebuild once his edits are committed or abandoned, and ask him
+first.**
+
+**⚠⚠ AND HE SAID WHAT THOSE EDITS ARE: "my edits are to change spelling to american english.
+follow that pattern in the future."** So he has been hand-correcting BRITISH spellings out of
+a GENERATED document — which means **every `build_docs.js` run silently throws that work away
+and he has to do it again.** The fix is not in the .docx, it is in the builders.
+
+**⬜ OPEN, AND MEASURED: the four doc builders still hold ~100 British spellings in prose** —
+`behaviour` ×33, `centre`/`centreline`/`centred` ×20, `metres`/`metre` ×19, `kilometres` ×9,
+`colour` ×9, `manoeuvre` ×5, `labelled` ×4, `modelled` ×3, `grey` ×3, and a few singles.
+(The 126 `color` hits are the CSS property and are already American — do not touch those, and
+do not blind-replace anything that names a CODE IDENTIFIER, since the API field is already
+`behavior`.) Converting them is what stops his corrections being overwritten, and it is a big
+prose diff across four files, so it is his call rather than a tidy-up to slip into another
+commit. **From here on, new prose in this repo is written in AMERICAN ENGLISH.**
 
 **NEWEST (this commit): THE FLOATING NOTE NO LONGER COVERS THE STATUS BAR.** Andy: *"There's
 a floating message on the top status bar that says 'Simulator connected. No hardware in the

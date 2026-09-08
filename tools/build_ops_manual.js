@@ -132,8 +132,8 @@ c.push(TBL(["Field", "Meaning"], [
 c.push(NOTE("DISTANCE UNITS", "The DIST pill changes DISPLAY only — every stored and transmitted value stays metric, so nothing about the mission, the vessel files or the wire changes with it. It applies to LONG distances: route lengths, distance remaining, HOME range, off-track distance and tide-station distances. Three families deliberately do NOT follow it: SHORT distances (line spacing, buffers, draft, depths and the LINES table) always read in metres, because 25 m of spacing is an unusable 0.0135 nm; chart-tile soundings stay in feet, as charted; and the AIS card always reads nautical miles, whatever the pill says. In the two-window layout the choice applies to both windows at once."));
 c.push(H2("4.3  The vessel-status card"));
 c.push(P("The detailed read, in one card: autonomy, speed, heading, course, bearing and range from home, attitude, wind, sea state, environmental set and crab, energy, water level, the keep-out model state, and a communications signal bar. Drag its header to move it; close it with the `×` and bring it back with the VESSEL pill."));
-c.push(H3("4.3.1  The MISSION block"));
-c.push(P("While any run is planned or active, a MISSION block appears in the same card — one readout that covers EVERY commanded run, whether it is a survey, a search, a Go-To, a transit or a return home:"));
+c.push(H3("4.3.1  The RUN block"));
+c.push(P("While any run is planned or active, a RUN block appears in the same card — one readout that covers EVERY commanded run, whether it is a survey, a search, a Go-To, a transit or a return home:"));
 c.push(TBL(["Row", "Reads"], [
   ["Type", "The behaviour running"],
   ["Waypoint", "Progress along the uploaded route, or the planned count before Upload"],
@@ -306,14 +306,14 @@ c.push(TBL(["Field", "Sets"], [
   ["Speed", "Low / Survey / High, from the vessel's own profile"],
   ["End of plan", "What happens when the plan finishes — see 11.5"],
 ], [1400, 7960]));
-c.push(NOTE("SPEED APPLIES IMMEDIATELY", "Changing the speed selector commands the vessel THERE AND THEN, mid-run included — it does not wait for the next Upload. Speed over ground will follow within a few seconds. The MISSION block's Speed row shows the speed the VESSEL reports it is running to, so you can confirm the command landed rather than assuming it; if that row ever disagrees with the selector, the row is the one moving the vessel."));
+c.push(NOTE("SPEED APPLIES IMMEDIATELY", "Changing the speed selector commands the vessel THERE AND THEN, mid-run included — it does not wait for the next Upload. Speed over ground will follow within a few seconds. The RUN block's Speed row shows the speed the VESSEL reports it is running to, so you can confirm the command landed rather than assuming it; if that row ever disagrees with the selector, the row is the one moving the vessel."));
 c.push(NOTE("CHANGING SPEED RE-PLANS THE TURNS", "Speed is an input to the plan, not a label on it: the minimum radius the vessel can hold scales with it, and so does the shape of every line-to-line reversal. Change it and the console recalculates — turns, durations, per-line times. If the plan is already COMMITTED it cannot rebuild the turn waypoints, so it re-checks the spacing against the new speed and tells you when speeding up has put a reversal beyond what the vessel can hold. Slowing down is always safe."));
 c.push(NOTE("THE BUFFER HAS A FLOOR", "The vessel's own profile sets a minimum buffer. A plan saved against a smaller vessel cannot quietly give this one less standoff than its profile demands. You can always widen it by hand."));
 c.push(H2("11.2  The sequence"));
 c.push(B("`Arm` — enables commanding. Confirm the transmitter's autonomy switch is forward."));
 c.push(B("`Upload` — pushes the plan to the vessel, first routing the approach and every inter-line transit clear of obstacles. Needs armed, no E-STOP, at least one waypoint."));
 c.push(B("`Start` — begins the run. Needs armed, a plan uploaded, no E-STOP."));
-c.push(B("Monitor — waypoint progress, the MISSION block, the track, energy, and the water."));
+c.push(B("Monitor — waypoint progress, the RUN block, the track, energy, and the water."));
 c.push(H2("11.3  Pause, Stop, E-STOP"));
 c.push(TBL(["Control", "Does", "Recover by"], [
   ["`Pause`", "Holds position, keeps the next waypoint active", "`Start` resumes"],
@@ -322,7 +322,7 @@ c.push(TBL(["Control", "Does", "Recover by"], [
 ], [1300, 5060, 3000]));
 c.push(H2("11.4  What you should be watching"));
 c.push(B("THE WATER, first. Everything below is secondary to that."));
-c.push(B("The MISSION block's status line and percent — the fastest read on whether the run is progressing."));
+c.push(B("The RUN block's status line and percent — the fastest read on whether the run is progressing."));
 c.push(B("Energy, against the distance still to run. The card gives endurance and range for fuelled vessels."));
 c.push(B("The communications bar. A degrading link is visible before it is lost."));
 c.push(B("The Nogo row, if the vessel is transiting into an area the model was not built for — it re-extracts, and says so."));
@@ -334,7 +334,7 @@ c.push(TBL(["Setting", "At the end of the plan"], [
   ["Loiter", "Station-keep at the last waypoint"],
   ["Repeat", "Loop the route until you Stop"],
 ], [1400, 7960]));
-c.push(P("With RTH selected, THE RETURN ALSO HAPPENS AT THE END OF A GO-TO OR A TRANSIT, not only at the end of a survey. The MISSION block's End mode says so for the whole run rather than only once the return begins, so you can confirm before the run ends where the vessel is going to finish."));
+c.push(P("With RTH selected, THE RETURN ALSO HAPPENS AT THE END OF A GO-TO OR A TRANSIT, not only at the end of a survey. The RUN block's End mode says so for the whole run rather than only once the return begins, so you can confirm before the run ends where the vessel is going to finish."));
 c.push(P("The setting is LIVE from the moment you change it — the end-of-plan return gates on it continuously, so switching to RTH part-way through a run arms a return, and switching away from it disarms one. What waits for the next Upload is the behaviour the vessel itself falls back on at its last waypoint with no console attached."));
 c.push(NOTE("WHEN IT WILL NOT SAY RTH", "End mode only promises a return the vessel can actually make. With no HOME set, disarmed, E-STOP latched, on a Repeat run that never ends, or after a return that was routed and refused, it reads what the vessel will really do instead. Believe it."));
 
@@ -410,7 +410,7 @@ c.push(B("Transmitter operator present, autonomy switch understood."));
 c.push(H2("16.2  Running"));
 c.push(B("Arm, and confirm the transmitter's autonomy switch is forward."));
 c.push(B("Upload. Read the banner — it says what was routed and what was degraded."));
-c.push(B("Start. Confirm the MISSION block shows the run progressing and End mode reads what you intended."));
+c.push(B("Start. Confirm the RUN block shows the run progressing and End mode reads what you intended."));
 c.push(B("Watch the water; scan the card."));
 c.push(H2("16.3  After"));
 c.push(B("Confirm the vessel is where you expect it and station-keeping or stopped."));
