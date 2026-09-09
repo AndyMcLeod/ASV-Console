@@ -14,10 +14,21 @@
 //
 //   * a hazard whose extent the chart does not give (wreck, hulk, obstruction, awash
 //     rock) carries an intrinsic radius, and the buffer is added ON TOP as the margin
-//   * a hazard with a charted sounding over it (VALSOU) that clears the vessel's own
-//     navigability floor is passable and collapses back to a point - tide-corrected,
-//     the same way depth areas are
+//   * a hazard with a charted sounding over it (VALSOU) that clears the floor in force
+//     by the margin is PASSABLE, and a passable hazard is DROPPED FROM THE MODEL - not
+//     merely collapsed to a point. Tide-corrected, the same way depth areas are.
 //   * NO sounding means UNKNOWN, and unknown takes the full berth
+//
+// ⚠ "COLLAPSES BACK TO A POINT" WAS NOT ENOUGH, AND THAT IS THE 2026-09-09 CHANGE.
+// Andy, with a survey line cut in two beside a charted rock: *"The avoidance maneuver
+// circled in red for a rock on the chart is unnecessary."* The rock carried VALSOU 8.8 m
+// and the hull draws 0.12 m, so the sounding test fired and hazExtent already returned 0 -
+// but the feature stayed in the model, the operator's 3 m buffer made it a dot, the dot sat
+// 0.2 m off a survey line, and clipLine split a 350.4 m line into 334.5 m plus an 8.0 m
+// offcut. punchOut then serviced that offcut like any other line: 77 m of track across 16
+// waypoints to collect 7.8 m of coverage. hazExtent's own docstring had said the vessel
+// "can pass over it" since the rule was written; it could not, because a point in this
+// model still carries the buffer. Checks 13-21 are that fix and its controls.
 //   * genuinely point-sized objects (piles, buoys, beacons) are UNCHANGED - the fix
 //     must not inflate every mark on the chart
 //   * BOTH clearance paths honour it: the exact `legClear` check AND the A* occupancy
@@ -67,7 +78,7 @@ const { sea } = require("../static/js/state.js");
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
-const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, depthExcluded, hazExtent, legClear, markId, markSystems, nogoKind, snapClearLL } = require("../static/js/chart.js");
+const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, depthExcluded, hazExtent, hazPassable, legClear, markId, markSystems, nogoDR, nogoKind, snapClearLL } = require("../static/js/chart.js");
 
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
@@ -94,7 +105,7 @@ function grabDecl(name) {
   throw new Error("test setup: declaration " + name + " not found (renamed?)");
 }
 
-const HELPERS = [];
+const HELPERS = ["clipLine"];
 const M_PER_DEG_LAT = 111320.0;
 
 // Real declarations pulled verbatim so the test uses the SHIPPING tuning values rather
@@ -143,8 +154,9 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         hazExtent(wreck) === V.WRECK_RADIUS_M && hazExtent(pile) === 0,
         "wreck=" + hazExtent(wreck) + " m, pile=" + hazExtent(pile) + " m");
   // V.NOGO_MIN_DEPTH_M is 2.3 here (2.0 m draft + 0.3 UKC) and the clear margin is 1.0.
-  check("2. a wreck with charted water over it (VALSOU 4.5) collapses to a point",
-        hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 4.5 })) === 0);
+  check("2. a wreck with charted water over it (VALSOU 4.5) carries no extent",
+        hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 4.5 })) === 0,
+        "no EXTENT is only half of it - check 13 is whether it is in the model at all");
   check("3. ... but a SHALLOW charted wreck (VALSOU 2.5) keeps the full berth",
         hazExtent(feat("Wreck_point", 0, 0, { VALSOU: 2.5 })) === V.WRECK_RADIUS_M,
         "2.5 m over it vs a 2.3 m floor + 1.0 margin");
@@ -237,6 +249,133 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
   check("12. the radius is vessel-configurable, and reverts with the setting",
         wide && blocked({ e: 100, n: 0 }, K2, 3) === false,
         "at 120 m: 100 m blocked; back at " + saved + " m: 100 m clear");
+}
+
+
+// ── 13-14. THE REPORTED CASE: PASSABLE MEANS OUT OF THE MODEL ─────────────────────────
+// ⚠ DRIVEN THROUGH buildKeepouts AND THE PAGE'S OWN clipLine, because the whole defect was
+// that a function returning the right number (hazExtent = 0) sat beside a model that kept
+// the feature anyway. Asking hazExtent again would have agreed with the bug.
+{
+  const K = ko([feat("Wreck_point", 0, 0, { VALSOU: 4.5 })]);
+  const over = legClear(enLL(-300, 0), enLL(300, 0), ref, K, 3);
+  check("13. THE REPORTED CASE: a wreck the chart proves passable is not in the model at all",
+        K.points.length === 0 && K.passed === 1
+        && blocked({ e: 0, n: 0 }, K, 3) === false && over === true,
+        K.points.length + " keep-out point(s), " + K.passed + " passed over; a leg straight " +
+        "over it is " + (over ? "clear" : "REFUSED") + ". At extent 0 it was still a " +
+        "buffer-sized dot, which is what cut the line");
+
+  // The defect itself, in the units it was reported in: a 350 m survey line over the hazard.
+  const A = enLL(-175, 0), B = enLL(175, 0);
+  const runs = (K2) => clipLine(A, B, ref, K2, 3).map(s => Math.round(
+      Math.hypot((s[1].lon - s[0].lon) * M_PER_DEG_LAT * cosr,
+                 (s[1].lat - s[0].lat) * M_PER_DEG_LAT)));
+  const whole = runs(ko([feat("Underwater_Awash_Rock_point", 0, 0, { VALSOU: 8.8 })]));
+  const cut   = runs(ko([feat("Underwater_Awash_Rock_point", 0, 0, {})]));
+  check("14. ... and THAT is what stops it cutting a survey line in two",
+        whole.length === 1 && whole[0] >= 348
+        && cut.length >= 1 && cut[0] < 300,
+        "with a charted 8.8 m over it the 350 m line survives as " + JSON.stringify(whole) +
+        " m; with NO sounding charted the same line clips to " + JSON.stringify(cut) + " m");
+}
+
+// ── 15-17. THE CONTROLS. Every one of these must still be a keep-out. ─────────────────
+{
+  const blind = feat("Wreck_point", 0, 0, {});
+  const shallow = feat("Wreck_point", 0, 0, { VALSOU: 2.5 });   // floor 2.3 + margin 1.0 = 3.3
+  const Kb = ko([blind]), Ks = ko([shallow]);
+  check("15. CONTROL: no charted sounding is not a pass - unknown keeps the full berth",
+        hazPassable(blind) === false && Kb.points.length === 1 && Kb.passed === 0
+        && Kb.points[0].r === V.WRECK_RADIUS_M
+        && legClear(enLL(-300, 0), enLL(300, 0), ref, Kb, 3) === false,
+        "absent VALSOU is UNKNOWN, and the whole point of the assumed radius is that " +
+        "unknown is the conservative case");
+  check("16. CONTROL: a sounding that does NOT clear the floor is not a pass either",
+        hazPassable(shallow) === false && Ks.points.length === 1 && Ks.passed === 0
+        && Ks.points[0].r === V.WRECK_RADIUS_M,
+        "2.5 m over it against a 2.3 m floor + a 1.0 m margin - it has to beat the floor " +
+        "by the margin, so this is never decided at the water's edge");
+  const pile = feat("Pile_point", 0, 0, { VALSOU: 99 });
+  const Kp = ko([pile]);
+  check("17. CONTROL: a pile is never passable, whatever sounding is charted on it",
+        hazPassable(pile) === false && Kp.points.length === 1 && Kp.passed === 0
+        && blocked({ e: 2, n: 0 }, Kp, 3) === true,
+        "a pile, buoy, beacon or mooring point is an obstruction AT THE SURFACE - none of " +
+        "them is in HAZ_UNKNOWN_EXTENT, so none of them ever reaches the sounding test");
+}
+
+// ── 18. THE RASTER SEES THE SAME MODEL ────────────────────────────────────────────────
+// If only the exact check knew, the A* search would still swing round something the leg
+// check allows - which is the mirror image of the fault check 9 exists for.
+{
+  const K = ko([feat("Wreck_point", 0, 0, { VALSOU: 4.5 })]);
+  const route = routeAround(enLL(-300, 0), enLL(300, 0), ref, K, 3);
+  let minD = Infinity;
+  const pts = [enLL(-300, 0), ...(route || []), enLL(300, 0)];
+  for (let i = 1; i < pts.length; i++) {
+    const a = llEN(pts[i-1].lat, pts[i-1].lon, ref), b2 = llEN(pts[i].lat, pts[i].lon, ref);
+    const n = Math.max(1, Math.ceil(Math.hypot(b2.e-a.e, b2.n-a.n) / 2));
+    for (let k = 0; k <= n; k++) { const t = k / n;
+      minD = Math.min(minD, Math.hypot(a.e + (b2.e-a.e)*t, a.n + (b2.n-a.n)*t)); }
+  }
+  check("18. the A* raster drops it too - the search does not swing round a passable hazard",
+        minD < 5,
+        "closest approach " + minD.toFixed(1) + " m; check 9 wants >= " +
+        V.WRECK_RADIUS_M + " m for the UNSOUNDED wreck, and this wants the opposite");
+}
+
+// ── 19. TIDE, ON THE DROP AND NOT ONLY ON THE EXTENT ──────────────────────────────────
+{
+  const marginal = feat("Wreck_point", 0, 0, { VALSOU: 3.0 });   // floor 2.3 + 1.0 = 3.3
+  const atDatum = ko([marginal]);
+  sea.waterOffset = 1.16;
+  const atTide = ko([marginal]);
+  sea.waterOffset = 0;
+  check("19. the DROP is tide-corrected, not just the extent",
+        atDatum.points.length === 1 && atDatum.passed === 0
+        && atTide.points.length === 0 && atTide.passed === 1,
+        "at datum it is in the model; at +1.16 m it is not - and on a falling tide it " +
+        "comes back, which is the direction that matters");
+}
+
+// ── 20-21. SAYING SO, AND AT WHICH FLOOR ──────────────────────────────────────────────
+// ⚠ THE READOUT IS DRIVEN, NOT GREPPED. A model that removes something the chart draws has
+// to account for it somewhere the operator can find, and `if(false)` in front of the
+// sentence would leave every string a source check looks for exactly where it was.
+{
+  const RO = grab("nogoReadout");
+  const nogo = { band: "enc_harbour", busy: false, ko: { passed: 3 } };
+  const chartInk = { lines: [], areas: [], note: null };
+  const nogoKindCounts = () => ({ land: 40, "a charted hazard": 7 });
+  // eslint-disable-next-line no-eval
+  const readout = eval("(" + RO + ")");
+  const said = readout().title;
+  nogo.ko.passed = 0;
+  const silent = readout().title;
+  check("20. the model accounts for what it dropped, where the operator can find it",
+        /Passed over: 3 charted hazards/.test(said) && /clears 2\.3 m by 1 m/.test(said)
+        && /chart carries a sounding/.test(said) && /live water level/.test(said)
+        && /Still DRAWN on the chart/.test(said) && /no charted sounding is unknown/.test(said)
+        && !/Passed over/.test(silent),
+        "with 3 dropped the Nogo row's tooltip says so, and says the AUTHORITY (the chart's " +
+        "own sounding, tide-corrected) rather than only the arithmetic; with none it says " +
+        "nothing at all rather than \"0 hazards\"");
+
+  // ⚠ AND THE FLOOR IS THE EFFECTIVE ONE. Two floors used to reach one model build - the
+  // depth areas filtered at the deeper of the hull's limit and the operator's Min depth,
+  // the hazard rule at the hull's alone. A test that REMOVES a keep-out must never be
+  // judged at a shallower floor than the water around it.
+  const marginal = feat("Wreck_point", 0, 0, { VALSOU: 3.5 });   // hull 2.3 + 1.0 = 3.3
+  const atHull = hazPassable(marginal);
+  V.OPER_MIN_DEPTH_M = 4.0;                                      // operator asks 4 m -> 5.0
+  const atOper = hazPassable(marginal);
+  const K = buildKeepouts(ref, ENF, { min: 4.0, max: 0 }, [marginal]);
+  delete V.OPER_MIN_DEPTH_M;
+  check("21. the rule is judged at the EFFECTIVE floor, not the hull's alone",
+        atHull === true && atOper === false && K.points.length === 1 && K.passed === 0,
+        "3.5 m over it passes the hull's 2.3 m floor but not an operator asking for 4 m - " +
+        "and the operator's number is the one the rest of the model was built at");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

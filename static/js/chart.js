@@ -48,6 +48,7 @@ import { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
          markId, markSystems, systemCenterline, extendCenterline, pairGates, channelPolys,
          buildKeepouts as coreBuildKeepouts, hazExtent as coreHazExtent,
+         hazPassable as coreHazPassable,
          depthExcluded as coreDepthExcluded, nogoKind as coreNogoKind } from "./keepouts.js";
 export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
          blocked, blockedInfo, clearanceM, legClear, firstBlockAlong,
@@ -63,8 +64,25 @@ export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
 // V.NOGO_MIN_DEPTH_M, V.WRECK_RADIUS_M and V.NOGO_BUFFER_M equal DEFAULTS.minDepthM,
 // .wreckRadiusM and .bufferM exactly. What makes them worth passing is that all three are
 // vessel-configurable here and the defaults are not.
+// ⚠ THE FLOOR HERE IS THE EFFECTIVE ONE, NOT THE HULL'S (2026-09-09). Two floors were
+// reaching one model build: the depth areas were filtered at nogoDR().min - the deeper of
+// the hull's own limit and the operator's Min depth - while hazExtent and nogoKind were
+// handed V.NOGO_MIN_DEPTH_M, the hull's alone. Three things fell out of that and all three
+// are fixed by this one line:
+//
+//   * a hazard could be judged passable at a floor SHALLOWER than the water around it,
+//     which is the wrong direction for a test that removes a keep-out;
+//   * the dashed circle the chart draws around a sized hazard came from hazExtent at the
+//     hull floor while the router kept out of the radius from the deeper one, so a route
+//     could swing wide of a circle that was never drawn - the exact fault the drawing
+//     code's own comment says it exists to prevent;
+//   * nogoKind labelled a shallow-water polygon "water shallower than 1.0 m" on a model
+//     built at 2.0 m, which is a count the operator cannot reconcile with the card.
+//
+// It is also the CONSERVATIVE direction: a deeper floor is a higher bar for calling a
+// hazard passable, and this is the seam that decides whether one is dropped at all.
 function koOpts(){
-  return {minDepthM: V.NOGO_MIN_DEPTH_M, wreckRadiusM: V.WRECK_RADIUS_M,
+  return {minDepthM: nogoDR().min, wreckRadiusM: V.WRECK_RADIUS_M,
           bufferM: V.NOGO_BUFFER_M, waterOffsetM: sea.waterOffset};
 }
 
@@ -83,6 +101,10 @@ function koOpts(){
 // Vessel-configurable via planning.wreck_radius_m; loadVessel() overwrites V.WRECK_RADIUS_M,
 // and koOpts() is what carries it into the shared body.
 export function hazExtent(f){ return coreHazExtent(f, koOpts()); }
+// WHETHER IT IS A KEEP-OUT AT ALL, as opposed to how big it is. A charted sounding that
+// clears this vessel's floor by the margin takes the feature OUT of the model rather than
+// leaving a buffered dot behind it - see the core's hazPassable for what that dot cost.
+export function hazPassable(f){ return coreHazPassable(f, koOpts()); }
 // --- real-time water level UI -------------------------------------------- //
 // HOW FAR AWAY IS THE TIDE THAT IS BEING APPLIED? A CO-OPS reading is only the local
 // water level near its own station. The console interpolates the nearest few, but if the

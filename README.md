@@ -642,10 +642,26 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    that genuinely *are* point-sized — piles, buoys, beacons — are unaffected. A sized
    hazard draws its circle on the chart, so you can see why a route swings wide.
 
-   Where the chart gives a **sounding over** the hazard (`VALSOU`) that clears the
-   vessel's own navigability floor — tide-corrected, the same as depth areas — the boat
-   can pass over it and the hazard collapses back to a point. **No sounding means
-   unknown**, and unknown takes the full berth rather than the benefit of the doubt. Depth areas that merely *straddle* the minimum are kept (classified
+   Where the chart gives a **sounding over** the hazard (`VALSOU`) that clears the floor
+   in force by a metre — tide-corrected, the same as depth areas — the boat can pass over
+   it, and the hazard is **dropped from the keep-out model entirely**. **No sounding means
+   unknown**, and unknown takes the full berth rather than the benefit of the doubt.
+
+   *That used to say "collapses back to a point", and a point in this model still carries
+   the buffer — so the boat could not pass over it after all.* Andy, 2026-09-09, on a
+   survey line cut in two beside a rock with **8.8 m** charted over it, on a hull drawing
+   **0.12 m**: *"The avoidance maneuver circled in red for a rock on the chart is
+   unnecessary."* It was. The sounding test had fired and the assumed 50 m extent had
+   already collapsed to zero — but the feature stayed in the model, the 3 m buffer made it
+   a dot, the dot sat 0.2 m off the line, and the clip split a 350.4 m line into 334.5 m
+   plus an 8.0 m offcut. Punch Out then serviced that offcut like any other line: **77 m
+   of track across 16 waypoints to collect 7.8 m of coverage**. A hazard the console has
+   decided is passable is now simply not in the model.
+
+   It is **still drawn on the chart** — the overlay reads the extract, not the keep-out
+   model — so you can see what you are passing over, and the Nogo row's tooltip says how
+   many were dropped and why. Two questions, deliberately separate: *may the vessel be
+   here* is the model; *what is charted here* is the chart. Depth areas that merely *straddle* the minimum are kept (classified
    by the band's deepest edge). `CHRT` / `NOGO` show the chart features / the red nogo
    overlay. (Finger piers are charted as line features that NOAA's server returns
    empty to a naïve query — the console fetches them by object-id so they aren't

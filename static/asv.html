@@ -4825,9 +4825,27 @@ function nogoReadout(){
           : "")
     : "\n\nChart image: not compared here yet — it is read over the water of each commanded "
       + "plan, just before the route is built.";
+  // ⚠ WHAT THE MODEL LEFT OUT IS PART OF WHAT THE MODEL IS. Since 2026-09-09 a charted
+  // wreck, hulk, obstruction or awash rock carrying a sounding that clears the floor by
+  // the margin is DROPPED rather than left as a buffered dot - so the vessel passes over
+  // it instead of round it, and a survey line through it is no longer cut in two. That is
+  // the console deciding it may drive over something the chart draws, which is not a
+  // decision to make silently. It is not on the face of the row because in charted water
+  // it would be up permanently, and a chip that is always up is a chip nobody reads.
+  const past = (nogo.ko && nogo.ko.passed) || 0;
+  const one = past === 1;
+  const pastTxt = past
+    ? "\n\nPassed over: " + past + " charted hazard" + (one ? "" : "s")
+      + " " + (one ? "is" : "are") + " NOT in this model. The chart carries a sounding over "
+      + (one ? "it" : "each of them") + " that clears " + floor + " by "
+      + WRECK_CLEAR_MARGIN_M + " m or more at the live water level, so the vessel goes over "
+      + (one ? "it" : "them") + " rather than round. Still DRAWN on the chart - this is the "
+      + "keep-out model, not the chart. A hazard with no charted sounding is unknown, and "
+      + "unknown keeps its full berth."
+    : "";
   return {text: n + " zones · floor " + floor + (inkN ? " · +" + inkN + " chart" : ""),
     cls: inkN ? "warn" : "",
-    title: "Chart read (ENC band " + band + "): " + brk + "." + inkTxt + why};
+    title: "Chart read (ENC band " + band + "): " + brk + "." + pastTxt + inkTxt + why};
 }
 function updateNogoUI(){
   const btn=$("#nogoBtn");

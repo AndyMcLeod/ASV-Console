@@ -10,11 +10,18 @@
  * now wrong for this repo, and dangerously so:
  *
  *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
- *     THIS FILE AND SILENTLY DELETE A SAFETY FIX. This copy carries
- *     clearanceM -- the boat's LIVE distance to the keep-out
- *     model, which is the quantity the runtime guard watches.
- *     asv_core does not have it. If a `--check` there reports this copy as
- *     DRIFTED, that is correct and expected: it has drifted, on purpose.
+ *     THIS FILE AND SILENTLY DELETE TWO DELIBERATE CHANGES. If a `--check`
+ *     there reports this copy as DRIFTED, that is correct and expected: it has
+ *     drifted, on purpose, and here is the whole of it.
+ *
+ *       1. clearanceM -- the boat's LIVE distance to the keep-out model, which
+ *          is the quantity the runtime guard watches. asv_core does not have
+ *          it. Covered by tests/clearance_guard.js.
+ *       2. hazPassable, and buildKeepouts DROPPING a hazard the chart proves
+ *          passable rather than merely zeroing its extent (2026-09-09). The
+ *          core still leaves a buffered point behind, which is what split a
+ *          survey line beside a rock with 8.8 m of water over it. Covered by
+ *          tests/wreck_clearance.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -284,10 +291,54 @@ export function depthExcluded(f, dr, waterOffset = 0) {
 export function hazExtent(f, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   if (!HAZ_UNKNOWN_EXTENT.has(f.cls)) return 0;
+  return hazPassable(f, o) ? 0 : o.wreckRadiusM;
+}
+
+/**
+ * Does the CHART ITSELF say there is enough water over this hazard for the
+ * vessel the model is being built for?
+ *
+ * ⚠ THIS DECIDES WHETHER THE FEATURE IS A KEEP-OUT AT ALL, NOT HOW BIG IT IS,
+ * and that distinction is the whole of the 2026-09-09 fix. Andy, with a survey
+ * line cut in two beside a charted rock: *"The avoidance maneuver circled in red
+ * for a rock on the chart is unnecessary."* He was right, and the depth logic was
+ * not the fault -- this test already fired, and hazExtent already collapsed the
+ * assumed 50 m extent to zero. What nothing did was take the feature OUT. So the
+ * operator's buffer still made it a 3 m no-go dot; the dot sat 0.2 m off a survey
+ * line; clipLine split a 350.4 m line into 334.5 m and an 8.0 m offcut; and the
+ * offcut earned its own pair of reversals -- 77 m of track across 16 waypoints to
+ * collect 7.8 m of coverage. Measured on his own plan, over a rock carrying
+ * VALSOU 8.8 m with a hull drawing 0.12 m.
+ *
+ * hazExtent's docstring had said the vessel "can pass over it" since the rule was
+ * written. It could not. Now it can.
+ *
+ * ⚠ ONLY THE FOUR CLASSES WHOSE EXTENT THE CHART DOES NOT GIVE. A pile, buoy,
+ * beacon or mooring point is an obstruction AT THE SURFACE and no sounding under
+ * it makes one passable; none of them is in HAZ_UNKNOWN_EXTENT, so none of them
+ * ever reaches the sounding test. The four that do are the ones the chart sizes
+ * by assumption, which is exactly the set a charted sounding can settle.
+ *
+ * ⚠ AND ONLY ON A CHARTED SOUNDING, TIDE-CORRECTED, WITH A MARGIN. Absent
+ * VALSOU is UNKNOWN and unknown stays a hazard at the full assumed radius -- the
+ * conservative case, unchanged. The water has to beat the floor by
+ * WRECK_CLEAR_MARGIN_M, so this is never a decision taken at the water's edge,
+ * and the correction is the live level, so a hazard marginal at datum comes back
+ * into the model on a falling tide.
+ *
+ * ⚠ WHAT IS GIVEN UP, STATED. A dropped hazard no longer refuses a leg, no
+ * longer appears in blockedInfo, and no longer counts toward clearanceM. It is
+ * still DRAWN -- the chart overlay reads the extract, not this model -- so the
+ * operator can still see what they are passing over. That is the same split this
+ * file already draws for channels: "may the vessel be here" is the keep-out
+ * model; "what is charted here" is the chart.
+ */
+export function hazPassable(f, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  if (!HAZ_UNKNOWN_EXTENT.has(f.cls)) return false;
   const vs = f.props?.VALSOU;
-  if (typeof vs === 'number'
-      && (vs + o.waterOffsetM) >= o.minDepthM + WRECK_CLEAR_MARGIN_M) return 0;
-  return o.wreckRadiusM;
+  return typeof vs === 'number'
+      && (vs + o.waterOffsetM) >= o.minDepthM + WRECK_CLEAR_MARGIN_M;
 }
 
 // ── Channel structure ───────────────────────────────────────────────────────
@@ -561,8 +612,11 @@ export function nogoKind(role, depthbad, opts = {}) {
  * @param {object} [opts]
  * @param {{min:number,max:number}} [opts.depthRange]  the survey depth window
  * @param {object} [opts.enforce]  {land, depth, haz, area} — operator toggles
- * @returns {{polys:Array, lines:Array, points:Array, marks:Array, sys:Array, chans:Array}}
- *          in the frame's metres
+ * @returns {{polys:Array, lines:Array, points:Array, marks:Array, passed:number,
+ *            sys:Array, chans:Array}} in the frame's metres. `passed` counts the
+ *          charted hazards a charted sounding proved passable, and which are
+ *          therefore absent from `points` -- a model that drops something has to
+ *          be able to say how much.
  */
 export function buildKeepouts(frame, feats, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -570,6 +624,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
   const enf = enforcement(opts.enforce);
 
   const polys = [], lines = [], points = [], marks = [];
+  let passed = 0;              // hazards the chart proves passable, and this drops
   for (const f of feats || []) {
     const g = f.geometry, r = f.role;
     // ⚠ `bridge` IS THE SUPPORTS, NOT THE SPAN. A bridge pylon is a pier that happens
@@ -628,6 +683,10 @@ export function buildKeepouts(frame, feats, opts = {}) {
     if ((isLand || isShore) && !enf.land) continue;
     if (depthbad && !enf.depth) continue;
     if (isHaz && !enf.haz) continue;
+    // ⚠ PROVEN PASSABLE IS NOT A KEEP-OUT AT ALL -- see hazPassable. Zeroing the
+    // extent was never enough: with r = 0 the operator's buffer still leaves a dot,
+    // and a dot on a survey line splits that line in two.
+    if (isHaz && hazPassable(f, o)) { eachPoint(g, () => passed++); continue; }
     if (isArea && !enf.area) continue;
 
     const kind = nogoKind(r, depthbad, o);
@@ -659,7 +718,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
   // operator enforces it, yet its EXTENT is what tells the lane how far the
   // fairway runs past the last buoy. Built unconditionally for that reason.
   return {
-    polys, lines, points, marks,
+    polys, lines, points, marks, passed,
     sys: markSystems(marks),
     chans: channelPolys(frame, feats, marks),
   };

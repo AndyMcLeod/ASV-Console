@@ -55,11 +55,80 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-09 — the guard can hand a stopped survey back)
+## ⇒ START HERE (handoff refreshed 2026-09-09 — a hazard the chart proves passable is dropped)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): A SURVEY THE CLEARANCE GUARD STOPPED CAN BE HANDED BACK, AT LOW
+**NEWEST (this commit): A CHARTED HAZARD THE CHART PROVES PASSABLE IS DROPPED FROM THE
+KEEP-OUT MODEL, NOT MERELY STRIPPED OF ITS EXTENT.** Andy, 2026-09-09, with a screenshot of
+a survey plan and a hook drawn round it in red: *"The avoidance maneuver circled in red for a
+rock on the chart is unnecessary. Check charted depth and draft of the chosen ASV and tell me
+why the avoidance maneuver was implemented."* Then, given the two levers: *"Drop a
+proven-passable hazard from the model"*.
+
+**THE DIAGNOSIS, MEASURED OFF HIS OWN PLAN AND HIS OWN CACHED EXTRACT.** The feature is an
+`Underwater_Awash_Rock_point` at 43.070934, −70.706792, 81 m from the boat on 111°, carrying
+**VALSOU 8.8 m**; plus the live +0.20 m that is **9.00 m of water** over a Z-Boat drawing
+**0.12 m** with a **2.0 m** floor in force. It was never a depth refusal:
+
+* `hazExtent` was already returning **0** — the sounding test fired and the assumed 50 m
+  wreck radius had already collapsed. That part was right.
+* But **`buildKeepouts` pushed the feature in anyway**, extent 0, so the operator's **3 m
+  buffer** made it a 3 m no-go dot. Blocked at 3 m, clear at 4 m — probed.
+* The dot sat **0.2 m off a survey line**. `clipLine` (2 m sampling, one dropped sample each
+  side) split a **350.4 m** line into **334.5 m + an 8.0 m offcut**.
+* punchOut serviced the offcut like any other line, because this hull's `min_survey_line_m`
+  is **0**: **77 m of track across 16 waypoints to collect 7.8 m of coverage**. A straight
+  hop between the two neighbours is 40 m. That hook is what he circled.
+
+**hazExtent's own docstring had said the vessel "can pass over it" since the rule was
+written. It could not** — a point in this model still carries the buffer.
+
+**THE FIX.** New `hazPassable(f, opts)` in `static/js/keepouts.js`; `hazExtent` delegates to
+it; `buildKeepouts` **`continue`s** on a passable hazard and counts what it dropped
+(`ko.passed`). Only the four `HAZ_UNKNOWN_EXTENT` classes reach the test — a pile, buoy or
+beacon is an obstruction AT THE SURFACE and no sounding under one makes it passable. Absent
+VALSOU is still UNKNOWN and still takes the full berth.
+
+**⚠ AND THE FLOOR IT IS JUDGED AT MOVED, WHICH IS THE SAME LESSON `nogoReadout` LEARNED.**
+Two floors were reaching one model build: depth areas filtered at `nogoDR().min` (the deeper
+of the hull's limit and the operator's Min depth) while `hazExtent` and `nogoKind` were handed
+`V.NOGO_MIN_DEPTH_M`, the hull's alone. `koOpts()` now carries the EFFECTIVE floor, which
+fixes three things at once: a test that REMOVES a keep-out is no longer decided at a shallower
+floor than the water around it (the conservative direction); the dashed circle the chart draws
+round a sized hazard matches the radius the router keeps out of, which is the exact fault the
+drawing code's own comment exists to prevent; and a shallow-water polygon no longer reads
+*"water shallower than 1.0 m"* on a model built at 2.0.
+
+**WHAT IS GIVEN UP, AND WHERE IT IS SAID.** A dropped hazard no longer refuses a leg, no
+longer appears in `blockedInfo`, and no longer counts toward `clearanceM`. It is **still
+drawn** — the overlay reads the extract, not the model — and the Nogo row's tooltip now reads
+*"Passed over: N charted hazards are NOT in this model … Still DRAWN on the chart"*. Not on
+the face of the row, because in charted water it would be up permanently and a chip that is
+always up is a chip nobody reads.
+
+**TEETH: `tests/wreck_clearance.js` 12 checks → 21, 11 mutations, all killed.** The new ones
+DRIVE `buildKeepouts` and the page's own `clipLine` rather than asking `hazExtent` again —
+the whole defect was a function returning the right number beside a model that kept the
+feature anyway, so a second look at that number would have agreed with the bug. Check 20
+drives `nogoReadout` for the same reason; the one mutation that survived the first sweep put
+`XX` in place of the sentence's AUTHORITY clause while leaving the arithmetic, and the check
+now pins that the tooltip names the chart's own sounding, not just the numbers.
+
+**VERIFIED BOTH WAYS.** Headless, on the reported line: before `334.5 m + 8.0 m`, after a
+single `350.4 m` run; the same rock with its VALSOU removed still clips it to 284.7 m. Live
+on the real page and the real chart at New Castle: 10 hazards dropped and the tooltip says so,
+the kind labels now use the effective floor, and a 74-line punch straight over the rock came
+back **74 lines → 74 segments**, no split, no line under 30 m, no console errors.
+
+**⚠ THE SECOND LEVER IS STILL OPEN, AND IT IS HIS CALL.** `min_survey_line_m` is **0** on
+`zboat_1800hs` (the DriX's is 80 m), so ANY offcut, however short, still earns a pair of
+reversals. That is what turned a 3 m dot into 77 m of track, and it will bite again on any
+line a hazard legitimately clips. Offered, not taken.
+
+---
+
+**BEFORE THAT: A SURVEY THE CLEARANCE GUARD STOPPED CAN BE HANDED BACK, AT LOW
 SPEED.** Andy, 2026-09-09: *"after a survey is punched out and uploaded, there can be nogo
 violation event that cause a hold and loiter. This should not happens because punch out should
 correct before the run. However, in the event this situation happens, institute a feature
