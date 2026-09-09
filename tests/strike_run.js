@@ -83,7 +83,7 @@ const fs = require("fs");
 const path = require("path");
 
 // THE REAL MODULES, not source text lifted out of the page.
-const { distTo } = require("../static/js/geodesy.js");
+const { distTo, llEN, fromEN, planeFrame } = require("../static/js/geodesy.js");
 const { shortenSeg } = require("../static/js/core_turns.js");
 const { regionOrder } = require("../static/js/passage.js");
 
@@ -112,8 +112,15 @@ let fails = 0, ran = 0;
 function check(name, cond, detail) {
   ran++;
   let ok;
-  try { ok = !!(typeof cond === "function" ? cond() : cond); }
-  catch (e) { ok = false; detail = (detail ? detail + " — " : "") + "THREW: " + e.message; }
+  // ⚠ A FUNCTION DETAIL IS CALLED, NOT STRINGIFIED. Every other suite in this repo allows
+  // one, and passing one here printed the LAMBDA'S SOURCE into the bracket — which reads
+  // as a detail line at a glance and says nothing about the run. The detail is the only
+  // place a check that passed for the wrong reason shows up; it has to carry the
+  // observation, so it has to be evaluated.
+  try { ok = !!(typeof cond === "function" ? cond() : cond);
+        if (typeof detail === "function") detail = detail(); }
+  catch (e) { ok = false; detail = (typeof detail === "string" && detail ? detail + " — " : "")
+                                   + "THREW: " + e.message; }
   console.log((ok ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
   if (!ok) fails++;
 }
@@ -293,7 +300,8 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   const gap = /const GAP_LINES = (\d+), gapSpan = GAP_LINES \+ ([\d.]+);/.exec(punch);
   const span = gap ? parseInt(gap[1], 10) + parseFloat(gap[2]) : 0;
   check("14. the reversal gate admits a pair separated by a MISSING line",
-        () => gap !== null && span >= 2 && /distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3/.test(punch),
+        () => gap !== null && span >= 2
+              && /distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(punch),
         gap ? "gapSpan " + span + " spacings — a struck line leaves survivors 2 apart"
             : "the gate is still a fixed 1.6 spacings: a struck line yields a SILENT "
               + "straight 180 the hull cannot track");
@@ -310,11 +318,93 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   // mention a gap turn. A bare fragment tests the SOURCE, not the behaviour - pin what the
   // increment is guarded ON, and where that guard's threshold comes from.
   check("16. ... and a reversal built across a gap is REPORTED, not slipped in",
-        () => /const gapWide = distTo\(Ap,Bp\) > sp\.spacing\*1\.6 \+ 3;/.test(punch)
+        () => /const gapWide = distTo\(Ap,Bp\) > sp\.spacing\*1\.6 \+ 3 \+ leadSlack;/.test(punch)
               && /if\(gapWide\) nGapTurn\+\+;/.test(punch)
               && /\$\{nGapTurn\}/.test(punch)
               && /swing across a gap where a line is missing/.test(punch),
         "counted against the plain-neighbour threshold and named in the punch readout");
+}
+
+// ── 16b-16c. BOTH GATES CARRY A LEAD ALLOWANCE ─────────────────────────────────────
+// Both thresholds are multiples of the LINE SPACING compared against the straight distance
+// between two line ends. A lead inflates that distance without adding a metre of spacing,
+// so without an allowance a big enough lead pushes a plain neighbour past both gates: no
+// turn attempted and nothing counted (the silent-unflyable-reversal shape GAP_LINES exists
+// to prevent), and every remaining turn reported as swinging across a missing line.
+//
+// ⚠ AND MEASURING THE CROSSING INSTEAD IS THE WRONG FIX, WHICH COST A MEASUREMENT TO FIND.
+// It is the purer answer geometrically — "how many spacings across" is a question about
+// the crossing — but the crossing is ALWAYS ≤ the distance, so it ADMITS pairs the old gate
+// excluded. The chart clip leaves adjacent runs with different extents routinely, with no
+// lead involved at all: on a 7-line harbour plan two pairs sat 53.9 m and 22 m apart along
+// track, and measuring across pulled both into the reversal branch, where a refusal is
+// flagged red rather than routed around — 0 unroutable became 2. An ALLOWANCE is a no-op
+// when it is zero, which is every plan that does not use the feature; a different measure
+// is not.
+//
+// ⚠ A TEXT MATCH CANNOT TELL ANY OF THIS APART — checks 14 and 16 pass against all three
+// spellings — so the arithmetic is driven here.
+{
+  const ref = planeFrame({ lat: 43, lon: -70.7 });
+  const hE = 90, fwd = { e: Math.sin(hE * Math.PI / 180), n: Math.cos(hE * Math.PI / 180) };
+  const rgt = { e: fwd.n, n: -fwd.e };
+  const across = (P, Q) => { const pe = llEN(P.lat, P.lon, ref), qe = llEN(Q.lat, Q.lon, ref);
+    return Math.abs((qe.e - pe.e) * rgt.e + (qe.n - pe.n) * rgt.n); };
+  const SP20 = 20;                                    // 20 m line spacing, tight survey
+  const E = fromEN(0, 0, ref);
+  const Fplain = fromEN(0, SP20, ref);                // the neighbour, ends abeam
+  const Flead = fromEN(120, SP20, ref);               // ...with a 120 m lead-in on it
+  const gate = SP20 * 4.6 + 3, wide = SP20 * 1.6 + 3; // gapSpan and the gapWide threshold
+
+  check("16b. a lead moves the two ends APART without moving the lines ACROSS",
+        () => Math.abs(across(E, Fplain) - SP20) < 0.5 && Math.abs(across(E, Flead) - SP20) < 0.5
+              && distTo(E, Flead) > 100,
+        () => "abeam: apart " + distTo(E, Fplain).toFixed(0) + " m, across "
+              + across(E, Fplain).toFixed(0) + " m  |  with a 120 m lead-in: apart "
+              + distTo(E, Flead).toFixed(0) + " m, across " + across(E, Flead).toFixed(0) + " m");
+
+  const slack = 120;                                  // Math.max(leadIn, leadOut) in punchOut
+  check("16c. ... so without the allowance both gates would misjudge a plain neighbour",
+        () => distTo(E, Flead) > gate && distTo(E, Flead) < gate + slack
+              && distTo(E, Flead) > wide && distTo(E, Flead) < wide + slack,
+        () => "apart " + distTo(E, Flead).toFixed(0) + " m against a reversal gate of "
+              + gate.toFixed(0) + " m and a gap-report threshold of " + wide.toFixed(0)
+              + " m — over BOTH, so no turn attempted, nothing counted, and the card "
+              + "blaming a line that is not missing. With the 120 m allowance both become "
+              + (gate + slack).toFixed(0) + " m and " + (wide + slack).toFixed(0)
+              + " m, and it is the neighbour it always was.");
+
+  // ⚠ AND IT IS max(), NOT the sum. The along-track separation a lead can open is
+  // |lead_in(k+1) - lead_out(k)|, whose largest value over the two settings is the LARGER
+  // of them — never their sum. An allowance of wantIn + wantOut is not merely generous, it
+  // admits pairs min(wantIn, wantOut) metres further apart than any lead could put them,
+  // which is the gate quietly deciding that a region hop is a reversal.
+  {
+    const wantIn = 40, wantOut = 25;
+    let worst = 0;
+    for (let li = 0; li <= wantIn; li += 0.5)
+      for (let lo = 0; lo <= wantOut; lo += 0.5) worst = Math.max(worst, Math.abs(li - lo));
+    // The arithmetic below is the REASON; the regex is what makes this a test of the
+    // console rather than of Math.max. A check that only ran the sweep would agree with
+    // itself whatever punchOut does.
+    check("16c2. the allowance is the LARGER lead, which is the tight bound",
+          () => /const leadSlack = Math\.max\(wantIn, wantOut\);/.test(grab("punchOut"))
+                && Math.abs(worst - Math.max(wantIn, wantOut)) < 0.01
+                && worst < wantIn + wantOut - 0.01,
+          () => "over every (lead_in <= " + wantIn + ", lead_out <= " + wantOut + ") the widest "
+                + "along-track separation is " + worst.toFixed(1) + " m = max(), not "
+                + (wantIn + wantOut) + " m = sum(). The sum over-allows by "
+                + Math.min(wantIn, wantOut) + " m of pairs no lead can produce.");
+  }
+
+  check("16d. ... and the allowance is ZERO on a plan with no lead, so nothing moves",
+        () => distTo(E, Fplain) < gate && distTo(E, Fplain) < wide + 0.001
+              && Math.abs(distTo(E, Fplain) - across(E, Fplain)) < 0.01,
+        () => "abeam pair: apart " + distTo(E, Fplain).toFixed(1) + " m = across "
+              + across(E, Fplain).toFixed(1) + " m, under both thresholds with a slack of 0. "
+              + "This is the property the ALLOWANCE has and a different MEASURE does not: "
+              + "the crossing is always <= the distance, so it admits pairs the old gate "
+              + "excluded and changes plans that never asked for a lead.");
 }
 
 // ── 17. A STRAY CLICK MUST NOT THROW THE PUNCH AWAY ────────────────────────────────

@@ -55,11 +55,87 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-08 — survey lines have a lead-in and a lead-out)
+## ⇒ START HERE (handoff refreshed 2026-09-08 — reversals are built from the poses, not the chord)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): LEAD-IN / LEAD-OUT — THE RUN IS NOW LONGER THAN THE COVERAGE.** Andy:
+**NEWEST (this commit): THE REVERSAL IS BUILT FROM THE TWO POSES, AND THE LEAD GIVES WAY TO
+THE TURN.** Andy, looking at a punched plan with leads on it: *"The turns for the lead-in /
+lead-out don't make great sense. In the attached picture, I scribed a curve that works better
+with red marker. Use a pattern like this and find a mathematical rather than just arbitrarily
+drawn curve."*
+
+**⚠⚠ THE LEAD FEATURE SHIPPED A REAL DEFECT AND THIS IS IT.** `teardropTurn`'s SEMICIRCLE
+branch centred its arc on the midpoint of E–F and took its radius from half that CHORD, so
+its tangents were perpendicular to the chord rather than to the LINES. While the two ends are
+abeam those are the same thing — which is why the shape was right for months. Give the pair
+an along-track offset and the error is exactly `atan(along / lateral)` at BOTH ends.
+**MEASURED: 40 m lead-in against a 25 m lead-out → off the line at 19.2°, onto the next at
+21.9°. A 40 m lead-in with no lead-out → 44° and 46°.** A feature whose entire purpose is to
+have the boat settled on the line was throwing it onto the line at 46°.
+
+**THE FIX IS WHAT THE OTHER TWO SHAPES ALREADY DID.** `racetrackTurn` and the TEARDROP branch
+both decompose E→F into along/lateral and run the offset out ON THE LINE before they arc —
+the teardrop's own comment says so. The semicircle was the one shape in the file without it.
+`along`/`lateral`/`rgt` are hoisted above the branch now, R is half the **crossing**, and the
+branch gate moved to the crossing with it (gated on the chord, a tight crossing with a long
+offset hands the boat a radius BELOW its own minimum — 6.0 m against a floor of 8.3 m; that
+is check 33b, and the first mutation sweep missed it because every fixture was 40 m spacing).
+After: every generated turn leaves the line at **0.0°** and joins at 4.3° (the arc's own
+half-chord at a 3 m sampling step), measured on a live 7-line punch.
+
+**TWO THINGS THE FIX EXPOSED, both pre-existing:**
+
+* **`outboard` was ASSERTED, not measured** — the semicircle said `R`, the racetrack said `R`.
+  With a run-out the shape reaches `along + R`, so both under-reported by exactly the offset,
+  and that is the number the operator answers *"is that water clear?"* with. Measured off the
+  points now, in every branch.
+* **`along` is 1e-14, not 0, on an abeam pair** — so `if (along > 0)` pushed a waypoint on top
+  of the line end. The plan carried a duplicate the boat "arrives" at instantly, and a bearing
+  taken across it is noise: it read as a 90° kink out of a turn that was in fact perfect.
+  `ALONG_EPS_M = 0.05` now, in all three shapes.
+
+**THE LEAD GIVES WAY TO THE TURN (Andy's call).** A lead pushes the reversal outboard, so it
+can take a turn that fitted and make it not fit. Rather than block Upload over a settling
+distance, punchOut shortens BOTH leads on that pair — `LEAD_GIVE = [0.6, 0.3, 0]` — retrying
+the whole ladder at each rung. **The last rung is 0 on purpose: with no lead the pair IS the
+pair this console punched before the feature existed, so a lead can never be the reason a
+plan has an unflyable turn.** Scaling both is the right knob because the water a reversal
+needs past the COVERAGE end is `max(lead_in, lead_out) + R` — driven against the real shape in
+survey_lead 34/35, measured 59.9 / 43.9 / 31.9 / 19.9 m against a prediction of 60 / 44 / 32 / 20.
+
+**⚠ THE GATE CHANGE THAT WAS WRONG, AND HOW IT WAS CAUGHT.** Both spacing gates compare the
+straight distance between two line ends against a multiple of the LINE SPACING, and a lead
+inflates that distance. The first cut measured the CROSSING instead — geometrically the purer
+answer. **It changed plans that have no lead at all.** The crossing is always ≤ the distance,
+so it ADMITS pairs the old gate excluded, and the chart clip leaves adjacent runs at different
+extents routinely: on the test plan two pairs sat 53.9 m and 22.0 m apart along track with no
+lead involved, and measuring across pulled both into the reversal branch where a refusal is
+flagged RED rather than routed around — **0 unroutable became 2**. It is a `leadSlack =
+Math.max(wantIn, wantOut)` **allowance on the threshold** now, which is a no-op when it is
+zero. `max`, not the sum: the separation a lead can open is `|lead_in − lead_out|`, whose
+largest value is the larger of the two (strike_run 16c2).
+
+**⚠ AND A CONSEQUENCE ANDY NEEDS TO KNOW ABOUT.** On the harbour test plan, **with no lead at
+all**, the corrected geometry turns 2 of 6 reversals RED where the old one shipped them. That
+is not a regression: those pairs are offset 53.9 m and 22 m along track, the old chord arc
+reached 60.5 m past the line end while any shape actually tangent to both lines needs 68–74 m,
+and that water is foul. The old plan was not fitting the turn in, it was cutting the corner.
+The banner had to be fixed to say so — it called every red leg a blocked transit (*"the ASV
+would cross the obstacle on those legs"*), which for a refused reversal is false in both
+halves, since the straight line between those ends is exactly what IS clear.
+
+**TEETH: 18 mutations, 17 killed.** The survivor is not a defect and is recorded as such:
+dropping the run-out WAYPOINT (leaving the arc, which already starts at the abeam point) costs
+**0.11 m of cross-track** on a 40 m offset — measured, not argued. **One mutation exposed the
+`ais_table` harness fault again**: `clearance_guard.js` read `static/asv.html` by a fixed path,
+so a mutation deleting a counter its own check greps for by name came back green. It honours
+`ASV_HTML` now.
+
+**⚠ core_turns.js IS OWNED BY THIS REPO AND HAS NOW DRIFTED FROM asv_core TWICE.** Its header
+records both drifts and names the suite covering each. Do not re-vendor.
+
+**Before that (`e75161ec`): LEAD-IN / LEAD-OUT — THE RUN IS NOW LONGER THAN THE COVERAGE.** Andy:
 *"implement lead in and lead out extensions to survey lines a selection on the survey card.
 They are meant to extend lines to accommodate settling of vessel steering onto path and
 settling of IMU stability after a turn. The user should have options in the survey card to

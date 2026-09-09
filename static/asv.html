@@ -3654,6 +3654,35 @@ function patCoverMid(k){ const s = patCoverSeg(k); return s ? runMid(s) : null; 
 function patLeadTotal(){ return patLead.reduce((a,L)=>a + (L?(L.in||0)+(L.out||0):0), 0); }
 
 /**
+ * Run `k` rebuilt with its leads set to `li` / `lo` metres — the COVERAGE is untouched.
+ *
+ * Built off `patCoverSeg`, so it cannot drift from what the rest of the console calls
+ * coverage, and so shrinking a lead is exactly reversible: the coverage segment is
+ * invariant under any lead, which is what makes the give-way ladder in punchOut safe to
+ * run after the leads have already been applied once.
+ */
+function runWithLeads(k, li, lo){
+  const cov = patCoverSeg(k); if(!cov) return null;
+  if(!(distTo(cov[0], cov[1]) > 0)) return null;
+  const outA = azTo(cov[1], cov[0]), outB = azTo(cov[0], cov[1]);   // outward at each end
+  return [li > 0 ? atDA(cov[0], li, outA) : cov[0],
+          lo > 0 ? atDA(cov[1], lo, outB) : cov[1]];
+}
+// ⚠ THE LEAD GIVES WAY TO THE TURN, NOT THE OTHER WAY ROUND (Andy, 2026-09-08). What each
+// rung multiplies BOTH leads by. Scaling rather than picking one end is what makes it
+// monotone in the quantity that actually matters: with the turn built from the two poses,
+// the water a reversal needs past the COVERAGE end of the line is
+//
+//     max(lead_in, lead_out) + R
+//
+// (the lead-out translates the whole turn outboard; a lead-in longer than it adds its own
+// difference on top, because the arc cannot start until the boat is abeam of the next
+// line's start). Scaling both by λ scales that whole term by λ — and **λ = 0 is the plan
+// this console drew before the feature existed**, so the ladder cannot end anywhere worse
+// than where it started. That guarantee is why the last rung is 0 and not 0.1.
+const LEAD_GIVE = [0.6, 0.3, 0];
+
+/**
  * Everything that decides WHICH RUNS EXIST — before any of them are struck off.
  *
  * The three corners and the alignment make the lines; the boundary ring clips them; the
@@ -6059,14 +6088,13 @@ async function punchOut(){
     // reason (a channel the operator chose not to survey) rather than a navigation one.
     const wantIn = leadInM(), wantOut = leadOutM();
     patLead = patClip.map(()=>({in:0, out:0}));
-    let nLeadCut = 0, leadGot = 0;
+    let nLeadCut = 0;
     const leadWant = (wantIn + wantOut) * patClip.length;
     if(wantIn > 0 || wantOut > 0){
       patClip = patClip.map((seg,k)=>{
         const gi = extendLead(seg[0], seg[1], wantIn,  ref, koTurn, buffer);
         const go = extendLead(seg[1], seg[0], wantOut, ref, koTurn, buffer);
         patLead[k] = {in: gi.m, out: go.m};
-        leadGot += gi.m + go.m;
         if(gi.m < wantIn - 0.5 || go.m < wantOut - 0.5) nLeadCut++;
         return [gi.p, go.p];
       });
@@ -6079,6 +6107,14 @@ async function punchOut(){
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
     let nTurnInboard=0, nTurnSlow=0, nGapTurn=0; turnSlowAt={};
+    // Reversals whose lead had to be shortened before a turn would fit. Counted for the
+    // same reason every other dropped thing is: it is a setting the operator asked for and
+    // did not get, and a settling distance they believe they have is worse than none.
+    let nLeadGave=0;
+    // How many of the RED legs are refused reversals rather than blocked transits. They are
+    // two different faults with two different remedies, and until 2026-09-08 the banner
+    // called both of them the first one — see its branch below.
+    let nUnsafeTurn=0;
     // The radius at the slow speed - the second lever Andy named. Computed here beside
     // minTurnR so the two are read from the same vessel model in the same breath.
     const minTurnRSlow = minTurnRadiusM("low");
@@ -6086,9 +6122,28 @@ async function punchOut(){
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
     for(let k=0;k<patClip.length-1;k++){
-      const Ap=patClip[k][1], Bp=patClip[k+1][0];
+      let Ap=patClip[k][1], Bp=patClip[k+1][0];
       const hE=azTo(patClip[k][0], patClip[k][1]), hF=azTo(patClip[k+1][0], patClip[k+1][1]);
       const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)
+      // ⚠ THE TWO SPACING GATES BELOW CARRY A LEAD ALLOWANCE (2026-09-08). Both compare
+      // the straight distance between the two line ends against a multiple of the line
+      // spacing, and a lead inflates that distance without adding a metre of spacing: a
+      // 120 m lead-in on a 20 m-spaced plan puts the ends 122 m apart. Left alone, a big
+      // enough lead would (a) push the pair past the reversal gate entirely, leaving a
+      // 180° nobody attempted and nobody counted — the exact silent-unflyable-turn shape
+      // GAP_LINES exists to prevent — and (b) make `gapWide` true everywhere, so the card
+      // would report a plan full of "reversals swinging across a gap where a line is
+      // missing" with no line missing.
+      //
+      // ⚠⚠ AND MEASURING THE CROSSING INSTEAD IS THE WRONG FIX. That was the first cut and
+      // it is geometrically the purer answer, but the crossing is ALWAYS ≤ the distance, so
+      // it admits pairs the old gate excluded — and the chart clip leaves adjacent runs
+      // with different extents routinely, long before any lead existed. MEASURED on a
+      // 7-line harbour plan with NO lead: it pulled two pairs into the reversal branch that
+      // used to be routed around, where a refusal is flagged red, and the punch went from
+      // 0 unroutable to 2. A threshold that carries the allowance is a no-op when the
+      // allowance is zero, which is every plan that does not use the feature.
+      const leadSlack = Math.max(wantIn, wantOut);
       // A REVERSAL and everything standing in for one answers to koTurn (the turn
       // water rule); only a genuine region-hop transit may use the channel (ko).
       const koHere = antiParallel ? koTurn : ko;
@@ -6096,13 +6151,43 @@ async function punchOut(){
       // `gapSpan`, not 1.6 — see its declaration. A pair separated by a MISSING line is
       // still a reversal, and one that is not attempted is one that falls through to a
       // straight 180 nothing counts and nothing reports.
-      const gapWide = distTo(Ap,Bp) > sp.spacing*1.6 + 3;
-      if(antiParallel && distTo(Ap,Bp) < sp.spacing*gapSpan + 3){
+      const gapWide = distTo(Ap,Bp) > sp.spacing*1.6 + 3 + leadSlack;
+      if(antiParallel && distTo(Ap,Bp) < sp.spacing*gapSpan + 3 + leadSlack){
         // THE LADDER, not one attempt: outboard, then INBOARD (away from whatever refused
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
         // the wharf this exists for - the old single attempt refused, and refusing was
         // what put the boat on the pier.
-        const t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
+        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
+        // ⚠⚠ AND WHEN EVERY RUNG IS REFUSED, THE LEAD GIVES WAY BEFORE THE TURN DOES.
+        // Andy's call, 2026-09-08: "Cap the lead at what the turn water allows."
+        //
+        // A lead pushes the turn outboard - `max(lead_in, lead_out) + R` past the coverage
+        // end instead of `R` (see LEAD_GIVE) - so a lead can take a reversal that fitted
+        // and make it not fit. The alternative to shortening it is shipping the pair as
+        // UNSAFE, which blocks Upload over a settling distance the operator would have
+        // given up in a heartbeat if asked. So ask, in code: shrink both leads together
+        // and re-try the whole ladder at each step.
+        //
+        // THE LAST RUNG IS ZERO ON PURPOSE. With no lead the pair IS the pair this console
+        // punched before the feature existed, so the ladder is guaranteed to end no worse
+        // than it started - a lead can never be the reason a plan has an unflyable turn.
+        // Only the reversal branch does this: a region hop has a router, not a turn.
+        if(!t.pts && ((patLead[k]&&patLead[k].out>0) || (patLead[k+1]&&patLead[k+1].in>0))){
+          for(const lam of LEAD_GIVE){
+            const lo = (patLead[k].out||0)*lam, li = (patLead[k+1].in||0)*lam;
+            const sK = runWithLeads(k, patLead[k].in||0, lo);
+            const sK1 = runWithLeads(k+1, li, patLead[k+1].out||0);
+            if(!sK || !sK1) break;
+            const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+                                     minTurnR, turnMaxHalf, minTurnRSlow);
+            if(!t2.pts) continue;
+            // Written together, because patLead[k] describes patClip[k] and nothing else.
+            patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0,   out: lo};
+            patClip[k+1] = sK1; patLead[k+1] = {in: li, out: patLead[k+1].out||0};
+            Ap = sK[1]; Bp = sK1[0]; t = t2; nLeadGave++;
+            break;
+          }
+        }
         if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : t.kind==="racetrack" ? nRace++ : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard);
                    // A reversal built across a MISSING line - struck off, clipped away, or
@@ -6133,7 +6218,7 @@ async function punchOut(){
       // it anyway hands the boat a manoeuvre it cannot perform next to the one feature
       // that refused it. Flagged red like any other unroutable leg, so Upload blocks and
       // the operator moves the line, widens the spacing or slows the plan.
-      if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); continue; }
+      if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); nUnsafeTurn++; continue; }
       // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
       // a real leg and this is the right answer; for a reversal it is the degenerate
       // fallback the nNoTurn banner warns about - clear of nogo, but a 180 the boat
@@ -6205,9 +6290,14 @@ async function punchOut(){
       // this line is coverage the operator is getting or losing; this one is distance
       // they are paying for and will not be surveying, which is the opposite kind of
       // fact and would be read as the first kind if it were not named.
+      // ⚠ READ BACK OFF patLead, NEVER ACCUMULATED WHILE APPLYING. A running total would be
+      // taken before the give-way ladder above shortens some of the leads, so it would be
+      // stale by exactly the amount the operator most needs to know about — and it would
+      // still read like a measurement. The array is what shipped; read that.
       (leadWant>0?`, lead ${wantIn.toFixed(0)} m in / ${wantOut.toFixed(0)} m out `+
-        `(+${leadGot.toFixed(0)} m of ${leadWant.toFixed(0)} m asked, run only — not coverage)`+
-        (nLeadCut?`, ${nLeadCut} run(s) cut short of the full lead by the chart`:``):``)+
+        `(+${patLeadTotal().toFixed(0)} m of ${leadWant.toFixed(0)} m asked, run only — not coverage)`+
+        (nLeadCut?`, ${nLeadCut} run(s) cut short of the full lead by the chart`:``)+
+        (nLeadGave?`, ${nLeadGave} reversal(s) had the lead shortened to fit the turn water`:``):``)+
       // STRUCK RUNS ARE NAMED WHERE THE OTHER DROPPED COVERAGE IS NAMED. Coverage that
       // leaves the plan is said out loud whatever took it — the depth window, the hull's
       // minimum line, or the operator's own hand — or a thin survey reads as a chart
@@ -6235,8 +6325,27 @@ async function punchOut(){
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
     const widenTxt = !canWiden ? `` : `Widen the spacing to ${Math.ceil(needSpacing)} m`+
       (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
+    // ⚠ A RED LEG HAS TWO CAUSES AND THEY NEED DIFFERENT WORDS. This branch called every
+    // one of them a blocked transit — "the ASV would cross the obstacle on those legs" —
+    // and for a refused REVERSAL that sentence is false in both halves. The straight line
+    // between two line ends is clear; this file says so itself, three screens up ("The
+    // straight line IS clear - it is the loop the boat flies INSTEAD of it that is not").
+    // What has no answer is the TURN, and the remedies are different too: a blocked transit
+    // wants the line moved, a refused reversal wants spacing, speed, or lead.
+    //
+    // It went unnoticed because a refused reversal used to be rare. Building the turn from
+    // the two poses (2026-09-08) makes the console honest about the water a turn really
+    // needs, so it is not rare any more — MEASURED on a 7-line harbour plan with no lead at
+    // all: two pairs the chart had clipped to different extents, offset 53.9 m and 22 m
+    // along track, whose old chord arc reached 60.5 m past the line end while any shape
+    // actually tangent to both lines needs 68-74 m. That water is foul. The old plan was
+    // not fitting the turn in, it was cutting the corner.
     if(nU){ const reasons=legReasons(patUnsafe); setViolations([...reasons, ...turnBlocks]);
-      showBanner(`${nU} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted). Edit the plan — the ASV would cross the obstacle on those legs.`); }
+      const nUnsafeLeg = nU - nUnsafeTurn;
+      showBanner(
+        (nUnsafeLeg?`${nUnsafeLeg} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted) — the ASV would cross the obstacle on those legs. `:``)+
+        (nUnsafeTurn?`${nUnsafeTurn} reversal(s) have NO FLYABLE TURN (highlighted). The straight line between those line ends is clear; what is foul is the water every loop needs to get from one to the other — outboard, inboard, and both again at the slow radius were all refused. Widen the spacing, slow the turn, shorten the lead, or move the line. `:``)+
+        `Edit the plan.`); }
     else if(nNoTurn){ setViolations(turnBlocks);
       // The channel case earns its own sentence: the "keep-out" the loop hit LOOKS
       // like open water on the chart, and widening the spacing may not cure a line

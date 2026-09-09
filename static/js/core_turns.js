@@ -10,15 +10,30 @@
  * now wrong for this repo, and dangerously so:
  *
  *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
- *     THIS FILE AND SILENTLY DELETE A SAFETY FIX. This copy carries
- *     the `side` option on teardropTurn's semicircle branch, which is
- *     what lets a refused turn go AWAY from a dock instead of being
- *     abandoned.
- *     asv_core does not have it. If a `--check` there reports this copy as
+ *     THIS FILE AND SILENTLY DELETE TWO SAFETY FIXES. This copy carries:
+ *
+ *     1. the `side` option on teardropTurn's semicircle branch, which is
+ *        what lets a refused turn go AWAY from a dock instead of being
+ *        abandoned (2026-08-31);
+ *     2. THE SEMICIRCLE BUILT FROM THE TWO POSES rather than from the E-F
+ *        chord (2026-09-08), with the run-out epsilon, the lateral branch
+ *        gate, and `outboard` MEASURED off the points in both this shape and
+ *        racetrackTurn instead of asserted. Upstream still centres the arc on
+ *        the midpoint of E-F and takes its radius from half that chord, which
+ *        is correct only while the two line ends are ABEAM. Give the pair any
+ *        along-track offset -- which lead-in / lead-out extensions produce at
+ *        every reversal, and which the chart clip produces on its own -- and
+ *        the tangents are wrong by atan(along / lateral) at BOTH ends.
+ *        MEASURED at 40 m spacing: a 40 m lead-in against a 25 m lead-out
+ *        threw the boat off the line at 19 degrees and put it onto the next at
+ *        22; a 40 m lead-in with no lead-out, 44 and 46.
+ *
+ *     asv_core has neither. If a `--check` there reports this copy as
  *     DRIFTED, that is correct and expected: it has drifted, on purpose.
  *
- * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
- * pre-commit hook. If it is ever wanted upstream, carry it there as its own
+ * Both are covered by suites in this repo's own pre-commit hook --
+ * tests/clearance_guard.js for the first, tests/turn_geometry.js 31-36 for the
+ * second. If either is ever wanted upstream, carry it there as its own
  * deliberate piece of work -- never by syncing in this direction.
  * ======================================================================== */
 /* ========================================================================
@@ -179,6 +194,15 @@ export const SKEW_LIMIT_DEG = 15;
 
 /** The reversal-pair guard's fallback, for a caller that passes no `maxHalfM`. */
 export const MAX_HALF_M = 60;
+
+// ⚠ HOW MUCH ALONG-TRACK OFFSET IS WORTH A WAYPOINT (2026-09-08). All three shapes below
+// absorb an offset between the two line ends with a straight run ON the line, guarded by
+// `along > 0`. On a pair that is genuinely abeam `along` is not 0, it is ~1e-14 — so the
+// guard fires and pushes a waypoint sitting on top of the line end. The plan then carries
+// a duplicate the boat "arrives" at instantly, and any bearing taken across it is noise:
+// it read as a 90° kink out of a turn that was in fact perfect. Below a fingernail's width
+// there is no run-out, there is rounding.
+const ALONG_EPS_M = 0.05;
 
 /**
  * The minimum turn radius the vessel can actually HOLD at a given speed.
@@ -412,20 +436,30 @@ export function racetrackTurn(E, F, hE, hF, frame, opts = {}) {
   // A chord subtending ~11 degrees keeps the secant error under R/50 at any radius.
   const step = Math.min(opts.arcStepM ?? arcStepFor(R), Math.max(0.2, R * 0.2));
   const pts = [];
-  if (along > 0) pts.push(en2ll(P.e, P.n));
+  if (along > ALONG_EPS_M) pts.push(en2ll(P.e, P.n));
   pts.push(...arcPts(C1, R, Math.PI, -Math.PI / 2, 2, map, step), map(C1.x, R));
   pts.push(map(C2.x, R));                                   // the straight across the gap
   pts.push(...arcPts(C2, R, Math.PI / 2, -Math.PI / 2, 2, map, step));
-  if (along < 0) pts.push(en2ll(Q.e, Q.n));
+  if (along < -ALONG_EPS_M) pts.push(en2ll(Q.e, Q.n));
 
   let prev = E;
   for (const p of [...pts, F]) {
     if (!clear(prev, p)) return { why: 'nogo', seg: [prev, p] };
     prev = p;
   }
-  // The reach past the end of the line is the arc radius and nothing more - that is the
-  // whole point of the shape, and the caller reports it to the operator.
-  return { pts, kind: 'racetrack', R, outboard: R, side: 'outboard' };
+  // ⚠ MEASURED, NOT ASSERTED (2026-09-08). The reach past the end of the line is the arc
+  // radius "and nothing more" only while the two ends are ABEAM. This shape has always
+  // absorbed an along-track offset with the run-out above, and when it does the arcs start
+  // `along` metres further down the line and reach `along + R` — so the constant under-
+  // reported by exactly the offset. Nothing produced offsets routinely until lead-in /
+  // lead-out extensions did, which is why it stood. It is the figure the operator decides
+  // "is that water clear?" against, so it is counted off the points like every other shape.
+  let outboard = 0;
+  for (const p of pts) {
+    const pe = frame.toEN(p);
+    outboard = Math.max(outboard, (pe.e - Ee.e) * fwd.e + (pe.n - Ee.n) * fwd.n);
+  }
+  return { pts, kind: 'racetrack', R, outboard, side: 'outboard' };
 }
 
 export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
@@ -440,14 +474,53 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
 
   const minRc = Math.max(0.75, opts.minR || 0);
   const fwd = { e: Math.sin(hE * D2R), n: Math.cos(hE * D2R) };      // exit heading = outboard
+  const rgt = { e: fwd.n, n: -fwd.e };                               // starboard of it
   const en2ll = (e, n) => frame.fromEN(e, n);
 
+  // ⚠ THE PAIR IS DESCRIBED IN THE LINE'S OWN FRAME, AND BOTH BRANCHES READ IT. Splitting
+  // E→F into ALONG (down the line just run) and LATERAL (across to the next one) is what
+  // lets a turn be built from the two POSES rather than from the chord between them, and
+  // it was hoisted out of the teardrop branch on 2026-09-08 because the semicircle branch
+  // below was the one shape in this file that did not have it. See that branch.
+  const Dv = { e: Fe.e - Ee.e, n: Fe.n - Ee.n };
+  const along = Dv.e * fwd.e + Dv.n * fwd.n;
+  const lateral = Dv.e * rgt.e + Dv.n * rgt.n;
+
   let pts, kind, R, outboard, side = 'outboard';
-  if (half >= minRc) {
+  // ⚠ GATED ON THE LATERAL OFFSET, NOT ON THE CHORD. They are the same number only while
+  // the two ends are abeam; an along-track offset makes the chord longer than the crossing
+  // and would let a pair take the semicircle at a radius the hull cannot hold.
+  if (Math.abs(lateral) / 2 >= minRc) {
     // ── SEMICIRCLE: the offset itself supplies a radius the vessel can hold ─────────
-    R = half; kind = 'semicircle'; outboard = R;
-    const C = { x: (Ee.e + Fe.e) / 2, y: (Ee.n + Fe.n) / 2 };
-    const a0 = Math.atan2(Ee.n - C.y, Ee.e - C.x);
+    //
+    // ⚠⚠ BUILT FROM THE TWO POSES, NOT FROM THE E–F CHORD (2026-09-08). This branch used
+    // to set R = half and centre the arc on the midpoint of E–F, which makes the tangents
+    // perpendicular to the CHORD. While the two ends are abeam that is the same thing as
+    // perpendicular to the LINES and the shape is right — which is why it stood for
+    // months. Give the pair any along-track offset and it is wrong by exactly
+    // atan(along / lateral) at BOTH ends: the boat is thrown off the line it has just run
+    // and arrives on the next one crabbing.
+    //
+    // MEASURED on a 40 m-spaced plan the day lead-in/lead-out extensions made offsets
+    // ordinary: a 40 m lead-in against a 25 m lead-out leaves the ends 15 m apart along
+    // track, and the boat left the line 19° off and joined the next one 22° off. A 40 m
+    // lead-in with no lead-out gave 44° and 46°. A feature whose whole purpose is to have
+    // the boat SETTLED on the line was throwing it onto the line at 46°.
+    //
+    // The fix is what `racetrackTurn` and the teardrop branch below have always done, and
+    // this was the one shape in the file without it: run the along-track offset out ON THE
+    // LINE, and put the semicircle between the abeam points. R is then half the LATERAL
+    // offset — the crossing distance — which is what the radius always meant. With no
+    // offset every number here is identical to what it was, so a plan with no lead is
+    // unchanged, point for point.
+    R = Math.abs(lateral) / 2; kind = 'semicircle';
+    const sSide = lateral >= 0 ? 1 : -1;
+    // P = where the arc STARTS (E, run forward to the abeam point if F is further along);
+    // Q = where it ENDS (F, or short of it if F is BEHIND E, then a straight run in).
+    const P = { e: Ee.e + (along > 0 ? along * fwd.e : 0), n: Ee.n + (along > 0 ? along * fwd.n : 0) };
+    const Q = { e: Fe.e - (along < 0 ? along * fwd.e : 0), n: Fe.n - (along < 0 ? along * fwd.n : 0) };
+    const C = { x: P.e + sSide * R * rgt.e, y: P.n + sSide * R * rgt.n };
+    const a0 = Math.atan2(P.n - C.y, P.e - C.x);
     // ⚠ TWO SWEEPS EXIST, AND THE CALLER MAY NEED THE OTHER ONE (2026-08-31).
     // A semicircle from E to F traces the same circle whichever way it is swept; the
     // direction only decides which SIDE of the E–F chord it bulges. Outboard — past the
@@ -472,7 +545,12 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
       if (proj > bestProj) { bestProj = proj; dir = cand; }
     }
     if (opts.side === 'inboard') { dir = -dir; side = 'inboard'; }
-    pts = arcPts(C, R, a0, dir * Math.PI, 4, en2ll, opts.arcStepM);
+    // The run-out and the run-in bracket the arc, exactly as they do in racetrackTurn and
+    // in the teardrop below. Both are on the line, so neither adds a degree of turning.
+    pts = [];
+    if (along > ALONG_EPS_M) pts.push(en2ll(P.e, P.n));
+    pts.push(...arcPts(C, R, a0, dir * Math.PI, 4, en2ll, opts.arcStepM));
+    if (along < -ALONG_EPS_M) pts.push(en2ll(Q.e, Q.n));
   } else {
     // ── TEARDROP: loop at the vessel's own minimum radius ───────────────────────────
     // The closed form assumes a true reversal; the caller's anti-parallel gate is far
@@ -480,10 +558,8 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
     // on a heading that misses the next line.
     if (Math.abs(((hF - hE + 360) % 360) - 180) > SKEW_LIMIT_DEG) return { why: 'skew' };
     R = minRc; kind = 'teardrop';
-    const rgt = { e: fwd.n, n: -fwd.e };                  // starboard of the exit heading
-    const D = { e: Fe.e - Ee.e, n: Fe.n - Ee.n };
-    const along = D.e * fwd.e + D.n * fwd.n;
-    const lateral = D.e * rgt.e + D.n * rgt.n;
+    // `rgt`, `along` and `lateral` are the hoisted ones now — this branch is where they
+    // were written, and the semicircle above reads the same three.
     const s = lateral >= 0 ? 1 : -1, d = Math.abs(lateral);
     if (d < 0.5) return { why: 'degenerate' };            // lines on top of each other
 
@@ -507,19 +583,25 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
 
     const step = opts.arcStepM;
     pts = [];
-    if (along > 0) pts.push(en2ll(P.e, P.n));             // run-out to the abeam point
+    if (along > ALONG_EPS_M) pts.push(en2ll(P.e, P.n));   // run-out to the abeam point
     pts.push(...arcPts(C1, R, 0, s1, 2, map, step), map(T1.x, T1.y));
     pts.push(...arcPts(C2, R, a2, s2, 2, map, step), map(T2.x, T2.y));
     pts.push(...arcPts(C3, R, a3, s3, 2, map, step));
-    if (along < 0) pts.push(en2ll(Q.e, Q.n));             // roll out early, straight in to F
+    if (along < -ALONG_EPS_M) pts.push(en2ll(Q.e, Q.n));  // roll out early, straight in to F
 
-    // How far past the line end the loop actually reaches, measured on the exit heading
-    // from E — this is the water the operator has to have clear.
-    outboard = 0;
-    for (const p of pts) {
-      const pe = frame.toEN(p);
-      outboard = Math.max(outboard, (pe.e - Ee.e) * fwd.e + (pe.n - Ee.n) * fwd.n);
-    }
+  }
+
+  // ⚠ HOW FAR PAST THE LINE END THE SHAPE ACTUALLY REACHES — MEASURED FROM THE POINTS,
+  // FOR EVERY BRANCH. This is the water the operator has to have clear, and it is the
+  // number the card quotes them. Both branches used to assert it instead: the semicircle
+  // said `R` and the teardrop measured. `R` was right only while the two ends were abeam
+  // — with the run-out above, the arc starts `along` metres further down the line and
+  // reaches `along + R`. An asserted reach that is short is worse than none, because it
+  // is the figure the operator decides "is that water clear?" against.
+  outboard = 0;
+  for (const p of pts) {
+    const pe = frame.toEN(p);
+    outboard = Math.max(outboard, (pe.e - Ee.e) * fwd.e + (pe.n - Ee.n) * fwd.n);
   }
 
   let prev = E;

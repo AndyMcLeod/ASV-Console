@@ -92,6 +92,9 @@ const PY = fs.readFileSync(path.join(__dirname, "..", "asv_console.py"), "utf8")
 // fails HERE, at load, rather than quietly resolving to a stale copy.
 const { distTo, azTo, atDA, llEN, fromEN, planeFrame } = require("../static/js/geodesy.js");
 const { blocked, buildKeepouts } = require("../static/js/chart.js");
+// The reversal shape itself, for the give-way ladder below: the claim that scaling both
+// leads scales the water a turn needs is a claim about THIS function, so it is asked.
+const { teardropTurn } = require("../static/js/turns.js");
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -125,7 +128,10 @@ var mission = { lines: [], speeds: { transit: "high", turn: "low", survey: "surv
                 lead_mode: "m", lead_in: 0, lead_out: 0 };
 var lineActual = [], runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
 var S = null, asv = null;
+var patClip = null, patLead = [];
+const NO_LEAD = { in: 0, out: 0 };
 function fmtDist(m) { return Math.round(m) + " m"; }
+function runMid(seg) { return { lat: (seg[0].lat + seg[1].lat) / 2, lon: (seg[0].lon + seg[1].lon) / 2 }; }
 
 // The page's own bodies, run for real. clipLine is the primitive extendLead delegates its
 // whole safety argument to, so it is grabbed rather than restated - a reimplementation here
@@ -137,6 +143,8 @@ eval([
   grab("leadMetres"), grab("leadInM"), grab("leadOutM"),
   grab("alongLineM"), grab("linePhase"),
   grab("clipLine"), grab("extendLead"),
+  grab("patCoverSeg"), grab("runWithLeads"), grab("patLeadTotal"),
+  grabDecl("LEAD_GIVE"), "function __leadGive(){ return LEAD_GIVE; }",
   grab("buildLineTable"), grab("committedPatternInfo"),
   grab("currentActivity"),
   "function __setMission(m){ mission = m; }",
@@ -493,6 +501,104 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
   check("31. ... and says out loud when the chart cut one short",
         () => /nLeadCut\+\+/.test(punch) && /cut short of the full lead by the chart/.test(punch),
         "a lead trimmed in silence is a settling distance the operator believes they have");
+}
+
+// ── 32-37. THE LEAD GIVES WAY TO THE TURN ─────────────────────────────────────────
+// Andy, 2026-09-08: "Cap the lead at what the turn water allows."
+//
+// A lead pushes the reversal outboard, so a lead can take a turn that fitted and make it
+// not fit. The alternative to shortening it is shipping the pair UNSAFE and blocking
+// Upload over a settling distance the operator would have given up in a heartbeat.
+//
+// TEETH - 7 more mutations against the sidecar, all killed, 2026-09-08:
+//   LEAD_GIVE never reaches 0 / is not descending      -> 36
+//   the ladder fires on every reversal, not a refusal  -> 36
+//   patClip re-cut but patLead left saying the old figure -> 36
+//   the shortened lead is not counted                  -> 37
+//   the card quotes a total taken before the ladder    -> 37
+//   runWithLeads measures off the RUN, not the coverage -> 32, 33
+{
+  const ref = planeFrame({ lat: 43.07, lon: -70.76 });
+  const ll = (e, n) => fromEN(e, n, ref);
+  const SPACING = 40, MINR = 8.3, LEN = 300;
+  // Two 300 m lines on 090/270, 40 m apart, each carrying a lead. patClip holds the RUNS.
+  const mk = (li, lo, e0, n0, east) => {
+    const a = east ? ll(e0 - li, n0) : ll(e0 + li, n0);
+    const b = east ? ll(e0 + LEN + lo, n0) : ll(e0 - LEN - lo, n0);
+    return [a, b];
+  };
+  patClip = [mk(30, 25, 0, 0, true), mk(40, 30, LEN, SPACING, false)];
+  patLead = [{ in: 30, out: 25 }, { in: 40, out: 30 }];
+  const cov0 = [patCoverSeg(0), patCoverSeg(1)].map(s => [s[0], s[1]]);
+
+  // ⚠ THE PROPERTY THE WHOLE LADDER RESTS ON. Shrinking a lead must be exactly reversible,
+  // because the ladder runs AFTER the leads have already been applied once — it re-cuts a
+  // run that was itself cut. If the coverage moved by even a metre per rung, three rungs
+  // would quietly eat coverage the operator drew.
+  const worst = [1, 0.6, 0.3, 0].map(lam => {
+    const s0 = runWithLeads(0, 30 * lam, 25 * lam), s1 = runWithLeads(1, 40 * lam, 30 * lam);
+    const saveC = patClip, saveL = patLead;
+    patClip = [s0, s1]; patLead = [{ in: 30 * lam, out: 25 * lam }, { in: 40 * lam, out: 30 * lam }];
+    const c = [patCoverSeg(0), patCoverSeg(1)];
+    patClip = saveC; patLead = saveL;
+    return Math.max(distTo(c[0][0], cov0[0][0]), distTo(c[0][1], cov0[0][1]),
+                    distTo(c[1][0], cov0[1][0]), distTo(c[1][1], cov0[1][1]));
+  });
+  check("32. shrinking a lead moves the RUN and never the coverage",
+        () => Math.max(...worst) < 0.01,
+        "worst coverage-endpoint drift across lambda 1 / 0.6 / 0.3 / 0: "
+        + worst.map(w => w.toFixed(4) + " m").join(", "));
+
+  const zero = runWithLeads(0, 0, 0);
+  check("33. ... and lambda = 0 IS the run this console punched before the feature",
+        () => distTo(zero[0], cov0[0][0]) < 0.01 && distTo(zero[1], cov0[0][1]) < 0.01,
+        "no lead → the coverage segment itself, to "
+        + Math.max(distTo(zero[0], cov0[0][0]), distTo(zero[1], cov0[0][1])).toFixed(4)
+        + " m. This is why the last rung is 0 and not 0.1: the ladder cannot end worse "
+        + "than a plan that never had a lead.");
+
+  // ⚠ THE MONOTONICITY CLAIM, DRIVEN AGAINST THE REAL SHAPE. punchOut's comment says the
+  // water a reversal needs past the COVERAGE end is max(lead_in, lead_out) + R, and that
+  // is the whole reason scaling BOTH leads is the right knob. If it were false the ladder
+  // could shrink a lead and need MORE water, which is worse than not trying.
+  const koOpen = { polys: [], lines: [], points: [], marks: [] };
+  const need = [1, 0.6, 0.3, 0].map(lam => {
+    const lo = 25 * lam, li = 40 * lam;                      // run k's out, run k+1's in
+    const E = ll(LEN + lo, 0), F = ll(LEN + li, SPACING);
+    const t = teardropTurn(E, F, 90, 270, ref, koOpen, 1, MINR, 400);
+    return t.pts ? lo + t.outboard : null;                   // measured from the COVERAGE end
+  });
+  const pred = [1, 0.6, 0.3, 0].map(lam => Math.max(40 * lam, 25 * lam) + SPACING / 2);
+  check("34. the water a reversal needs past the COVERAGE end is max(in, out) + R",
+        () => need.every((n, i) => n != null && Math.abs(n - pred[i]) < 0.3),
+        "measured " + need.map(n => n == null ? "refused" : n.toFixed(1)).join(" / ")
+        + " m against predicted " + pred.map(p => p.toFixed(1)).join(" / ")
+        + " m at lambda 1 / 0.6 / 0.3 / 0");
+  check("35. ... so every rung of the ladder needs strictly less water than the last",
+        () => need.every((n, i) => i === 0 || (n != null && n < need[i - 1] - 0.5)),
+        "need " + need.map(n => n.toFixed(1)).join(" > ") + " m — monotone, which is what "
+        + "makes scaling BOTH leads the right knob rather than picking an end");
+  patClip = null; patLead = [];
+}
+
+// ── 36-37. ...AND IT IS WIRED THAT WAY, AND SAID OUT LOUD ─────────────────────────
+{
+  const punch = grab("punchOut");
+  const give = __leadGive();
+  check("36. the ladder runs only on a REFUSED reversal, and ends at zero lead",
+        () => give.length >= 2 && give[give.length - 1] === 0
+              && give.every((v, i) => i === 0 || v < give[i - 1])
+              && /if\(!t\.pts && \(\(patLead\[k\]&&patLead\[k\]\.out>0\)/.test(punch)
+              && /patLead\[k\]   = \{in: patLead\[k\]\.in\|\|0,   out: lo\};/.test(punch),
+        "LEAD_GIVE = " + give.join(", ") + " — descending, ending at 0, and gated on "
+        + "!t.pts so an accepted turn keeps the lead the operator asked for");
+  // NEVER SILENTLY — the same rule the chart clip and the minimum line answer to.
+  check("37. ... and a shortened lead is named, with the total read back off patLead",
+        () => /nLeadGave\+\+/.test(punch)
+              && /had the lead shortened to fit the turn water/.test(punch)
+              && /\+\$\{patLeadTotal\(\)\.toFixed\(0\)\} m of/.test(punch),
+        "a running total would be taken BEFORE the ladder shortens anything, so the card "
+        + "would quote a lead the plan does not have");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");

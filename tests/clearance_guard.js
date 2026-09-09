@@ -88,7 +88,15 @@ const { planeFrame } = require("../static/js/geodesy.js");
 const { bbOf } = require("../static/js/geometry.js");
 const { teardropTurn, turnWithRetry, minTurnRadiusM } = require("../static/js/turns.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Without it the only way to
+// mutate what this suite reads is to edit static/asv.html itself — and a suite that ignores
+// the override scores every mutation as SURVIVED, which is a broken instrument rather than
+// weak checks. Caught here the same way it was caught in ais_table.js on 2026-09-08: a
+// mutation that deletes a counter this suite explicitly greps for came back green. Check
+// 12's regex names `nUnsafeTurn++` outright, so the SUITE was never the problem — the
+// instrument was reading a file nothing had written to, and reporting that as coverage.
+const H = fs.readFileSync(process.env.ASV_HTML ||
+                          path.join(__dirname, "..", "static", "asv.html"), "utf8");
 const T = fs.readFileSync(path.join(__dirname, "..", "static", "js", "turns.js"), "utf8");
 
 function grab(src, name) {
@@ -338,9 +346,33 @@ const PO = grab(H, "punchOut");
 // flagged red, blocking Upload - because the console has just established that the water
 // for that loop is foul on every side and at every radius it can fly.
 check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped straight",
-      () => /if\(reversalRefused\)\{ patTransits\.push\(\[\]\); patUnsafe\.push\(\[Ap,Bp\]\); continue; \}/.test(PO) &&
+      () => /if\(reversalRefused\)\{ patTransits\.push\(\[\]\); patUnsafe\.push\(\[Ap,Bp\]\); nUnsafeTurn\+\+; continue; \}/.test(PO) &&
             PO.indexOf("reversalRefused") < PO.indexOf("if(legSafe(Ap,Bp))"),
       "and the guard sits BEFORE the legSafe straight-leg fallback, or it would never run");
+// 12b. ...AND THE BANNER SAYS WHICH OF THE TWO FAULTS IT IS. A red leg means either a
+// transit blocked by a keep-out or a reversal with no flyable turn, and until 2026-09-08
+// the banner called every one of them the first: "the ASV would cross the obstacle on
+// those legs". For a refused reversal both halves of that are false — check 12 above
+// exists precisely because the straight line between those ends IS clear — and the
+// remedies differ: a blocked transit wants the line moved, a refused reversal wants
+// spacing, turn speed, or lead. It went unnoticed while refused reversals were rare;
+// building the turn from the two poses made the console honest about the water a turn
+// really needs, and they are not rare any more.
+{
+  // ⚠ SCOPED TO THE BRANCH, NOT THE FILE. The comment ABOVE that branch quotes the old
+  // sentence in order to explain why it was wrong, so a whole-function indexOf finds the
+  // explanation rather than the code and orders them backwards. First cut of this check
+  // failed for exactly that reason.
+  const body = PO.slice(PO.indexOf("const nUnsafeLeg = nU - nUnsafeTurn;"));
+  const iLeg = body.indexOf("nUnsafeLeg?"), iCross = body.indexOf("would cross the obstacle on those legs");
+  check("12b. ... and named as its own fault, counted apart from a blocked transit",
+        () => /let nUnsafeTurn=0;/.test(PO) && iLeg >= 0
+              && /reversal\(s\) have NO FLYABLE TURN/.test(body)
+              && /The straight line between those line ends is clear/.test(body)
+              && iCross > iLeg,
+        "two counts, two sentences — and 'would cross the obstacle' sits INSIDE the "
+        + "blocked-transit branch instead of being said about every red leg");
+}
 check("13. punchOut climbs the ladder rather than making one attempt",
       () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow\)/.test(PO) &&
             /const minTurnRSlow = minTurnRadiusM\("low"\)/.test(PO),

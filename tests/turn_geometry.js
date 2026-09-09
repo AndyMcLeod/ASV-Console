@@ -426,5 +426,113 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
                     : "all " + fs.readdirSync(dir).filter(f => /\.(js|py)$/.test(f)).length + " suites guarded");
 }
 
+// ── 31-36. A REVERSAL IS BUILT FROM THE TWO POSES, NOT FROM THE CHORD ──────────────
+// Andy, 2026-09-08, looking at a punched plan with lead-in / lead-out extensions on it:
+// "The turns for the lead-in / lead-out don't make great sense."
+//
+// They did not. The semicircle branch put its centre on the MIDPOINT OF E-F and its radius
+// at HALF THAT CHORD, so its tangents came out perpendicular to the chord rather than to
+// the lines. While the two line ends are abeam those are the same thing, which is why the
+// shape was right for as long as nothing produced an along-track offset. A lead-in longer
+// than the lead-out produces one at every reversal, and the error is exactly
+// atan(along / lateral) at BOTH ends: the boat is thrown off the line it has just run and
+// arrives on the next one crabbing. The fix is what racetrackTurn and the teardrop branch
+// have always done - run the offset out ON THE LINE, arc between the abeam points.
+//
+// TEETH - 18 mutations across this suite, strike_run, survey_lead and clearance_guard,
+// 2026-09-08; core_turns.js has no ASV_HTML override, so those were applied to a COPY that
+// is restored in a `finally` and confirmed with `git diff` at the end of the run. The six
+// graded here:
+//   R back to half the CHORD (the control)                 -> 31, 32, 33, 34
+//   arc re-centred on the E-F midpoint                     -> 31, 32, 34
+//   branch gated on the chord again                        -> 33b
+//   semicircle asserts its reach as R                      -> 12, 34
+//   racetrack asserts its reach as R                       -> 35
+//   the run-out guard loses its epsilon                    -> 36
+//
+// ⚠ ONE MUTATION SURVIVED AND IT IS NOT A DEFECT — dropping the run-out WAYPOINT (leaving
+// the arc, which already starts at the abeam point). MEASURED on a 40 m offset: the boat
+// would fly a 42.98 m chord from E straight to the first arc point, whose far end is
+// 0.22 m off the line — 0.11 m of cross-track, against a keep-out buffer of metres. The
+// waypoint is worth having because it says on the chart where the run-out ends, not
+// because the geometry needs it. Recorded here rather than answered with a check that
+// would only be pinning the source text.
+//
+// ⚠ AND 33b IS THERE BECAUSE THE FIRST SWEEP MISSED IT. Every fixture here was 40 m
+// spacing, where half the crossing (20 m) clears the 8.3 m floor comfortably, so gating on
+// the chord instead made no difference and the mutation survived. The corner is a TIGHT
+// crossing with a LONG offset, and there the chord-gated branch hands the boat a radius
+// below the radius it can hold.
+{
+  const { racetrackTurn } = require("../static/js/turns.js");
+  const refP = planeFrame({ lat: 43.07, lon: -70.76 });
+  const llP = (e, n) => fromEN(e, n, refP);
+  const SPACING = 40, MINR = 8.3;
+  const koOpen = { polys: [], lines: [], points: [], marks: [] };   // open water: geometry only
+  // E ends line k on 090; F starts line k+1 on 270, `along` metres further east.
+  const turnFor = (along, fn) =>
+    fn(llP(0, 0), llP(along, SPACING), 90, 270, refP, koOpen, 1, MINR, 200);
+  const dd = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  // The tangent at each end, over the FIRST and LAST generated step. A sampled arc reports
+  // its own half-chord angle here, so the comparison is against the NO-OFFSET case rather
+  // than against zero: the question is whether an offset makes it worse, not whether a
+  // polyline is a circle.
+  const ends = (r, along) => { const p = [llP(0,0), ...r.pts, llP(along, SPACING)];
+    return [dd(azTo(p[0], p[1]), 90), dd(azTo(p[p.length-2], p[p.length-1]), 270)]; };
+
+  const base = turnFor(0, teardropTurn),  b = ends(base, 0);
+  const skew = turnFor(15, teardropTurn), s = ends(skew, 15);
+  const hard = turnFor(40, teardropTurn), h = ends(hard, 40);
+
+  check("31. an along-track offset no longer skews the semicircle's tangents",
+        !!(base.pts && skew.pts) && s[0] <= b[0] + 0.2 && s[1] <= b[1] + 0.2,
+        "abeam " + f1(b[0],1) + "/" + f1(b[1],1) + " deg (that is the arc's half-chord at a "
+        + "3 m step), 15 m offset " + f1(s[0],1) + "/" + f1(s[1],1) + " deg — it was 19.2/21.9");
+  check("32. ... including a lead-in with no lead-out, which is the worst of it",
+        !!hard.pts && h[0] <= b[0] + 0.2 && h[1] <= b[1] + 0.2,
+        "40 m offset " + f1(h[0],1) + "/" + f1(h[1],1) + " deg — it was 44.0/46.0");
+  // ⚠ AND THE BRANCH GATE HAS TO MEASURE THE CROSSING TOO, WHICH IS A DIFFERENT CORNER.
+  // The semicircle is only available when the offset itself supplies a radius the hull can
+  // hold — and "the offset" is the CROSSING. Gated on the chord, an along-track offset can
+  // carry a pair over the gate that the crossing alone would not, and the branch then
+  // builds at half the crossing anyway: a radius BELOW the hull's minimum, handed to the
+  // boat as a turn. 12 m of spacing with a 30 m offset is R = 6.0 m against a floor of
+  // 8.3 m. The teardrop is the right answer there, and it loops at the floor.
+  const tight = teardropTurn(llP(0, 0), llP(30, 12), 90, 270, refP, koOpen, 1, MINR, 200);
+  check("33b. a crossing too tight for the hull takes the TEARDROP, whatever the chord",
+        !!tight.pts && tight.kind === "teardrop" && near(tight.R, MINR, 0.01),
+        "spacing 12 m, offset 30 m: crossing/2 = 6.00 m, chord/2 = 16.16 m, hull floor "
+        + f1(MINR) + " m → " + tight.kind + " at R " + f1(tight.R)
+        + " m (chord-gated it is a semicircle at R 6.00, under the floor)");
+
+  check("33. R is half the CROSSING, not half the chord",
+        near(base.R, SPACING/2, 0.01) && near(skew.R, SPACING/2, 0.01) && near(hard.R, SPACING/2, 0.01),
+        "R " + f1(base.R) + " / " + f1(skew.R) + " / " + f1(hard.R)
+        + " m at offsets 0 / 15 / 40 — the chord gives 20.00 / 21.36 / 28.28");
+  // The reach past the line end is the number the operator answers "is that water clear?"
+  // with. Both branches used to ASSERT it, and the semicircle asserted R.
+  check("34. the reach past the line end is MEASURED, and grows with the offset",
+        near(base.outboard, SPACING/2, 0.25) && near(skew.outboard, 15 + SPACING/2, 0.25)
+        && near(hard.outboard, 40 + SPACING/2, 0.25),
+        "outboard " + f1(base.outboard) + " / " + f1(skew.outboard) + " / " + f1(hard.outboard)
+        + " m — asserting R would have said 20.00 for all three");
+  const rt0 = turnFor(0, racetrackTurn), rt40 = turnFor(40, racetrackTurn);
+  check("35. ... and the racetrack reports its reach the same way",
+        !!(rt0.pts && rt40.pts) && near(rt0.outboard, MINR, 0.4)
+        && near(rt40.outboard, 40 + MINR, 0.4),
+        "outboard " + f1(rt0 && rt0.outboard) + " m abeam, " + f1(rt40 && rt40.outboard)
+        + " m at a 40 m offset — the constant said " + f1(MINR) + " for both");
+  // ⚠ AND AN ABEAM PAIR MUST NOT HAVE MOVED. Every plan without a lead has abeam ends, so
+  // this is only allowed to be a no-op for them — including no duplicate waypoint, which
+  // is what the run-out guard pushed before it was thresholded (`along` is 1e-14, not 0).
+  const onCircle = base.pts.map(p => llEN(p.lat, p.lon, refP))
+                           .every(p => near(Math.hypot(p.e, p.n - SPACING/2), SPACING/2, 0.02));
+  check("36. an abeam pair is untouched — same circle, and no duplicate point at E",
+        onCircle && distTo(base.pts[0], llP(0,0)) > 0.05,
+        base.pts.length + " points, all within 20 mm of the R" + (SPACING/2)
+        + " circle centred between the ends; first point " + f1(distTo(base.pts[0], llP(0,0)))
+        + " m off E — 0.00 there is the duplicate waypoint the un-thresholded guard pushed");
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

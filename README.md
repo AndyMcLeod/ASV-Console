@@ -729,6 +729,24 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    the same reason: outside the fetched chart the keep-out model is *empty*, which reads
    as clear rather than as unknown.
 
+   *The reversal is built from the two line ends' HEADINGS, not from the chord between
+   them.* A lead-in longer than the lead-out leaves the two ends offset along-track, and
+   the turn runs that offset out **on the line** before it arcs — so the boat leaves the
+   line it has just run on that line's heading and joins the next one on its heading,
+   whatever the offset. (Before 2026-09-08 the semicircle was drawn on the E–F chord, which
+   is the same shape only while the ends are abeam; a 40 m lead-in against a 25 m lead-out
+   threw the boat off the line at 19° and put it onto the next at 22°.) The water a reversal
+   needs past the coverage end is then `max(lead_in, lead_out) + R`, which the Punch Out
+   readout quotes.
+
+   *And the lead gives way to the turn, not the other way round.* A lead can take a
+   reversal that fitted and make it not fit. Rather than block Upload over a settling
+   distance, Punch Out shortens **both** leads on that pair — 60%, 30%, none — retrying the
+   whole turn ladder at each step, and says so (`N reversal(s) had the lead shortened to fit
+   the turn water`). The last rung is zero on purpose: with no lead the pair is the pair the
+   console punched before the feature existed, so a lead can never be the reason a plan has
+   an unflyable turn.
+
    *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
    coverage and adds a `lead m` column beside it — the `plan` column times the whole run,
    because `actual` is clocked over the whole run — and the survey card's **Line len**
