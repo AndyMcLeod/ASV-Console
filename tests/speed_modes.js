@@ -128,6 +128,10 @@ function check(name, cond, detail) {
 // ---- the page's world, as the governor reads it ------------------------------------- //
 V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 };
 var mission, runLineIdx = -1, curTurn = -1, turnSeg = [], turnSlowAt = {}, lastRunLine = -1;
+// The post-pause low-speed hold (2026-09-09). The governor stands down while it is set, the
+// same way it does for the safety override — declared here so the checks below run against
+// the ordinary case, and driven on purpose in the resume checks further down.
+var resumeSlow = false;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
 var sent = [];
 function cmd(path, body) { sent.push({ path, body }); }

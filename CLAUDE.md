@@ -55,11 +55,71 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-08 — eased (clothoid) reversals)
+## ⇒ START HERE (handoff refreshed 2026-09-09 — pause flashes, and resuming closes the hole)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): EASED REVERSALS — clothoid, arc, clothoid.** Andy: *"build the
+**NEWEST (this commit): PAUSE FLASHES AND TOGGLES, AND RESUMING BACKS DOWN THE LINE.** Andy,
+2026-09-09: *"When a pause happens during survey the pause button should flash until pause
+button selected. Behavior of ASV is to then turn back to the point in the survey line where
+the button push happened, backtrack 12 boat lengths and continue the run at low speed or
+until user changes speed manually."*
+
+**Pause is a toggle now.** It used to grey out the instant it worked, leaving Start — a
+control nobody looks at during a run — as the only way back. While paused it reads RESUME,
+is enabled, and FLASHES (steady amber under `prefers-reduced-motion`: the state is a safety
+readout, not decoration). Start still resumes and goes through the **same** `resumeRun()`, so
+the behaviour cannot depend on which button the operator reaches for.
+
+**THE BACKTRACK.** `markPause()` records `{line, along, fwd, at}` at the PRESS. On resume,
+`resumePointOn()` returns the point twelve hull lengths back down that line, and the plan's
+remainder is AMENDED to `[thatPoint, ...runRoute.slice(idx)]` — so she runs back, then
+forward through the pause point and on. Four things are load-bearing and each has a check:
+
+* **The mark is taken at the press and never re-derived.** She drifts while paused; reading
+  the position again on resume returns the drift, not the mark.
+* **The direction is read off the route, not assumed.** A plan edited in WPT mode need not
+  run a→b, and backing the wrong way drives her into water never surveyed and lays the
+  overlap on the far side of the gap.
+* **Amend, not upload** — an upload resets `_wp_index` and would re-run the survey from line
+  1. `amend_plan` needs `_running`, and pause leaves that TRUE while stopping the prop, so
+  the remainder is rewritten **while still paused**, before the run is released.
+* **Twelve BOAT LENGTHS**, from `hull.loa_m`: 92.5 m on the DriX, 22.8 m on the launch. A
+  hull that declares no length gets no backtrack rather than a guess.
+
+A foul way back gives up the BACKTRACK, not the resume, checked with the real `legClear`.
+
+**LOW UNTIL THE OPERATOR SAYS OTHERWISE.** `resumeSlow` is a hold in the same shape as
+`clearance.slowed` — the governor returns null while it is set — but a different authority:
+that one is the safety ladder, this one is the operator's standing instruction, so only a
+manual role-speed change ends it (`setRoleSpeed`), along with Stop and a fresh Start. It is
+set whether or not there was a line to back down.
+
+**TEETH: new `tests/pause_resume.js`, 19 checks, 19 mutations, all killed** — GUARDS entry in
+this commit (64 suites, 64 entries). **⚠ THE FIRST SWEEP LEFT THE CONTROL ALIVE**, which is
+the one that matters: checks 9-12 grepped `resumeRun`'s source, so switching the whole
+backtrack off (`const to = null`) left every string they look for in place and every check
+green — the feature disabled and the suite content. They DRIVE the function now and read what
+it SENT. Two more went with it: a fixture where the boat only ever ran a→b could not tell a
+direction that was READ from one that was ASSUMED, and an unwrapped call to a mutated
+`markPause` threw and killed the run before any FAIL line printed.
+
+**⚠⚠ WHAT THE LIVE RUN DID AND DID NOT SHOW — READ THIS BEFORE TRUSTING THE BACKTRACK.**
+Confirmed on the water: the button flashes, toggles, and reads RESUME; the resume commands
+`low`; the banner and the Intent card say what happened. **NOT confirmed: the backtrack
+itself.** The resume reported *"not on a coverage line when it was paused"* even though the
+boat was measurably 253 m along line 1 at 5.7 m cross-track — because `runLineIdx` was −1,
+and the LINES table's `actual` column was `--` for both lines, which is the same fact.
+
+**That was my fixture, not the feature.** To dodge slow chart-clicking I POSTed a hand-built
+4-waypoint plan (line endpoints only, NO turn vertices); Upload routed it to 21 waypoints by
+splicing detours INTO the line legs, so no route leg matched a committed line within
+`LINE_MATCH_M`. A real punched plan carries its own turn vertices and matches — verified
+headlessly on 2026-09-08 (all 6 lines found by the real `currentLegLine`). **Next session:
+watch a pause on a REAL punched plan, in water where the clearance guard is not firing** —
+it took the run into a `hold` here, as it did during the lead work.
+
+**Before that (`70d74d19`): EASED REVERSALS — clothoid, arc, clothoid.** Andy: *"build the
 clothoid version too."*
 
 Every other reversal in this console steps its curvature from 0 to 1/R the instant the boat

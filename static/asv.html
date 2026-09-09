@@ -68,6 +68,16 @@
     border:1px solid var(--line2);background:#0e1a24;color:var(--ink);padding:8px 12px;border-radius:3px;min-width:64px;}
   .cbtn:hover:not(:disabled){border-color:var(--bronze);color:var(--bronze);}
   .cbtn:disabled{opacity:.35;cursor:not-allowed;}
+  /* A HELD RUN FLASHES UNTIL SOMEBODY ANSWERS IT (Andy, 2026-09-09). A paused survey is a
+     boat sitting in the tide with the prop stopped and a hole growing in the coverage; the
+     one control that ends it says so until it is pressed. `prefers-reduced-motion` swaps the
+     blink for a steady amber, because the state has to be legible to somebody who cannot
+     take a flashing light - it is a safety readout, not decoration. */
+  @keyframes cbtnFlash{0%,49%{background:var(--warn);color:#160d02;border-color:var(--warn);}
+                       50%,100%{background:transparent;color:var(--warn);border-color:var(--warn);}}
+  .cbtn.flash{animation:cbtnFlash 1s steps(1,end) infinite;font-weight:700;}
+  @media (prefers-reduced-motion: reduce){
+    .cbtn.flash{animation:none;background:var(--warn);color:#160d02;border-color:var(--warn);}}
   .cbtn.arm.on{background:var(--warn);color:#160d02;border-color:var(--warn);font-weight:700;}
   .cbtn.go{border-color:#2b6d3f;} .cbtn.go:hover:not(:disabled){border-color:var(--ok);color:var(--ok);}
   .cbtn.estop{background:#3a1210;border-color:var(--bad);color:#ff8f8b;font-weight:700;}
@@ -1292,6 +1302,40 @@ function fmtBrgRange(from, to){
 const CLEAR_CAP_M = 400;            // far enough to be useful, near enough to stay cheap
 const CLEAR_CLOSING_MS = 4000;      // the window "closing" is measured over
 let clearance = {m:null, kind:null, closing:false, slowed:false, prev:null, info:null};
+
+// --- PAUSE AND RESUME ON A SURVEY LINE ---------------------------------------------- //
+// Andy, 2026-09-09: "When a pause happens during survey the pause button should flash until
+// pause button selected. Behavior of ASV is to then turn back to the point in the survey
+// line where the button push happened, backtrack 12 boat lengths and continue the run at
+// low speed or until user changes speed manually."
+//
+// A pause leaves a HOLE in the coverage, and it is worse than the gap it looks like: the
+// prop stops, the boat is set by wind and stream while it waits, and whatever it was doing
+// when the data stopped it is not doing when the data starts again. Resuming from wherever
+// it drifted to would butt two runs of coverage together at an angle with a gap in between.
+// So the resume goes BACK down the line, far enough that the boat is settled and the new
+// coverage overlaps the old before it reaches the point the operator stopped it at - which
+// is the same argument as the lead-in, answered at a different moment.
+//
+// ⚠ THE MARK IS TAKEN AT THE PRESS AND NEVER RE-DERIVED. The boat drifts while paused, so
+// "where the button push happened" is a fact about one instant; reading the position again
+// on resume would return the drift, not the mark.
+let pauseMark = null;      // {line, along, at:{lat,lon}, t} or null (not on a line)
+// ⚠ TWELVE BOAT LENGTHS IS ANDY'S NUMBER, AND IT IS A LENGTH THAT BELONGS TO THE HULL.
+// 92.5 m on the 7.7 m diesel ASV, 22.8 m on the 1.9 m launch - which is the point of
+// expressing it in hulls rather than metres: the distance a boat needs to settle and to
+// lay down overlapping coverage scales with the boat, not with the survey.
+const RESUME_BACK_LENGTHS = 12;
+function resumeBackM(){
+  const loa = (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0;
+  return loa > 0 ? RESUME_BACK_LENGTHS * loa : 0;
+}
+// The run was resumed after a pause and is being held at LOW until the operator says
+// otherwise. Same shape as `clearance.slowed` - the governor stands down while it is set -
+// but a different authority: that one is the safety ladder, this one is the operator's own
+// standing instruction, so only the operator ends it.
+let resumeSlow = false;
+
 function updateClearance(){
   if(!asv || !nogo.ready || !nogo.ko || !nogo.frame){
     clearance = {...clearance, m:null, kind:null, closing:false, prev:null, info:null};
@@ -1688,6 +1732,11 @@ function speedGovernor(){
   const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
   if(!act){ commandedSpeed = null; return null; }     // a stopped boat is re-governed on start
   if(clearance.slowed) return null;                   // safety owns the throttle
+  // ⚠ AND THE OPERATOR OWNS IT AFTER A PAUSE. A resumed run is held at low until they say
+  // otherwise, so the governor must not re-assert the role's speed the moment the boat
+  // rejoins its line — that would undo the instruction within a frame of carrying it out.
+  // Ended only by a manual speed change, or by the run ending; see setRoleSpeed.
+  if(resumeSlow) return null;
   // ⚠ A COASTING BOAT HAS NO GOVERNOR. The whole manoeuvre is the ABSENCE of a commanded
   // speed, and this function's job is to command one every time the role changes - it would
   // re-power the prop within a frame of it stopping and drive the boat at the berth it was
@@ -1791,7 +1840,8 @@ function renderIntent(){
     html += row("clearance", clearance.m >= CLEAR_CAP_M
         ? "> " + CLEAR_CAP_M + " m"
         : clearance.m.toFixed(1) + " m" + (clearance.kind ? " to " + clearance.kind : "")
-          + (clearance.closing ? " · CLOSING" : "") + (clearance.slowed ? " · SLOWED" : ""),
+          + (clearance.closing ? " · CLOSING" : "") + (clearance.slowed ? " · SLOWED" : "")
+          + (resumeSlow ? " · LOW (resumed)" : ""),
       tight ? "#d9958f" : (clearance.m < cbuf*3 ? "#e8b46a" : "var(--ink)"));
   }
   // SPEED, IN THREE LAYERS, because "6.8 kn" on its own answers none of the questions the
@@ -1816,6 +1866,8 @@ function renderIntent(){
   }
   if(clearance.slowed)
     html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
+  else if(resumeSlow)
+    html += row("for", "RESUMED AFTER A PAUSE — held at low until you change the speed", "#e8b46a");
   else
     html += row("for", spRole.toUpperCase() + " — " + act.detail,
                 spRole === "survey" ? "#7fd6a0" : (spRole === "turn" ? "#e8c07a" : "var(--ink)"));
@@ -1824,7 +1876,7 @@ function renderIntent(){
   html += row("speeds", SPEED_ROLES.map(r=>{
       const k = roleSpeed(r), kn = V.SPEED_KN[k];
       const txt = r + " " + k + (kn != null ? " " + kn.toFixed(1) : "");
-      return (r === spRole && !clearance.slowed)
+      return (r === spRole && !clearance.slowed && !resumeSlow)
         ? '<b style="color:var(--ink)">' + txt + '</b>' : txt;
     }).join(" · "), "var(--ink-dim)");
   // ---- WHY (captured with the plan) ----
@@ -7132,6 +7184,12 @@ function setRoleSpeed(role, v){
   if(role === "transit" && $("#c_spd_transit")) $("#c_spd_transit").value = v;
   saveMission();
   commandedSpeed = null;            // let the governor decide whether this one is live now
+  // ⚠ THIS IS "until user changes speed manually" (Andy, 2026-09-09), AND IT IS THE ONLY
+  // WAY THE POST-PAUSE HOLD ENDS. Touching any of the three role selectors is the operator
+  // taking the speed back, so the hold lapses and the governor re-asserts on the next frame
+  // — including when they select "low" itself, which is them owning the choice rather than
+  // inheriting it.
+  if(resumeSlow){ resumeSlow = false; flashNote("Speed released — the post-pause low-speed hold is over."); }
   updateSpeedNote();
   // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
   // speed moving moves it. The note is what tells the operator their 20 s just became a
@@ -8055,12 +8113,123 @@ $("#b_upload").onclick = ()=>{
   render();
 };
 $("#b_start").onclick = async ()=>{
+  // ⚠ RESUMING A PAUSE IS RESUMING, WHICHEVER BUTTON DOES IT. Start is enabled while paused
+  // and has always been the way back; routing it through the same function as the Pause
+  // toggle is what stops the backtrack depending on which control the operator reached for.
+  if(S && S.run === "paused") return resumeRun();
   if(!await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
+  pauseMark = null; resumeSlow = false; commandedSpeed = null;   // a FRESH run, not a resume
   cmd("/api/cmd/start");
 };
-$("#b_pause").onclick = ()=>cmd("/api/cmd/pause");
-$("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/stop"); };
+
+/** Where the boat was on its line at the instant Pause was pressed, or null. */
+function markPause(){
+  pauseMark = null;
+  const L = (mission.lines || [])[runLineIdx];
+  if(!(S && S.behavior === "survey") || runLineIdx < 0 || !L || !asv) return;
+  const len = distTo(L.a, L.b); if(!(len > 0)) return;
+  // Which way along a→b is the boat going? The committed order is a→b, but a plan edited in
+  // WPT mode need not be, so it is read off the waypoint the boat is steering for rather
+  // than assumed. Getting this backwards would back the boat up into UNsurveyed water.
+  const rr = (runRoute && runRoute.length) ? runRoute : (mission.waypoints || []);
+  const next = rr[Math.min(window._wpIndex || 0, rr.length - 1)];
+  const fwd = (next && distTo(next, L.b) <= distTo(next, L.a)) ? 1 : -1;
+  pauseMark = {line: runLineIdx, along: alongLineM(L, asv), fwd,
+               at: {lat: asv.lat, lon: asv.lon}, t: Date.now()};
+}
+
+/**
+ * Where a resumed run rejoins line `L`: `backM` metres back down it from the mark, on the
+ * side the boat came FROM, clamped to the line's own ends.
+ *
+ * ⚠ CLAMPED, NOT WRAPPED. Pause a boat twenty metres into a line and twelve hull lengths
+ * back is off the end of it — and the water there is the turn it has just flown, which is
+ * no place to rejoin a survey. The start of the RUN is as far back as back goes; on a line
+ * with a lead-in that start is already ahead of the coverage, so whatever overlap the line
+ * can give is still given.
+ */
+function resumePointOn(L, mark, backM){
+  if(!L || !mark) return null;
+  const len = distTo(L.a, L.b); if(!(len > 0)) return null;
+  const s = Math.max(0, Math.min(len, mark.along - mark.fwd * backM));
+  const t = s / len;
+  return {lat: L.a.lat + (L.b.lat - L.a.lat)*t, lon: L.a.lon + (L.b.lon - L.a.lon)*t};
+}
+
+/**
+ * Resume a paused run: back down the line, then carry on at low speed.
+ *
+ * THE AMENDMENT IS MADE WHILE STILL PAUSED, AND THAT ORDER IS THE POINT. `amend_plan`
+ * needs a RUNNING plan and pause leaves `_running` true while stopping the prop, so the
+ * remainder can be rewritten before anything moves. Resuming first would give the boat a
+ * frame or more of the OLD plan - it would start back toward the line end it was heading
+ * for, from wherever the tide had put it, which is the manoeuvre this exists to prevent.
+ */
+async function resumeRun(){
+  const back = resumeBackM();
+  let note = null, backedM = 0;
+  const L = pauseMark ? (mission.lines || [])[pauseMark.line] : null;
+  const rr = runRoute || [];
+  const idx = Math.min(window._wpIndex || 0, rr.length);
+  const to = (L && back > 0) ? resumePointOn(L, pauseMark, back) : null;
+  if(to && idx < rr.length){
+    backedM = distTo(to, pauseMark.at);
+    // ⚠ THE WAY BACK IS CHECKED LIKE ANY OTHER COMMANDED MOTION. It is water the boat has
+    // just surveyed, so it is nearly always clear - but "nearly always" is not the standard
+    // anything else here is held to, and the boat is not where it was when it left that
+    // water. A foul leg gives up the backtrack rather than the resume.
+    const from = asv ? {lat: asv.lat, lon: asv.lon} : pauseMark.at;
+    if(legClear(from, to, nogo.frame, nogo.ko, nogo.buffer)){
+      const tail = [to, ...rr.slice(idx)];
+      const r = await cmd("/api/cmd/amend", {route: tail,
+        note: "Resuming the survey " + fmtDist(backedM) + " back down line "
+              + (pauseMark.line + 1) + " of the pause point."});
+      if(r && r.error){ note = "could not amend the plan (" + r.error + ") — resumed where it lay"; }
+      else {
+        runRoute = [...rr.slice(0, idx), ...tail];
+        note = "backed up " + fmtDist(backedM) + " down line " + (pauseMark.line + 1)
+             + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
+      }
+    } else {
+      note = "the way back down line " + (pauseMark.line + 1)
+           + " is not clear — resumed where it lay, WITHOUT the backtrack";
+      backedM = 0;
+    }
+  } else if(!L){
+    note = "not on a coverage line when it was paused, so there was nothing to back down";
+  }
+  // LOW UNTIL THE OPERATOR SAYS OTHERWISE — Andy's "or until user changes speed manually".
+  // Set before the run resumes so the boat never makes way at the old speed, and NOT
+  // conditional on the backtrack: a resume is cautious whether or not there was a line.
+  const lineNo = pauseMark ? pauseMark.line + 1 : null;   // read BEFORE the mark is spent
+  resumeSlow = true; commandedSpeed = null;
+  await cmd("/api/cmd/speed", {speed: "low"});
+  await cmd("/api/cmd/start");
+  pauseMark = null;
+  flashNote("Resumed at LOW — " + (note || "carrying on") + ". Speed stays low until you change it.");
+  if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED after a pause — " + (note || "carrying on")
+    + "; held at LOW speed until the operator changes it"});
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"resume", data:{line: lineNo, backed_m: Math.round(backedM),
+      boat_lengths: RESUME_BACK_LENGTHS, note}})}).catch(()=>{});
+  updateMissionCard(); render();
+}
+
+// PAUSE IS A TOGGLE NOW. It flashes while the run is held, and pressing it again is the
+// resume — so the control that stopped the boat is the control that starts it, and the
+// operator does not have to know that Start was the way back.
+$("#b_pause").onclick = ()=>{
+  if(S && S.run === "paused") return resumeRun();
+  markPause();
+  cmd("/api/cmd/pause");
+};
+$("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[];
+  // A stopped run takes its holds with it: the post-pause low-speed hold belongs to THAT
+  // run, and carrying it into the next one would be this console remembering an
+  // instruction the operator gave about a survey that is over.
+  pauseMark = null; resumeSlow = false; commandedSpeed = null;
+  cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
 // THE OPERATOR'S "PROCEED". One decision, recorded with the situation it was taken about,
 // and logged - because this is the operator overriding a safety intervention and a recording
@@ -8210,7 +8379,20 @@ function applyCmdState(s){
   $("#b_arm").disabled = !connected || estop;
   $("#b_upload").disabled = !armed || estop;
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || run==="running";
-  $("#b_pause").disabled = run!=="running";
+  // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to grey out the
+  // moment it worked, which left Start as the only resume — a control the operator has no
+  // reason to look at for a run that is already going. It toggles, it says which way it
+  // will go, and it FLASHES until somebody answers it.
+  const held = run==="paused";
+  $("#b_pause").disabled = !(run==="running" || held);
+  $("#b_pause").textContent = held ? "Resume" : "Pause";
+  $("#b_pause").classList.toggle("flash", held);
+  $("#b_pause").title = held
+    ? "RESUME. The boat backs " + RESUME_BACK_LENGTHS + " boat lengths down the line it was "
+      + "running before the pause, so the new coverage overlaps the old, then carries on at "
+      + "LOW speed until you change it."
+    : "Hold the run where it is. The prop stops; the boat is set by wind and stream while it "
+      + "waits, and this button becomes RESUME.";
   $("#b_stop").disabled = !(run==="running" || run==="paused");
   $("#b_rth").disabled = !canCommand(s) || !s.home;
   $("#b_hold").disabled = !canCommand(s);
@@ -8554,14 +8736,16 @@ function updateMissionCard(){
       // Against the ROLE the boat is in, not against one setting - during a turn the
       // right answer IS the turn speed, and flagging that as a disagreement would train
       // the operator to ignore the one readout that catches a real one.
-      const agrees = (k === (clearance.slowed ? "low" : roleSpeed(speedRole())));
+      const agrees = (k === ((clearance.slowed || resumeSlow) ? "low" : roleSpeed(speedRole())));
       msp.className = "vv" + (agrees ? "" : " warn");
       msp.title = agrees
         ? "The vessel is running to " + k + " (" + (kn != null ? kn.toFixed(1) + " kn" : "?")
           + "), which is what the command bar has selected."
         : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
-          + (clearance.slowed ? "low (safety override)" : roleSpeed(speedRole()) + " for the "
-             + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
+          + (clearance.slowed ? "low (safety override)"
+             : resumeSlow ? "low (held there since the run was resumed; change any speed to release it)"
+             : roleSpeed(speedRole()) + " for the "
+               + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
     }
   }
   // Waypoint progress is the top bar's WPT pill (written in onState) once a plan is

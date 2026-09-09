@@ -1151,6 +1151,39 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.
 
+   **Pause is a toggle, and it flashes until it is answered.** A held run is a boat
+   sitting in the tide with the prop stopped and a hole growing in its coverage, so the
+   one control that ends it says so: while paused the button reads **RESUME** and blinks
+   (a steady amber under `prefers-reduced-motion` — the state is a safety readout, not
+   decoration). Pressing it again resumes; so does Start, which has always been enabled
+   while paused, and both go through the same path so the behaviour cannot depend on which
+   button you reach for.
+
+   **Resuming closes the hole.** A pause is not a freeze: the boat is set by wind and
+   stream while it waits, and picking the plan up from wherever it drifted to would butt
+   two runs of coverage together at an angle with a gap between them. So if the pause
+   happened on a coverage line, the resume rejoins that line **twelve boat lengths behind
+   the point the button was pressed** — 92.5 m on the 7.7 m ASV, 22.8 m on the 1.9 m launch,
+   because what a hull needs to settle and to lay down overlap scales with the hull — and
+   runs forward through it, so the new coverage overlaps the old before it reaches the gap.
+   That is the lead-in's argument answered at a different moment.
+
+   The mark is taken at the **press**, never re-derived (re-reading the position on resume
+   would return the drift). The direction to back up in is read off the route, not assumed,
+   because backing the wrong way would drive the boat into water never surveyed. Backing
+   past the start of the run is clamped to the run. The plan's remainder is **amended**
+   rather than re-uploaded — an upload resets the waypoint index and would re-run the survey
+   from its first line — and the amendment is made while still paused, before the run is
+   released, so the boat never makes way under the old plan. A way back that is not clear
+   gives up the *backtrack*, not the resume, and says so.
+
+   **And the run continues at low speed until you change it** (any of the three role
+   selectors releases it, including selecting `low` yourself). The governor stands down
+   meanwhile, so it cannot re-assert the role's speed in the act of carrying the instruction
+   out; the Intent card and the clearance chip both say the hold is on. A pause off a
+   coverage line — mid-turn, on the approach, between regions — gets the low speed but no
+   backtrack, because there is no line to back down.
+
 **Session recording (for a future playback mode).** Every run is recorded
 automatically to `logs/asv_<timestamp>.jsonl` — one JSON event per line: every
 command / setting / action the console receives (arm, upload, start/pause/stop,
