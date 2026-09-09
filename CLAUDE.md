@@ -55,11 +55,87 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-09 — pause flashes, and resuming closes the hole)
+## ⇒ START HERE (handoff refreshed 2026-09-09 — the guard can hand a stopped survey back)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): PAUSE FLASHES AND TOGGLES, AND RESUMING BACKS DOWN THE LINE.** Andy,
+**NEWEST (this commit): A SURVEY THE CLEARANCE GUARD STOPPED CAN BE HANDED BACK, AT LOW
+SPEED.** Andy, 2026-09-09: *"after a survey is punched out and uploaded, there can be nogo
+violation event that cause a hold and loiter. This should not happens because punch out should
+correct before the run. However, in the event this situation happens, institute a feature
+wherein on resume, the user should be provided an option to force the ASV survey to continue at
+slow speed."*
+
+**TWO THINGS WERE MISSING, AND THE SECOND IS THE EXPENSIVE ONE.** The guard bar's only offer
+was PROCEED, which hands the throttle back to the governor and returns the boat to the SURVEY
+speed — so past a feature the operator can see, the choice on the bar was "full speed" or "no
+survey". And once the HOLD rung has fired it is too late for either: `hold` uploads a
+one-waypoint plan over the survey (`Engine._run_route`), so the vessel's plan IS the hold point
+and `wp_index` counts that. **That rung's own comment said the survey "cannot be resumed ... the
+console's only way back is to re-run from waypoint one". It was right. It is not any more.**
+
+* **`guardHeld`** keeps `{route, idx, mark, kind, clearM}` — captured by `markGuardHeld(c)` in
+  the frame BEFORE the hold command goes out, because afterwards `window._wpIndex` describes the
+  hold. Only for a SURVEY with an unflown remainder; a held Go-To is re-commanded in one click.
+* **The bar outlives the rung.** Once she is station-keeping the ladder reads CLEAR *by
+  construction* — `hold` is only ever reached when the drift-only track is clear, which is the
+  state stopping produces — so the box that named the hazard used to go out within a frame of
+  the survey being stopped, and nothing on screen said the run was over. `renderHeldBar` puts up
+  **SURVEY HELD — LOITERING**, naming what she was stopped off and how many waypoints are
+  unflown, with **RESUME SURVEY AT LOW SPEED** and **LEAVE IT HOLDING** (which asks first).
+* **`guardOverride` has two strengths now**, one record: `.slow` suppresses only the rung that
+  STOPS her, a full PROCEED suppresses the slowing too. Both keep the alarm, the readout, the
+  deviations and the helm, and both lapse the same three ways. `overSlow` in `clearanceGuard`.
+* **`continueAtLow()`** is the same decision taken before the hold, off the live bar.
+* **The low speed is the OPERATOR'S**: `clearance.slowed` is handed back at the moment
+  `resumeSlow` is taken, or the guard's own release restores the survey speed behind them.
+
+**⚠ THE PAUSE BEFORE THE UPLOAD IS THE SAFETY HALF, AND IT IS MEASURED, NOT REASONED.**
+`upload_plan` clears `_holding` and adopts the TRANSIT role's speed while `_running` is still
+true from the hold — so an upload to a station-keeping boat releases her before the Start that
+was meant to. Driven against a real console on 8796, transit set to `high`:
+
+```
+after HOLD                 run=running behav=hold  holding=True  sog=3.00 kn
+4 s after UPLOAD (no pause) run=running behav=hold  holding=False sog=8.91 kn   <- no Start sent
+   PEAK SOG in those 4 s: 8.17 kn, still climbing toward the 14 kn transit setting
+3 s after PAUSE+UPLOAD      run=paused  behav=hold  holding=False sog=0.09 kn
+after speed low + START     run=running behav=survey              sog=3.93 kn
+```
+
+So the order is **pause → upload → speed low → start**, and a refused upload re-issues the
+HOLD rather than leaving her paused and drifting beside the thing she was stopped off.
+
+**AND `legClear` THROWS ON A NULL FRAME**, which `resumeRun` (last commit) was exposed to as
+well: a resume pressed while the keep-out model is rebuilding would have thrown inside the
+handler and the button would have done nothing at all, silently, on a safety path. Both go
+through **`backtrackClear()`** now, and **no model is not a pass** — the console cannot certify
+water it has no chart for, so unknown gives up the backtrack exactly as foul does.
+
+**TEETH: new `tests/guard_resume.js`, 22 checks, 23 mutations, all killed** — GUARDS entry in
+this commit (65 suites, 65 entries). **⚠ THREE SURVIVED THE FIRST SWEEP AND ALL THREE WERE THE
+SAME MISTAKE:** 19 and 20 grepped the function bodies for the banner and the confirmation, so
+`if(false)` in front of each left every string in place and both stayed green — the override
+silent, the remainder discarded unasked. And 16 drove the rungs but not the SAME rung twice: it
+set `guardLevel = "hold"` for the overridden runs, which makes `escalated` false, so those runs
+sent nothing for a reason unconnected to the override and the CONTROL walked through. Its own
+detail line had been printing the evidence from the first run. `tests/track_edge.js` 22 was
+updated deliberately — the slow rung's gate is `overridden && !overSlow` now.
+
+**⚠⚠ WHAT THE LIVE RUN DID AND DID NOT SHOW.** Confirmed against a real console on 8796 with a
+REAL punched plan (14 lines, 1245 waypoints, New Castle ENC): the page loads clean, both offers
+are present and correctly labelled, and the guard bar renders live at the real EDGE and HELM
+rungs with `#gb_low` correctly WITHHELD at both — the "and nowhere else" half of the offer
+contract, in the real DOM. **NOT seen live: the HOLD rung itself**, so neither the SURVEY HELD
+bar nor the resume was watched on the water. Staging a hold needs the buffered edge 30-70 m
+ahead ON THE ROUTE with the drift-only track still clear; at New Castle the deviation rung kept
+answering it first, and a buffer big enough to beat that put the boat inside the buffered zone,
+which is HELM, not hold. **Next session: stage it deliberately** — a small survey in tight water
+with the deviation budget already spent, or a fixture that drives `clearanceGuard` in the page.
+
+---
+
+**BEFORE THAT: PAUSE FLASHES AND TOGGLES, AND RESUMING BACKS DOWN THE LINE.** Andy,
 2026-09-09: *"When a pause happens during survey the pause button should flash until pause
 button selected. Behavior of ASV is to then turn back to the point in the survey line where
 the button push happened, backtrack 12 boat lengths and continue the run at low speed or

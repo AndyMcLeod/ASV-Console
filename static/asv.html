@@ -598,8 +598,10 @@
       <span class="gb-why" id="gb_why"></span>
     </div>
     <div class="gb-row">
+      <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you change the speed yourself. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
       <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
       <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console.">CANCEL OVERRIDE</button>
+      <button class="ctl small" id="gb_drop" style="display:none" title="Leave the boat station-keeping and forget the unflown remainder. The survey would then have to be run again from waypoint one.">LEAVE IT HOLDING</button>
     </div>
   </div>
 
@@ -1330,10 +1332,15 @@ function resumeBackM(){
   const loa = (V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m) || 0;
   return loa > 0 ? RESUME_BACK_LENGTHS * loa : 0;
 }
-// The run was resumed after a pause and is being held at LOW until the operator says
-// otherwise. Same shape as `clearance.slowed` - the governor stands down while it is set -
-// but a different authority: that one is the safety ladder, this one is the operator's own
-// standing instruction, so only the operator ends it.
+// The run is being held at LOW until the operator says otherwise. Same shape as
+// `clearance.slowed` - the governor stands down while it is set - but a different
+// authority: that one is the safety ladder, this one is the operator's own standing
+// instruction, so only the operator ends it.
+//
+// SET BY BOTH CAUTIOUS RESUMES: after a pause (resumeRun) and after the clearance guard
+// stopped or nearly stopped the survey (continueAtLow, resumeHeldSurvey). One flag, because
+// it is one instruction - "carry on slowly until I say otherwise" - and a second one would
+// be a second thing setRoleSpeed had to remember to release.
 let resumeSlow = false;
 
 function updateClearance(){
@@ -1396,12 +1403,22 @@ function updateClearance(){
  */
 function renderGuardBar(a, c){
   const bar = $("#guardBar"); if(!bar) return;
+  // ⚠ A STOPPED SURVEY IS THE GUARD STILL INTERVENING, and the bar used to go out on it.
+  // Once the boat is station-keeping the ladder reads CLEAR by construction - the hold rung
+  // is only ever reached when the drift-only track is clear, which is the state taking the
+  // way off produces - so the box that named the hazard and the box that offers the way on
+  // both vanished within a frame of the survey being stopped, leaving nothing on screen to
+  // say the run was over. The offer outlives the rung that caused it.
+  const held = guardHeldOffer();
+  if(held) return renderHeldBar(bar, held);
   if(!a || a.level === "clear"){ bar.style.display = "none"; return; }
   const over = !!guardOverride;
+  const slow = over && !!guardOverride.slow;
   bar.className = "guardbar" + (over ? " over" : (a.level === "edge" ? " edge"
                                 : (a.level === "helm" ? " helm" : "")));
   bar.style.display = "block";
-  $("#gb_rung").textContent = over ? "PROCEEDING — OPERATOR'S AUTHORITY"
+  $("#gb_rung").textContent = over ? (slow ? "CONTINUING AT LOW — OPERATOR'S AUTHORITY"
+                                           : "PROCEEDING — OPERATOR'S AUTHORITY")
                                    : "⚠ " + a.level.toUpperCase();
   const off = (c && c.m != null) ? c.m.toFixed(1) + " m off " + (c.kind || "a keep-out") : "";
   $("#gb_why").textContent = (off ? off + " · " : "") + (a.why || "");
@@ -1409,8 +1426,36 @@ function renderGuardBar(a, c){
   // stopping the boat is a decision with no consequence, and offering it there teaches the
   // operator to press it out of habit before the one that matters.
   const offerable = (a.level === "slow" || a.level === "hold") && !!(S && S.armed && !S.estop);
+  $("#gb_low").textContent = "CONTINUE AT LOW SPEED";
+  $("#gb_low").style.display     = (!over && offerable) ? "" : "none";
   $("#gb_proceed").style.display = (!over && offerable) ? "" : "none";
   $("#gb_cancel").style.display  = over ? "" : "none";
+  $("#gb_drop").style.display    = "none";
+}
+/**
+ * THE BAR AFTER THE SURVEY HAS ALREADY BEEN STOPPED. Same box, because it is the same
+ * situation one step later, and the operator should not have to find a different control on
+ * a different card to answer it.
+ *
+ * It says the two things they need to decide with: WHAT the console stopped them off, and
+ * HOW MUCH SURVEY is still sitting unflown. A bar that only said "holding" would be asking
+ * them to choose between re-running the lot and abandoning it without telling them which.
+ */
+function renderHeldBar(bar, g){
+  const left = Math.max(0, g.route.length - g.idx);
+  bar.className = "guardbar";      // amber: the console has intervened and is waiting for an answer
+  bar.style.display = "block";
+  $("#gb_rung").textContent = "SURVEY HELD — LOITERING";
+  $("#gb_why").textContent =
+    "the console stopped the survey"
+    + (g.clearM != null ? " " + g.clearM.toFixed(1) + " m off " + (g.kind || "a keep-out") : "")
+    + " and is station-keeping · " + left + " waypoint" + (left === 1 ? "" : "s")
+    + " unflown" + (g.mark ? ", on line " + (g.mark.line + 1) : "");
+  $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
+  $("#gb_low").style.display     = "";
+  $("#gb_proceed").style.display = "none";
+  $("#gb_cancel").style.display  = "none";
+  $("#gb_drop").style.display    = "";
 }
 
 /**
@@ -1457,8 +1502,56 @@ const EDGE_REASSESS_MS = 2000;
 let guardEdgeAt = 0, edgeSpentM = 0, edgeCount = 0;
 // THE OPERATOR'S "PROCEED". Not a switch and not a mode - a record of one decision, taken
 // while looking at one situation, and it lapses on its own three ways (see guardOverrideOk).
-// {t, level, clearM}
+// {t, level, clearM, slow}. `slow` is the CAUTIOUS half of it: the console stops stopping
+// the boat but keeps it at low speed, which is the answer an operator actually wants beside
+// a charted feature they can see - see continueAtLow.
 let guardOverride = null;
+/**
+ * THE SURVEY THE GUARD STOPPED, kept so it can be handed back.
+ *
+ * Andy, 2026-09-09: *"after a survey is punched out and uploaded, there can be nogo
+ * violation event that cause a hold and loiter. This should not happens because punch out
+ * should correct before the run. However, in the event this situation happens, institute a
+ * feature wherein on resume, the user should be provided an option to force the ASV survey
+ * to continue at slow speed."*
+ *
+ * ⚠ THE HOLD DESTROYS THE PLAN ON THE VESSEL, which is why anything has to be kept at all.
+ * `hold` is a one-waypoint route uploaded over the survey (Engine._run_route), so the moment
+ * it lands the boat's plan IS the hold point: `wp_index` is 0 of 1 and the survey's unflown
+ * remainder exists nowhere but this console. The rung's own comment used to say the survey
+ * "cannot be resumed ... the console's only way back is to re-run from waypoint one", and
+ * that was true. This is the record that makes it untrue.
+ *
+ * Captured BEFORE the hold command goes out, for the same reason the pause mark is taken at
+ * the press: afterwards `window._wpIndex` describes the hold, not the survey.
+ * {route, idx, mark, at, kind, clearM, t}
+ */
+let guardHeld = null;
+function markGuardHeld(c){
+  guardHeld = null;
+  if(!(S && S.behavior === "survey") || !runRoute || !runRoute.length) return;
+  const idx = Math.min(window._wpIndex || 0, runRoute.length);
+  if(idx >= runRoute.length) return;      // nothing unflown: there is no survey left to offer
+  guardHeld = {route: runRoute.slice(), idx, mark: lineMark(),
+               at: asv ? {lat: asv.lat, lon: asv.lon} : null,
+               kind: (c && c.kind) || null, clearM: (c && c.m != null) ? c.m : null,
+               t: Date.now()};
+}
+/**
+ * Is that record still about the boat in front of the operator?
+ *
+ * ⚠ DERIVED, NOT REMEMBERED IN SIX PLACES. Stop, Start, Upload, RTH, Go-To, a spawn and the
+ * guard's own escape all change `run`, `behavior` or `holding`, so every one of them clears
+ * this offer by simply not matching - rather than by each remembering to. The one case the
+ * state cannot tell apart is the operator's OWN Hold button, which looks identical from
+ * here, so that button clears it by name.
+ */
+function guardHeldOffer(){
+  if(!guardHeld) return null;
+  const st = (S && S.status) || {};
+  if(!(S && S.run === "running" && S.behavior === "hold" && st.holding)){ guardHeld = null; return null; }
+  return (S.armed && !S.estop) ? guardHeld : null;
+}
 /**
  * Is the operator's override still good for what is in front of the boat NOW?
  *
@@ -1588,6 +1681,10 @@ function clearanceGuard(){
   setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
   guardLevel = a.level;
   const overridden = guardOverrideOk(a.level, c.m);
+  // TWO OVERRIDES, ONE RECORD. A full PROCEED suppresses both rungs that impede the boat; a
+  // CONTINUE AT LOW suppresses only the one that STOPS it, because "keep surveying, slowly"
+  // is not "keep surveying at survey speed" and the console should not read it as such.
+  const overSlow = overridden && !!guardOverride.slow;
   renderGuardBar(a, c);
   if(!act) return c;                       // the operator has it; alarm, do not fight
 
@@ -1641,7 +1738,7 @@ function clearanceGuard(){
   // ── RUNG 2: SLOW. Buys time and shortens the stopping distance. ───────────────────
   if(a.level === "slow"){
     if(settling) return c;                 // a deviation is in flight; it answers this
-    if(overridden) return c;               // the operator has said proceed; keep the speed
+    if(overridden && !overSlow) return c;  // a full PROCEED keeps the speed; a low one does not
     if(!clearance.slowed && roleSpeed(speedRole()) !== "low"){
       clearance.slowed = true;
       cmd("/api/cmd/speed", {speed:"low"});
@@ -1661,11 +1758,18 @@ function clearanceGuard(){
     if(overridden) return c;               // the operator has said proceed; do not stop them
     if(escalated){
       guardActedAt = Date.now();
+      // ⚠ KEEP THE SURVEY BEFORE THE HOLD REPLACES IT. One line, and it is the difference
+      // between an operator resuming the remainder and re-running the whole survey: the
+      // hold uploads a one-waypoint plan over theirs, and after that `window._wpIndex`
+      // counts the hold, not the survey.
+      markGuardHeld(c);
       // Told how much water it has here, so a boat set off THIS hold point does not drive
       // a blind bearing back towards the very feature it was holding off.
       cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
-                + "Drift alone stays clear, so taking the way off answers it.");
+                + "Drift alone stays clear, so taking the way off answers it."
+                + (guardHeld ? " The survey is kept: RESUME AT LOW SPEED on the guard bar."
+                             : ""));
     }
     return c;
   }
@@ -7189,7 +7293,7 @@ function setRoleSpeed(role, v){
   // taking the speed back, so the hold lapses and the governor re-asserts on the next frame
   // — including when they select "low" itself, which is them owning the choice rather than
   // inheriting it.
-  if(resumeSlow){ resumeSlow = false; flashNote("Speed released — the post-pause low-speed hold is over."); }
+  if(resumeSlow){ resumeSlow = false; flashNote("Speed released — the low-speed hold is over."); }
   updateSpeedNote();
   // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
   // speed moving moves it. The note is what tells the operator their 20 s just became a
@@ -8123,21 +8227,29 @@ $("#b_start").onclick = async ()=>{
   cmd("/api/cmd/start");
 };
 
-/** Where the boat was on its line at the instant Pause was pressed, or null. */
-function markPause(){
-  pauseMark = null;
+/**
+ * WHERE THE BOAT IS ON ITS COVERAGE LINE AT THIS INSTANT, or null when it is not on one.
+ *
+ * ⚠ ONE FUNCTION, TWO CALLERS, AND THAT IS DELIBERATE. The operator's Pause takes this mark
+ * and so does the clearance guard's HOLD, because both stop a survey mid-line and both are
+ * resumed by backing down that line. A second copy of the direction test below would be a
+ * copy that no mutation has ever been run against.
+ */
+function lineMark(){
   const L = (mission.lines || [])[runLineIdx];
-  if(!(S && S.behavior === "survey") || runLineIdx < 0 || !L || !asv) return;
-  const len = distTo(L.a, L.b); if(!(len > 0)) return;
+  if(!(S && S.behavior === "survey") || runLineIdx < 0 || !L || !asv) return null;
+  const len = distTo(L.a, L.b); if(!(len > 0)) return null;
   // Which way along a→b is the boat going? The committed order is a→b, but a plan edited in
   // WPT mode need not be, so it is read off the waypoint the boat is steering for rather
   // than assumed. Getting this backwards would back the boat up into UNsurveyed water.
   const rr = (runRoute && runRoute.length) ? runRoute : (mission.waypoints || []);
   const next = rr[Math.min(window._wpIndex || 0, rr.length - 1)];
   const fwd = (next && distTo(next, L.b) <= distTo(next, L.a)) ? 1 : -1;
-  pauseMark = {line: runLineIdx, along: alongLineM(L, asv), fwd,
-               at: {lat: asv.lat, lon: asv.lon}, t: Date.now()};
+  return {line: runLineIdx, along: alongLineM(L, asv), fwd,
+          at: {lat: asv.lat, lon: asv.lon}, t: Date.now()};
 }
+/** Where the boat was on its line at the instant Pause was pressed, or null. */
+function markPause(){ pauseMark = lineMark(); }
 
 /**
  * Where a resumed run rejoins line `L`: `backM` metres back down it from the mark, on the
@@ -8155,6 +8267,21 @@ function resumePointOn(L, mark, backM){
   const s = Math.max(0, Math.min(len, mark.along - mark.fwd * backM));
   const t = s / len;
   return {lat: L.a.lat + (L.b.lat - L.a.lat)*t, lon: L.a.lon + (L.b.lon - L.a.lon)*t};
+}
+
+/**
+ * IS THE WAY BACK CLEAR? Both resumes ask, and neither may ask `legClear` directly.
+ *
+ * ⚠ NO MODEL IS NOT A PASS, AND legClear THROWS ON ONE. It dereferences the frame in its
+ * first line, so a resume pressed while the keep-out model is being rebuilt - a port change,
+ * a fresh extract - would throw inside the handler and the button would do nothing at all,
+ * silently, on a safety path. And the honest answer where there is no model is not "clear":
+ * the console cannot certify water it has no chart for, and a resume is not the moment to
+ * start assuming. Unknown gives up the backtrack, exactly as foul does.
+ */
+function backtrackClear(from, to){
+  if(!nogo.ready || !nogo.frame || !nogo.ko) return false;
+  return legClear(from, to, nogo.frame, nogo.ko, nogo.buffer);
 }
 
 /**
@@ -8180,7 +8307,7 @@ async function resumeRun(){
     // anything else here is held to, and the boat is not where it was when it left that
     // water. A foul leg gives up the backtrack rather than the resume.
     const from = asv ? {lat: asv.lat, lon: asv.lon} : pauseMark.at;
-    if(legClear(from, to, nogo.frame, nogo.ko, nogo.buffer)){
+    if(backtrackClear(from, to)){
       const tail = [to, ...rr.slice(idx)];
       const r = await cmd("/api/cmd/amend", {route: tail,
         note: "Resuming the survey " + fmtDist(backedM) + " back down line "
@@ -8192,8 +8319,10 @@ async function resumeRun(){
              + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
       }
     } else {
-      note = "the way back down line " + (pauseMark.line + 1)
-           + " is not clear — resumed where it lay, WITHOUT the backtrack";
+      note = (nogo.ready && nogo.frame && nogo.ko
+              ? "the way back down line " + (pauseMark.line + 1) + " is not clear"
+              : "the keep-out model is not loaded, so the way back could not be certified")
+           + " — resumed where it lay, WITHOUT the backtrack";
       backedM = 0;
     }
   } else if(!L){
@@ -8262,7 +8391,170 @@ $("#gb_cancel").onclick = ()=>{
   flashNote("Override cancelled — the console has the situation again.");
   renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
 };
-$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
+
+/**
+ * CONTINUE AT LOW SPEED — the cautious half of PROCEED, and the one Andy asked for.
+ *
+ * Andy, 2026-09-09: *"the user should be provided an option to force the ASV survey to
+ * continue at slow speed"*.
+ *
+ * PROCEED hands the throttle straight back to the governor, which re-asserts the SURVEY
+ * speed - and an operator looking at a charted feature forty metres away, deciding they can
+ * see it and want to keep surveying, has not decided to go past it at seven knots. That was
+ * the only offer on the bar, so the choice was full speed or a stopped survey.
+ *
+ * ⚠ IT SUPPRESSES THE STOP, NOT THE SLOWING. The console keeps alarming, keeps reading out
+ * the clearance, keeps deviating where there is water, still takes the helm in extremis, and
+ * the override still lapses the same three ways (guardOverrideOk). What it stops doing is
+ * ending the survey.
+ *
+ * ⚠ AND THE LOW IS THE OPERATOR'S, NOT THE GUARD'S, which is why `clearance.slowed` is
+ * handed back at the same moment `resumeSlow` is taken. Left set, the guard's own release
+ * would restore the survey speed the moment the water read clear - undoing the instruction
+ * without the operator touching anything. This one ends only where they end it.
+ */
+function continueAtLow(){
+  const c = clearance || {};
+  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null, slow: true};
+  clearance.slowed = false;                 // the throttle passes from the ladder to the operator
+  resumeSlow = true; commandedSpeed = null;
+  cmd("/api/cmd/speed", {speed: "low"});
+  logGuardLow("slow_continue", c.m, c.kind, null);
+  if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE at "
+    + (c.m != null ? c.m.toFixed(1) + " m" : "unknown range") + " from " + (c.kind || "a keep-out")
+    + " — CONTINUING AT LOW SPEED on the operator's assessment; the console has stopped "
+    + "holding the boat for this situation but still alarms, still deviates where the water "
+    + "allows, and still takes the helm in extremis"});
+  showBanner("CONTINUING AT LOW SPEED ON THE OPERATOR'S AUTHORITY — the survey carries on at "
+    + "the low speed and the console will not stop it for this situation. It is still "
+    + "watching, will still deviate where there is water, and still takes the helm in "
+    + "extremis. The speed stays low until you change it. Recorded in the session log.");
+  renderGuardBar({level: guardOverride.level, why: c.why}, c);
+  updateMissionCard();
+}
+
+/**
+ * RESUME SURVEY AT LOW SPEED — the same decision, taken one step too late.
+ *
+ * The hold has already landed and the vessel's plan IS the hold point, so this cannot be an
+ * amendment the way the pause resume is: the remainder has to be uploaded as a plan of its
+ * own and started. Everything else is the pause resume, deliberately - twelve boat lengths
+ * back down the line she was on, the way back checked against the chart, and low until the
+ * operator says otherwise. One resume behaviour, reached two ways.
+ *
+ * ⚠ THE PAUSE COMES FIRST, AND IT IS NOT TIDINESS. `upload_plan` clears `_holding` and sets
+ * the speed to the TRANSIT role, while `_running` is still true from the hold - so an upload
+ * to a station-keeping boat releases it, at the transit speed, toward the first waypoint of
+ * the tail, before the Start that was supposed to release it is ever sent. Pausing first
+ * takes the way off for the length of the exchange; Start clears it. This is the same
+ * argument as the pause resume amending while still paused, from the other side.
+ *
+ * ⚠ AND THE OVERRIDE IS RECORDED BEFORE THE FIRST COMMAND GOES OUT. The hazard has not moved
+ * and the guard runs on every telemetry frame; without it the boat is stopped again inside a
+ * second, and the button reads as broken rather than as refused.
+ */
+async function resumeHeldSurvey(){
+  const g = guardHeldOffer(); if(!g) return;
+  const back = resumeBackM();
+  const L = g.mark ? (mission.lines || [])[g.mark.line] : null;
+  const tail = g.route.slice(g.idx);
+  let note = null, backedM = 0;
+  const to = (L && back > 0) ? resumePointOn(L, g.mark, back) : null;
+  if(to){
+    // The same check the pause resume makes, for the same reason - except that here the
+    // console already knows something ahead is foul, so "she has just surveyed it" is worth
+    // even less than usual as an argument.
+    const from = asv ? {lat: asv.lat, lon: asv.lon} : g.at;
+    if(backtrackClear(from, to)){
+      backedM = distTo(to, g.mark.at);
+      tail.unshift(to);
+      note = "backed up " + fmtDist(backedM) + " down line " + (g.mark.line + 1)
+           + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
+    } else {
+      note = (nogo.ready && nogo.frame && nogo.ko
+              ? "the way back down line " + (g.mark.line + 1) + " is not clear"
+              : "the keep-out model is not loaded, so the way back could not be certified")
+           + " — carried on from here, WITHOUT the backtrack";
+    }
+  } else if(!L){
+    note = "it was not on a coverage line when the console stopped it, so there was nothing "
+         + "to back down";
+  }
+  guardOverride = {t: Date.now(), level: "hold", clearM: g.clearM, slow: true};
+  clearance.slowed = false;
+  resumeSlow = true; commandedSpeed = null;
+  await cmd("/api/cmd/pause");
+  const up = await cmd("/api/cmd/upload",
+                       {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1])});
+  if(up && up.error){
+    // ⚠ PUT HER BACK ON STATION. She is paused beside the very feature the console stopped
+    // her off, and a paused boat does not station-keep - it drifts. The offer stays up.
+    guardOverride = null; resumeSlow = false;
+    await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
+    showBanner("⚠ COULD NOT RESUME THE SURVEY — " + up.error + ". The boat is station-keeping "
+      + "again and the remainder is still held; try again, or Stop and re-plan.");
+    render(); return;
+  }
+  // The drawn route is the plan the vessel is flying, indexed by the same `wp_index` - the
+  // upload restarted that index at zero, so the route it counts into has to be the tail.
+  runRoute = tail; runUnsafe = [];
+  if(planIntent) planIntent.route = tail.length;
+  await cmd("/api/cmd/speed", {speed: "low"});
+  await cmd("/api/cmd/start");
+  const left = tail.length;
+  guardHeld = null;
+  flashNote("Survey resumed at LOW — " + (note || "carrying on") + ". Speed stays low until "
+            + "you change it.");
+  logGuardLow("held_resume", g.clearM, g.kind, {backed_m: Math.round(backedM),
+              line: g.mark ? g.mark.line + 1 : null, waypoints: left, note});
+  if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE after a guard HOLD at "
+    + (g.clearM != null ? g.clearM.toFixed(1) + " m" : "unknown range") + " from "
+    + (g.kind || "a keep-out") + " — the survey's remaining " + left + " waypoint"
+    + (left === 1 ? "" : "s") + " were re-uploaded and RESUMED AT LOW SPEED (" + (note || "carrying on")
+    + "); the console will not stop the boat for this situation but still alarms, still "
+    + "deviates where the water allows, and still takes the helm in extremis"});
+  showBanner("SURVEY RESUMED AT LOW SPEED ON THE OPERATOR'S AUTHORITY — " + left
+    + " waypoint" + (left === 1 ? "" : "s") + " to fly, " + (note || "carrying on")
+    + ". The console will not stop the boat for this situation; it is still watching, will "
+    + "still deviate where there is water, and still takes the helm in extremis. Recorded in "
+    + "the session log.");
+  updateMissionCard(); render();
+}
+
+// An operator overriding a safety intervention goes in the recording, both ways round, or
+// the run cannot be read afterwards. Same event shape as the full PROCEED's.
+function logGuardLow(how, clearM, kindName, extra){
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"guard_low", data:{how: how, clearance_m: clearM,
+      kind_: kindName || null, buffer_m: nogo.buffer || null,
+      boat_lengths: RESUME_BACK_LENGTHS, ...(extra||{})}})}).catch(()=>{});
+}
+
+// ONE BUTTON, TWO MOMENTS. Before the hold it keeps the survey going; after it, it gives the
+// survey back. The operator is answering the same question either way, so it is the same
+// control in the same place, and only its label changes.
+$("#gb_low").onclick = ()=>{
+  if(guardHeldOffer()) return resumeHeldSurvey();
+  continueAtLow();
+};
+// ⚠ SAYS WHAT IT COSTS. Dropping the remainder is not "dismiss": the plan is gone from the
+// vessel, so the survey would have to be run again from waypoint one.
+async function dropHeldSurvey(){
+  const g = guardHeldOffer(); if(!g) return;
+  const left = Math.max(0, g.route.length - g.idx);
+  if(!await guiConfirm("Leave the boat holding",
+      "The " + left + " unflown waypoint(s) of this survey are forgotten. The boat keeps "
+      + "station-keeping where it is; to survey them you would re-plan and run again from "
+      + "waypoint one.")) return;
+  guardHeld = null;
+  flashNote("Held survey dropped — the boat is still station-keeping.");
+  renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
+}
+$("#gb_drop").onclick = dropHeldSurvey;
+// The operator holding the boat themselves REPLACES the guard's hold, and looks identical
+// from guardHeldOffer() - same run, same behavior, same holding flag - so this is the one
+// place that has to say so by name. It also drops the drawn route, which is the remainder.
+$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; guardHeld=null; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 $("#b_estop").onclick = async ()=>{
   const on = !S.estop;

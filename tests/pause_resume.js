@@ -118,12 +118,16 @@ globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({}) });
 // a stub would make it a test of the stub. `nogo` is swapped between an empty model and a
 // blocking one to drive both branches.
 const { legClear, buildKeepouts } = require("../static/js/chart.js");
-var nogo = { frame: null, ko: { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
+var nogo = { ready: true, frame: null, ko: { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
 
 // eslint-disable-next-line no-eval
 eval([
   grabDecl("RESUME_BACK_LENGTHS"),
-  grab("resumeBackM"), grab("alongLineM"), grab("markPause"), grab("resumePointOn"),
+  // markPause DELEGATES to lineMark, which the clearance guard's hold takes as well
+  // (tests/guard_resume.js) - one implementation of "which line, how far along, which way",
+  // because a second copy is a copy no mutation has ever been run against.
+  grab("resumeBackM"), grab("alongLineM"), grab("lineMark"), grab("markPause"),
+  grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
@@ -283,7 +287,7 @@ async function drive(ko) {
   runRoute = [LINE_E.a, LINE_E.b, ll(400, 60), ll(0, 60)];   // line 1, then the next line
   window._wpIndex = 1;                                        // steering for LINE_E.b
   asv = ll(150, 0);
-  nogo = { frame: ref, ko: ko || { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
+  nogo = { ready: true, frame: ref, ko: ko || { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
   tryMark();
   sent = []; notes = []; planIntent = { why: [] }; __setResumeSlow(false);
   await resumeRun();

@@ -435,15 +435,24 @@ check("21. PROCEED NEVER COVERS THE HELM — it lapses the moment stopping stops
       () => /level === "clear" \|\| level === "helm"/.test(OVR)
             && /guardOverride = null; return false;/.test(OVR),
       "\"keep going\" was never an answer to \"the water is carrying you in\"");
+// ⚠ THE SLOW RUNG'S GATE IS NO LONGER A BARE `overridden`, AND THAT IS DELIBERATE (Andy,
+// 2026-09-09, "force the ASV survey to continue at slow speed"). There are two strengths of
+// the same record now: a full PROCEED suppresses both rungs that impede the boat, while a
+// CONTINUE AT LOW suppresses only the one that STOPS it - keep surveying slowly is not keep
+// surveying at survey speed. What has NOT changed is the half this check exists for: neither
+// strength goes anywhere near the deviation or the helm, so those two rungs carry no
+// override gate at all. tests/guard_resume.js 16 DRIVES both strengths against both rungs.
 check("22. ... and it never suppresses a DEVIATION, which is the forward progress it is " +
       "asking for",
       () => R_EDGE.length > 500 && R_SLOW.length > 200 && R_HOLD.length > 200
             && R_HELM.length > 200
-            && !/if\(overridden\)/.test(R_EDGE)
-            && !/if\(overridden\)/.test(R_HELM)
-            && /if\(overridden\) return c;/.test(R_SLOW)
+            && !/if\(overridden/.test(R_EDGE)
+            && !/if\(overridden/.test(R_HELM)
+            && /if\(overridden && !overSlow\) return c;/.test(R_SLOW)
             && /if\(overridden\) return c;/.test(R_HOLD),
-      "suppressing the deviation would make PROCEED strictly worse than not pressing it");
+      "suppressing the deviation would make PROCEED strictly worse than not pressing it - " +
+      "and the slow rung has to tell the two strengths of the override apart, or \"carry " +
+      "on slowly\" is read as \"carry on at the survey speed\"");
 check("23. it is ONE DECISION ABOUT ONE SITUATION — a new commanded motion clears it, so " +
       "it can never become a standing permission",
       () => {

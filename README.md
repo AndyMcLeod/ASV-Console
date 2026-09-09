@@ -873,6 +873,45 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    a keep-out within the look-ahead, the console **refuses** and says TAKE MANUAL CONTROL,
    rather than offering a confident-looking direction that still ends at the pier.
 
+   **The guard's own bar, and the two ways past it.** While the guard is intervening, the
+   rung, the reason, the clearance and the operator's way through it all sit in one box on
+   the chart — a sentence that scrolls past, with the control it refers to somewhere else on
+   the page, is how a survey ends up power-cycled. It offers two answers, and only at the
+   two rungs that actually impede the boat:
+
+   - **CONTINUE AT LOW SPEED** — keep surveying, slowly. The console stops *stopping* the
+     boat for this situation and holds it at the low speed until you change the speed
+     yourself.
+   - **PROCEED — I have assessed it** — the same, at the speed the run's role calls for.
+
+   Neither one switches the guard off. Both keep the alarm, the clearance readout, the
+   deviations where there is water, and the helm in extremis; both are recorded in the
+   session log as an operator override; and both lapse on their own three ways — the episode
+   ends, it goes in extremis (*"keep going"* was never an answer to *"the water is carrying
+   you in"*), or the water gets materially worse than the water you looked at.
+
+   **If the guard has already stopped the survey, the bar hands it back.** A `hold` uploads
+   a one-waypoint plan over the running plan, so the moment it lands the vessel's plan *is*
+   the hold point and the unflown remainder exists nowhere but the console — which is why
+   the console keeps it, in the frame before the hold command goes out. And because the
+   `hold` rung is only ever reached when the drift-only track is *clear*, a station-keeping
+   boat reads clear, so the box that named the hazard used to go out within a frame of the
+   survey being stopped and nothing on screen said the run was over. It now stays up as
+   **SURVEY HELD — LOITERING**, naming what the boat was stopped off and how many waypoints
+   are unflown, with **RESUME SURVEY AT LOW SPEED** and **LEAVE IT HOLDING** (which asks
+   first, because the remainder really is gone after it).
+
+   Resuming re-uploads the remainder and starts it, **pausing first** — an upload clears the
+   holding state and adopts the *transit* role's speed while the run is still live, so an
+   upload sent to a station-keeping boat releases it at the fastest speed on the card before
+   the Start that was meant to release it is ever sent. Measured in the simulator: 3.0 kn
+   station-keeping → **8.2 kn within four seconds** of the upload, still climbing toward the
+   14 kn transit setting, with no Start command sent. Paused first, the same exchange holds
+   her at 0.08 kn until the Start. Everything after that is the pause resume: twelve boat
+   lengths back down the line, the way back checked against the chart (and *"no chart"* is
+   not *"clear"*), the backtrack — never the resume — given up when that water is foul, and
+   low speed until you change it.
+
    **The banner NAMES what refused each one** — blocked by a keep-out, more than 15° off
    a true reversal, line ends too close together, or a fold an obstacle forced on a
    detour — because a loop exists at *any* spacing, so a shortfall of turning radius is
@@ -1183,6 +1222,11 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    out; the Intent card and the clearance chip both say the hold is on. A pause off a
    coverage line — mid-turn, on the approach, between regions — gets the low speed but no
    backtrack, because there is no line to back down.
+
+   **The clearance guard has the same resume.** If the guard STOPS a survey rather than the
+   operator, the guard's own bar keeps the unflown remainder and offers **RESUME SURVEY AT
+   LOW SPEED**, which goes back down the line exactly as this one does - see the clearance
+   guard's ladder above. Pause is the operator's hole; that one is the console's.
 
 **Session recording (for a future playback mode).** Every run is recorded
 automatically to `logs/asv_<timestamp>.jsonl` — one JSON event per line: every
