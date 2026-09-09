@@ -20,6 +20,7 @@
   },
   "maneuvering": {
     "max_turn_rate_deg_s": 60,
+    "steering_settle_s": 1.5,
     "approach_m": 1.0,
     "lookahead_m": 3.0,
     "arrival_radius_m": 2.0

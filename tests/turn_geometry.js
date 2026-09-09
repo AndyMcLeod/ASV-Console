@@ -534,5 +534,197 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         + " m off E — 0.00 there is the duplicate waypoint the un-thresholded guard pushed");
 }
 
+// ── 37-43. THE EASED REVERSAL: clothoid - arc - clothoid ──────────────────────────
+// Andy, 2026-09-08: "build the clothoid version too."
+//
+// Every other shape here steps its curvature from 0 to 1/R the instant the vessel leaves
+// the line - an infinite rudder rate, which the hull answers by overshooting and settling.
+// This one ramps: curvature rises linearly over a spiral of length Ls, holds through a
+// circular core, and ramps back, so the helm rate is constant and finite and the boat rolls
+// out onto the next line already straight.
+//
+// TEETH - 19 mutations, 17 killed, 2026-09-08 (core_turns.js and turns.js have no
+// ASV_HTML override, so those were applied to COPIES restored in a `finally`):
+//   the entry ramp is a step / the exit ramp never comes off   -> 37, 39
+//   the core is not shortened for what the spirals turned      -> 37, 39, 43
+//   the seed is never refined against the integrated crossing  -> 39
+//   the spirals are sampled at the ordinary arc step           -> 38, 39
+//   a trailing waypoint lands on F again                       -> 39b
+//   the hull's floor stops refusing / a NaN radius is built    -> 42, 43
+//   easing REPLACES the plain arc rather than sitting above it -> 43, 43b
+//   an eased refusal becomes the reason the operator is shown  -> 43b
+//
+// ⚠ TWO SURVIVED AND BOTH ARE INERT, WHICH IS WORTH MORE HERE THAN A KILL. Deleting the
+// spiral term from the discriminant, and dropping the halving so the seed comes out at
+// TWICE the right radius, both still converge to the same R: the three Newton steps do
+// the work and the closed form only saves iterations. That is a real property of the
+// code, and it is now written into core_turns.js's header — where it corrects a comment
+// of mine that had claimed R "comes from a closed form, not a search". The mutation run
+// is what established it; reading the code had not.
+//
+// ⚠ AND THE CONTROL MUTATION CRASHED THE SUITE BEFORE THIS BLOCK WAS TOTAL. Making the
+// shape always refuse turned check 37 red exactly as intended, and then check 38's DETAIL
+// string read `es.pts.length` on a refusal and threw — losing every check after it, which
+// the runner scores as SURVIVED. This suite evaluates details eagerly, so a detail has to
+// be as total as its condition; see `nPts` and `kappaSteps`.
+//
+// The properties below are the ones that make this that curve and not a differently-drawn
+// arc.
+{
+  const { spiralTurn } = require("../static/js/turns.js");
+  const refS = planeFrame({ lat: 43.07, lon: -70.76 });
+  const llS = (e, n) => fromEN(e, n, refS);
+  const koS = { polys: [], lines: [], points: [], marks: [] };
+  const D = 40, MINR2 = 8.3, LS = 8;
+  const ease = (Ls, along, d, minR) =>
+    spiralTurn(llS(0, 0), llS(along || 0, d || D), 90, 270, refS, koS, 1, minR ?? MINR2, 400, Ls);
+
+  // Discrete curvature at each interior vertex of a polyline, in the local EN frame, and
+  // the largest STEP between neighbouring vertices. The straights either side are included
+  // deliberately: the line -> turn junction is where a plain arc's discontinuity lives.
+  // ⚠ TOTAL. A mutation that makes the shape REFUSE hands this a {why:...} with no `pts`,
+  // and a bare spread would throw — killing the run before a single FAIL line printed,
+  // which scores as SURVIVED. The control mutation in the sweep did exactly that.
+  const kappaSteps = (r, along) => {
+    if (!r || !r.pts) return Infinity;                 // no shape = no smoothness to claim
+    const pts = [llS(-8, 0), llS(-4, 0), ...r.pts, llS((along || 0) - 4, D), llS((along || 0) - 8, D)]
+      .map(p => { const e = llEN(p.lat, p.lon, refS); return [e.e, e.n]; });
+    const k = [];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [x1, y1] = pts[i - 1], [x2, y2] = pts[i], [x3, y3] = pts[i + 1];
+      const A = Math.hypot(x2 - x1, y2 - y1), B = Math.hypot(x3 - x2, y3 - y2), C = Math.hypot(x3 - x1, y3 - y1);
+      const ar = Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1));
+      k.push(A * B * C > 0 ? (2 * ar) / (A * B * C) : 0);
+    }
+    let m = 0; for (let i = 1; i < k.length; i++) m = Math.max(m, Math.abs(k[i] - k[i - 1]));
+    return m;
+  };
+
+  const es = ease(LS, 0), plain = teardropTurn(llS(0, 0), llS(0, D), 90, 270, refS, koS, 1, MINR2, 400);
+  const kE = kappaSteps(es, 0), kP = kappaSteps(plain, 0);
+  check("37. the eased turn's curvature CHANGES more gently than the plain arc's",
+        !!es.pts && kE < kP,
+        "worst curvature step between waypoints: eased " + kE.toFixed(4) + " /m against the "
+        + "arc's " + kP.toFixed(4) + " /m — " + (kP / kE).toFixed(1) + "x. Analytically the arc "
+        + "STEPS 0→" + (1 / 20).toFixed(3) + " (an infinite derivative) while the clothoid is "
+        + "bounded at 1/(R·Ls) = " + (1 / (es.R * LS)).toFixed(5) + "; a polyline can only "
+        + "approach either, so this is what the boat is actually handed");
+
+  // ⚠ AND IT COSTS WAYPOINTS, WHICH IS THE PRICE OF THE ABOVE. A curvature ramp sampled too
+  // coarsely is an arc wearing the word "eased" — 8 chords per spiral is what buys the row
+  // above, and the count is reported to the operator rather than hidden.
+  // ⚠ THE DETAIL IS EVALUATED EAGERLY IN THIS SUITE, so it has to be as total as the
+  // condition. `es.pts.length` in a detail string killed the whole run under the control
+  // mutation — check 37 went red exactly as intended and then nothing after it ran, which
+  // reads as SURVIVED to the mutation runner.
+  const nPts = r => (r && r.pts) ? r.pts.length : 0;
+  check("38. ... and pays for it in waypoints, about double",
+        !!es.pts && nPts(es) > nPts(plain) * 1.5,
+        "eased " + nPts(es) + " waypoints against the plain arc's " + nPts(plain));
+
+  // ⚠ THE ACROSS ERROR OF THE LAST WAYPOINT IS WHAT THE NEWTON SOLVE BUYS, and it is
+  // only visible at a LONG spiral: the closed-form seed is 0.2 mm out at Ls 8 and 23.7 mm
+  // at Ls 25, so a fixture at Ls 8 alone cannot tell a solved radius from a seeded one.
+  const acrossErr = (r) => {
+    if (!r || !r.pts) return Infinity;
+    const p = llEN(r.pts[r.pts.length - 1].lat, r.pts[r.pts.length - 1].lon, refS);
+    return Math.abs(p.n - D);                          // the next line lies at n = D
+  };
+  // ⚠ THE TOLERANCE IS 20 mm AND THE REASON IS SAMPLING, NOT SOLVING. The last waypoint
+  // sits up to one emit step short of the shape's end by construction, and the curve is
+  // still creeping across over that step — so a few millimetres here is the emitter, and
+  // it does not shrink monotonically with Ls (0.02 mm at 8, 2.9 at 16, 0.5 at 20, 9.7 at
+  // 25, following how the length happens to divide by the step). What WOULD dominate it is
+  // a radius left at the closed-form seed: 47 mm at Ls 25, comfortably outside this.
+  const long = ease(25, 0);
+  check("39. it lands ON the next line, at a short spiral AND a long one",
+        !!es.pts && !!long.pts && near(es.R, 19.87, 0.05)
+        && acrossErr(es) < 0.02 && acrossErr(long) < 0.02,
+        "across error of the last waypoint: " + (acrossErr(es) * 1000).toFixed(2)
+        + " mm at Ls 8, " + (acrossErr(long) * 1000).toFixed(2) + " mm at Ls 25 (one emit "
+        + "step of creep); the closed-form seed without the Newton steps would put the "
+        + "second at 47 mm. R " + f1(es.R) + " m");
+
+  // ...and no waypoint may LAND on F. Whether the last emitted point coincides with the
+  // shape's end is an accident of how the length divides by the step: Ls 16 is the case
+  // that did, and the caller appending F on top of it read as a 90 deg join.
+  const dup = (r, along) => !!r.pts && distTo(r.pts[r.pts.length - 1], llS(along || 0, D));
+  check("39b. ... and never ON it, whatever way the length divides by the step",
+        [0.6, 4, 8, 12, 16, 20, 25].every(L => dup(ease(L, 0), 0) > 0.05),
+        "closest last-waypoint approach to the line start across Ls 0.6-25: "
+        + Math.min(...[0.6, 4, 8, 12, 16, 20, 25].map(L => dup(ease(L, 0), 0))).toFixed(3)
+        + " m (Ls 16 is the one that used to land exactly on it)");
+
+  // THE FAMILY IS CONTINUOUS: shrink the spiral and the shape must become the semicircle it
+  // is a generalisation of. That is the strongest single statement that the integration and
+  // the closed form agree with the rest of this file.
+  const tiny = ease(0.6, 0);
+  check("40. as the spiral shrinks it becomes the plain semicircle",
+        !!tiny.pts && near(tiny.R, D / 2, 0.02) && near(tiny.outboard, D / 2, 0.35),
+        "Ls 0.6 m → R " + f1(tiny.R) + " and outboard " + f1(tiny.outboard)
+        + " against the semicircle's " + (D / 2).toFixed(2) + " and " + f1(plain.outboard)
+        + "; at Ls 8 they are R " + f1(es.R) + " and outboard " + f1(es.outboard));
+
+  const off = ease(LS, 25);
+  check("41. the along-track offset is absorbed on the line, exactly as the other shapes",
+        !!off.pts && near(off.outboard, 25 + es.outboard, 0.05),
+        "offset 25 m → outboard " + f1(off.outboard) + " m = 25 + " + f1(es.outboard)
+        + ", so a lead does to this shape precisely what it does to a plain arc");
+
+  // ⚠ EASING DOES NOT MAKE A RADIUS FLYABLE. The eased R is always a little TIGHTER than
+  // the plain semicircle's, because the spirals contribute crossing of their own — so it
+  // has to answer to the hull's floor like everything else, and refuse when it cannot.
+  check("42. it refuses rather than handing over a radius the hull cannot hold",
+        ease(LS, 0, D, 25).why === "tight" && ease(60, 0).why === "tight"
+        && ease(0.2, 0).why === "no-spiral",
+        "minR 25 on a 40 m crossing → " + ease(LS, 0, D, 25).why
+        + "; a 60 m spiral across 40 m → " + ease(60, 0).why
+        + " (no radius spans a crossing under Ls·√6/2 = " + (60 * Math.sqrt(6) / 2).toFixed(0)
+        + " m); a 0.2 m spiral → " + ease(0.2, 0).why + ", because that IS the plain arc");
+
+  // ...and the ladder must never let easing cost a plan its turn.
+  const { turnWithRetry } = require("../static/js/turns.js");
+  const withEase = turnWithRetry(llS(0, 0), llS(0, D), 90, 270, refS, koS, 1, MINR2, 400, 4.1, LS);
+  const noEase = turnWithRetry(llS(0, 0), llS(0, D), 90, 270, refS, koS, 1, MINR2, 400, 4.1, 0);
+  const refused = turnWithRetry(llS(0, 0), llS(0, 12), 90, 270, refS, koS, 1, MINR2, 400, 4.1, LS);
+  const refusedOff = turnWithRetry(llS(0, 0), llS(0, 12), 90, 270, refS, koS, 1, MINR2, 400, 4.1, 0);
+  check("43. easing is a rung ON TOP of the ladder, so it can never cost a plan its turn",
+        withEase.kind === "eased" && noEase.kind === "semicircle"
+        && refused.kind === refusedOff.kind && refused.rung === refusedOff.rung + 1,
+        "easeLs 8 → " + withEase.kind + " (rung " + withEase.rung + "), easeLs 0 → "
+        + noEase.kind + " (rung " + noEase.rung + "); on a 12 m crossing the eased rung is "
+        + "refused and the ladder returns " + refused.kind + " — the same shape easing-off "
+        + "returns, one rung later");
+
+  // ⚠ AND THE EASED RUNG IS NEVER THE REFUSAL THE OPERATOR IS SHOWN. When every rung is
+  // refused the caller reports the FIRST one's `why` and `seg`, because rung 1 is the turn
+  // the operator expected to see and its chord names the feature that actually blocked it.
+  // With easing on, rung 1 is a comfort shape whose refusal answers a question nobody
+  // asked — and worse, it refuses for reasons ('no-spiral', a crossing too tight for the
+  // spiral) that have nothing to do with the water.
+  {
+    // Foul water on BOTH sides of the pair, so every rung is refused and the caller has to
+    // choose whose refusal to report. `seg` is the half that matters: it is the chord the
+    // console hands to firstBlockAlong to name the feature on the card.
+    const { buildKeepouts } = require("../static/js/chart.js");
+    const ring = pts => [pts.map(([e, n]) => { const p = llS(e, n); return [p.lon, p.lat]; })];
+    const wall = buildKeepouts(refS, { land: true, depth: true, haz: true, area: false },
+      { min: 2, max: 0 },
+      [{ role: "land", cls: "Land_Area", props: {},
+         geometry: { type: "Polygon", coordinates: ring(
+           [[-200, -200], [200, -200], [200, 200], [-200, 200], [-200, -200]]) } }]);
+    const wEase  = turnWithRetry(llS(0, 0), llS(0, D), 90, 270, refS, wall, 1, MINR2, 400, 4.1, LS);
+    const wPlain = turnWithRetry(llS(0, 0), llS(0, D), 90, 270, refS, wall, 1, MINR2, 400, 4.1, 0);
+    const segEq = !!(wEase.seg && wPlain.seg)
+      && distTo(wEase.seg[0], wPlain.seg[0]) < 0.01 && distTo(wEase.seg[1], wPlain.seg[1]) < 0.01;
+    check("43b. ... and a refusal is still reported by the rung the operator expected",
+          !wEase.pts && !wPlain.pts && wEase.why === wPlain.why && segEq,
+          "every rung refused: easing on reports '" + wEase.why + "' and easing off '"
+          + wPlain.why + "', on the SAME blocking chord — so 'why is there no turn here' is "
+          + "answered by the arc the operator expected, not by a comfort shape refusing "
+          + "for reasons of its own");
+  }
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

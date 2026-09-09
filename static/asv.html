@@ -429,6 +429,21 @@
         </select>
       </span></div>
     <div class="phint" id="sp_lead_note">lead: none</div>
+    <!-- EASED TURNS. Every reversal this console draws steps its curvature from nothing to
+         1/R the instant the boat leaves the line — an infinite rudder rate, which no hull
+         can answer, so it overshoots and settles. That settling is exactly what the lead-in
+         above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
+         clothoid out, so the helm rate is constant and the boat rolls onto the next line
+         with the wheel already amidships.
+         OFF BY DEFAULT, and deliberately: it needs a few metres more outboard water and
+         roughly twice the waypoints, so a console that has never been told otherwise plans
+         exactly the turns it always did. The spiral length is the VESSEL's steering settle
+         time times the turn speed, so a profile that does not declare one cannot ease. -->
+    <div class="prow"><label>Turn shape</label>
+      <select id="sp_turn_ease" title="ARC is the plain reversal this console has always drawn: its curvature steps from zero to 1/R at the line end, which the hull answers by overshooting and settling. EASED ramps the curvature in and out over a spiral, so the steering rate is constant and the boat arrives on the next line already straight — at the cost of a little more outboard water and about twice the waypoints. Needs the vessel profile to declare a steering settle time.">
+        <option value="arc" selected>Arc</option><option value="eased">Eased</option>
+      </select></div>
+    <div class="phint" id="sp_ease_note">turns: arc</div>
     <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behaviour (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviours.">
       <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
       <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
@@ -984,7 +999,7 @@ let asv = null;                              // {lat,lon,hdg}
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
                speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3,
-               lead_mode: "m", lead_in: 0, lead_out: 0};
+               lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "arc"};
 // --- SPEED BY ROLE: transit, turn, survey ----------------------------------------- //
 // Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow separate
 // speed selection for transits, turns, and survey. These values may be temporarily
@@ -1048,6 +1063,21 @@ function leadMetres(v){
 }
 function leadInM(){  return leadMetres(mission.lead_in);  }
 function leadOutM(){ return leadMetres(mission.lead_out); }
+/**
+ * The EASED reversal's spiral length, in metres — 0 when there is to be no easing.
+ *
+ * Ls = (how long this hull's steering takes to reach the commanded rate) × (the speed the
+ * turn is flown at). The TURN speed, not the survey speed: the spiral is part of the
+ * reversal, and a hull covers a different distance while its helm comes over depending on
+ * how fast it is going. Both factors have to be there — an operator who has asked for
+ * easing on a vessel profile that never declared a settle time gets none, and the card
+ * says so rather than quietly drawing plain arcs under an "Eased" label.
+ */
+function easeLsM(){
+  if(mission.turn_ease !== "eased") return 0;
+  const t = V.STEERING_SETTLE_S || 0;
+  return t > 0 ? t * roleSpeedMS("turn") : 0;
+}
 /** Along-track distance of `p` from L.a, in metres, signed along a→b. */
 function alongLineM(L, p){
   if(!L || !p) return 0;
@@ -2064,7 +2094,8 @@ async function loadMission(){
                  // three travel together or none of them mean anything (a stored 20 that
                  // loses its "s" becomes 20 m instead of ~41 m, quietly).
                  lead_mode:(m.lead_mode === "s" ? "s" : "m"),
-                 lead_in:m.lead_in ?? 0, lead_out:m.lead_out ?? 0};
+                 lead_in:m.lead_in ?? 0, lead_out:m.lead_out ?? 0,
+                 turn_ease:(m.turn_ease === "eased" ? "eased" : "arc")};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
@@ -2098,7 +2129,8 @@ async function loadMission(){
       if($("#sp_lead_mode")) $("#sp_lead_mode").value = mission.lead_mode || "m";
       if($("#sp_lead_in"))   $("#sp_lead_in").value   = mission.lead_in  ?? 0;
       if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out ?? 0;
-      updateLeadNote();
+      if($("#sp_turn_ease")) $("#sp_turn_ease").value = mission.turn_ease || "arc";
+      updateLeadNote(); updateEaseNote();
       // The plan just came back from the server, so the survey card can describe it
       // again - without this, a committed plan reads blank after every page refresh.
       updatePatReadout(); render(); } }catch(e){}
@@ -2112,6 +2144,11 @@ function applyVesselToUI(v){
   // physics mirrors the sim uses for routing/turn geometry
   if(v.propulsion && v.propulsion.speeds_kn) V.SPEED_KN = {...v.propulsion.speeds_kn};
   if(v.maneuvering && v.maneuvering.max_turn_rate_deg_s) V.MAX_TURN_RATE_DEG_S = v.maneuvering.max_turn_rate_deg_s;
+  // Steering settle time, which is what an EASED reversal's spiral is built from. Absent
+  // or non-numeric reads as 0 = no easing available, so a vessel file written before this
+  // existed behaves exactly as it did: the turn ladder never gets an eased rung at all.
+  V.STEERING_SETTLE_S = (v.maneuvering && typeof v.maneuvering.steering_settle_s === "number"
+                         && v.maneuvering.steering_settle_s > 0) ? v.maneuvering.steering_settle_s : 0;
   if(v.planning && typeof v.planning.nogo_buffer_m === "number") V.NOGO_BUFFER_M = v.planning.nogo_buffer_m;
   if(v.planning && typeof v.planning.wreck_radius_m === "number") V.WRECK_RADIUS_M = v.planning.wreck_radius_m;
   // The vessel's buffer is a FLOOR, not a default a stale mission may undercut. A
@@ -6115,9 +6152,18 @@ async function punchOut(){
     // two different faults with two different remedies, and until 2026-09-08 the banner
     // called both of them the first one — see its branch below.
     let nUnsafeTurn=0;
+    // Reversals that got the EASED shape. Counted separately from nSemi because they are
+    // not semicircles - the operator asked for a different curve and is owed the number
+    // that says how many they actually got, since the eased rung refuses more often than
+    // the plain arc and falls back silently by design.
+    let nEased=0, easedWpts=0;
     // The radius at the slow speed - the second lever Andy named. Computed here beside
     // minTurnR so the two are read from the same vessel model in the same breath.
     const minTurnRSlow = minTurnRadiusM("low");
+    // The EASED reversal's spiral length. 0 unless the operator asked for easing AND this
+    // vessel declares a steering settle time — and 0 makes turnWithRetry's ladder exactly
+    // the ladder it was before easing existed, with no rung added at all.
+    const easeLs = easeLsM();
     // For each line-to-line transit: prefer a generated TURN (semicircle or teardrop -
     // either way the ASV rolls onto the next line aligned); else keep straight if clear;
     // else route around; else flag.
@@ -6157,7 +6203,7 @@ async function punchOut(){
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
         // the wharf this exists for - the old single attempt refused, and refusing was
         // what put the boat on the pier.
-        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow);
+        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs);
         // ⚠⚠ AND WHEN EVERY RUNG IS REFUSED, THE LEAD GIVES WAY BEFORE THE TURN DOES.
         // Andy's call, 2026-09-08: "Cap the lead at what the turn water allows."
         //
@@ -6179,7 +6225,7 @@ async function punchOut(){
             const sK1 = runWithLeads(k+1, li, patLead[k+1].out||0);
             if(!sK || !sK1) break;
             const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
-                                     minTurnR, turnMaxHalf, minTurnRSlow);
+                                     minTurnR, turnMaxHalf, minTurnRSlow, easeLs);
             if(!t2.pts) continue;
             // Written together, because patLead[k] describes patClip[k] and nothing else.
             patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0,   out: lo};
@@ -6188,7 +6234,9 @@ async function punchOut(){
             break;
           }
         }
-        if(t.pts){ via=t.pts; (t.kind==="teardrop" ? nTear++ : t.kind==="racetrack" ? nRace++ : nSemi++);
+        if(t.pts){ via=t.pts;
+                   (t.kind==="teardrop" ? nTear++ : t.kind==="racetrack" ? nRace++
+                    : t.kind==="eased" ? (nEased++, easedWpts+=t.pts.length) : nSemi++);
                    maxOutboard=Math.max(maxOutboard, t.outboard);
                    // A reversal built across a MISSING line - struck off, clipped away, or
                    // dropped as too short. It is a real turn and a valid one, it simply
@@ -6250,7 +6298,14 @@ async function punchOut(){
       }
       else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
     }
-    const nRoute=patRoutes.length-nSemi-nTear-nRace, nU=patUnsafe.length;
+    // ⚠ EVERY GENERATED TURN MUST BE SUBTRACTED HERE, AND A NEW SHAPE IS EASY TO FORGET.
+    // `patRoutes` holds one entry per leg that got waypoints of ANY kind, so "routed around
+    // obstacles" is what is left after the turns are taken out. Adding the eased shape
+    // without adding it to this line reported all three eased turns as detours as well —
+    // caught on a live punch, where the eased run claimed "3 routed around obstacles" and
+    // the identical arc run claimed none. A count the operator cannot reconcile with what
+    // they can see on the chart reads as a fault in the plan.
+    const nRoute=patRoutes.length-nSemi-nTear-nRace-nEased, nU=patUnsafe.length;
     const nChanTurn = turnBlocks.filter(r=>r.info && r.info.kind==="a navigation channel").length;
     // Turn-radius advisory. The spacing a plain semicircle needs is twice the minimum
     // radius the boat can hold at the plan speed; below that the reversals become
@@ -6305,6 +6360,15 @@ async function punchOut(){
       (nStruck?`, ${nStruck} struck off by hand`:``)+
       (nShort?`, ${nShort} line(s) under ${minLine} m dropped (this hull's minimum)`:``)+
       (nSemi?`, ${nSemi} semicircle turn(s)`:``)+
+      // THE EASED TURNS, WITH WHAT THEY COST. The waypoint count is the honest half: an
+      // eased reversal is roughly twice the points of a plain arc, because a polyline
+      // cannot express a curvature ramp unless it is sampled finely enough to resolve one.
+      // And the count of turns that did NOT get it matters just as much — the eased rung
+      // needs more outboard water than the plain arc and falls back without complaint, so
+      // "Eased" on the card and eased on the water are two different claims.
+      (nEased?`, ${nEased} eased turn(s) @ R ${minTurnR.toFixed(1)}+ m with `+
+        `${fmtDist(easeLs)} of spiral each end (${easedWpts} waypoints; a plain arc would be about half that)`+
+        ((nSemi+nTear+nRace)?`, ${nSemi+nTear+nRace} that the eased shape would not fit and fell back to a plain turn`:``):``)+
       // A RACETRACK IS NOT A SEMICIRCLE AND THE CARD MUST NOT SAY IT IS. It is flown when
       // the gentle arc was refused, so its presence is the operator's signal that the water
       // past those line ends is tight - and its whole virtue is the number quoted here: it
@@ -6877,6 +6941,41 @@ function updateLeadNote(){
 $("#sp_lead_in").onchange   = ()=>setLead("in",  $("#sp_lead_in").value);
 $("#sp_lead_out").onchange  = ()=>setLead("out", $("#sp_lead_out").value);
 $("#sp_lead_mode").onchange = ()=>setLeadMode($("#sp_lead_mode").value);
+// --- EASED TURNS ------------------------------------------------------------------- //
+function setTurnEase(v){
+  mission.turn_ease = (v === "eased") ? "eased" : "arc";
+  $("#sp_turn_ease").value = mission.turn_ease;
+  // Same discipline as setLead: the turn SHAPE is geometry, so a changed shape is a
+  // different plan and the punch has to go with it.
+  saveMission(); patClip = null; updateEaseNote(); updatePatReadout(); render();
+}
+/**
+ * What "Eased" actually comes to on THIS vessel at THIS turn speed — or why it will not.
+ *
+ * A spiral length is a time times a speed, and both can be missing: a vessel profile that
+ * never declared a steering settle time cannot ease at all. Saying "Eased" on the control
+ * while the plan quietly fills with plain arcs is the failure this note exists to prevent.
+ */
+function updateEaseNote(){
+  const el = $("#sp_ease_note"); if(!el) return;
+  if(mission.turn_ease !== "eased"){
+    el.style.color = "";
+    el.textContent = "turns: arc — curvature steps at the line end; the boat settles onto the line";
+    return;
+  }
+  const t = V.STEERING_SETTLE_S || 0;
+  if(!(t > 0)){
+    el.style.color = "var(--warn)";
+    el.textContent = "turns: eased NOT AVAILABLE — " + ((V.VESSEL && V.VESSEL.name) || "this vessel")
+      + " declares no steering settle time, so every reversal stays a plain arc";
+    return;
+  }
+  el.style.color = "";
+  el.textContent = "turns: eased — " + t.toFixed(1) + " s of steering settle at "
+    + roleSpeed("turn") + " = " + fmtDist(easeLsM()) + " of spiral each end. "
+    + "Costs a little outboard water and about twice the waypoints; Punch Out reports both.";
+}
+$("#sp_turn_ease").onchange = ()=>setTurnEase($("#sp_turn_ease").value);
 // enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
 ["#enf_land","#enf_depth","#enf_haz","#enf_area"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };

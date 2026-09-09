@@ -374,9 +374,12 @@ check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped st
         + "blocked-transit branch instead of being said about every red leg");
 }
 check("13. punchOut climbs the ladder rather than making one attempt",
-      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow\)/.test(PO) &&
-            /const minTurnRSlow = minTurnRadiusM\("low"\)/.test(PO),
-      "the slow radius is derived from the vessel model beside the plan radius");
+      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs\)/.test(PO) &&
+            /const minTurnRSlow = minTurnRadiusM\("low"\)/.test(PO) &&
+            /const easeLs = easeLsM\(\);/.test(PO),
+      "the slow radius AND the eased spiral length are both derived from the vessel model "
+      + "beside the plan radius — easeLs is 0 unless the operator asked and the hull can, "
+      + "and 0 leaves this ladder exactly the ladder it was before easing existed");
 
 const G = grab(H, "clearanceGuard");
 // 14. IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND. A slow-down sent

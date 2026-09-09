@@ -55,12 +55,85 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-08 — reversals are built from the poses, not the chord)
+## ⇒ START HERE (handoff refreshed 2026-09-08 — eased (clothoid) reversals)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): THE REVERSAL IS BUILT FROM THE TWO POSES, AND THE LEAD GIVES WAY TO
-THE TURN.** Andy, looking at a punched plan with leads on it: *"The turns for the lead-in /
+**NEWEST (this commit): EASED REVERSALS — clothoid, arc, clothoid.** Andy: *"build the
+clothoid version too."*
+
+Every other reversal in this console steps its curvature from 0 to 1/R the instant the boat
+leaves the line — an infinite rudder rate, which the hull answers by overshooting and
+settling, and that settling is what the lead-in exists to hide. The eased shape ramps
+instead, so the helm rate is constant and the boat rolls onto the next line already straight.
+
+**THE GEOMETRY.** One spiral turns `τ = Ls/2R`, the core takes `π − 2τ`, and the three
+phases sum to π exactly for any Ls and R. The shape is symmetric about its half-way point,
+so it ends ABEAM of where it started — VERIFIED, the integrated along-track displacement is
+1e-13 m and the heading 180.000000° — which is what lets the along-track offset be absorbed
+with an on-line straight exactly as in the other two shapes. R is **solved** against the
+integrated crossing; `R = [d/2 + sqrt(d²/4 − Ls²/6)]/2` only seeds it.
+
+**⚠ AND THE SOLVE, NOT THE SEED, IS WHAT DECIDES R — ESTABLISHED BY MUTATION.** Deleting the
+spiral term from the discriminant, and even dropping the halving so the seed comes out at
+TWICE the right radius, both still converge in three Newton steps. **My own header had
+claimed R "comes from a closed form, not a search"; the mutation run corrected it.** Only
+the FEASIBILITY test genuinely needs the closed form (no radius spans a crossing under
+`Ls·√6/2`). Do not "simplify" by trusting the seed: at a long spiral it is tens of
+millimetres out and nothing downstream would say so.
+
+**⚠⚠ THE EMIT STEP IS PART OF THE SHAPE, NOT A DETAIL.** A polyline cannot express curvature
+continuity — the boat gets WAYPOINTS. MEASURED on a 40 m crossing at Ls 8, worst curvature
+change between consecutive waypoints: at the ordinary 3 m arc step eased 0.0188 against the
+plain arc's 0.0286 (**1.5× — a label, not a feature**); at 1 m, 0.0065 against 0.0400 (6.2×).
+Note which way each moves: refining the sampling drives the PLAIN arc's figure UP toward its
+true discontinuity and the eased one DOWN toward its bounded derivative, and that divergence
+is the only proof the two shapes differ at all. So the spirals are emitted at `Ls/8` and the
+core at the ordinary step — measured better than a uniform fine step on every axis (42
+waypoints against 67 for identical curvature figures).
+
+**MEASURED ON A LIVE 7-LINE PUNCH, per turn, isolated (a plan-wide worst vertex is useless
+here — two pairs have no turn at all and a straight 180° dwarfs everything):**
+
+| pair | arc | eased | |
+|---|---|---|---|
+| 1→2 | 0.0491 | **0.0071** | 6.9× |
+| 3→4, 4→5 | 0.0494 | **0.0071** | 7.0× |
+| 5→6 (racetrack; easing did not fit) | 0.1204 | 0.1204 | unchanged |
+
+90 → 117 waypoints over the plan. Better than the synthetic 3.2× because the real Ls is 14 m
+(4 s at this hull's turn speed), which resolves the ramp further.
+
+**WIRING.** `maneuvering.steering_settle_s` in `vessels/*.json` → `V.STEERING_SETTLE_S` →
+`easeLsM() = settle × roleSpeedMS("turn")`. **The TURN speed, not the survey speed.** Absent
+or zero = the vessel cannot ease, and `updateEaseNote` says so in the warning colour rather
+than letting the control read "Eased" over a plan of plain arcs. **The shipped settle times
+are ESTIMATES (1.5 / 2.5 / 4.0 s) and no trial has been flown** — how to measure one is in
+`state.js` beside the constant. **OFF by default**, and `easeLs = 0` makes `turnWithRetry`'s
+ladder byte-identical to the one that shipped before this existed.
+
+**⚠ EASING IS A RUNG ON TOP OF THE LADDER, NEVER A REPLACEMENT** — same guarantee shape as
+the lead give-way ladder. It refuses more readily than the plain arc, and its refusal is
+deliberately NOT the one reported: `first` skips the eased rung, so "why is there no turn
+here" is still answered by the arc the operator expected rather than by a comfort shape
+complaining about a crossing too narrow for its spiral.
+
+**TEETH: 19 mutations, 17 killed.** The two survivors are the seed mutations above and are
+recorded as INERT with the reason. **The control mutation crashed the suite** — check 37 went
+red as intended and then check 38's DETAIL string read `es.pts.length` on a refusal and
+threw, losing every check after it, which the runner scores as SURVIVED. `turn_geometry`
+evaluates details eagerly; a detail must be as total as its condition. **And `direct_turn.js`
+was mutation-blind** (fixed path to asv.html) — the third suite in three commits, which is
+why `task_9844f26c` exists for the remaining 22.
+
+**⚠ A COUNTER I FORGOT, CAUGHT ONLY ON THE WATER.** `nRoute = patRoutes.length − nSemi −
+nTear − nRace` is "what is left after the turns are taken out", and I added `nEased` without
+adding it there — so the eased run reported *"3 routed around obstacles"* where the identical
+arc run reported none. A count the operator cannot reconcile with the chart reads as a fault
+in the plan. Any new turn shape has to be subtracted there too; `direct_turn` 13 now pins it.
+
+**Before that (`0f5eb6ec`): THE REVERSAL IS BUILT FROM THE TWO POSES, AND THE LEAD GIVES WAY
+TO THE TURN.** Andy, looking at a punched plan with leads on it: *"The turns for the lead-in /
 lead-out don't make great sense. In the attached picture, I scribed a curve that works better
 with red marker. Use a pattern like this and find a mathematical rather than just arbitrarily
 drawn curve."*

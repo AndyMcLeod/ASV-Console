@@ -30,6 +30,22 @@ export const V = {
   // --- physics mirrors the sim uses for routing + turn geometry ---
   SPEED_KN: {low:1.5, survey:3.0, high:6.0},
   MAX_TURN_RATE_DEG_S: 60,
+  // HOW LONG THE STEERING TAKES TO REACH THE COMMANDED RATE, seconds (2026-09-08). The
+  // turn rate above says how tightly a hull CAN turn; this says how fast it can get there,
+  // and an EASED reversal needs both - the clothoid's spiral length is this time times the
+  // speed the turn is flown at, which is what makes the rudder rate through the transition
+  // constant and finite instead of a step.
+  //
+  // ⚠ THE SHIPPED VALUES ARE ESTIMATES AND NO TRIAL HAS BEEN FLOWN. 1.5 s for the 1.3 m
+  // differential-thrust boat, 2.5 s for the 4 m example, 4.0 s for the 7.7 m diesel ASV -
+  // scaled with hull size and with the turn rates beside them, which are themselves
+  // estimates for these hulls. TO REPLACE ONE WITH A REAL NUMBER: in slack water, at the
+  // turn speed, command a hard turn out of a steady straight run and read off the recorded
+  // track the time from the order to the moment the yaw rate stops rising.
+  //
+  // 0 (or an absent key) means the eased turn is unavailable for that vessel, which is the
+  // honest default for a profile nobody has asked the question of.
+  STEERING_SETTLE_S: 0,
 
   // --- planning limits -------------------------------------------------------------
   // Corrected-depth nogo floor: draft + under-keel clearance, so a deeper-draft vessel

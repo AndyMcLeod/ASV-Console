@@ -140,7 +140,7 @@ function runMid(seg) { return { lat: (seg[0].lat + seg[1].lat) / 2, lon: (seg[0]
 eval([
   grabDecl("LEAD_MAX_M"),
   grab("roleSpeed"), grab("roleSpeedMS"),
-  grab("leadMetres"), grab("leadInM"), grab("leadOutM"),
+  grab("leadMetres"), grab("leadInM"), grab("leadOutM"), grab("easeLsM"),
   grab("alongLineM"), grab("linePhase"),
   grab("clipLine"), grab("extendLead"),
   grab("patCoverSeg"), grab("runWithLeads"), grab("patLeadTotal"),
@@ -599,6 +599,76 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
               && /\+\$\{patLeadTotal\(\)\.toFixed\(0\)\} m of/.test(punch),
         "a running total would be taken BEFORE the ladder shortens anything, so the card "
         + "would quote a lead the plan does not have");
+}
+
+// ── 38-42. EASED TURNS: the other half of the settling story ──────────────────────
+// Andy, 2026-09-08: "build the clothoid version too."
+//
+// The lead-in above exists because the boat is not settled on the line when the turn hands
+// it over. An EASED turn attacks the same problem from the other end — it ramps the
+// curvature instead of stepping it, so the helm is already amidships at the handover. The
+// GEOMETRY is pinned in tests/turn_geometry.js 37-43; what is pinned here is the operator's
+// side of it: where the spiral length comes from, and what happens when it cannot exist.
+{
+  const ref = planeFrame({ lat: 43.07, lon: -70.76 });
+  __setMission({ lines: [], speeds: { transit: "high", turn: "low", survey: "survey" },
+                 lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "eased" });
+  V.STEERING_SETTLE_S = 4.0;
+
+  // ⚠ THE TURN SPEED, NOT THE SURVEY SPEED. The spiral is part of the reversal, and a hull
+  // covers a different distance while its helm comes over depending on how fast it is
+  // going. The three roles are deliberately different here so the check can tell which.
+  const turnMS = 4.0 * 0.514444, surveyMS = 7.0 * 0.514444, transitMS = 14.0 * 0.514444;
+  check("38. the spiral length is the hull's settle TIME times the TURN speed",
+        () => Math.abs(easeLsM() - 4.0 * turnMS) < 0.01,
+        "4.0 s at " + roleSpeed("turn") + " → " + easeLsM().toFixed(2) + " m of spiral. "
+        + "At the survey speed it would be " + (4.0 * surveyMS).toFixed(2)
+        + " m and at the transit speed " + (4.0 * transitMS).toFixed(2) + " m");
+
+  V.STEERING_SETTLE_S = 0;
+  const noHull = easeLsM();
+  V.STEERING_SETTLE_S = 4.0;
+  mission.turn_ease = "arc";
+  const notAsked = easeLsM();
+  mission.turn_ease = "eased";
+  check("39. ... and it is ZERO unless the operator asked AND the hull can answer",
+        () => noHull === 0 && notAsked === 0 && easeLsM() > 0,
+        "no settle time in the vessel profile → " + noHull + "; operator on Arc → " + notAsked
+        + "; both → " + easeLsM().toFixed(2) + " m. Zero is what makes the turn ladder "
+        + "identical to the one that shipped before easing existed");
+
+  // NEVER SILENTLY. A vessel that cannot ease, under a control that says "Eased", would
+  // plan plain arcs under a label — the same fault class as a lead the chart cut short.
+  const note = grab("updateEaseNote");
+  check("40. a vessel that cannot ease says so on the card, in the warning colour",
+        () => /NOT AVAILABLE/.test(note) && /var\(--warn\)/.test(note)
+              && /steering settle time/.test(note),
+        "otherwise the control reads Eased and the plan quietly fills with plain arcs");
+
+  const punch = grab("punchOut");
+  check("41. the punch names how many turns were eased AND how many fell back",
+        () => /\$\{nEased\} eased turn\(s\)/.test(punch)
+              && /would not fit and fell back to a plain turn/.test(punch)
+              && /waypoints; a plain arc would be about half that/.test(punch),
+        "the eased rung refuses more readily than the plain arc and falls back without "
+        + "complaint, so 'Eased' on the card and eased on the water are two claims");
+
+  // The usual four whitelists.
+  const load = grab("loadMission");
+  const pyLoad = PY.slice(PY.indexOf("def load_mission()"), PY.indexOf("def plan_completion()"));
+  const pySave = PY.slice(PY.indexOf("def save_mission("), PY.indexOf("def save_mission(") + 1600);
+  check("42. the turn shape survives a reload — client, server, default and save",
+        () => /turn_ease:\(m\.turn_ease === "eased" \? "eased" : "arc"\)/.test(load)
+              // The KEY form, not the word: `m.get("turn_ease")` sits on the same line as
+              // the key it fills, and a line-anchored match finds only whichever literal
+              // happens to start its line. Two dicts, two keys.
+              && (pyLoad.match(/"turn_ease":/g) || []).length === 2
+              && /"turn_ease":/.test(pySave)
+              && /\$\("#sp_turn_ease"\)\.value = mission\.turn_ease/.test(load),
+        (pyLoad.match(/"turn_ease":/g) || []).length + " server literal(s) (read path + "
+        + "no-file default), carried from the payload client-side, saved back, and restored "
+        + "onto the control");
+  V.STEERING_SETTLE_S = 0;
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");

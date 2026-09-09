@@ -60,10 +60,12 @@ import { legClear } from "./chart.js";
 import { V } from "./state.js";
 // THE SHARED TURN GEOMETRY. Four bodies, four wrappers below; the constants pass straight
 // through because both consoles already agreed on every one of them.
-import { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, arcStepFor,
+import { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, SPIRAL_MIN_LS_M,
+         arcStepFor,
          minTurnRadiusM as coreMinTurnRadiusM, shortenSeg as coreShortenSeg,
-         arcPts as coreArcPts, teardropTurn as coreTeardropTurn, racetrackTurn as coreRacetrackTurn} from "./core_turns.js";
-export { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, arcStepFor };
+         arcPts as coreArcPts, teardropTurn as coreTeardropTurn, racetrackTurn as coreRacetrackTurn,
+         spiralTurn as coreSpiralTurn } from "./core_turns.js";
+export { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, SPIRAL_MIN_LS_M, arcStepFor };
 
 // THIS CONSOLE'S ARC STEP, PINNED. The core scales the step with the radius (arcStepFor:
 // 3 m at a 2 m radius, 12.5 m at 250 m) so a survey ship's turn does not emit 260
@@ -126,6 +128,21 @@ export function racetrackTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM){
   });
 }
 
+/** The EASED reversal - clothoid, arc, clothoid - see core_turns.js. `Ls` is the spiral
+ *  length: a VESSEL property (how long the steering takes to reach the commanded rate)
+ *  times the speed the turn is flown at. Zero or absent means the operator has not asked
+ *  for easing, and the shape DECLINES rather than quietly degenerating into the plain
+ *  semicircle the caller already has - two shapes that cannot be told apart is how a
+ *  readout starts counting one of them as the other. */
+export function spiralTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, Ls){
+  return coreSpiralTurn(E, F, hE, hF, ref, {
+    minR, Ls,
+    clear: (a, b) => legClear(a, b, ref, ko, buf),
+    arcStepM: ARC_STEP_M,
+    maxHalfM,
+  });
+}
+
 // THE TURN LADDER - what to try when the obvious turn is refused, and why it exists.
 // Andy, 2026-08-31, after a DriX passed a wharf in Pago Pago at 0.6 m:
 //
@@ -159,7 +176,14 @@ export function racetrackTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM){
 // Only when every rung is refused is there genuinely no turn - and that is the case the
 // caller must flag UNSAFE rather than ship, because it is the one where the boat
 // improvises a loop of its own and nothing has said where.
-export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow){
+// ⚠ EASING IS AN EXTRA RUNG AT THE TOP, NEVER A REPLACEMENT (2026-09-08). `easeLs > 0`
+// puts the clothoid-arc-clothoid ahead of the plain arc; everything below it is untouched,
+// so a plan whose water will not take the eased shape gets EXACTLY the turn it would have
+// got with easing switched off. That is the same guarantee the lead give-way ladder has,
+// and for the same reason: a comfort feature must not be able to cost a plan its turn.
+// The eased shape refuses more often than the plain arc does - it needs a little more
+// outboard water and a slightly tighter radius - so the fallback is not theoretical.
+export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow, easeLs){
   // ⚠ THE RACETRACK RUNGS SIT ABOVE THE INBOARD ONE, AND THAT ORDER IS THE FIX Andy
   // ASKED FOR (2026-09-01): *"the turns are implemented as inverted teardrop turns.
   // Consider a more direct, curvilinear format for this implementation."* What he was
@@ -174,8 +198,10 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
   // the survey, it is what every un-obstructed turn in every existing plan already flies,
   // and nobody has reported a problem with those. This ladder only changes what happens
   // AFTER the gentle turn is refused.
-  const tries = [{side: undefined, minR, slow: false, shape: 'arc'},
-                 {side: undefined, minR, slow: false, shape: 'racetrack'}];
+  const tries = [];
+  if(easeLs > 0) tries.push({side: undefined, minR, slow: false, shape: 'eased'});
+  tries.push({side: undefined, minR, slow: false, shape: 'arc'},
+             {side: undefined, minR, slow: false, shape: 'racetrack'});
   // ⚠ A SLOWER ATTEMPT ONLY RESHAPES A TEARDROP, AND THE TEST IS WHAT ESTABLISHED THAT.
   // teardropTurn takes the SEMICIRCLE branch when half the line offset already clears the
   // radius the hull can hold, and that semicircle's radius is `half` -- fixed by the line
@@ -206,13 +232,21 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
     const t = tries[i];
     const r = t.shape === 'racetrack'
       ? racetrackTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM)
+      : t.shape === 'eased'
+      ? spiralTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, easeLs)
       : teardropTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, t.side);
     if(r.pts) return {...r, slow: t.slow, rung: i + 1};
     // THE FIRST REFUSAL IS THE ONE WORTH REPORTING, not the last: rung 1 is the turn the
     // operator expected to see, and its `seg` names the feature that actually refused it.
     // Reporting rung 4's refusal would name whatever blocked a tighter inboard loop, which
     // is not the answer to "why is there no turn at the end of line 12".
-    if(!first) first = r;
+    //
+    // ⚠ AND THE EASED RUNG IS NEVER THE ONE REPORTED. When easing is on it is rung 1, and
+    // its refusal is a comfort shape declining - the operator's question is still about the
+    // turn they expected to see, which is the plain arc below it. Skipping it here keeps
+    // "why is there no turn" answered by the same rung it was answered by before easing
+    // existed, rather than by a keep-out that only the wider eased loop ever reached.
+    if(!first && t.shape !== 'eased') first = r;
   }
   return {...first, rung: tries.length};
 }

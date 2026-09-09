@@ -268,12 +268,32 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
 // semicircle would hide exactly the thing worth telling them.
 {
   const fs = require("fs"), path = require("path");
-  const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
-  const counter = /t\.kind\s*===\s*"teardrop"\s*\?\s*nTear\+\+\s*:\s*t\.kind\s*===\s*"racetrack"\s*\?\s*nRace\+\+\s*:\s*nSemi\+\+/;
-  check("13. punchOut counts racetracks separately and names them on the card",
-        () => counter.test(H) && /\$\{nRace\} direct \(racetrack\) turn\(s\)/.test(H),
-        counter.test(H) ? "counted apart from semicircles and teardrops, and named"
-                        : "a racetrack is being tallied as something it is not");
+  // ASV_HTML points this at a SIDECAR copy for a mutation run. Without it a mutation of
+  // the page scores as SURVIVED whatever this check says — caught here on 2026-09-08 when
+  // deleting the eased-turn tally, which the check below names outright, came back green.
+  const H = fs.readFileSync(process.env.ASV_HTML ||
+                            path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  // EVERY SHAPE IS COUNTED AS ITSELF. The same argument covers the EASED reversal added on
+  // 2026-09-08: it is a curve the operator asked for by name, the eased rung refuses more
+  // readily than the plain arc and falls back to it without complaint, so an eased turn
+  // tallied as a semicircle would hide precisely what the card is for — how many of the
+  // turns they asked to have eased actually were.
+  const counter = /t\.kind===\"teardrop\" \? nTear\+\+ : t\.kind===\"racetrack\" \? nRace\+\+[\s\S]{0,60}?t\.kind===\"eased\" \? \(nEased\+\+[\s\S]{0,40}?\) : nSemi\+\+/;
+  // ⚠ AND "ROUTED AROUND OBSTACLES" IS WHAT IS LEFT AFTER EVERY TURN IS SUBTRACTED, so a
+  // new shape has to be taken out of it too. Adding the eased reversal without touching
+  // that line reported all three eased turns as detours as well — MEASURED on a live punch,
+  // where the eased run claimed "3 routed around obstacles" and the identical arc run
+  // claimed none. This is the second half of the same fault the counter above guards.
+  const routed = /const nRoute=patRoutes\.length-nSemi-nTear-nRace-nEased/;
+  check("13. punchOut counts every turn shape as itself, and names each on the card",
+        () => counter.test(H) && routed.test(H)
+              && /\$\{nRace\} direct \(racetrack\) turn\(s\)/.test(H)
+              && /\$\{nEased\} eased turn\(s\)/.test(H),
+        counter.test(H) && routed.test(H)
+          ? "semicircle, teardrop, racetrack and eased each counted apart, each named, and "
+            + "every one of them subtracted from the routed-detour tally"
+          : !routed.test(H) ? "a generated turn is also being counted as a routed detour"
+                            : "a turn shape is being tallied as something it is not");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

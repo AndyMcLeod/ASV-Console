@@ -863,6 +863,13 @@ def load_mission():
                 "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
                 "lead_in": m.get("lead_in", 0),
                 "lead_out": m.get("lead_out", 0),
+                # EASED TURNS (2026-09-08): "arc" is the plain reversal this console has
+                # always drawn, "eased" ramps the curvature in and out over a clothoid so
+                # the steering rate is finite. A SETTING, not geometry - the spiral length
+                # is derived client-side from the vessel's steering settle time and the
+                # turn speed, so a mission carried to a different hull eases by that hull's
+                # numbers rather than by the one it was planned on.
+                "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
                 # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
                 # plan drawn at the dock survives a reload / a session at sea.
                 "boundary": m.get("boundary") or [],
@@ -874,7 +881,7 @@ def load_mission():
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
-            "lead_mode": "m", "lead_in": 0, "lead_out": 0,
+            "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
             "boundary": [], "boundary_closed": False}
 
 
@@ -903,6 +910,7 @@ def save_mission(m):
         "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
         "lead_in": m.get("lead_in", 0),
         "lead_out": m.get("lead_out", 0),
+        "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
     }, indent=1)

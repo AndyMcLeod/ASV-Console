@@ -204,6 +204,11 @@ export const MAX_HALF_M = 60;
 // there is no run-out, there is rounding.
 const ALONG_EPS_M = 0.05;
 
+// The shortest spiral worth building. Below it the eased reversal IS the plain semicircle
+// to within a waypoint, and `spiralTurn` says so rather than returning a shape the caller
+// cannot tell apart from the one it already has.
+export const SPIRAL_MIN_LS_M = 0.5;
+
 /**
  * The minimum turn radius the vessel can actually HOLD at a given speed.
  *
@@ -460,6 +465,178 @@ export function racetrackTurn(E, F, hE, hF, frame, opts = {}) {
     outboard = Math.max(outboard, (pe.e - Ee.e) * fwd.e + (pe.n - Ee.n) * fwd.n);
   }
   return { pts, kind: 'racetrack', R, outboard, side: 'outboard' };
+}
+
+/**
+ * THE EASED REVERSAL: clothoid - arc - clothoid, so the CURVATURE is continuous.
+ *
+ * Every other shape in this file steps its curvature from 0 to 1/R the instant the vessel
+ * leaves the line: an infinite rate of change, which is a rudder movement no hull can make.
+ * The boat answers it by overshooting and settling, and settling is exactly what the
+ * lead-in exists to hide. This shape ramps instead - curvature rises linearly from 0 to
+ * 1/R over a spiral of length `Ls`, holds through a circular core, and ramps back to 0 -
+ * so the rudder rate is constant and finite, and the vessel rolls out onto the next line
+ * with the helm already amidships.
+ *
+ * ── THE GEOMETRY ───────────────────────────────────────────────────────────────────
+ * One spiral turns tau = Ls / 2R, so the core is left with theta = pi - 2 tau, and the
+ * three phases sum to pi exactly, by construction, for any Ls and R.
+ *
+ * The shape is symmetric about its own half-way point, so - like the plain semicircle - it
+ * ends ABEAM of where it started (VERIFIED: the integrated along-track displacement comes
+ * out at 1e-13 m, and the heading at 180.000000 deg). That is what lets the along-track
+ * offset be absorbed with an on-line straight here exactly as in the other two shapes.
+ *
+ * R is SOLVED against the integrated crossing; the closed form below only seeds it. A
+ * transition curve shifts its circular core outward by p ~= Ls^2 / 24R, so a 180-degree
+ * reversal spans d = 2(R + p) across:
+ *
+ *     R^2 - (d/2) R + Ls^2/24 = 0   ->   R = [ d/2 + sqrt(d^2/4 - Ls^2/6) ] / 2
+ *
+ * `p` is the first term of a series, so that lands 0.2 mm out at Ls 8 and 23.7 mm at
+ * Ls 25 (MEASURED, d = 40) - which is why three Newton steps follow it, on the integrated
+ * crossing, with the analytic derivative d(crossing)/dR = 2.
+ *
+ * ⚠ AND THE SOLVE IS WHAT DECIDES R, NOT THE SEED - established by mutation, not by
+ * reading. Deleting the spiral term from the discriminant, and even dropping the halving
+ * so the seed comes out at twice the right radius, both still converge to the same answer
+ * in three steps: the seed is a convenience that saves iterations, and only the
+ * FEASIBILITY test genuinely depends on the closed form. So do not "simplify" by trusting
+ * the seed - at a long spiral it is tens of millimetres out, and nothing downstream would
+ * say so.
+ *
+ * The discriminant is that feasibility test: no radius spans a crossing narrower than
+ * Ls * sqrt(6) / 2, and there the caller falls back to the shapes that do.
+ *
+ * ⚠⚠ AND THE EMIT STEP IS PART OF THE SHAPE, NOT A DETAIL. A polyline cannot express
+ * curvature continuity; the boat gets WAYPOINTS, and at the console's ordinary 3 m arc
+ * step the sampling swamps the thing this shape exists for. MEASURED on a 40 m crossing
+ * with Ls 8 m, worst curvature change between consecutive waypoints:
+ *
+ *     3 m step   eased 0.0188 /m   plain 0.0286 /m    1.5x   <- a label, not a feature
+ *     1 m step   eased 0.0065 /m   plain 0.0400 /m    6.2x
+ *     0.5 m      eased 0.0034 /m   plain 0.0445 /m   13.2x
+ *
+ * Note which way each column moves: refining the sampling drives the PLAIN arc's figure UP
+ * toward its true discontinuity (1/R = 0.05) and the eased one DOWN toward its true bounded
+ * derivative 1/(R Ls). That divergence is the proof the two shapes differ at all, and it
+ * only appears once the step is fine enough to resolve the ramp. So this shape is emitted
+ * at `Ls / 8` - eight chords per spiral - and pays for it in waypoints (69 rather than 22
+ * on that geometry). The caller reports the count; it is not hidden.
+ *
+ * ⚠ WHAT IS NOT KNOWN: how the vessel's own controller interpolates BETWEEN waypoints. If
+ * it flies chord to chord the polyline is the path and the step above is what matters; if
+ * it smooths, the easing survives a coarser one. Nobody has measured it on this hull, so
+ * the step is chosen for the pessimistic case and this comment says which.
+ *
+ * Same call shape as racetrackTurn. Returns {pts, kind:'eased', R, Ls, tau, outboard} with
+ * `pts` EXCLUDING E and F, or {why, seg?}.
+ */
+export function spiralTurn(E, F, hE, hF, frame, opts = {}) {
+  const clear = opts.clear || (() => true);
+  const maxHalf = opts.maxHalfM ?? MAX_HALF_M;
+  const Ee = frame.toEN(E), Fe = frame.toEN(F);
+  const half = Math.hypot(Ee.e - Fe.e, Ee.n - Fe.n) / 2;
+  if (half > maxHalf || half < 0.25) return { why: 'degenerate' };
+  // A reversal, not a dogleg - the same gate the other two shapes apply, for the same
+  // reason: the construction assumes the exit and entry headings are opposed.
+  if (Math.abs(((hF - hE + 360) % 360) - 180) > SKEW_LIMIT_DEG) return { why: 'skew' };
+
+  const Ls = opts.Ls || 0;
+  // Below a spiral worth building this IS the plain semicircle, and the caller already has
+  // one. Saying so is better than returning a shape indistinguishable from it.
+  if (Ls < SPIRAL_MIN_LS_M) return { why: 'no-spiral' };
+
+  const fwd = { e: Math.sin(hE * D2R), n: Math.cos(hE * D2R) };
+  const rgt = { e: fwd.n, n: -fwd.e };
+  const en2ll = (e, n) => frame.fromEN(e, n);
+  const Dv = { e: Fe.e - Ee.e, n: Fe.n - Ee.n };
+  const along = Dv.e * fwd.e + Dv.n * fwd.n;
+  const lateral = Dv.e * rgt.e + Dv.n * rgt.n;
+  const s = lateral >= 0 ? 1 : -1, d = Math.abs(lateral);
+  if (d < 0.5) return { why: 'degenerate' };
+
+  const disc = (d * d) / 4 - (Ls * Ls) / 6;
+  if (disc < 0) return { why: 'tight' };            // no radius spans this crossing
+  let R = (d / 2 + Math.sqrt(disc)) / 2;
+
+  // Walk the three phases, returning either the crossing reached (probe) or the points.
+  const fine = Math.min(0.25, Ls / 16, R / 40);
+  const walk = (Rw, step, emit) => {
+    const tau = Ls / (2 * Rw), theta = Math.PI - 2 * tau;
+    if (theta < 0) return null;                     // the spirals alone over-rotate
+    const Lc = Rw * theta;
+    let u = 0, w = 0, psi = 0, acc = 0;             // u across, w forward, psi from +fwd
+    const out = emit ? [] : null;
+    const phase = (L, kOf, every) => {
+      const n = Math.max(1, Math.ceil(L / step)), h = L / n;
+      for (let i = 1; i <= n; i++) {
+        const k = kOf(h * (i - 0.5));               // midpoint rule: second order in h
+        const mid = psi + k * h / 2;
+        psi += k * h; w += Math.cos(mid) * h; u += Math.sin(mid) * h;
+        if (emit) { acc += h; if (acc >= every) { out.push([u, w]); acc = 0; } }
+      }
+    };
+    // ⚠ THE SPIRALS ARE SAMPLED FINELY AND THE CORE IS NOT, because the core is a plain
+    // arc and there is nothing there to resolve. MEASURED at a 40 m crossing: a uniform
+    // fine step buys nothing over this and costs 60% more waypoints (67 against 42 at
+    // Ls 8, identical curvature figures) — and at a SHORT spiral it is far worse, because
+    // eight chords of a 2 m spiral is a 0.25 m step imposed on 60 m of core that does not
+    // want it. The core step is held within 2x the spiral step all the same: a chord
+    // length that jumps is a per-vertex heading change that jumps, which is the very
+    // thing this shape is built to avoid.
+    phase(Ls, x => x / (Rw * Ls), emit);
+    phase(Lc, () => 1 / Rw, emit ? Math.min(opts.arcStepM ?? arcStepFor(Rw), 2 * emit) : emit);
+    phase(Ls, x => (Ls - x) / (Rw * Ls), emit);
+    // ⚠ DROP A TRAILING POINT THAT LANDS ON F. The emitter fires on accumulated distance,
+    // so whether the last one falls on the shape's end is an accident of how the length
+    // divides by the step — and when it does, the caller appends F on top of it and every
+    // bearing taken across that pair is noise. It read as a 90 deg join out of a turn that
+    // was in fact tangent to 0.1 deg. Same fault the run-out guard has, same threshold.
+    if (out) while (out.length && Math.hypot(out[out.length - 1][0] - d,
+                                             out[out.length - 1][1]) < ALONG_EPS_M) out.pop();
+    return { u, w, psi, tau, len: 2 * Ls + Lc, pts: out };
+  };
+
+  for (let i = 0; i < 3; i++) {                     // close the seed's series error
+    const probe = walk(R, fine, 0);
+    if (!probe) return { why: 'tight' };
+    const err = probe.u - d;
+    if (Math.abs(err) < 1e-4) break;
+    R -= err / 2;                                   // d(crossing)/dR = 2
+  }
+  // ⚠ THE HULL STILL HAS THE LAST WORD. Easing does not make a radius flyable, and the
+  // eased R is always a little TIGHTER than the plain semicircle's (the spirals contribute
+  // crossing of their own), so this can refuse where the plain arc would not.
+  if (R < Math.max(0.75, opts.minR || 0)) return { why: 'tight' };
+
+  // EIGHT CHORDS PER SPIRAL - see the header. Capped by the caller's ordinary arc step so
+  // a long spiral is not sampled more finely than anything else, floored so a short one
+  // cannot explode the waypoint count.
+  const stepOut = Math.max(0.35, Math.min(opts.arcStepM ?? arcStepFor(R), Ls / 8));
+  const built = walk(R, fine, stepOut);
+  if (!built) return { why: 'tight' };
+
+  const P = { e: Ee.e + (along > 0 ? along * fwd.e : 0), n: Ee.n + (along > 0 ? along * fwd.n : 0) };
+  const Q = { e: Fe.e - (along < 0 ? along * fwd.e : 0), n: Fe.n - (along < 0 ? along * fwd.n : 0) };
+  const map = (x, y) => en2ll(P.e + x * s * rgt.e + y * fwd.e, P.n + x * s * rgt.n + y * fwd.n);
+
+  const pts = [];
+  if (along > ALONG_EPS_M) pts.push(en2ll(P.e, P.n));
+  for (const [u, w] of built.pts) pts.push(map(u, w));
+  if (along < -ALONG_EPS_M) pts.push(en2ll(Q.e, Q.n));
+
+  let prev = E;
+  for (const p of [...pts, F]) {
+    if (!clear(prev, p)) return { why: 'nogo', seg: [prev, p] };
+    prev = p;
+  }
+  let outboard = 0;
+  for (const p of pts) {
+    const pe = frame.toEN(p);
+    outboard = Math.max(outboard, (pe.e - Ee.e) * fwd.e + (pe.n - Ee.n) * fwd.n);
+  }
+  return { pts, kind: 'eased', R, Ls, tau: built.tau, len: built.len, outboard, side: 'outboard' };
 }
 
 export function teardropTurn(E, F, hE, hF, frame, opts = {}) {

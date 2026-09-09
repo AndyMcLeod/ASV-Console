@@ -756,6 +756,36 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    commanded speed stays the survey speed across both boundaries. Measured on a real
    7-line punch: coverage 1316 m before the lead and 1316 m after, run 1316 → 1725 m.
 
+   **Eased turns (clothoid transitions).** Every reversal above steps its curvature from
+   nothing to `1/R` the instant the boat leaves the line — an infinite rudder rate, which
+   no hull can answer, so it overshoots and settles. That settling is exactly what the
+   lead-in exists to hide. Setting **Turn shape → Eased** replaces the plain semicircle
+   with a **clothoid – arc – clothoid**: curvature ramps linearly over a spiral, holds
+   through a circular core, and ramps back, so the steering rate is constant and finite and
+   the boat rolls onto the next line with the helm already amidships.
+
+   The spiral length is a **vessel** property times the speed the turn is flown at —
+   `maneuvering.steering_settle_s`, how long the steering takes to reach the commanded rate.
+   A profile that doesn't declare one cannot ease, and the card says so rather than quietly
+   planning plain arcs under an "Eased" label. *The shipped settle times are estimates and
+   no trial has been flown*; to replace one with a real number, run up steady at the turn
+   speed in slack water, command a hard turn, and read off the recorded track the time from
+   the order to the moment the yaw rate stops rising.
+
+   *It is a rung on top of the turn ladder, never a replacement.* Where the eased shape
+   won't fit — it needs a little more outboard water and a slightly tighter radius — the
+   plan gets exactly the turn it would have got with easing off, and the readout counts
+   both. **Off by default**, so a console that has never been told otherwise plans the
+   turns it always did.
+
+   *What it costs and what it buys, measured on a live 7-line punch:* the three reversals
+   that took the eased shape went from a worst per-waypoint curvature change of **0.049 to
+   0.0071 per metre — about 7× gentler** — for 29 waypoints each instead of 20 (90 → 117
+   over the plan). A fourth pair, where the eased shape didn't fit, is byte-for-byte the
+   racetrack it was. Note the sampling matters as much as the curve: a curvature ramp
+   emitted at the ordinary 3 m arc step is an arc wearing the word "eased", so the spirals
+   are emitted at `Ls/8` and the core at the normal step.
+
    **Striking a run off by hand.** A minimum line length drops short coverage by
    *rule*; this is the same decision one line at a time, because "not worth
    surveying" is a judgement about this water and this vessel that no threshold
