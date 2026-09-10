@@ -55,11 +55,89 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-09 — a hazard the chart proves passable is dropped)
+## ⇒ START HERE (handoff refreshed 2026-09-10 — a turn is verified as a TRACK, not a drawing)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): A CHARTED HAZARD THE CHART PROVES PASSABLE IS DROPPED FROM THE
+**NEWEST (this commit): A TURN IS VERIFIED AS A TRACK, NOT AS A DRAWING — AND THE ROOT WAS
+THE WAYPOINT SPACING.** Andy, 2026-09-10: *"the ASV is on hold and there is no way to release
+the hold and continue without resetting the entire survey. Am I correct in this?"* He was.
+Then, on the four defects that came out of the diagnosis: *"Fix all four, in that order."*
+This is **the first of four** — the root; the other three are consequences.
+
+**WHAT HAPPENED, off his own console and his own cached chart.** A 645-waypoint / 17-line
+survey, Z-Boat, buffer 3 m, Min depth 3 m, eased turns, lead-in 15 m. She reached coverage
+line 1, ran 76 m of an 87 m line, and the guard held her eleven metres short of the end. The
+reversal immediately ahead (waypoints 2-18) sat 3.75-4.4 m off a keep-out at a 3 m buffer —
+clear by 0.75 m, and `punchOut` was right to ship it. The guard's projection over the same
+waypoints came within **2.9 m** and called an entry.
+
+**⚠⚠ THE REASON THEY DISAGREED IS THE VERTEX SPACING, AND NOTHING ELSE.** That reversal was
+emitted with vertices **0.20 m** apart. Both the vessel (`approach_m` 1.0, `arrival_m` 2.0)
+and the guard's `projectRoute` advance to the next waypoint the moment they are within the
+approach radius of it — so nine vertices are swallowed in one integration step and the boat
+is left steering at a point half way round the loop. It flies a CHORD across the inside of
+its own turn. Walked through the guard's own integrator:
+
+```
+as emitted, 39 waypoints, min gap 0.20 m  ->  flown track came within 1.42 m: ENTERS
+thinned to a 1 m floor, 15 waypoints      ->  flown track came within 4.01 m: clear
+```
+
+**The drawn polyline is 3.75 m off either way. Sampling it eighteen times finer moved the
+FLOWN track 2.6 m closer to the feature.** A route sampled finer than the approach radius
+that consumes it is not a finer route; it is a worse one. That sampling came from
+`spiralTurn`'s `Ls / 8` (my clothoid commit, `70d74d19`) meeting a hull whose settle length
+is 2.31 m — written for a DriX at 15 m, floored at 0.35 m, and never asked what would follow it.
+
+**THE FIX, in `static/js/turns.js`.**
+* **`thinTrack(pts, minGapM, ref)`** — no two waypoints closer than the approach radius.
+  E and F are in the chain that is thinned, not outside it: a first arc vertex 0.20 m off the
+  line end is the same seam. A crowded LAST point drops its neighbour, never itself.
+* **`turnFlyable(...)`** — every candidate shape is projected with the guard's own
+  `projectRoute`: same integrator, same turn rate (`V.MAX_TURN_RATE_DEG_S`), same approach
+  radius (the identical expression `guardTrack` uses), same model, same buffer. Horizon is the
+  SHAPE'S OWN LENGTH, not 45 s, or a long turn stops being checked half way round. Flown in
+  still water — the plan may be flown on the other half of the tide.
+* **Thin, THEN verify.** Checking the dense shape and shipping the thinned one is this same
+  defect one layer down.
+* **The eased rung is withheld** when `easeLs < 4 × gap` — what would ship is an arc wearing
+  the word "eased".
+* **Armed unless disabled by name.** `fly === false` is the only opt-out (the pure-geometry
+  suites); an omitted argument still checks. Same rule as chart.js's `enforce` whitelist.
+* punchOut passes `fly` at both call sites and the banner names the new refusal: *"the hull
+  cannot TRACK without entering it - the shape fits on paper, the boat flown along it does not"*.
+
+**⚠ A DOCUMENTED SAFETY RUNG'S WINDOW MOVED, DELIBERATELY.** `direct_turn.js` 10 (the wharf
+rung) squeezed the outboard water to 3.5 m and demanded an inboard turn. At 3.5 m there is
+0.5 m of clear water in front of a hull that needs 1.47 m of radius: it cannot make ANY turn
+there, and the loop the old check demanded was one the boat would have clipped. The fixture
+is 4.0 m now, where the inboard rung is still reached and still chosen, and a NEW 10b pins the
+other edge — at 3.5 m it must REFUSE. That is only safe because a refused reversal has not
+shipped as a straight leg since punchOut started flagging it UNSAFE: it blocks Upload.
+**Swept across that fixture the two answers are identical from 4.5 m out** — the flyability
+test costs nothing in ordinary water and bites only in the last half-metre.
+
+**TEETH: `tests/turn_geometry.js` 43b → 49 (six new), 12 mutations, all killed.** The teeth
+that matter are 47 (the SAME semicircle, sampled 94 ways and 14 ways, `legClear` passes both
+and only the flown track separates them) and 47b (a 94 m arc against a 45 s horizon).
+
+**⚠ ONE MUTATION IS DELIBERATELY ABSENT AND THE REASON IS WRITTEN DOWN.** Removing the
+`legClear` re-check of the THINNED polyline kills no test: across every fixture built for it
+(a pile swept 0 to 1 m inside the arc; a pile on the final chord into F) the projection
+refuses everything the polyline does. The line is kept — `patRoutes` is what is drawn and
+uploaded, and the artifact that ships has to be verified as itself — but it is belt-and-braces
+over a stricter test, and inventing a contrived fixture to redden would be theatre.
+
+**STILL TO DO, IN HIS ORDER:** (2) the slow/release oscillation — 36 throttle commands in 35 s;
+(3) the deviation rung cannot answer a TURN (0 amendments all session, `edgeAround` returns
+null on a 17-vertex arc it can only nudge one vertex of); (4) the two resume bugs from
+`228961d1` — `guardHeldOffer` demanding `holding` through the 5 s arrival gap, and
+`markGuardHeld` nulling before its own guard.
+
+---
+
+**BEFORE THAT: A CHARTED HAZARD THE CHART PROVES PASSABLE IS DROPPED FROM THE
 KEEP-OUT MODEL, NOT MERELY STRIPPED OF ITS EXTENT.** Andy, 2026-09-09, with a screenshot of
 a survey plan and a hook drawn round it in red: *"The avoidance maneuver circled in red for a
 rock on the chart is unnecessary. Check charted depth and draft of the chosen ASV and tell me

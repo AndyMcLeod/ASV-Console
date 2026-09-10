@@ -6314,7 +6314,7 @@ async function punchOut(){
     // nNoTurn is the total; the three beside it are WHY, because the banner used to
     // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nRace=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
-    let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0;
+    let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0, nTurnTrack=0;
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
     let nTurnInboard=0, nTurnSlow=0, nGapTurn=0; turnSlowAt={};
@@ -6377,7 +6377,12 @@ async function punchOut(){
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
         // the wharf this exists for - the old single attempt refused, and refusing was
         // what put the boat on the pier.
-        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs);
+        // ⚠ THE HULL THAT HAS TO FLY IT, so the ladder can ask the RUNTIME GUARD'S OWN
+        // projection whether each candidate shape is flyable - see turnFlyable. The
+        // approach radius is the identical expression guardTrack uses, because the two
+        // must be the same number or the punch and the guard are back to disagreeing.
+        const fly = {spdKey: roleSpeed("turn"), approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
+        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
         // ⚠⚠ AND WHEN EVERY RUNG IS REFUSED, THE LEAD GIVES WAY BEFORE THE TURN DOES.
         // Andy's call, 2026-09-08: "Cap the lead at what the turn water allows."
         //
@@ -6399,7 +6404,7 @@ async function punchOut(){
             const sK1 = runWithLeads(k+1, li, patLead[k+1].out||0);
             if(!sK || !sK1) break;
             const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
-                                     minTurnR, turnMaxHalf, minTurnRSlow, easeLs);
+                                     minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
             if(!t2.pts) continue;
             // Written together, because patLead[k] describes patClip[k] and nothing else.
             patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0,   out: lo};
@@ -6424,7 +6429,8 @@ async function punchOut(){
                    // nowhere else - a plan-wide speed drop would cost the whole survey.
                    if(t.slow){ nTurnSlow++; turnSlowAt[k]=true; } }
         else { nNoTurn++; reversalRefused=true;  // every rung refused - the boat will improvise
-          if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++; else nTurnDegen++;
+          if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++;
+          else if(t.why==="track") nTurnTrack++; else nTurnDegen++;
           if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
             const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
             if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at}); } }
@@ -6598,6 +6604,7 @@ async function punchOut(){
       const whyTxt = [nTurnNogo?`${nTurnNogo} blocked by a keep-out`:``,
                       nTurnSkew?`${nTurnSkew} more than ${SKEW_LIMIT_DEG}° off a true reversal`:``,
                       nTurnDegen?`${nTurnDegen} with the line ends too close together to loop between`:``,
+                      nTurnTrack?`${nTurnTrack} the hull cannot TRACK without entering it - the shape fits on paper, the boat flown along it does not`:``,
                       nKnotFold?`${nKnotFold} folded by an obstacle the detour had to round`:``]
                      .filter(Boolean).join(", ");
       showBanner(`${nNoTurn} reversal(s) have no generated turn (${whyTxt}), so those legs fall back to a straight hop the ASV CANNOT actually track.${chanTxt}${widenTxt?` ${widenTxt}`:``}`); }

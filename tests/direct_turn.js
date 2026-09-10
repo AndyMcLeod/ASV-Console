@@ -87,6 +87,15 @@ function check(name, cond, detail) {
 
 // Erie, and the plan's own numbers: a Z-Boat holding 2.06 m at survey speed, 1.03 m slow.
 const F = planeFrame({ lat: 42.1396, lon: -80.0902 });
+// ⚠ THE VESSEL MODEL HAS TO MATCH THE RADII, since turnWithRetry now asks the runtime
+// guard's own projection whether each shape is flyable (turns.js turnFlyable) and that
+// projection integrates at V.MAX_TURN_RATE_DEG_S. MIN_R 2.06 m IS 3 kn at 60 deg/s with the
+// 1.4 tracking margin - these constants were always this hull's, they were just never said
+// out loud, and a projection run at some other rate would be judging a different boat.
+const { V } = require("../static/js/state.js");
+V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
+V.MAX_TURN_RATE_DEG_S = 60;
+V.VESSEL = { maneuvering: { approach_m: 1.0 } };
 const MIN_R = 2.06, MIN_R_SLOW = 1.03, BUF = 3, SPACING = 31.5;
 const MAXHALF = Math.max(60, SPACING * 1.6);
 const CLEAR = { polys: [], lines: [], points: [], marks: [], sys: [], chans: [] };
@@ -226,13 +235,38 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
   // BOTH radii: 2.06 + BUF = 5.06 m at survey speed, 1.03 + BUF = 4.03 m slowed. A second
   // draft at 4.5 m left the SLOW racetrack fitting, so the ladder rightly took rung 3 and
   // never reached the inboard rung this check exists to prove is still there.
-  const TIGHT = 3.5;                       // > BUF, < MIN_R_SLOW + BUF
+  // ⚠ THE WINDOW MOVED FROM 3.5 m TO 4.0 m ON 2026-09-10, AND THE REASON IS THAT THIS IS
+  // NOW A TEST ABOUT A BOAT RATHER THAN ABOUT A POLYLINE. turnWithRetry asks the runtime
+  // guard's own projection whether each candidate can be TRACKED (turnFlyable), and with the
+  // slab 3.5 m off the line end there is 0.5 m of clear water in front of a hull that needs
+  // 1.47 m of radius at 3 kn: it cannot make ANY turn there, and the inboard semicircle the
+  // old check demanded was a shape the boat would have clipped. Swept across the fixture,
+  // the two answers are IDENTICAL from 4.5 m out - the flyability test costs nothing in
+  // ordinary water and bites only in the last half-metre.
+  const TIGHT = 4.0;                       // > BUF, < MIN_R_SLOW + BUF, and flyable
   const tightW = slab(TIGHT, 40);
   const inv = turnWithRetry(E, at(SPACING), 0, 180, F, tightW, BUF, MIN_R, MAXHALF, MIN_R_SLOW);
   check("10. when even the tight shape will not fit, it STILL inverts rather than refusing",
         () => inv.pts && inv.side === "inboard" && inv.rung > 2,
         "outboard water cut to " + TIGHT + " m -> " + (inv.pts ? inv.kind + "/" + inv.side
           + " on rung " + inv.rung : "REFUSED (" + inv.why + ") — the wharf bug returning"));
+
+  // 10b. THE OTHER EDGE, AND IT IS NEW. Squeeze it to where no turn can be FLOWN and the
+  // ladder must refuse rather than ship a loop the hull would clip. That is only safe
+  // because a refused reversal has not shipped as a straight leg since punchOut started
+  // flagging it UNSAFE - it blocks Upload and the operator moves the line, widens the
+  // spacing or slows the plan. Shipping an unflyable loop next to the one feature that
+  // refused it is the wharf incident itself.
+  const noneFly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
+                                MIN_R, MAXHALF, MIN_R_SLOW);
+  const geomOnly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
+                                 MIN_R, MAXHALF, MIN_R_SLOW, 0, false);
+  check("10b. ... and where nothing can be TRACKED it refuses, though the polyline fits",
+        () => !noneFly.pts && geomOnly.pts && geomOnly.side === "inboard",
+        "at 3.5 m the drawn shape is clear (" + (geomOnly.pts ? geomOnly.kind + "/"
+          + geomOnly.side + ", " + geomOnly.pts.length + " waypoints, no fouled chord" : "?")
+          + ") but the hull flown along it enters, so the ladder gives up: "
+          + (noneFly.pts ? "SHIPPED ANYWAY" : "refused (" + noneFly.why + ")"));
 
   // 11. And when there is genuinely nothing, it is refused as unsafe with rung ONE's
   // reason - the turn the operator expected, and the feature that took it away.

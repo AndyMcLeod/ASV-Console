@@ -952,6 +952,24 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    name the channel in the banner, outline it as a violation, and quote the standoff
    the turns need (`tests/turn_channel.js`).
 
+   **A turn is verified as a TRACK, not as a drawing** (2026-09-10). Every candidate shape
+   on the ladder is projected exactly as the runtime clearance guard will project it — same
+   integrator, same turn rate, same approach radius, same keep-out model — and a shape the
+   hull would fly *through* a keep-out is refused even when the drawn polyline is clear. The
+   two used to answer different questions about the same turn, and where they disagreed the
+   boat got a plan it was then stopped for flying.
+
+   That also puts a floor under the **waypoint spacing**: no two turn waypoints closer than
+   the approach radius. Both the vessel and the guard advance to the next waypoint the moment
+   they are within the approach radius of it, so a cluster of vertices 0.20 m apart is
+   consumed in one step and the boat is left steering at a point half way round the loop —
+   it flies a chord across the inside of its own turn. Measured on a real plan: the same
+   reversal, drawn 3.75 m off a keep-out either way, put the *flown* track **1.42 m** from
+   the feature at 0.20 m spacing and **4.01 m** at 1 m spacing. Sampling a curve finer than
+   the thing that follows it makes the boat fly it worse, not better. An eased turn whose
+   settle length cannot ramp across that spacing is not offered at all; the plain arc takes
+   the turn, exactly as it would have before easing existed.
+
    The turn waypoints — the line reversals and the arc points — are drawn
    **unlabeled** (each line already carries its own `L#` label, so per-point `W#`
    numbers are just clutter), and arcs are sampled coarsely (~3 m) so a wide-spacing

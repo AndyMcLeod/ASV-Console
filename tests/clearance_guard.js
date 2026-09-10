@@ -374,12 +374,15 @@ check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped st
         + "blocked-transit branch instead of being said about every red leg");
 }
 check("13. punchOut climbs the ladder rather than making one attempt",
-      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs\)/.test(PO) &&
+      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly\)/.test(PO) &&
             /const minTurnRSlow = minTurnRadiusM\("low"\)/.test(PO) &&
-            /const easeLs = easeLsM\(\);/.test(PO),
-      "the slow radius AND the eased spiral length are both derived from the vessel model "
-      + "beside the plan radius — easeLs is 0 unless the operator asked and the hull can, "
-      + "and 0 leaves this ladder exactly the ladder it was before easing existed");
+            /const easeLs = easeLsM\(\);/.test(PO) &&
+            /const fly = \{spdKey: roleSpeed\("turn"\), approachM: Math\.max\(0\.5, \+\(mission\.approach_radius_m\) \|\| 1\)\};/.test(PO),
+      "the slow radius, the eased spiral length AND the hull that has to fly the shape are "
+      + "all derived from the vessel model beside the plan radius — easeLs is 0 unless the "
+      + "operator asked and the hull can, and `fly` carries the APPROACH RADIUS, which has to "
+      + "be the identical expression guardTrack uses or the punch and the runtime guard are "
+      + "judging different boats (2026-09-10)");
 
 const G = grab(H, "clearanceGuard");
 // 14. IT COMMANDS NOTHING UNLESS THE BOAT IS UNDER AUTONOMOUS COMMAND. A slow-down sent

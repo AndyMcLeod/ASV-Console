@@ -73,7 +73,9 @@ const { V, nogo } = require("../static/js/state.js");
 // copy - and the checks below exercise the function that actually ships.
 const { blocked, legClear } = require("../static/js/chart.js");
 // The turn geometry itself, from the module it moved to out of asv.html.
-const { arcPts, minTurnRadiusM, shortenSeg, teardropTurn } = require("../static/js/turns.js");
+const { arcPts, minTurnRadiusM, shortenSeg, teardropTurn, thinTrack, trackGapM, turnFlyable,
+        turnWithRetry: twr } = require("../static/js/turns.js");
+const { bbOf } = require("../static/js/geometry.js");
 
 // The junction-seam guard (2026-08-10, mission wpt 551) ships in passage.js beside
 // pruneStitch - the interior prune it completes. Required, not grabbed: real module.
@@ -724,6 +726,157 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
           + "answered by the arc the operator expected, not by a comfort shape refusing "
           + "for reasons of its own");
   }
+}
+
+
+// ── 44-49. A ROUTE HAS TO BE FOLLOWABLE BY WHATEVER FOLLOWS IT ─────────────────────────
+//
+// Andy, 2026-09-10, on a survey the clearance guard stopped eleven metres into line 1 of 17:
+// *"the ASV is on hold and there is no way to release the hold and continue without
+// resetting the entire survey."* The hold was correct. The PLAN was not, and not for the
+// reason anyone would guess: its reversal was emitted with vertices 0.20 m apart, while both
+// the vessel and the guard's projection advance to the next waypoint the moment they are
+// within the APPROACH RADIUS (1.0 m on this hull). Nine vertices are consumed in one step,
+// the boat is left steering at a point half way round the loop, and it flies a chord across
+// the inside of its own turn.
+//
+// The drawn polyline was 3.75 m off the keep-out either way. Sampling it eighteen times
+// finer moved the FLOWN track 2.6 m closer - from 4.01 m to 1.42 m, inside a 3 m buffer.
+{
+  const gap = 1.0;
+  const straight = [];
+  for (let i = 0; i <= 20; i++) straight.push(enLL(i * 0.2, 0));   // 0.2 m apart, like the spirals
+  const thin = thinTrack(straight, gap, ref);
+  const gaps = [];
+  for (let i = 1; i < thin.length; i++)
+    gaps.push(Math.hypot(toE(thin[i]) - toE(thin[i-1]), toN(thin[i]) - toN(thin[i-1])));
+  check("44. thinTrack floors the spacing at the approach radius that consumes it",
+        thin.length < straight.length && Math.min(...gaps) >= gap - 1e-6
+        && distTo(thin[0], straight[0]) < 1e-6
+        && distTo(thin[thin.length-1], straight[straight.length-1]) < 1e-6,
+        straight.length + " waypoints 0.20 m apart -> " + thin.length + ", min gap "
+        + Math.min(...gaps).toFixed(2) + " m. First and last are where the shape meets the "
+        + "lines and are never dropped");
+
+  // ⚠ THE LAST POINT IS NOT OPTIONAL, so when it crowds its neighbour the NEIGHBOUR goes.
+  const crowd = [enLL(0, 0), enLL(5, 0), enLL(5.1, 0)];
+  const ct = thinTrack(crowd, gap, ref);
+  check("45. ... and a crowded END drops the point before it, never itself",
+        ct.length === 2 && distTo(ct[1], crowd[2]) < 1e-6,
+        "3 waypoints with the last 0.1 m behind the middle -> " + ct.length
+        + ", ending at the " + (distTo(ct[1], crowd[2]) < 1e-6 ? "LAST" : "middle")
+        + " one. Keeping the middle would leave the shape short of the line it joins");
+}
+
+// 46-47. THE REPORTED CASE, DRIVEN THROUGH THE GUARD'S OWN PROJECTION.
+{
+  const sav = { s: V.SPEED_KN, r: V.MAX_TURN_RATE_DEG_S, v: V.VESSEL };
+  V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
+  V.MAX_TURN_RATE_DEG_S = 60;
+  V.VESSEL = { maneuvering: { approach_m: 1.0 } };
+  const fly = { spdKey: "survey", approachM: 1.0 };
+
+  // 46. WHAT SHIPS IS WHAT WAS VERIFIED. The eased shape emits its spirals at Ls/8 - 0.5 m
+  // at Ls 4 - so it is the rung that exercises the thinning. Checking the dense shape and
+  // shipping the thinned one would be verifying a different route from the one the boat is
+  // given, which is this whole defect one layer down.
+  const E1 = enLL(0, 0), F1 = enLL(0, 40);
+  const eased = twr(E1, F1, 90, 270, ref, CLEAR, BUF, 8, 400, 4, 4, fly);
+  const gapsOf = (r, A, B) => { const P = [A, ...(r.pts || []), B]; const g = [];
+    for (let i = 1; i < P.length; i++) g.push(distTo(P[i-1], P[i])); return g; };
+  const g46 = eased.pts ? gapsOf(eased, E1, F1) : [];
+  check("46. what SHIPS is what was verified - thinned first, then checked",
+        !!eased.pts && Math.min(...g46) >= trackGapM(fly) - 1e-6,
+        (eased.pts ? eased.kind + ", " + eased.pts.length + " waypoints, tightest gap "
+          + Math.min(...g46).toFixed(2) : "refused (" + eased.why + ")")
+        + " m against a 1.0 m approach radius. The spirals are emitted at Ls/8 = 0.50 m and "
+        + "the shape is thinned BEFORE legClear and the projection are asked about it");
+
+  // 47. AND THE FLYABILITY TEST IS WHAT TELLS DENSE FROM COARSE. One semicircle, sampled
+  // two ways, with a pile inside the loop. legClear passes both polylines - they are the
+  // same curve. The projection does not: fed 94 waypoints 0.2 m apart it consumes a dozen
+  // per step, steers at a point half way round, and cuts across the middle onto the pile.
+  const R = 6;
+  const arcAt = (stepM) => { const out = [], n = Math.max(2, Math.ceil(Math.PI * R / stepM));
+    for (let i = 1; i < n; i++) { const a = -Math.PI/2 + Math.PI * (i / n);
+      out.push(enLL(R * Math.cos(a), R + R * Math.sin(a))); } return out; };
+  const pile = { polys: [], lines: [],
+                 points: [{ e: R * 0.35, n: R, r: 0, kind: "a pile" }],
+                 marks: [], sys: [], chans: [] };
+  const E2 = enLL(0, 0), F2 = enLL(0, 2 * R);
+  const dense = arcAt(0.2);
+  const thinned = thinTrack([E2, ...dense, F2], 1.0, ref).slice(1, -1);
+  const okDense = turnFlyable(E2, F2, dense, 90, ref, pile, 3, fly);
+  const okThin  = turnFlyable(E2, F2, thinned, 90, ref, pile, 3, fly);
+  const chordsClear = (pts) => { const P = [E2, ...pts, F2];
+    for (let i = 1; i < P.length; i++) if (!legClear(P[i-1], P[i], ref, pile, 3)) return false;
+    return true; };
+  check("47. ... and the flyability test is what tells the two apart",
+        okDense === false && okThin === true && chordsClear(dense) && chordsClear(thinned),
+        "the SAME semicircle: " + dense.length + " waypoints 0.2 m apart -> flyable="
+        + okDense + "; thinned to " + thinned.length + " at 1 m -> flyable=" + okThin
+        + ". legClear passes both (" + chordsClear(dense) + "/" + chordsClear(thinned)
+        + ") because they are one curve - only the FLOWN track separates them, and the "
+        + "finer sampling is the one that cuts across its own loop");
+  V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
+}
+
+// 47b. AND THE HORIZON IS THE SHAPE'S OWN LENGTH, NOT THE GUARD'S 45 SECONDS. The guard
+// looks 45 s ahead because that is how far it can see; a plan-time question is about one
+// manoeuvre end to end, and a 45 s cap stops checking a big turn half way round it. At
+// 3 kn that cap is 69 m of arc, and a 30 m semicircle is 94 m.
+{
+  const sav = { s: V.SPEED_KN, r: V.MAX_TURN_RATE_DEG_S, v: V.VESSEL };
+  V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
+  V.MAX_TURN_RATE_DEG_S = 60;
+  V.VESSEL = { maneuvering: { approach_m: 1.0 } };
+  const R = 30, fly = { spdKey: "survey", approachM: 1.0 };
+  const pts = [];
+  for (let i = 1; i < 60; i++) { const a = -Math.PI/2 + Math.PI * (i / 60);
+    pts.push(enLL(R * Math.cos(a), R + R * Math.sin(a))); }
+  const E = enLL(0, 0), Fp = enLL(0, 2 * R);
+  // a pile inside the FAR half of the loop - past 69 m of arc, where a 45 s cap stops looking
+  const far = { polys: [], lines: [],
+                points: [{ e: R * Math.cos(1.2), n: R * (1 + Math.sin(1.2)), r: 0, kind: "a pile" }],
+                marks: [], sys: [], chans: [] };
+  const near = { polys: [], lines: [],
+                 points: [{ e: R * Math.SQRT1_2, n: R * (1 - Math.SQRT1_2), r: 0, kind: "a pile" }],
+                 marks: [], sys: [], chans: [] };
+  const arcLen = Math.PI * R;
+  check("47b. the flyability horizon covers the whole shape, not the guard's 45 s",
+        turnFlyable(E, Fp, pts, 90, ref, near, 3, fly) === false
+        && turnFlyable(E, Fp, pts, 90, ref, far, 3, fly) === false,
+        "a " + arcLen.toFixed(0) + " m arc at 3 kn takes " + (arcLen / 1.543).toFixed(0)
+        + " s to fly, against a 45 s guard horizon. A pile in the NEAR half is caught either "
+        + "way; one in the FAR half is caught only because the horizon is the shape's own "
+        + "length - and an unchecked far half is the end of the turn, where it rejoins the "
+        + "next line");
+  V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
+}
+
+// 48. THE CHECK IS ARMED UNLESS IT IS TURNED OFF BY NAME. An absent argument must not
+// silently disable a safety test - the fault chart.js's `enforce` whitelist was rewritten
+// to remove. `false` is the only opt-out, and it exists for the pure-geometry suites.
+{
+  const src = fs.readFileSync(path.join(STATIC, "js", "turns.js"), "utf8");
+  check("48. an omitted `fly` still checks; only an explicit false opts out",
+        /if\(fly === false\) return true;/.test(src)
+        && /trackGapM\(fly\)/.test(src)
+        && !/if\(!fly\) return true/.test(src)
+        && trackGapM(undefined) > 0 && trackGapM(false) === 0,
+        "trackGapM(undefined) = " + trackGapM(undefined) + " m (armed), trackGapM(false) = "
+        + trackGapM(false) + " (off). A caller who forgets gets the check, not the bug");
+}
+
+// 49. AND AN EASED TURN THE SPACING CANNOT EXPRESS IS NOT OFFERED AT ALL. Four vertices per
+// spiral is the floor; below it what ships is an arc wearing the word "eased".
+{
+  const src = fs.readFileSync(path.join(STATIC, "js", "turns.js"), "utf8");
+  check("49. the eased rung is withheld when the waypoint spacing cannot ramp",
+        /easeLs > 0 && \(easeGap <= 0 \|\| easeLs >= 4 \* easeGap\)/.test(src),
+        "a 2.31 m settle length thinned to a 1.0 m approach radius keeps two vertices, "
+        + "which is an arc - the plain rung below takes the turn instead, exactly as it "
+        + "would have before easing existed");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

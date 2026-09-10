@@ -58,6 +58,8 @@
 import { distTo } from "./geodesy.js";
 import { legClear } from "./chart.js";
 import { V } from "./state.js";
+// THE RUNTIME GUARD'S OWN PROJECTION, borrowed at PLAN time - see turnFlyable.
+import { projectRoute } from "./guard.js";
 // THE SHARED TURN GEOMETRY. Four bodies, four wrappers below; the constants pass straight
 // through because both consoles already agreed on every one of them.
 import { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, SPIRAL_MIN_LS_M,
@@ -183,7 +185,114 @@ export function spiralTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, Ls){
 // and for the same reason: a comfort feature must not be able to cost a plan its turn.
 // The eased shape refuses more often than the plain arc does - it needs a little more
 // outboard water and a slightly tighter radius - so the fallback is not theoretical.
-export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow, easeLs){
+/**
+ * NO TWO WAYPOINTS CLOSER THAN THE APPROACH RADIUS THAT CONSUMES THEM.
+ *
+ * ⚠ A ROUTE SAMPLED FINER THAN THE APPROACH RADIUS IS NOT A FINER ROUTE, IT IS A WORSE
+ * ONE - and this is measured, not argued. Both the vessel and the guard's projection
+ * advance to the next waypoint the moment they are within the approach radius of it, so a
+ * cluster of vertices 0.20 m apart is consumed in a single integration step and the boat is
+ * left steering at whatever lies a dozen vertices further round. It flies a CHORD across
+ * the inside of its own turn.
+ *
+ * On Andy's plan, 2026-09-10, the same reversal walked through the guard's own integrator:
+ *
+ *     as emitted, 39 waypoints, min gap 0.20 m   -> track came within 1.42 m: ENTERS
+ *     thinned to a 1 m floor, 15 waypoints       -> track came within 4.01 m: clear
+ *
+ * The drawn polyline is 3.75 m off the keep-out either way. Sampling it EIGHTEEN TIMES
+ * FINER moved the flown track 2.6 m closer to the feature, into the buffer, and the guard
+ * held a 645-waypoint survey eleven metres into line 1 of 17.
+ *
+ * The first and last points are not optional - they are where the shape meets the lines -
+ * so when the last one crowds its neighbour it is the NEIGHBOUR that goes.
+ */
+export function thinTrack(pts, minGapM, ref){
+  if(!pts || pts.length < 3 || !(minGapM > 0)) return pts;
+  const en = pts.map(q => ref.toEN(q));
+  const keep = [0];
+  for(let i = 1; i < pts.length - 1; i++){
+    const q = en[keep[keep.length - 1]];
+    if(Math.hypot(en[i].e - q.e, en[i].n - q.n) >= minGapM) keep.push(i);
+  }
+  const last = pts.length - 1;
+  while(keep.length > 1){
+    const q = en[keep[keep.length - 1]];
+    if(Math.hypot(en[last].e - q.e, en[last].n - q.n) >= minGapM) break;
+    keep.pop();
+  }
+  keep.push(last);
+  return keep.map(i => pts[i]);
+}
+
+/** The waypoint spacing floor a shape is built to, for this hull. */
+export function trackGapM(fly){
+  if(fly === false) return 0;
+  const o = fly || {};
+  return o.approachM
+    || (V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.approach_m) || 1;
+}
+
+/**
+ * CAN THE HULL ACTUALLY FLY THIS SHAPE, JUDGED BY THE RUNTIME GUARD'S OWN MODEL?
+ *
+ * ⚠ THE PUNCH AND THE GUARD USED TO ANSWER DIFFERENT QUESTIONS ABOUT THE SAME TURN, and
+ * that is what stopped a survey dead at New Castle on 2026-09-10. The punch asks whether
+ * the drawn POLYLINE clears the keep-outs (`legClear`, sampled every buf/3 metres). The
+ * guard asks whether the boat, steering at its own turn rate toward the waypoint it is
+ * actually being steered at, stays clear. Those are not the same question, and where they
+ * disagree the boat gets a plan it is then stopped for flying.
+ *
+ * Measured on Andy's plan: a reversal whose every vertex sat 3.75-4.4 m off a keep-out at a
+ * 3 m buffer - legal, clear by 0.75 m, and the punch was right to ship it. The guard's
+ * projection over the same waypoints came within 2.9 m and called an entry. The survey held
+ * eleven metres short of the end of line 1 of 17, the hold replaced the 645-waypoint plan
+ * with a single waypoint, and there was no way back.
+ *
+ * ⚠⚠ AND THE REASON THE TWO DISAGREED IS THE ONE NOBODY WOULD GUESS: the eased turn's
+ * VERTEX SPACING. `spiralTurn` emits its clothoids at `Ls / 8`, floored at 0.35 m - written
+ * for a hull whose settle length is 15 m. This vessel's is 2.31 m (1.5 s at 3 kn), so the
+ * spirals came out at 0.20-0.35 m per vertex, while the projection - and the VESSEL, whose
+ * own approach radius is 1.0 m and arrival radius 2.0 m - advances to the next waypoint the
+ * moment it is within the approach radius. Nine vertices are consumed in a single step and
+ * the "turn" is flown as a chord across its own inside. **A route sampled finer than the
+ * approach radius that consumes it is not a finer route, it is a different one.**
+ *
+ * So rather than guess a margin, ask the guard. Every candidate shape is projected exactly
+ * as the runtime guard will project it - same integrator, same turn rate, same approach
+ * radius, same keep-out model, same buffer - and a shape whose projected track enters is
+ * refused, and the ladder falls to the next rung. The plain arc's vertices are 3 m apart,
+ * are followable, and pass; so the plan that ships is the plan the guard will let fly.
+ *
+ * ⚠ THE HORIZON IS THE SHAPE'S OWN LENGTH, not the guard's 45 s. The guard looks 45 s
+ * ahead because that is how far it can see; here the question is about a specific manoeuvre
+ * from end to end, and a 45 s cap would silently stop checking a long turn half way round.
+ *
+ * ⚠ AND IT IS FLOWN IN STILL WATER. The set at plan time is not the set at run time - the
+ * plan may be flown hours later, on the other half of the tide - so adding today's drift
+ * would build a turn for a stream that will not be there. The guard adds the live set when
+ * the boat is actually there, which is the right place for it; this check is about whether
+ * the SHAPE is flyable at all.
+ */
+export function turnFlyable(E, F, pts, hE, ref, ko, buf, fly){
+  if(fly === false) return true;                       // explicit opt-out, for geometry tests
+  const o = fly || {};
+  const kn = (V.SPEED_KN && V.SPEED_KN[o.spdKey]) || (V.SPEED_KN && V.SPEED_KN.survey) || 3.0;
+  const twMs = kn * 0.514444;
+  const rate = V.MAX_TURN_RATE_DEG_S || 20;
+  const approachM = o.approachM
+    || (V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.approach_m) || 1;
+  const track = [...(pts || []), F].map(q => ref.toEN(q));
+  if(track.length < 2) return true;
+  let len = distTo(E, (pts && pts[0]) || F);
+  for(let i = 1; i < track.length; i++)
+    len += Math.hypot(track[i].e - track[i-1].e, track[i].n - track[i-1].n);
+  const horizonS = Math.max(10, len / twMs + 10);
+  return !projectRoute(ref.toEN(E), hE, twMs, {e:0, n:0}, track, ko, buf,
+                       {turnRateDegS: rate, approachM, horizonS});
+}
+
+export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow, easeLs, fly){
   // ⚠ THE RACETRACK RUNGS SIT ABOVE THE INBOARD ONE, AND THAT ORDER IS THE FIX Andy
   // ASKED FOR (2026-09-01): *"the turns are implemented as inverted teardrop turns.
   // Consider a more direct, curvilinear format for this implementation."* What he was
@@ -199,7 +308,16 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
   // and nobody has reported a problem with those. This ladder only changes what happens
   // AFTER the gentle turn is refused.
   const tries = [];
-  if(easeLs > 0) tries.push({side: undefined, minR, slow: false, shape: 'eased'});
+  // ⚠ AN EASED TURN THE WAYPOINT SPACING CANNOT EXPRESS IS NOT AN EASED TURN. The whole
+  // value of the clothoid is the curvature RAMP, and a ramp needs vertices to ramp across;
+  // thinned to the approach radius, a 2.3 m settle length keeps two of them and what ships
+  // is an arc wearing the word "eased". Four per spiral is the floor - below it the rung is
+  // not offered at all and the plain arc takes the turn, which is what it would have had
+  // before easing existed. Same rule as SPIRAL_MIN_LS_M, measured against the consumer
+  // rather than against zero.
+  const easeGap = trackGapM(fly);
+  if(easeLs > 0 && (easeGap <= 0 || easeLs >= 4 * easeGap))
+    tries.push({side: undefined, minR, slow: false, shape: 'eased'});
   tries.push({side: undefined, minR, slow: false, shape: 'arc'},
              {side: undefined, minR, slow: false, shape: 'racetrack'});
   // ⚠ A SLOWER ATTEMPT ONLY RESHAPES A TEARDROP, AND THE TEST IS WHAT ESTABLISHED THAT.
@@ -235,7 +353,29 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
       : t.shape === 'eased'
       ? spiralTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, easeLs)
       : teardropTurn(E, F, hE, hF, ref, ko, buf, t.minR, maxHalfM, t.side);
-    if(r.pts) return {...r, slow: t.slow, rung: i + 1};
+    // ⚠ GEOMETRY IS NOT ENOUGH - the projected track has to clear it too. See turnFlyable.
+    // A shape that fits on paper but that the hull flies THROUGH the keep-out is refused
+    // here and the ladder carries on, which is how the fine-sampled eased shape hands over
+    // to the plain arc instead of shipping a turn the runtime guard will stop the boat for.
+    if(r.pts){
+      const spdKey = t.slow ? "low" : ((fly && fly.spdKey) || "survey");
+      const f = fly === false ? false : {...(fly || {}), spdKey};
+      // THIN FIRST, THEN VERIFY WHAT WILL ACTUALLY SHIP. Checking the dense shape and
+      // shipping the thinned one would be verifying a different route from the one the
+      // boat is given - the fault this whole change exists to remove, one layer down.
+      // ⚠ E AND F ARE IN THE CHAIN THAT IS THINNED, NOT OUTSIDE IT. The join is a corner
+      // like any other: a first arc vertex 0.20 m off the line end is consumed in the same
+      // step as the line end itself, and the boat leaves the line steering at a point half
+      // way round the loop. Thinning only the interior leaves exactly that seam behind.
+      const chain = thinTrack([E, ...r.pts, F], trackGapM(f), ref);
+      const pts = chain.slice(1, -1);
+      let ok = true;
+      for(let j = 1; ok && j < chain.length; j++) ok = legClear(chain[j-1], chain[j], ref, ko, buf);
+      if(ok && turnFlyable(E, F, pts, hE, ref, ko, buf, f))
+        return {...r, pts, slow: t.slow, rung: i + 1};
+      if(!first && t.shape !== 'eased') first = {why: "track", seg: [E, F]};
+      continue;
+    }
     // THE FIRST REFUSAL IS THE ONE WORTH REPORTING, not the last: rung 1 is the turn the
     // operator expected to see, and its `seg` names the feature that actually refused it.
     // Reporting rung 4's refusal would name whatever blocked a tighter inboard loop, which
