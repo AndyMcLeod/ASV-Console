@@ -1492,6 +1492,45 @@ function guardTrack(p, vel, drift){
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
 }
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
+/**
+ * HOW LONG THE WATER HAS TO STAY CLEAR BEFORE THE THROTTLE GOES BACK.
+ *
+ * ⚠ THE LADDER IS DELIBERATELY ASYMMETRIC: it slows on the FRAME it sees the trouble, and
+ * it hands the throttle back only after the water has read clear for this long. Reacting
+ * fast and releasing slow is the whole shape of the thing - a frame of doubt should cost
+ * speed, not a hold.
+ *
+ * Andy's log, 2026-09-10, in the thirty-five seconds before a survey was stopped:
+ *
+ *     12:38:25 low  12:38:25 survey  12:38:27 low  12:38:28 survey
+ *     12:38:29 low  12:38:30 survey  12:38:31 low  12:38:33 survey  ... 36 of them
+ *
+ * The counterfactual below exists so that cannot happen and it was not enough, because it
+ * asks the SAME question the trigger asks - and on that plan the question itself was
+ * unstable. The route had been emitted with waypoints 0.20 m apart, far finer than the
+ * approach radius `projectRoute` advances on, so which vertex the projection grabbed (and
+ * therefore where it cut) changed with a 7% change of speed: replayed frame by frame,
+ * 2.80 kn read `slow` and 2.99 kn read `clear` from the same position. Thinning that route
+ * to a 1 m floor - the previous commit - takes the level changes over the same 37 frames
+ * from 2 to 0 and makes the counterfactual agree with the live reading on every one.
+ *
+ * So the root is fixed upstream, and this is the damping that should have been here anyway:
+ * NO SINGLE FRAME MAY HAND BACK THE THROTTLE. Four seconds is four times the period of the
+ * oscillation actually recorded, and at survey speed it costs about five metres.
+ */
+const RELEASE_HOLD_MS = 4000;
+let clearHoldAt = 0;               // when the water first read clear AND the counterfactual agreed
+/**
+ * Has the clear water LASTED, or is this one frame's opinion?
+ *
+ * The clock is an argument so this can be driven over a synthetic minute rather than a real
+ * one - a dwell tested by sleeping is a dwell nobody runs.
+ */
+function releaseSettled(ok, now){
+  if(!ok){ clearHoldAt = 0; return false; }
+  if(!clearHoldAt) clearHoldAt = now;
+  return now - clearHoldAt >= RELEASE_HOLD_MS;
+}
 const GUARD_REASSESS_MS = 6000;     // while steering, re-solve the escape this often
 // THE DEVIATION SEARCH IS NOT FREE and it does not need to run at telemetry rate. It
 // projects a candidate track for every bearing at every offset from two bases - hundreds of
@@ -1528,7 +1567,12 @@ let guardOverride = null;
  */
 let guardHeld = null;
 function markGuardHeld(c){
-  guardHeld = null;
+  // ⚠ IT NEVER CLEARS WHAT IT CANNOT REPLACE. This began with `guardHeld = null` on entry,
+  // and on 2026-09-10 that threw away a 645-waypoint survey: the hold rung fired THREE times
+  // in five seconds as the clearance closed (25.4 -> 24.0 -> 21.3 m), and by the third call
+  // `S.behavior` was already "hold", so the guard below returned early - after the null had
+  // already spent the record the FIRST call made. A function that gives up has to leave what
+  // it found alone.
   if(!(S && S.behavior === "survey") || !runRoute || !runRoute.length) return;
   const idx = Math.min(window._wpIndex || 0, runRoute.length);
   if(idx >= runRoute.length) return;      // nothing unflown: there is no survey left to offer
@@ -1548,8 +1592,17 @@ function markGuardHeld(c){
  */
 function guardHeldOffer(){
   if(!guardHeld) return null;
-  const st = (S && S.status) || {};
-  if(!(S && S.run === "running" && S.behavior === "hold" && st.holding)){ guardHeld = null; return null; }
+  // ⚠ IT DOES NOT WAIT FOR `holding`, AND THAT ONE WORD COST A SURVEY. A hold command
+  // uploads a one-waypoint plan and STARTS it; the vessel only reports `holding` once it has
+  // ARRIVED at that point. On Andy's console, 2026-09-10, the hold was commanded at 12:39:00
+  // and station-keeping was reported at 12:39:05 - five seconds in which `behavior` is
+  // already "hold" and `holding` is still false. This predicate ran on the very next
+  // telemetry frame, failed, and the line below spent the captured survey. The offer never
+  // appeared, and the run it was holding could not be handed back.
+  //
+  // `run === "running" && behavior === "hold"` is the state the whole way through, arriving
+  // or arrived, which is the state the offer is actually about.
+  if(!(S && S.run === "running" && S.behavior === "hold")){ guardHeld = null; return null; }
   return (S.armed && !S.estop) ? guardHeld : null;
 }
 /**
@@ -1623,6 +1676,13 @@ function clearanceGuard(){
   const rose = a.level !== "clear" && a.level !== guardLevel;
   const RUNG = {clear:0, edge:1, slow:2, hold:3, helm:4};
   const escalated = RUNG[a.level] > RUNG[guardLevel];
+  // ⚠ ONE CALL, ABOVE THE BRANCH, AND THAT PLACEMENT IS THE WHOLE GUARANTEE. The dwell has
+  // to restart every time the water goes bad, and a reset written on the not-clear path is a
+  // line somebody can delete without a single check reddening - it did survive a mutation
+  // sweep written exactly that way. Evaluated unconditionally here, the only way the dwell
+  // can advance is for THIS frame to have read clear, so the property holds by construction
+  // rather than by remembering.
+  const clearRun = releaseSettled(a.level === "clear", Date.now());
 
   if(a.level === "clear"){
     if(guardLevel !== "clear"){
@@ -1649,7 +1709,12 @@ function clearanceGuard(){
                               {...(trk||{}), twMs: trk ? back : undefined, edge:false}
                              ).level === "clear";
       }
+      // ⚠ AND IT HAS TO KEEP SAYING SO. See RELEASE_HOLD_MS: the counterfactual is the
+      // correctness test and this is the dwell, and they answer different questions - "is
+      // this safe" and "has it settled". One frame of clear water is not a settled state.
+      release = release && clearRun;
       if(release){
+        clearHoldAt = 0;
         flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — speed back to "
                   + roleSpeed(speedRole()) + " (" + speedRole() + ").");
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
@@ -1756,6 +1821,58 @@ function clearanceGuard(){
   if(a.level === "hold"){
     if(settling) return c;                 // a deviation is in flight; it answers this
     if(overridden) return c;               // the operator has said proceed; do not stop them
+    // ⚠⚠ A DEVIATION CANNOT ANSWER A TURN, SO ASK THE RUNG THAT CAN BEFORE STOPPING THE BOAT.
+    //
+    // Andy, 2026-09-10, on the third of four defects: *"The deviation rung can't answer a
+    // turn. Re-generating the reversal tighter or further inboard is a real amendment;
+    // moving one arc vertex is not."* He is right about the diagnosis and his own log proves
+    // it - NOT ONE `/api/cmd/amend` in the whole session, with fifteen metres of deviation
+    // budget unspent, because `edgeAround` may move a corner and a reversal is not a corner:
+    // it is a run of vertices a metre apart, and nudging one of them makes a spike the
+    // re-projection then refuses.
+    //
+    // But the answer to a turn was never a deviation. A turn's trouble is TRACKING - how
+    // wide the hull swings while it comes round - and the lever on tracking is SPEED. On his
+    // own plan, from the point the guard stopped her, the same reversal on the same route:
+    //
+    //     at the survey speed, 3.0 kn:  hold   "entry in 14 s under way"
+    //     at the low speed,    1.5 kn:  clear  "nothing within 45 s on the route ahead"
+    //
+    // So the ladder gets what it was missing: before it takes the way off, it asks whether
+    // going SLOWER answers it, in the same shape as the release counterfactual - ask the
+    // question of the state you are proposing to enter. Slowing is strictly cheaper than
+    // stopping (a stopped hull beside a structure is handed to the tide, and a hold destroys
+    // the run), and if it turns out not to be enough the guard is back here next frame with
+    // nothing lost but a few metres of way.
+    //
+    // ⚠ IT IS NOT OFFERED WHEN SHE IS ALREADY SLOW. Then the low speed IS the state being
+    // assessed, the answer has already been tried, and the hold is the honest next rung.
+    //
+    // ⚠ AND MUTATION SAYS THE `helm` HALF OF THE TEST BELOW IS CURRENTLY UNREACHABLE. `helm`
+    // is decided by the DRIFT-ONLY projection, which does not change with the commanded
+    // speed - so if low reads helm, the live reading was helm too and this branch was never
+    // entered. It stays, for the same reason edgeAround keeps its astern test: it costs one
+    // comparison, it is the difference between "cannot happen" and "must not happen", and
+    // the day the helm rung learns another way in this is the line that stops a slow-down
+    // being offered as an answer to being set on. Recorded rather than removed, and
+    // recorded rather than claimed as covered.
+    if(trk && !clearance.slowed && vel){
+      const lowMs = (V.SPEED_KN.low || 0) * 0.514444;
+      if(lowMs > 0 && lowMs < trk.twMs){
+        const atLow = guardAssess(p, restoreVel(vel, drift, lowMs), drift, nogo.ko, buf,
+                                  {...trk, twMs: lowMs, edge: false});
+        if(atLow.level !== "hold" && atLow.level !== "helm"){
+          clearance.slowed = true;
+          cmd("/api/cmd/speed", {speed:"low"});
+          flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low rather "
+                    + "than stopping: at low speed the track stays clear (" + atLow.level + ").");
+          if(planIntent) planIntent.why.push({t:"warn", s:"SLOWED instead of holding — the "
+            + "projected track entered " + (c.kind||"a keep-out") + " at the plan speed and is "
+            + "clear at low, so the way came off rather than the run stopping"});
+          return c;
+        }
+      }
+    }
     if(escalated){
       guardActedAt = Date.now();
       // ⚠ KEEP THE SURVEY BEFORE THE HOLD REPLACES IT. One line, and it is the difference

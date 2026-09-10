@@ -193,6 +193,9 @@ eval([
   // have written a different binding and every rung would have run on a null clearance.
   "function updateClearance(){ clearance = {...clearance, ...__clr}; return clearance; }",
   grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
+  grabDecl("RELEASE_HOLD_MS"),
+  "let clearHoldAt = 0;",
+  grab("releaseSettled"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
   grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
@@ -351,12 +354,69 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   S.run = "stopped";
   const stopped = guardHeldOffer();
   const cleared = guardHeld;
+  // and a behavior change is the other way the situation stops being this one: an RTH, a
+  // Go-To or an escape is a different command, and the survey it captured is not what the
+  // boat is doing any more.
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "hold"; S.status.holding = true;
+  const held2 = guardHeldOffer();
+  S.behavior = "rth";                       // still running, but a different command
+  const onRth = guardHeldOffer();
+  // ...and the console has to be able to COMMAND before it offers to
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "hold"; S.status.holding = true;
+  S.armed = false;  const unarmed = guardHeldOffer(), survivesUnarmed = guardHeld;
+  S.armed = true; S.estop = true;  const stopped2 = guardHeldOffer();
+  S.estop = false;
+  check("8b0. an RTH or Go-To is a different command, and clears the offer with it",
+        !!held2 && onRth === null,
+        "behavior 'hold' -> offer stands; behavior 'rth' -> " + (onRth ? "STILL THERE" : "cleared")
+        + ". Only the guard's own hold is the situation this offer is about");
+  check("8b1. ... and a disarmed or e-stopped console is not offered a resume it cannot send",
+        unarmed === null && stopped2 === null && !!survivesUnarmed,
+        "disarmed -> " + (unarmed ? "OFFERED" : "withheld") + ", e-stopped -> "
+        + (stopped2 ? "OFFERED" : "withheld") + "; the capture itself survives ("
+        + (survivesUnarmed ? "yes" : "NO") + ") because disarming is not the situation changing");
+
   check("8. the offer stands only while she is still holding under the guard's hold",
         () => !!kept && live === kept && stopped === null && cleared === null
               && /guardHeld=null; cmd\("\/api\/cmd\/hold"/.test(H),
         "Stop, Start, Upload, RTH, Go-To and a spawn all change run/behavior/holding, so "
         + "each clears this by not matching rather than by remembering to. The operator's "
         + "OWN Hold looks identical from here, so that button clears it by name");
+}
+
+// ── 8b-8c. THE TWO WAYS THE CAPTURE WAS BEING THROWN AWAY (both live, 2026-09-10) ──────
+{
+  standingIn(6); tryIt(() => clearanceGuard());
+  const kept = guardHeld;
+
+  // ⚠ THE ARRIVAL GAP. A hold command uploads a one-waypoint plan and STARTS it; the vessel
+  // reports `holding` only once it has ARRIVED. Andy's log: commanded 12:39:00, station-
+  // keeping at 12:39:05 - five seconds in which behavior is "hold" and holding is false. The
+  // offer used to demand `holding`, so the very next telemetry frame spent the record.
+  S.behavior = "hold"; S.status.holding = false; S.run = "running";
+  const inGap = guardHeldOffer();
+  const stillThere = guardHeld;
+  S.status.holding = true;
+  const arrived = guardHeldOffer();
+  check("8b. the offer survives the ARRIVAL GAP, where behavior is hold and holding is not yet",
+        !!kept && inGap === kept && stillThere === kept && arrived === kept,
+        "commanded -> " + (inGap ? "offer stands" : "OFFER GONE") + "; arrived -> "
+        + (arrived ? "offer stands" : "OFFER GONE") + ". Five seconds of `holding === false` "
+        + "is the state the offer is most needed in, not a state to discard it in");
+
+  // ⚠ AND THE SECOND FIRING. The hold rung fired three times in five seconds as the
+  // clearance closed (25.4 -> 24.0 -> 21.3 m). By the third, behavior was already "hold", so
+  // markGuardHeld returned early - after the `guardHeld = null` on its own first line had
+  // already spent what the FIRST call captured.
+  const before = guardHeld;
+  tryIt(() => markGuardHeld({m: 21.3, kind: "a dock / pier"}));
+  check("8c. ... and a second hold firing does not spend what the first one captured",
+        guardHeld === before && !!guardHeld && guardHeld.route.length === 4,
+        "markGuardHeld called again with behavior already 'hold' -> "
+        + (guardHeld ? guardHeld.route.length + " waypoints still held" : "NOTHING HELD")
+        + ". A function that gives up has to leave what it found alone");
 }
 
 // ── 9-15. THE RESUME, DRIVEN ───────────────────────────────────────────────────────

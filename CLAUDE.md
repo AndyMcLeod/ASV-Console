@@ -55,11 +55,98 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-10 — a turn is verified as a TRACK, not a drawing)
+## ⇒ START HERE (handoff refreshed 2026-09-10 — all four of the hold defects are fixed)
 
 ### ➤ PICK UP HERE
 
-**NEWEST (this commit): A TURN IS VERIFIED AS A TRACK, NOT AS A DRAWING — AND THE ROOT WAS
+**NEWEST (this commit): THE OTHER THREE OF ANDY'S FOUR — THE OSCILLATION, THE RUNG THAT CAN
+ANSWER A TURN, AND THE TWO RESUME BUGS.** *"Fix all four, in that order."* The first (the
+root) is the commit below this one.
+
+**② THE SLOW/RELEASE OSCILLATION.** His log, 35 s before the survey stopped: **36
+`/api/cmd/speed` commands**, low/survey alternating about once a second. Replaying the
+recorded telemetry through the real ladder found the cause and it is NOT the counterfactual
+being wrong — it is the question being unstable. On that route (waypoints 0.20 m apart, the
+defect the commit below fixes) `projectRoute` grabs a different vertex on a 7% speed change,
+so **2.80 kn read `slow` and 2.99 kn read `clear` from the same position**. Thinning the same
+route to a 1 m floor takes the level changes over those 37 frames from **2 to 0** and makes
+the counterfactual agree with the live reading on every one.
+
+So the root is upstream, and this is the damping that should have been here anyway:
+`releaseSettled(ok, now)` — **no single frame may hand back the throttle**. `RELEASE_HOLD_MS`
+is 4000, four times the period actually recorded. The counterfactual is the CORRECTNESS test
+("would the speed I am about to restore trigger it again?"); the dwell is the SETTLING test.
+The clock is an argument so it can be driven over a synthetic minute — a dwell tested by
+sleeping is a dwell nobody runs.
+
+**⚠ AND IT IS ASKED ONCE A FRAME, ABOVE THE BRANCH.** Written as a reset on the not-clear
+path it survived a mutation sweep: a line anybody could delete with nothing reddening, and a
+dwell banked before a slow episode would then release on the first clear frame after it.
+Evaluated unconditionally the property holds by construction.
+
+**③ THE RUNG THAT CAN ANSWER A TURN.** Andy: *"The deviation rung can't answer a turn."* His
+log proves it — **not one `/api/cmd/amend` all session**, with 15 m of budget unspent, because
+`edgeAround` may move a CORNER and a reversal is a run of vertices a metre apart. **But the
+answer to a turn was never a deviation.** A turn's trouble is TRACKING and the lever on
+tracking is SPEED. From the point the guard stopped her, on her own route:
+
+```
+3.0 kn (survey):  hold    "entry in 14 s under way"
+1.5 kn (low):     clear   "nothing within 45 s on the route ahead"
+```
+
+So the hold rung re-asks the projection at the low speed BEFORE taking the way off, and slows
+instead of stopping when that answers it — same shape as the release counterfactual, asked of
+the state being proposed. **Not offered when she is already slow** (that answer has been
+tried) and **not in extremis** (the drift-only track enters too; stopping is no answer either
+and the helm rung is the one that is). ⚠ Mutation proved the `helm` half UNREACHABLE — helm
+comes from the drift-only projection, which does not change with commanded speed — and the
+clause is kept with that written beside it rather than claimed as covered.
+
+**④ THE TWO RESUME BUGS FROM `228961d1`, both live in his log.**
+* **The arrival gap.** A hold uploads its one-waypoint plan and STARTS it; `holding` is
+  reported only on ARRIVAL. Commanded 12:39:00, station-keeping 12:39:05 — five seconds in
+  which `behavior` is "hold" and `holding` is false. `guardHeldOffer` demanded `holding`, so
+  the next telemetry frame spent the captured survey. The predicate is
+  `run === "running" && behavior === "hold"` now, arriving or arrived.
+* **The second firing.** The hold rung fired **three times in five seconds** as the clearance
+  closed (25.4 → 24.0 → 21.3 m). `markGuardHeld` began with `guardHeld = null`, so by the
+  third call — behavior already "hold" — it returned early having already spent what the
+  first captured. **A function that gives up has to leave what it found alone.**
+
+⚠ Neither was in the fixture: it set `behavior` and `holding` in the same statement and never
+called the capture twice. Same lesson as the hand-built plan, one layer down.
+
+**TEETH: 19 mutations across the three, all killed** (12 more on the commit below). Checks
+`clearance_guard.js` 15b-15j (the dwell driven over a synthetic minute; the slow-before-hold
+rung driven on in_extremis's pier, with both refusals) and `guard_resume.js` 8b-8c, 8b0-8b1.
+`clearance_guard.js` now carries a DRIVING harness for `clearanceGuard`, which it did not
+before — 15f-15j could not have been source checks.
+
+**⚠⚠ WHAT THE LIVE RUN SHOWED, AND THE OPERATOR CONSEQUENCE.** Ran his exact 645-waypoint
+plan on an isolated console with all four fixes:
+
+```
+before:  36 speed commands in 35 s, three holds in five seconds, stopped at  90 s
+after:   10 speed commands in 419 s, ONE hold,                    stopped at 419 s
+```
+
+**Still stopped** — because that plan's turns were PUNCHED BEFORE fix 1 and still carry
+0.20 m vertices. Fixes 2 and 3 turn a 90-second stop into a seven-minute run and take the
+throttle abuse down about fourfold, but they cannot make an unflyable route flyable. Asked
+from the exact point the guard stopped her:
+
+```
+her plan, punched BEFORE the fix : ladder at 3.0 kn = hold
+the same reversal, punched AFTER : ladder at 3.0 kn = clear
+```
+
+**⇒ AN EXISTING PLAN MUST BE RE-PUNCHED to get fix 1.** Tell the operator that; it is not
+discoverable.
+
+---
+
+**BEFORE THAT: A TURN IS VERIFIED AS A TRACK, NOT AS A DRAWING — AND THE ROOT WAS
 THE WAYPOINT SPACING.** Andy, 2026-09-10: *"the ASV is on hold and there is no way to release
 the hold and continue without resetting the entire survey. Am I correct in this?"* He was.
 Then, on the four defects that came out of the diagnosis: *"Fix all four, in that order."*

@@ -882,6 +882,26 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    purpose only ever commands a **speed**, is permitted the helm at this one rung — and why
    it is not permitted it anywhere else.
 
+   **The ladder is asymmetric: fast to protect, slow to release.** It slows on the frame it
+   sees the trouble; it hands the throttle back only once the water has read clear for four
+   seconds. One frame's opinion used to be enough, and on 2026-09-10 that put **36 speed
+   commands into 35 seconds** — low, survey, low, survey, about once a second — before the
+   survey was stopped. The release counterfactual is the *correctness* test ("would the speed
+   I am about to restore trigger it again?"); the dwell is the *settling* test, and they
+   answer different questions. The dwell restarts every time the water goes bad, so an
+   alternating reading never releases at all.
+
+   **And before it stops the boat it asks whether going slower would do.** A deviation cannot
+   answer a turn — the console may move a corner, and a reversal is a run of vertices a metre
+   apart — but a turn's trouble is *tracking*, and the lever on tracking is speed. Measured on
+   a real plan, from the point the guard stopped a survey: at 3.0 kn the projected track
+   entered in 14 s; at 1.5 kn it was clear through the whole look-ahead. So the hold rung
+   re-asks the question at the low speed first and slows instead of stopping when that
+   answers it — a hold destroys the run and hands a stopped hull to the tide, and if slowing
+   turns out not to be enough the guard is back next frame having lost a few metres of way.
+   It is not offered when the boat is already slow (that answer has been tried) or when the
+   drift-only track enters too (that is the helm's case).
+
    The escape is a computed **Go-To**, so the intervention rides a behaviour you can already
    see on the card, stop, or override from the RC transmitter — which remains the true
    failsafe throughout. It is scored *with the set in it*: a heading that is clear through

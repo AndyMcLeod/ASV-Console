@@ -419,6 +419,184 @@ check("15. the release is the COUNTERFACTUAL, not a distance margin — it asks 
       () => /restoreVel\(vel, drift, back\)/.test(G) && /guardAssess\(p, velBack/.test(G)
             && !/c\.m > buf \* 1\.5/.test(G),
       "slowing changes the very quantity being tested, so releasing on it oscillates");
+// ── 15b-15d. THE RELEASE IS DAMPED, AND THE DAMPING IS DRIVEN ─────────────────────────
+// Andy's log, 2026-09-10, in the 35 s before a survey was stopped: 36 speed commands,
+// alternating low / survey about once a second. The counterfactual above is the correctness
+// test - "would the speed I am about to restore trigger it again?" - and it was not enough,
+// because on that plan the question ITSELF was unstable: the route had waypoints 0.20 m
+// apart, far finer than the approach radius projectRoute advances on, so 2.80 kn read `slow`
+// and 2.99 kn read `clear` from the same position. The root is fixed upstream (turns.js
+// thinTrack); this is the damping that should have been here anyway.
+{
+  const decl = H.slice(H.indexOf("const RELEASE_HOLD_MS"), H.indexOf("const RELEASE_HOLD_MS") + 120);
+  const HOLD = +(decl.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
+  // eslint-disable-next-line no-eval
+  const NL = String.fromCharCode(10);
+  const drive = eval("(function(){ let clearHoldAt = 0; const RELEASE_HOLD_MS = " + HOLD + ";" + NL
+                     + grab(H, "releaseSettled") + NL + " return releaseSettled; })()");
+  let t = 1000;
+  const steps = [];
+  for (let i = 0; i < 12; i++) { t += 500; steps.push(drive(true, t)); }
+  const firstTrue = steps.indexOf(true);
+  check("15b. one frame of clear water does not hand the throttle back",
+        HOLD >= 2000 && firstTrue > 0 && (firstTrue + 1) * 500 >= HOLD,
+        "clear water every 500 ms: the release comes on frame " + (firstTrue + 1) + " at "
+        + ((firstTrue + 1) * 500) + " ms, against a " + HOLD + " ms dwell. The ladder still "
+        + "SLOWS on the frame it sees the trouble - fast to protect, slow to release");
+
+  // The oscillation itself: clear, not clear, clear, ... must never release.
+  let t2 = 1000, released = 0;
+  for (let i = 0; i < 40; i++) { t2 += 1000; if (drive(i % 2 === 0, t2)) released++; }
+  check("15c. ... and an alternating reading never releases at all",
+        released === 0,
+        "40 s of clear/not-clear at 1 Hz - the exact cadence recorded in his log - released "
+        + released + " time(s). A single frame's opinion is what put 36 throttle commands "
+        + "into 35 seconds");
+
+  // And it is a DWELL, not a deadline: the clock restarts every time the water goes bad.
+  let t3 = 1000;
+  drive(true, t3); t3 += 3000; drive(true, t3);          // 3 s of clear, nearly there
+  drive(false, t3);                                       // one bad frame
+  t3 += 3000;
+  check("15d. ... and one bad frame restarts the dwell rather than shortening it",
+        drive(true, t3) === false,
+        "3 s clear, one frame not clear, 3 s clear again -> still held. A dwell that only "
+        + "counted total clear frames would be released by exactly the pattern it exists for");
+}
+
+// 15e. AND THE DWELL IS EVALUATED ONCE, UNCONDITIONALLY, ABOVE THE BRANCH. Written as a
+// reset on the not-clear path it is a line anybody can delete with no check reddening -
+// which it was, and a mutation sweep proved it: removing the reset let a dwell banked
+// before a slow episode release the throttle on the first clear frame after it. Placed
+// here the property holds by construction: the only way the dwell advances is for THIS
+// frame to have read clear.
+check("15e. the dwell is asked once a frame, above the branch, so no path can skip it",
+      () => (G.match(/releaseSettled\(/g) || []).length === 1
+            && G.indexOf("releaseSettled(") < G.indexOf('if(a.level === "clear")')
+            && /const clearRun = releaseSettled\(a\.level === "clear", Date\.now\(\)\);/.test(G)
+            && /release = release && clearRun;/.test(G),
+      (G.match(/releaseSettled\(/g) || []).length + " call site(s), "
+      + ((G.indexOf("releaseSettled(") < G.indexOf('if(a.level === "clear")')) ? "above" : "BELOW")
+      + " the clear branch. Two call sites, or one inside a branch, and the reset is "
+      + "something a path has to remember rather than something it cannot avoid");
+
+// ── 15f-15h. A DEVIATION CANNOT ANSWER A TURN, SO THE LADDER ASKS THE RUNG THAT CAN ────
+//
+// Andy, 2026-09-10: *"The deviation rung can't answer a turn. Re-generating the reversal
+// tighter or further inboard is a real amendment; moving one arc vertex is not."* His log
+// proves the diagnosis - not one /api/cmd/amend all session, with the whole deviation budget
+// unspent, because edgeAround may move a CORNER and a reversal is a run of vertices a metre
+// apart. But the answer to a turn was never a deviation: a turn's trouble is TRACKING, and
+// the lever on tracking is SPEED. On his own plan, from where the guard stopped her:
+//
+//     3.0 kn (survey):  hold    "entry in 14 s under way"
+//     1.5 kn (low):     clear   "nothing within 45 s on the route ahead"
+//
+// So before the ladder takes the way off it asks whether going slower answers it - the same
+// shape as the release counterfactual, asked of the state being proposed.
+//
+// ⚠ DRIVEN, on tests/in_extremis.js's pier. A source check could not tell a rung that fires
+// from one that is unreachable, and this rung's whole value is that it fires INSTEAD of the
+// hold.
+{
+  const G4 = require("../static/js/guard.js");
+  const V = { SPEED_KN: { low: 1.5, survey: 6.0, high: 12.0 }, MAX_TURN_RATE_DEG_S: 60 };
+  let clearance = { m: 25, kind: "a dock / pier", slowed: false, prev: null, info: null };
+  let guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
+  let guardEdgeAt = 0, edgeSpentM = 1e9, edgeCount = 0, guardOverride = null, guardHeld = null;
+  let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false;
+  const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
+  let planIntent = { why: [] }, sent = [], notes = [];
+  const guardAssess = G4.assess, groundVel = G4.groundVel, restoreVel = G4.restoreVel;
+  const edgeCapM = G4.edgeCapM, edgeText = G4.edgeText, GUARD_HORIZON_S = G4.HORIZON_S;
+  const escapeCourse = () => null;
+  const cmd = (p2, b2) => { sent.push(p2 + (b2 && b2.speed ? ":" + b2.speed : "")); };
+  const flashNote = (m) => notes.push(m);
+  const showBanner = () => {}, setViolations = () => {}, renderGuardBar = () => {};
+  const updateMissionCard = () => {}, render = () => {}, holdClearAt = () => 12;
+  const markGuardHeld = () => {}, guardHeldOffer = () => null, guardOverrideOk = () => false;
+  const roleSpeed = () => "survey", speedRole = () => "survey";
+  const ref = planeFrame({ lat: 43.07, lon: -70.76 });
+  const wall = (n0) => { const r = [{ e: -400, n: n0 }, { e: 400, n: n0 },
+                                    { e: 400, n: n0 + 300 }, { e: -400, n: n0 + 300 }];
+    return { polys: [{ ring: r, bb: bbOf(r), kind: "a dock / pier" }],
+             lines: [], points: [], marks: [], sys: [], chans: [] }; };
+  let nogo = { ready: true, frame: ref, ko: wall(30), buffer: 5 };
+  let asv = null, S = null, runRoute = null;
+  const mission = { approach_radius_m: 2 };
+  const EDGE_REASSESS_MS = 2000, GUARD_REASSESS_MS = 6000;
+  const edgeCapM2 = edgeCapM;
+  const updateClearance = () => clearance;
+  // eslint-disable-next-line no-eval
+  const NL2 = String.fromCharCode(10);
+  const guard = eval("(function(){ " + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+                     + grab(H, "clearanceGuard").replace(/^function /, "return function ")
+                     .replace("return function clearanceGuard", "const clearanceGuard = function")
+                     + "; return clearanceGuard; })()");
+  const runFrame = (sogKn, slowed) => {
+    const NM = 111320;
+    asv = { lat: ref.lat, lon: ref.lon };
+    runRoute = [{ lat: ref.lat + 60 / NM, lon: ref.lon }, { lat: ref.lat + 120 / NM, lon: ref.lon }];
+    S = { armed: true, estop: false, run: "running", behavior: "survey",
+          status: { cog_deg: 0, sog_kn: sogKn, heading_deg: 0, env_set_deg: 0, env_set_kn: 0,
+                    holding: false, drifting: false } };
+    globalThis.window = globalThis; window._wpIndex = 0;
+    clearance = { m: 25, kind: "a dock / pier", slowed, prev: null, info: null };
+    guardLevel = "clear"; clearHoldAt = 0; sent = []; notes = []; planIntent = { why: [] };
+    guard();
+    return { sent: sent.slice(), notes: notes.slice(), why: planIntent.why.slice(), level: clearance.level };
+  };
+  const fast = runFrame(6.0, false);
+  const already = runFrame(6.0, true);
+  check("15f. standing at the pier, the ladder SLOWS instead of stopping when low would clear",
+        fast.level === "hold" && fast.sent.includes("/api/cmd/speed:low")
+        && !fast.sent.includes("/api/cmd/hold"),
+        "the rung reads " + fast.level + " at 6 kn and the guard sent " + JSON.stringify(fast.sent)
+        + ". A hold destroys the run and hands a stopped hull to the tide; slowing costs a few "
+        + "metres of way and the guard is back next frame if it was not enough");
+  check("15g. ... and says WHY, on the note and on the Intent card",
+        /SLOWED to low rather than stopping/.test(fast.notes.join(" "))
+        && fast.why.some((w) => /SLOWED instead of holding/.test(w.s)),
+        "\"" + (fast.notes[0] || "") + "\"");
+  // ⚠ AND THE ANSWER HAS TO BE ONE SLOWING ACTUALLY GIVES. Two ways it does not, and both
+  // must still stop the boat: the pier close enough that low speed is inside the hold time
+  // as well, and a set carrying her on regardless - where stopping is not the answer either
+  // and the helm rung is the one that is.
+  const runAt = (n0, sogKn, setKn) => {
+    nogo = { ready: true, frame: ref, ko: wall(n0), buffer: 5 };
+    const NM = 111320;
+    asv = { lat: ref.lat, lon: ref.lon };
+    runRoute = [{ lat: ref.lat + 60 / NM, lon: ref.lon }, { lat: ref.lat + 120 / NM, lon: ref.lon }];
+    S = { armed: true, estop: false, run: "running", behavior: "survey",
+          status: { cog_deg: 0, sog_kn: sogKn, heading_deg: 0, env_set_deg: 0,
+                    env_set_kn: setKn, holding: false, drifting: false } };
+    globalThis.window = globalThis; window._wpIndex = 0;
+    clearance = { m: n0 - 5, kind: "a dock / pier", slowed: false, prev: null, info: null };
+    guardLevel = "clear"; clearHoldAt = 0; sent = []; notes = []; planIntent = { why: [] };
+    guard();
+    return { sent: sent.slice(), level: clearance.level };
+  };
+  const tooClose = runAt(18, 6.0, 0);
+  const beingSet = runAt(30, 6.0, 2.0);
+  check("15i. ... and never when slowing would NOT answer it - then it still stops",
+        tooClose.sent.includes("/api/cmd/hold") && !tooClose.sent.includes("/api/cmd/speed:low"),
+        "pier 18 m off: at 1.5 kn the entry is still inside the hold time, so low is not an "
+        + "answer and the guard sent " + JSON.stringify(tooClose.sent) + ". A rung that slowed "
+        + "here would leave the boat standing on, more slowly, into the same feature");
+  check("15j. ... nor in extremis, where stopping is not the answer either",
+        beingSet.level === "helm" && !beingSet.sent.includes("/api/cmd/speed:low"),
+        "with a 2 kn set onto the pier the rung reads " + beingSet.level + " and the guard sent "
+        + JSON.stringify(beingSet.sent) + ". The drift-only track enters too, so taking way off "
+        + "- fast or slow - hands her to the tide; that is the helm's case, not this one");
+  nogo = { ready: true, frame: ref, ko: wall(30), buffer: 5 };
+
+  check("15h. ... but NOT when she is already slow - then low IS the state being assessed",
+        already.sent.includes("/api/cmd/hold") && !already.sent.includes("/api/cmd/speed:low"),
+        "already slowed -> " + JSON.stringify(already.sent) + ". Offering the answer that has "
+        + "already been tried would leave the boat standing on at low speed with the ladder "
+        + "believing it had acted");
+}
+
 check("16. it steers ONLY at the helm rung, and NOT as a Go-To",
       () => /a\.level === "helm"/.test(G) && /cmd\("\/api\/cmd\/escape"/.test(G)
             && !/cmd\("\/api\/cmd\/goto"/.test(G)
