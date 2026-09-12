@@ -55,9 +55,72 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-10 — all four of the hold defects are fixed)
+## ⇒ START HERE (handoff refreshed 2026-09-11 — four hold defects fixed; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
+
+**⚠ OPEN, 2026-09-11 — EASTPORT: "WHAT IS THE STORY WITH THE LINE HEADING OUT TO THE
+NORTHWEST?" NO CODE CHANGED FOR THIS; THE ANSWER IS WITH ANDY.** He was running a 9-row,
+385-waypoint survey at **Eastport, ME** on his own console (port 8791), DriX H-8, buffer 3,
+Min depth 4, lead 50/10, arc turns, and asked about a line leaving the block to the NW. Then:
+*"there is a line drawn from buoy 7 to buoy 9"* and *"its a green dashed line like a survey
+line"*.
+
+**WHAT IS PROVEN (measured off his live `/api/state`, his `mission.json`, his session log and
+his cached ENC — READ-ONLY GETs, no page opened on his console, his files byte-identical):**
+
+* **The pattern is simple: it is EIGHT lines, not nine.** LINES rows 8 and 9 are two halves of
+  ONE line — identical across-track offset (−673.5 m from line 1), identical heading (140.7°),
+  split by a **392 m gap** where a keep-out cut it and detoured around. The across-track ladder
+  is `0.1, 96.3, 96.1, 96.3, 96.2, 96.3, 96.2, 96.2` m — that leading **0.1** is rows 8 and 9
+  sharing an offset. That is why two rows read 833 m and 1115 m instead of 2399 m.
+* **The NW line is NOT in the committed plan or the uploaded route.** Of 444 uploaded
+  waypoints only 54 stray more than 150 m off the coverage band, and those are the approach:
+  3.1 km on **227°** (SW) from home to line 1's start. The only other long external line is the
+  RTH, 2.8 km on **050°** (NE) back to home. Nothing runs NW but the survey lines (320.7°).
+* **⚠ THE COLOURS ARE THE DIAGNOSTIC, AND THEY ARE NOT WHAT ANYONE ASSUMES.** The COMMITTED
+  survey lines (`mission.lines`) are drawn **YELLOW** `#ffd76a` with the `L#` labels. GREEN
+  DASHED is a different layer and there are two: `[5,4]` 1.6 px from the boat forward is
+  **`runRoute`** (the uploaded run path), and `[3,3]` 1.4 px is **`patClip` — the UNCOMMITTED
+  pattern preview**, drawn only while `pat.A` is set and drawn OVER whatever is committed.
+* **His SURVEY SETTINGS panel was describing a different box from the committed plan:**
+  panel `spacing 13.8 m · line 352 m · width 220 m · direction 350° · 19 lines` against
+  committed `spacing 96.2 m · line 2458 m · direction 320.7° · 8 lines`. That mismatch is
+  exactly what a stale preview over a committed plan looks like.
+* Cobscook Bay Buoy 7 is 1.6 km NW of the block, Popes Folly Ledge Buoy 9 is 4.9 km SE; a line
+  between them is 6.6 km on 309°, straight through the survey along its axis and out both
+  ends. Nothing in the plan or route does that.
+* **RULED OUT, each by measurement:** the trail (`checkBoot` drops it on the boot id a port
+  change mints); the ROC layer (`rocs: []`); the boundary (empty); the buoy-derived channel
+  model (`chans` are five small rings round the harbour, not a 6 km centreline); and the
+  `HOME→ 256°` pill, which is CORRECT — `azTo(home, boat)`, "Bearing and range from Home to
+  the ASV" per its own tooltip; home is genuinely 076° / 3.8 km ENE.
+
+**THE ONE-CLICK DISCRIMINATOR HE WAS GIVEN:** SURV → RESET clears the pattern anchors. If the
+NW line goes with them it was the preview, not the plan. **His answer is not in yet — start
+there.**
+
+**TWO FIXES OFFERED AND NOT YET TAKEN (his call):**
+1. The LINES table should say a split line is a split rather than inventing a ninth row — a
+   count the operator cannot reconcile with what they can see reads as a fault.
+2. The pattern PREVIEW should be visually distinguishable from the COMMITTED plan. Today the
+   committed lines are yellow and the preview is green-dashed, which is a distinction nobody
+   can be expected to know; it cost this whole investigation.
+
+**⚠ DIAGNOSTIC RECIPES THAT WORKED, BOTH REUSABLE:**
+* **The session log is a fixture nobody has to build.** `logs/*.jsonl` carries the
+  `/api/cmd/upload` body (which IS `runRoute`), every command with its body, and ~1 Hz
+  telemetry. Replaying those frames through the REAL `assess` is what turned "it chatters"
+  into "2.80 kn reads slow and 2.99 kn reads clear from the same position".
+* **An isolated copy, never his console.** Copy `*.py` + `static/` + `vessels/` +
+  `ports*.json` (+ his `mission.json` to reproduce a plan) to a temp dir, `mklink /J` the
+  `charts/` cache back to the real one, run on 8796 with `--base <port> --vessel <id>`.
+  **NEVER open a browser page on his console** — a second client runs its own clearance guard
+  and speed governor and starts POSTing commands to the boat. Read-only GETs are fine.
+
+---
+
+
 
 **NEWEST (this commit): THE OTHER THREE OF ANDY'S FOUR — THE OSCILLATION, THE RUNG THAT CAN
 ANSWER A TURN, AND THE TWO RESUME BUGS.** *"Fix all four, in that order."* The first (the
