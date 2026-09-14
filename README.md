@@ -908,12 +908,24 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    It is not offered when the boat is already slow (that answer has been tried) or when the
    drift-only track enters too (that is the helm's case).
 
-   The escape is a computed **Go-To**, so the intervention rides a behaviour you can already
-   see on the card, stop, or override from the RC transmitter — which remains the true
-   failsafe throughout. It is scored *with the set in it*: a heading that is clear through
-   the water and downstream into the pier is not a way out. And if **every** heading enters
-   a keep-out within the look-ahead, the console **refuses** and says TAKE MANUAL CONTROL,
-   rather than offering a confident-looking direction that still ends at the pier.
+   The escape is its own behavior, never a Go-To — a Go-To's arrival used to re-chain the
+   end-of-plan return straight back toward the hazard — and you can see it on the card, stop
+   it, or override it from the RC transmitter, which remains the true failsafe throughout. It
+   is scored *with the set in it*: a heading that is clear through the water and downstream
+   into the pier is not a way out. Among the headings that are clear, it takes the one that
+   keeps the **most water between the boat and trouble** along the whole track, not the one
+   that makes the most ground: with the set running along a face, the fastest heading over
+   the ground runs along the face.
+
+   **It works from inside the buffer too**, which is where it is most likely to be needed.
+   From there a heading is a way out when its track never touches the feature, gets out of
+   the buffer within the look-ahead, and then stays out for a whole look-ahead — however
+   slowly it gets out, because deep in a wide buffer in a strong set, straight out is a slow
+   crawl and still the way out. The escape ends a whole look-ahead past the buffer's edge, not
+   a few meters outside it. And if **no** heading qualifies, the console **refuses** and says
+   TAKE MANUAL CONTROL, naming which refusal it was (every heading enters a keep-out, or none
+   gets out of the buffer), rather than offering a confident-looking direction that still
+   ends at the pier.
 
    **The guard's own bar, and the two ways past it.** While the guard is intervening, the
    rung, the reason, the clearance and the operator's way through it all sit in one box on

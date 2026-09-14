@@ -55,11 +55,36 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#6 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#7 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #6 - A COMMAND IS CHECKED, NOT ASSUMED.**
+**NEWEST, 2026-09-14: REVIEW ITEM #7 - THE ESCAPE WORKS FROM INSIDE THE BUFFER, AND AWAY FROM TROUBLE.**
+Two faults in `escapeCourse` (static/js/guard.js), both measured first: from INSIDE the buffer `timeToEntry`
+answers 0 for every heading, so the search found nothing and the page read BOXED IN with open water straight
+behind the boat (pier face, 2 kn set, 5 m buffer: a way out at 5.5 m off, none at 4.5, 3 or 1.5 m); and the
+tie-break was ground distance, so with the set running along a face the escape ran ALONG the face (75 deg, 35 m
+clear after 45 s, where straight out gives 241 m).
+
+* From inside, each heading's track is walked at a quarter step: fouled if it comes within `ESCAPE_HARD_M`
+  (0.5 m) of a feature, out at the first sample outside every buffer, then the ordinary projection from there
+  must stay clear a whole horizon. The escape point is `tOut + horizon` along the track.
+* Clear headings rank by the WORST clearance along the track (1 s samples), then the clearance at its end.
+* ⚠ NO FIXED EXIT DEADLINE. The first cut had one (10 s, `ESCAPE_EXIT_S`, since removed) and nothing tested it;
+  asked why, it turned out WRONG: a 15 m buffer in a 4 kn set takes 11.7 s straight out, and it read BOXED IN.
+  The escape point one horizon from NOW was also wrong: it ended a late exit a few meters past the edge.
+* The BOXED IN banner now names the refusal: from inside, "no heading gets out of the N m buffer and stays out
+  for 45 s without touching X"; outside, the old "every heading enters a keep-out within 45 s".
+* README's escape paragraph still called it "a computed Go-To" - stale since the dedicated escape behavior
+  (2026-09-03); rewritten with the above.
+* Cost, 1500-zone synthetic chart: about 35 ms a search outside or in a 5 m buffer, up to about 110 ms deep
+  in a 25 m buffer; it runs at most once per `GUARD_REASSESS_MS` (6 s) while steering. An adaptive-step walk
+  roughly halved the worst case but was not taken - more safety logic to pin for a stress-chart saving.
+* Tests: in_extremis.js 10b-10h; clearance_guard.js 15q (driven through the helm rung). TEETH: 7 scratch-clone
+  mutations of guard.js, 7 killed; 2 sidecar mutations of the banner, 2 killed.
+* Next up after approval: #8, Stop / E-stop / disarm leave the vessel's station-keeping state set.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #6 - A COMMAND IS CHECKED, NOT ASSUMED.**
 Every speed sender assumed its POST had worked: the governor set `commandedSpeed` before the answer, the
 guard set `slowed` before it, `resumeRun` / `resumeHeldSurvey` sent Start after a LOW they never checked,
 the slow rung's gate read the CONFIGURED role speed, and `cmd()` answered a network error with {} - which
@@ -79,7 +104,7 @@ every `r.error` check in the page read as success.
   mutations, 11 killed.
 * This also removes review #2's trigger (a lost LOW is re-sent within a second); #2's 2 s deadline stays as
   the backstop.
-* Next up after approval: #7, the in-extremis escape disappears inside the buffer and runs along the hazard.
+* Committed and pushed as `ca42fffb`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #5 - THE PLAN FILE SURVIVES CONCURRENCY, CORRUPTION AND SPEED COMMANDS.**
 Measured before any code: on Windows a reader holding mission.json open makes `os.replace` fail with

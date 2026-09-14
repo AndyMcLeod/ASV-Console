@@ -513,7 +513,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const escapeCourse = () => null;
   const cmd = (p2, b2) => { sent.push(p2 + (b2 && b2.speed ? ":" + b2.speed : "")); };
   const flashNote = (m) => notes.push(m);
-  const showBanner = () => {}, setViolations = () => {}, renderGuardBar = () => {};
+  let banners = [];
+  const showBanner = (m) => banners.push(m), setViolations = () => {}, renderGuardBar = () => {};
   const updateMissionCard = () => {}, render = () => {}, holdClearAt = () => 12;
   const markGuardHeld = () => {}, guardHeldOffer = () => null, guardOverrideOk = () => false;
   let roleKey = "survey", speedWant = null;          // 15p switches the CONFIGURED role speed
@@ -703,6 +704,32 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
           && p2.level === "slow" && !p2.sent.includes("/api/cmd/speed:low"),
           "role low / vessel survey " + p1.level + " " + JSON.stringify(p1.sent)
           + "; role survey / vessel low " + p2.level + " " + JSON.stringify(p2.sent));
+
+    // 15q. A REFUSED ESCAPE SAYS WHICH REFUSAL IT WAS (review #7). From inside the buffer every
+    // heading "enters" at zero seconds by definition, so "every heading enters a keep-out"
+    // explained nothing there - what escapeCourse refuses from inside is a way OUT. Driven
+    // through the helm rung with the escape refused, from 30 m off and from 3 m off (inside).
+    // TEETH, sidecar ASV_HTML, 2 mutations, 2 killed: the inside wording dropped -> 15q; the
+    // inside test inverted -> 15q.
+    const boxedIn = (n0) => {
+      fresh(); banners = []; clock = T0 + 60000;
+      nogo = { ready: true, frame: ref, ko: wall(n0), buffer: 5 };
+      asv = { lat: ref.lat, lon: ref.lon };
+      S = { armed: true, estop: false, run: "running", behavior: "survey",
+            status: { cog_deg: 0, sog_kn: 6.0, heading_deg: 0, env_set_deg: 0, env_set_kn: 2.0,
+                      holding: false, drifting: false } };
+      clearance = { m: n0, kind: "a dock / pier", slowed: false, prev: null, info: null };
+      sent = []; notes = [];
+      guard();
+      return { level: clearance.level, said: banners.filter((b) => /BOXED IN/.test(b)).join(" | ") };
+    };
+    const off30 = boxedIn(30), in3 = boxedIn(3);
+    check("15q. a refused escape says WHICH refusal: from inside the buffer, no way OUT - not 'every heading enters'",
+          off30.level === "helm" && /every heading enters a keep-out within 45 s/.test(off30.said)
+          && in3.level === "helm" && /no heading gets out of the 5 m buffer and stays out for 45 s/.test(in3.said)
+          && !/every heading enters/.test(in3.said),
+          "30 m off (" + off30.level + "): \"" + off30.said + "\"; 3 m off, inside (" + in3.level + "): \""
+          + in3.said + "\"");
   } finally { Date.now = realNow; roleKey = "survey"; }
 }
 

@@ -102,6 +102,8 @@ export const STEP_S = 0.5;
 export const HOLD_S = 20;
 /** Candidate escape headings, every this many degrees. 24 of them at 15°. */
 export const ESCAPE_STEP_DEG = 15;
+/** From inside the buffer, how close an escape track may pass the feature itself (m). */
+export const ESCAPE_HARD_M = 0.5;
 /**
  * Candidate deviation bearings, every this many degrees.
  *
@@ -536,12 +538,27 @@ export function restoreVel(vel, drift, restoreMs) {
  *
  * Searched rather than solved. A gradient off the nearest feature points away from ONE
  * thing, and the situation that needs this rung is usually a boat set into a corner with
- * two of them; sampling the whole compass and scoring the WORST clearance along each
- * candidate track picks the way out rather than the way off the nearest wall.
+ * two of them; sampling the whole compass picks the way out rather than the way off the
+ * nearest wall.
  *
  * The escape is scored WITH the drift added, because a heading that is clear through the
  * water and downstream into the pier is not an escape. That is the same mistake as
  * commanding a heading and calling it a course.
+ *
+ * ⚠ TWO FAULTS, BOTH MEASURED (review #7, 2026-09-14), BOTH IN THIS SCORE:
+ *   * ALREADY INSIDE THE BUFFER, IT FOUND NOTHING. timeToEntry answers 0 for every heading
+ *     from a point already in the buffer, so every candidate "survived" nothing and this
+ *     returned null - BOXED IN, TAKE MANUAL CONTROL - with open water straight behind the boat.
+ *     That is the state this rung is most likely to fire in: a pier face south, a 2 kn set onto
+ *     it, a 5 m buffer, found a way out at 5.5 m off and none at 4.5, 3 or 1.5 m. From inside,
+ *     a heading now counts as clear when its track never touches the feature itself, leaves the
+ *     buffer within the horizon, and then stays out of it for a whole horizon; the escape point
+ *     is the end of that horizon, not a few meters past the edge.
+ *   * THE TIE-BREAK WAS GROUND DISTANCE, while this comment said "distance made good away from
+ *     trouble". Every heading that never enters ties on the horizon, and the fastest over the
+ *     ground won - which, with the set running along a face, is ALONG the face: from 8 m off it
+ *     chose 75 deg, 14 m clear after 10 s and 35 m after 45 s, where straight out gives 60 m and
+ *     241 m. Ties are broken by CLEARANCE at the end of the track now.
  *
  * Returns null when nothing improves matters - and the caller must treat that as its own
  * answer, not as "no action needed".
@@ -551,20 +568,67 @@ export function escapeCourse(p, drift, ko, buf, speedMs, opts = {}) {
   const step = opts.stepS ?? STEP_S;
   const degStep = opts.degStep ?? ESCAPE_STEP_DEG;
   if (!(speedMs > 0)) return null;
+  const inside = blocked(p, ko, buf);
   let best = null;
   for (let hdg = 0; hdg < 360; hdg += degStep) {
     const a = hdg * D2R;
     const v = { e: drift.e + speedMs * Math.sin(a), n: drift.n + speedMs * Math.cos(a) };
-    const t = timeToEntry(p, v, ko, buf, horizon, step);
-    // Score by how long the track stays clear, then by how far it gets. A heading that
-    // never enters within the horizon scores the horizon itself, so several may tie - and
-    // the tie is broken by distance made good away from trouble.
-    const survived = t == null ? horizon : t;
-    const reach = Math.hypot(v.e, v.n) * survived;
-    if (!best || survived > best.survived + 1e-9
-        || (Math.abs(survived - best.survived) < 1e-9 && reach > best.reach)) {
-      best = { hdg, survived, reach, clear: t == null,
-               to: { e: p.e + v.e * survived, n: p.n + v.n * survived } };
+    let survived, clear, run;
+    if (!inside) {
+      const t = timeToEntry(p, v, ko, buf, horizon, step);
+      survived = t == null ? horizon : t;
+      clear = t == null;
+      run = survived;
+    } else {
+      // From inside: never touch the feature itself, get out of the buffer, and stay out. Walked
+      // at a quarter step with a 0.5 m hard margin, because a charted shoreline or dock LINE has
+      // no width, and a 3 m stride at escape speed could step straight over one between samples.
+      // The fine walk only lasts until the track is OUT; from there it is an ordinary track
+      // outside the buffer, and the ordinary projection says whether it comes back in - which
+      // keeps a 1500-zone chart to tens of milliseconds rather than a quarter of a second.
+      // ⚠ OUT WITHIN THE HORIZON, THEN A WHOLE HORIZON OF CLEAR WATER - AND THE ESCAPE POINT IS
+      // AT THE END OF IT. Measured against the other two readings of "get out and stay out":
+      //   * a fixed exit deadline (10 s) refused a 15 m buffer in a 4 kn set - straight out
+      //     takes 11.7 s - and read BOXED IN with open water behind the boat;
+      //   * an escape point one horizon from NOW ended a late exit a few meters outside the
+      //     buffer, holding in the set that put it there.
+      // The vessel flies the escape as a line with the crab solved (SimVcu.tick), so a slow way
+      // out is still the line that was checked; lingering is scored down by `worst`, not refused.
+      let out = false, fouled = false, tOut = 0;
+      const fine = step / 4;
+      for (let tt = fine; tt <= horizon + 1e-9; tt += fine) {
+        const q = { e: p.e + v.e * tt, n: p.n + v.n * tt };
+        if (blocked(q, ko, ESCAPE_HARD_M)) { fouled = true; break; }
+        if (!blocked(q, ko, buf)) { out = true; tOut = tt; break; }
+      }
+      if (out) {
+        const q = { e: p.e + v.e * tOut, n: p.n + v.n * tOut };
+        fouled = timeToEntry(q, v, ko, buf, horizon, step) != null;
+      }
+      clear = out && !fouled;
+      survived = clear ? horizon : 0;
+      run = clear ? tOut + horizon : 0;
+    }
+    // Score: how long the track stays clear; then the WORST clearance along it, sampled each
+    // second; then the clearance it ends in. Distance away from trouble at every point, not
+    // distance over the ground - and not only at the end, or a track that grazes a pile on its
+    // way to open water beats one that goes round it (tests/in_extremis.js 10e). Only clear
+    // tracks are measured, so the cost is bounded by the headings that are actually answers.
+    const to = { e: p.e + v.e * run, n: p.n + v.n * run };
+    let worst = 0, gain = 0;
+    if (clear) {
+      gain = worst = clearanceM(to, ko);
+      for (let tt = 1; tt < run; tt += 1) {
+        const c = clearanceM({ e: p.e + v.e * tt, n: p.n + v.n * tt }, ko);
+        if (c < worst) worst = c;
+      }
+    }
+    if (!best || (clear && !best.clear) || (clear === best.clear
+        && (survived > best.survived + 1e-9
+            || (Math.abs(survived - best.survived) < 1e-9
+                && (worst > best.worst + 1e-6
+                    || (Math.abs(worst - best.worst) <= 1e-6 && gain > best.gain)))))) {
+      best = { hdg, survived, worst, gain, clear, to };
     }
   }
   // Refusing is a real answer here. If every heading enters within the horizon, the boat is

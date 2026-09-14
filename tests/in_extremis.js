@@ -169,6 +169,97 @@ check("7. a point already inside the buffer reports zero seconds, not 'no entry'
         () => G.escapeCourse(P, SET_ON, boxed4, BUF, kn6) === null,
         "the caller alarms and hands the helm back — an escape that still ends in the pier "
           + "is worse than saying so");
+
+  // ── 10b-10h. REVIEW #7, 2026-09-14: FROM INSIDE THE BUFFER, AND AWAY FROM TROUBLE ───────
+  // timeToEntry answers 0 for every heading from a point already in the buffer, so the search
+  // found nothing there and the page read BOXED IN - with open water straight behind the boat.
+  // And the tie-break was ground distance, so with the set running along a face the escape ran
+  // ALONG the face. The comment said "distance made good away from trouble"; now the code does.
+  //
+  // TEETH, 7 mutations run against a scratch-clone copy of guard.js, 7 killed:
+  //   inside the buffer scored the old way (timeToEntry)   -> 10b, 10e, 10g, 10h
+  //   the tie-break back to ground distance                -> 10b, 10c, 10e, 10g
+  //   the hard check dropped from the inside walk          -> 10d
+  //   the re-entry projection dropped after the exit       -> 10f
+  //   the worst clearance along the track ignored          -> 10e
+  //   a fixed 10 s deadline to get out of the buffer       -> 10g, 10h
+  //   the escape point one horizon from NOW, not the exit  -> 10h
+  const inside = { e: 0, n: 27 };                        // 3 m off the face, inside the 5 m buffer
+  const eIn = G.escapeCourse(inside, SET_ON, W, BUF, kn6);
+  check("10b. being set onto the face from INSIDE the buffer, it still finds the way out - straight away from it",
+        () => eIn && eIn.clear && Math.abs(((eIn.hdg - 180 + 540) % 360) - 180) <= 15,
+        eIn ? "steer " + eIn.hdg + "°, ending " + eIn.gain.toFixed(0) + " m clear" : "none found - BOXED IN");
+
+  const along = { e: 1.03, n: 0 };                       // 2 kn stream running along the face
+  const near = { e: 0, n: 22 };                          // 8 m off the face, outside the buffer
+  const eAl = G.escapeCourse(near, along, W, BUF, kn6);
+  check("10c. with the set running along the face, the tie goes to CLEARANCE gained, not ground distance",
+        () => eAl && eAl.clear && Math.abs(((eAl.hdg - 180 + 540) % 360) - 180) <= 30 && eAl.gain > 100,
+        eAl ? "steer " + eAl.hdg + "°, ending " + eAl.gain.toFixed(0) + " m clear" : "none found");
+
+  // Pocketed: walls close on three sides, a THIN pier (0.3 m) 2.5 m east, slack water - and the
+  // only open water is through the pier. Crossing it is not a way out, so the answer is to
+  // refuse. ⚠ The pier is thinner than a one-second stride, so only the fine hard-margin walk
+  // sees the crossing: the worst-clearance samples can step clean over it.
+  const thin = [{ e: 0, n: -60 }, { e: 0.3, n: -60 }, { e: 0.3, n: 60 }, { e: 0, n: 60 }];
+  const pocket = [
+    [{ e: -400, n: -400 }, { e: -10, n: -400 }, { e: -10, n: 400 }, { e: -400, n: 400 }],   // west
+    [{ e: -400, n: 6 }, { e: 0, n: 6 }, { e: 0, n: 400 }, { e: -400, n: 400 }],             // north
+    [{ e: -400, n: -400 }, { e: 0, n: -400 }, { e: 0, n: -6 }, { e: -400, n: -6 }],         // south
+  ];
+  const pocketed = { polys: [thin, ...pocket].map((r) => ({ ring: r, bb: bbOf(r), kind: "a dock / pier" })),
+                     lines: [], points: [], marks: [], sys: [], chans: [] };
+  const eTh = G.escapeCourse({ e: -2.5, n: 0 }, SLACK, pocketed, BUF, kn6);
+  check("10d. ... and from inside, a track that CROSSES the feature is never the way out - pocketed, it refuses",
+        () => eTh === null,
+        eTh ? "steered " + eTh.hdg + "° - through the pier at e=0..0.3" : "refused: the only open water is through the pier");
+
+  // Straight away from the face passes 2 m from a pile - never touching it, but back inside a
+  // buffer, which is not a way OUT. The answer has to go round it.
+  const withPile = { ...W, points: [{ kind: "a pile", e: 2, n: 20, r: 0.5 }] };   // 7 m in: 180 still ENDS in the most water
+  const ePl = G.escapeCourse(inside, SET_ON, withPile, BUF, kn6);
+  check("10e. ... and a track that leaves the buffer only to pass inside another's is not a way out either",
+        () => ePl && ePl.clear && ePl.hdg !== 180 && Math.abs(((ePl.hdg - 180 + 540) % 360) - 180) <= 45,
+        ePl ? "steer " + ePl.hdg + "° (straight away, 180°, passes 2 m from the pile)" : "none found");
+
+  // A corridor with an 8 m free band: every candidate heading that gets out of this buffer
+  // crosses the band into the far wall's inside a horizon. Out of one buffer into another is not
+  // a way out. (A 37 m corridor is NOT boxed - a slow crab across it stays clear for the horizon -
+  // which is how the first cut of this check was wrong.)
+  const farWall = [{ e: -400, n: -290 }, { e: 400, n: -290 }, { e: 400, n: 12 }, { e: -400, n: 12 }];
+  const corridor = { ...W, polys: [...W.polys, { ring: farWall, bb: bbOf(farWall), kind: "a dock / pier" }] };
+  const eCo = G.escapeCourse(inside, SET_ON, corridor, BUF, kn6);
+  check("10f. ... and in a corridor, out of this buffer only into the far wall's, it REFUSES",
+        () => eCo === null,
+        eCo ? "steered " + eCo.hdg + "° - a way out it does not have" : "refused: 18 m between the faces, 8 m of it outside both buffers");
+
+  // Deep in a WIDE buffer, in a strong set: 3 m off the face, a 15 m buffer the operator set for
+  // the structure, a 4 kn stream onto it. Straight out makes 2 kn over the ground and takes
+  // 11.7 s to leave the buffer. A fixed exit deadline (10 s, the first cut of this fix) read that
+  // as BOXED IN - with open water straight behind the boat. Slow is not the same as no way out.
+  const SET_HARD = { e: 0, n: 4 * 0.514444 };
+  const WIDE = 15;
+  const eWd = G.escapeCourse(inside, SET_HARD, W, WIDE, kn6);
+  check("10g. deep in a WIDE buffer in a strong set, a slow way out is still the way out - it is not BOXED IN",
+        () => eWd && eWd.clear && Math.abs(((eWd.hdg - 180 + 540) % 360) - 180) <= 15,
+        eWd ? "steer " + eWd.hdg + "°; straight out takes 11.7 s to leave a 15 m buffer in a 4 kn set"
+            : "none found - BOXED IN, with open water straight behind the boat");
+
+  // ... and it ends a whole horizon of clear water past the buffer's edge, like an escape that
+  // starts outside one - not a horizon from NOW, which put this one 33 s past the edge and a
+  // late exit a few meters past it, holding in the set that put it there. Worked from the
+  // geometry, not the code: the edge is 15 m off a face that runs east-west, so the escape
+  // point's distance past it, over the speed away from the face, is the time run in clear water.
+  check("10h. ... and the escape point is a whole horizon of clear water past the buffer, not a few meters",
+        () => {
+          if (!eWd) return false;
+          const a = eWd.hdg * Math.PI / 180;
+          const away = -(SET_HARD.n + kn6 * Math.cos(a));          // m/s over the ground, off the face
+          return away > 0 && (30 - WIDE - eWd.to.n) / away >= G.HORIZON_S - 0.01;
+        },
+        eWd ? ((30 - WIDE - eWd.to.n) / -(SET_HARD.n + kn6 * Math.cos(eWd.hdg * Math.PI / 180))).toFixed(1)
+                + " s of clear water past the edge (the horizon is " + G.HORIZON_S + " s)"
+            : "none found");
 }
 
 // ── 11. A BOAT MAKING NO WAY OVER THE GROUND ────────────────────────────────────────

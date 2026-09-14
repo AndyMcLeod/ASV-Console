@@ -1948,8 +1948,17 @@ function clearanceGuard(){
       // REFUSING IS A REAL ANSWER. Every heading enters within the horizon: the boat is
       // boxed in, and a confident-looking escape would be a lie. Say so and leave the helm
       // to the operator, who can see things this model cannot.
-      showBanner("⚠⚠ IN EXTREMIS and BOXED IN — every heading enters a keep-out within "
-        + GUARD_HORIZON_S + " s. The console cannot find a way out; TAKE MANUAL CONTROL.");
+      //
+      // ⚠ AND SAY WHICH REFUSAL IT WAS. From INSIDE the buffer every heading "enters" at zero
+      // seconds by definition, so that sentence explains nothing there. What the search refuses
+      // from inside is a way OUT: none that leaves the buffer and stays out for the look-ahead
+      // without touching the feature (escapeCourse in static/js/guard.js, review #7).
+      const within = c.m < buf;
+      showBanner("⚠⚠ IN EXTREMIS and BOXED IN — "
+        + (within ? "no heading gets out of the " + buf + " m buffer and stays out for "
+                    + GUARD_HORIZON_S + " s without touching " + (c.kind || "a keep-out")
+                  : "every heading enters a keep-out within " + GUARD_HORIZON_S + " s")
+        + ". The console cannot find a way out; TAKE MANUAL CONTROL.");
       return c;
     }
     const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
