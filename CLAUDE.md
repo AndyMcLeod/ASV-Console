@@ -55,11 +55,33 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#5 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#6 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #5 - THE PLAN FILE SURVIVES CONCURRENCY, CORRUPTION AND SPEED COMMANDS.**
+**NEWEST, 2026-09-14: REVIEW ITEM #6 - A COMMAND IS CHECKED, NOT ASSUMED.**
+Every speed sender assumed its POST had worked: the governor set `commandedSpeed` before the answer, the
+guard set `slowed` before it, `resumeRun` / `resumeHeldSurvey` sent Start after a LOW they never checked,
+the slow rung's gate read the CONFIGURED role speed, and `cmd()` answered a network error with {} - which
+every `r.error` check in the page read as success.
+
+* `commandSpeed(key)` is the one sender (governor, all three guard rungs, continueAtLow, both resumes) and
+  remembers `speedWant`; `speedReconcile(s, st)` runs every frame right after the governor, compares it with
+  the vessel's `speed_key`, re-sends after `SPEED_RESEND_MS` (1 s), and after `SPEED_RESEND_MAX` (3) says so
+  once in a banner and keeps trying every 5 s. Dropped when not under command; a link with no key is left alone.
+* The slow rung reads the reported `speed_key` (falls back to the role only with no key).
+* `cmd()` returns `{ok:false, error}` on a refusal or a network error.
+* `resumeRun` stops if LOW or Start is refused (still paused, says so); `resumeHeldSurvey` stops at a refused
+  pause, upload, LOW or Start and puts her back on station with the offer up. Its comment about the pause
+  preventing a take-off was stale since #3 and says so now.
+* Tests: speed_modes.js 9 (follows the call into commandSpeed) and 19a-19f; clearance_guard.js 15p;
+  pause_resume.js 12c-12e and 15; guard_resume.js 15b; in_extremis.js 12 updated. TEETH: 11 sidecar
+  mutations, 11 killed.
+* This also removes review #2's trigger (a lost LOW is re-sent within a second); #2's 2 s deadline stays as
+  the backstop.
+* Next up after approval: #7, the in-extremis escape disappears inside the buffer and runs along the hazard.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #5 - THE PLAN FILE SURVIVES CONCURRENCY, CORRUPTION AND SPEED COMMANDS.**
 Measured before any code: on Windows a reader holding mission.json open makes `os.replace` fail with
 WinError 5 (2460 failures to 112 successes in 10 s, one reader) - the open list's 500; a read landing
 mid-replace raises PermissionError, and `load_mission` answered that (and a corrupt file) with an EMPTY
@@ -81,7 +103,7 @@ before commanding the boat (over HTTP a speed command sent with a Go-To failed 1
   scratch clone, 9 killed - including reads without the lock (the concurrency check still catches it).
 * The open list's persistence-500 and empty-plan entries are marked addressed; the 281-byte file itself
   is still unexplained.
-* Next up after approval: #6, commands are assumed to have worked (speed reconciliation against speed_key).
+* Committed and pushed as `35c20cb3`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #4 - UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER.**
 `#b_upload` lumped three cases into one silent branch: no waypoints, no position fix, and the keep-out

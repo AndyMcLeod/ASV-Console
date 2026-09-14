@@ -1809,9 +1809,12 @@ function clearanceGuard(){
   if(a.level === "slow"){
     if(settling) return c;                 // a deviation is in flight; it answers this
     if(overridden && !overSlow) return c;  // a full PROCEED keeps the speed; a low one does not
-    if(!clearance.slowed && roleSpeed(speedRole()) !== "low"){
+    // THE BOAT'S OWN SPEED, where the vessel reports it (review #6): a role CONFIGURED low says
+    // nothing about a boat actually running faster - a lost command, a resume, a transit.
+    const runningKey = (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole());
+    if(!clearance.slowed && runningKey !== "low"){
       clearance.slowed = true;
-      cmd("/api/cmd/speed", {speed:"low"});
+      commandSpeed("low");
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low.");
     }
     return c;
@@ -1870,7 +1873,7 @@ function clearanceGuard(){
         if(atLow.level !== "hold" && atLow.level !== "helm"){
           clearance.slowed = true;
           slowLieu = {at: Date.now(), sog: st.sog_kn != null ? st.sog_kn : null};
-          cmd("/api/cmd/speed", {speed:"low"});
+          commandSpeed("low");
           flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low rather "
                     + "than stopping: at low speed the track stays clear (" + atLow.level + ").");
           if(planIntent) planIntent.why.push({t:"warn", s:"SLOWED instead of holding — the "
@@ -1951,7 +1954,7 @@ function clearanceGuard(){
     }
     const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
     clearance.slowed = false; commandedSpeed = null;
-    cmd("/api/cmd/speed", {speed:"high"});      // steerage authority to beat the set
+    commandSpeed("high");                       // steerage authority to beat the set
     // Captured with the route, like every other commanded motion - so the Intent card can
     // say why the boat is where it is, not just that it moved.
     runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
@@ -1983,6 +1986,37 @@ function clearanceGuard(){
 // has no business steering and never will. (The clearance guard now does, at its last rung
 // and only there, on Andy's instruction of 2026-09-02; this comment used to say "the
 // console never steers" on the guard's behalf and no longer speaks for it.)
+// THE SPEED THE CONSOLE WANTS, AND WHETHER THE VESSEL HAS TAKEN IT (review #6, 2026-09-14).
+// Every speed command goes through commandSpeed(), which remembers the key; speedReconcile()
+// runs every frame, compares it with the speed_key the vessel REPORTS, and re-sends after
+// SPEED_RESEND_MS of disagreement. Until this every sender assumed its POST had worked: the
+// governor recorded commandedSpeed before the answer and the guard set `slowed` before it, so
+// one lost or refused command left a whole segment - or a slow-down beside a pier - at the
+// wrong speed with nothing looking back. After SPEED_RESEND_MAX re-sends it says so, and
+// keeps trying at a slower cadence.
+const SPEED_RESEND_MS = 1000, SPEED_RESEND_MAX = 3;
+let speedWant = null;                  // {key, at, sends, told} - the last speed commanded
+function commandSpeed(key){
+  speedWant = {key: key, at: Date.now(), sends: 1, told: false};
+  return cmd("/api/cmd/speed", {speed: key});
+}
+function speedReconcile(s, st){
+  if(!speedWant) return null;
+  if(!(s && s.armed && !s.estop && (s.run === "running" || s.run === "paused"))){ speedWant = null; return null; }
+  if(typeof (st || {}).speed_key !== "string" || st.speed_key === speedWant.key) return null;
+  const now = Date.now();
+  const wait = speedWant.sends > SPEED_RESEND_MAX ? SPEED_RESEND_MS * 5 : SPEED_RESEND_MS;
+  if(now - speedWant.at < wait) return null;
+  speedWant.at = now; speedWant.sends++;
+  cmd("/api/cmd/speed", {speed: speedWant.key});
+  if(speedWant.sends > SPEED_RESEND_MAX && !speedWant.told){
+    speedWant.told = true;
+    showBanner("⚠ THE VESSEL IS NOT TAKING THE SPEED COMMAND — the console wants "
+      + speedWant.key.toUpperCase() + " and the vessel still reports " + String(st.speed_key).toUpperCase()
+      + " after " + SPEED_RESEND_MAX + " re-sends. It keeps trying; take the speed by hand if it does not change.");
+  }
+  return "resent";
+}
 let commandedSpeed = null;
 function speedGovernor(){
   const st = (S && S.status) || {};
@@ -2008,7 +2042,7 @@ function speedGovernor(){
   const want = (role === "turn" && gap >= 0 && turnSlowAt[gap]) ? "low" : roleSpeed(role);
   if(want === commandedSpeed) return want;
   commandedSpeed = want;
-  cmd("/api/cmd/speed", {speed: want});
+  commandSpeed(want);
   return want;
 }
 // OFF TRACK is displacement from the LINE OF ADVANCE THE BOAT IS ACTUALLY FLYING — the leg
@@ -8356,9 +8390,11 @@ async function cmd(path, body){
     const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
                                  body: JSON.stringify(body||{})});
     const j = await r.json().catch(()=>({}));
-    if(!r.ok){ flashNote(j.error || ("command failed ("+r.status+")")); }
+    // ⚠ A REFUSAL IS ANSWERED AS ONE (review #6). This returned the bare body, and a network
+    // error as {} - which every `r.error` check in the page read as success.
+    if(!r.ok){ const err = j.error || ("command failed ("+r.status+")"); flashNote(err); return {...j, ok:false, error:err}; }
     return j;
-  }catch(e){ flashNote("network error"); return {}; }
+  }catch(e){ flashNote("network error"); return {ok:false, error:"network error"}; }
 }
 let noteTimer = null;
 // SHOWS AND THEN HIDES. It used to only fade the COLOUR back after 4 s, because the box was
@@ -8460,7 +8496,7 @@ $("#b_start").onclick = async ()=>{
   if(S && S.run === "paused") return resumeRun();
   if(!await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
-  pauseMark = null; resumeSlow = false; commandedSpeed = null;   // a FRESH run, not a resume
+  pauseMark = null; resumeSlow = false; commandedSpeed = null; speedWant = null;   // a FRESH run, not a resume
   cmd("/api/cmd/start");
 };
 
@@ -8570,8 +8606,23 @@ async function resumeRun(){
   // conditional on the backtrack: a resume is cautious whether or not there was a line.
   const lineNo = pauseMark ? pauseMark.line + 1 : null;   // read BEFORE the mark is spent
   resumeSlow = true; commandedSpeed = null;
-  await cmd("/api/cmd/speed", {speed: "low"});
-  await cmd("/api/cmd/start");
+  // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6). Start used to follow a LOW it never
+  // checked: refused or lost, the boat resumed at its old speed while this said LOW, and
+  // resumeSlow kept the governor from ever correcting it.
+  const slowed = await commandSpeed("low");
+  if(!slowed || slowed.ok === false || slowed.error){
+    resumeSlow = false;
+    flashNote("Resume stopped — the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer")
+              + "). She is still paused; press Resume again.");
+    return;
+  }
+  const started = await cmd("/api/cmd/start");
+  if(!started || started.ok === false || started.error){
+    resumeSlow = false;
+    flashNote("Resume stopped — Start was refused (" + ((started && started.error) || "no answer")
+              + "). She is still paused.");
+    return;
+  }
   pauseMark = null;
   flashNote("Resumed at LOW — " + (note || "carrying on") + ". Speed stays low until you change it.");
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED after a pause — " + (note || "carrying on")
@@ -8655,7 +8706,7 @@ function continueAtLow(){
   guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null, slow: true};
   clearance.slowed = false;                 // the throttle passes from the ladder to the operator
   resumeSlow = true; commandedSpeed = null;
-  cmd("/api/cmd/speed", {speed: "low"});
+  commandSpeed("low");                      // reconciled against the vessel's speed_key every frame
   logGuardLow("slow_continue", c.m, c.kind, null);
   if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE at "
     + (c.m != null ? c.m.toFixed(1) + " m" : "unknown range") + " from " + (c.kind || "a keep-out")
@@ -8720,7 +8771,17 @@ async function resumeHeldSurvey(){
   guardOverride = {t: Date.now(), level: "hold", clearM: g.clearM, slow: true};
   clearance.slowed = false;
   resumeSlow = true; commandedSpeed = null;
-  await cmd("/api/cmd/pause");
+  // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6) - the pause, the upload, the LOW and
+  // the Start. Since review #3 an upload to a station-keeping boat is STAGED rather than releasing
+  // her, so the pause is no longer what stops a take-off; it stays because every step after it
+  // was written against a paused boat.
+  const paused = await cmd("/api/cmd/pause");
+  if(!paused || paused.ok === false || paused.error){
+    guardOverride = null; resumeSlow = false;
+    showBanner("⚠ COULD NOT RESUME THE SURVEY — the pause was refused (" + ((paused && paused.error) || "no answer")
+      + "). The boat is still holding and the remainder is still held; try again, or Stop and re-plan.");
+    render(); return;
+  }
   const up = await cmd("/api/cmd/upload",
                        {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1])});
   if(up && up.error){
@@ -8736,8 +8797,20 @@ async function resumeHeldSurvey(){
   // upload restarted that index at zero, so the route it counts into has to be the tail.
   runRoute = tail; runUnsafe = [];
   if(planIntent) planIntent.route = tail.length;
-  await cmd("/api/cmd/speed", {speed: "low"});
-  await cmd("/api/cmd/start");
+  const slowed = await commandSpeed("low");
+  const lowOk = !!slowed && slowed.ok !== false && !slowed.error;
+  const started = lowOk ? await cmd("/api/cmd/start") : null;
+  if(!started || started.ok === false || started.error){
+    // Paused beside the very feature the console stopped her off, remainder uploaded: put her back
+    // on station rather than leave her drifting, and keep the offer up.
+    guardOverride = null; resumeSlow = false;
+    await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
+    const why = lowOk ? "Start was refused (" + ((started && started.error) || "no answer") + ")"
+                      : "the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer") + ")";
+    showBanner("⚠ COULD NOT RESUME THE SURVEY — " + why + ". The boat is station-keeping again and the "
+      + "remainder is still held; try again, or Stop and re-plan.");
+    render(); return;
+  }
   const left = tail.length;
   guardHeld = null;
   flashNote("Survey resumed at LOW — " + (note || "carrying on") + ". Speed stays low until "
@@ -9107,7 +9180,7 @@ function onState(s){
     // governor reads for the role - so the role describes THIS frame, not the last.
     // The clearance guard runs first of all, because safety outranks the role.
     clearanceGuard();
-    accumLineTime(); speedGovernor(); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    accumLineTime(); speedGovernor(); speedReconcile(s, st); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)

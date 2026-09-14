@@ -129,6 +129,7 @@ eval([
   grab("resumeBackM"), grab("alongLineM"), grab("lineMark"), grab("markPause"),
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
+  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
@@ -305,6 +306,8 @@ async function drive(ko) {
 // The recorder has to keep the amendment's ROUTE, which the plain cmd() stub drops.
 function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                      if (p === "/api/cmd/amend") globalThis.__lastRoute = b && b.route;
+                     // 12c: a command the console must NOT assume worked (review #6)
+                     if (p === globalThis.__failPath) return Promise.resolve({ ok: false, error: "simulated refusal" });
                      return Promise.resolve({}); }
 
 (async () => {
@@ -359,6 +362,42 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
               && foul.sent.some(x => x.p === "/api/cmd/speed" && x.speed === "low"),
         "a resume is cautious whether or not there was a line to back down");
   __setResumeSlow(false);
+
+  // ── 12c-12e. EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6) ──────────────────────
+  // resumeRun awaited LOW and then sent Start whatever LOW had answered - so a refused or lost
+  // speed command resumed at the old speed while the note said LOW, and resumeSlow kept the
+  // governor from ever correcting it. And cmd() answered a network error with {}, which every
+  // `r.error` check in the page read as success.
+  //
+  // TEETH, sidecar ASV_HTML, 3 mutations, 3 killed:
+  //   resumeRun ignores a refused LOW                  -> 12c
+  //   cmd() answers a network error with {} again      -> 12d
+  //   cmd() drops ok:false on an HTTP refusal          -> 12e
+  globalThis.__failPath = "/api/cmd/speed";
+  const refusedLow = await drive();
+  globalThis.__failPath = null;
+  check("12c. a resume whose LOW is refused does NOT start, keeps no low-speed hold, and says so",
+        () => !refusedLow.sent.some(x => x.p === "/api/cmd/start") && __resumeSlow() === false
+              && /Resume stopped/.test(refusedLow.notes.join(" ")),
+        () => "sent " + JSON.stringify(refusedLow.sent.map(x => x.p)) + "; note: "
+              + (refusedLow.notes.find(n => /Resume/.test(n)) || "none"));
+  __setResumeSlow(false);
+  {
+    const fnotes = [];
+    const flashNote = (m) => fnotes.push(m);
+    let fetch = () => Promise.reject(new Error("socket hang up"));
+    // eslint-disable-next-line no-eval
+    const realCmd = eval("(" + grab("cmd") + ")");
+    const offline = await realCmd("/api/cmd/speed", { speed: "low" });
+    fetch = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: "Access is denied" }) });
+    const refused = await realCmd("/api/cmd/speed", { speed: "low" });
+    check("12d. cmd() answers a network error with an explicit failure, not an empty object",
+          () => offline.ok === false && /network/.test(offline.error || ""),
+          () => JSON.stringify(offline));
+    check("12e. ... and an HTTP refusal carries ok:false with the server's own words",
+          () => refused.ok === false && refused.error === "Access is denied",
+          () => JSON.stringify(refused) + " notes " + JSON.stringify(fnotes));
+  }
 
   // ── 1c-1g. UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER (review #4) ─────
   // With the keep-out model not ready - still loading, never loaded, or no keep-outs read for
@@ -467,7 +506,7 @@ function finish(){
         + "including selecting 'low' itself, which is them owning the choice");
   check("15. ... and a stop or a fresh start does not carry it into the next run",
         () => /pauseMark = null; resumeSlow = false; commandedSpeed = null;\r?\n?\s*cmd\("\/api\/cmd\/stop"\)/.test(H)
-              && /pauseMark = null; resumeSlow = false; commandedSpeed = null;\s*\/\/ a FRESH run/.test(H),
+              && /pauseMark = null; resumeSlow = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
         "the hold belongs to the run it was given about");
   resumeSlow = false;
 }

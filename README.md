@@ -1290,6 +1290,11 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    coverage line — mid-turn, on the approach, between regions — gets the low speed but no
    backtrack, because there is no line to back down.
 
+   **Every speed the console commands is checked against the speed the vessel reports**
+   (`commandSpeed` / `speedReconcile`): re-sent after a second of disagreement, with a banner
+   after three tries. A resume whose LOW is refused does not start - it says so and, off a
+   guard hold, puts the boat back on station.
+
    **The clearance guard has the same resume.** If the guard STOPS a survey rather than the
    operator, the guard's own bar keeps the unflown remainder and offers **RESUME SURVEY AT
    LOW SPEED**, which goes back down the line exactly as this one does - see the clearance

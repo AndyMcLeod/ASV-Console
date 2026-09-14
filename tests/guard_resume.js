@@ -196,6 +196,7 @@ eval([
   grabDecl("RELEASE_HOLD_MS"),
   "let clearHoldAt = 0;",
   grab("releaseSettled"),
+  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
   grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
@@ -541,6 +542,17 @@ async function resumeFrom(opts) {
                  < H.indexOf('await cmd("/api/cmd/pause")'),
         () => "override " + JSON.stringify(guardOverride) + " - the hazard has not moved, "
             + "and the guard runs on every telemetry frame");
+
+  // 15b. EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6). The resume sent Start after a
+  // LOW it never checked: refused, she resumed beside the feature at whatever speed the upload
+  // left, the banner said LOW, and the override stopped the guard from holding her.
+  // TEETH, sidecar ASV_HTML: resumeHeldSurvey ignores a refused LOW -> 15b (killed).
+  const noLow = await resumeFrom({ refuse: "/api/cmd/speed" });
+  check("15b. a resume whose LOW is refused does NOT start - she is put back on station, the offer stays",
+        () => !noLow.paths.includes("/api/cmd/start")
+              && noLow.paths.lastIndexOf("/api/cmd/hold") > noLow.paths.indexOf("/api/cmd/speed")
+              && noLow.banners.some(b => /COULD NOT RESUME/.test(b)) && !!guardHeld,
+        () => JSON.stringify(noLow.paths) + "; offer still up: " + !!guardHeld);
   finish();
 })();
 

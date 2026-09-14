@@ -516,7 +516,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const showBanner = () => {}, setViolations = () => {}, renderGuardBar = () => {};
   const updateMissionCard = () => {}, render = () => {}, holdClearAt = () => 12;
   const markGuardHeld = () => {}, guardHeldOffer = () => null, guardOverrideOk = () => false;
-  const roleSpeed = () => "survey", speedRole = () => "survey";
+  let roleKey = "survey", speedWant = null;          // 15p switches the CONFIGURED role speed
+  const roleSpeed = () => roleKey, speedRole = () => "survey";
   const ref = planeFrame({ lat: 43.07, lon: -70.76 });
   const wall = (n0) => { const r = [{ e: -400, n: n0 }, { e: 400, n: n0 },
                                     { e: 400, n: n0 + 300 }, { e: -400, n: n0 + 300 }];
@@ -531,6 +532,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // eslint-disable-next-line no-eval
   const NL2 = String.fromCharCode(10);
   const guard = eval("(function(){ " + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+                     + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");
@@ -686,7 +688,22 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
           f1.sent.includes("/api/cmd/speed:low") && !held(f2),
           "speed_key low, still 5.9 kn after 2.5 s: " + JSON.stringify(f2.sent)
           + " - judged on speed over ground alone this would be held while it slows");
-  } finally { Date.now = realNow; }
+
+    // 15p. THE SLOW RUNG READS THE BOAT'S SPEED, NOT THE SETTING (review #6). TEETH: the gate reading the setting again -> 15p (killed). Its gate asked
+    // whether the role was CONFIGURED low - so a boat whose role is set low but is actually
+    // running faster (a lost command, a resume, a transit) was never slowed. At 70 m and 6 kn
+    // this guard reads `slow`.
+    fresh(); roleKey = "low";
+    const p1 = step(0, 70, 6.0, "survey");
+    fresh(); roleKey = "survey";
+    const p2 = step(0, 70, 6.0, "low");
+    check("15p. the slow rung reads the speed the vessel REPORTS: set low but running survey is slowed, and "
+          + "already low is left alone",
+          p1.level === "slow" && p1.sent.includes("/api/cmd/speed:low")
+          && p2.level === "slow" && !p2.sent.includes("/api/cmd/speed:low"),
+          "role low / vessel survey " + p1.level + " " + JSON.stringify(p1.sent)
+          + "; role survey / vessel low " + p2.level + " " + JSON.stringify(p2.sent));
+  } finally { Date.now = realNow; roleKey = "survey"; }
 }
 
 check("16. it steers ONLY at the helm rung, and NOT as a Go-To",

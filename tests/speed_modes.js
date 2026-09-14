@@ -135,6 +135,8 @@ var resumeSlow = false;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
 var sent = [];
 function cmd(path, body) { sent.push({ path, body }); }
+var banners = [];
+function showBanner(m) { banners.push(m); }
 
 // currentActivity IS the role classifier - speedRole just asks it. Grabbed rather than
 // stubbed for that reason: a stub would let this suite pass against a page whose speed and
@@ -144,6 +146,9 @@ function cmd(path, body) { sent.push({ path, body }); }
 eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
      grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+     grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
+     grab("commandSpeed") + "\n" + grab("speedReconcile") + "\n" +
+     "function __want(){ return speedWant; }\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
@@ -286,10 +291,15 @@ console.log("Speed by mode - three settings, and the console governs which one i
 // 9. THE CONSOLE NEVER STEERS. The whole intervention is a speed; anything commanding a
 // heading, a waypoint or a behaviour from here is out of scope by design.
 {
-  const G = grab("speedGovernor");
+  const G = grab("speedGovernor"), CS = grab("commandSpeed") + grab("speedReconcile");
+  // Since review #6 the governor commands through commandSpeed(), which the page's speed
+  // reconciliation needs to see - so the check follows the call into it rather than passing
+  // vacuously on a governor with no cmd( left in it.
   check("9. the governor's only command is a SPEED - it never steers",
-        () => (G.match(/cmd\("[^"]+"/g) || []).every(c => c === 'cmd("/api/cmd/speed"'),
-        "commands issued: " + JSON.stringify([...new Set(G.match(/cmd\("[^"]+"/g) || [])]));
+        () => !/\bcmd\(/.test(G) && /commandSpeed\(want\)/.test(G)
+              && (CS.match(/cmd\("[^"]+"/g) || []).length >= 2
+              && (CS.match(/cmd\("[^"]+"/g) || []).every(c => c === 'cmd("/api/cmd/speed"'),
+        "commands issued: " + JSON.stringify([...new Set(CS.match(/cmd\("[^"]+"/g) || [])]));
 }
 // 10. THE TURN RADIUS BELONGS TO THE TURN SPEED, and this is the one that is a safety
 // change rather than a convenience. A hull holds v/omega, so the radius every generated
@@ -447,6 +457,61 @@ console.log("Speed by mode - three settings, and the console governs which one i
   check("18b. ... and the migration fills only the roles that are absent",
         () => /if\(!mission\.speeds\[r\]\) mission\.speeds\[r\] = mission\.speed/.test(LM),
         "`if (!...)` — a role that arrived from the server keeps what it arrived with");
+}
+
+// 19. THE SPEED THE CONSOLE WANTS IS CHECKED AGAINST THE SPEED THE VESSEL REPORTS (review #6,
+// 2026-09-14). Every sender used to assume its POST had worked - the governor recorded
+// commandedSpeed before the answer and the guard set `slowed` before it - so one lost or
+// refused command left a segment, or a slow-down beside a pier, at the wrong speed for good.
+//
+// TEETH, sidecar ASV_HTML, 6 mutations, 6 killed:
+//   the reconcile never re-sends                    -> 9, 19a, 19d
+//   it re-sends before SPEED_RESEND_MS              -> 19a, 19d
+//   it re-sends a speed the vessel already has      -> 19b
+//   it keeps a want when not under command          -> 19c
+//   the operator is never told                      -> 19d
+//   onState stops asking                            -> 19f
+{
+  const realNow = Date.now;
+  let clock = 5e9;
+  Date.now = () => clock;
+  const run = { armed: true, estop: false, run: "running" };
+  const speedsSent = () => sent.filter((x) => x.path === "/api/cmd/speed").map((x) => x.body.speed);
+  try {
+    sent = []; banners = [];
+    commandSpeed("low");
+    clock += 500;  const r1 = speedReconcile(run, { speed_key: "survey" });
+    clock += 700;  const r2 = speedReconcile(run, { speed_key: "survey" });
+    check("19a. a speed the vessel has not taken is RE-SENT after SPEED_RESEND_MS - and not before",
+          () => r1 === null && r2 === "resent" && JSON.stringify(speedsSent()) === '["low","low"]',
+          "at 500 ms " + r1 + ", at 1200 ms " + r2 + ", sent " + JSON.stringify(speedsSent()));
+    sent = [];
+    clock += 1500; const r3 = speedReconcile(run, { speed_key: "low" });
+    check("19b. ... and once the vessel reports it, nothing more is sent",
+          () => r3 === null && speedsSent().length === 0, "sent " + JSON.stringify(speedsSent()));
+    sent = [];
+    commandSpeed("high"); clock += 5000;
+    const r4 = speedReconcile({ armed: false, estop: false, run: "running" }, { speed_key: "survey" });
+    check("19c. not under autonomous command, the want is dropped and nothing more is sent",
+          () => r4 === null && __want() === null && speedsSent().length === 1,
+          "want=" + JSON.stringify(__want()) + " sent " + JSON.stringify(speedsSent()));
+    sent = []; banners = [];
+    commandSpeed("low");
+    for (let i = 0; i < 6; i++) { clock += 1100; speedReconcile(run, { speed_key: "survey" }); }
+    check("19d. a vessel that will not take it is TOLD to the operator once, and the console keeps trying, slower",
+          () => banners.length === 1 && /NOT TAKING THE SPEED COMMAND/.test(banners[0] || "")
+                && speedsSent().length === 4,
+          speedsSent().length + " sends over 6.6 s, " + banners.length + " banner(s): "
+                + (banners[0] || "").slice(0, 60));
+    sent = [];
+    commandSpeed("low"); clock += 5000;
+    const r5 = speedReconcile(run, {});
+    check("19e. a vessel that reports no speed_key is left alone - there is nothing to check against",
+          () => r5 === null && speedsSent().length === 1, "sent " + JSON.stringify(speedsSent()));
+  } finally { Date.now = realNow; }
+  check("19f. every frame asks, right after the governor",
+        () => /speedGovernor\(\); speedReconcile\(s, st\);/.test(H),
+        "onState: the governor states the want, the reconcile checks the vessel has it");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

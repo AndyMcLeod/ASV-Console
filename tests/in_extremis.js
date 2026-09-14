@@ -215,7 +215,9 @@ check("11. no ground track means no predicted entry — and the next tick will s
   const fn = H.slice(H.indexOf("function clearanceGuard("), H.indexOf("// --- THE SPEED GOVERNOR"));
   const code = fn.replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/.*$/, ""));
   check("12. every rung commands something different, and only the last one steers",
-        () => /cmd\("\/api\/cmd\/speed", \{speed:"low"\}\)/.test(code)
+        // commandSpeed() since review #6 - it sends /api/cmd/speed and remembers the key the
+        // console reconciles against (tests/speed_modes.js 9 and 19)
+        () => /commandSpeed\("low"\)/.test(code)
               && /cmd\("\/api\/cmd\/hold"/.test(code)
               && /cmd\("\/api\/cmd\/escape"/.test(code)
               && !/cmd\("\/api\/cmd\/goto"/.test(code)
