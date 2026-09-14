@@ -193,6 +193,73 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
         "or it opens showing the markup default while the panel shows the truth");
 }
 
+// --- 12-16. the TIDE is a depth input too, and the model has to follow it ---- //
+// buildKeepouts reads the water level once, when it runs. Nothing rebuilt the model when the
+// level moved, so a model built at high water kept a drying flat and a rock out of the
+// keep-outs - for the router, Punch Out and the clearance guard - however far the tide fell.
+// Review item #1, 2026-09-14. DRIVEN: the page's own applyWaterOffset against the REAL
+// builder, with the tide falling in the 5 cm steps a station actually reports.
+{
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const { effectiveWaterOffset } = require("../static/js/chart.js");
+  const TIDE_REBUILD_M = +((H.match(/const TIDE_REBUILD_M = ([\d.]+);/) || [])[1]);
+  // A station on the doorstep, so the trust gate passes the level through unchanged.
+  const wl = (offset_m) => ({ ok: true, offset_m, stations: [{ dist_km: 2 }] });
+  // Eastport water at his Min depth of 4 m: a rock with a charted sounding, and a 0-2 m flat.
+  const F = planeFrame({ lat: 44.905, lon: -66.985 });
+  const P = (e, n) => { const q = F.fromEN(e, n); return [q.lon, q.lat]; };
+  const feats = [
+    { role: "hazard_point", cls: "Underwater_Awash_Rock_point", props: { VALSOU: 1.5 },
+      geometry: { type: "Point", coordinates: P(0, 0) } },
+    { role: "depth_area", props: { DRVAL1: 0, DRVAL2: 2 },
+      geometry: { type: "Polygon", coordinates: [[P(100, -50), P(200, -50), P(200, 50), P(100, 50), P(100, -50)]] } }];
+  // The page's state, and a rebuildNogo doing what the page's does to `ko` and `builtOffset`:
+  // the real builder, at the level in force.
+  const sea = { waterOffset: 0 };
+  const nogo = { features: feats, ko: null, builtOffset: null };
+  let patClip = "punched", rebuilds = 0;
+  const rebuildNogo = () => { rebuilds++;
+    nogo.ko = K.buildKeepouts(F, feats, { minDepthM: 4, bufferM: 3, wreckRadiusM: 50, waterOffsetM: sea.waterOffset });
+    nogo.builtOffset = sea.waterOffset; };
+  // eslint-disable-next-line no-eval
+  const applyWaterOffset = eval("(" + grab(H, "applyWaterOffset").replace(/^function applyWaterOffset/, "function") + ")");
+  const rock = () => K.blocked({ e: 0, n: 0 }, nogo.ko, 3);
+  const flat = () => K.blocked({ e: 150, n: 0 }, nogo.ko, 3);
+
+  check("12. rebuildNogo records the water level its model was built at",
+        () => /nogo\.builtOffset\s*=\s*sea\.waterOffset;/.test(grab(H, "rebuildNogo")),
+        "without it there is nothing to measure the live level against");
+
+  applyWaterOffset(wl(4.5)); rebuildNogo();             // high water, model built there
+  const highRock = rock(), highFlat = flat(), atHigh = rebuilds;
+  for (let cm = 445; cm >= 0; cm -= 5) applyWaterOffset(wl(cm / 100));
+  check("13. THE REPORTED FAULT: as the tide falls to datum, the model blocks the rock and the flat again",
+        () => !highRock && !highFlat && rock() && flat() && Math.abs(nogo.builtOffset) < TIDE_REBUILD_M,
+        () => "at +4.5 m rock=" + highRock + " flat=" + highFlat + "; at datum rock=" + rock() + " flat=" + flat()
+              + ", model now built at " + nogo.builtOffset + " m");
+  const fell = rebuilds - atHigh;
+  check("14. ...measured from the level the model was BUILT at, so 5 cm steps still add up",
+        () => fell === Math.round(4.5 / TIDE_REBUILD_M),
+        () => fell + " rebuilds over a 4.5 m fall in 5 cm steps (one per " + TIDE_REBUILD_M
+              + " m) - a frame-to-frame test would never rebuild at all");
+
+  const before = rebuilds;
+  applyWaterOffset(wl(nogo.builtOffset + 0.04));
+  const wobble = rebuilds === before;
+  nogo.features = null; applyWaterOffset(wl(3)); const none = rebuilds === before; nogo.features = feats;
+  check("15. ...and it does not churn: a 4 cm wobble rebuilds nothing, and no model means nothing to rebuild",
+        () => wobble && none && patClip === null, () => "wobble:" + wobble + " no-model:" + none);
+
+  const ON = grab(H, "onState"), code = noComments(H);
+  const writes = (code.match(/sea\.waterOffset\s*=(?!=)/g) || []).length;
+  check("16. ONE writer, applied before the guard reads the model, and the manual override uses it too",
+        () => ON.indexOf("applyWaterOffset(water)") >= 0
+              && ON.indexOf("applyWaterOffset(water)") < ON.indexOf("clearanceGuard()")
+              && writes === 1 && /applyWaterOffset\(water\);\s*updateWaterUI\(water\)/.test(code),
+        () => writes + " assignment(s) to sea.waterOffset in the page (want 1, inside applyWaterOffset)");
+}
+
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
 process.exit(fails ? 1 : 0);
 
@@ -216,6 +283,17 @@ process.exit(fails ? 1 : 0);
 //   save_mission / load_mission (server) drop it           -> 9b
 //
 // 16 mutations, 16 killed, none survived and none crashed the suite.
+//
+// REVIEW #1, 2026-09-14 - the tide as a depth input (checks 12-16), same sidecar method:
+//   applyWaterOffset never rebuilds                        -> 13, 14
+//   compared frame-to-frame instead of with the BUILT level -> 13, 14, 15
+//   rebuildNogo stops recording nogo.builtOffset            -> 12
+//   onState writes sea.waterOffset directly again           -> 16
+//   the manual Water m override writes it directly          -> 16
+//   rebuild on ANY change (churn)                           -> 14, 15
+//   the no-model guard dropped                              -> 15
+//   the 1e-9 floating-point tolerance dropped               -> 14
+// 8 mutations, 8 killed.
 //
 // ⚠ TWO CHECKS WERE TOO WEAK ON THE FIRST RUN, and both are the same shape - a source-shape
 // assertion matching an IDENTIFIER where the meaning is in the STATEMENT:

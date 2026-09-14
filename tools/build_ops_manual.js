@@ -198,7 +198,7 @@ c.push(P("MANY FEEDS, ONE PICTURE. The layer can run several sources at once and
 // 7 ---------------------------------------------------------------------------
 c.push(H1("7  Environment, tide and the water level"));
 c.push(H2("7.1  The water level is part of the safety model"));
-c.push(P("Charted depths are referenced to a datum, not to the water that is there now. The console fetches the live level from public tide stations and ADDS it to charted depths before deciding what is too shallow. That correction is not a readout — it changes which water the vessel will enter."));
+c.push(P("Charted depths are referenced to a datum, not to the water that is there now. The console fetches the live level from public tide stations and ADDS it to charted depths before deciding what is too shallow. That correction is not a readout — it changes which water the vessel will enter. It is kept current: as the level changes during a run, the keep-out model is rebuilt, so water and charted rocks that a falling tide makes too shallow come back into the model the routes and the clearance guard use."));
 c.push(H2("7.2  How far away is the tide you are using"));
 c.push(P("A tide gauge reports the level near ITS OWN station. The console interpolates the nearest few and bands the result by distance to the nearest contributing one:"));
 c.push(TBL(["Band", "Shown as", "Applied to depths?"], [

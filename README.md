@@ -1006,7 +1006,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    to the vessel — capturing the spatial gradient (seiche tilt across a lake, tide
    phase along a coast) rather than assuming one station's level everywhere — and
    **adds that to the charted depths** so Punch Out uses the depth available *right
-   now* (it refetches every 6 min and on a large move). Only stations sharing the
+   now* (it refetches every 6 min and on a large move). The keep-out model that every behavior and the
+   clearance guard read is rebuilt from the same features once the level moves
+   `TIDE_REBUILD_M` (0.1 m) from the level it was built at (`applyWaterOffset`), so a
+   falling tide brings drying water and charted rocks back into it mid-run. Only stations sharing the
    vessel's datum are blended, and in the Great Lakes only stations in the *same
    lake* (LWD is defined per lake). **Fallback chain:** real-time *observed* levels
    → NOAA tide *predictions* (projected; ocean/tidal stations only) → the *ENC chart

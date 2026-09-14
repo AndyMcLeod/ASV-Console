@@ -4829,6 +4829,9 @@ function rebuildNogo(){                         // (re)build the keep-out model 
   // against the bare-ref model over a mixed extract before the switch.
   nogo.frame = planeFrame(featuresBboxRef(feats) || (asv?{lat:asv.lat,lon:asv.lon}:center));
   nogo.ko = buildKeepouts(nogo.frame, nogo.enf, nogoDR(), feats);   // depth floor fixed (navigability)
+  // The water level this model credits the vessel with - buildKeepouts reads it only now.
+  // applyWaterOffset rebuilds once the live level moves TIDE_REBUILD_M away from it.
+  nogo.builtOffset = sea.waterOffset;
   // STRUCTURES READ OFF THE CHART, folded in HERE and nowhere else.
   //
   // ⚠ IT HAS TO BE INSIDE rebuildNogo, NOT BESIDE IT. Every path that changes the buffer, a
@@ -4847,6 +4850,29 @@ function rebuildNogo(){                         // (re)build the keep-out model 
                     + (inkN ? ` · +${inkN} read off the chart` : ``)
                   : "no nogo features in this area";
   updateNogoUI();
+}
+// THE MODEL FOLLOWS THE TIDE. buildKeepouts reads sea.waterOffset once, when it runs: depth
+// areas and charted soundings are judged against the water AT THAT MOMENT. Nothing used to
+// rebuild the model when the level moved - only the uncommitted preview was thrown away - so a
+// model built at high water kept treating a drying flat or a rock as open water for the
+// router, Punch Out and the clearance guard alike, however far the tide went out. Measured
+// with the real builder at a 4 m floor: built at +4.5 m, a VALSOU 1.5 m rock and a 0-2 m flat
+// are open water; at datum both are keep-outs (tests/min_depth_floor.js 12-16).
+//
+// ⚠ MEASURED FROM THE LEVEL THE MODEL WAS BUILT AT, NOT FROM THE LAST READING. A station
+// update moves the level a few centimeters, so a frame-to-frame test would never reach the
+// threshold and the model would fall a meter behind one small step at a time.
+// A REBUILD, NOT A RE-FETCH: every feature already carries its own soundings.
+const TIDE_REBUILD_M = 0.1;
+function applyWaterOffset(wl){
+  const prev = sea.waterOffset;
+  sea.waterOffset = effectiveWaterOffset(wl);
+  // The punched survey clip was cut against the old level (the trust gate flipping when the
+  // station changes included), so any change at all invalidates it.
+  if(sea.waterOffset !== prev) patClip = null;
+  // The 1e-9: 0.3 - 0.2 is 0.0999... in floating point, and a 0.1 m move must count as one.
+  if(nogo.features && nogo.features.length && nogo.builtOffset != null
+     && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9) rebuildNogo();
 }
 async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
   if(nogo.busy) return;
@@ -8964,11 +8990,10 @@ function onState(s){
 
   // real-time water level (corrects charted depths); applied in depthExcluded
   water = s.water || {};
-  const prevOffset = sea.waterOffset;
-  sea.waterOffset = effectiveWaterOffset(water);
-  // The nogo model is built against this offset, so a change in it (including the gate
-  // flipping when the station changes) must invalidate the punched survey clip.
-  if(sea.waterOffset !== prevOffset) patClip = null;
+  // ONE WRITER for the offset, and it rebuilds the keep-out model once the level has moved far
+  // enough from the one the model was built at - HERE, before the clearance guard reads that
+  // model further down this same frame. See applyWaterOffset.
+  applyWaterOffset(water);
   // Chart source card: follow the vessel (zone of confidence is position-dependent).
   // Both calls no-op cheaply unless the card is open and something actually changed.
   if($("#chartPanel") && $("#chartPanel").style.display !== "none"){ ensureChartInfo(); updateChartCard(); }
@@ -9070,7 +9095,7 @@ $("#sp_water").onchange = ()=>{
   fetch("/api/waterlevel", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({manual_offset: v==="" ? null : parseFloat(v)})})
     .then(r=>r.json()).then(j=>{ if(j.water){ water=j.water;
-      sea.waterOffset=effectiveWaterOffset(water); updateWaterUI(water); patClip=null; render(); }}).catch(()=>{});
+      applyWaterOffset(water); updateWaterUI(water); render(); }}).catch(()=>{});
 };
 
 // --- environment READOUTS on the vessel-status card ----------------------- //

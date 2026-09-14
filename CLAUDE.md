@@ -55,9 +55,39 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-11 — four hold defects fixed; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review item #1 built: the keep-out model follows the tide; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
+
+**NEWEST, 2026-09-14: REVIEW ITEM #1 - THE KEEP-OUT MODEL FOLLOWS THE TIDE.** Andy asked for a
+reliability/utility review as a numbered list and is taking the items ONE AT A TIME, IN ORDER,
+approving each before the next (the 30 items are in the session transcript; the verified ones
+are summarized in auto-memory `asv-simulator.md`). Next up after approval: #2, the guard's
+slow-instead-of-hold rung that can suppress the hold for good.
+
+**#1, what was wrong.** `buildKeepouts` reads `sea.waterOffset` only when it runs, and nothing
+rebuilt the model when the level moved - `onState` only discarded the preview. So a model built at
+high water kept a drying flat and a charted rock OUT of the keep-outs for the router, Punch Out
+and the clearance guard however far the tide fell. Real builder, 4 m floor: built at +4.5 m a
+VALSOU 1.5 m rock and a 0-2 m flat are open water; at datum both are keep-outs. The keepouts.js
+comment "comes back into the model on a falling tide" asserted a mechanism that did not exist.
+
+* `applyWaterOffset(wl)` is now the ONE writer of `sea.waterOffset` (onState and the manual Water m
+  override both call it). It rebuilds once the level is `TIDE_REBUILD_M` (0.1 m) from
+  `nogo.builtOffset`, which `rebuildNogo` records. **Measured from the BUILT level, never the last
+  reading** - station updates move a few cm, and a frame-to-frame test never adds up.
+* onState applies it BEFORE `clearanceGuard()` reads the model in the same frame.
+* Tests: `min_depth_floor.js` 12-16, driven - the page's own function against the real builder over
+  a 4.5 m fall in 5 cm steps (45 rebuilds). TEETH: 8 sidecar mutations, 8 killed.
+* Docs: ops manual 7.1 and README state the property; the tech manual GUARDS entry and the hook
+  advice name the rule. Docs rebuilt, `docs_valid.py` green (pages not rasterized).
+* **Still Andy's call, not built:** whether PLANS should credit the tide at punch time at all, or
+  plan to datum / the predicted low over the run window.
+* Not done: no live browser check (the logic is driven in the suite; the wiring is source-checked).
+* ⚠ The commit hook is likely to go red on `hold_station.py` 11b - review item #8, flaky 4 of 6
+  runs at f10b0ec3 because Stop leaves `holding` set. Retry the commit; never `--no-verify`.
+
+---
 
 **⚠ OPEN, 2026-09-11 — EASTPORT: "WHAT IS THE STORY WITH THE LINE HEADING OUT TO THE
 NORTHWEST?" NO CODE CHANGED FOR THIS; THE ANSWER IS WITH ANDY.** He was running a 9-row,
