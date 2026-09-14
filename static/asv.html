@@ -1492,6 +1492,11 @@ function guardTrack(p, vel, drift){
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
 }
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
+// A SLOW-DOWN OFFERED IN LIEU OF A HOLD, while it stands: when it was offered and the speed over
+// ground at that moment. See the hold rung: it has SLOW_ANSWER_MS to be TAKEN, and it has to keep
+// answering the situation from wherever the boat is now, or the hold fires after all.
+const SLOW_ANSWER_MS = 2000;
+let slowLieu = null;
 /**
  * HOW LONG THE WATER HAS TO STAY CLEAR BEFORE THE THROTTLE GOES BACK.
  *
@@ -1842,8 +1847,9 @@ function clearanceGuard(){
     // going SLOWER answers it, in the same shape as the release counterfactual - ask the
     // question of the state you are proposing to enter. Slowing is strictly cheaper than
     // stopping (a stopped hull beside a structure is handed to the tide, and a hold destroys
-    // the run), and if it turns out not to be enough the guard is back here next frame with
-    // nothing lost but a few metres of way.
+    // the run). If it turns out not to be enough, the check below the rung holds her - this
+    // comment used to say the guard would simply be "back here next frame", and it was, doing
+    // nothing: see SLOW_ANSWER_MS.
     //
     // ⚠ IT IS NOT OFFERED WHEN SHE IS ALREADY SLOW. Then the low speed IS the state being
     // assessed, the answer has already been tried, and the hold is the honest next rung.
@@ -1863,6 +1869,7 @@ function clearanceGuard(){
                                   {...trk, twMs: lowMs, edge: false});
         if(atLow.level !== "hold" && atLow.level !== "helm"){
           clearance.slowed = true;
+          slowLieu = {at: Date.now(), sog: st.sog_kn != null ? st.sog_kn : null};
           cmd("/api/cmd/speed", {speed:"low"});
           flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low rather "
                     + "than stopping: at low speed the track stays clear (" + atLow.level + ").");
@@ -1873,7 +1880,33 @@ function clearanceGuard(){
         }
       }
     }
-    if(escalated){
+    // ⚠⚠ AND THAT SLOW-DOWN HAS TO KEEP ANSWERING IT, OR THE HOLD FIRES ANYWAY. The rung above
+    // spends the escalation: every later frame at `hold` reads not-escalated, so a boat that
+    // did not actually slow - the speed command refused or lost, or a hull that will not come
+    // down - was never held at all. Driven over consecutive frames (review #2, 2026-09-14):
+    // "low" sent at 30 m, then NOTHING from 30 m to 10 m at 6 kn, where a fresh guard holds.
+    // So while the level still reads hold, two questions are asked every frame, and the hold
+    // fires the moment either fails:
+    //   * does slowing STILL answer it, asked again from where she is NOW; and
+    //   * has the slow-down been TAKEN within SLOW_ANSWER_MS - the vessel reports speed_key
+    //     "low", or, on a link that reports no key, the speed over ground has actually dropped.
+    // A boat that is genuinely coming down passes both, and within a few seconds the level falls
+    // to `slow` and the run goes on - which is the whole point of the rung above.
+    let lieuFailed = null;
+    if(!escalated && slowLieu && clearance.slowed){
+      const lowMs = (V.SPEED_KN.low || 0) * 0.514444;
+      const stillAnswers = !!(trk && vel && lowMs > 0) && ["hold", "helm"].indexOf(
+        guardAssess(p, restoreVel(vel, drift, lowMs), drift, nogo.ko, buf,
+                    {...trk, twMs: lowMs, edge: false}).level) < 0;
+      const taken = typeof st.speed_key === "string" ? st.speed_key === "low"
+                  : (st.sog_kn != null && slowLieu.sog != null && st.sog_kn <= slowLieu.sog - 0.2);
+      if(!stillAnswers) lieuFailed = "slowing no longer answers it from here";
+      else if(!taken && Date.now() - slowLieu.at > SLOW_ANSWER_MS)
+        lieuFailed = "the slow-down was not taken within " + (SLOW_ANSWER_MS / 1000) + " s";
+      if(!lieuFailed) return c;
+    }
+    if(escalated || lieuFailed){
+      slowLieu = null;
       guardActedAt = Date.now();
       // ⚠ KEEP THE SURVEY BEFORE THE HOLD REPLACES IT. One line, and it is the difference
       // between an operator resuming the remainder and re-running the whole survey: the
@@ -1884,9 +1917,12 @@ function clearanceGuard(){
       // a blind bearing back towards the very feature it was holding off.
       cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
-                + "Drift alone stays clear, so taking the way off answers it."
+                + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
+                              : "Drift alone stays clear, so taking the way off answers it.")
                 + (guardHeld ? " The survey is kept: RESUME AT LOW SPEED on the guard bar."
                              : ""));
+      if(lieuFailed && planIntent) planIntent.why.push({t:"bad", s:"HELD after slowing: "
+        + lieuFailed + ", and the projected track still entered " + (c.kind || "a keep-out")});
     }
     return c;
   }

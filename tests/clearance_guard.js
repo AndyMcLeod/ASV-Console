@@ -504,8 +504,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let clearance = { m: 25, kind: "a dock / pier", slowed: false, prev: null, info: null };
   let guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
   let guardEdgeAt = 0, edgeSpentM = 1e9, edgeCount = 0, guardOverride = null, guardHeld = null;
-  let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false;
+  let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false, slowLieu = null;
   const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
+  const SLOW_ANSWER_MS = +(H.match(/const SLOW_ANSWER_MS = (\d+)/) || [])[1];
   let planIntent = { why: [] }, sent = [], notes = [];
   const guardAssess = G4.assess, groundVel = G4.groundVel, restoreVel = G4.restoreVel;
   const edgeCapM = G4.edgeCapM, edgeText = G4.edgeText, GUARD_HORIZON_S = G4.HORIZON_S;
@@ -553,7 +554,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
         && !fast.sent.includes("/api/cmd/hold"),
         "the rung reads " + fast.level + " at 6 kn and the guard sent " + JSON.stringify(fast.sent)
         + ". A hold destroys the run and hands a stopped hull to the tide; slowing costs a few "
-        + "metres of way and the guard is back next frame if it was not enough");
+        + "metres of way, and 15k-15n hold her if it is not taken or stops answering");
   check("15g. ... and says WHY, on the note and on the Intent card",
         /SLOWED to low rather than stopping/.test(fast.notes.join(" "))
         && fast.why.some((w) => /SLOWED instead of holding/.test(w.s)),
@@ -595,6 +596,97 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
         "already slowed -> " + JSON.stringify(already.sent) + ". Offering the answer that has "
         + "already been tried would leave the boat standing on at low speed with the ladder "
         + "believing it had acted");
+
+  // ── 15k-15n. ...AND THE SLOW-DOWN HAS TO BE TAKEN, AND KEEP ANSWERING, OR SHE IS HELD ─────
+  //
+  // Review #2, 2026-09-14. Every check above runs ONE frame from a fresh guard, and the defect
+  // was on the SECOND: the rung spends the escalation, so a boat that did not actually slow - a
+  // speed command refused or lost - read `hold` on every later frame, never escalated, and was
+  // never held ("low" at 30 m, then NOTHING from 30 m to 10 m at 6 kn). Driven here over
+  // CONSECUTIVE frames with guardLevel and `slowed` carried and the clock stepped - the
+  // transient a single-statement fixture never contains.
+  //
+  // TEETH, sidecar ASV_HTML, 8 mutations, 8 killed (numbers are the checks that went red):
+  //   the in-lieu check removed                           -> 15k, 15m, 15n
+  //   the slow-down always counted as taken               -> 15k, 15n
+  //   the vessel's speed_key ignored, SOG only            -> 15o (SURVIVED until 15o was added:
+  //                                                          in every other fixture key and SOG agree)
+  //   slowing always counted as still answering           -> 15m
+  //   slowLieu never recorded when the rung fires         -> 15k, 15m, 15n
+  //   no deadline: hold on the first untaken frame        -> 15k
+  //   the deadline fires whether or not it was taken      -> 15l, 15n
+  //   the speed-over-ground fallback loses its 0.2 kn     -> 15n
+  const realNow = Date.now;
+  const T0 = 5e9;             // far from zero, or `settling` (now - guardEdgeAt < 2 s) gates the rung
+  let clock = T0;
+  Date.now = () => clock;
+  const step = (ms, n0, sogKn, key) => {
+    clock = T0 + ms;
+    nogo = { ready: true, frame: ref, ko: wall(n0), buffer: 5 };
+    const NM = 111320;
+    asv = { lat: ref.lat, lon: ref.lon };
+    runRoute = [{ lat: ref.lat + 60 / NM, lon: ref.lon }, { lat: ref.lat + 120 / NM, lon: ref.lon }];
+    const status = { cog_deg: 0, sog_kn: sogKn, heading_deg: 0, env_set_deg: 0, env_set_kn: 0,
+                     holding: false, drifting: false };
+    if (key !== undefined) status.speed_key = key;
+    S = { armed: true, estop: false, run: "running", behavior: "survey", status };
+    globalThis.window = globalThis; window._wpIndex = 0;
+    clearance = { m: n0 - 5, kind: "a dock / pier", slowed: clearance.slowed, prev: null, info: null };
+    sent = []; notes = [];
+    guard();
+    return { sent: sent.slice(), notes: notes.slice(), level: clearance.level };
+  };
+  const fresh = () => { guardLevel = "clear"; clearance = { ...clearance, slowed: false };
+    slowLieu = null; clearHoldAt = 0; clearAlarmAt = 0; planIntent = { why: [] }; };
+  const held = (r) => r.sent.includes("/api/cmd/hold");
+  try {
+    // A. the speed command never lands: the vessel keeps reporting survey, and keeps making 6 kn
+    fresh();
+    const a1 = step(0, 30, 6.0, "survey"), a2 = step(250, 29.5, 6.0, "survey");
+    const a3 = step(2500, 25.5, 6.0, "survey");
+    check("15k. THE REPORTED DEFECT: a slow-down that is never TAKEN is followed by the hold",
+          a1.sent.includes("/api/cmd/speed:low") && !held(a1) && !held(a2) && held(a3)
+          && /was not taken within/.test(a3.notes.join(" ")),
+          "30 m " + JSON.stringify(a1.sent) + " -> 29.5 m at 250 ms " + JSON.stringify(a2.sent)
+          + " -> 25.5 m at 2.5 s, still 6 kn and speed_key survey: " + JSON.stringify(a3.sent)
+          + ". Before the fix every frame after the first sent nothing, down to 10 m");
+
+    // B. it lands, and she comes down at the engine's 1.5 kn/s - the rung must still win
+    fresh();
+    const b = [step(0, 30, 6.0, "survey"), step(1000, 28.5, 4.5, "low"), step(2000, 27.2, 3.0, "low"),
+               step(2500, 26.8, 2.25, "low"), step(3000, 26.3, 1.5, "low"), step(4000, 25.6, 1.5, "low")];
+    check("15l. ... but a boat that really is coming down is left to do it - slowed, never stopped",
+          b[0].sent.includes("/api/cmd/speed:low") && !b.some(held),
+          "levels " + b.map((r) => r.level).join(" > ") + ", holds sent: " + b.filter(held).length
+          + ". A deadline that fired on a hull still decelerating would undo the rung it guards");
+
+    // C. it lands, but she closes faster than slowing can answer from where she now is
+    fresh();
+    const c1 = step(0, 30, 6.0, "survey"), c2 = step(500, 18, 5.0, "low");
+    check("15m. ... and the moment slowing stops answering it from where she now is, she is held",
+          c1.sent.includes("/api/cmd/speed:low") && held(c2) && /no longer answers/.test(c2.notes.join(" ")),
+          "18 m at 5 kn, speed_key low: " + JSON.stringify(c2.sent)
+          + " - low was an answer at 30 m and is not at 18 m");
+
+    // D. a link that reports no speed_key: the speed over ground is the evidence
+    fresh();
+    const d1 = step(0, 30, 6.0), d2 = step(2500, 25.5, 5.95);
+    fresh();
+    const e1 = step(0, 30, 6.0), e2 = step(2500, 26.5, 4.0);
+    check("15n. ... and on a link with no speed_key, the speed over ground decides whether it was taken",
+          d1.sent.includes("/api/cmd/speed:low") && held(d2) && /was not taken within/.test(d2.notes.join(" "))
+          && e1.sent.includes("/api/cmd/speed:low") && !held(e2),
+          "6.0 -> 5.95 kn after 2.5 s: " + JSON.stringify(d2.sent) + "; 6.0 -> 4.0 kn: " + JSON.stringify(e2.sent));
+
+    // E. where the vessel DOES report its key, the key is the evidence: a heavy hull that has
+    // taken "low" but is still carrying its way is coming down, and holding it is a false hold
+    fresh();
+    const f1 = step(0, 30, 6.0, "survey"), f2 = step(2500, 25.5, 5.9, "low");
+    check("15o. ... and where the vessel reports speed_key, the key decides: taken but still carrying way is not held",
+          f1.sent.includes("/api/cmd/speed:low") && !held(f2),
+          "speed_key low, still 5.9 kn after 2.5 s: " + JSON.stringify(f2.sent)
+          + " - judged on speed over ground alone this would be held while it slows");
+  } finally { Date.now = realNow; }
 }
 
 check("16. it steers ONLY at the helm rung, and NOT as a Go-To",

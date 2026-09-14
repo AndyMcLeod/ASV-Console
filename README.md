@@ -897,8 +897,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    a real plan, from the point the guard stopped a survey: at 3.0 kn the projected track
    entered in 14 s; at 1.5 kn it was clear through the whole look-ahead. So the hold rung
    re-asks the question at the low speed first and slows instead of stopping when that
-   answers it — a hold destroys the run and hands a stopped hull to the tide, and if slowing
-   turns out not to be enough the guard is back next frame having lost a few metres of way.
+   answers it — a hold destroys the run and hands a stopped hull to the tide, and it has to
+   keep answering: if the slow-down is not taken within 2 s (the vessel's `speed_key`, or its
+   speed over ground where no key is reported), or stops answering from where the boat now is,
+   the hold fires after all.
    It is not offered when the boat is already slow (that answer has been tried) or when the
    drift-only track enters too (that is the helm's case).
 

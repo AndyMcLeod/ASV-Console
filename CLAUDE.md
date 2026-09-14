@@ -55,15 +55,33 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review item #1 built: the keep-out model follows the tide; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1 and #2 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #1 - THE KEEP-OUT MODEL FOLLOWS THE TIDE.** Andy asked for a
+**NEWEST, 2026-09-14: REVIEW ITEM #2 - A SLOW-DOWN IN LIEU OF A HOLD HAS TO BE TAKEN, AND KEEP ANSWERING.**
+The 09-10 slow-before-hold rung spent the escalation: every later frame at `hold` read not-escalated, so
+a boat that did not actually slow - a speed command refused or lost, which the mission.json WinError 5
+race makes real (review #5) - was never held. Driven over consecutive frames: "low" at 30 m, then
+NOTHING from 30 m to 10 m at 6 kn, where a fresh guard holds. The rung's own comment ("the guard is back
+here next frame") asserted a mechanism that did nothing.
+
+* `slowLieu` {at, sog} is recorded when the rung fires. While the level still reads hold, every frame asks
+  whether slowing STILL answers it from where she is now (the same counterfactual, re-asked), and whether
+  it was TAKEN within `SLOW_ANSWER_MS` (2 s): `speed_key` "low", or speed over ground down 0.2 kn on a
+  link with no key. Either failing fires the hold, and the note names which.
+* A hull genuinely coming down is left alone: 15l reads hold > hold > hold > hold > slow with no hold sent.
+* Tests: `clearance_guard.js` 15k-15o, driven over consecutive frames with the clock stepped. TEETH: 8
+  sidecar mutations, 8 killed - "speed_key ignored, SOG only" SURVIVED until 15o was added, because in
+  every other fixture the key and the speed over ground agree.
+* Docs: README corrected (it repeated the "back next frame" claim); tech manual GUARDS entry and hook
+  advice name the rule; docs rebuilt. The ops manual does not describe this rung and is unchanged.
+* Next up after approval: #3, Upload by itself sets a station-keeping boat moving.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #1 - THE KEEP-OUT MODEL FOLLOWS THE TIDE.** Andy asked for a
 reliability/utility review as a numbered list and is taking the items ONE AT A TIME, IN ORDER,
 approving each before the next (the 30 items are in the session transcript; the verified ones
-are summarized in auto-memory `asv-simulator.md`). Next up after approval: #2, the guard's
-slow-instead-of-hold rung that can suppress the hold for good.
+are summarized in auto-memory `asv-simulator.md`). Committed and pushed as `a80df030`.
 
 **#1, what was wrong.** `buildKeepouts` reads `sea.waterOffset` only when it runs, and nothing
 rebuilt the model when the level moved - `onState` only discarded the preview. So a model built at
