@@ -55,11 +55,27 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#3 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#4 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #3 - AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING.**
+**NEWEST, 2026-09-14: REVIEW ITEM #4 - UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER.**
+`#b_upload` lumped three cases into one silent branch: no waypoints, no position fix, and the keep-out
+model not ready - and for the last two it sent the raw survey waypoints with no routed approach and no
+detours, no word to the operator, while the clearance guard (which reads the same model) stood down.
+
+* The handler is now `async function doUpload()` (wrapped in try/catch - an async button handler that
+  throws does nothing silently). No fix: refused in words. Model not ready (loading, not loaded, or no
+  keep-outs read for the area - `nogo.band` tells the last apart): it ASKS via `guiConfirm(..., {always:
+  true})`, sends nothing on a no, and on a yes uploads unrouted with a banner that stays up.
+* `guiConfirm` gained `opts.always`: shown even in the simulator, where every other confirmation still
+  answers yes by itself (that general question is review #11, not touched here).
+* Tests: `pause_resume.js` 1c-1g, driven (inside the async block - `finish()` holds the synchronous
+  checks). TEETH: 5 sidecar mutations, 5 killed.
+* Docs: ops manual Upload bullet and README step 4 state it; tech manual GUARDS entry names it; docs rebuilt.
+* Next up after approval: #5, reads and writes of mission.json collide (server persistence).
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #3 - AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING.**
 `SimVcu.upload_plan` replaced the active plan and cleared `_holding` but left `_running` set, so a boat
 station-keeping at a Go-To point drove off at the upload's transit speed the moment Upload was pressed
 (measured 3.9 -> 9.9 kn in 4 s, no Start, still labeled goto) - and Upload was enabled whenever armed.
@@ -79,7 +95,7 @@ station-keeping at a Go-To point drove off at the upload's transit speed the mom
   11c-11d calls pass `{}`; fix line 341 when doing #8.
 * Docs: ops manual Upload/Start bullets and README step 4 state it; tech manual GUARDS entry and hook
   advice name the rule; docs rebuilt.
-* Next up after approval: #4, Upload before the chart model loads goes out unrouted, with no warning.
+* Committed and pushed as `41c9932b`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #2 - A SLOW-DOWN IN LIEU OF A HOLD HAS TO BE TAKEN, AND KEEP ANSWERING.**
 The 09-10 slow-before-hold rung spent the escalation: every later frame at `hold` read not-escalated, so

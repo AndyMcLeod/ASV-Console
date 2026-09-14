@@ -8377,9 +8377,11 @@ let S = {};   // latest server state
 // browsers (it silently returns false), which was blocking ARM/START. This modal
 // works everywhere. In SIMULATOR mode there is no real boat to endanger, so the
 // prompt is skipped entirely - the sim just runs.
-function guiConfirm(title, msg){
+function guiConfirm(title, msg, opts){
   return new Promise(resolve=>{
-    if(S.mode === "sim"){ resolve(true); return; }
+    // `always`: a question that must be asked even in the simulator, because the answer changes
+    // what the console checks, not only what the boat does - review #4's unrouted upload.
+    if(S.mode === "sim" && !(opts && opts.always)){ resolve(true); return; }
     const ov = $("#confirm");
     $("#confirmTtl").textContent = title; $("#confirmMsg").textContent = msg;
     ov.style.display = "flex";
@@ -8394,12 +8396,36 @@ $("#b_arm").onclick = async ()=>{
     "Confirm the RC Autonomy switch (Sw A) is forward and an operator is holding the RC transmitter.")) return;
   cmd("/api/cmd/arm", {on:true});
 };
-$("#b_upload").onclick = ()=>{
+// UPLOAD. A named function, and async, because it may have to ASK - see the chart-model branch.
+async function doUpload(){
+ try{
   const wps = mission.waypoints || [];
+  if(!wps.length){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }   // the server refuses it in words
+  if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
+  if(!nogo.ready){
+    // ⚠ WITHOUT THE CHART MODEL NOTHING IS CHECKED, AND THAT USED TO GO OUT SILENTLY (review #4,
+    // 2026-09-14). The raw survey waypoints were sent with no routed approach and no detours, and
+    // the clearance guard - which reads the same model - stood down, with no word to the operator.
+    // So it ASKS, in the simulator too (where every other confirmation answers yes by itself), and
+    // a banner stays up saying what was not checked.
+    const why = nogo.busy ? "the chart model is still loading"
+              : nogo.band ? "the chart model has no keep-outs read for this area"
+              : "the chart model is not loaded (" + (nogo.note || "no extract") + ")";
+    if(!await guiConfirm("Upload WITHOUT routing",
+        "Upload now, and " + why + ": the approach and every transit go out as straight lines that "
+        + "have NOT been checked against the chart, and the clearance guard has no model to watch "
+        + "the track with. Waiting until the NOGO row shows a zone count routes them properly.",
+        {always: true})) return;
+    const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps);          // degraded: the waypoints as they are
+    runRoute = raw.route; runUnsafe = []; setPlanIntent("survey", raw, raw.route);
+    showBanner("⚠ UNROUTED UPLOAD — " + why + ". The approach and transits were NOT checked against "
+      + "the chart, and the clearance guard is not watching the track until the model loads.");
+    cmd("/api/cmd/upload").then(stagedNote);
+    render(); return;
+  }
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
-  if(!wps.length || !nogo.ready || !asv){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }
   const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
   runRoute = plan.route; setPlanIntent("survey", plan, plan.route);                          // drawn so the operator sees the real path
   runUnsafe = plan.unroutable || [];
@@ -8418,10 +8444,15 @@ $("#b_upload").onclick = ()=>{
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
   cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])})
-    .then(j=>{ if(j && j.state && j.state.plan_staged)
-      flashNote("Plan uploaded and STAGED — the boat carries on station-keeping until you press Start."); });
+    .then(stagedNote);
   render();
-};
+ }catch(e){ flashNote("Upload failed: " + ((e && e.message) || e)); }
+}
+function stagedNote(j){
+  if(j && j.state && j.state.plan_staged)
+    flashNote("Plan uploaded and STAGED — the boat carries on station-keeping until you press Start.");
+}
+$("#b_upload").onclick = doUpload;
 $("#b_start").onclick = async ()=>{
   // ⚠ RESUMING A PAUSE IS RESUMING, WHICHEVER BUTTON DOES IT. Start is enabled while paused
   // and has always been the way back; routing it through the same function as the Pause

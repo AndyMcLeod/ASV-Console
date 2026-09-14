@@ -359,6 +359,75 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
               && foul.sent.some(x => x.p === "/api/cmd/speed" && x.speed === "low"),
         "a resume is cautious whether or not there was a line to back down");
   __setResumeSlow(false);
+
+  // ── 1c-1g. UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER (review #4) ─────
+  // With the keep-out model not ready - still loading, never loaded, or no keep-outs read for
+  // the area - Upload used to send the raw survey waypoints with no routed approach and no
+  // detours, and no word to the operator, while the clearance guard (which reads the same
+  // model) stood down. DRIVEN: the page's own doUpload and guiConfirm, the world stubbed.
+  // Async, so it lives in the driven block rather than in finish().
+  //
+  // TEETH, sidecar ASV_HTML, 5 mutations, 5 killed:
+  //   the no-fix refusal removed                        -> 1c
+  //   the model-not-ready branch goes back to silent    -> 1d, 1e
+  //   the question loses {always: true}                 -> 1d
+  //   the banner removed                                -> 1e
+  //   guiConfirm ignores `always` again                 -> 1g
+  {
+    const calls = [], unotes = [], banners = [];
+    let S = { mode: "sim", run: "idle", status: {} }, asv = { lat: 43.07, lon: -70.71 };
+    let mission = { waypoints: [{ lat: 43.08, lon: -70.71 }, { lat: 43.09, lon: -70.71 }] };
+    let nogo = { ready: false, busy: false, band: null, note: "nogo not loaded" };
+    let runRoute = null, planIntent = null, runUnsafe = [], answer = false, asked = null;
+    const cmd = (p, b) => { calls.push({ p, b }); return Promise.resolve({ ok: true, state: {} }); };
+    const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
+    const render = () => {}, setViolations = () => {}, clearViolation = () => {};
+    const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
+    const setPlanIntent = (kind) => { planIntent = { kind, why: [] }; };
+    const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon })),
+                                          unroutable: [], degraded: !nogo.ready });
+    const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
+    // eslint-disable-next-line no-eval
+    const stagedNote = eval("(" + grab("stagedNote") + ")");
+    // eslint-disable-next-line no-eval
+    const doUpload = eval("(" + grab("doUpload") + ")");
+    const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
+                                  runRoute = null; setup(); await doUpload(); await Promise.resolve(); };
+
+    await up(() => { asv = null; nogo = { ready: true, band: "enc_harbour" }; });
+    check("1c. Upload with no position fix is refused in words, and nothing is sent",
+          () => calls.length === 0 && /No position fix/.test(unotes.join(" ")), () => JSON.stringify(unotes));
+    asv = { lat: 43.07, lon: -70.71 };
+    await up(() => { nogo = { ready: false, busy: true, band: null }; answer = false; });
+    check("1d. with the chart model still loading, Upload ASKS - in the simulator too - and a no sends nothing",
+          () => !!asked && !!asked.opts && asked.opts.always === true && /still loading/.test(asked.msg)
+                && calls.length === 0,
+          () => "asked=" + !!asked + " always=" + (asked && asked.opts && asked.opts.always) + " sent=" + calls.length);
+    await up(() => { nogo = { ready: false, busy: false, band: null, note: "extract failed" }; answer = true; });
+    check("1e. ... and a yes sends it UNROUTED, with a banner that stays up and says what was not checked",
+          () => calls.length === 1 && calls[0].p === "/api/cmd/upload" && !(calls[0].b && calls[0].b.route)
+                && /UNROUTED UPLOAD/.test(banners.join(" ")) && /not loaded/.test(banners.join(" ")),
+          () => JSON.stringify(calls) + "  banner: " + (banners[0] || "").slice(0, 70));
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    check("1f. a loaded model routes as it always did - no question asked",
+          () => asked === null && calls.length === 1 && !!calls[0].b && Array.isArray(calls[0].b.route),
+          () => "asked=" + !!asked + " " + JSON.stringify(calls.map((c) => c.p)));
+  }
+  {
+    const els = { "#confirm": { style: {} }, "#confirmTtl": {}, "#confirmMsg": {}, "#confirmYes": {}, "#confirmNo": {} };
+    const $ = (sel) => els[sel];
+    let S = { mode: "sim" };
+    // eslint-disable-next-line no-eval
+    const guiConfirm = eval("(" + grab("guiConfirm") + ")");
+    const plain = await guiConfirm("t", "m");
+    const pending = guiConfirm("t", "m", { always: true });
+    const shown = els["#confirm"].style.display === "flex";
+    if (els["#confirmNo"].onclick) els["#confirmNo"].onclick();
+    const said = await Promise.race([pending, new Promise((r) => setTimeout(() => r("never answered"), 500))]);
+    check("1g. guiConfirm's `always` shows the dialog in the simulator, where it otherwise answers yes by itself",
+          () => plain === true && shown && said === false,
+          () => "plain=" + plain + " shown=" + shown + " answered=" + said);
+  }
   finish();
 })();
 
