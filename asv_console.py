@@ -2623,6 +2623,9 @@ class VcuLink:
     def set_approach(self, m): ...          # live-tune the waypoint approach radius
     def set_speed(self, key): ...        # live-tune the commanded speed (low|survey|high)
     def set_unlimited_energy(self, on): ... # sim testing aid (no-op on real hardware)
+    # True while an uploaded plan waits for start() because the link was running when it
+    # arrived (SimVcu). A link that cannot stage never reports one.
+    plan_staged = False
 
 
 # SCALE: these defaults are sized for the actual boat - a survey ASV
@@ -2682,6 +2685,7 @@ class SimVcu(VcuLink):
         self._seg_start = {"lat": start_lat, "lon": start_lon}   # current leg origin
         self._completion = "rth"       # complete (stop) | loiter (station-keep) | repeat (loop) | rth
         self._holding = False          # currently station-keeping (loiter reached the end)
+        self._staged = None            # a plan uploaded while running, applied by start()
         # THE HOLD DISC. `_hold_clear_m` is the radius around the hold point the CONSOLE
         # certified clear of the keep-out model at the operator's buffer (hold.js), or None
         # when no model was consulted. Inside it a straight re-approach is clear by
@@ -2713,21 +2717,52 @@ class SimVcu(VcuLink):
     # -- commands ---------------------------------------------------------- #
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
                     completion="complete", hold_clear_m=None, coast_from_m=None):
-        self._plan = [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])]
-        self._arrival_m = clamp(float(arrival_radius_m or 5.0), 1.0, 50.0)
-        self._approach_m = clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0)
-        self._speed_key = speed if speed in SPEED_KN else "survey"
+        """Load a plan. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING - only start() does.
+
+        ⚠ IT USED TO, and that is review #3 (2026-09-14). This replaced the active plan and
+        cleared `_holding` but left `_running` set, so a boat station-keeping at a Go-To point
+        drove off toward the new plan at the upload's own (transit) speed the moment Upload
+        was pressed - measured 3.9 -> 9.9 kn in 4 s with no Start, still labeled goto. So a
+        plan that arrives while the link is RUNNING (holding, paused, or under way on a
+        command that uploads and starts in one step) is STAGED and the boat carries on;
+        start() applies it, and stop() keeps it as the loaded plan. An idle link takes it at
+        once, exactly as before. Values are normalized HERE, so a bad one is refused at the
+        upload rather than at a later start()."""
+        plan = {
+            "plan": [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])],
+            "arrival_m": clamp(float(arrival_radius_m or 5.0), 1.0, 50.0),
+            "approach_m": clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0),
+            "speed_key": speed if speed in SPEED_KN else "survey",
+            # completion semantics at the last waypoint (goto/rth/hold -> loiter)
+            "completion": completion if completion in ("complete", "loiter", "repeat", "rth") else "rth",
+            # None means "no model consulted" and keeps the direct re-approach - the same honest
+            # degrade as a Go-To with no route. A number is the console's certified clear disc.
+            "hold_clear_m": None if hold_clear_m is None else max(0.0, float(hold_clear_m)),
+            # A FRESH PLAN IS NEVER MID-COAST. None keeps the engine-governed approach exactly
+            # as it was; a number is the range from the last waypoint at which to stop the prop.
+            "coast_from_m": None if coast_from_m is None else max(0.0, float(coast_from_m)),
+        }
+        if self._running:
+            self._staged = plan
+        else:
+            self._apply_plan(plan)
+
+    @property
+    def plan_staged(self):
+        return self._staged is not None
+
+    def _apply_plan(self, p):
+        self._staged = None
+        self._plan = p["plan"]
+        self._arrival_m = p["arrival_m"]
+        self._approach_m = p["approach_m"]
+        self._speed_key = p["speed_key"]
         self._wp_index = 0
-        # completion semantics at the last waypoint (goto/rth/hold -> loiter)
-        self._completion = completion if completion in ("complete", "loiter", "repeat", "rth") else "rth"
+        self._completion = p["completion"]
         self._holding = False
-        # None means "no model consulted" and keeps the direct re-approach - the same honest
-        # degrade as a Go-To with no route. A number is the console's certified clear disc.
-        self._hold_clear_m = None if hold_clear_m is None else max(0.0, float(hold_clear_m))
+        self._hold_clear_m = p["hold_clear_m"]
         self._hold_wants_route = False
-        # A FRESH PLAN IS NEVER MID-COAST. None keeps the engine-governed approach exactly as
-        # it was; a number is the range from the last waypoint at which to stop the prop.
-        self._coast_from_m = None if coast_from_m is None else max(0.0, float(coast_from_m))
+        self._coast_from_m = p["coast_from_m"]
         self._coasting = False
         self._coast_s0 = None
         self._laps = 0
@@ -2791,6 +2826,11 @@ class SimVcu(VcuLink):
         was uploaded with. Speed is a live command, not a property of the last upload."""
         if key in SPEED_KN:
             self._speed_key = key
+            # A speed commanded AFTER an upload is the speed the staged plan starts at. The
+            # console's guard-hold resume pauses, uploads, commands LOW and only then starts;
+            # letting start() apply the upload's own transit speed would undo that LOW.
+            if self._staged is not None:
+                self._staged["speed_key"] = key
 
     @property
     def speed_key(self):                   # what the boat is ACTUALLY doing, for the state
@@ -2803,6 +2843,8 @@ class SimVcu(VcuLink):
             self.fuel_l = FUEL_CAPACITY_L
 
     def start(self):
+        if self._staged is not None:           # the plan uploaded while running starts NOW
+            self._apply_plan(self._staged)
         if not self._plan:
             raise VcuProtocolError("no waypoints uploaded")
         self._running = True
@@ -2817,9 +2859,13 @@ class SimVcu(VcuLink):
         self._paused = True
         self.sog_kn = 0.0
 
+    # A staged plan that meets Stop, E-STOP or a disarm becomes THE loaded plan rather than a
+    # lost one: the operator uploaded it, and Start from rest should run it.
     def stop(self):
         self._running = False
         self._paused = False
+        if self._staged is not None:
+            self._apply_plan(self._staged)
         self._wp_index = 0
         self.sog_kn = 0.0
 
@@ -2827,11 +2873,15 @@ class SimVcu(VcuLink):
         self._estop = bool(on)
         if on:
             self._running = False
+            if self._staged is not None:
+                self._apply_plan(self._staged)
             self.sog_kn = 0.0
 
     def set_neutral(self):
         self._running = False
         self._paused = False
+        if self._staged is not None:
+            self._apply_plan(self._staged)
         self.sog_kn = 0.0
 
     # -- physics tick ------------------------------------------------------ #
@@ -3244,6 +3294,7 @@ class Engine:
         self.armed = False
         self.estop = False
         self.plan_uploaded = False
+        self._staged_completion = None   # the completion a STAGED upload runs with (see upload)
         self.run = "idle"          # idle | running | paused | stopped | complete
         self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
         # WHAT THE RUN CURRENTLY IN PROGRESS DOES AT ITS END - transient, and rewritten
@@ -3440,6 +3491,13 @@ class Engine:
             self._require(link is not None, "not connected")
             self._require(self.armed, "ARM before uploading a plan")
             self._require(not self.estop, "clear E-STOP first")
+            # ⚠ AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3, 2026-09-14). Under
+            # way on a plan it is REFUSED - a plan never swaps beneath a moving boat, and the
+            # console's projection of the route ahead would be indexed into the wrong one.
+            # Station-keeping or paused, the link STAGES it and the boat carries on until Start.
+            self._require(not (self.run == "running" and not self.status.get("holding")),
+                          "the vessel is running a plan - Hold or Stop it first; an upload never "
+                          "changes what the boat is doing, and Start applies the new plan")
             m = load_mission()
             # `route` (if given) is the client's ENC-aware run path: the mission
             # waypoints with obstacle-avoidance detours inserted AND the approach
@@ -3447,7 +3505,7 @@ class Engine:
             # the raw mission waypoints when no routed plan is supplied.
             wpts = self._sanitize_route(route) if route else (m.get("waypoints") or [])
             self._require(len(wpts) >= 1, "add at least one waypoint first")
-            self.run_completion = plan_completion()   # a plan run honours the setting
+            completion = plan_completion()            # a plan run honours the setting
             # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
             # console's governor re-asserts the right role on the first telemetry frame
             # either way, but starting the boat at the survey speed for a 30-minute transit
@@ -3455,13 +3513,22 @@ class Engine:
             # value that shows on the vessel card the instant the plan is uploaded.
             _sp = _norm_speeds(m.get("speeds"), m.get("speed", "survey"))
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
-                             m.get("approach_radius_m", WP_APPROACH_M), completion=self.run_completion,
+                             m.get("approach_radius_m", WP_APPROACH_M), completion=completion,
                              hold_clear_m=hold_clear_m)
             self.plan_uploaded = True
-            self.wp_total = len(wpts)
-            self.wp_index = 0
-            self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
-                len(wpts), " · ENC-routed" if route else "", self.run_completion)
+            if link.plan_staged:
+                # The run in progress (the hold) keeps its own completion and waypoint count
+                # until Start; the staged plan's completion is applied then.
+                self._staged_completion = completion
+                self.note = ("Run plan uploaded (%d waypoints%s, %s) and STAGED: the boat carries "
+                             "on station-keeping until Start." % (
+                                 len(wpts), " · ENC-routed" if route else "", completion))
+            else:
+                self.run_completion = completion
+                self.wp_total = len(wpts)
+                self.wp_index = 0
+                self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
+                    len(wpts), " · ENC-routed" if route else "", self.run_completion)
         self._push_state()
 
     def set_approach(self, m):
@@ -3530,6 +3597,8 @@ class Engine:
             self._require(self.armed, "ARM before starting")
             self._require(self.plan_uploaded, "upload a run plan first")
             self._require(not self.estop, "clear E-STOP first")
+            if link.plan_staged:
+                self.run_completion = self._staged_completion or plan_completion()
             link.start()
             self.run = "running"
             self.behavior = "survey"
@@ -4013,6 +4082,9 @@ class Engine:
             "armed": self.armed,
             "estop": self.estop,
             "plan_uploaded": self.plan_uploaded,
+            # An uploaded plan waiting for Start while the boat carries on (station-keeping or
+            # paused) - the page enables Start for it even though the run reads "running".
+            "plan_staged": bool(self._link is not None and self._link.plan_staged),
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,

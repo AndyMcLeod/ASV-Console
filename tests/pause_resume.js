@@ -170,6 +170,14 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
         () => /@keyframes cbtnFlash/.test(H)
               && /prefers-reduced-motion: reduce[\s\S]{0,160}?\.cbtn\.flash\{animation:none/.test(H),
         "the state must survive the animation being switched off");
+  // AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3). The resume above pauses, uploads
+  // and starts - which only works because a plan uploaded to a running link is STAGED - and the
+  // operator's own Upload to a station-keeping boat needs Start to stay live for it.
+  check("1b. Start stays live for a STAGED plan while the run reads running, and Upload is off while under way",
+        () => /const underWay = run==="running" && !\(s\.status\|\|\{\}\)\.holding;/.test(cmdState)
+              && /\$\("#b_upload"\)\.disabled = !armed \|\| estop \|\| underWay;/.test(cmdState)
+              && /\$\("#b_start"\)\.disabled = !armed \|\| estop \|\| !s\.plan_uploaded \|\| \(run==="running" && !s\.plan_staged\);/.test(cmdState),
+        "without the staged clause Start is dead after a staged upload; without underWay Upload offers a click the server refuses");
 }
 
 // ── 3-4. THE MARK IS TAKEN AT THE PRESS ────────────────────────────────────────────

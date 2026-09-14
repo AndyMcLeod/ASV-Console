@@ -8417,7 +8417,9 @@ $("#b_upload").onclick = ()=>{
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
-  cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])});
+  cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])})
+    .then(j=>{ if(j && j.state && j.state.plan_staged)
+      flashNote("Plan uploaded and STAGED — the boat carries on station-keeping until you press Start."); });
   render();
 };
 $("#b_start").onclick = async ()=>{
@@ -8873,8 +8875,13 @@ function applyCmdState(s){
   $("#b_arm").classList.toggle("on", armed);
   $("#b_arm").textContent = armed ? "Disarm" : "Arm";
   $("#b_arm").disabled = !connected || estop;
-  $("#b_upload").disabled = !armed || estop;
-  $("#b_start").disabled = !armed || estop || !s.plan_uploaded || run==="running";
+  // AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3). Under way on a plan the server
+  // refuses it, so the button is off rather than offering a click that fails - and that also
+  // keeps this handler from drawing a route the boat is not flying. Station-keeping or paused,
+  // the plan is STAGED, and Start stays live for it although the run still reads "running".
+  const underWay = run==="running" && !(s.status||{}).holding;
+  $("#b_upload").disabled = !armed || estop || underWay;
+  $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
   // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to grey out the
   // moment it worked, which left Start as the only resume — a control the operator has no
   // reason to look at for a run that is already going. It toggles, it says which way it

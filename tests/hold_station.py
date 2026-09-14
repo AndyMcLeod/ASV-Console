@@ -207,6 +207,45 @@ check("7. a vessel that is not holding publishes no hold, no range and no reques
       t["hold"] is None and t["off_station_m"] is None and t["hold_wants_route"] is False,
       json.dumps({k: t[k] for k in ("hold", "off_station_m", "hold_wants_route")}))
 
+# 7b-7e. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3, 2026-09-14). The link used
+#    to replace its plan and clear `_holding` but leave `_running` set, so a boat holding at a
+#    Go-To point drove off at the upload's transit speed with no Start: 3.9 -> 9.9 kn in 4 s.
+FAR = [{"lat": HP["lat"] + 0.003, "lon": HP["lon"]}, {"lat": HP["lat"] + 0.006, "lon": HP["lon"]}]
+v, _ = _holding_boat(None)
+_C.CURRENTS = _FakeCurrents(0.0, 0.0)
+v.upload_plan(FAR, 2.0, "high", 1.0, completion="rth")
+peak = 0.0
+for _ in range(40):                       # the same 4 s the release took
+    t = v.tick(0.1)
+    peak = max(peak, v.sog_kn)
+check("7b. an UPLOAD to a station-keeping vessel does not move it: it keeps holding the same point, "
+      "and the plan is STAGED",
+      t["holding"] and t["hold"] == HP and t["wp_total"] == 1 and peak < 0.5 and v.plan_staged,
+      "holding=%s hold=%s wp_total=%s peak %.2f kn staged=%s"
+      % (t["holding"], t["hold"], t["wp_total"], peak, v.plan_staged))
+v.set_speed("low")                        # the console's resume: pause, upload, LOW, then start
+v.start()
+for _ in range(10):
+    t = v.tick(0.1)
+check("7c. ... start() applies it - at the speed commanded AFTER the upload, not the upload's own",
+      not v.plan_staged and t["running"] and not t["holding"] and t["wp_total"] == 2
+      and t["speed_key"] == "low",
+      "staged=%s running=%s holding=%s wp_total=%s speed_key=%s"
+      % (v.plan_staged, t["running"], t["holding"], t["wp_total"], t["speed_key"]))
+v, _ = _holding_boat(None)
+v.upload_plan(FAR, 2.0, "high", 1.0, completion="rth")
+v.stop()
+t = v.tick(0.1)
+check("7d. ... a staged plan that meets Stop becomes the loaded plan rather than a lost one",
+      not v.plan_staged and t["wp_total"] == 2 and not t["running"],
+      "staged=%s wp_total=%s running=%s" % (v.plan_staged, t["wp_total"], t["running"]))
+v = _C.SimVcu(HP["lat"], HP["lon"])
+v.upload_plan(FAR, 2.0, "high", 1.0, completion="rth")
+t = v.tick(0.1)
+check("7e. ... and an IDLE vessel takes an upload at once, exactly as before",
+      not v.plan_staged and t["wp_total"] == 2 and not t["running"],
+      "staged=%s wp_total=%s running=%s" % (v.plan_staged, t["wp_total"], t["running"]))
+
 
 # --- 8-13: the engine over a real console ------------------------------------------- #
 def free_port():
@@ -306,6 +345,45 @@ try:
           "route arriving then is a command nobody gave",
           code == 409 and "not station-keeping" in (r.get("error") or ""),
           "code %s error=%r" % (code, r.get("error")))
+
+    # 11c-11d. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3), over the real engine.
+    tgt3 = {"lat": lat + 0.0003, "lon": lon}                   # ~33 m north
+    far3 = [{"lat": lat + 0.003, "lon": lon}, {"lat": lat + 0.006, "lon": lon}]
+    api(port, "/api/cmd/goto", {"lat": tgt3["lat"], "lon": tgt3["lon"], "route": [tgt3],
+                                "hold_clear_m": 6.0})
+    time.sleep(0.6)
+    code_uw, r_uw = api(port, "/api/cmd/upload", {"route": far3})
+    s = None
+    for _ in range(160):
+        s = state(port)
+        h = s["status"].get("hold")
+        if s["status"].get("holding") and h and abs(h["lat"] - tgt3["lat"]) < 1e-6:
+            break
+        time.sleep(0.25)
+    held3 = bool(s and s["status"].get("holding"))
+    code_up, r_up = api(port, "/api/cmd/upload", {"route": far3})
+    time.sleep(3.0)
+    s = state(port)
+    check("11c. under way, Upload is REFUSED in words; station-keeping, it is STAGED and the boat "
+          "stays on station",
+          code_uw == 409 and "Hold or Stop" in (r_uw.get("error") or "") and held3
+          and code_up == 200 and s.get("plan_staged") is True and s["status"].get("holding")
+          and s["status"].get("wp_total") == 1 and (s["status"].get("hold") or {}).get("lat") is not None
+          and abs(s["status"]["hold"]["lat"] - tgt3["lat"]) < 1e-6,
+          "under way %s %r; held=%s; upload %s staged=%s holding=%s wp_total=%s hold=%s" % (
+              code_uw, (r_uw.get("error") or "")[:40], held3, code_up, s.get("plan_staged"),
+              s["status"].get("holding"), s["status"].get("wp_total"), s["status"].get("hold")))
+    code_st, _ = api(port, "/api/cmd/start", {})   # {} makes it a POST; with no body api() sends a GET, which 404s
+    time.sleep(1.0)
+    s = state(port)
+    check("11d. ... and Start applies the staged plan: she leaves the hold and runs it as a survey",
+          code_st == 200 and s.get("plan_staged") is False and not s["status"].get("holding")
+          and s["status"].get("wp_total") == 2 and s["behavior"] == "survey",
+          "start %s staged=%s holding=%s wp_total=%s behavior=%s" % (
+              code_st, s.get("plan_staged"), s["status"].get("holding"),
+              s["status"].get("wp_total"), s["behavior"]))
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
 
     # 12. The hold point itself is published for the console to plan back to.
     tgt2 = {"lat": tgt["lat"], "lon": lon + 0.00005}          # a different point: its own frames

@@ -55,11 +55,33 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1 and #2 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#3 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #2 - A SLOW-DOWN IN LIEU OF A HOLD HAS TO BE TAKEN, AND KEEP ANSWERING.**
+**NEWEST, 2026-09-14: REVIEW ITEM #3 - AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING.**
+`SimVcu.upload_plan` replaced the active plan and cleared `_holding` but left `_running` set, so a boat
+station-keeping at a Go-To point drove off at the upload's transit speed the moment Upload was pressed
+(measured 3.9 -> 9.9 kn in 4 s, no Start, still labeled goto) - and Upload was enabled whenever armed.
+
+* A plan uploaded to a RUNNING link (holding, paused, or a one-step command) is STAGED; `start()` applies
+  it, `set_speed` carries into it (the guard-hold resume commands LOW between upload and start), and
+  Stop / E-STOP / disarm keep it as the loaded plan. An idle link applies at once, as before. Values are
+  normalized at upload, so a bad one still fails there.
+* `Engine.upload` REFUSES while under way on a plan (409, "Hold or Stop it first"); `state()` publishes
+  `plan_staged`. The page disables Upload under way and keeps Start live for a staged plan.
+* Tests: `hold_station.py` 7b-7e (link) and 11c-11d (real engine), `pause_resume.js` 1b (gating).
+  TEETH: 6 server mutations run in a scratch CLONE (the real source never touched) + 2 page sidecars,
+  8 killed.
+* ⚠ FOUND ON THE WAY, FOR #8: `hold_station.py`'s `api(port, path)` with no body sends a GET, and
+  `/api/cmd/stop` GET is a 404 - so the `stop` before check 11b has never stopped anything. 11b's
+  flakiness is that no-op plus re-arrival timing, on top of the real stale-`holding` defect. The new
+  11c-11d calls pass `{}`; fix line 341 when doing #8.
+* Docs: ops manual Upload/Start bullets and README step 4 state it; tech manual GUARDS entry and hook
+  advice name the rule; docs rebuilt.
+* Next up after approval: #4, Upload before the chart model loads goes out unrouted, with no warning.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #2 - A SLOW-DOWN IN LIEU OF A HOLD HAS TO BE TAKEN, AND KEEP ANSWERING.**
 The 09-10 slow-before-hold rung spent the escalation: every later frame at `hold` read not-escalated, so
 a boat that did not actually slow - a speed command refused or lost, which the mission.json WinError 5
 race makes real (review #5) - was never held. Driven over consecutive frames: "low" at 30 m, then
@@ -76,7 +98,7 @@ here next frame") asserted a mechanism that did nothing.
   every other fixture the key and the speed over ground agree.
 * Docs: README corrected (it repeated the "back next frame" claim); tech manual GUARDS entry and hook
   advice name the rule; docs rebuilt. The ops manual does not describe this rung and is unchanged.
-* Next up after approval: #3, Upload by itself sets a station-keeping boat moving.
+* Committed and pushed as `c6d03cf0`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #1 - THE KEEP-OUT MODEL FOLLOWS THE TIDE.** Andy asked for a
 reliability/utility review as a numbered list and is taking the items ONE AT A TIME, IN ORDER,
