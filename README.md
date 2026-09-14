@@ -549,7 +549,11 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    **Direction** are editable fields — type a value to force the spacing or rotate
    the whole pattern to a bearing. `Add to plan` commits the lines + waypoints. Set
    arrival radius, speed (Low / Survey / High), and **completion** (below) in the
-   command bar. The plan persists server-side (`mission.json`).
+   command bar. The plan persists server-side (`mission.json`). Reads and writes are locked and
+   retried; a file that is there but cannot be read as a plan is refused rather than treated as
+   empty (a corrupt one is copied aside as `mission.json.corrupt-*`); and each change to the
+   plan's geometry keeps the previous plan as `mission.json.bak1`..`bak5`. A live speed command
+   never writes the file - the commanded speed is the vessel's.
 
    **Chart source (`SRC`).** The ENC's answer to a paper chart's title block, as a
    card: **every cell in view, one row each** (broadest scale first, usage band

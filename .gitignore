@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 charts/
 mission.json
+# earlier PLANS kept on a geometry change, and a corrupt plan file copied aside (review #5)
+mission.json.bak*
+mission.json.corrupt-*
 comms_config.json
 logs/
 *.log

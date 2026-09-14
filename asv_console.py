@@ -43,6 +43,7 @@ opens a browser tab. See --help.
 
 import argparse
 import atexit
+import hashlib
 import json
 import math
 import os
@@ -774,7 +775,7 @@ LOG = None
 # dock is there at sea. `arrival_radius_m` and `speed` are the run parameters the
 # VCU route plan needs: arrival radius ~5 m default, speed
 # one of Low / Survey / High.
-_mission_lock = threading.Lock()
+_mission_lock = threading.RLock()     # the READS hold it too - see _read_mission_file
 
 
 def _cache_plan_completion(v):
@@ -823,66 +824,187 @@ def _norm_speeds(raw, fallback="survey"):
     return out
 
 
-def load_mission():
+class MissionUnavailable(Exception):
+    """The plan file is there but cannot be read as a plan right now - locked past every retry,
+    or not a JSON object. Deliberately NOT an empty plan: see _read_mission_file."""
+
+
+_MISSION_CACHE = None      # the last plan read or written successfully - see mission_params
+_MISSION_IO_TRIES = 6      # a Windows sharing violation clears in milliseconds: ~0.3 s in all
+_MISSION_IO_WAIT_S = 0.05
+MISSION_BACKUPS = 5        # mission.json.bak1 (newest) .. .bak5 - earlier PLANS, see _keep_previous_plan
+
+
+def _quarantine_mission(raw_b):
+    """Copy an unreadable plan file aside - once per distinct content - before anything can
+    replace it, and return the copy's path."""
+    path = "%s.corrupt-%s" % (MISSION_PATH, hashlib.sha1(raw_b).hexdigest()[:10])
+    if not os.path.exists(path):
+        with open(path, "wb") as f:
+            f.write(raw_b)
+    return path
+
+
+def _read_mission_file():
+    """The plan file as a dict, or None when there is NO file. Raises MissionUnavailable when it
+    is there but locked past every retry, or is not a JSON object - copied aside first.
+
+    ⚠ THE READ HOLDS THE WRITER'S LOCK, AND ONLY A MISSING FILE IS "NO PLAN" (review #5,
+    2026-09-14). On Windows a read landing mid-replace raises PermissionError - 34 times in 10 s
+    under contention - and load_mission used to answer that, and a corrupt file, with an EMPTY
+    plan; set_speed then saved what it had loaded, over the real one. The lock removes the
+    in-process race outright; the retry covers a reader in another process."""
+    last = None
+    for _attempt in range(_MISSION_IO_TRIES):
+        with _mission_lock:
+            try:
+                with open(MISSION_PATH, "rb") as f:
+                    raw_b = f.read()
+            except FileNotFoundError:
+                return None
+            except OSError as e:
+                last = e
+            else:
+                try:
+                    m = json.loads(raw_b.decode("utf-8"))
+                    if isinstance(m, dict):
+                        return m
+                    raise ValueError("the top level is not an object")
+                except ValueError as e:
+                    try:
+                        kept = os.path.basename(_quarantine_mission(raw_b))
+                    except OSError as qe:
+                        kept = "nowhere (%s)" % qe
+                    raise MissionUnavailable("mission.json is not a valid plan (%s) - kept as %s, "
+                                             "and nothing was written over it" % (e, kept))
+        time.sleep(_MISSION_IO_WAIT_S)
+    raise MissionUnavailable("mission.json could not be read (%s)" % last)
+
+
+def _keep_previous_plan(new_doc):
+    """Before a save replaces the file: copy a CORRUPT file aside, and when the plan's GEOMETRY is
+    changing, shift the previous plan into mission.json.bak1..bakN. Settings-only saves do not
+    churn the backups, and an empty plan never takes a slot - so a real plan saved over by an
+    empty one is always one file away. A backup that cannot be written is reported and does not
+    cost the operator the save; a corrupt file that cannot be copied aside DOES stop it."""
     try:
-        with open(MISSION_PATH, "r", encoding="utf-8") as f:
-            m = json.load(f)
-        if isinstance(m, dict):
-            return {
-                "waypoints": m.get("waypoints") or [],
-                "lines": m.get("lines") or [],
-                "arrival_radius_m": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
-                "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
-                "speed": m.get("speed") or "survey",
-                "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
-                # plan-run completion semantics (Survey/search as a typed behavior):
-                # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
-                # | rth (chain the ENC-routed Return-to-Home). Default: rth.
-                "completion": _cache_plan_completion(m.get("completion")),
-                # keep-clear buffer (m) around every nogo zone - the tightness the
-                # ASV threads between piers; smaller for tight marinas.
-                "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
-                # operator MIN DEPTH (m) - a routing floor for EVERY behavior, not just
-                # survey coverage (2026-09-07). The client takes the deeper of this and the
-                # hull's own navigability limit, so a value below what the hull needs cannot
-                # narrow its clearance. There is no max here on purpose: deep water is not a
-                # keep-out, and the survey Max depth stays a coverage window.
-                "min_depth_m": m.get("min_depth_m", 2.0),
-                # LEAD-IN / LEAD-OUT (2026-09-08) - how far the boat runs ON a survey
-                # line before the coverage starts, and past where it ends, so steering
-                # and IMU are settled through the coverage. The stored value is the one
-                # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (metres) or
-                # "s" (seconds, converted client-side at the survey speed). All three
-                # travel together or none of them mean anything - a 20 that loses its
-                # "s" is 20 m instead of ~41 m, silently.
-                #
-                # The per-line lengths ACTUALLY APPLIED ride in "lines" as lead_in_m /
-                # lead_out_m, which pass through untouched: they are what the chart
-                # allowed, not what was asked for, and only the client's Punch Out can
-                # know the difference.
-                "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
-                "lead_in": m.get("lead_in", 0),
-                "lead_out": m.get("lead_out", 0),
-                # EASED TURNS (2026-09-08): "arc" is the plain reversal this console has
-                # always drawn, "eased" ramps the curvature in and out over a clothoid so
-                # the steering rate is finite. A SETTING, not geometry - the spiral length
-                # is derived client-side from the vessel's steering settle time and the
-                # turn speed, so a mission carried to a different hull eases by that hull's
-                # numbers rather than by the one it was planned on.
-                "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
-                # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
-                # plan drawn at the dock survives a reload / a session at sea.
-                "boundary": m.get("boundary") or [],
-                "boundary_closed": bool(m.get("boundary_closed")),
-            }
-    except (OSError, ValueError):
-        pass
-    return {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
+        with open(MISSION_PATH, "rb") as f:
+            raw_b = f.read()
+    except OSError:
+        return
+    try:
+        old = json.loads(raw_b.decode("utf-8"))
+    except ValueError:
+        _quarantine_mission(raw_b)
+        return
+
+    def geometry(d):
+        return json.dumps([d.get("waypoints") or [], d.get("lines") or [], d.get("boundary") or []],
+                          sort_keys=True)
+    if (not isinstance(old, dict) or not (old.get("waypoints") or old.get("lines"))
+            or geometry(old) == geometry(new_doc)):
+        return
+    try:
+        for i in range(MISSION_BACKUPS, 1, -1):
+            older = "%s.bak%d" % (MISSION_PATH, i - 1)
+            if os.path.exists(older):
+                os.replace(older, "%s.bak%d" % (MISSION_PATH, i))
+        with open(MISSION_PATH + ".bak1", "wb") as f:
+            f.write(raw_b)
+    except OSError as e:
+        print("[mission] could not keep a backup of the previous plan: %s" % e, file=sys.stderr)
+
+
+def _replace_retrying(tmp, dst):
+    """os.replace, retried. On Windows ANY reader holding the destination open makes it fail with
+    WinError 5 - measured 2460 failures to 112 successes in 10 s with one reader thread."""
+    for i in range(_MISSION_IO_TRIES):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if i == _MISSION_IO_TRIES - 1:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(_MISSION_IO_WAIT_S)
+
+
+def mission_params():
+    """The last good plan, for command paths that must not fail on a file read - a Go-To, a hold,
+    the in-extremis escape. Reads the file only when nothing has been read yet, and answers {}
+    (every caller supplies its own defaults) rather than raise."""
+    if _MISSION_CACHE is None:
+        try:
+            return load_mission()
+        except MissionUnavailable:
+            return {}
+    return dict(_MISSION_CACHE)
+
+
+def load_mission():
+    """The plan, normalized. A missing file is the empty plan; a file that is there but cannot be
+    read as a plan RAISES MissionUnavailable - see _read_mission_file for why never an empty one."""
+    global _MISSION_CACHE
+    m = _read_mission_file()
+    if m is not None:
+        _MISSION_CACHE = {
+            "waypoints": m.get("waypoints") or [],
+            "lines": m.get("lines") or [],
+            "arrival_radius_m": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
+            "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
+            "speed": m.get("speed") or "survey",
+            "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
+            # plan-run completion semantics (Survey/search as a typed behavior):
+            # complete (stop) | loiter (station-keep at the last wp) | repeat (loop)
+            # | rth (chain the ENC-routed Return-to-Home). Default: rth.
+            "completion": _cache_plan_completion(m.get("completion")),
+            # keep-clear buffer (m) around every nogo zone - the tightness the
+            # ASV threads between piers; smaller for tight marinas.
+            "buffer_m": m.get("buffer_m", NOGO_BUFFER_DEFAULT_M),
+            # operator MIN DEPTH (m) - a routing floor for EVERY behavior, not just
+            # survey coverage (2026-09-07). The client takes the deeper of this and the
+            # hull's own navigability limit, so a value below what the hull needs cannot
+            # narrow its clearance. There is no max here on purpose: deep water is not a
+            # keep-out, and the survey Max depth stays a coverage window.
+            "min_depth_m": m.get("min_depth_m", 2.0),
+            # LEAD-IN / LEAD-OUT (2026-09-08) - how far the boat runs ON a survey
+            # line before the coverage starts, and past where it ends, so steering
+            # and IMU are settled through the coverage. The stored value is the one
+            # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (metres) or
+            # "s" (seconds, converted client-side at the survey speed). All three
+            # travel together or none of them mean anything - a 20 that loses its
+            # "s" is 20 m instead of ~41 m, silently.
+            #
+            # The per-line lengths ACTUALLY APPLIED ride in "lines" as lead_in_m /
+            # lead_out_m, which pass through untouched: they are what the chart
+            # allowed, not what was asked for, and only the client's Punch Out can
+            # know the difference.
+            "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
+            "lead_in": m.get("lead_in", 0),
+            "lead_out": m.get("lead_out", 0),
+            # EASED TURNS (2026-09-08): "arc" is the plain reversal this console has
+            # always drawn, "eased" ramps the curvature in and out over a clothoid so
+            # the steering rate is finite. A SETTING, not geometry - the spiral length
+            # is derived client-side from the vessel's steering settle time and the
+            # turn speed, so a mission carried to a different hull eases by that hull's
+            # numbers rather than by the one it was planned on.
+            "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
+            # arbitrary survey-area boundary (CAMP SurveyArea) - persisted so a
+            # plan drawn at the dock survives a reload / a session at sea.
+            "boundary": m.get("boundary") or [],
+            "boundary_closed": bool(m.get("boundary_closed")),
+        }
+        return dict(_MISSION_CACHE)
+    _MISSION_CACHE = {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
             "approach_radius_m": WP_APPROACH_M, "speed": "survey",
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
             "boundary": [], "boundary_closed": False}
+    return dict(_MISSION_CACHE)
 
 
 # The operator's END-OF-PLAN setting, cached so the 4 Hz telemetry loop never touches
@@ -897,7 +1019,8 @@ def plan_completion():
 
 
 def save_mission(m):
-    data = json.dumps({
+    global _MISSION_CACHE
+    doc = {
         "waypoints": m.get("waypoints") or [],
         "lines": m.get("lines") or [],
         "arrival_radius_m": m.get("arrival_radius_m", 2.0),
@@ -913,12 +1036,17 @@ def save_mission(m):
         "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
-    }, indent=1)
+    }
+    data = json.dumps(doc, indent=1)
+    # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
+    # file per writer, and the replace retried - review #5, see _read_mission_file.
     with _mission_lock:
-        tmp = MISSION_PATH + ".part"
+        _keep_previous_plan(doc)
+        tmp = "%s.%d.%d.part" % (MISSION_PATH, os.getpid(), threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(data)
-        os.replace(tmp, MISSION_PATH)
+        _replace_retrying(tmp, MISSION_PATH)
+        _MISSION_CACHE = doc
 
 
 # --------------------------------------------------------------------------- #
@@ -3498,7 +3626,10 @@ class Engine:
             self._require(not (self.run == "running" and not self.status.get("holding")),
                           "the vessel is running a plan - Hold or Stop it first; an upload never "
                           "changes what the boat is doing, and Start applies the new plan")
-            m = load_mission()
+            try:
+                m = load_mission()
+            except MissionUnavailable as e:
+                raise VcuProtocolError("the plan could not be read, so nothing was uploaded: %s" % e)
             # `route` (if given) is the client's ENC-aware run path: the mission
             # waypoints with obstacle-avoidance detours inserted AND the approach
             # from the present position routed clear of land / nogo. Fall back to
@@ -3541,24 +3672,19 @@ class Engine:
                     pass
 
     def set_speed(self, key):
-        """Live speed change: command the link AND persist what the boat is now commanded.
+        """Live speed change: command the link. NOTHING IS WRITTEN.
 
-        ⚠ WHAT IS PERSISTED HERE IS `speed`, AND `speed` IS NO LONGER THE OPERATOR'S
-        SETTING (2026-08-31). It used to be both, and this docstring used to say the plan
-        speed was one concept. It is two now: `speeds` holds the operator's three role
-        choices (transit / turn / survey) and is written only by the survey card, while
-        `speed` is what the vessel was last told - which the console's speed GOVERNOR
-        changes every time the run moves between coverage, a turn and a transit, and which
-        the clearance guard overrides for safety. Writing that stream of commanded values
-        into the operator's setting would eat their choice several times a minute; the
-        completion field is the same lesson (see plan_completion). save_mission carries
-        `speeds` through untouched, which is what keeps them apart.
+        ⚠ THIS USED TO LOAD, EDIT AND SAVE THE WHOLE PLAN FILE, AND SAVE IT FIRST (review #5,
+        2026-09-14). `speed` is what the vessel was last told - the console's governor changes it
+        several times a minute and the clearance guard overrides it - so it was a plan-file write
+        on the hottest command path there is, and on Windows a read in flight made that write fail
+        with WinError 5: a 500, and the command never reached the boat (1 in 60 when a speed
+        command met a Go-To). The commanded speed is the VESSEL'S (`speed_key` on its telemetry),
+        and a Go-To now takes it from the link rather than from the file. `speeds`, the operator's
+        three role choices, is still written only by the survey card through save_mission.
         """
         if key not in SPEED_KN:
             raise VcuProtocolError("unknown speed %r (want one of %s)" % (key, ", ".join(sorted(SPEED_KN))))
-        m = load_mission()
-        m["speed"] = key
-        save_mission(m)
         with self._lock:
             if self._link is not None:
                 try:
@@ -3624,8 +3750,11 @@ class Engine:
             self._require(link is not None, "not connected")
             self._require(self.armed, "ARM before commanding the boat")
             self._require(not self.estop, "clear E-STOP first")
-            m = load_mission()
-            link.upload_plan(route, m.get("arrival_radius_m", 2.0), m.get("speed", "survey"),
+            # The last good plan settings, never a file read that could fail a Go-To, a hold or
+            # the escape - and the speed the vessel is ACTUALLY running, not a copy of it on disk.
+            m = mission_params()
+            link.upload_plan(route, m.get("arrival_radius_m", 2.0),
+                             getattr(link, "speed_key", None) or m.get("speed", "survey"),
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
                              hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
             link.start()
@@ -3919,9 +4048,9 @@ class Engine:
         with self._lock:
             self._rth_follow = follow
             if follow:
-                m = load_mission()
+                m = mission_params()
                 self._rth_params = {"arrival": m.get("arrival_radius_m", ARRIVAL_DEFAULT_M),
-                                    "speed": m.get("speed", "survey"),
+                                    "speed": getattr(self._link, "speed_key", None) or m.get("speed", "survey"),
                                     "approach": m.get("approach_radius_m", WP_APPROACH_M)}
                 self._rth_last_target = dict(home)
 
@@ -4284,7 +4413,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/ais"):
             self._serve_ais()
         elif self.path == "/api/mission":
-            self._send(200, json.dumps(load_mission()))
+            # A plan that cannot be read right now is a 503 in words - never an empty plan the
+            # page would adopt and later save back over the real one (review #5).
+            try:
+                self._send(200, json.dumps(load_mission()))
+            except MissionUnavailable as e:
+                self._send(503, json.dumps({"error": str(e)}))
         elif self.path == "/api/vessel":
             # active vessel (full params for the UI) + the available list (picker)
             self._send(200, json.dumps({"vessel": VESSEL, "active": VESSEL["id"],
@@ -4466,7 +4600,10 @@ class Handler(BaseHTTPRequestHandler):
         """Route a POST to its handler; return (http_code, response_obj). Split
         out of do_POST so the session recorder can log a single uniform outcome."""
         if path == "/api/mission":
-            save_mission(body)
+            try:
+                save_mission(body)
+            except OSError as e:
+                return 503, {"error": "the plan could not be saved: %s" % e}
             return 200, {"ok": True}
         if path == "/api/logevent":
             # Client-supplied structured event for the session log (e.g. the

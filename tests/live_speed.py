@@ -153,6 +153,9 @@ try:
     check("2. the vessel publishes its own speed set", set(speeds) >= {"low", "survey", "high"},
           json.dumps(speeds))
 
+    # The plan file's own `speed`, read before any speed command - check 8 holds it unchanged.
+    plan_speed_at_start = api(port, "/api/mission").get("speed")
+
     # 3. APPLICATION-WIDE AWARENESS. The state has to carry what the vessel is running to,
     # or nothing downstream can tell the selector and the vessel apart.
     api(port, "/api/cmd/speed", {"speed": "survey"})
@@ -202,12 +205,24 @@ try:
           surv < high - 1.0 and abs(surv - speeds["survey"]) <= max(0.6, speeds["survey"] * 0.12),
           "%.2f -> %.2f kn (commanded %.1f)" % (high, surv, speeds["survey"]))
 
-    # 8. The change is PERSISTED, so a later Upload re-sends what the operator chose rather
-    # than reverting the vessel to whatever the mission file happened to hold. Same class as
-    # the completion-field bug: two places holding one operator intent.
-    check("8. the live change is persisted to the mission store",
-          api(port, "/api/mission").get("speed") == "survey",
-          "mission.speed=%s" % api(port, "/api/mission").get("speed"))
+    # 8. THE LIVE SPEED IS THE VESSEL'S, NOT THE PLAN FILE'S (review #5, 2026-09-14). This check
+    # used to require the change be PERSISTED, so a later command would re-send it - and that
+    # persistence was a whole-plan load-edit-save on every speed command, which on Windows
+    # failed with WinError 5 whenever a read was in flight: a 500, and the speed never reached
+    # the boat. The intent survives without the write: the next commanded motion takes the
+    # speed the vessel is running, and the plan file is left alone.
+    # A speed the FILE does not already hold, or an old write-back would leave it looking untouched.
+    k8 = next(k for k in ("high", "low", "survey") if k != plan_speed_at_start)
+    api(port, "/api/cmd/speed", {"speed": k8})
+    api(port, "/api/cmd/goto", {"lat": s0["lat_deg"] + 0.04, "lon": s0["lon_deg"] + 0.02})
+    time.sleep(0.6)
+    st8 = status(port)
+    plan_speed_now = api(port, "/api/mission").get("speed")
+    check("8. a live speed change carries into the next commanded motion, and is NOT written into the plan file",
+          st8.get("speed_key") == k8 and plan_speed_now == plan_speed_at_start,
+          "speed_key after a new Go-To=%s; the file's speed %s -> %s"
+          % (st8.get("speed_key"), plan_speed_at_start, plan_speed_now))
+    api(port, "/api/cmd/speed", {"speed": "survey"})   # check 9 reads the announcement of THIS
 
     # 9. A speed change is worth a line in the session record. It sets `note`, which is a
     # salient field, so the recorder takes a full snapshot without needing its own rule.

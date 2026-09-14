@@ -55,11 +55,35 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#4 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#5 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #4 - UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER.**
+**NEWEST, 2026-09-14: REVIEW ITEM #5 - THE PLAN FILE SURVIVES CONCURRENCY, CORRUPTION AND SPEED COMMANDS.**
+Measured before any code: on Windows a reader holding mission.json open makes `os.replace` fail with
+WinError 5 (2460 failures to 112 successes in 10 s, one reader) - the open list's 500; a read landing
+mid-replace raises PermissionError, and `load_mission` answered that (and a corrupt file) with an EMPTY
+plan, 36 times in 10 s with the full plan on disk; and `set_speed` loaded, edited and SAVED the plan
+before commanding the boat (over HTTP a speed command sent with a Go-To failed 1 in 60).
+
+* `_read_mission_file()` holds the writer's lock (now an RLock). Only FileNotFoundError is no plan; a
+  locked file is retried ~0.3 s then `MissionUnavailable`; a corrupt one is copied to
+  `mission.json.corrupt-<sha>` and refused. GET /api/mission answers 503 in words, never an empty plan.
+* `save_mission` keeps the previous PLAN on a geometry change (`mission.json.bak1..bak5`, never an empty
+  plan, never on settings-only saves), writes a per-writer temp file, and retries the replace.
+* `set_speed` writes NOTHING. `_run_route` / the RTH chase use `mission_params()` (the last good plan)
+  and the link's live `speed_key` - a Go-To or the escape can no longer fail on a file read.
+* ⚠ `load_mission` still owns BOTH dict literals (read path and no-file default): survey_lead.js and
+  min_depth_floor.js count them in that exact span - keep new helpers OUTSIDE load_mission..plan_completion,
+  and keep save_mission's keys in its first 1400 characters (no long docstring there).
+* Tests: NEW suite `tests/mission_store.py` (11 checks, temp path, asserts the real file untouched) and
+  `live_speed.py` check 8 rewritten (it asserted the old persistence). TEETH: 9 server mutations in a
+  scratch clone, 9 killed - including reads without the lock (the concurrency check still catches it).
+* The open list's persistence-500 and empty-plan entries are marked addressed; the 281-byte file itself
+  is still unexplained.
+* Next up after approval: #6, commands are assumed to have worked (speed reconciliation against speed_key).
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #4 - UPLOAD WITHOUT THE CHART MODEL ASKS FIRST, AND SAYS SO AFTER.**
 `#b_upload` lumped three cases into one silent branch: no waypoints, no position fix, and the keep-out
 model not ready - and for the last two it sent the raw survey waypoints with no routed approach and no
 detours, no word to the operator, while the clearance guard (which reads the same model) stood down.
@@ -73,7 +97,7 @@ detours, no word to the operator, while the clearance guard (which reads the sam
 * Tests: `pause_resume.js` 1c-1g, driven (inside the async block - `finish()` holds the synchronous
   checks). TEETH: 5 sidecar mutations, 5 killed.
 * Docs: ops manual Upload bullet and README step 4 state it; tech manual GUARDS entry names it; docs rebuilt.
-* Next up after approval: #5, reads and writes of mission.json collide (server persistence).
+* Committed and pushed as `f65da112`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #3 - AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING.**
 `SimVcu.upload_plan` replaced the active plan and cleared `_holding` but left `_running` set, so a boat
@@ -1297,7 +1321,9 @@ blocks. Every one is deliberate: it is recorded, not forgotten.
   The rule to carry: **hash every gitignored file in the app directory before and after, not
   the one you remembered.** (`git ls-files --others --ignored --exclude-standard` enumerates
   exactly the files nothing else will warn you about.)
-  **⚠⚠ AND IT HAPPENED A SECOND TIME THE SAME DAY, WITH NO CONSOLE RUNNING.** `mission.json`
+  **⇒ REVIEW #5 (2026-09-14) FOUND AND CLOSED A MECHANISM THAT PRODUCES EXACTLY THIS** - a read landing
+  mid-replace answered with an empty plan, which set_speed then saved back - but the 281-byte file itself
+  was NOT matched to it (every save_mission path at that schema writes 303-309 bytes on Windows). **⚠⚠ AND IT HAPPENED A SECOND TIME THE SAME DAY, WITH NO CONSOLE RUNNING.** `mission.json`
   was replaced by an EMPTY plan (281 bytes) at 22:59, ten minutes after a commit, during a
   stretch in which nothing but greps, file edits and pure-JS suites ran. Restored from the
   pre-session copy. **The suites are cleared, and that is measured rather than assumed:** all
@@ -1308,7 +1334,7 @@ blocks. Every one is deliberate: it is recorded, not forgotten.
   runs left the file untouched. **So something outside the suites is doing it and I could not
   identify what.** Treat any session in this directory as capable of eating the plan: copy it
   first, hash it after, and do not assume a clean `git status` means anything here.
-* **NEW — a persistence failure fails the COMMAND.** `POST /api/cmd/speed` returned **500** on
+* **⇒ ADDRESSED BY REVIEW #5 (2026-09-14) - see NEWEST.** **NEW — a persistence failure fails the COMMAND.** `POST /api/cmd/speed` returned **500** on
   `[WinError 5] Access is denied: 'mission.json.part' -> 'mission.json'` — a transient external
   lock on `os.replace` (`save_mission` is already atomic and in-process locked; no second
   console was running). The command's *effect* was lost with it, so the governor's speed for
