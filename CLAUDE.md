@@ -55,11 +55,31 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#8 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#9 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT (found fixing review #8).**
+**NEWEST, 2026-09-14: REVIEW ITEM #9 - A ROUTE GOES WHOLE OR NOT AT ALL.**
+`Engine._sanitize_route` kept the first 1000 waypoints of any route and dropped the rest with a 200 - a survey
+that ended wherever waypoint 1000 fell, which is also where an end-of-plan RTH would fire. The session logs
+hold 350 route commands; 9 were over 1000, all uploads the server took and cut: 6,435 (2026-08-01), 3,388,
+3,172, 1,288, 1,224, 1,133, 1,031, 1,020, 1,017. (A first count read the log folder twice and said 18 of 232.)
+
+* `ROUTE_MAX_WPTS = 20000` (three times the largest logged plan): a sanity bound on a request, not a vessel
+  limit. Over it, `_sanitize_route` REFUSES WHOLE via `too_many_wpts()`; `Engine.upload` applies the same bound
+  to the saved plan (an upload with no route never passed the route check). The state publishes
+  `route_max_wpts`.
+* Page: `routeTooLong(n)` in `doUpload` checks the saved plan's count before the no-chart-model question and
+  the ROUTED path's count before anything is drawn as the run; the banner gives both numbers. No limit on the
+  state (an older server) sends as before.
+* Go-To / RTH / transit / amend / re-approach routes meet the server bound only; none comes near it.
+* Tests: run_link_control.py 3c (over-limit transit refused in words, at-limit passes to the arm gate, limit
+  covers 6,435) and 16 (saved plan, in-process with the store stubbed); pause_resume.js 1h-1j. TEETH: 4
+  scratch-clone mutations of the server and 5 sidecar mutations of the page, 9 killed.
+* Andy approved #9 before its final report; it was committed after the verification finished.
+* Next up: #10, POST /api/mission accepts any body.
+
+**BEFORE THAT, 2026-09-14: A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT (found fixing review #8).**
 `Engine._run` asks the link for its frame OUTSIDE the lock (a real link's read can block, and a Stop must not wait on
 it) and applies it under the lock, so a command could land in between and be overwritten by a frame that described
 the boat before it. Reproduced in-process: a Stop read `running` for 0.45 s and then `complete`, never `stopped`.
@@ -75,7 +95,7 @@ re-approach gate, and into the moving-home chase in `_run`, which uploads and ST
   only way to put it in that window on demand. TEETH: 8 mutations in a scratch clone against the suite trimmed to
   that part, 8 killed, each by its own check. The tech manual's Engine section says why, and its run-state and
   behavior lists now include `stopped` and `escape`.
-* Next up after approval: #9, routes over 1000 waypoints are silently cut off.
+* Committed and pushed as `77c78f05`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #8 - NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE BLIND.**
 Reported: `SimVcu` kept `_holding` through Stop, E-STOP and a disarm, and `Engine.reapproach` took any boat that

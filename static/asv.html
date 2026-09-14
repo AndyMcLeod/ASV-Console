@@ -8441,12 +8441,27 @@ $("#b_arm").onclick = async ()=>{
     "Confirm the RC Autonomy switch (Sw A) is forward and an operator is holding the RC transmitter.")) return;
   cmd("/api/cmd/arm", {on:true});
 };
+// A PLAN OVER THE CONSOLE'S WAYPOINT LIMIT IS NEVER SENT (review #9, 2026-09-14). The server kept
+// the first 1000 waypoints and dropped the rest, answering 200 - a survey that ended wherever
+// waypoint 1000 fell. It refuses the whole route now and publishes its limit, which is checked
+// HERE first: before anything is drawn as the run, because a plan the vessel will not take must
+// not look uploaded. No limit on the state (an older server) sends as before; the server decides.
+function routeTooLong(n){
+  const maxW = S && S.route_max_wpts;
+  if(!(maxW > 0) || n <= maxW) return false;
+  showBanner("⚠ UPLOAD BLOCKED — this plan has " + n.toLocaleString() + " waypoints and the console takes at most "
+    + maxW.toLocaleString() + ". Nothing was sent. Reduce it (strike runs off the pattern, or split the survey) "
+    + "and upload again.");
+  flashNote("Upload blocked: " + n.toLocaleString() + " waypoints, the limit is " + maxW.toLocaleString() + ".");
+  return true;
+}
 // UPLOAD. A named function, and async, because it may have to ASK - see the chart-model branch.
 async function doUpload(){
  try{
   const wps = mission.waypoints || [];
   if(!wps.length){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }   // the server refuses it in words
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
+  if(routeTooLong(wps.length)) return;                // the saved plan itself - and before the question below
   if(!nogo.ready){
     // ⚠ WITHOUT THE CHART MODEL NOTHING IS CHECKED, AND THAT USED TO GO OUT SILENTLY (review #4,
     // 2026-09-14). The raw survey waypoints were sent with no routed approach and no detours, and
@@ -8472,6 +8487,7 @@ async function doUpload(){
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
   const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
+  if(routeTooLong(plan.route.length)) return;         // the approach and the detours count too
   runRoute = plan.route; setPlanIntent("survey", plan, plan.route);                          // drawn so the operator sees the real path
   runUnsafe = plan.unroutable || [];
   const added = plan.route.length - wps.length;

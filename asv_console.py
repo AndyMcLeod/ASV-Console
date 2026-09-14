@@ -442,6 +442,21 @@ def apply_port():
     return p
 
 ARRIVAL_DEFAULT_M = 2.0
+# THE MOST WAYPOINTS ONE COMMAND'S ROUTE MAY CARRY - a sanity bound on a request, not a vessel
+# limit, and a route over it is REFUSED WHOLE (review #9, 2026-09-14). It was 1000 and the rest
+# were dropped without a word; the session logs hold nine uploads cut that way, the largest
+# 6,435 waypoints (2026-08-01). Sized at three times that. Published on the state so the page
+# can say so before it draws a plan the vessel would not take.
+ROUTE_MAX_WPTS = 20000
+
+
+def too_many_wpts(n, limit, what="route"):
+    """The refusal for a route (or a saved plan) over ROUTE_MAX_WPTS - one wording everywhere."""
+    return ("the %s has %d waypoints and the console takes at most %d - nothing was sent to the "
+            "vessel, because a route is refused whole rather than cut short; reduce the plan and "
+            "upload again" % (what, n, limit))
+
+
 NOGO_BUFFER_DEFAULT_M = 3.0
 UNDER_KEEL_CLEARANCE_M = 0.9
 # Minimum navigable water depth (m) for the active vessel = draft + under-keel
@@ -3672,6 +3687,8 @@ class Engine:
             # the raw mission waypoints when no routed plan is supplied.
             wpts = self._sanitize_route(route) if route else (m.get("waypoints") or [])
             self._require(len(wpts) >= 1, "add at least one waypoint first")
+            # The saved plan's own waypoints (an upload with no route) meet the same bound.
+            self._require(len(wpts) <= ROUTE_MAX_WPTS, too_many_wpts(len(wpts), ROUTE_MAX_WPTS, "saved plan"))
             completion = plan_completion()            # a plan run honours the setting
             # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
             # console's governor re-asserts the right role on the first telemetry frame
@@ -3822,14 +3839,21 @@ class Engine:
         self._push_state()
 
     @staticmethod
-    def _sanitize_route(route, limit=1000):
+    def _sanitize_route(route, limit=None):
         """Validate a client-supplied waypoint route (ENC-aware detour path) into a
         clean list of {lat,lon} floats. Raises if malformed - the Engine never
-        forwards an unvetted route to the link."""
+        forwards an unvetted route to the link.
+
+        ⚠ NOR A PART OF ONE (review #9). This kept the first 1000 waypoints and dropped the rest:
+        HTTP 200, `wp_total` 1000, and a survey that ended wherever waypoint 1000 fell - which is
+        also where an end-of-plan Return-to-Home would have fired. See ROUTE_MAX_WPTS."""
+        limit = ROUTE_MAX_WPTS if limit is None else limit
         if not isinstance(route, list) or not route:
             raise VcuProtocolError("empty or malformed route")
+        if len(route) > limit:
+            raise VcuProtocolError(too_many_wpts(len(route), limit))
         out = []
-        for p in route[:limit]:
+        for p in route:
             try:
                 lat, lon = float(p["lat"]), float(p["lon"])
             except (TypeError, KeyError, ValueError):
@@ -4288,6 +4312,7 @@ class Engine:
             # An uploaded plan waiting for Start while the boat carries on (station-keeping or
             # paused) - the page enables Start for it even though the run reads "running".
             "plan_staged": bool(self._link is not None and self._link.plan_staged),
+            "route_max_wpts": ROUTE_MAX_WPTS,          # a longer route is refused whole (review #9)
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,

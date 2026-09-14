@@ -1244,7 +1244,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    changes what the boat is doing: under way on a plan it is refused (Hold or Stop first);
    station-keeping or paused, the plan is **staged** and the boat carries on until Start. With no
    position fix Upload refuses; with the chart model not loaded it asks first (in the simulator
-   too) and keeps an UNROUTED banner up. The transit is
+   too) and keeps an UNROUTED banner up. A plan goes whole or not at all: one whose routed path
+   is longer than the console's waypoint limit is blocked before anything is sent, and the
+   banner gives both numbers (the console used to keep the first 1000 waypoints and drop the
+   rest). The transit is
    routed clear of obstacles at Upload; **completion** (command bar) sets what happens
    at the end — **RTH** (chain the ENC-routed Return-to-Home and station-keep at home;
    the default), **Complete** (stop), **Loiter** (station-keep at the last waypoint), or

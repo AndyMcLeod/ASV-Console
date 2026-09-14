@@ -63,6 +63,12 @@ against this file trimmed to its in-process part, 8/8 caught, each by the check 
   * Stop / Pause / Start / E-STOP / disarm / _run_route not marking the command
                                           -> caught by 15 / 15b / 15c / 15d / 15e / 15f
 
+TEETH for 3c and 16 (review #9, the route waypoint limit) - 4 mutations RUN in a scratch clone, 4/4 caught:
+  * the route cut short again with no refusal            -> caught by 3c
+  * the limit back to 1000                               -> caught by 3c (it must fit the largest plan logged)
+  * the saved plan's bound removed                       -> caught by 16
+  * the state stops publishing the limit                 -> caught by 3c
+
 Harness rules as estop_chain: every condition is a THUNK and a throw is a failed check;
 the server's output goes to a temp file and the last check reads it.
 """
@@ -229,6 +235,23 @@ try:
     check("2. a transit is REFUSED while disarmed - it is a behaviour, so it is arm-gated",
           lambda: bool(r.get("error")) and "ARM" in r["error"].upper(),
           str(r.get("error"))[:60])
+
+    # 3c. A ROUTE OVER THE CONSOLE'S WAYPOINT LIMIT IS REFUSED WHOLE, IN WORDS (review #9). It kept the
+    # first 1000 waypoints and dropped the rest with a 200 - nine uploads in the session logs were cut
+    # that way, the largest 6,435. Asked while still DISARMED so neither route can run: the one over the
+    # limit must be stopped by the ROUTE check, and the one AT it must get past that check to the arm
+    # gate - the pair is what shows the bound applied is the bound the state publishes.
+    lim = state(port).get("route_max_wpts")
+    mk = lambda n: [{"lat": spawn0[0] + i * 1e-6, "lon": spawn0[1]} for i in range(n)]
+    r_over = cmd(port, "/api/cmd/transit", {"route": mk(lim + 1)}) if isinstance(lim, int) else {}
+    r_at = cmd(port, "/api/cmd/transit", {"route": mk(lim)}) if isinstance(lim, int) else {}
+    check("3c. a route over the console's waypoint limit is REFUSED WHOLE in words, and one AT it passes the "
+          "route check - the limit the state publishes is the one applied, and it fits the largest plan logged",
+          lambda: isinstance(lim, int) and lim >= 6435
+          and ("%d waypoints" % (lim + 1)) in str(r_over.get("error"))
+          and "refused whole" in str(r_over.get("error"))
+          and "ARM" in str(r_at.get("error")).upper() and "waypoints" not in str(r_at.get("error")),
+          lambda: "limit=%s; over: %s; at: %s" % (lim, str(r_over.get("error"))[:80], str(r_at.get("error"))[:40]))
 
     cmd(port, "/api/cmd/arm", {"on": True})
     r_bad = cmd(port, "/api/cmd/transit", {"route": [{"lat": "abc", "lon": 0}]})
@@ -487,6 +510,34 @@ try:
     check("15f. ... and a Go-To from rest reads RUNNING - not 'complete', which is what a frame from before "
           "it made of a run that had just started",
           lambda: seen == ["running"], "run after the Go-To: %s" % seen)
+
+    # 16. ... AND THE SAVED PLAN MEETS THE SAME BOUND (review #9). An upload with no route sends the
+    # saved plan's own waypoints, which never passed the route check. In-process, with the store
+    # stubbed, so no plan file is written to make one this long.
+    E.stop()
+    time.sleep(0.4)
+    real_load = _C.load_mission
+    lim = _C.ROUTE_MAX_WPTS
+    pts = lambda n: [{"lat": far[0] + i * 1e-6, "lon": far[1]} for i in range(n)]
+    try:
+        _C.load_mission = lambda: {"waypoints": pts(lim + 1)}
+        try:
+            E.upload()
+            over_err = None
+        except _C.VcuProtocolError as e:
+            over_err = str(e)
+        _C.load_mission = lambda: {"waypoints": pts(lim)}
+        try:
+            E.upload()
+            at_err = None
+        except _C.VcuProtocolError as e:
+            at_err = str(e)
+    finally:
+        _C.load_mission = real_load
+    check("16. an upload of a SAVED plan over the limit is refused whole in words, and one at the limit is taken",
+          lambda: over_err is not None and ("saved plan has %d waypoints" % (lim + 1)) in over_err
+          and at_err is None and E.wp_total == lim,
+          "over: %s; at: %s, wp_total=%s" % ((over_err or "taken")[:60], at_err or "taken", E.wp_total))
 finally:
     try:
         E.disconnect()

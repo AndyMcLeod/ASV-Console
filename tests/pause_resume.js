@@ -423,9 +423,13 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const render = () => {}, setViolations = () => {}, clearViolation = () => {};
     const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
     const setPlanIntent = (kind) => { planIntent = { kind, why: [] }; };
-    const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon })),
+    let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan
+    const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
+                                                   .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
                                           unroutable: [], degraded: !nogo.ready });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
+    // eslint-disable-next-line no-eval
+    const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval
     const stagedNote = eval("(" + grab("stagedNote") + ")");
     // eslint-disable-next-line no-eval
@@ -451,6 +455,33 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     check("1f. a loaded model routes as it always did - no question asked",
           () => asked === null && calls.length === 1 && !!calls[0].b && Array.isArray(calls[0].b.route),
           () => "asked=" + !!asked + " " + JSON.stringify(calls.map((c) => c.p)));
+
+    // 1h-1j. A PLAN OVER THE CONSOLE'S WAYPOINT LIMIT IS NEVER SENT (review #9). The server kept the
+    // first 1000 waypoints and dropped the rest with a 200; it refuses the whole route now and
+    // publishes `route_max_wpts`, which doUpload checks before it draws or sends anything.
+    // TEETH, sidecar ASV_HTML, 5 mutations, 5 killed:
+    //   routeTooLong never blocks                          -> 1h, 1i
+    //   the ROUTED check removed (the plan fits, its route does not) -> 1h
+    //   the saved-plan check removed (the unrouted branch asks and sends) -> 1i
+    //   the plan drawn as the run before the check         -> 1h
+    //   a plan AT the limit blocked (< for <=)             -> 1h, 1j
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; S.route_max_wpts = 2; detour = true; });
+    check("1h. a plan whose ROUTE is over the console's waypoint limit is not sent and not drawn as the run - "
+          + "blocked in words, with both numbers",
+          () => calls.length === 0 && runRoute === null && /UPLOAD BLOCKED/.test(banners.join(" "))
+                && /3 waypoints/.test(banners.join(" ")) && /at most 2\b/.test(banners.join(" ")),
+          () => "sent=" + calls.length + " runRoute=" + JSON.stringify(runRoute) + " banner: " + (banners[0] || "none"));
+    await up(() => { nogo = { ready: false, busy: false, band: null, note: "extract failed" }; answer = true;
+                     S.route_max_wpts = 1; detour = false; });
+    check("1i. ... and the unrouted upload of a saved plan over it is blocked before it is even asked about",
+          () => calls.length === 0 && asked === null && /UPLOAD BLOCKED/.test(banners.join(" ")),
+          () => "sent=" + calls.length + " asked=" + !!asked + " banner: " + (banners[0] || "none"));
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; S.route_max_wpts = 2; detour = false; });
+    check("1j. ... and a route AT the limit goes as it always did",
+          () => calls.length === 1 && !!calls[0].b && Array.isArray(calls[0].b.route) && calls[0].b.route.length === 2
+                && banners.length === 0,
+          () => "sent=" + JSON.stringify(calls.map((c) => [c.p, c.b && c.b.route && c.b.route.length])));
+    delete S.route_max_wpts;
   }
   {
     const els = { "#confirm": { style: {} }, "#confirmTtl": {}, "#confirmMsg": {}, "#confirmYes": {}, "#confirmNo": {} };
