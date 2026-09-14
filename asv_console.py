@@ -3472,6 +3472,10 @@ class Engine:
         self.wp_index = 0
         self.wp_total = 0
         self._misses = 0
+        # THE COMMAND GENERATION. Bumped, under the lock, by every command that changes what the
+        # run is doing; the telemetry loop notes it before it asks the link for a frame, and a
+        # frame read before a command is never applied after it - see _commanded and _run.
+        self._cmd_gen = 0
         # Identity of the current link session. A fresh value on every connect() -
         # and Reset reconnects - so the browser can tell a power-cycle from a resume
         # and drop the stale trail (see checkBoot in asv.html). Starts at BOOT_ID.
@@ -3586,6 +3590,11 @@ class Engine:
         if not cond:
             raise VcuProtocolError(msg)
 
+    def _commanded(self):
+        """Mark a command that changes what the run is doing. Call it UNDER THE LOCK, in the
+        block that commands the link, so the telemetry loop drops any frame it read before it."""
+        self._cmd_gen += 1
+
     def set_home_provider(self, fn):
         """Inject the ROC tracker's home_intent getter (see main())."""
         self.home_provider = fn
@@ -3603,6 +3612,7 @@ class Engine:
                 self.run = "idle"
                 if link:
                     link.set_neutral()
+                self._commanded()
                 self.note = "SAFE (disarmed)."
         self._push_state()
 
@@ -3758,6 +3768,7 @@ class Engine:
                 self.run_completion = self._staged_completion or plan_completion()
             link.start()
             self.run = "running"
+            self._commanded()
             if resuming:
                 self.note = "Resumed."
             else:
@@ -3798,6 +3809,7 @@ class Engine:
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
                              hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
             link.start()
+            self._commanded()
             self.plan_uploaded = True
             # goto/rth/hold/transit always station-keep at their own endpoint. This is
             # the RUN's completion only - the operator's end-of-plan setting is untouched.
@@ -4002,6 +4014,7 @@ class Engine:
             if link:
                 link.pause()
             self.run = "paused"
+            self._commanded()
             self.note = "Paused (next waypoint held)."
         self._push_state()
 
@@ -4012,6 +4025,7 @@ class Engine:
             if link:
                 link.stop()
             self.run = "stopped"
+            self._commanded()
             self.note = "Stopped - run plan aborted."
         self._push_state()
 
@@ -4021,6 +4035,7 @@ class Engine:
             self.estop = bool(on)
             if link:
                 link.estop(bool(on))
+            self._commanded()
             if on:
                 self.armed = False
                 self.run = "idle"
@@ -4111,6 +4126,7 @@ class Engine:
             last = now
             with self._lock:
                 link = self._link
+                gen = self._cmd_gen
             if link is None:
                 continue
             try:
@@ -4123,7 +4139,19 @@ class Engine:
             # two in opposite orders anywhere would deadlock the telemetry loop.
             intent = self.home_provider() if self.home_provider else None
             with self._lock:
-                if telem:
+                if telem and gen != self._cmd_gen:
+                    # ⚠ A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT. The link is asked
+                    # for its frame OUTSIDE the lock - a real link's read can block, and a Stop must
+                    # not wait on it - so a command can land between that read and this block.
+                    # Applied, the frame put the run back the way it was: a Stop read "running" for
+                    # 0.45 s and then "complete", never "stopped" (review #8, reproduced in-process).
+                    # For a holding boat that carried running + holding to the page's end-of-plan RTH
+                    # chain, past the re-approach gate, and into the moving-home chase below, which
+                    # uploads and STARTS the link. The link did answer, so this is not a miss; the
+                    # next frame is read after the command and describes it.
+                    self._misses = 0
+                    self.link = self.LINK_OK
+                elif telem:
                     self._misses = 0
                     self.link = self.LINK_OK
                     self.status = telem

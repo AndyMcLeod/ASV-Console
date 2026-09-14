@@ -56,6 +56,13 @@ results; the runner scores a missing anchor as SKIP and a crash as its own outco
   * connect stops forcing a fresh link SAFE          -> caught by 9 (reset's internal
     reconnect carries the running boat's armed state across) and 13
 
+TEETH for 15-15f (the frame race, found fixing review #8) - 8 mutations RUN in a scratch clone
+against this file trimmed to its in-process part, 8/8 caught, each by the check written for it:
+  * the stale-frame check removed from Engine._run      -> caught by 15, 15b, 15c, 15d, 15e, 15f
+  * the generation read AFTER the tick, not before      -> caught by 15, 15b, 15c, 15d, 15e, 15f
+  * Stop / Pause / Start / E-STOP / disarm / _run_route not marking the command
+                                          -> caught by 15 / 15b / 15c / 15d / 15e / 15f
+
 Harness rules as estop_chain: every condition is a THUNK and a throw is a failed check;
 the server's output goes to a temp file and the last check reads it.
 """
@@ -386,6 +393,105 @@ check("14. the console logged NO exception while serving those requests",
       not tb,
       ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
       else "an answered request can still kill its handler")
+
+# ── 15-15f. A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT (found fixing review #8) ──
+#
+# Engine._run asks the link for its frame OUTSIDE the lock and applies it under the lock, so a
+# command could land in between and be overwritten by a frame that described the boat before it:
+# a Stop read "running" for 0.45 s and then "complete", never "stopped" - and for a holding boat
+# that fed running + holding to the page's RTH chain, the re-approach gate and the moving-home
+# chase. Nothing over HTTP puts a command in that window on demand, so this part is IN-PROCESS: a
+# SimVcu whose tick() fires the command after computing its frame - exactly the interleaving the
+# loop allows - with the run state sampled every 5 ms from the moment the command returns.
+import importlib.util as _ilu
+
+_spec = _ilu.spec_from_file_location("engine_under_test", os.path.join(APP, "asv_console.py"))
+_C = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_C)
+
+
+class _RacyVcu(_C.SimVcu):
+    fire = None                       # a command to land between the frame's read and its use
+    fired = False
+    error = None
+
+    def tick(self, dt):
+        t = super().tick(dt)
+        if _RacyVcu.fire is not None:
+            f, _RacyVcu.fire = _RacyVcu.fire, None
+            try:
+                f()
+            except Exception as e:    # a refused command is the fixture failing, not the race
+                _RacyVcu.error = e
+            _RacyVcu.fired = True
+        return t
+
+
+def _states_after(eng, command, secs=0.8):
+    """Fire `command` from inside the link's tick; every run state seen once it has returned."""
+    _RacyVcu.fired, _RacyVcu.error = False, None
+    _RacyVcu.fire = command
+    t0 = time.time()
+    while not _RacyVcu.fired and time.time() - t0 < 3.0:
+        time.sleep(0.001)
+    seen, t1 = [], time.time()
+    while time.time() - t1 < secs:
+        r = eng.run
+        if not seen or seen[-1] != r:
+            seen.append(r)
+        time.sleep(0.005)
+    return seen + (["(command raised: %s)" % _RacyVcu.error] if _RacyVcu.error else [])
+
+
+_C.SimVcu = _RacyVcu
+E = _C.Engine()
+try:
+    E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+    t0 = time.time()
+    while (E.status or {}).get("lat_deg") is None and time.time() - t0 < 20:
+        time.sleep(0.1)
+    E.set_armed(True)
+    far = ((E.status or {}).get("lat_deg", 0.0) + 0.003, (E.status or {}).get("lon_deg", 0.0))  # ~330 m
+
+    def under_way():
+        E.go_to(*far)
+        t0 = time.time()
+        while not (E.run == "running" and (E.status.get("sog_kn") or 0.0) > 0.5) and time.time() - t0 < 10:
+            time.sleep(0.05)
+        return E.run == "running"
+
+    ok = under_way()
+    seen = _states_after(E, E.stop)
+    check("15. a Stop landing between the link's frame and its use reads STOPPED from then on - the frame "
+          "from before it is dropped, not applied",
+          lambda: ok and seen == ["stopped"], "under way=%s; run after the Stop: %s" % (ok, seen))
+    ok = under_way()
+    seen = _states_after(E, E.pause)
+    check("15b. ... a Pause reads PAUSED", lambda: ok and seen == ["paused"],
+          "under way=%s; run after the Pause: %s" % (ok, seen))
+    seen = _states_after(E, E.start)
+    check("15c. ... a Start from that pause reads RUNNING", lambda: seen == ["running"],
+          "run after the Start: %s" % seen)
+    seen = _states_after(E, lambda: E.set_estop(True))
+    check("15d. ... an E-STOP reads IDLE", lambda: seen == ["idle"], "run after the E-STOP: %s" % seen)
+    E.set_estop(False)
+    E.set_armed(True)
+    ok = under_way()
+    seen = _states_after(E, lambda: E.set_armed(False))
+    check("15e. ... a disarm reads IDLE", lambda: ok and seen == ["idle"],
+          "under way=%s; run after the disarm: %s" % (ok, seen))
+    E.set_armed(True)
+    E.stop()
+    time.sleep(0.6)
+    seen = _states_after(E, lambda: E.go_to(*far))
+    check("15f. ... and a Go-To from rest reads RUNNING - not 'complete', which is what a frame from before "
+          "it made of a run that had just started",
+          lambda: seen == ["running"], "run after the Go-To: %s" % seen)
+finally:
+    try:
+        E.disconnect()
+    except Exception:
+        pass
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))

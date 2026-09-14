@@ -55,11 +55,29 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#8 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#8 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #8 - NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE BLIND.**
+**NEWEST, 2026-09-14: A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT (found fixing review #8).**
+`Engine._run` asks the link for its frame OUTSIDE the lock (a real link's read can block, and a Stop must not wait on
+it) and applies it under the lock, so a command could land in between and be overwritten by a frame that described
+the boat before it. Reproduced in-process: a Stop read `running` for 0.45 s and then `complete`, never `stopped`.
+For a holding boat that window carried `running` + `holding` to the page's end-of-plan RTH chain, past #8's
+re-approach gate, and into the moving-home chase in `_run`, which uploads and STARTS the link with no page involved.
+
+* `Engine._cmd_gen`, bumped by `_commanded()` under the lock in stop / pause / start / set_estop / set_armed(off) /
+  `_run_route`. `_run` notes it before `link.tick()` and drops the frame if it moved - not a link miss; the next
+  frame is read after the command.
+* Upload, amend and the speed/approach tuning do NOT mark: a frame from before them changes no run state, only
+  `wp_total` / `speed_key` for one 250 ms frame. Connect/disconnect replace the link and join the old thread.
+* Tests: run_link_control.py 15-15f, IN-PROCESS - a SimVcu subclass fires each command from inside `tick()`, the
+  only way to put it in that window on demand. TEETH: 8 mutations in a scratch clone against the suite trimmed to
+  that part, 8 killed, each by its own check. The tech manual's Engine section says why, and its run-state and
+  behavior lists now include `stopped` and `escape`.
+* Next up after approval: #9, routes over 1000 waypoints are silently cut off.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #8 - NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE BLIND.**
 Reported: `SimVcu` kept `_holding` through Stop, E-STOP and a disarm, and `Engine.reapproach` took any boat that
 said holding - Go-To, hold, Stop, re-approach: HTTP 200 and 3.9 kn. hold_station.py 11b failed 4 runs in 6 because
 its Stop was a GET (404): the boat was never stopped, and 11b passed only if the re-approach had not yet landed.
@@ -77,13 +95,13 @@ renamed every resume "survey", so a paused escape came back CHAINABLE - the East
 * Page unchanged: Pause then Resume on a holding boat now puts her back on station at LOW, under the same run.
 * Tests: hold_station.py 7f-7i (in-process), 11b made a POST and tightened, 11e-11g over the API. TEETH: 11
   scratch-clone mutations, 11 killed. README item 5, the operations manual's Pause/Stop table and the tech manual updated.
-* ⚠ OPEN - FOUND AND REPRODUCED, NOT FIXED: a telemetry frame read BEFORE a command can be applied AFTER it.
+* FIXED IN THE NEXT COMMIT (see NEWEST): a telemetry frame read BEFORE a command could be applied AFTER it.
   `Engine._run` calls `link.tick()` outside the lock and applies the frame under it, so a Stop landing in between
   is overwritten: the run read `running` for 0.45 s and then `complete`, never `stopped` (reproduced with a SimVcu
   subclass whose tick() calls `engine.stop()` after computing its frame). For a holding boat that window carries
   `running` + `holding` to the page's RTH chain and past the new re-approach gate. Proposed: a command generation
   counter the poll loop checks before applying a frame.
-* Next up after approval: that race, if Andy wants it first; otherwise #9, routes over 1000 waypoints silently cut off.
+* Committed and pushed as `92601279`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #7 - THE ESCAPE WORKS FROM INSIDE THE BUFFER, AND AWAY FROM TROUBLE.**
 Two faults in `escapeCourse` (static/js/guard.js), both measured first: from INSIDE the buffer `timeToEntry`
