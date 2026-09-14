@@ -36,6 +36,16 @@ TEETH - mutations RUN, and the checks each one turned red:
     Engine.reapproach loses its holding gate                            -> 11
     hold_clear_m validation dropped (float() raw -> a 500)              -> 13
     telemetry stops publishing `hold`                                   -> 1, 12
+  review #8, 11 mutations in a scratch clone, 11 killed:
+    Stop / E-STOP / a disarm each keep the hold (three mutations)       -> 7f, 7f, 7f
+    start() clears the hold again                                       -> 7g, 11f
+    start() does not restart a finished plan                            -> 7h
+    the tick's no-leg-no-hold branch removed                            -> 7i
+    Engine.start renames a resume "survey"                              -> 11f
+    the run gate removed from _run_route                                -> 11e, 11f
+    the re-approach not marked continuing                               -> 11e, 11f
+    E-STOP keeps the hold AND the run gate removed                      -> 7f, 11e, 11f, 11g
+    11b's Stop back to a GET (the 404 that made it timing-dependent)   -> 11b
 
 ⚠ THIS SUITE'S check() TAKES A VALUE, not a thunk - the same harness shape as currents.py.
 A lambda passed as `cond` is an object and always truthy. Values here.
@@ -246,6 +256,83 @@ check("7e. ... and an IDLE vessel takes an upload at once, exactly as before",
       not v.plan_staged and t["wp_total"] == 2 and not t["running"],
       "staged=%s wp_total=%s running=%s" % (v.plan_staged, t["wp_total"], t["running"]))
 
+# 7f-7i. NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE WITH NOTHING TO
+#    STEER FOR (review #8, 2026-09-14). `_holding` survived Stop, E-STOP and a disarm, so the telemetry
+#    went on saying "holding" and the console took a re-approach that restarted a stopped boat. And
+#    start() cleared it unconditionally with the waypoint index at the END of the plan, so a resumed
+#    hold, a finished run started again and an E-STOPped hold started again all drove off on their
+#    heading at the commanded speed - 7 to 19 m in 6 s, nothing steering.
+ends = {}
+for name, halt in (("Stop", lambda b: b.stop()), ("E-STOP", lambda b: b.estop(True)),
+                   ("disarm", lambda b: b.set_neutral())):
+    v, _ = _holding_boat(3.0)
+    r = _set_off(v, 1.0, 90.0, 30.0, disc=3.0)          # set off beyond the disc: the request is UP
+    halt(v)
+    _C.CURRENTS = _FakeCurrents(0.0, 0.0)
+    t = v.tick(0.1)
+    ends[name] = (r["tel"]["hold_wants_route"], t["holding"], t["hold"], t["hold_wants_route"])
+check("7f. Stop, E-STOP and a disarm each leave the boat NOT station-keeping - no hold, no request for "
+      "a route back",
+      all(w and not h and hp is None and not wr for (w, h, hp, wr) in ends.values()),
+      "; ".join("%s: wants_route %s before, then holding=%s hold=%s wants_route=%s" % ((k,) + e)
+                for k, e in ends.items()))
+
+v, _ = _holding_boat(None)
+_C.CURRENTS = _FakeCurrents(0.0, 0.0)
+v.pause()
+for _ in range(10):
+    v.tick(0.1)
+v.start()
+peak = 0.0
+for _ in range(60):                       # the 6 s the drive-off was measured over
+    t = v.tick(0.1)
+    peak = max(peak, v.sog_kn)
+check("7g. a PAUSED station-keeping boat that is started again keeps station - it does not drive off on "
+      "its heading with nothing to steer for",
+      # `is not None`, NOT `or`: a boat exactly on station reads 0.0, and `0.0 or 99` is 99.
+      t["holding"] and t["hold"] == HP and t["off_station_m"] is not None and t["off_station_m"] < 2.5
+      and peak < 0.5,
+      "holding=%s off=%s m, peak %.2f kn" % (t["holding"], t["off_station_m"], peak))
+
+A1 = {"lat": HP["lat"] + 0.0002, "lon": HP["lon"]}                      # ~22 m north of the start
+v = _C.SimVcu(HP["lat"], HP["lon"])
+_C.CURRENTS = _FakeCurrents(0.0, 0.0)
+v.upload_plan([HP, A1], 2.0, "low", 1.0, completion="complete")
+v.start()
+for _ in range(1200):
+    t = v.tick(0.1)
+    if not t["running"]:
+        break
+for _ in range(40):                       # let the way come off where it finished
+    t = v.tick(0.1)
+finished = t["running"] is False and t["wp_index"] == 2
+d0 = _C.range_bearing(v.lat, v.lon, HP["lat"], HP["lon"])[0]
+v.start()
+t = v.tick(0.1)
+restarted_at = t["wp_index"]
+closest = d0
+# 60 s, not the 6 s of the drive-off: she is pointing AWAY from waypoint 1 when she finishes, and a
+# turn-rate-limited U-turn carries her further off before she comes back (6 s read 23.9 -> 27.0 m).
+for _ in range(600):
+    t = v.tick(0.1)
+    closest = min(closest, _C.range_bearing(v.lat, v.lon, HP["lat"], HP["lon"])[0])
+check("7h. a plan run to its END and started again runs again from its FIRST waypoint - she turns back "
+      "and reaches it, not off on the last heading",
+      finished and restarted_at == 0 and closest < 3.0,
+      "finished=%s; after Start wp_index=%s, closest to waypoint 1 in 60 s %.1f m (from %.1f)"
+      % (finished, restarted_at, closest, d0))
+
+v = _C.SimVcu(HP["lat"], HP["lon"])
+_C.CURRENTS = _FakeCurrents(0.0, 0.0)
+v.upload_plan([HP], 2.0, "high", 1.0, completion="loiter")
+v._running, v._holding, v._wp_index = True, False, 1          # the state start() used to leave
+peak = 0.0
+for _ in range(40):
+    v.tick(0.1)
+    peak = max(peak, v.sog_kn)
+check("7i. ... and the tick itself makes no way with no leg left and no hold to keep, whatever put it there",
+      peak < 0.05, "peak %.2f kn at waypoint 1 of 1, not holding" % peak)
+
 
 # --- 8-13: the engine over a real console ------------------------------------------- #
 def free_port():
@@ -338,13 +425,72 @@ try:
           "(behavior 'goto', not renamed a Go-To of its own)",
           code == 200 and s["behavior"] == "goto" and "re-approaching" in (s.get("note") or ""),
           "code %s behavior=%s note=%r" % (code, s["behavior"], (s.get("note") or "")[:60]))
-    api(port, "/api/cmd/stop")
+    # ⚠ {} MAKES IT A POST. With no body api() sends a GET, which 404s - so for as long as this line
+    # read `api(port, "/api/cmd/stop")` the boat was never stopped, and 11b passed only when the
+    # re-approach above had not yet brought her back onto station: it failed 4 runs in 6 (review #8).
+    api(port, "/api/cmd/stop", {})
     time.sleep(0.4)
     code, r = api(port, "/api/cmd/reapproach", {"route": back})
-    check("11b. ... and REFUSED (409, in words) when the vessel is not station-keeping - a "
-          "route arriving then is a command nobody gave",
-          code == 409 and "not station-keeping" in (r.get("error") or ""),
-          "code %s error=%r" % (code, r.get("error")))
+    s = state(port)
+    check("11b. ... and REFUSED (409, in words) after a Stop - the vessel is not station-keeping, and "
+          "a route arriving then is a command nobody gave",
+          code == 409 and "not station-keeping" in (r.get("error") or "") and s["run"] == "stopped"
+          and not s["status"].get("holding"),
+          "code %s error=%r run=%s holding=%s" % (code, r.get("error"), s["run"], s["status"].get("holding")))
+
+    # 11e-11g. A RE-APPROACH CONTINUES A RUN THAT IS UNDER WAY, AND NOTHING ELSE (review #8).
+    def hold_at(pt, cmd_path):
+        api(port, cmd_path, {"lat": pt["lat"], "lon": pt["lon"], "route": [pt], "hold_clear_m": 6.0})
+        s = None
+        for _ in range(120):
+            s = state(port)
+            h = s["status"].get("hold")
+            if s["status"].get("holding") and h and abs(h["lat"] - pt["lat"]) < 1e-6:
+                return True, s
+            time.sleep(0.25)
+        return False, s
+
+    tgt8 = {"lat": lat + 0.00006, "lon": lon}
+    held8, _ = hold_at(tgt8, "/api/cmd/escape")
+    api(port, "/api/cmd/pause", {})
+    time.sleep(0.4)
+    code_p, r_p = api(port, "/api/cmd/reapproach", {"route": [tgt8], "hold_clear_m": 6.0})
+    s_p = state(port)
+    check("11e. a PAUSED station-keeping run takes no re-approach - it would un-pause the boat, and "
+          "resuming is the operator's",
+          held8 and code_p == 409 and "not under way" in (r_p.get("error") or "") and s_p["run"] == "paused",
+          "held=%s code %s error=%r run=%s" % (held8, code_p, (r_p.get("error") or "")[:50], s_p["run"]))
+    code_r, _ = api(port, "/api/cmd/start", {})
+    time.sleep(1.5)
+    s_r = state(port)
+    check("11f. ... and RESUMED it is the same run: an escape stays 'escape', still holding its point - "
+          "renamed 'survey' it became a run the page chains Return-to-Home from",
+          code_r == 200 and s_r["run"] == "running" and s_r["behavior"] == "escape"
+          and s_r["status"].get("holding") and (s_r["status"].get("hold") or {}).get("lat") == tgt8["lat"],
+          "start %s run=%s behavior=%s holding=%s" % (code_r, s_r["run"], s_r["behavior"],
+                                                      s_r["status"].get("holding")))
+    api(port, "/api/cmd/estop", {"on": True})
+    time.sleep(0.3)
+    api(port, "/api/cmd/estop", {"on": False})
+    api(port, "/api/cmd/arm", {"on": True})
+    time.sleep(0.4)
+    code_e, r_e = api(port, "/api/cmd/reapproach", {"route": [tgt8], "hold_clear_m": 6.0})
+    tgt9 = {"lat": lat + 0.00003, "lon": lon}
+    held9, _ = hold_at(tgt9, "/api/cmd/goto")
+    api(port, "/api/cmd/arm", {"on": False})
+    time.sleep(0.3)
+    api(port, "/api/cmd/arm", {"on": True})
+    time.sleep(0.4)
+    code_d, r_d = api(port, "/api/cmd/reapproach", {"route": [tgt9], "hold_clear_m": 6.0})
+    time.sleep(1.0)
+    s_d = state(port)
+    check("11g. after an E-STOP, or a disarm, the boat re-armed takes no re-approach and makes no way - the "
+          "run ended with the command",
+          held9 and code_e == 409 and code_d == 409 and s_d["run"] == "idle"
+          and (s_d["status"].get("sog_kn") or 0.0) < 0.3,
+          "E-STOP: %s %r; disarm: held=%s %s %r; run=%s sog=%s" % (
+              code_e, (r_e.get("error") or "")[:40], held9, code_d, (r_d.get("error") or "")[:40],
+              s_d["run"], s_d["status"].get("sog_kn")))
 
     # 11c-11d. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3), over the real engine.
     tgt3 = {"lat": lat + 0.0003, "lon": lon}                   # ~33 m north

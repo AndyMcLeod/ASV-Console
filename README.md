@@ -1269,6 +1269,15 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.
 
+   **None of them leaves a boat station-keeping behind your back.** Stop, E-STOP and a
+   disarm end the hold along with the run, and the console's routed way back onto station
+   (the re-approach) is accepted only while a run is under way — so nothing can restart a
+   boat you have stopped. A station-keeping boat that is paused and resumed goes back to
+   keeping station under the run it was on: an in-extremis escape stays an escape, and never
+   becomes a run the end-of-plan Return-to-Home chains from. And Start on a plan that has
+   already run to its end runs it again from the first waypoint, rather than setting off on
+   whatever heading the boat had.
+
    **Pause is a toggle, and it flashes until it is answered.** A held run is a boat
    sitting in the tide with the prop stopped and a hole growing in its coverage, so the
    one control that ends it says so: while paused the button reads **RESUME** and blinks

@@ -2975,10 +2975,19 @@ class SimVcu(VcuLink):
             self._apply_plan(self._staged)
         if not self._plan:
             raise VcuProtocolError("no waypoints uploaded")
+        # ⚠ START NEVER LEAVES THE BOAT WITH NOTHING TO STEER FOR (review #8, 2026-09-14). This
+        # cleared `_holding` unconditionally and left `_wp_index` where it was, so a start at the
+        # END of a plan gave the tick no leg to steer and no hold to keep, and the boat drove off
+        # on whatever heading it had at the commanded speed. Measured 6 s after each Start: a
+        # paused station-keeping boat resumed (6.9 kn, 9 m off station), a finished "complete"
+        # run started again (6.9 kn, 19 m past its end), a boat E-STOPped while holding then
+        # released and started (6.9 kn, 7 m off). So a RESUMED hold is still a hold, and a plan
+        # run to its end runs again from the first waypoint - what Start after Stop always did.
+        if self._wp_index >= len(self._plan) and not self._holding:
+            self._wp_index = 0
         self._running = True
         self._paused = False
         self._estop = False
-        self._holding = False
         self._laps = 0
         self._xte_i = 0.0
         self._seg_start = {"lat": self.lat, "lon": self.lon}    # first leg: here -> wp0
@@ -2989,9 +2998,19 @@ class SimVcu(VcuLink):
 
     # A staged plan that meets Stop, E-STOP or a disarm becomes THE loaded plan rather than a
     # lost one: the operator uploaded it, and Start from rest should run it.
+    #
+    # ⚠ AND NONE OF THE THREE LEAVES THE BOAT STATION-KEEPING (review #8). `_holding` used to
+    # survive them all, so the telemetry went on saying "holding" - `hold_wants_route` still up
+    # if she had been set off - and the console took a re-approach that restarted a boat the
+    # operator had just stopped: Go-To, hold, Stop, re-approach, HTTP 200 and 3.9 kn.
+    def _end_hold(self):
+        self._holding = False
+        self._hold_wants_route = False
+
     def stop(self):
         self._running = False
         self._paused = False
+        self._end_hold()
         if self._staged is not None:
             self._apply_plan(self._staged)
         self._wp_index = 0
@@ -3001,6 +3020,7 @@ class SimVcu(VcuLink):
         self._estop = bool(on)
         if on:
             self._running = False
+            self._end_hold()
             if self._staged is not None:
                 self._apply_plan(self._staged)
             self.sog_kn = 0.0
@@ -3008,6 +3028,7 @@ class SimVcu(VcuLink):
     def set_neutral(self):
         self._running = False
         self._paused = False
+        self._end_hold()
         if self._staged is not None:
             self._apply_plan(self._staged)
         self.sog_kn = 0.0
@@ -3113,6 +3134,11 @@ class SimVcu(VcuLink):
             else:
                 target_kn = 0.0                    # beyond the certified water: no blind drive
                 self._hold_wants_route = True
+        elif moving:
+            # NO LEG LEFT AND NO HOLD TO KEEP: no way on. start() no longer leaves the link here
+            # (review #8); this makes the rule structural rather than remembered, because the
+            # speed above is set before any branch has decided there is something to steer for.
+            target_kn = 0.0
 
         # ── SPEED: ENGINE-GOVERNED RAMP, OR HULL-GOVERNED DECAY WHILE COASTING ──────────
         #
@@ -3723,26 +3749,37 @@ class Engine:
             self._require(self.armed, "ARM before starting")
             self._require(self.plan_uploaded, "upload a run plan first")
             self._require(not self.estop, "clear E-STOP first")
+            # ⚠ A RESUME IS THE SAME RUN, AND KEEPS ITS NAME (review #8). Every Start used to rename
+            # the run "survey" - so a paused ESCAPE or HOLD came back as a chainable run, and the
+            # page chains the end-of-plan Return-to-Home from a survey that is holding: straight
+            # back toward whatever the escape had just steered clear of. A staged plan is a new run.
+            resuming = self.run == "paused" and not link.plan_staged
             if link.plan_staged:
                 self.run_completion = self._staged_completion or plan_completion()
             link.start()
             self.run = "running"
-            self.behavior = "survey"
-            self.note = {"complete": "Survey started.",
-                         "loiter": "Survey started (will loiter / station-keep at the end).",
-                         "repeat": "Survey started (will repeat the route).",
-                         "rth": "Survey started (will Return-to-Home at the end)."}.get(
-                             self.run_completion, "Survey started.")
+            if resuming:
+                self.note = "Resumed."
+            else:
+                self.behavior = "survey"
+                self.note = {"complete": "Survey started.",
+                             "loiter": "Survey started (will loiter / station-keep at the end).",
+                             "repeat": "Survey started (will repeat the route).",
+                             "rth": "Survey started (will Return-to-Home at the end)."}.get(
+                                 self.run_completion, "Survey started.")
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
-    def _run_route(self, route, behavior, note, hold_clear_m=None, coast_from_m=None):
+    def _run_route(self, route, behavior, note, hold_clear_m=None, coast_from_m=None, continuing=False):
         """Arm-gated: push a behavior route to the link and run it, holding at the
         end. Shared by Go-To / Return-to-Home / Hold / Transit / the routed re-approach.
         `hold_clear_m` is the console's certified clear disc around the end point (see
         SimVcu's station-keep branch); None keeps the vessel's direct re-approach.
         `coast_from_m` is the range from the last waypoint at which to stop the prop and
-        come in on the drift (coast.js solved it); None powers in exactly as before."""
+        come in on the drift (coast.js solved it); None powers in exactly as before.
+        `continuing` marks a leg of the run in progress (the re-approach): refused unless that
+        run is still under way, and checked here, under the lock, so a Stop that lands between
+        the caller's own gates and this upload cannot be overtaken by it."""
         hold_clear_m = self._hold_clear(hold_clear_m)
         coast_from_m = self._coast_from(coast_from_m)
         with self._lock:
@@ -3750,6 +3787,9 @@ class Engine:
             self._require(link is not None, "not connected")
             self._require(self.armed, "ARM before commanding the boat")
             self._require(not self.estop, "clear E-STOP first")
+            self._require(not continuing or self.run == "running",
+                          "the run is not under way (%s) - a re-approach only continues a run in "
+                          "progress; resuming or restarting it is the operator's" % self.run)
             # The last good plan settings, never a file read that could fail a Go-To, a hold or
             # the escape - and the speed the vessel is ACTUALLY running, not a copy of it on disk.
             m = mission_params()
@@ -3840,14 +3880,20 @@ class Engine:
         IT KEEPS THE BEHAVIOUR. A Go-To would do the same driving, and would also rename a
         boat holding at HOME after a Return-to-Home as a "goto" on every card - the run is
         still the run it was; this is a leg of it. Gated on the vessel actually HOLDING,
-        because outside that state a route arriving here is a command nobody gave."""
+        because outside that state a route arriving here is a command nobody gave.
+
+        ⚠ AND ON THE RUN STILL BEING UNDER WAY (review #8), because the vessel's own flag is not
+        enough: the simulator's `holding` survived Stop, E-STOP and a disarm, and a real vessel
+        may go on reporting its last station-keeping state - so a re-approach from a stale frame
+        restarted a boat the operator had just stopped. A PAUSED run is not under way either:
+        a re-approach would un-pause it, and resuming is the operator's. See `continuing`."""
         st = self.status
         self._require(bool(st.get("holding")), "the vessel is not station-keeping")
         self._require(not self._rth_follow, "a moving home is re-targeted by the chase, not here")
         r = self._sanitize_route(route)
         self._run_route(r, self.behavior,
                         "Set off station - re-approaching on a routed path (%d wpts)." % len(r),
-                        hold_clear_m)
+                        hold_clear_m, continuing=True)
 
     def amend(self, route, note=None):
         """Deviate the RUNNING plan: replace its unflown remainder, keep everything else.

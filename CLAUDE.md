@@ -55,11 +55,37 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#7 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#8 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #7 - THE ESCAPE WORKS FROM INSIDE THE BUFFER, AND AWAY FROM TROUBLE.**
+**NEWEST, 2026-09-14: REVIEW ITEM #8 - NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE BLIND.**
+Reported: `SimVcu` kept `_holding` through Stop, E-STOP and a disarm, and `Engine.reapproach` took any boat that
+said holding - Go-To, hold, Stop, re-approach: HTTP 200 and 3.9 kn. hold_station.py 11b failed 4 runs in 6 because
+its Stop was a GET (404): the boat was never stopped, and 11b passed only if the re-approach had not yet landed.
+Found while fixing it, each measured on a sandbox server 6 s after Start: `SimVcu.start()` cleared `_holding` with
+`_wp_index` at the END of the plan, so the tick had no leg and no hold and drove the boat off on its heading at the
+commanded speed - a paused station-keeping boat resumed (6.9 kn, 9 m off), a finished "complete" run started again
+(6.9 kn, 19 m past its end), an E-STOP while holding released and started (6.9 kn, 7 m off). And `Engine.start`
+renamed every resume "survey", so a paused escape came back CHAINABLE - the Eastport escape-then-RTH loop.
+
+* SimVcu: `_end_hold()` in stop / estop(on) / set_neutral; start() keeps a resumed hold and restarts a finished plan
+  at waypoint 0; tick() has `elif moving: target_kn = 0.0` - no leg and no hold means no way on.
+* Engine: `reapproach` passes `continuing=True` and `_run_route` refuses it UNDER THE LOCK unless `run == "running"`
+  (which also refuses a PAUSED hold, where a re-approach would un-pause her). `start` keeps the behavior on a
+  resume and says "Resumed."
+* Page unchanged: Pause then Resume on a holding boat now puts her back on station at LOW, under the same run.
+* Tests: hold_station.py 7f-7i (in-process), 11b made a POST and tightened, 11e-11g over the API. TEETH: 11
+  scratch-clone mutations, 11 killed. README item 5, the operations manual's Pause/Stop table and the tech manual updated.
+* ⚠ OPEN - FOUND AND REPRODUCED, NOT FIXED: a telemetry frame read BEFORE a command can be applied AFTER it.
+  `Engine._run` calls `link.tick()` outside the lock and applies the frame under it, so a Stop landing in between
+  is overwritten: the run read `running` for 0.45 s and then `complete`, never `stopped` (reproduced with a SimVcu
+  subclass whose tick() calls `engine.stop()` after computing its frame). For a holding boat that window carries
+  `running` + `holding` to the page's RTH chain and past the new re-approach gate. Proposed: a command generation
+  counter the poll loop checks before applying a frame.
+* Next up after approval: that race, if Andy wants it first; otherwise #9, routes over 1000 waypoints silently cut off.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #7 - THE ESCAPE WORKS FROM INSIDE THE BUFFER, AND AWAY FROM TROUBLE.**
 Two faults in `escapeCourse` (static/js/guard.js), both measured first: from INSIDE the buffer `timeToEntry`
 answers 0 for every heading, so the search found nothing and the page read BOXED IN with open water straight
 behind the boat (pier face, 2 kn set, 5 m buffer: a way out at 5.5 m off, none at 4.5, 3 or 1.5 m); and the
@@ -82,7 +108,7 @@ clear after 45 s, where straight out gives 241 m).
   roughly halved the worst case but was not taken - more safety logic to pin for a stress-chart saving.
 * Tests: in_extremis.js 10b-10h; clearance_guard.js 15q (driven through the helm rung). TEETH: 7 scratch-clone
   mutations of guard.js, 7 killed; 2 sidecar mutations of the banner, 2 killed.
-* Next up after approval: #8, Stop / E-stop / disarm leave the vessel's station-keeping state set.
+* Committed and pushed as `bc53c1d3`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #6 - A COMMAND IS CHECKED, NOT ASSUMED.**
 Every speed sender assumed its POST had worked: the governor set `commandedSpeed` before the answer, the

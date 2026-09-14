@@ -316,10 +316,11 @@ c.push(B("`Start` — begins the run. Needs armed, a plan uploaded, no E-STOP. I
 c.push(B("Monitor — waypoint progress, the RUN block, the track, energy, and the water."));
 c.push(H2("11.3  Pause, Stop, E-STOP"));
 c.push(TBL(["Control", "Does", "Recover by"], [
-  ["`Pause`", "Holds position, keeps the next waypoint active", "`Start` resumes"],
+  ["`Pause`", "Holds position, keeps the next waypoint active. A vessel that was station-keeping goes back to it when resumed.", "`Start` resumes"],
   ["`Stop`", "Aborts the run and reverts to the first waypoint", "Re-Upload and Start"],
   ["`E-STOP`", "Latches a command-side motor cut and force-disarms", "Clear E-STOP, then re-arm"],
 ], [1300, 5060, 3000]));
+c.push(P("Stop, E-STOP and a disarm each end station-keeping along with the run: nothing the console does afterwards will set the vessel moving again until you command it. Start on a plan that has already run to its end runs it again from its first waypoint."));
 c.push(H2("11.4  What you should be watching"));
 c.push(B("THE WATER, first. Everything below is secondary to that."));
 c.push(B("The RUN block's status line and percent — the fastest read on whether the run is progressing."));
