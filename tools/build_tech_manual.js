@@ -245,7 +245,8 @@ c.push(TBL(["Document", "Audience", "Covers"], [
   ["`README.md`", "Operators, new readers", "What it is, running it, and a walkthrough of every feature"],
   ["`README_SIM.md`", "Operators", "The simulation model, command flow, endpoints, mission walkthrough"],
   ["`README_PLAYBACK.md`", "Operators", "Session recording and the read-only playback view"],
-  ["`CLAUDE.md`", "Maintainers", "Design decisions, durable gotchas, and the session log"],
+  ["`CLAUDE.md`", "Maintainers", "Design decisions, durable gotchas, and the session log from 2026-09-05 on"],
+  ["`HANDOFF_ARCHIVE.md`", "Maintainers", "The handoffs and session notes from before 2026-09-05, moved out of CLAUDE.md verbatim"],
 ], [2400, 2100, 4860]));
 c.push(SP());
 c.push(P("Rebuild the whole generated set with `cd tools && node build_docs.js`. Each generator is standalone and can be run on its own; the shared formatting lives in `tools/docx_kit.js`."));

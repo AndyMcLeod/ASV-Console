@@ -15,7 +15,7 @@
 // shown under an nm label, wrong by 1.852 with a plausible number on screen. So 1852 m
 // must read "1.00 nm", not "1.85 nm".
 //
-// TEETH (each mutation run, results in CLAUDE.md):
+// TEETH (each mutation run, results in HANDOFF_ARCHIVE.md, "THE km↔nm DISTANCE DISPLAY"):
 //   * nm branch returns the km value with an nm label      -> 3 fails
 //   * the <1000 m short-circuit dropped (short goes nm)    -> 2 fails
 //   * applyDistUnit stops persisting (lsSet lost)          -> 6 fails

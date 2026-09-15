@@ -21,7 +21,7 @@
 //
 //   node tests/measure_tool.js      # exit 0 = pass, 1 = fail   (stdlib Node, no deps)
 //
-// TEETH (each mutation run, results in CLAUDE.md):
+// TEETH (each mutation run, results in HANDOFF_ARCHIVE.md, "THE MEASURING TOOL + THE CHART CONTEXT MENU"):
 //   * measLabel hand-rolls (m/1000).toFixed(2)+" km"      -> 1,2 fail
 //   * bearing taken b->a (the reciprocal)                 -> 4 fails
 //   * bearing printed unpadded (String(deg))              -> 5 fails

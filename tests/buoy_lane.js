@@ -674,7 +674,7 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
 // knot — the fold needed the real ENC's confluence), so the guard is two-part, the same
 // split as 19/19b: the MECHANISM is proven functionally, and the WIRING is pinned in the
 // module source. The real-geometry reproduction lives in the session log, replayed
-// offline during the fix; its numbers are in CLAUDE.md "THE CIRCLE AT THE MOUTH".
+// offline during the fix; its numbers are in HANDOFF_ARCHIVE.md "THE CIRCLE AT THE MOUTH".
 {
   // 28. the mechanism: pruneStitch unfolds a 3 m reversal whose neighbours connect clear.
   const knotted = [

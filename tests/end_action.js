@@ -6,7 +6,8 @@
 // read LOITER, right up to the moment the boat turned for home. The one thing the operator
 // wanted to confirm before the run ended was the one thing the console would not say.
 //
-// The cause is the same shape as the completion-field bug (see CLAUDE.md): `run_completion`
+// The cause is the same shape as the completion-field bug (HANDOFF_ARCHIVE.md, "END-OF-PLAN SETTING vs RUN
+// COMPLETION"): `run_completion`
 // is the literal completion the LINK was uploaded with, and for a Go-To / Transit / Hold
 // that really is "loiter" - the run does station-keep at its endpoint. What happens NEXT is
 // the console's end-of-plan RTH chain, which is a separate mechanism the readouts knew
