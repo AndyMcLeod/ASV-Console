@@ -55,11 +55,30 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#18 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#19 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-15: REVIEW ITEM #18 - A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT.**
+**NEWEST, 2026-09-15: REVIEW ITEM #19 - A PREVIEW NEVER LOOKS LIKE THE ROUTE.**
+A punched survey pattern and a clipped search pattern were drawn solid GREEN - the green of the UPLOADED route
+(`runRoute`, dashed `rgba(63,191,107,0.7)`) - while committed lines are yellow. That is what the Eastport "line heading out
+to the northwest" investigation (2026-09-11) turned on; the question to Andy stays open in the Eastport note.
+
+* `PREVIEW_INK` (`rgba(57,192,255,0.95)`, the drafts' cyan) + `drawPreviewLabel(x, y)` ("PREVIEW — not in plan", bold, cyan
+  with a dark halo). drawPattern: punched coverage, its run under a lead (cyan 0.55) and a selected run's inner line are
+  cyan; the label sits above the pattern's screen top-left. drawSearch: kept legs cyan, label below the datum. The raw
+  (un-punched) previews and the transit draft were already cyan. THREE INKS: cyan = not in the plan, yellow = the plan,
+  green = the route sent to the boat - and `rgba(63,191,107` now appears exactly ONCE in the page (preview_ink.js 5).
+* Words: the Quick Start's Punch Out and Search steps and the SRCH hint say "cyan kept"; README and the ops manual (9.1
+  note THREE INKS, THREE MEANINGS) say it too.
+* Tests: NEW tests/preview_ink.js (6 checks) on a canvas stub that records every stroke's ink; 10 sidecar mutations, 10
+  caught.
+* LIVE (port 8796, temp copy): a drawn pattern showed cyan dashed lines under PREVIEW — not in plan; after Punch Out, solid
+  cyan lines clipped around the islands, amber detours, the label, and no green.
+* Verified: all 76 suites in the scratch clone.
+* Next: #20, the LINES table is rebuilt four times a second.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #18 - A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT.**
 Punch Out cuts a pattern line around a keep-out into segments, and each became a "line": an 8-line pattern read as 9
 (the old open-list note in MEMORY) - in the LINES table, the chart's L# labels, every "line N of M" - and
 `committedPatternInfo` divided the width by segments - 1, UNDERSTATING the spacing (3 lines, one cut: 13.3 m, not 20).
@@ -83,7 +102,7 @@ Punch Out cuts a pattern line around a keep-out into segments, and each became a
 * LIVE (port 8796, temp copy seeded with a 4-segment plan): the LINES panel read "2 · 120 + 120 (60 m gap) · 1:06",
   Σ 840, "RTH L3"; zoomed in, the chart labelled the lines L3, L2, L2, L1.
 * Verified: all 75 suites in the scratch clone.
-* Next: #19, the unsaved preview looks like the uploaded route.
+* Committed and pushed as `e4fc2c08`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #17 - THE COMMIT GATE HAS NO GAPS.**
 Four holes in `.githooks/pre-commit` and the suites it runs: its list of paths that count had drifted (a commit touching

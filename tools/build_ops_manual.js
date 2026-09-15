@@ -254,6 +254,7 @@ c.push(B("The START CORNER of the area."));
 c.push(B("The OPPOSITE (diagonal) corner."));
 c.push(B("A third point that sets the LINE SPACING — its distance from the start — and the LINE DIRECTION — its bearing."));
 c.push(P("Parallel lines fill the box automatically as a lawnmower route. The line COUNT is derived from width divided by spacing; you never type it. All three control points stay draggable and the pattern regenerates live."));
+c.push(NOTE("THREE INKS, THREE MEANINGS", "A pattern not yet added to the plan is CYAN and labeled PREVIEW \u2014 not in plan - before Punch Out and after it, and a search pattern too. The committed plan's lines are YELLOW, with their L# labels. GREEN is only ever the route uploaded to the vessel. A preview used to turn green once punched, and looked exactly like a route under way."));
 c.push(H3("9.1.1  Moving the whole pattern"));
 c.push(P("A crosshair grip sits at the center of the pattern, labeled `move`. Dragging it translates every control point by one delta, so the pattern moves with its shape, spacing and direction preserved EXACTLY. Use it when the pattern is right but positioned wrong — redrawing by hand will not reproduce the same spacing. The corner handles win where the two overlap, so reshaping a small pattern stays possible."));
 c.push(H2("9.2  Adjusting the pattern"));

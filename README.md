@@ -641,7 +641,13 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    Project 11 `track_patterns`): **Expanding box**, **Sector**, or **Parallel /
    creeping-line**. Click a datum, tune the params (leg / radius / spacing /
    heading / turn), and `Add to plan`. Legs clip to the nogo zones just like a
-   survey (green kept / amber routed-around / red blocked).
+   survey (cyan kept / amber routed-around / red blocked).
+
+   **A preview never looks like the route.** A pattern not yet added to the plan - a survey
+   before or after Punch Out, a search - is drawn **cyan** and labelled **PREVIEW — not in
+   plan** on the chart. **Green** is only ever the route uploaded to the boat, and the committed
+   plan's lines are **yellow** with their L# labels. (A punched preview used to be green, the same
+   green as the route under way.)
 
    **Punch Out (chart-feature clipping).** Draw a survey rectangle, set the survey
    **depth window** (Min depth, optional Max — blank surveys deep water), and click

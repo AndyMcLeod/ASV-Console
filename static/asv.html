@@ -791,8 +791,8 @@
           </ol>
           Parallel survey lines fill the box automatically (boustrophedon). <b>Drag A / B / C</b> to adjust &mdash; spacing, line count and dimensions update live, or <b>type a Spacing</b> to force it. Click <span class="tag">Add&nbsp;to&nbsp;plan</span> to commit.</li>
         <li><b>Survey area (optional).</b> Click <span class="tag">BND</span> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
-        <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behaviour avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip green, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
-        <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (green kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
+        <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behaviour avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
+        <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
         <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as the <i>Run mode</i> on the vessel card.</li>
@@ -4433,6 +4433,19 @@ function drawBoundary(toScreen){
     ctx.fill(); ctx.lineWidth=1.2; ctx.strokeStyle="#160d02"; ctx.stroke(); });
   ctx.restore();
 }
+// ⚠ A PREVIEW IS NEVER DRAWN IN THE ROUTE'S GREEN (review #19, 2026-09-15). A punched survey pattern and a clipped
+// search pattern were drawn solid GREEN - the green of the route UPLOADED to the boat - while the committed plan's
+// lines are yellow: a pattern nobody had added to the plan looked exactly like the run under way, and on 2026-09-11 it
+// cost a whole investigation into "a line heading out to the northwest" at Eastport. The drafts were already cyan
+// before Punch Out (the transit draft too), so a preview stays CYAN once it is checked against the chart - solid over
+// the faint dashed raw lines - and says so on the chart: PREVIEW — not in plan. Green is the route; yellow the plan.
+const PREVIEW_INK = "rgba(57,192,255,0.95)", PREVIEW_LABEL = "PREVIEW — not in plan";
+function drawPreviewLabel(x, y){
+  ctx.save(); ctx.setLineDash([]); ctx.font = "bold 11px Consolas,monospace";
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(10,20,28,0.85)"; ctx.strokeText(PREVIEW_LABEL, x, y);
+  ctx.fillStyle = PREVIEW_INK; ctx.fillText(PREVIEW_LABEL, x, y);
+  ctx.restore();
+}
 function drawPattern(toScreen){
   if(!pat.A) return;
   const sp = currentPattern();
@@ -4450,10 +4463,10 @@ function drawPattern(toScreen){
       // meant: water that gets surveyed.
       if(patLeadTotal() > 0){
         const cov = patClip.map((s,k)=>patCoverSeg(k)).filter(Boolean);
-        ctx.setLineDash([3,3]); ctx.strokeStyle="rgba(63,191,107,0.55)"; ctx.lineWidth=1.4; seg(patClip);
-        ctx.setLineDash([]);    ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(cov);
+        ctx.setLineDash([3,3]); ctx.strokeStyle="rgba(57,192,255,0.55)"; ctx.lineWidth=1.4; seg(patClip);
+        ctx.setLineDash([]);    ctx.strokeStyle=PREVIEW_INK; ctx.lineWidth=2.5; seg(cov);
       } else {
-        ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg(patClip);
+        ctx.setLineDash([]); ctx.strokeStyle=PREVIEW_INK; ctx.lineWidth=2.5; seg(patClip);
       }
       if(patRoutes.length){                        // transits auto-routed around obstacles
         ctx.setLineDash([6,4]); ctx.strokeStyle="rgba(217,154,60,0.95)"; ctx.lineWidth=1.8;
@@ -4486,7 +4499,7 @@ function drawPattern(toScreen){
           // that is the feature missing, not a cosmetic flaw.
           ctx.setLineDash([]);
           ctx.strokeStyle="rgba(255,215,106,0.95)"; ctx.lineWidth=9; seg([hit]);
-          ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5; seg([hit]);
+          ctx.strokeStyle=PREVIEW_INK; ctx.lineWidth=2.5; seg([hit]);
           // END CAPS, because the run an operator most wants rid of is a SHORT one, and a
           // short line's halo is a short line's halo. The caps give the highlight a size
           // floor that does not depend on the length of what is selected.
@@ -4504,6 +4517,10 @@ function drawPattern(toScreen){
         ctx.stroke();
       }
     }
+    // the label, above the pattern's top-left corner on screen
+    let lx = Infinity, ly = Infinity;
+    src.forEach(l=>l.forEach(p=>{ const s=toScreen(p.lat,p.lon); lx=Math.min(lx,s.x); ly=Math.min(ly,s.y); }));
+    if(isFinite(lx)) drawPreviewLabel(lx, ly - 10);
     ctx.restore();
   } else if(pat.B){
     const a=toScreen(pat.A.lat,pat.A.lon), b=toScreen(pat.B.lat,pat.B.lon);
@@ -4898,9 +4915,9 @@ function drawSearch(toScreen){
   const raw=searchRoute();
   const drawPoly=(pts,close)=>{ ctx.beginPath(); pts.forEach((p,i)=>{ const s=toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); if(close)ctx.closePath(); ctx.stroke(); };
   ctx.save();
-  if(searchRouted){                                // nogo-aware preview: green kept + amber detours + red unroutable
+  if(searchRouted){                                // nogo-aware preview: cyan kept + amber detours + red unroutable (review #19)
     ctx.setLineDash([2,4]); ctx.strokeStyle="rgba(57,192,255,0.20)"; ctx.lineWidth=1; drawPoly(raw,false);
-    ctx.setLineDash([]); ctx.strokeStyle="rgba(63,191,107,0.95)"; ctx.lineWidth=2.5;
+    ctx.setLineDash([]); ctx.strokeStyle=PREVIEW_INK; ctx.lineWidth=2.5;
     searchRouted.clipped.forEach(s=>drawPoly(s,false));
     if(searchRouted.routes.length){ ctx.setLineDash([6,4]); ctx.strokeStyle="rgba(217,154,60,0.95)"; ctx.lineWidth=1.8;
       searchRouted.routes.forEach(rt=>drawPoly(rt,false)); ctx.setLineDash([]); }
@@ -4916,6 +4933,7 @@ function drawSearch(toScreen){
   ctx.beginPath(); ctx.arc(d.x,d.y,5,0,2*Math.PI); ctx.fillStyle="#39c0ff"; ctx.fill();
   ctx.lineWidth=1.5; ctx.strokeStyle="#0a141c"; ctx.stroke();
   ctx.fillStyle="#39c0ff"; ctx.font="10px Consolas,monospace"; ctx.fillText("D", d.x+7, d.y-6);
+  if(raw.length>1) drawPreviewLabel(d.x+7, d.y+16);   // a search pattern is a preview until Add to plan (review #19)
   ctx.restore();
 }
 function updateSearchPanel(){
@@ -4925,7 +4943,7 @@ function updateSearchPanel(){
   $("#sr_count").textContent = search.datum ? routeCountLabel() : "--";
   $("#sr_add").disabled = !(search.datum && raw.length>1);
   $("#sr_hint").textContent = search.datum
-    ? (nogo.ready ? "Drag the D datum or tune params; legs clip to nogo (green kept / amber routed / red blocked). Add to plan."
+    ? (nogo.ready ? "Drag the D datum or tune params; legs clip to nogo (cyan kept / amber routed / red blocked). Add to plan."
                   : "Drag the D datum or tune params; Add to plan. (Nogo not loaded — route not ENC-checked.)")
     : "Click the chart to set the datum (search origin).";
   scheduleSearchNogo();
