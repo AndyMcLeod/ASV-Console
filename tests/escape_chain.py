@@ -95,14 +95,14 @@ def state(port):
 print("The in-extremis escape reaches the vessel as its OWN behaviour:")
 
 port = free_port()
-mpath = os.path.join(APP, "mission.json")
-mission_bak = None
-if os.path.exists(mpath):
-    with open(mpath, "r", encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -197,9 +197,6 @@ finally:
         proc.wait(timeout=5)
     except Exception:
         proc.kill()
-    if mission_bak is not None:
-        with open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
 
 print("\n%d CHECK(S) FAILED" % fails if fails else "\nall checks passed")
 sys.exit(1 if fails else 0)

@@ -152,8 +152,13 @@ SENTINEL = {
 BQ = "bbox=%s" % ",".join("%s" % v for v in BBOX)
 
 srvlog = tempfile.TemporaryFile(mode="w+")
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False

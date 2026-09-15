@@ -1346,6 +1346,12 @@ Passwords are redacted; the file is append-only and line-buffered, so a crash or
 kill still leaves a complete record. It's on by default (both sim and live);
 `--no-log` disables it. `logs/` is gitignored.
 
+**`--state-dir DIR`** keeps this console's own state - the plan (`mission.json` and its backups),
+`comms_config.json`, `ports.json`, `roc_config.json` and `logs/` - in DIR instead of beside the
+program. Every test that starts a console passes a temp folder this way
+(`tests/lib/console_state.py`), so running the suites or committing never writes your own plan,
+settings or logs; `tests/state_dir.py` fails if a suite starts a console without one.
+
 **Playback.** Open **`/playback`** (or the **▶ Playback** link in the top bar) to
 replay any recording on the same chart: the boat drives its recorded track, the
 plan and commanded routes appear as they were sent, a timeline lists every command

@@ -91,6 +91,7 @@ c.push(TBL(["Option", "Effect"], [
   ["`--ais-radius-km <n>`", "Traffic display + subscription radius (default 50; widen where receiver coverage is sparse)"],
   ["`--no-ais-service`", "Do not start the traffic provider"],
   ["`--no-log`", "Do not record the session"],
+  ["`--state-dir <folder>`", "Keep the plan, settings and session logs in another folder instead of beside the program. The test suites use this so they never touch your own files."],
   ["`--fetch-charts \"LAT,LON,RADIUS_KM\"`", "Pre-cache chart tiles for an operating area before going offline"],
 ], [2600, 6760]));
 c.push(NOTE("BEFORE A JOB", "If the operating area has poor connectivity, pre-cache the chart with `--fetch-charts` while you still have a network. The keep-out model and the chart display both come from cached data once fetched."));

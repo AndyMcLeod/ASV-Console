@@ -98,11 +98,11 @@ print("End-of-plan SETTING vs the run in progress — they are two different thi
 
 port = free_port()
 # A scratch mission file so the developer's own plan is never touched by the test.
-mission_bak = None
-mpath = os.path.join(APP, "mission.json")
-if os.path.exists(mpath):
-    with open(mpath, "r", encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 
 # Capture the server's output rather than discarding it - see the last check. A handler that
 # answers correctly and THEN raises is invisible to any client-side assertion, which is how
@@ -110,7 +110,7 @@ if os.path.exists(mpath):
 # pipe while the console runs, so a full buffer would hang the test.
 srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -217,11 +217,6 @@ finally:
         proc.wait(timeout=6)
     except Exception:
         proc.kill()
-    if mission_bak is not None:
-        with open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
-    elif os.path.exists(mpath):
-        os.remove(mpath)
 
 # THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the console is stopped, so its output
 # is complete. _send() writes the response BEFORE its caller can raise, so an endpoint can

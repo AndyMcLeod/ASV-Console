@@ -192,11 +192,11 @@ def wait_stopped(port, limit=20.0):
 print("E-STOP — the chain has to reach the vessel, latch, and let go cleanly:")
 
 port = free_port()
-mpath = os.path.join(APP, "mission.json")
-mission_bak = None
-if os.path.exists(mpath):
-    with open(mpath, "r", encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 
 # Capture the server's output rather than discarding it - see the final check. A handler
 # that answers correctly and THEN raises is invisible to any client-side assertion, which is
@@ -204,7 +204,7 @@ if os.path.exists(mpath):
 # drains a pipe while the console runs, so a full buffer would hang the test.
 srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     # READY means answering AND the simulated link has produced a telemetry frame, not
@@ -330,9 +330,6 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
-    if mission_bak is not None:                      # never leave the developer's plan changed
-        with open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
 
 # THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the console is stopped, so its output
 # is complete. `_send()` writes the response BEFORE its caller can raise, so an endpoint can

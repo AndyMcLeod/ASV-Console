@@ -163,10 +163,15 @@ port = free_port()
 # A file rather than a PIPE on purpose: nothing drains a pipe while the console runs, so a
 # chatty server would block on a full buffer and hang the test.
 srvlog = tempfile.TemporaryFile(mode="w+")
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-log", "--no-ais-service",
                          "--ais", "http://127.0.0.1:%d" % stub_port,
-                         "--ais-radius-km", "50", "--ais-collect-km", "150"],
+                         "--ais-radius-km", "50", "--ais-collect-km", "150", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False

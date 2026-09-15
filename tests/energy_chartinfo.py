@@ -161,11 +161,11 @@ def wait_for(port, pred, limit=90.0, every=0.5):
 print("Energy override + chart info — two layers of full, and a card served from cache:")
 
 port = free_port()
-mpath = os.path.join(APP, "mission.json")
-mission_bak = None
-if os.path.exists(mpath):
-    with open(mpath, "r", encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 
 # The hermetic chartinfo fixture: a sentinel cache entry at a mid-ocean bbox. The key
 # format is the server's own ("%.4f" each) - if that format drifts, check 3 fails as a
@@ -182,7 +182,7 @@ os.makedirs(ENC_DIR, exist_ok=True)
 with open(SEED_FILE, "w", encoding="utf-8") as f:
     json.dump(SEED, f)
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -314,9 +314,6 @@ finally:
         os.remove(SEED_FILE)                          # never leave the sentinel in the cache
     except OSError:
         pass
-    if mission_bak is not None:                      # never leave the developer's plan changed
-        with open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
 
 srvlog.seek(0)
 server_out = srvlog.read()

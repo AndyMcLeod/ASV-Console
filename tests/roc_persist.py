@@ -223,7 +223,9 @@ def launches_console(src):
 
 
 def passes_roc_config(src):
-    return '"--roc-config"' in src
+    # A console given a state folder of its own (--state-dir, tests/lib/console_state.py) keeps its ROC
+    # registry there too - review #16, proved by tests/state_dir.py 2b.
+    return '"--roc-config"' in src or "ConsoleState(" in src
 
 
 roc_suites, unisolated = [], []

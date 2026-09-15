@@ -159,15 +159,13 @@ def read_session(path):
 print("Data routes — vessels, comms, tide, and the ROC's HTTP face:")
 
 port = free_port()
-LOG_DIR = os.path.join(APP, "logs")
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
+LOG_DIR = STATE.path("logs")
 before = set(os.listdir(LOG_DIR)) if os.path.isdir(LOG_DIR) else set()
-
-backups = {}
-for name in ("mission.json", "comms_config.json"):
-    p = os.path.join(APP, name)
-    if os.path.exists(p):
-        with open(p, "r", encoding="utf-8") as f:
-            backups[p] = f.read()
 
 # This suite adds a ROC ("Test Dock") against a live console. Without its own registry
 # file it writes into the OPERATOR's roc_config.json - the accumulation that had the ROC
@@ -192,7 +190,7 @@ srvlog = tempfile.TemporaryFile(mode="w+")
 # the same --no-log mask that hid the logevent defect would hide a redaction break.
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-ais-service",
-                         "--roc-config", ROC_CFG, "--ports-config", PORTS_CFG],
+                         "--roc-config", ROC_CFG, "--ports-config", PORTS_CFG, *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -250,7 +248,7 @@ try:
           lambda: "recorded body: %s" % json.dumps(next(
               (r.get("body") for r in read_session(spath)
                if r.get("kind") == "command" and r.get("path") == "/api/comms"), None)))
-    with open(os.path.join(APP, "comms_config.json"), encoding="utf-8") as f:
+    with open(STATE.path("comms_config.json"), encoding="utf-8") as f:
         disk = f.read()
     check("6. the saved config file carries NO password - memory only, as the class "
           "comment has always promised",
@@ -475,9 +473,6 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
-    for p, text in backups.items():                  # mission + comms config as found
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(text)
     for f in sorted(set(os.listdir(LOG_DIR)) - before):
         try:
             os.remove(os.path.join(LOG_DIR, f))

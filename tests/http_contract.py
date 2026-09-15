@@ -357,11 +357,11 @@ BODIES = {
 ROC_OPS = ["add", "update", "remove", "confirm", "activate", "stage", "home", "clear",
            "select", "offset", "nonsense-op"]
 
-mpath = os.path.join(APP, "mission.json")
-mission_bak = None
-if os.path.exists(mpath):
-    with io.open(mpath, encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 
 # This suite POSTs ROC ops against a live console. Without its own registry file
 # every run left a staged ROC behind in the OPERATOR's roc_config.json - that is
@@ -371,7 +371,7 @@ srvlog = tempfile.TemporaryFile(mode="w+")
 port = free_port()
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
                          "--port", str(port), "--no-ais-service", "--no-log",
-                         "--roc-config", ROC_CFG],
+                         "--roc-config", ROC_CFG, *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 no_response, not_json, roc_dead = [], [], []
 get_dead, get_hung, sse = [], [], (None, "", b"")
@@ -459,9 +459,6 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
-    if mission_bak is not None:                      # never leave the developer's plan changed
-        with io.open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
 
 check("10. EVERY POST endpoint answered — none left the client with no response",
       lambda: not no_response,

@@ -34,11 +34,11 @@ and every POST route answers. TEETH - 10 mutations RUN in a scratch clone, 10 ki
   setting the console runs by without writing a byte - found reading the code after the first 9)
 
 Everything runs against a TEMP mission path - the module's MISSION_PATH is re-pointed before
-anything is read or written, and the last check asserts the app directory's file was never
-touched.
+anything is read or written - and check 10 RECORDS every write, replace or remove that names the
+app folder's plan files (review #16: a hash of mission.json compared before and after failed a commit
+whenever the operator's own console saved meanwhile). Re-pointing removed -> 2, 3, 8, 9, 10.
 """
 import builtins
-import hashlib
 import importlib.util as _ilu
 import json
 import os
@@ -79,16 +79,41 @@ def check(name, cond, detail=""):
         fails += 1
 
 
-def _sha(path):
-    try:
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except OSError:
-        return None
-
-
 REAL_MISSION = os.path.join(APP, "mission.json")
-REAL_BEFORE = _sha(REAL_MISSION)
+# 10's instrument: every write-mode open, replace or remove that names the app folder's own plan files
+# (mission.json, its backups, corrupt copies and temp parts). NOT a hash of mission.json compared before
+# and after: the operator's own console may save that file while this suite runs, and a hash check then
+# fails a commit for a change no test made (review #16).
+_WRITES_TO_APP = []
+_open0, _replace0, _remove0 = builtins.open, os.replace, os.remove
+
+
+def _names_app_plan(path):
+    try:
+        return os.path.abspath(os.fspath(path)).startswith(os.path.abspath(REAL_MISSION))
+    except TypeError:                               # a file descriptor, not a path
+        return False
+
+
+def _recording_open(path, mode="r", *a, **k):
+    if any(c in mode for c in "wax+") and _names_app_plan(path):
+        _WRITES_TO_APP.append("open(%s, %r)" % (path, mode))
+    return _open0(path, mode, *a, **k)
+
+
+def _recording_replace(src, dst, *a, **k):
+    if _names_app_plan(src) or _names_app_plan(dst):
+        _WRITES_TO_APP.append("replace(%s -> %s)" % (src, dst))
+    return _replace0(src, dst, *a, **k)
+
+
+def _recording_remove(path, *a, **k):
+    if _names_app_plan(path):
+        _WRITES_TO_APP.append("remove(%s)" % path)
+    return _remove0(path, *a, **k)
+
+
+builtins.open, os.replace, os.remove = _recording_open, _recording_replace, _recording_remove
 TMP = tempfile.mkdtemp(prefix="asv_mission_store_")
 _C.MISSION_PATH = os.path.join(TMP, "mission.json")
 _C._MISSION_CACHE = None
@@ -425,9 +450,8 @@ finally:
     srv.server_close()
 
 # 10. None of it touched the operator's own plan.
-check("10. the app directory's own mission.json was never touched",
-      _sha(REAL_MISSION) == REAL_BEFORE, "sha before=%s after=%s" % ((REAL_BEFORE or "none")[:12],
-                                                                    (_sha(REAL_MISSION) or "none")[:12]))
+check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
+      not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")
 
 print("\n" + ("%d CHECK(S) FAILED" % fails if fails else "all checks passed"))
 sys.exit(1 if fails else 0)

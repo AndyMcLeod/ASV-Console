@@ -102,6 +102,7 @@ advice_for() {
     tide_note.py)      echo "  The tide card is repeating one upstream failure as two sentences again, or has stopped naming which series were lost (tide_note in asv_console.py)." ;;
     http_contract.py)  echo "  A POST handler is breaking _dispatch_post's (code, obj) contract, a GET handler has a path that commits NO response, or something raised while serving. A handler can answer the client CORRECTLY and still take down its thread, so the check on the server's own log is the one no client check can see." ;;
     plan_save.js)      echo "  The page is saving the plan blind again: flushMission must send missionRev, adopt the rev the console answers, send one save at a time, stop and say PLAN NOT SAVED on a 409, and say any other failure; loadMission must take rev." ;;
+    state_dir.py)      echo "  A test can write the operator's own files again: a suite starts asv_console.py without *STATE.args() (tests/lib/console_state.py), or use_state_dir no longer moves the plan, comms, ports, ROC registry or logs - or no longer re-reads the three loaded at import." ;;
     *)                 echo "  See the suite's own docstring for what it guards and how to fix it." ;;
   esac
 }

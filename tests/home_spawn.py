@@ -191,15 +191,15 @@ def wait_for(port, pred, limit=60.0, every=0.5):
 print("Home + spawn — where HOME comes from, and a power-cycle at a chosen point:")
 
 port = free_port()
-mpath = os.path.join(APP, "mission.json")
-mission_bak = None
-if os.path.exists(mpath):
-    with open(mpath, "r", encoding="utf-8") as f:
-        mission_bak = f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 
 srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service", "--no-log"],
+                         "--port", str(port), "--no-ais-service", "--no-log", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 try:
     up = False
@@ -425,9 +425,6 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
-    if mission_bak is not None:                      # never leave the developer's plan changed
-        with open(mpath, "w", encoding="utf-8") as f:
-            f.write(mission_bak)
 
 srvlog.seek(0)
 server_out = srvlog.read()

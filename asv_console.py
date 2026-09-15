@@ -5399,6 +5399,45 @@ def _rescope_ais_service():
     _start_ais_service()
 
 
+def use_state_dir(d):
+    """Keep this console's own state in `d`, not beside the program (review #16, 2026-09-14).
+
+    THE FILES A CONSOLE WRITES ABOUT ITS OPERATOR'S WORK: the plan (mission.json with its .bak1..5,
+    any .corrupt- copy and the per-writer .part), comms_config.json, ports.json, roc_config.json and
+    the session logs (logs/, which also takes ais_service.log and each gps_sim log). The chart and
+    station CACHES stay in charts/ - shared lookups, not anybody's work.
+
+    ⚠ WHY. Eighteen suites started a console in the app directory, so every pre-commit run wrote the
+    operator's own files: test plans POSTed into mission.json, and the file then put back from a
+    snapshot taken when the suite began. An edit made in the operator's own console while that ran was
+    lost at the put-back - and with plan revisions (review #10) the put-back also rolled the revision
+    back, so the operator's page then refused to save. Every harness now passes a temp folder
+    (tests/lib/console_state.py), and tests/state_dir.py holds them to it.
+
+    Re-read here, because three of these were read at IMPORT: the ports registry, the comms settings
+    and the ROC registry. A file not yet in `d` is the same first run as a fresh app folder - no plan,
+    the ports from ports.default.json."""
+    global MISSION_PATH, COMMS_CONFIG_PATH, LOG_DIR, PORTS_PATH, _MISSION_CACHE
+    d = os.path.abspath(d)
+    os.makedirs(d, exist_ok=True)
+    MISSION_PATH = os.path.join(d, "mission.json")
+    COMMS_CONFIG_PATH = os.path.join(d, "comms_config.json")
+    LOG_DIR = os.path.join(d, "logs")
+    PORTS_PATH = os.path.join(d, "ports.json")
+    with _mission_lock:
+        _MISSION_CACHE = None
+        _cache_plan_completion(None)
+    cfg = _load_comms_config()
+    with COMMS._lock:
+        COMMS.mode, COMMS.host, COMMS.username = cfg["mode"], cfg["host"], cfg["username"]
+    ROC.use_config(os.path.join(d, "roc_config.json"))
+    ROC._log_dir = LOG_DIR
+    load_ports()
+    apply_port()
+    print("[state] this console keeps its plan, settings and logs in %s" % d, flush=True)
+    return d
+
+
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
@@ -5475,7 +5514,18 @@ def main():
                     help="ROC registry file to use instead of roc_config.json (a test "
                          "harness points this at a temp file so it cannot write to the "
                          "operator's own ROCs)")
+    ap.add_argument("--state-dir", default="", metavar="DIR",
+                    help="keep this console's own state - the plan (mission.json and its "
+                         "backups), comms_config.json, ports.json, roc_config.json and the "
+                         "session logs - in DIR instead of beside the program. EVERY TEST "
+                         "HARNESS THAT STARTS A CONSOLE PASSES THIS (tests/lib/console_state.py). "
+                         "--ports-config and --roc-config still name their own file")
     args = ap.parse_args()
+
+    # FIRST, before anything reads or writes state: a harness's console must never open the
+    # operator's plan, even to read it (review #16). The two single-file flags below still win.
+    if args.state_dir:
+        use_state_dir(args.state_dir)
 
     # A harness that drives a real console MUST be able to keep its ROCs out of the
     # operator's registry. Without this every run of the HTTP-contract suite, which POSTs
@@ -5561,7 +5611,9 @@ def main():
     if args.sim:
         ROC.start_sim()
         atexit.register(ROC.stop)
-    LOG = SessionLogger(enabled=not args.no_log)
+    # log_dir PASSED, not defaulted: the default was bound when the class was defined, before
+    # --state-dir could move LOG_DIR (review #16).
+    LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)

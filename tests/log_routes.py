@@ -144,14 +144,19 @@ def read_session(path):
 print("Log routes — the recorder takes what the client sends, and serves only its own files:")
 
 port = free_port()
-LOG_DIR = os.path.join(APP, "logs")
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
+LOG_DIR = STATE.path("logs")
 before = set(os.listdir(LOG_DIR)) if os.path.isdir(LOG_DIR) else set()
 
 srvlog = tempfile.TemporaryFile(mode="w+")
 # NO --no-log: LOG must exist, because the defect lived in the branch every other
 # harness masks. The session file this creates is cleaned up in the finally.
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
-                         "--port", str(port), "--no-ais-service"],
+                         "--port", str(port), "--no-ais-service", *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 session_file = None
 try:
@@ -234,7 +239,7 @@ try:
     #     the bare-basename rule (backed by join-on-basename) refuses "../logs_evil/...".
     #   * logs/not_a_session.txt EXISTS inside LOG_DIR with a clean basename - only the
     #     asv_*.jsonl shape rule refuses it.
-    evil_dir = os.path.join(APP, "logs_evil")
+    evil_dir = STATE.path("logs_evil")
     os.makedirs(evil_dir, exist_ok=True)
     with open(os.path.join(evil_dir, "asv_evil.jsonl"), "w", encoding="utf-8") as f:
         f.write('{"secret": "outside the log dir"}\n')
@@ -272,8 +277,8 @@ finally:
         except OSError:
             pass
     try:                                             # ... nor the seeded traversal targets
-        os.remove(os.path.join(APP, "logs_evil", "asv_evil.jsonl"))
-        os.rmdir(os.path.join(APP, "logs_evil"))
+        os.remove(STATE.path("logs_evil", "asv_evil.jsonl"))
+        os.rmdir(STATE.path("logs_evil"))
     except OSError:
         pass
 

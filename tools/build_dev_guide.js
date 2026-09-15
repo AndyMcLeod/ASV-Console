@@ -109,13 +109,15 @@ c.push(B("Nested backticks inside a template expression, and regular-expression 
 c.push(B("A suite left pointing at source files that do not exist in this repository, inherited from a port. The source a harness NAMES must be the source it READS."));
 c.push(H2("4.5  When a unit test is the wrong tool"));
 c.push(P("Some failures live in the INTERACTION between a command and persisted state, and a unit test of either half alone will miss them. One suite deliberately starts a real console and drives it over the API for exactly that reason. Reach for this when the bug is “these two things disagree”, not when it is “this function computes the wrong number”."));
+c.push(H3("4.5.1  A test console never keeps its state beside the program"));
+c.push(P("A console keeps the plan, comms settings, port registry, ROC registry and session logs beside the program, and the operator may be working in their own console while the suites run. So every suite that starts one passes a temp folder with --state-dir, through tests/lib/console_state.py - and never takes a copy of the operator's plan to put back afterwards: the putting back is a write of its own, and it destroys whatever the operator saved meanwhile. tests/state_dir.py reads every suite's source and fails the day one starts a console without a state folder."));
 c.push(H2("4.6  Source-order assertions, used sparingly"));
 c.push(P("Two checks in one suite assert the ORDER of calls in the source rather than a computed value, because the property under test is canvas draw order and it is not observable without standing up a full render harness. This is a legitimate tool when the alternative is no coverage at all — but it is brittle, so it is used only where the regression is precisely an ordering, and the check says so in its own text."));
 
 // 5 ---------------------------------------------------------------------------
 c.push(H1("5  Verification beyond tests"));
 c.push(H2("5.1  Drive the real thing"));
-c.push(P("Start a headless console on a spare port and drive it over the API. The state endpoint and the event stream tell you what the server believes; that is the ground truth for anything the server owns."));
+c.push(P("Start a headless console on a spare port, with --state-dir pointing at a temp folder so none of it lands in the operator's plan or logs, and drive it over the API. The state endpoint and the event stream tell you what the server believes; that is the ground truth for anything the server owns."));
 c.push(NOTE("THE CLIENT DOES THE ROUTING", "Route planning, keep-out avoidance and channel handling are all BROWSER code. Driving the raw command API with no route bypasses every one of them, and a scripted run will cross keep-outs that the interface would have routed around. Rehearse through the interface, or place raw-API waypoints in open water only."));
 c.push(H2("5.2  Look at the pixels"));
 c.push(P("The chart is an animating canvas, so screenshots time out. Read the CANVAS DIRECTLY instead: sample a small box of image data at a known screen point and count pixels matching the feature's own color. One call, no screenshot, immune to the animation."));

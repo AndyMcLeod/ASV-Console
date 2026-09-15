@@ -266,14 +266,14 @@ LOGDIR = tempfile.mkdtemp(prefix="asv_amend_")
 # suites that start a console already back it up; this was one of the seven that did not.
 # BYTES, not text mode: this file is CRLF on disk and a text-mode round trip rewrites
 # every line ending of a file the suite is only meant to leave alone.
-MPATH = os.path.join(APP, "mission.json")
-MISSION_BAK = None
-if os.path.exists(MPATH):
-    with open(MPATH, "rb") as _f:
-        MISSION_BAK = _f.read()
+# ITS OWN STATE FOLDER (review #16): this console never reads or writes the operator's plan, settings
+# or logs - no snapshot of mission.json, and no write-back of one when the suite ends.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from console_state import ConsoleState  # noqa: E402
+STATE = ConsoleState()
 proc = subprocess.Popen(
     [sys.executable, os.path.join(APP, "asv_console.py"), "--port", str(PORT),
-     "--sim", "--browser", "none", "--no-log", "--no-ais-service"],
+     "--sim", "--browser", "none", "--no-log", "--no-ais-service", *STATE.args()],
     cwd=APP, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
@@ -397,9 +397,6 @@ finally:
         proc.wait(timeout=5)
     except Exception:
         proc.kill()
-    if MISSION_BAK is not None:              # never leave the operator's plan changed
-        with open(MPATH, "wb") as _f:
-            _f.write(MISSION_BAK)
 
 print("")
 print(("%d CHECK(S) FAILED" % fails) if fails else "all checks pass")

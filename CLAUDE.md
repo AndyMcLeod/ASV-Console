@@ -55,11 +55,38 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#10 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#10 and #16 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #10 - A PLAN SAVE IS CHECKED, MADE AGAINST A REVISION, AND SAID WHEN IT IS NOT KEPT.**
+**NEWEST, 2026-09-14: REVIEW ITEM #16 - NO TEST WRITES THE OPERATOR'S FILES.**
+Seventeen suites started a console in the app folder, and a console keeps its plan, comms settings, port registry,
+ROC registry and session logs beside the program. Thirteen "protected" mission.json by reading it at the start and
+writing it back at the end - a write of its own, which lost any edit Andy made in his console while the hook ran,
+and after #10 rolled the plan revision back so his page refused to save. Measured today: three plan-backup
+rotations in his folder fell inside the #9 hook run while his console was up. completion_modes could even DELETE
+his plan; log_routes and data_routes wrote test sessions into his logs/.
+
+* `--state-dir DIR` / `use_state_dir()`: re-points MISSION_PATH (with .bak/.corrupt/.part), COMMS_CONFIG_PATH,
+  PORTS_PATH, LOG_DIR (session logs, ais_service.log, gps_sim logs) and the ROC registry, and RE-READS the three
+  loaded at import (ports, comms, ROC). Applied first in main; --ports-config / --roc-config still win. The session
+  logger now gets `log_dir` passed - its default was bound at class definition. Chart/station caches stay put.
+* tests/lib/console_state.py (`ConsoleState`: temp folder, `.args()`, `.path()`), one level down so the hook does
+  not run it as a suite. All 17 console launches pass `*STATE.args()`; every snapshot and write-back of
+  mission.json is gone. run_link_control's in-process Engine calls `_C.use_state_dir(STATE.dir)` (it READ his plan).
+* mission_store.py 10 no longer hashes his mission.json - a save from his own console mid-run failed the commit.
+  It records every write-mode open / replace / remove naming the app folder's plan files.
+* NEW tests/state_dir.py: 1 AST audit (every console Popen passes a state folder); 2-3b on a temp COPY of the
+  program, so a broken flag cannot reach his files: the console READS seeded plan/comms/ports from the folder,
+  WRITES plan, comms, ports, ROC and session log there and nothing beside the program, and without the flag writes
+  beside itself. TEETH: 11 scratch-clone mutations, 11 killed.
+* Knock-ons: roc_persist 9 accepts a ConsoleState suite as ROC-isolated; survey_lead 27 and 42 read save_mission
+  to the next def instead of a fixed 1400/1600-char window (#10's docstring had pushed the fields past it).
+* Verified: all 68 suites in the scratch clone with its state files fingerprinted before and after - unchanged.
+* Next up after approval: #11's remainder - loadMission accepting an empty reply, RESET wiping the plan with no
+  confirmation in the simulator.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #10 - A PLAN SAVE IS CHECKED, MADE AGAINST A REVISION, AND SAID WHEN IT IS NOT KEPT.**
 POST /api/mission saved whatever arrived: an unreadable body came back from `_read_json` as {} and was written as an
 EMPTY plan - #5 hardened the READ side only. Two pages that had loaded the same plan each autosaved over the other's
 edits without a word, because `saveMission` never read the answer. And eight POST routes (plan, logevent, vessel,
@@ -92,9 +119,9 @@ with no answer and nothing in the session log.
   the console in the app dir (hold_station, run_link_control, http_contract, completion_modes and others) snapshot
   and RESTORE mission.json, and some POST test plans into it: an edit he makes while the hook runs can be
   overwritten at the restore, and with revisions the restore also rolls `rev` back, so his page then says PLAN NOT
-  SAVED. #16 (the suites get their own state dir) removes it; until then do not run the hook while he is editing.
+  SAVED. #16, committed straight after this, removed it: no suite writes his files now.
   This item's server suites were verified in a scratch clone for that reason.
-* Next: #16, committed straight after this (Andy chose #16 first so the hook never touches his files).
+* Committed and pushed just before #16 (Andy chose #16 first so the hook never touches his files).
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #9 - A ROUTE GOES WHOLE OR NOT AT ALL.**
 `Engine._sanitize_route` kept the first 1000 waypoints of any route and dropped the rest with a 200 - a survey
