@@ -104,6 +104,74 @@ DEFAULT_VESSEL_ID = "drix08"
 # is in the session logs). Changes on every restart.
 BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 
+# ⚠ THE PAGE AND THE PROGRAM MUST BE THE SAME VERSION (review #15, 2026-09-14). The page and its modules are read
+# from disk on every request, but the Python is read once, when the console starts - so after a commit or an edit
+# while the console ran, a refresh paired a NEW page with the OLD server: fields the page sent were dropped, routes
+# it called answered 404, and nothing said why. The console now fingerprints its own files (the Python it runs, the
+# page and the modules it serves): once at start (`build`), and again whenever one of them changes on disk
+# (`build_on_disk`). The state carries both, the page is served with the fingerprint it was read at, and the page
+# says which one is behind - restart the console, or reload the page.
+BUILD_PY = ("asv_console.py", "currents.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
+BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
+PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
+
+
+def build_files(app_dir=None):
+    """The files that make this console what it is: its Python, and the pages and modules it serves."""
+    app_dir = app_dir or APP_DIR
+    files = [os.path.join(app_dir, n) for n in BUILD_PY]
+    for sub, ext in (("static", ".html"), (os.path.join("static", "js"), ".js")):
+        d = os.path.join(app_dir, sub)
+        try:
+            files += sorted(os.path.join(d, n) for n in os.listdir(d) if n.endswith(ext))
+        except OSError:
+            pass
+    return files
+
+
+class BuildWatch:
+    """The fingerprint of the console's files as they are on disk. Re-read only when a file's size or modification
+    time has changed (and those are looked at no more often than every BUILD_RECHECK_S); line endings are not part
+    of it, so a checkout that only rewrites them is the same build."""
+
+    def __init__(self, app_dir=None):
+        self._app = app_dir or APP_DIR
+        self._lock = threading.Lock()
+        self._key = None
+        self._digest = None
+        self._checked = 0.0
+        self.boot = self.current(force=True)
+
+    def current(self, force=False):
+        now = time.time()
+        with self._lock:
+            if not force and self._digest is not None and now - self._checked < BUILD_RECHECK_S:
+                return self._digest
+            self._checked = now
+            files = build_files(self._app)
+            key = []
+            for f in files:
+                try:
+                    st = os.stat(f)
+                    key.append((f, st.st_size, st.st_mtime_ns))
+                except OSError:
+                    key.append((f, None, None))
+            key = tuple(key)
+            if key != self._key:
+                h = hashlib.sha256()
+                for f in files:
+                    h.update(os.path.relpath(f, self._app).replace(os.sep, "/").encode("utf-8") + b"\0")
+                    try:
+                        with open(f, "rb") as fh:
+                            h.update(fh.read().replace(b"\r\n", b"\n"))
+                    except OSError:
+                        h.update(b"(missing)")
+                self._key, self._digest = key, h.hexdigest()[:12]
+            return self._digest
+
+
+BUILD = BuildWatch()
+
 # 8791 (not 8781) so this simulator never collides with the branded sibling console it
 # was derived from - both default to their own port and can run side by side.
 DEFAULT_WEB_PORT = 8791
@@ -4597,6 +4665,9 @@ class Engine:
         return {
             "type": "state",
             "boot_id": self.boot_id,
+            # the version this process started from, and the one on disk now (review #15)
+            "build": BUILD.boot,
+            "build_on_disk": BUILD.current(),
             "mode": self._mode,
             "host": self._host,
             "link": self.link,
@@ -4765,6 +4836,8 @@ class Handler(BaseHTTPRequestHandler):
                 html = load_static("asv.html")
             except OSError:
                 html = INDEX_HTML
+            # the fingerprint of the files as they are NOW, so the page knows what it was served from (review #15)
+            html = html.replace(PAGE_BUILD_TOKEN, BUILD.current(force=True))
             self._send(200, html, "text/html; charset=utf-8")
         elif root.startswith("/static/js/"):
             # The page's ES modules. Served fresh per request for the same reason the page

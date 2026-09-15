@@ -340,6 +340,7 @@
     <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current centre as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
+    <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
@@ -9323,6 +9324,36 @@ function onFrame(ev){
     }
   }
   consoleHealth();
+  buildCheck();
+}
+// ⚠ THE PAGE AND THE PROGRAM MUST BE THE SAME VERSION (review #15, 2026-09-14). The page and its modules are read
+// from disk on every request, but the console's Python only when it starts - so a refresh after a commit or an edit
+// paired a NEW page with the OLD program: fields the page sent were dropped, routes it called answered 404, and
+// nothing said why. The console reports the version it started from (S.build) and the one on disk now
+// (S.build_on_disk), and serves this page with the version it was read at (PAGE_BUILD, filled in by the console).
+// The pill says which one is behind. A console from before this existed reports no version at all - and a page that
+// knows to ask is newer than it.
+const PAGE_BUILD = "__ASV_PAGE_BUILD__";
+function buildCheck(){
+  const pill = $("#buildPill"); if(!pill) return;
+  const st = S || {};
+  let say = "", tip = "";
+  if(st.type === "state" && !("build" in st)){
+    say = "⚠ RESTART CONSOLE";
+    tip = "This page is newer than the console program answering it: the program was updated after the console "
+        + "started, and it reports no version. Controls on this page may not work until the console is restarted.";
+  } else if(st.build && st.build_on_disk && st.build !== st.build_on_disk){
+    say = "⚠ RESTART CONSOLE";
+    tip = "The console's program changed on disk after it started - version " + st.build + " is running and "
+        + st.build_on_disk + " is on disk. This page may not match the program answering it until the console is restarted.";
+  } else if(st.build && /^[0-9a-f]{12}$/.test(PAGE_BUILD) && PAGE_BUILD !== st.build){
+    say = "⚠ RELOAD PAGE";
+    tip = "The console is running version " + st.build + ", and this page was loaded from version " + PAGE_BUILD
+        + ". Reload the page to match it, when the vessel is not under way.";
+  }
+  pill.style.display = say ? "" : "none";
+  pill.textContent = say;
+  pill.title = tip;
 }
 // Said on every frame and every second, so it follows the conditions both ways; it takes down only its own
 // banner, never another one that happens to be up.

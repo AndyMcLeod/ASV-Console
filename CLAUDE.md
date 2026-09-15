@@ -55,11 +55,38 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#13 and #16 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#13, #15 and #16 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #13 - WATER, WEATHER AND CURRENT READINGS DO NOT FREEZE, AND SAY HOW OLD THEY ARE.**
+**NEWEST, 2026-09-14: REVIEW ITEM #15 - THE PAGE AND THE PROGRAM SAY WHEN THEY ARE DIFFERENT VERSIONS.**
+The page and its modules are read from disk on every request; the Python only when the console starts. After a commit
+or an edit while a console ran, a refresh paired a NEW page with the OLD program - fields dropped, routes 404, nothing
+said. ⚠ ANDY'S CONSOLE RUNS THE WORKING TREE, so this is every commit made while it is up.
+
+* Server: `BuildWatch` (module global `BUILD`) fingerprints `BUILD_PY` (asv_console, currents, roc_tracks,
+  ais_service, gps_sim) + static/*.html + static/js/*.js by CONTENT - CRLF normalized, names relative to the program
+  folder - re-reading only when a size/mtime changed, looking at most every `BUILD_RECHECK_S` (5 s). State:
+  `build` (`BUILD.boot`) and `build_on_disk` (`BUILD.current()`). `GET /` replaces `PAGE_BUILD_TOKEN`
+  ("__ASV_PAGE_BUILD__") with `BUILD.current(force=True)`.
+* Page: `const PAGE_BUILD` + `buildCheck()` (from `onFrame`, after `consoleHealth`) drive `#buildPill` in the top bar
+  beside the link pill: RESTART CONSOLE when build != build_on_disk, or when the state has no `build` (a console from
+  before this - the page is newer than it); RELOAD PAGE when a filled-in 12-hex PAGE_BUILD != build; hidden otherwise.
+  A pill, not the shared banner: a version notice must not re-assert itself over PLAN NOT SAVED and the like.
+  frame_health.js stubs `buildCheck` (onFrame calls it).
+* ⚠ WHEN ANDY NEXT REFRESHES HIS PAGE WITH AN OLDER CONSOLE STILL RUNNING, IT WILL SAY RESTART CONSOLE - correctly.
+* Tests: NEW tests/build_id.py (6 checks, on a temp COPY of the program; 8 scratch-clone mutations, 8 caught) and
+  tests/build_check.js (7; 8 sidecar mutations, 8 caught).
+* LIVE (port 8796, temp copy): the #13 console serving the #15 page -> RESTART CONSOLE ("reports no version");
+  restarted on #15 and reloaded -> no pill, served f66fbfb77b2c (the clone's fingerprint, though this copy's chart.js
+  had other line endings); a module changed under it -> RESTART CONSOLE naming f66fbfb77b2c and 7ffd0afbb6c4;
+  restarted with the page open -> RELOAD PAGE; reloaded -> no pill.
+* Also: the README paragraph #12 added ran straight into the next one with no blank line - fixed.
+* Verified: all 73 suites in the scratch clone (reset to the #13 tip first - a clone left at #12 was missing #13's
+  suites, caught by the count: 71, not 73).
+* Next: #17, the pre-commit hook's gaps - and the eleven suites whose "logged NO exception" check matches any "Error".
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #13 - WATER, WEATHER AND CURRENT READINGS DO NOT FREEZE, AND SAY HOW OLD THEY ARE.**
 `WaterLevel`, `EnvMonitor` and `CurrentsMonitor` each had a loop with no handler: one exception ended the thread and the
 reading FROZE, still `ok`, carrying no time - and the page kept adding a frozen water level to every charted depth.
 Reproduced before the fix: an `http.client.IncompleteRead` (a connection cut mid-body) is neither OSError nor ValueError,
@@ -89,7 +116,7 @@ came up through `fetch_water_level`, and the level never changed again after the
   (`builtOffset` 1.049 -> 0), and back to applied when fresh; wind "2.7 kn @ 355° · 1 h 40 min". After the fix the
   current's reason held for 100 s of per-minute samples.
 * Verified: all 71 suites in the scratch clone.
-* Next: #15, a running console serves a newer page against an older server (build ID). (#14 is Andy's call.)
+* Committed and pushed as `f191aa72`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #12 - THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN.**
 Every telemetry frame runs the clearance guard, the speed governor, the re-approach and the end-of-plan chain inside

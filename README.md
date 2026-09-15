@@ -1305,6 +1305,16 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    (`loop_fault`: the latest error, a count and when it began) as **CONSOLE FAULT** too. A fault
    comes down only after 2 s without a failure, so one that fails on every other frame is a fault,
    not a flicker.
+
+   **A page and a console of different versions say so.** The page and its modules are read from
+   disk on every request, but the console's own program only when it starts - so a refresh after an
+   update, while the console ran, paired a new page with the old program, and controls quietly did
+   nothing. The console now reports the version it started from and the version on disk, and serves
+   the page with the version it was read at. A top-bar pill says **RESTART CONSOLE** when the program
+   on disk has changed since the console started (or the console is too old to report a version), and
+   **RELOAD PAGE** when the console was restarted with a version this page was not loaded from. A
+   checkout that only rewrites line endings is not a new version.
+
    **Pause is a toggle, and it flashes until it is answered.** A held run is a boat
    sitting in the tide with the prop stopped and a hole growing in its coverage, so the
    one control that ends it says so: while paused the button reads **RESUME** and blinks
