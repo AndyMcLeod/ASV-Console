@@ -1420,6 +1420,23 @@ Passwords are redacted; the file is append-only and line-buffered, so a crash or
 kill still leaves a complete record. It's on by default (both sim and live);
 `--no-log` disables it. `logs/` is gitignored.
 
+**What the console keeps on disk, and the room left.** Nothing removes a session log or a
+cached chart automatically: the logs are your records, and the chart cache is what lets an
+area already seen plan with the network down, so what to thin and when is your call. The
+console MEASURES instead - at start and every 30 minutes, on its own thread - what `logs/` and
+`charts/` occupy on the drive and what they hold (on a drive with large allocation units,
+thousands of small chart tiles occupy several times their content, and the on-disk figure is
+the one a folder's Properties shows as "size on disk"), how much of `logs/` is older than 30
+days, and the room left on the drive the plan, the session log and the chart cache are written
+to. It prints one `[storage]` line at start, and again only when a drive goes low or recovers,
+and publishes the measurement as `storage` in `/api/state`. With under 2 GB free on a drive it
+writes to, the page raises **⚠ DISK SPACE LOW** once - the room left, the drive, what writes
+there, and what the two folders occupy - and keeps a **⚠ DISK LOW** pill on the top bar for as
+long as it lasts (hover it for the whole warning; the banner slot is shared, and the next
+banner can take it within seconds). The session log records `storage_low` / `storage_ok`. A
+folder that is a link or junction is measured and named by the drive it leads to
+(`tests/storage_watch.py`, `tests/storage_banner.js`).
+
 **`--state-dir DIR`** keeps this console's own state - the plan (`mission.json` and its backups),
 `comms_config.json`, `ports.json`, `roc_config.json` and `logs/` - in DIR instead of beside the
 program. Every test that starts a console passes a temp folder this way

@@ -50,6 +50,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import socket
 import ssl
 import subprocess
@@ -4749,6 +4750,8 @@ class Engine:
                      "enabled": False, "note": "environmental sim (sim mode only)"},
             # Real water, both modes - see CurrentsMonitor. Not gated on `sim`.
             "current": CURRENTS.snapshot(),
+            # What the console keeps on disk and the room left - measured on its own thread, never here (review #24).
+            "storage": STORAGE.snapshot(),
         }
 
 
@@ -5616,6 +5619,184 @@ def watch_station_report(kind, stop=None):
     return last
 
 
+# --- STORAGE: what the console keeps on disk, and the room it has left (review #24) --- #
+# Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB."
+# ⚠ NOTHING HERE REMOVES ANYTHING, and that is the design, not an omission. The session logs are records the operator
+# analyzes, and the chart cache is what lets an area already seen plan with the network down; whether either should
+# ever be thinned on a schedule is the operator's call, not a default. What the console owes him is to SAY - how much
+# each holds, how much of the log is older than a month - and to warn when a drive it writes to runs low, which is the
+# moment growth turns into a fault: a plan save refused (review #10's PLAN NOT SAVED), a session that stops recording.
+# The trees are walked on a thread started by main(), never at import: tests import this module by the dozen, and the
+# chart cache runs to a hundred thousand files.
+STORAGE_CHECK_S = 1800.0          # re-measured this often
+STORAGE_OLD_DAYS = 30             # a session log older than this is counted apart
+STORAGE_LOW_MB = 2048.0           # less free than this on a drive the console writes to is low
+
+
+def _cluster_bytes(path):
+    """The allocation unit of the drive holding `path` on Windows (GetDiskFreeSpaceW), else None - where os.stat's
+    st_blocks says what a file occupies instead."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        root = os.path.splitdrive(os.path.abspath(path))[0] + "\\"
+        spc, bps = ctypes.c_ulong(), ctypes.c_ulong()
+        if ctypes.windll.kernel32.GetDiskFreeSpaceW(ctypes.c_wchar_p(root), ctypes.byref(spc), ctypes.byref(bps),
+                                                    None, None):
+            return (spc.value * bps.value) or None
+    except Exception:
+        pass
+    return None
+
+
+_REPARSE_POINT = 0x400             # FILE_ATTRIBUTE_REPARSE_POINT: a junction, a symbolic link or a mounted volume
+
+
+def _tree_size(root, old_before=None):
+    """What the files under `root` hold and what they OCCUPY: {bytes, disk, files, old_bytes, old_disk, old_files,
+    cluster}. An entry that vanishes or cannot be read mid-walk is skipped - a measurement never raises. Files modified
+    before `old_before` (an epoch) are also counted as old.
+    ⚠ OCCUPY, BECAUSE THAT IS WHAT THE DRIVE LOSES, AND IT CAN BE SEVERAL TIMES THE CONTENT. Measured on Andy's D: (256 KB
+    clusters), 2026-09-15: charts/ holds 861 MB in 15,838 tile files and occupies 4.6 GB, so the "4.4 GB" in the review
+    can only have been what it occupied. A readout of content alone would have contradicted the operator's own number.
+    ⚠ A ROOT THAT IS A LINK IS MEASURED WHERE IT LEADS, AND PRICED BY THAT DRIVE. Found live: a charts/ junction on C:
+    leading to D:\\Claude\\ASV\\charts was priced at C:'s 4 KB allocation unit and read 897 MB on disk - it occupies
+    4.6 GB. A link or junction INSIDE the tree is not walked: is_dir(follow_symlinks=False) is True for a Windows junction
+    (it is not a symlink), so the old walk counted another folder's files as this one's - or its own again, round a loop."""
+    root = os.path.realpath(root)
+    cluster = _cluster_bytes(root)
+    t = {"bytes": 0, "disk": 0, "files": 0, "old_bytes": 0, "old_disk": 0, "old_files": 0, "cluster": cluster}
+    stack = [root]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            if not getattr(e.stat(follow_symlinks=False), "st_file_attributes", 0) & _REPARSE_POINT:
+                                stack.append(e.path)
+                        elif e.is_file(follow_symlinks=False):
+                            st = e.stat(follow_symlinks=False)
+                            size = st.st_size
+                            disk = (-(-size // cluster) * cluster if cluster
+                                    else getattr(st, "st_blocks", None) * 512 if getattr(st, "st_blocks", None) is not None
+                                    else size)
+                            t["bytes"] += size
+                            t["disk"] += disk
+                            t["files"] += 1
+                            if old_before is not None and st.st_mtime < old_before:
+                                t["old_bytes"] += size
+                                t["old_disk"] += disk
+                                t["old_files"] += 1
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return t
+
+
+def _fmt_mb(mb):
+    return ("%.1f GB" % (mb / 1024.0)) if mb >= 1024 else ("%d MB" % round(mb))
+
+
+class StorageWatch:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._snap = {"ok": False, "note": "not measured yet"}
+        self._low_said = None
+        self._thread = None
+
+    def measure(self, now=None):
+        """Walk logs/ and charts/, and ask each drive the console writes to how much room it has. Returns the snapshot."""
+        now = time.time() if now is None else now
+        logs = _tree_size(LOG_DIR, now - STORAGE_OLD_DAYS * 86400.0)
+        charts = _tree_size(CHART_DIR)
+        drives = {}
+        for use, path in (("the plan", os.path.dirname(os.path.abspath(MISSION_PATH))), ("the session log", LOG_DIR),
+                          ("the chart cache", CHART_DIR)):
+            p = os.path.realpath(path)          # named by the drive the files are ON - a link's own letter is not it
+            while not os.path.exists(p) and os.path.dirname(p) != p:
+                p = os.path.dirname(p)
+            try:
+                usage, dev = shutil.disk_usage(p), os.stat(p).st_dev
+            except OSError:
+                continue
+            name = os.path.splitdrive(p)[0] or p
+            d = drives.setdefault(dev, {"drive": name, "free_mb": usage.free / 1048576.0,
+                                        "total_mb": usage.total / 1048576.0, "uses": []})
+            d["uses"].append(use)
+        tightest = min(drives.values(), key=lambda d: d["free_mb"]) if drives else None
+        mb = lambda b: round(b / 1048576.0, 1)  # noqa: E731
+        snap = {"ok": True, "at": now,
+                # ON DISK is what each holds on the drive; the content is what a copy elsewhere would take
+                "logs_mb": mb(logs["disk"]), "logs_content_mb": mb(logs["bytes"]), "logs_files": logs["files"],
+                "logs_old_mb": mb(logs["old_disk"]), "logs_old_files": logs["old_files"], "old_days": STORAGE_OLD_DAYS,
+                "charts_mb": mb(charts["disk"]), "charts_content_mb": mb(charts["bytes"]), "charts_files": charts["files"],
+                "cluster_kb": (charts["cluster"] or logs["cluster"] or 0) // 1024,
+                "free_mb": round(tightest["free_mb"], 1) if tightest else None,
+                "free_drive": tightest["drive"] if tightest else None,
+                "free_uses": list(tightest["uses"]) if tightest else [],
+                "low": bool(tightest and tightest["free_mb"] < STORAGE_LOW_MB)}
+        with self._lock:
+            self._snap = snap
+        return snap
+
+    def snapshot(self):
+        with self._lock:
+            s = dict(self._snap)
+        if s.get("ok"):
+            s["age_s"] = round(time.time() - s.pop("at"), 1)
+        return s
+
+    def report(self, snap=None):
+        s = snap or self.snapshot()
+        if not s.get("ok"):
+            return "[storage] not measured yet"
+        def held(name, disk, content, files):
+            # the content is named only when the drive's allocation units cost more than the content itself
+            unit = (" %d KB" % s["cluster_kb"]) if s.get("cluster_kb") else ""
+            extra = (" (%s of content: each small file takes a whole%s allocation unit)" % (_fmt_mb(content), unit)
+                     if disk >= 2 * content and disk - content >= 64 else "")
+            return "%s %s on disk in %d files%s" % (name, _fmt_mb(disk), files, extra)
+        line = ("[storage] %s (%s of it older than %d days); %s; %s free on %s"
+                % (held("logs", s["logs_mb"], s["logs_content_mb"], s["logs_files"]), _fmt_mb(s["logs_old_mb"]),
+                   s["old_days"], held("charts", s["charts_mb"], s["charts_content_mb"], s["charts_files"]),
+                   _fmt_mb(s["free_mb"] or 0), s["free_drive"]))
+        if s.get("low"):
+            line += (" - LOW: %s write%s there, and nothing is removed automatically"
+                     % (", ".join(s["free_uses"]), "" if len(s["free_uses"]) > 1 else "s"))
+        return line
+
+    def check_once(self):
+        snap = self.measure()
+        if self._low_said is None or snap["low"] != self._low_said:     # the first measurement, and any change
+            print(self.report(snap), file=sys.stderr if snap["low"] else sys.stdout, flush=True)
+            if LOG is not None and snap["low"] != bool(self._low_said):
+                LOG.event("storage_low" if snap["low"] else "storage_ok", free_mb=snap["free_mb"],
+                          drive=snap["free_drive"], logs_mb=snap["logs_mb"], charts_mb=snap["charts_mb"])
+            self._low_said = snap["low"]
+        return snap
+
+    def start(self):
+        if self._thread is not None:
+            return
+
+        def loop():
+            while True:
+                try:
+                    self.check_once()
+                except Exception as e:            # a measurement must never end the watch
+                    print("[storage] %s: %s" % (type(e).__name__, e), file=sys.stderr)
+                time.sleep(STORAGE_CHECK_S)
+        self._thread = threading.Thread(target=loop, name="storage-watch", daemon=True)
+        self._thread.start()
+
+
+STORAGE = StorageWatch()
+
+
 # --- auto-started AIS provider (ais_service.py as a child process) ---------- #
 _ais_proc = None
 # ⚠ A SERVICE THAT DIES IS STARTED AGAIN (review #27, 2026-09-15). It was started once, at launch, and nothing looked at
@@ -6027,6 +6208,7 @@ def main():
     # log_dir PASSED, not defaulted: the default was bound when the class was defined, before
     # --state-dir could move LOG_DIR (review #16).
     LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR)
+    STORAGE.start()                               # sizes of logs/ and charts/, and a warning when a drive runs low
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)

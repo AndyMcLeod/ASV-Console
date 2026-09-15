@@ -348,6 +348,7 @@
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
+    <div class="pill" id="diskPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
@@ -9642,6 +9643,43 @@ function onFrame(ev){
   }
   consoleHealth();
   buildCheck();
+  storageCheck();
+}
+// ⚠ A DRIVE THE CONSOLE WRITES TO IS RUNNING OUT (review #24, 2026-09-15). The console measures logs/ and charts/ and the
+// room left, on its own thread (S.storage), and NOTHING on either side removes anything: the session logs are records the
+// operator analyzes, and thinning them or the chart cache is the operator's call. Said once when a drive goes low - the
+// plan, the session log and the chart cache would be the first writes to fail there - and taken down, if it is still
+// the banner up, when there is room again.
+// ⚠ AND A PILL STAYS UP WHILE IT LASTS, because the banner slot is shared: in the live check the chart's own "Nogo
+// established" banner took the slot FOUR SECONDS after the warning went up, leaving it only in the history. The pill is
+// written when what it says changes, not on every frame.
+const STORAGE_WARN_PREFIX = "⚠ DISK SPACE LOW";
+let storageLowSaid = false;
+function fmtStorageMb(mb){ return mb == null ? "?" : mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB"; }
+function storageCheck(){
+  const st = (S && S.storage) || {};
+  const low = !!(st.ok && st.low);
+  const uses = st.free_uses || [];
+  const said = !low ? "" : STORAGE_WARN_PREFIX + " — " + fmtStorageMb(st.free_mb) + " free on "
+    + (st.free_drive || "the console's drive") + ", where " + (uses.join(", ") || "the console")
+    + (uses.length > 1 ? " write" : " writes") + ". logs/ occupies " + fmtStorageMb(st.logs_mb)
+    + " (" + fmtStorageMb(st.logs_old_mb) + " of it older than " + st.old_days + " days) and charts/ "
+    + fmtStorageMb(st.charts_mb) + ". Nothing is removed automatically.";
+  const pill = $("#diskPill");
+  if(pill && pill._said !== said){
+    pill._said = said;
+    pill.textContent = low ? "⚠ DISK LOW · " + fmtStorageMb(st.free_mb) + " free" : "";
+    pill.title = said;
+    pill.style.display = low ? "" : "none";
+  }
+  if(low && !storageLowSaid){
+    storageLowSaid = true;
+    showBanner(said);
+  } else if(!low && storageLowSaid){
+    storageLowSaid = false;
+    const b = $("#encbanner");
+    if(b && (b.textContent || "").indexOf(STORAGE_WARN_PREFIX) === 0) b.style.display = "none";
+  }
 }
 // ⚠ THE PAGE AND THE PROGRAM MUST BE THE SAME VERSION (review #15, 2026-09-14). The page and its modules are read
 // from disk on every request, but the console's Python only when it starts - so a refresh after a commit or an edit

@@ -55,13 +55,13 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22 and #25-#27 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22 and #24-#27 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #26, pushed; 83 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+* **STATE:** `master` carries #24, pushed; 85 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
   any of this (hash-checked before every commit). His console was OFF through #20-#27 (nothing on 8790-8799).
   **Everything in this file from before 2026-09-05 is in `HANDOFF_ARCHIVE.md` now (review #26) - see the pointer
   section below the 09-05 handoff.**
@@ -70,12 +70,12 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20, #21, #22, #25, #26 AND #27 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that
-  carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
+* **#20, #21, #22, #24, #25, #26 AND #27 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`)
+  that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
-    session logs are records he analyzes - anything that deletes them automatically is his call, not a default)
-  * **Andy's call:** #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
+  * **Andy's call:** #24's RETENTION question - #24 measures and warns and removes nothing, as he asked; whether old
+    session logs are ever compressed, moved or deleted (and after how long), whether the chart cache gets a cap, and
+    whether 2 GB / 30 days are the right thresholds are his (numbers in the #24 block); #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
     hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #23 "`runElapsed`
     spans back-to-back runs" (time each commanded motion, or each job?); #28 the Eastport north-west line (his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
@@ -106,7 +106,46 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #26 - THE HANDOFFS FROM BEFORE 2026-09-05 ARE ARCHIVED.**
+**NEWEST, 2026-09-15: REVIEW ITEM #24 - THE CONSOLE SAYS WHAT IT KEEPS ON DISK, AND REMOVES NOTHING.**
+Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." His session logs
+are records he analyzes, and anything that deletes them automatically is his call, not a default - so this item MEASURES
+and WARNS, and retention is a question for him.
+
+* MEASURED ON HIS D: FIRST (exFAT, 256 KB allocation units; read-only walks, 2026-09-15): `logs/` 475 MB on disk (446 MB
+  of content) in 191 files, 329 MB of it (119 files) older than 30 days; `charts/` 861 MB of content in 15,838 files
+  OCCUPYING 4.6 GB, 5.5x - every tile takes a whole 256 KB unit, so his "4.4 GB" can only have been the size on disk.
+  422.6 GB free. For the retention question: the 118 old session logs gzip from 309.6 MB to 8.9 MB (35x, in memory).
+* `StorageWatch` (asv_console.py), a daemon thread started by `main()` - never at import, which dozens of suites do: at
+  start and every `STORAGE_CHECK_S` (30 min), `_tree_size` walks logs/ and charts/ for content, on-disk size (priced by
+  the allocation unit of the drive the folder's REAL path is on - GetDiskFreeSpaceW) and the part of logs/ older than
+  `STORAGE_OLD_DAYS` (30); `shutil.disk_usage` for each drive the plan, the session log and the chart cache are written
+  to, grouped by device. The tightest drive goes in the state as `storage` (with `age_s`); one `[storage]` line prints
+  at start and then only when a drive goes low or recovers (stderr when low), logged as `storage_low` / `storage_ok`.
+* Under `STORAGE_LOW_MB` (2 GB): the page (`storageCheck`, from `onFrame`) raises ⚠ DISK SPACE LOW once - room left,
+  drive, what writes there, what the two folders occupy, nothing removed automatically - and keeps `#diskPill`
+  "⚠ DISK LOW · N free" in the top bar while it lasts, with the whole warning as its title.
+* NOTHING REMOVES ANYTHING, by construction: tests/storage_watch.py 9 audits the watch by AST for remove / unlink /
+  rmdir / rmtree / truncate and any write-open.
+* ⚠ THE LIVE CHECK FOUND THREE THINGS THE SUITES HAD NOT:
+  1. The temp copy's charts/ was a JUNCTION on C: to `D:\Claude\ASV\charts` (so it did not copy 4.6 GB), and the line
+     read "charts 897 MB on disk ... 422.6 GB free on C:" - D:'s free space under C:'s name, the tiles priced at C:'s
+     4 KB unit. Naming and pricing now go through `os.path.realpath`. And the walk that CLAIMED not to follow links
+     followed junctions inside the tree: on Python 3.11 `is_dir(follow_symlinks=False)` is True for one and
+     `is_symlink()` False, so it now skips any reparse-point directory. Live after: "charts 4.6 GB on disk in 15838
+     files (861 MB of content: each small file takes a whole 256 KB allocation unit); 422.6 GB free on D:".
+  2. With low forced in the temp copy (`STORAGE_LOW_MB` edited in the COPY only), the banner went up and the chart's
+     own "Nogo established" banner took the single slot FOUR SECONDS later, leaving the warning only in the history.
+     Hence the pill - verified in the page, the banner slot holding the chart's banner and the pill still up.
+  3. One use on a drive read "where the chart cache write".
+* Tests: NEW tests/storage_watch.py (12 checks; 13 mutations, 13 caught - check 12 MODELS a cross-drive link with a
+  patched `realpath` on an unused drive letter, because one volume cannot show it, and a junction from a temp folder into
+  his repo is a risk not worth taking); tests/storage_banner.js (8; 10 sidecar mutations, 10 caught - "posted on every
+  frame" SURVIVED the first draft, because showBanner records only words not already on screen); tests/frame_health.js
+  stubs `storageCheck`.
+* Words: README (after "Session recording"); the operations manual's top-bar table and 4.4; the technical manual's
+  chapter 11 and constants table; GUARDS; the hook's advice.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #26 - THE HANDOFFS FROM BEFORE 2026-09-05 ARE ARCHIVED.**
 Andy: "`CLAUDE.md` is 7,105 lines, and START HERE alone is about 1,200. Archiving the handoffs from before 09-05 would make
 every session's start cheaper." It had grown to 7,798.
 
@@ -123,6 +162,8 @@ every session's start cheaper." It had grown to 7,798.
 * The four code comments that cited a moved section now name the archive (buoy_lane.js, end_action.js, measure_tool.js,
   units_toggle.js); the technical manual's document table lists `HANDOFF_ARCHIVE.md`. The two generic "see CLAUDE.md"
   notes (estop_chain.py, live_speed.py) are about client-side routing, which the kept Architecture section covers.
+* Verified: all 83 suites through the hook; in the real repo, the archive's spans compared equal to the text they came
+  from at the previous tip. Committed and pushed as `52fc8f24`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #27 - THE SMALL CLEANUPS, AND WHAT THREE OF THEM TURNED OUT TO BE.**
 The list's own words: "a crashed AIS service is never restarted; the NDBC weather-station cache is written non-atomically;

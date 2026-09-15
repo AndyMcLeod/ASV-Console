@@ -81,7 +81,7 @@ const world = {
 };
 // eslint-disable-next-line no-eval
 const page = eval("(function(){ \"use strict\"; let S = {}; const $ = world.$, showBanner = world.showBanner, fetch = world.fetch;"
-  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {};"
+  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const storageCheck = () => {};"
   + " const onState = (m) => { stateSeen++; S = m; if (throwNext > 0) { throwNext--; throw new TypeError(\"guard fell over\"); } };\n"
   + DECL + "\n" + grab("onFrame") + "\n" + grab("consoleHealth") + "\n"
   + "return { onFrame, consoleHealth, faults: () => frameFaults, lastAt: () => lastFrameAt }; })()");
@@ -170,7 +170,7 @@ clock += 10000; page.consoleHealth();
 const idleSaid = banner();
 // eslint-disable-next-line no-eval
 const fresh = eval("(function(){ \"use strict\"; let S = {}; const $ = world.$, showBanner = world.showBanner, fetch = world.fetch;"
-  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const onState = (m) => { S = m; };\n"
+  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const storageCheck = () => {}; const onState = (m) => { S = m; };\n"
   + DECL + "\n" + grab("onFrame") + "\n" + grab("consoleHealth") + "\n return { consoleHealth }; })()");
 clock += 10000; fresh.consoleHealth();
 check("5. ... but not when the console says nothing is streaming (no link: no frames to go stale), nor before the first frame",
