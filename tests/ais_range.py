@@ -295,8 +295,9 @@ finally:
 srvlog.seek(0)
 server_out = srvlog.read()
 srvlog.close()
-tb = [ln.strip() for ln in server_out.splitlines()
-      if "Traceback" in ln or "Error" in ln or "Exception occurred" in ln]
+# tracebacks and routes that raised - not every line that says "Error" (tests/lib/server_log.py, review #17)
+from server_log import exception_lines  # noqa: E402
+tb = exception_lines(server_out)
 # --- 8b-8d. THE CONTROL READS IN NAUTICAL MILES, THE WIRE STAYS IN KILOMETRES --------- #
 # The contact list has always reported range in nm, so a selector in km meant filtering in
 # one unit and reading distances in another. The conversion happens at the display edge; a

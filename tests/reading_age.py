@@ -25,7 +25,7 @@ age - is tests/water_trust.js 16-21 and tests/reading_age.js.
 
     python tests/reading_age.py     # exit 0 = pass, 1 = fail   (stdlib only)
 
-TEETH - 17 mutations RUN in a scratch clone on the final code, 17/17 caught, none by a crash (recorded results):
+TEETH - 20 mutations RUN in a scratch clone on the final code, 20/20 caught, none by a crash (recorded results):
   * a raising pass ends the monitor again (no handler)    -> caught by 2, 3, 4, 5, 7, 11
   * the monitor's error never cleared                     -> caught by 3, 7, 11
   * the failure printed on every failing pass             -> caught by 3
@@ -37,12 +37,16 @@ TEETH - 17 mutations RUN in a scratch clone on the final code, 17/17 caught, non
   * the weather aged from its NEWEST buoy                 -> caught by 6, 7
   * a manual weather override given an age                -> caught by 8
   * the current sampled only every POLL_S again           -> caught by 9, 12
-  * a forced refresh waits for the next POLL_S            -> caught by 10
+  * a forced refresh waits for the next POLL_S            -> caught by 10, 10b
   * the cycle looked for on every sample                  -> caught by 9
   * the no-cycle reason overwritten again                 -> caught by 12
   * the reason kept only on the pass that looked          -> caught by 12 (the first version of the fix; seen live)
   * the current's sample time never set                   -> caught by 9, 12
   * the water loop bypasses _monitor_pass                 -> caught by 2, 3, 4, 5
+  * the water loop clears its wake-up after ANY wait again  -> caught by 10b (water)
+  * the weather loop clears it after any wait again        -> caught by 10b (weather)
+  * the current's loop clears it after any wait again      -> caught by 10b (current) - the race that failed a
+    commit under load on 2026-09-15; check 10 then waited 0.3 s for a look the loop had wiped
 """
 
 import calendar
@@ -312,11 +316,6 @@ try:
           "itself is looked for every POLL_S, and its age is since that sample",
           lambda: n_smp >= 12 and 2 <= n_ens <= 4 and cs.get("age_s") is not None and cs["age_s"] <= 1,
           "%d samples and %d cycle lookups in 1.4 s; age_s=%s" % (n_smp, n_ens, cs.get("age_s")))
-    before = calls["ensure"]
-    C.refresh_now()
-    forced = until(lambda: calls["ensure"] > before, 0.3)
-    check("10. a forced refresh looks for the cycle at once, not at the next POLL_S",
-          lambda: forced, "cycle looked for within 0.3 s of the refresh: %s" % forced)
     calls["raise"] = True
     cfail = until(lambda: C.snapshot().get("monitor_error"))
     cf = C.snapshot()
@@ -328,6 +327,100 @@ try:
           "carried=%s (%s); cleared=%s" % (cfail, cf.get("monitor_error"), cback))
     C._stop.set()
     C._force.set()
+
+    # 10-10c. A FORCED REFRESH IS NEVER SWALLOWED. Each loop ended `wait(poll); clear()`, so a set() landing after a
+    # wait had timed out and before the clear was wiped - a refresh, or a move, then waited for the next poll: 15 min
+    # for the current, 6 for the water, 20 for the weather. It failed a commit, under load (2026-09-15). The window is
+    # a few microseconds, so it is PUT there: an Event whose next wait times out and takes the set() on its way out.
+    import threading as _th
+
+    class _RacingEvent(_th.Event):
+        armed = False
+
+        def wait(self, timeout=None):
+            if self.armed:
+                self.armed = False
+                got = super().wait(0)            # the poll ran out ...
+                self.set()                       # ... and the refresh lands now, before the loop's next line
+                return got
+            return super().wait(timeout)
+
+    def swallowed(mon, counter, rounds):
+        """Arm the race on `mon`; True when its loop went round `rounds` more times promptly - the refresh was kept.
+        Waking it is one round, and a loop that fetches after every wait takes the round after the timeout anyway,
+        so for the water and the weather the KEPT refresh is the third; the current only looks when due or forced,
+        so for it the kept refresh is the second look (measured against the old code: 2 and 1 rounds)."""
+        old, racing = mon._force, _RacingEvent()
+        mon._force = racing
+        racing.armed = True
+        old.set()                                # wake the loop out of its long wait, onto the racing Event
+        start = counter()
+        return until(lambda: counter() >= start + rounds, 1.5)
+
+    ens = {"n": 0}
+
+    class SlowCurrents(A.CurrentsMonitor):
+        POLL_S = 30.0                            # a periodic look cannot happen inside this check
+        SAMPLE_S = 0.05
+
+        def _ensure_cycle(self, lat, lon):
+            ens["n"] += 1
+            return None
+
+        def _sample(self, lat, lon):
+            return {"ok": True, "source": "fake", "speed_kn": 1.0, "set_deg": 90.0, "projected_h": 0.0}
+
+    K = SlowCurrents()
+    K.update_position(44.9, -66.98)
+    until(lambda: ens["n"] >= 1, 2.0)
+    before = ens["n"]
+    K.refresh_now()
+    forced = until(lambda: ens["n"] > before, 1.0)
+    check("10. a forced refresh looks for the cycle at once, not at the next POLL_S (30 s here)",
+          lambda: forced, "cycle looked for within 1 s of the refresh: %s" % forced)
+    kept_cur = swallowed(K, lambda: ens["n"], 2)
+    K._stop.set()
+    K._force.set()
+
+    fetches = {"n": 0}
+
+    def counting_water(lat, lon, timeout=15.0):
+        fetches["n"] += 1
+        return {"ok": True, "offset_m": 1.0, "t": gmt(0), "stations": []}
+
+    A.fetch_water_level = counting_water
+
+    class SlowWater(A.WaterLevel):
+        POLL_S = 30.0
+
+    SW = SlowWater()
+    SW.update_position(44.9, -66.98)
+    until(lambda: fetches["n"] >= 1, 2.0)
+    kept_water = swallowed(SW, lambda: fetches["n"], 3)
+    SW._stop.set()
+    SW._force.set()
+
+    pulls = {"n": 0}
+
+    def counting_env(lat, lon):
+        pulls["n"] += 1
+        return {"ok": True, "source": "buoy", "note": "", "wind": None, "sea": None, "stations": []}
+
+    A.fetch_environment = counting_env
+
+    class SlowEnv(A.EnvMonitor):
+        POLL_S = 30.0
+
+    SE = SlowEnv()
+    SE.update_position(44.9, -66.98)
+    until(lambda: pulls["n"] >= 1, 2.0)
+    kept_env = swallowed(SE, lambda: pulls["n"], 3)
+    SE._stop.set()
+    SE._force.set()
+    check("10b. a refresh that lands between a wait that timed out and the loop's next line is kept - by the current, "
+          "the water level and the weather alike - not wiped and left for the next poll",
+          lambda: kept_cur and kept_water and kept_env,
+          "went round again promptly: current %s, water %s, weather %s" % (kept_cur, kept_water, kept_env))
 
     # 12. WHY there is no cycle. _ensure_cycle's reason used to be overwritten on the same pass by
     # _sample's "no cycle cached yet" - at New Castle the card said that while the real answer was that

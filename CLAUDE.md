@@ -55,11 +55,40 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#13, #15 and #16 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#17 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #15 - THE PAGE AND THE PROGRAM SAY WHEN THEY ARE DIFFERENT VERSIONS.**
+**NEWEST, 2026-09-15: REVIEW ITEM #17 - THE COMMIT GATE HAS NO GAPS.**
+Four holes in `.githooks/pre-commit` and the suites it runs: its list of paths that count had drifted (a commit touching
+only `currents.py`, `vessels/*.json` or `ports.default.json` ran NOTHING); `track_edge.js` and `amend_plan.py` had two
+advice entries each, the second never reachable, and ten suites had none; a hung suite held the commit for ever; and
+eleven suites failed on any console output line containing "Error" - data_routes blocked a clean commit on 2026-09-14
+because a DNS hiccup printed "[ports] geocoder unreachable: URLError ...".
+
+* Skip rule INVERTED: the suites run unless every staged path is Markdown or `.gitignore`/`.gitattributes`; nothing
+  staged (an amend) runs them too.
+* `SUITE_LIMIT_S` 600 (`ASV_SUITE_LIMIT_S`), via GNU `timeout` when present (Git's MSYS one kills a native python
+  child - measured 3.5 s on a 3 s limit); exit 124 reads "TIMED OUT after N s" and blocks.
+* Duplicates dropped (the FIRST, fuller entry of each kept); advice written for chart_source_card, guard_resume,
+  pause_resume, survey_lead, turn_channel, units_toggle, ais_sources, currents, roc_persist, station_windows and the
+  new suite. ⚠ A NEW SUITE NOW NEEDS AN advice_for ENTRY (precommit_hook.py 5), like its GUARDS entry.
+* tests/lib/server_log.py `exception_lines(text)`: a traceback (reported by its error line), socketserver's
+  "Exception occurred during processing of request", and the console's own "[http] <path> raised:" (the POST
+  catch-all logs without a traceback - a matcher on "Traceback" alone would have MISSED it). Used by all eleven.
+* Tests: NEW tests/precommit_hook.py (7) runs a COPY of the real hook in a temp folder with a stand-in `git` (a
+  shebang script on PATH) answering `git diff --cached --name-only`. 11 mutations, 11 caught - end to end too:
+  with the water-level cast unguarded, env_water 9 still fails, naming "[http] /api/waterlevel raised: ValueError".
+* Verified: all 74 suites in the scratch clone.
+* ⚠ THE FIRST COMMIT ATTEMPT WAS BLOCKED - by reading_age.py 10, not by #17. A real RACE in #13's monitor loops:
+  `wait(poll); clear()` wiped a refresh (or a move) that landed after a wait timed out and before the clear, until
+  the next poll - 15 min for the current. Now `if wait(): clear()` in all three loops. 10b PUTS a set() in that
+  window with an Event whose next wait times out and sets on its way out; 3 mutations (one per loop), 3 caught.
+  A kept refresh is the THIRD round for water/weather (they fetch after every wait anyway) and the second look for
+  the current - a threshold of 2 let the water and weather mutations survive the first try.
+* Next: #18, the LINES table shows a split line as two lines.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #15 - THE PAGE AND THE PROGRAM SAY WHEN THEY ARE DIFFERENT VERSIONS.**
 The page and its modules are read from disk on every request; the Python only when the console starts. After a commit
 or an edit while a console ran, a refresh paired a NEW page with the OLD program - fields dropped, routes 404, nothing
 said. ⚠ ANDY'S CONSOLE RUNS THE WORKING TREE, so this is every commit made while it is up.
@@ -84,7 +113,7 @@ said. ⚠ ANDY'S CONSOLE RUNS THE WORKING TREE, so this is every commit made whi
 * Also: the README paragraph #12 added ran straight into the next one with no blank line - fixed.
 * Verified: all 73 suites in the scratch clone (reset to the #13 tip first - a clone left at #12 was missing #13's
   suites, caught by the count: 71, not 73).
-* Next: #17, the pre-commit hook's gaps - and the eleven suites whose "logged NO exception" check matches any "Error".
+* Committed and pushed as `17c5851c`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #13 - WATER, WEATHER AND CURRENT READINGS DO NOT FREEZE, AND SAY HOW OLD THEY ARE.**
 `WaterLevel`, `EnvMonitor` and `CurrentsMonitor` each had a loop with no handler: one exception ended the thread and the

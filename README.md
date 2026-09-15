@@ -1638,9 +1638,14 @@ page (a stale one fails silently: a panel just stops mirroring), and that the ve
 card stays on the chart window — not mirrored into the controls window, and not stripped
 from the chart either.
 
-A pre-commit hook runs all of them automatically whenever a source they cover, or any test
-itself, is staged, and blocks the commit if an invariant regresses. The hook is versioned in
-`.githooks/`; **enable it once per clone**:
+A pre-commit hook runs all of them automatically whenever anything but Markdown is staged, and
+blocks the commit if an invariant regresses. It used to run only for a list of covered paths, and
+that list had drifted: a commit touching only `currents.py`, a vessel file or `ports.default.json`
+ran nothing - so now only Markdown and git's own metadata files skip it. A suite that hangs is
+stopped after 10 minutes and blocks the commit as timed out, every suite has its own line of
+failure advice, and the suites that read a console's output count a real exception - a traceback,
+or a route that raised - rather than any line that happens to contain "Error". The hook is
+versioned in `.githooks/`; **enable it once per clone**:
 
 ```
 git config core.hooksPath .githooks

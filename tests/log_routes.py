@@ -285,8 +285,9 @@ finally:
 srvlog.seek(0)
 server_out = srvlog.read()
 srvlog.close()
-tb = [ln.strip() for ln in server_out.splitlines()
-      if "Traceback" in ln or "Error" in ln or "Exception occurred" in ln]
+# tracebacks and routes that raised - not every line that says "Error" (tests/lib/server_log.py, review #17)
+from server_log import exception_lines  # noqa: E402
+tb = exception_lines(server_out)
 check("8. the console logged NO exception while serving those requests",
       not tb,
       ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb

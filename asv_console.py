@@ -2406,8 +2406,10 @@ class WaterLevel:
                 pos = self._pos
             if pos:
                 _monitor_pass(self, "water", lambda: self._fetch(pos))
-            self._force.wait(self.POLL_S)
-            self._force.clear()
+            # Cleared only when the wait says it was SET: clearing after a wait that timed out swallowed a
+            # refresh, or a 3 km move, that landed between the two calls - until the next poll (review #13).
+            if self._force.wait(self.POLL_S):
+                self._force.clear()
 
     def _fetch(self, pos):
         res = fetch_water_level(pos[0], pos[1])
@@ -2775,8 +2777,8 @@ class EnvMonitor:
                 enabled = self._enabled
             if pos and enabled:
                 _monitor_pass(self, "weather", lambda: self._fetch(pos))
-            self._force.wait(self.POLL_S)
-            self._force.clear()
+            if self._force.wait(self.POLL_S):          # cleared only when set - see WaterLevel._loop
+                self._force.clear()
 
     def _fetch(self, pos):
         res = fetch_environment(pos[0], pos[1])
@@ -2949,8 +2951,8 @@ class CurrentsMonitor:
                 if look:
                     due = time.time() + self.POLL_S
             if self._force.wait(self.SAMPLE_S):     # a move, a refresh or a model switch: look at once
-                due = 0.0
-            self._force.clear()
+                self._force.clear()                  # only when set: a clear after a timeout swallowed a refresh
+                due = 0.0                            # landing between the two - it failed a commit, under load
 
     def _pass(self, pos, look):
         if look:
