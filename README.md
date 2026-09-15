@@ -1312,6 +1312,16 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    plan; the command E-STOP latches motors to zero and disarms. Link-loss also
    halts commanding automatically and surfaces the boat's own failsafe.
 
+   **Another website cannot command the console.** Every POST must be labeled
+   `Content-Type: application/json`, or it is refused `415` in words and logged: a web page
+   on any site can make a browser send a form or a `text/plain` body without asking, but it
+   must ask before sending JSON, and the console never says yes. The console's own pages
+   label every POST JSON. **A stop is never refused:** Stop, Pause and an E-STOP *latch* are
+   honored whatever they are labeled (a `curl` without `-H` labels its body a form), and an
+   E-STOP body that cannot be read or does not say *off* **latches** — only `"on": false`
+   (or `0`) releases, and a release must be JSON. It used to read a garbled E-STOP as a
+   release.
+
    **None of them leaves a boat station-keeping behind your back.** Stop, E-STOP and a
    disarm end the hold along with the run, and the console's routed way back onto station
    (the re-approach) is accepted only while a run is under way — so nothing can restart a

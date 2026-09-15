@@ -55,26 +55,24 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#22 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22 and #25 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #22, pushed; 79 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
-  any of this (hash-checked before every commit). His console was OFF through #20-#22 (nothing on 8790-8799).
+* **STATE:** `master` carries #25, pushed; 80 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+  any of this (hash-checked before every commit). His console was OFF through #20-#25 (nothing on 8790-8799).
 * **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
   this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from his iPhone, "Carry on
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20, #21 AND #22 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20
+* **#20, #21, #22 AND #25 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20
   half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
   * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
     session logs are records he analyzes - anything that deletes them automatically is his call, not a default)
-  * **#25** "POST requests don't require JSON. The page already sends JSON, so requiring it costs nothing and blocks
-    simple posts from other websites." (⚠ the #10 note on `_read_json`: a garbled Stop must still be honored)
   * **#26** "`CLAUDE.md` is 7,105 lines, and START HERE alone is about 1,200. Archiving the handoffs from before 09-05
     would make every session's start cheaper." (it has grown since)
   * **#27** Small cleanups: a crashed AIS service is never restarted; the NDBC weather-station cache is written
@@ -113,7 +111,35 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #22 - THE MISSION STATUS CARD KEEPS A HISTORY OF WHAT THE CONSOLE DID.**
+**NEWEST, 2026-09-15: REVIEW ITEM #25 - A POST MUST SAY IT IS JSON, AND A STOP IS NEVER REFUSED.**
+Andy: "POST requests don't require JSON. The page already sends JSON, so requiring it costs nothing and blocks simple posts
+from other websites." (With the #10 caution in the list: a garbled Stop must still be honored.)
+
+* THE THREAT, AND WHY THE LABEL IS THE GUARD: a page on any site can make the operator's browser POST to the console without a
+  preflight when the request is "simple" - a form, or a body labeled text/plain, form-urlencoded or multipart. A JSON label
+  makes the browser ask first (OPTIONS), and this console answers no OPTIONS (501) and sends no Access-Control header, so
+  that POST is never sent.
+* `post_refusal(path, content_type, body)` (module level, beside `class Server`) is answered by `do_POST` BEFORE dispatch:
+  415 {"error": "a POST must be sent as JSON (Content-Type: application/json) - ..."} and logged like any outcome.
+  `post_is_json` takes the media type before any `;`, case-insensitively. Every page POST (16) and every suite already
+  labels JSON.
+* ⚠ THE STOPS ARE EXEMPT: `POST_ANY_TYPE` = /api/cmd/stop, /api/cmd/pause, plus /api/cmd/estop when it LATCHES - another
+  website stopping the boat is a nuisance; refusing a stop typed by hand (curl without -H labels its body a form) is a
+  hazard. A RELEASE is not a stop and needs JSON.
+* ⚠ FOUND BUILDING IT: the E-STOP route read `bool(body.get("on"))`, and `_read_json` reads an unreadable body as {} - so a
+  GARBLED E-STOP RELEASED a latched one. `estop_wants_latch(body)` is read by the gate and the route alike: only `on` false
+  or 0 releases; unreadable, not an object, missing, null or the string "false" latches. (`/api/cmd/arm` still reads
+  `bool(on)`: a garbled Arm disarms, the safe way.)
+* Tests: NEW tests/post_json.py (9 checks) - the console's own Handler on a Server in-process, its ENGINE on a sim link, state
+  in a temp folder, requests through http.client so the labels are exact. 12 scratch-clone mutations (sidecar original,
+  atomic writes, PYTHONDONTWRITEBYTECODE, byte-compared after), 12 caught.
+* Words: README (Pause / Stop / E-STOP: "Another website cannot command the console") and the technical manual's section 10.
+* LIVE: a temp console on 8796 with logging and a page served from 8797 (another origin) in the in-app browser. A no-cors
+  text/plain POST of {"on": true} to /api/cmd/arm was sent and refused - the session log reads "/api/cmd/arm 415 a POST must
+  be sent as JSON", still disarmed; the same POST labeled JSON never left the browser ("Failed to fetch", no second arm in
+  the log). The console's own page then armed, latched and released E-STOP as before.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #22 - THE MISSION STATUS CARD KEEPS A HISTORY OF WHAT THE CONSOLE DID.**
 Andy: "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that about 40
 different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card." (Counted: 51
 `showBanner` call sites and 48 `flashNote`.)
@@ -152,6 +178,7 @@ different messages overwrite. Add a timestamped list of the last 20 actions to t
   page load posts "Extracting ENC nogo boundaries..." and "Nogo established (N zones)" - four reloads had taken eight
   lines, and N differed each time (585, 599, 737), which is why banners merge with their numbers set aside. After both:
   three reloads, two lines, each ×3.
+* Verified: all 79 suites through the hook (8.5 min). Committed and pushed as `7067c526`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #21 - THE TRAIL IS SAVED WHILE THE BOAT MOVES, AND A LONG DAY OF IT IS KEPT.**
 Andy: "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy saves only

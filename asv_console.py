@@ -4782,6 +4782,42 @@ def safe_js_path(name):
     return p if os.path.isfile(p) else None
 
 
+# ⚠ A POST MUST SAY IT IS JSON (review #25, 2026-09-15). Andy: "POST requests don't require JSON. The page already sends
+# JSON, so requiring it costs nothing and blocks simple posts from other websites."
+# A web page on ANY site can make the operator's browser POST to this console without asking anybody, so long as the
+# request is a "simple" one: a form, or a fetch labeled text/plain, form-urlencoded or multipart. Anything else -
+# application/json included - makes the browser ask the console first (an OPTIONS preflight), and this console answers
+# no OPTIONS and sends no Access-Control header, so that POST is never sent. The page labels every POST JSON, and so
+# does every suite.
+# ⚠ EXCEPT A STOP. The #10 rule stands - a garbled Stop is still a Stop - so Stop, Pause and an E-STOP LATCH are
+# honored whatever they are labeled: another website stopping the boat is a nuisance, while refusing a stop typed by
+# hand in an emergency (curl without -H labels its body form-urlencoded) would be a hazard. RELEASING an E-STOP is not
+# a stop, and needs JSON.
+POST_ANY_TYPE = ("/api/cmd/stop", "/api/cmd/pause")
+
+
+def post_is_json(content_type):
+    return (content_type or "").split(";", 1)[0].strip().lower() == "application/json"
+
+
+def estop_wants_latch(body):
+    """What an E-STOP request asks for. ONLY an explicit off - false, or 0 - releases. The dispatcher used to read
+    `bool(body.get("on"))`, and an unreadable body reads as {} (_read_json), so a garbled E-STOP RELEASED a latched
+    one; a body that cannot be read, is not an object, or does not say, latches now."""
+    on = body.get("on") if isinstance(body, dict) else None
+    return not (on is False or (type(on) is int and on == 0))
+
+
+def post_refusal(path, content_type, body):
+    """None when this POST may be dispatched; (415, {"error": ...}) when its body is not labeled JSON."""
+    if post_is_json(content_type) or path in POST_ANY_TYPE:
+        return None
+    if path == "/api/cmd/estop" and estop_wants_latch(body):
+        return None
+    return 415, {"error": "a POST must be sent as JSON (Content-Type: application/json) - this console refuses other "
+                          "bodies so that a web page elsewhere cannot command it through a browser"}
+
+
 class Server(ThreadingHTTPServer):
     """Threaded HTTP server that swallows benign client-disconnect errors.
 
@@ -5067,8 +5103,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self._read_json()
+        refused = post_refusal(self.path, self.headers.get("Content-Type"), body)   # review #25: JSON, or a stop
         try:
-            code, obj = self._dispatch_post(self.path, body)
+            code, obj = refused if refused else self._dispatch_post(self.path, body)
         except Exception as e:
             # ⚠ EVERY ROUTE ANSWERS, AND IS RECORDED (review #10). Eight routes - the plan, the session
             # log, vessel, ports, comms, water level, environment and ROC - sit above the dispatcher's
@@ -5309,7 +5346,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/stop":
                 ENGINE.stop()
             elif path == "/api/cmd/estop":
-                ENGINE.set_estop(bool(body.get("on")))
+                ENGINE.set_estop(estop_wants_latch(body))  # only an explicit off releases (review #25)
             # `hold_clear_m` on the four holding behaviours is the console's certified clear
             # disc around the end point (hold.js) - absent means the vessel re-approaches
             # direct, exactly as it always did.
