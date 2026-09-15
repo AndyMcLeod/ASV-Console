@@ -144,6 +144,8 @@ and WARNS, and retention is a question for him.
   stubs `storageCheck`.
 * Words: README (after "Session recording"); the operations manual's top-bar table and 4.4; the technical manual's
   chapter 11 and constants table; GUARDS; the hook's advice.
+* Verified: all 85 suites through the hook (0 FAIL lines); Andy's mission.json / ports.json / comms_config.json
+  hash-checked unchanged. Committed and pushed as `c9d1aec4`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #26 - THE HANDOFFS FROM BEFORE 2026-09-05 ARE ARCHIVED.**
 Andy: "`CLAUDE.md` is 7,105 lines, and START HERE alone is about 1,200. Archiving the handoffs from before 09-05 would make
