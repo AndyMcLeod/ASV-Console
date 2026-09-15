@@ -851,7 +851,7 @@ import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
          routeAround, routeAroundSeg, routePlan, smoothTrack, stampSeg } from "/static/js/passage.js";
-import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM,
+import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S,
          WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFloor, buildKeepouts, clearanceM,
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent,
          legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
@@ -9359,6 +9359,20 @@ function connect(){
   es.onerror = ()=>{ $("#dot").className="dot lost"; };
   setInterval(consoleHealth, 1000);
 }
+// HOW OLD A READING IS, for the water, weather and current rows (review #13): whole minutes, then hours. The
+// spaces inside an age do not break, so a narrow card row wraps before the age and not through it - the wind
+// row read "2.7 kn @ 355° · 1 h 40" over "min" on the live card.
+function fmtAge(s){
+  if(s < 60) return "<1\u00a0min";
+  const m = Math.round(s / 60);
+  return m < 60 ? m + "\u00a0min"
+    : Math.floor(m / 60) + "\u00a0h\u00a0" + String(m % 60).padStart(2, "0") + "\u00a0min";
+}
+// What the console's monitor said about its last update, when that update failed - for a row's tooltip.
+function monitorErrTxt(r){
+  return (r && r.monitor_error) ? "\n\nThe last update failed: " + r.monitor_error
+    + ". The monitor carries on; the reading above is the last one it had." : "";
+}
 function updateWaterUI(wl){
   const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;
   const val = off!=null ? ((off>=0?"+":"")+off.toFixed(2)+" m") : "--";
@@ -9375,12 +9389,14 @@ function updateWaterUI(wl){
     `  ${s.name} — ${s.dist_km} km, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
   // caution colour when we fell back off real-time data
   const trust = waterTrust(wl);
-  const warnCol = (!wl.ok || kind==="predicted" || trust.level==="remote");
+  // NOT APPLIED to charted depths: a remote reading, or a stale one (review #13) - see effectiveWaterOffset
+  const notApplied = trust.level==="remote" || trust.stale;
+  const warnCol = (!wl.ok || kind==="predicted" || notApplied);
   const mark = wl.source==="manual" ? "*" : (kind==="predicted" ? "~" : (kind==="chart"||!wl.ok ? "!" : ""));
   // GHOSTED = "this number is not from around here". Translucency reads as low confidence
   // at a glance, which is the point: the operator should not have to inspect a station
   // name to notice the tide belongs to another coast.
-  const ghost = trust.level==="remote" ? 0.45 : (trust.level==="far" ? 0.7 : 1);
+  const ghost = notApplied ? 0.45 : (trust.level==="far" ? 0.7 : 1);
   const farTxt = trust.km==null ? "" :
     (trust.level==="remote" ? `
 
@@ -9390,19 +9406,29 @@ Use the manual override if you know the real local level.`
    : trust.level==="far"    ? `
 
 Nearest station is ${fmtDist(trust.km*1000, 0)} away — indicative only.` : "");
+  // HOW OLD IT IS (review #13): a level the console has had no newer one of is not the water now.
+  const ageTxt = trust.age_s==null ? "" : " · " + fmtAge(trust.age_s);
+  const staleTxt = !trust.stale ? "" : `
+
+READING IS ${fmtAge(trust.age_s)} OLD — nothing newer has reached the console (past ${Math.round(WATER_STALE_S/60)} min is stale).
+It is NOT being applied to charted depths: routing uses chart datum.`;
   // "(datum)" spells out that the number on screen is NOT the one correcting depths.
-  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+(trust.level==="remote"?" ⚠ (datum)":"");
-    vw.title = tip+farTxt;
+  const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+ageTxt+(notApplied?" ⚠ (datum)":"");
+    vw.title = tip+farTxt+staleTxt+monitorErrTxt(wl);
     vw.style.color = warnCol ? "var(--warn)" : "";
     vw.style.opacity = ghost;
-    vw.style.fontStyle = trust.level==="local" ? "" : "italic"; }
+    vw.style.fontStyle = (trust.level==="local" && !trust.stale) ? "" : "italic"; }
   const swn = $("#sp_water_note"); if(swn){
-    swn.textContent = detail + (trust.level==="remote" ? ` — ${fmtDist(trust.km*1000, 0)} away, NOT the local tide; NOT applied to depths (using chart datum)`
-                              : trust.level==="far" ? ` — ${fmtDist(trust.km*1000, 0)} away, indicative` : "");
-    swn.title = tip+farTxt;
+    const why = [];
+    if(trust.level==="remote") why.push(`${fmtDist(trust.km*1000, 0)} away, NOT the local tide`);
+    if(trust.stale) why.push(`${fmtAge(trust.age_s)} old`);
+    swn.textContent = detail + (why.length ? ` — ${why.join(", ")}; NOT applied to depths (using chart datum)`
+                              : trust.level==="far" ? ` — ${fmtDist(trust.km*1000, 0)} away, indicative` : "")
+                     + (!trust.stale && trust.age_s!=null ? ` · ${fmtAge(trust.age_s)} old` : "");
+    swn.title = tip+farTxt+staleTxt+monitorErrTxt(wl);
     swn.style.color = warnCol ? "var(--warn)" : "";
     swn.style.opacity = ghost;
-    swn.style.fontStyle = trust.level==="local" ? "" : "italic"; }
+    swn.style.fontStyle = (trust.level==="local" && !trust.stale) ? "" : "italic"; }
   const so = $("#sp_water");
   if(so && wl.source!=="manual" && document.activeElement!==so){ so.value=""; so.placeholder = off!=null ? off.toFixed(2) : "auto"; }
 }
@@ -9432,20 +9458,29 @@ function updateEnvUI(env, st){
   roseEnv = env;                                  // the chart's wind rose reads the same block
   const simOff = env.source==="off";
   const w = env.wind, sea = env.sea;
+  // HOW OLD (review #13): buoys report hourly or so, so the age is shown rather than judged - the oldest
+  // observation in the blend. A manual override has none.
+  const envAge = (!simOff && typeof env.age_s==="number") ? " · " + fmtAge(env.age_s) : "";
   $("#v_wind").textContent = simOff ? "-- (sim only)"
-    : (w && w.speed_kn!=null ? (w.speed_kn+" kn @ "+dirTxt(w.dir_from_deg)) : (env.enabled ? "calm" : "off"));
+    : (w && w.speed_kn!=null ? (w.speed_kn+" kn @ "+dirTxt(w.dir_from_deg)+envAge) : (env.enabled ? "calm" : "off"));
   $("#v_sea").textContent = simOff ? "--"
     : (sea && sea.hs_m!=null ? (sea.hs_m.toFixed(2)+" m / "+ (sea.tp_s!=null?sea.tp_s+"s":"?") +" @ "+dirTxt(sea.dir_from_deg) + (sea.derived?" ~":"")) : "--");
   // applied set + crab from the sim telemetry
   const set = st.env_set_kn, sd = st.env_set_deg, crab = st.crab_deg;
   $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
+  const ageTip = (!simOff && typeof env.age_s==="number")
+    ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend)." : "";
+  if(vw) vw.title = "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + ageTip + monitorErrTxt(env);
+  const vs=$("#v_sea"); if(vs) vs.title = "Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only."
+    + ageTip + monitorErrTxt(env);
 }
 // SURFACE CURRENT at the boat's own position (NOAA OFS via /api/currents, on the state).
 // A FORECAST for real water, so unlike the wind rows it is NOT sim-gated. Every way this
 // can fail to be a live reading is SAID rather than shown as a dash or a plausible
 // number: no cycle cached, no model water here, or a value the module projected by whole
 // tidal cycles because no forecast frame covers now (it flags that itself).
+const CURRENT_AGE_SHOW_S = 5 * 60;
 function updateCurrentUI(cur){
   roseCur = cur || null;                          // the chart's rose draws the same block
   const el=$("#v_current"); if(!el) return;
@@ -9454,17 +9489,23 @@ function updateCurrentUI(cur){
     el.textContent = cur.note ? "-- (" + cur.note + ")" : "--";
     el.style.color = "var(--ink-faint)";
     el.title = "Surface current forecast at the vessel's position. " +
-               (cur.note || "No reading yet.");
+               (cur.note || "No reading yet.") + monitorErrTxt(cur);
     return;
   }
+  // HOW OLD (review #13): the forecast is recomputed every minute, so an age is only worth showing once
+  // the console has stopped refreshing it.
+  const stale = typeof cur.age_s==="number" && cur.age_s > CURRENT_AGE_SHOW_S;
   const proj = Math.abs(cur.projected_h || 0) > 1e-6;
-  el.textContent = cur.speed_kn.toFixed(2) + " kn @ " + dirTxt(cur.set_deg) + (proj ? " ~" : "");
-  // A projected value is an ESTIMATE and must not read like a measurement.
-  el.style.color = proj ? "var(--warn, #e8d9a0)" : "";
+  el.textContent = cur.speed_kn.toFixed(2) + " kn @ " + dirTxt(cur.set_deg) + (proj ? " ~" : "")
+                 + (stale ? " · " + fmtAge(cur.age_s) : "");
+  // A projected value is an ESTIMATE and must not read like a measurement - nor an old one like a current one.
+  el.style.color = (proj || stale) ? "var(--warn, #e8d9a0)" : "";
   el.title = "Surface current at the vessel's position, set = where the water GOES (true). "
            + "Model " + (cur.source||"?") + ", cycle " + (cur.tag||"?")
            + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : "")
-           + (proj ? ". ~ = " + cur.note : "");
+           + (proj ? ". ~ = " + cur.note : "")
+           + (typeof cur.age_s==="number" ? ". Computed " + fmtAge(cur.age_s) + " ago" : "")
+           + monitorErrTxt(cur);
 }
 // --- RUN block (inside the Mission Status card) ---------------------------- //
 // One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit

@@ -1387,6 +1387,17 @@ to **chart datum**, the same as when there is no data at all. A tide from anothe
 would otherwise credit the boat with depth nobody has measured here. A *far* reading is
 still applied (indicative), and a **manual override always is** — it is your own number.
 
+**And how old it is.** The water level, the weather and the surface current each carry their
+**age**. The WATER LVL row reads `+0.19 m · 11 min`, timed from the station's own observation
+(a live level is normally 5–17 minutes old); the wind row gives the age of its oldest buoy
+report; and the current, which is recomputed every minute, shows an age once it is more than
+5 minutes old. A water level **older than 25 minutes is not applied to charted depths** — it is
+shown ghosted with its age, and routing falls back to chart datum, as for a remote one. The
+monitors behind these readings no longer stop on an error: a failed update is named in the
+row's tooltip and the last reading stands, aging, until a new one arrives. And when no current
+forecast can be had, the row says why (the port's model does not cover this position, say)
+rather than "no cycle cached yet".
+
 **ROC · HOME — Remote Operations Centers and a moving recovery point.** Missions are
 commanded from one or more **Remote Operations Centers**, and the `ROC` card tracks
 them. Click **+ Shore** or **+ Ship**, then click the chart to place one:

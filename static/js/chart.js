@@ -120,6 +120,13 @@ export function hazPassable(f){ return coreHazPassable(f, koOpts()); }
 export const WATER_FAR_KM = 25;
       // beyond here the reading is indicative, not local
 export const WATER_REMOTE_KM = 75;
+// ... AND BY AGE (review #13, 2026-09-14). The console's water monitor could die and leave its last reading
+// standing - still ok, still added to every charted depth - and nothing on it said when it was taken. The
+// reading now carries `age_s`, from the station's own observation time. Measured across forty of the
+// operator's sessions (5,693 readings), a live level is 4.6 to 17.1 minutes old, median 11.2. Past
+// WATER_STALE_S it has missed at least one more poll (they come every 6 minutes), and it is SHOWN - ghosted,
+// with its age - but NOT APPLIED, exactly like a remote one.
+export const WATER_STALE_S = 25 * 60;
 // Worst (most conservative) zone of confidence containing the point - M_QUAL
 // polygons can overlap, and a survey operator wants the pessimistic answer.
 export function qualityAt(lat, lon){
@@ -191,14 +198,17 @@ export function legReasons(legs){ return (legs||[]).map(([a,b])=>legReason(a,b))
 export function depthExcluded(f, dr){ return coreDepthExcluded(f, dr, sea.waterOffset); }
    // beyond here it is simply another area's tide
 export function waterTrust(wl){
-  if(!wl || !wl.ok || wl.source==="manual") return {level:"local", km:null};
+  if(!wl || !wl.ok || wl.source==="manual") return {level:"local", km:null, stale:false, age_s:null};
+  // An older console sends no age: that is not a stale reading, it is an unknown one, as before.
+  const age_s = typeof wl.age_s === "number" ? wl.age_s : null;
+  const stale = age_s !== null && age_s > WATER_STALE_S;
   const stns = wl.stations || [];
   // The NEAREST contributing station is what decides it: an interpolation dominated by a
   // close station is still local even if a distant one is blended in.
   let km = null;
   for(const st of stns){ if(typeof st.dist_km === "number" && (km===null || st.dist_km<km)) km = st.dist_km; }
-  if(km === null) return {level:"local", km:null};
-  return {level: km > WATER_REMOTE_KM ? "remote" : (km > WATER_FAR_KM ? "far" : "local"), km};
+  if(km === null) return {level:"local", km:null, stale, age_s};
+  return {level: km > WATER_REMOTE_KM ? "remote" : (km > WATER_FAR_KM ? "far" : "local"), km, stale, age_s};
 }
 // THE OFFSET THAT ACTUALLY CORRECTS CHARTED DEPTHS. Displaying a distant station's tide
 // is one thing; APPLYING it to the nogo depth floor is another. A remote reading is not
@@ -209,7 +219,8 @@ export function waterTrust(wl){
 // So a `remote` reading is SHOWN (ghosted, so the operator can see what the distant
 // station says) but NOT APPLIED: routing falls back to chart datum, exactly as it already
 // does when there is no data at all. `far` is still applied - it is indicative rather
-// than irrelevant, and the ghosting says so.
+// than irrelevant, and the ghosting says so. A STALE reading is not applied either (review #13):
+// a level an hour old is not information about the water now, in either direction.
 //
 // RESIDUAL, unchanged by this and shared with the no-data path: chart datum is the
 // LOW-water reference, so if the real local tide is BELOW datum, charted depths are
@@ -219,7 +230,8 @@ export function effectiveWaterOffset(wl){
   // The manual-override exemption lives in waterTrust() and ONLY there - an operator's own
   // number is never "remote". Repeating the check here looked like defence in depth but was
   // unreachable, and an unreachable guard is a guard nobody is testing.
-  return waterTrust(wl).level === "remote" ? 0 : wl.offset_m;
+  const trust = waterTrust(wl);
+  return (trust.level === "remote" || trust.stale) ? 0 : wl.offset_m;
 }
 // Build the keep-out model. `ref` is a FRAME (Andy, 2026-08-20) - planeFrame() gives
 // {toEN, fromEN} over this console's flat plane, which is the interface the core body

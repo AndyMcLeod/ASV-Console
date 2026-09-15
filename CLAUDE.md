@@ -55,11 +55,43 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#12 and #16 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#13 and #16 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #12 - THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN.**
+**NEWEST, 2026-09-14: REVIEW ITEM #13 - WATER, WEATHER AND CURRENT READINGS DO NOT FREEZE, AND SAY HOW OLD THEY ARE.**
+`WaterLevel`, `EnvMonitor` and `CurrentsMonitor` each had a loop with no handler: one exception ended the thread and the
+reading FROZE, still `ok`, carrying no time - and the page kept adding a frozen water level to every charted depth.
+Reproduced before the fix: an `http.client.IncompleteRead` (a connection cut mid-body) is neither OSError nor ValueError,
+came up through `fetch_water_level`, and the level never changed again after the upstream recovered.
+
+* Server: `_monitor_pass(mon, name, body)` runs each loop body - a raise sets `_error` (published `monitor_error`),
+  printed when its text changes; the last reading is kept (its age grows) and the next completed pass clears it.
+  `_coops_get` / `_coops_series` / the station-list fetch catch `http.client.HTTPException`; a station cache that is
+  not JSON is fetched again. Snapshots publish `age_s`: water from CO-OPS' own GMT `t` (`_coops_epoch`, else the
+  fetch time; none for manual or not-ok), weather from the OLDEST buoy observation in the blend (`obs_t` via
+  `_ndbc_epoch`; none under a manual override), current from `_sampled_at`.
+* Currents: recomputed from the cached cycle every `SAMPLE_S` (60 s); the cycle is looked for every `POLL_S` (15 min)
+  or at once when forced. `_ensure_cycle` returns why no cycle could be had, kept as `_no_cycle_why` through every
+  sample until the next look - ⚠ the first version kept it only on the pass that looked, and the live card went back
+  to "no cycle cached yet" a minute later (caught live; check 12 now samples between looks). At New Castle the row
+  now says "gomofs frames are not hourly - unreadable by this build" (it always said "no cycle cached yet").
+* Page: `WATER_STALE_S` = 25 min in static/js/chart.js (measured across forty of Andy's sessions, 5,693 readings: a
+  live level is 4.6-17.1 min old, median 11.2). `waterTrust` returns `stale` + `age_s` (numeric ages only; never for
+  manual); `effectiveWaterOffset` is 0 when remote OR stale. Rows: water "+1.05 m · 7 min" (stale: "· 41 min ⚠
+  (datum)", ghosted, reasons in the survey note and tooltip), wind "· 1 h 40 min" (oldest buoy; none under manual or
+  sim off), current's age only past `CURRENT_AGE_SHOW_S` (5 min); `monitorErrTxt` names a failed update in each
+  tooltip. `fmtAge` joins an age with NO-BREAK spaces - the live wind row wrapped "1 h 40" over "min".
+* Tests: NEW tests/reading_age.py (14 checks; 17 scratch-clone mutations, 17 caught) and tests/reading_age.js (7;
+  run with water_trust.js 16-21 against 17 mutations, 17 caught).
+* LIVE (port 8796, scratch clone, temp state): water "+1.05 m · 7 min" applied; with its observation time set 40 min
+  back it read "+1.05 m · 41 min ⚠ (datum)", `sea.waterOffset` went to 0 and the keep-out model rebuilt at datum
+  (`builtOffset` 1.049 -> 0), and back to applied when fresh; wind "2.7 kn @ 355° · 1 h 40 min". After the fix the
+  current's reason held for 100 s of per-minute samples.
+* Verified: all 71 suites in the scratch clone.
+* Next: #15, a running console serves a newer page against an older server (build ID). (#14 is Andy's call.)
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #12 - THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN.**
 Every telemetry frame runs the clearance guard, the speed governor, the re-approach and the end-of-plan chain inside
 `onState`, and `connect()`'s handler caught and dropped every error in it - a guard that had stopped running looked
 exactly like one with nothing to do. And `Engine._run` had no handler: one exception in a tick ended the thread,
@@ -95,7 +127,7 @@ telemetry stopped, and the event stream's keep-alive comments kept the link dot 
   match any line containing "Error" - and passed on re-run. That over-broad match is a hook flake (for #17).
 * Andy, 2026-09-14: "Carry on all updates until the following session ends" - items go in one after another,
   each verified, committed and pushed; the "your call" items (#14, #23, #28-30) are left for him.
-* Next: #13, water, weather and current readings can freeze with no age shown.
+* Committed and pushed as `862797d4`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #11 - AN EMPTY PAGE NEVER SAVES OVER A REAL PLAN, AND WHAT DESTROYS WORK ASKS FIRST.**
 #10 took the first half of #11 (the page reads its save's answer). The rest: `loadMission` took any reply - an

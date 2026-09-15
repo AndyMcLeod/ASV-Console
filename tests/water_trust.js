@@ -24,6 +24,9 @@
 //
 //   node tests/water_trust.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
+// And (review #13) how OLD it is: past WATER_STALE_S a reading is not applied either - checks 16-21. Their
+// mutations are recorded in tests/reading_age.js, which ran them against both suites together.
+//
 // TEETH (verified by mutation, not assumed): average the distances instead of taking the
 // minimum and 6 fails. Drop the manual exemption and 4 fails. Swap the two thresholds and
 // 2 and 8 fail. Apply a remote offset to depths anyway and 12 and 15 fail. Gate `far` as
@@ -50,7 +53,7 @@ process.on("unhandledRejection", __crash);
 const fs = require("fs");
 const path = require("path");
 
-const { WATER_FAR_KM, WATER_REMOTE_KM, effectiveWaterOffset, waterTrust } = require("../static/js/chart.js");
+const { WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S, effectiveWaterOffset, waterTrust } = require("../static/js/chart.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
@@ -141,6 +144,34 @@ check("14. no reading at all is chart datum, as before",
 check("15. a negative remote offset also falls back to datum",
       effectiveWaterOffset(wl([{ dist_km: 800 }], { offset_m: -0.8 })) === 0,
       "-0.8 m at 800 km -> 0 m");
+
+// 16-21. AND HOW OLD IS IT (review #13, 2026-09-14)? The console's water monitor could die and leave its last
+// reading standing - still ok - and the page went on adding it to every charted depth. The reading carries
+// `age_s` now, from the station's own observation time; measured across forty sessions a live level is 4.6 to
+// 17.1 minutes old. Past WATER_STALE_S it is shown but NOT APPLIED, exactly like a remote one.
+const aged = (age_s, extra) => wl([{ dist_km: 4 }], Object.assign({ age_s }, extra || {}));
+check("16. a live reading - even one at the limit - is applied; the limit sits above the oldest live level measured",
+      effectiveWaterOffset(aged(11 * 60)) === 1.16 && effectiveWaterOffset(aged(WATER_STALE_S)) === 1.16
+      && !waterTrust(aged(WATER_STALE_S)).stale && WATER_STALE_S > 17.1 * 60,
+      "11 min and " + (WATER_STALE_S / 60) + " min -> +1.16 m applied");
+check("17. A STALE READING IS NOT APPLIED - routing falls back to chart datum, whichever way the level was",
+      waterTrust(aged(WATER_STALE_S + 1)).stale === true && effectiveWaterOffset(aged(WATER_STALE_S + 1)) === 0
+      && effectiveWaterOffset(aged(3600, { offset_m: -0.8 })) === 0,
+      "past the limit by 1 s -> 0 m; an hour old at -0.8 m -> 0 m");
+check("18. staleness is its own reason: a stale reading keeps its distance band, and the band does not rescue it",
+      waterTrust(aged(3600)).level === "local" && waterTrust(aged(3600)).age_s === 3600
+      && effectiveWaterOffset(wl([{ dist_km: 40 }], { age_s: 3600 })) === 0,
+      "local and stale -> not applied; far and stale -> not applied");
+check("19. a manual override is never stale, whatever age the payload carries - it is the operator's own number",
+      waterTrust(aged(99999, { source: "manual" })).stale === false
+      && effectiveWaterOffset(aged(99999, { source: "manual" })) === 1.16);
+check("20. a reading with no age at all - an older console, or an age that is not a number - is not called stale: "
+      + "unknown is not old",
+      waterTrust(wl([{ dist_km: 4 }])).stale === false && effectiveWaterOffset(wl([{ dist_km: 4 }])) === 1.16
+      && waterTrust(aged("99999")).stale === false);
+check("21. remote AND stale is still simply not applied",
+      effectiveWaterOffset(wl([{ dist_km: 800 }], { age_s: 3600 })) === 0
+      && waterTrust(wl([{ dist_km: 800 }], { age_s: 3600 })).level === "remote");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

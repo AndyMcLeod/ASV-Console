@@ -43,6 +43,7 @@ opens a browser tab. See --help.
 
 import argparse
 import atexit
+import calendar
 import hashlib
 import json
 import math
@@ -55,6 +56,7 @@ import subprocess
 import sys
 import threading
 import time
+import http.client
 import http.cookiejar
 import urllib.error
 import urllib.parse
@@ -1977,8 +1979,8 @@ def _load_water_stations(timeout=30.0):
     try:
         with open(WATER_STATIONS_CACHE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except OSError:
-        pass
+    except (OSError, ValueError):       # a cache that cannot be read as JSON is fetched again, not raised
+        data = None
     if data is None:
         try:
             req = urllib.request.Request(COOPS_STATIONS_URL, headers={"User-Agent": "ASV-Console/1.0"})
@@ -1994,7 +1996,7 @@ def _load_water_stations(timeout=30.0):
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(data, f)
                 os.replace(tmp, WATER_STATIONS_CACHE)
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, http.client.HTTPException):
             return []
     with _water_stations_lock:
         _water_stations = data
@@ -2020,8 +2022,11 @@ def _coops_get(station_id, datum, product, timeout=15.0):
                                      headers={"User-Agent": "ASV-Console/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read())
-    except (OSError, ValueError) as e:
-        return {"ok": False, "note": "fetch failed: %s" % e}
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        # HTTPException too: a connection cut mid-body (IncompleteRead - ordinary on a satellite link)
+        # is neither of the other two, and it used to come up through fetch_water_level and end the
+        # water monitor's thread (review #13).
+        return {"ok": False, "note": "fetch failed: %s: %s" % (type(e).__name__, e)}
     if isinstance(d, dict) and d.get("error"):
         return {"ok": False, "note": (d["error"].get("message") or "CO-OPS error").strip()}
     rows = (d.get(key) if isinstance(d, dict) else None) or []
@@ -2047,8 +2052,8 @@ def _coops_series(station_id, datum, product, begin, end, interval=None, timeout
                                      headers={"User-Agent": "ASV-Console/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read())
-    except (OSError, ValueError) as e:
-        return {"ok": False, "note": "fetch failed: %s" % e}
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return {"ok": False, "note": "fetch failed: %s: %s" % (type(e).__name__, e)}
     if isinstance(d, dict) and d.get("error"):
         return {"ok": False, "note": (d["error"].get("message") or "CO-OPS error").strip()}
     key = "predictions" if product == "predictions" else "data"
@@ -2208,6 +2213,49 @@ def fetch_water_level(lat, lon, timeout=15.0):
             "dist_km": prim["dist_km"], "t": prim["t"], "lake": lake, "stations": use}
 
 
+def _monitor_pass(mon, name, body):
+    """One pass of a background monitor's loop - the water level, the weather, the current.
+
+    ⚠ A PASS THAT RAISES NO LONGER ENDS THE MONITOR (review #13, 2026-09-14). None of the three loops
+    had a handler: one exception ended the thread and the reading FROZE at whatever it last held, still
+    marked ok and carrying no time - and the page went on adding a frozen water level to every charted
+    depth. Reproduced before the fix: an http.client.IncompleteRead (a connection cut mid-body) came up
+    through fetch_water_level and the level never changed again. Now the failure is kept on the monitor
+    as `_error` (its snapshot says `monitor_error`), printed when its text changes, and the last good
+    reading is kept - its AGE, not its value, tells the page it has gone stale; the next pass that
+    completes clears it."""
+    try:
+        body()
+    except Exception as e:                  # noqa: BLE001 - recorded and survived, never swallowed
+        msg = "%s: %s" % (type(e).__name__, e)
+        with mon._lock:
+            changed, mon._error = msg != mon._error, msg
+        if changed:
+            try:
+                print("[%s] an update failed, and the monitor carries on: %s" % (name, msg),
+                      file=sys.stderr, flush=True)
+            except Exception:               # noqa: BLE001 - a console window that has gone
+                pass
+        return
+    with mon._lock:
+        mon._error = None
+
+
+def _coops_epoch(t):
+    """CO-OPS' GMT "YYYY-MM-DD HH:MM" -> epoch seconds, or None when it cannot be read."""
+    try:
+        return calendar.timegm(time.strptime(str(t), "%Y-%m-%d %H:%M"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _age_s(at, now=None):
+    """Whole seconds since `at` (epoch), never negative (a prediction's slot can lie just ahead), or None."""
+    if at is None:
+        return None
+    return max(0, int((time.time() if now is None else now) - at))
+
+
 class WaterLevel:
     """Background link to the nearest CO-OPS stations (inverse-distance interpolated).
     On each vessel fix it learns the position; it refetches on start-up, every 6 min
@@ -2222,6 +2270,8 @@ class WaterLevel:
         self._pos = None
         self._manual = None
         self._last = {"ok": False, "note": "waiting for a GPS fix", "source": "none"}
+        self._fetched_at = None       # when _last was fetched (epoch)
+        self._error = None            # the last pass's failure, if it raised - see _monitor_pass
         self._tide_cache = None       # (epoch, result) for the tide-chart series
         self._force = threading.Event()
         self._stop = threading.Event()
@@ -2245,11 +2295,19 @@ class WaterLevel:
         with self._lock:
             base = dict(self._last)
             m = self._manual
+            fetched, err = self._fetched_at, self._error
         if m is not None:
             base = dict(base, ok=True, offset_m=round(m, 3), source="manual",
                         note="manual override (%.2f m)" % m)
+            base["age_s"] = None          # the operator's own number has no age
         else:
             base["source"] = "station" if base.get("ok") else "none"
+            # HOW OLD THE LEVEL IS, from the station's OWN observation time - not from when the console
+            # fetched it, which is minutes later (review #13). The page stops applying it past
+            # WATER_STALE_S. A reading whose time cannot be read is aged from its fetch.
+            base["age_s"] = (_age_s(_coops_epoch(base.get("t")) or fetched) if base.get("ok") else None)
+        base["fetched_at"] = fetched
+        base["monitor_error"] = err
         # THE STATION'S OWN PAGE, BUILT HERE AND NOWHERE ELSE. The console page opens and
         # re-points the tide window, and it must not carry a second copy of this URL
         # template - two spellings of the same address is how the window ends up on a page
@@ -2279,11 +2337,15 @@ class WaterLevel:
             with self._lock:
                 pos = self._pos
             if pos:
-                res = fetch_water_level(pos[0], pos[1])
-                with self._lock:
-                    self._last = res
+                _monitor_pass(self, "water", lambda: self._fetch(pos))
             self._force.wait(self.POLL_S)
             self._force.clear()
+
+    def _fetch(self, pos):
+        res = fetch_water_level(pos[0], pos[1])
+        with self._lock:
+            self._last = res
+            self._fetched_at = time.time()
 
 
 WATER = WaterLevel()
@@ -2403,6 +2465,15 @@ def _fetch_ndbc_obs(station_id, timeout=15.0):
     return rec
 
 
+def _ndbc_epoch(rec):
+    """An NDBC realtime2 row's own time (#YY MM DD hh mm, UTC) -> epoch seconds, or None."""
+    try:
+        return calendar.timegm((int(rec["YY"]), int(rec["MM"]), int(rec["DD"]),
+                                int(rec["hh"]), int(rec["mm"]), 0))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _idw_weights(items):
     """items: [(dist_km, value...)] -> list of inverse-distance weights (sum 1)."""
     ws = [1.0 / max(0.25, d) ** ENV_IDW_POWER for d, *_ in items]
@@ -2497,7 +2568,11 @@ def fetch_environment(lat, lon):
     # same shape the water reading has always returned. The wind set leads because wind
     # is what actually pushes the boat; sea is the fallback when only waves are reported.
     used = windset or seaset
+    # WHEN IT WAS OBSERVED: the OLDEST observation in the blend - a blend is no fresher than its
+    # stalest input (review #13). Buoys report hourly or so, so an hour is ordinary here.
+    times = [t for t in (_ndbc_epoch(r) for _, _, r in used) if t is not None]
     return {"ok": True, "source": src, "note": note, "wind": wind, "sea": sea,
+            "obs_t": (min(times) if times else None),
             "station": (used[0][1] if used else None),
             "stations": [{"id": sid, "dist_km": round(d, 1)} for d, sid, _ in used]}
 
@@ -2517,6 +2592,8 @@ class EnvMonitor:
         self._pos = None
         self._last = {"ok": False, "source": "none", "note": "waiting for a GPS fix"}
         self._manual = {}                # partial override: any of wind/sea fields
+        self._fetched_at = None          # when _last was fetched (epoch)
+        self._error = None               # the last pass's failure, if it raised - see _monitor_pass
         self._enabled = True
         self._force = threading.Event()
         self._stop = threading.Event()
@@ -2560,6 +2637,7 @@ class EnvMonitor:
             base = dict(self._last)
             man = dict(self._manual)
             enabled = self._enabled
+            fetched, err = self._fetched_at, self._error
         wind = dict(base.get("wind") or {}) if base.get("wind") else None
         sea = dict(base.get("sea") or {}) if base.get("sea") else None
         if man:
@@ -2589,7 +2667,11 @@ class EnvMonitor:
                 # the operator has replaced the VALUES, not the geography, and the buoy
                 # page is still the right page for where the vessel is.
                 "station": base.get("station"),
-                "stations": base.get("stations") or []}
+                "stations": base.get("stations") or [],
+                # HOW OLD (review #13): from the oldest buoy observation in the blend, else from the
+                # fetch; none under a manual override, whose values are the operator's.
+                "age_s": (None if man or not base.get("ok") else _age_s(base.get("obs_t") or fetched)),
+                "monitor_error": err}
 
     def snapshot(self):
         eff = dict(self._effective())
@@ -2624,11 +2706,15 @@ class EnvMonitor:
                 pos = self._pos
                 enabled = self._enabled
             if pos and enabled:
-                res = fetch_environment(pos[0], pos[1])
-                with self._lock:
-                    self._last = res
+                _monitor_pass(self, "weather", lambda: self._fetch(pos))
             self._force.wait(self.POLL_S)
             self._force.clear()
+
+    def _fetch(self, pos):
+        res = fetch_environment(pos[0], pos[1])
+        with self._lock:
+            self._last = res
+            self._fetched_at = time.time()
 
 
 ENV = EnvMonitor()
@@ -2660,7 +2746,10 @@ class CurrentsMonitor:
         last value or assuming slack. Past the cap it refuses instead of guessing.
     """
 
-    POLL_S = 900.0                       # the model is hourly; a 15 min sample is ample
+    POLL_S = 900.0                       # how often the cycle is looked for - the model is hourly
+    # ... but the READING is a forecast for NOW, recomputed from the cached cycle this often. It was taken
+    # only every POLL_S, so it could be a quarter of an hour behind the tide it describes (review #13).
+    SAMPLE_S = 60.0
     REFETCH_KM = 15.0                    # a move this far re-scopes the fetch bbox
     BBOX_DEG = 0.35                      # ~39 km half-box around the boat
 
@@ -2672,6 +2761,9 @@ class CurrentsMonitor:
         self._cur = None                 # a currents.Currents, or None
         self._box_at = None              # position the cached cycle was scoped to
         self._last = {"ok": False, "source": "none", "note": "waiting for a GPS fix"}
+        self._sampled_at = None          # when _last was computed (epoch)
+        self._error = None               # the last pass's failure, if it raised - see _monitor_pass
+        self._no_cycle_why = None        # why the last look found no cycle - see _pass
         self._force = threading.Event()
         self._stop = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
@@ -2701,7 +2793,11 @@ class CurrentsMonitor:
 
     def snapshot(self):
         with self._lock:
-            return dict(self._last)
+            out = dict(self._last)
+            at, err = self._sampled_at, self._error
+        out["age_s"] = _age_s(at) if out.get("ok") else None      # since it was computed (review #13)
+        out["monitor_error"] = err
+        return out
 
     def _sample(self, lat, lon):
         """The reading at (lat, lon) NOW, or an honest refusal. Never raises."""
@@ -2732,7 +2828,8 @@ class CurrentsMonitor:
         return out
 
     def _ensure_cycle(self, lat, lon):
-        """Cache a cycle covering NOW, scoped to a box around the boat. Best effort."""
+        """Cache a cycle covering NOW, scoped to a box around the boat. Best effort: returns why no
+        cycle could be had, or None."""
         now = datetime.now(timezone.utc)
         bbox = (lat - self.BBOX_DEG, lon - self.BBOX_DEG,
                 lat + self.BBOX_DEG, lon + self.BBOX_DEG)
@@ -2758,9 +2855,9 @@ class CurrentsMonitor:
                 note = "%s: %s" % (type(e).__name__, msg[:90])
             with self._lock:
                 self._last = {"ok": False, "source": self._ofs, "note": note}
-            return
+            return note
         if not tag:
-            return
+            return None
         if tag != self._tag or self._cur is None:
             try:
                 self._cur = currents.Currents(tag=tag)
@@ -2771,18 +2868,36 @@ class CurrentsMonitor:
                          self._cur.end.strftime("%H:%MZ")), file=sys.stderr)
             except Exception as e:
                 print("[currents] cycle %s unreadable: %s" % (tag, e), file=sys.stderr)
+        return None
 
     def _loop(self):
+        due = 0.0                                    # when the cycle is next looked for
         while not self._stop.is_set():
             with self._lock:
                 pos = self._pos
             if pos:
-                self._ensure_cycle(pos[0], pos[1])
-                res = self._sample(pos[0], pos[1])
-                with self._lock:
-                    self._last = res
-            self._force.wait(self.POLL_S)
+                look = time.time() >= due
+                _monitor_pass(self, "currents", lambda: self._pass(pos, look))
+                if look:
+                    due = time.time() + self.POLL_S
+            if self._force.wait(self.SAMPLE_S):     # a move, a refresh or a model switch: look at once
+                due = 0.0
             self._force.clear()
+
+    def _pass(self, pos, look):
+        if look:
+            self._no_cycle_why = self._ensure_cycle(pos[0], pos[1])
+        res = self._sample(pos[0], pos[1])
+        if self._no_cycle_why and self._cur is None:
+            # WHY THERE IS NO CYCLE, not "no cycle cached yet": _ensure_cycle's reason used to be overwritten
+            # by the sample on the same pass, so a port whose model does not cover the vessel read as a cache
+            # that had merely not filled yet (seen live at New Castle, 2026-09-14). Kept from the last look
+            # through every sample until the next one - not only on the pass that looked, which is what a
+            # first version of this did, and the row went back to "no cycle cached yet" a minute later.
+            res = dict(res, note=self._no_cycle_why)
+        with self._lock:
+            self._last = res
+            self._sampled_at = time.time()
 
 
 CURRENTS = CurrentsMonitor()
