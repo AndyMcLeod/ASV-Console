@@ -594,7 +594,10 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    **The Lines card (`LINES`).** A per-survey-line table: each line's length, its
    planned time at the plan speed, and the actual time once flown (actuals accrue
    while the survey runs and land in the session log, with the turns timed as their
-   own components). Above and below the table sit the **transit and RTH rows**:
+   own components). **A line is the line you drew**: when Punch Out cuts one around a
+   keep-out, it stays one row, read as its parts with the gap between them
+   (`833 + 1115 (392 m gap)`), and the chart's labels, the turn table, the survey
+   card's line count and spacing, and every "line N of M" count it the same way. Above and below the table sit the **transit and RTH rows**:
    the **ENC-routed** time and distance from the boat to line 1, and from the last
    line back home — routed by the same planner every behaviour flies (keep-outs +
    the Rule 9 channel lane), because at this console's home water the straight

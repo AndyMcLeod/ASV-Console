@@ -138,6 +138,9 @@ eval(
      // rename to "Turn speed" broke the clear and this suite caught it.
      grabDecl("SPEED_WARN_PREFIX") + "\n" +
      grab("committedPatternInfo") + "\n" +
+     // committedPatternInfo counts DRAWN lines (review #18) - the page's own numbering, not a stub
+     grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
+     grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      // ROLE-BILLED ESTIMATE (2026-09-05): recalcCommittedForSpeed no longer divides the
      // whole chain by one speed - it totals it BY ROLE through committedRoleLengths, which
      // tells a reversal from a region hop with isReversalGap. GRABBED, all three, for the

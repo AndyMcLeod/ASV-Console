@@ -146,6 +146,10 @@ eval([
   grab("patCoverSeg"), grab("runWithLeads"), grab("patLeadTotal"),
   grabDecl("LEAD_GIVE"), "function __leadGive(){ return LEAD_GIVE; }",
   grab("buildLineTable"), grab("committedPatternInfo"),
+  // the DRAWN-LINE numbering these now go through (review #18) - the page's own, not a stub
+  grab("lineSetKey"),
+  grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
+  grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("currentActivity"),
   "function __setMission(m){ mission = m; }",
   // A `const` declared inside a direct eval stays in the EVAL's scope — only the function

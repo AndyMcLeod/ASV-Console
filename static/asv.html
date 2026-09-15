@@ -1451,7 +1451,7 @@ function renderHeldBar(bar, g){
     "the console stopped the survey"
     + (g.clearM != null ? " " + g.clearM.toFixed(1) + " m off " + (g.kind || "a keep-out") : "")
     + " and is station-keeping · " + left + " waypoint" + (left === 1 ? "" : "s")
-    + " unflown" + (g.mark ? ", on line " + (g.mark.line + 1) : "");
+    + " unflown" + (g.mark ? ", on line " + lineNo(g.mark.line) : "");
   $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
   $("#gb_low").style.display     = "";
   $("#gb_proceed").style.display = "none";
@@ -2089,7 +2089,7 @@ function offTrack(rr, idx){
   if(len < 0.5) return null;                                    // a leg with no length has no direction
   const line = currentLegLine();
   return {m: (dx*a.n - dy*a.e)/len,                             // + = boat to starboard of the leg
-          of: line >= 0 ? "line " + (line+1) : "leg " + idx + "→" + (idx+1)};
+          of: line >= 0 ? "line " + lineNo(line) : "leg " + idx + "→" + (idx+1)};
 }
 // The live half: NOW and NEXT are DERIVED every tick from the route the boat is actually
 // following plus its reported waypoint index. Only the WHY is remembered.
@@ -3132,7 +3132,7 @@ function render(){
     ctx.setLineDash(act?[]:[7,5]); ctx.strokeStyle = act ? "#ffd76a" : "rgba(255,215,106,0.55)";
     ctx.lineWidth = act?2.5:1.5; ctx.stroke(); ctx.setLineDash([]);
     for(const p of [a,b]){ ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,2*Math.PI); ctx.fillStyle="#ffd76a"; ctx.fill(); }
-    ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+(i+1), a.x+5, a.y-5);
+    ctx.fillStyle = act ? "#ffd76a" : "rgba(255,215,106,0.75)"; ctx.fillText("L"+lineNo(i), a.x+5, a.y-5);
   });
   drawBoundary(toScreen);
   drawPattern(toScreen);
@@ -3522,7 +3522,7 @@ function updateLineTip(e){
   const dist=distTo({lat:asv.lat,lon:asv.lon}, end);
   const sog=(S.status&&S.status.sog_kn)||0;
   const spd=(sog>0.3?sog:roleSpeedMS("survey"));   // this is a COVERAGE line, by construction
-  tip.textContent="line "+(runLineIdx+1)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
+  tip.textContent="line "+lineNo(runLineIdx)+linePartTxt(runLineIdx)+" end · ~"+fmtETA(spd>0?dist/spd:0)+" · "+Math.round(dist)+" m"+(sog>0.3?" @ "+sog.toFixed(1)+" kn":" (plan spd)");
   tip.style.left=(e.clientX+14)+"px"; tip.style.top=(e.clientY+14)+"px"; tip.style.display="block";
 }
 // --- per-component timing: coverage LINES and the TURNS between them ------------
@@ -3574,6 +3574,49 @@ let lineStatsKey = null;
 function lineSetKey(){
   return mission.lines.map(L=>L.a.lat.toFixed(6)+","+L.a.lon.toFixed(6)+","
                             + L.b.lat.toFixed(6)+","+L.b.lon.toFixed(6)).join(";");
+}
+// ⚠ A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT (review #18, 2026-09-15). Punch Out cuts a
+// pattern line around a keep-out into segments, and each segment became a "line" of its own: an 8-line pattern read
+// as 9 lines, two of them with odd lengths - in the LINES table, on the chart's labels, in every "line N of M" - and
+// the survey card divided the plan's width by one gap too many, understating its spacing. The SEGMENTS are still
+// what the boat runs and the clock times (lineActual, runLineIdx and the turn records stay per segment), but every
+// number shown to the operator is the drawn line's. A segment continues the one before it when it lies on the same
+// straight line, further along it, in the same direction.
+const LINE_PART_OFFSET_M = 1.0;                 // the parts of one clipped straight line agree to millimeters
+function linePartContinues(k){
+  const L = mission.lines; if(!L || k < 0 || k+1 >= L.length) return false;
+  const ref = L[k].a, en = q => llEN(q.lat, q.lon, ref);
+  const a = en(L[k].a), b = en(L[k].b), c = en(L[k+1].a), d = en(L[k+1].b);
+  const ux = b.e - a.e, uy = b.n - a.n, len = Math.hypot(ux, uy);
+  const vx = d.e - c.e, vy = d.n - c.n, vlen = Math.hypot(vx, vy);
+  if(!(len > 0) || !(vlen > 0)) return false;
+  const off = q => Math.abs((q.e - a.e)*uy - (q.n - a.n)*ux) / len;   // distance from this segment's line
+  const along = ((c.e - a.e)*ux + (c.n - a.n)*uy) / len;             // where the next one starts, along it
+  return (ux*vx + uy*vy) / (len*vlen) > 0.9998                        // the same direction, within a degree
+      && off(c) <= LINE_PART_OFFSET_M && off(d) <= LINE_PART_OFFSET_M
+      && along >= len - LINE_PART_OFFSET_M;                           // beyond this one's end, not beside it
+}
+let _drawnLines = {key: null, of: [], lines: []};
+/** The lines as the operator drew them: lines[i] holds drawn line i's segment indexes, in order; of[k] is the
+ *  drawn line segment k belongs to. Recomputed only when the plan's lines change. */
+function drawnLines(){
+  const key = lineSetKey();
+  if(key === _drawnLines.key) return _drawnLines;
+  const of = [], lines = [];
+  for(let k = 0; k < mission.lines.length; k++){
+    if(k === 0 || !linePartContinues(k - 1)) lines.push([]);
+    lines[lines.length - 1].push(k);
+    of.push(lines.length - 1);
+  }
+  return (_drawnLines = {key, of, lines});
+}
+/** The number the operator knows segment k's line by (1-based). */
+function lineNo(k){ const d = drawnLines(); return (k >= 0 && k < d.of.length) ? d.of[k] + 1 : k + 1; }
+function lineCount(){ return drawnLines().lines.length; }
+/** " (part 1 of 2)" when segment k is one part of a line the keep-outs cut, else "". */
+function linePartTxt(k){
+  const d = drawnLines(), parts = (k >= 0 && k < d.of.length) ? d.lines[d.of[k]] : null;
+  return parts && parts.length > 1 ? " (part " + (parts.indexOf(k) + 1) + " of " + parts.length + ")" : "";
 }
 /** Zero the per-line stats if the lines they describe have changed. Returns whether it did. */
 function syncLineStats(){
@@ -3752,7 +3795,7 @@ function currentActivity(){
   const beh = (S && S.behavior) || "";
   if(beh === "survey"){
     if(runLineIdx >= 0){
-      const of = " line " + (runLineIdx+1) + " of " + mission.lines.length;
+      const of = " line " + lineNo(runLineIdx) + " of " + lineCount() + linePartTxt(runLineIdx);
       // ⚠ BEING ON A LINE IS NOT THE SAME AS ACQUIRING COVERAGE, and `surveying` means the
       // second one — it is the flag that paints this readout green and titles it
       // "acquiring coverage". A lead-in is deliberately NOT coverage: the boat is settling
@@ -3775,7 +3818,7 @@ function currentActivity(){
     if(curTurn >= 0){
       const t = turnSeg[curTurn] || {};
       return {activity:"transiting", surveying:false, role:"turn",
-              detail:"turning between lines" + (t.from>=0 ? " (off line " + (t.from+1) + ")" : "")};
+              detail:"turning between lines" + (t.from>=0 ? " (off line " + lineNo(t.from) + ")" : "")};
     }
     // A survey run that is not on a line and not in a turn is on its way somewhere: the
     // approach to the first line, or a hop between separated coverage regions. Both are
@@ -3815,7 +3858,8 @@ function logActivityChange(){
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({kind:"activity", data:{
       activity: a.activity, surveying: a.surveying, detail: a.detail,
-      behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? runLineIdx+1 : null,
+      behavior: (S&&S.behavior) || null, line: runLineIdx >= 0 ? lineNo(runLineIdx) : null,
+      segment: runLineIdx >= 0 ? runLineIdx+1 : null,
       lat: st.lat_deg, lon: st.lon_deg, sog_kn: st.sog_kn}})}).catch(()=>{});
 }
 function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flown at it too
@@ -3827,7 +3871,8 @@ function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flo
     // compared. The lead column is what reconciles them; without it the plan would read
     // long against a coverage length for no visible reason.
     const lead = Math.min(run, Math.max(0, L.lead_in_m||0) + Math.max(0, L.lead_out_m||0));
-    return {line:k+1, len_m:Math.round(run - lead), lead_m:Math.round(lead),
+    // `line` is the SEGMENT (what the session log has always counted); `drawn` is the line the operator drew
+    return {line:k+1, drawn:lineNo(k), len_m:Math.round(run - lead), lead_m:Math.round(lead),
             plan_s:Math.round(spd>0?run/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
 // --- transit-to-survey + RTH-home estimates (Lines card; Andy's ask 2026-08-10) ------- //
@@ -3924,13 +3969,24 @@ function renderLineTable(){
   // an always-on column of zeros is a question the operator has to answer every time they
   // read a survey that never asked one.
   const anyLead = t.some(r=>r.lead_m>0);
-  const rows=t.map(r=>{
-    const active = runningSurvey && (r.line-1)===runLineIdx;   // highlight the line being RUN (not merely nearest)
+  // ONE ROW PER DRAWN LINE (review #18): a line the keep-outs cut reads as its parts, "833 + 1115", with the gap
+  // between them - its plan and actual are the parts' sums, and it is under way while any part is.
+  const rows=drawnLines().lines.map((ks,i)=>{
+    const parts = ks.map(k=>t[k]);
+    const sum = f => parts.reduce((a,r)=>a+r[f],0);
+    const active = runningSurvey && ks.includes(runLineIdx);   // highlight the line being RUN (not merely nearest)
     const tr = active ? ' style="background:rgba(63,192,255,.14)"' : '';
     const mark = active ? '<span style="color:#39c0ff">▸</span>' : '';   // ▸ line under way
-    return `<tr${tr}><td style="${cell}">${mark}${r.line}</td><td style="${cell}">${r.len_m}</td>`+
-      (anyLead?`<td style="${cell};color:var(--ink-faint)">${r.lead_m||''}</td>`:``)+
-      `<td style="${cell}">${fmtMS(r.plan_s)}</td><td style="${cell};color:${r.actual_s?'#bfe8c8':'var(--ink-faint)'}">${r.actual_s?fmtMS(r.actual_s):'--'}</td></tr>`;
+    const gaps = ks.slice(1).map((k,j)=>Math.round(distTo(mission.lines[ks[j]].b, mission.lines[k].a)));
+    const len = parts.length > 1
+      ? parts.map(r=>r.len_m).join(" + ") + ` <span style="color:var(--ink-faint)">(${gaps.join(" + ")} m gap)</span>`
+      : String(sum("len_m"));
+    const tip = parts.length > 1
+      ? ` title="Line ${i+1} is cut by a keep-out into ${parts.length} parts: ${parts.map(r=>r.len_m+" m").join(" + ")}, with ${gaps.map(g=>g+" m").join(" and ")} between them."` : "";
+    const act = sum("actual_s");
+    return `<tr${tr}${tip}><td style="${cell}">${mark}${i+1}</td><td style="${cell}">${len}</td>`+
+      (anyLead?`<td style="${cell};color:var(--ink-faint)">${sum("lead_m")||''}</td>`:``)+
+      `<td style="${cell}">${fmtMS(sum("plan_s"))}</td><td style="${cell};color:${act?'#bfe8c8':'var(--ink-faint)'}">${act?fmtMS(act):'--'}</td></tr>`;
   }).join("");
   const T={len:t.reduce((a,r)=>a+r.len_m,0),lead:t.reduce((a,r)=>a+r.lead_m,0),
            plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
@@ -3956,7 +4012,8 @@ function renderLineTable(){
       const act=(i===curTurn);                                  // ↻ turn under way
       const tr=act?' style="background:rgba(63,192,255,.14)"':'';
       const mark=act?'<span style="color:#39c0ff">↻</span>':'↻';
-      const lbl=r.to?`${r.from}→${r.to}`:`${r.from}→·`;
+      const no=n=>n>=1?lineNo(n-1):n;                          // drawn-line numbers (review #18)
+      const lbl=r.to?`${no(r.from)}→${no(r.to)}`:`${no(r.from)}→·`;
       return `<tr${tr}><td style="${cell}">${mark}${r.turn}</td><td style="${cell};color:var(--ink-faint)">${lbl}</td><td style="${cell};color:${r.sec?'#e8d9a0':'var(--ink-faint)'}">${r.sec?fmtMS(r.sec):'--'}</td></tr>`;
     }).join("");
     const TT=tt.reduce((a,r)=>a+r.sec,0);
@@ -3964,7 +4021,8 @@ function renderLineTable(){
       `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
       `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${TT?fmtMS(TT):'--'}</td></tr></table>`;
   }
-  html+=transitRowHtml(`RTH L${t.length} → home:`, transitEst.rth, trSpd, roleSpeed("transit"));
+  const lastLine=lineCount();                    // the DRAWN line the return leaves from (review #18)
+  html+=transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit"));
   el.innerHTML=html;
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
@@ -4528,7 +4586,10 @@ function committedPatternInfo(){
     offMin = Math.min(offMin, off); offMax = Math.max(offMax, off);
   }
   const width = offMax - offMin;                  // the ACTUAL extent, not spacing x (n-1),
-  const spacing = L.length > 1 ? width/(L.length-1) : null;   // so an edited plan stays honest
+  // DRAWN lines, not segments (review #18): a line the keep-outs cut is one line, and counting its parts put one
+  // gap too many under the width - 8 lines with one cut read as a spacing of width/8, not width/7.
+  const n = lineCount();
+  const spacing = n > 1 ? width/(n-1) : null;     // so an edited plan stays honest
   // DIRECTION MUST MATCH THE CONVENTION THE OPERATOR TYPED. A boustrophedon alternates
   // end for end, so line 0's own bearing is only defined modulo 180 - reading it raw gave
   // the RECIPROCAL of the value in the Direction field about half the time, and a card
@@ -4537,14 +4598,14 @@ function committedPatternInfo(){
   // across-plan offset. A single-line plan has no across direction; its own bearing is
   // then the only answer available.
   let direction;
-  if(L.length > 1){
+  if(n > 1){
     const s = (offMax >= -offMin) ? 1 : -1;       // sense the lines actually extend in
     const across = Math.atan2(s*uy, s*(-ux)) * 180/Math.PI;
     direction = (across - 90 + 720) % 360;
   } else {
     direction = (Math.atan2(dx, dy) * 180/Math.PI + 360) % 360;
   }
-  return {spacing, width: L.length > 1 ? width : null, legLength, count: L.length, direction};
+  return {spacing, width: n > 1 ? width : null, legLength, count: n, direction};
 }
 function updatePatReadout(){
   const sp = currentPattern();
@@ -8686,16 +8747,16 @@ async function resumeRun(){
       const tail = [to, ...rr.slice(idx)];
       const r = await cmd("/api/cmd/amend", {route: tail,
         note: "Resuming the survey " + fmtDist(backedM) + " back down line "
-              + (pauseMark.line + 1) + " of the pause point."});
+              + lineNo(pauseMark.line) + " of the pause point."});
       if(r && r.error){ note = "could not amend the plan (" + r.error + ") — resumed where it lay"; }
       else {
         runRoute = [...rr.slice(0, idx), ...tail];
-        note = "backed up " + fmtDist(backedM) + " down line " + (pauseMark.line + 1)
+        note = "backed up " + fmtDist(backedM) + " down line " + lineNo(pauseMark.line)
              + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
       }
     } else {
       note = (nogo.ready && nogo.frame && nogo.ko
-              ? "the way back down line " + (pauseMark.line + 1) + " is not clear"
+              ? "the way back down line " + lineNo(pauseMark.line) + " is not clear"
               : "the keep-out model is not loaded, so the way back could not be certified")
            + " — resumed where it lay, WITHOUT the backtrack";
       backedM = 0;
@@ -8706,7 +8767,9 @@ async function resumeRun(){
   // LOW UNTIL THE OPERATOR SAYS OTHERWISE — Andy's "or until user changes speed manually".
   // Set before the run resumes so the boat never makes way at the old speed, and NOT
   // conditional on the backtrack: a resume is cautious whether or not there was a line.
-  const lineNo = pauseMark ? pauseMark.line + 1 : null;   // read BEFORE the mark is spent
+  // read BEFORE the mark is spent - and not named `lineNo`, which would shadow the drawn-line numbering this
+  // function calls above it (a const in its temporal dead zone throws; tests/pause_resume.js caught it, review #18)
+  const resumeLine = pauseMark ? lineNo(pauseMark.line) : null;
   resumeSlow = true; commandedSpeed = null;
   // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6). Start used to follow a LOW it never
   // checked: refused or lost, the boat resumed at its old speed while this said LOW, and
@@ -8730,7 +8793,7 @@ async function resumeRun(){
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED after a pause — " + (note || "carrying on")
     + "; held at LOW speed until the operator changes it"});
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({kind:"resume", data:{line: lineNo, backed_m: Math.round(backedM),
+    body: JSON.stringify({kind:"resume", data:{line: resumeLine, backed_m: Math.round(backedM),
       boat_lengths: RESUME_BACK_LENGTHS, note}})}).catch(()=>{});
   updateMissionCard(); render();
 }

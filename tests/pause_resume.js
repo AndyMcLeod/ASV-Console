@@ -127,6 +127,10 @@ eval([
   // (tests/guard_resume.js) - one implementation of "which line, how far along, which way",
   // because a second copy is a copy no mutation has ever been run against.
   grab("resumeBackM"), grab("alongLineM"), grab("lineMark"), grab("markPause"),
+  // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
+  grab("lineSetKey"),
+  grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
+  grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),

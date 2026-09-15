@@ -77,7 +77,7 @@ const path = require("path");
 // toEN is the frame offTrack itself works in, so the checks below are computed in the
 // SAME projection the shipped function uses; fromEN is its exact inverse, which is what
 // lets a scenario be written in metres and read back in metres.
-const { toEN, fromEN, distTo } = require("../static/js/geodesy.js");
+const { toEN, fromEN, distTo, llEN } = require("../static/js/geodesy.js");
 
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
@@ -108,6 +108,9 @@ var window = { _wpIndex: 0 };
 // stale line label; the suite clears it between worlds rather than working around it.
 // eslint-disable-next-line no-eval
 eval(grabDecl("LINE_MATCH_M") + "\n" + grabDecl("_legLine") + "\n" +
+     // the DRAWN-LINE numbering the "of: line N" label now goes through (review #18) - the page's own
+     grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
+     grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("currentLegLine") + "\n" + grab("offTrack") + "\n" +
      "function __resetLegMemo(){ _legLine = {key:'', line:-1}; }");
 

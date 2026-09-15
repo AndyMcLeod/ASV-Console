@@ -145,6 +145,9 @@ function showBanner(m) { banners.push(m); }
 // eslint-disable-next-line no-eval
 eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
      grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
+     // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
+     grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
+     grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
      grab("commandSpeed") + "\n" + grab("speedReconcile") + "\n" +

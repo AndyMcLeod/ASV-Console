@@ -224,6 +224,9 @@ check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints 
          grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
          grabDecl("SPEED_WARN_PREFIX") + "\n" +
          grab("committedPatternInfo") + "\n" +
+         // committedPatternInfo counts DRAWN lines (review #18) - the page's own numbering, not a stub
+         grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
+     grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
          // ROLE-BILLED ESTIMATE (2026-09-05): the survey row totals the chain BY ROLE now,
          // so its three helpers are grabbed with it rather than stubbed.
          grabDecl("LINE_MATCH_M") + "\n" +

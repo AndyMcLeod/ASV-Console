@@ -193,6 +193,10 @@ eval([
   // have written a different binding and every rung would have run on a null clearance.
   "function updateClearance(){ clearance = {...clearance, ...__clr}; return clearance; }",
   grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
+  // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
+  grab("lineSetKey"),
+  grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
+  grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grabDecl("RELEASE_HOLD_MS"),
   "let clearHoldAt = 0;",
   grab("releaseSettled"),

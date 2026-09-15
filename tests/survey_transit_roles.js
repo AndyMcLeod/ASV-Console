@@ -103,6 +103,9 @@ globalThis.performance = globalThis.performance || { now: () => Date.now() };
 eval([
   grabDecl("LINE_MATCH_M"), grabDecl("_legLine"), grabDecl("SPEED_ROLES"),
   grab("lineSetKey"), grab("syncLineStats"), grab("turnZoneM"), grab("nearestEndpointM"),
+  // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
+  grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
+  grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("reversalScaleM"), grab("isReversalGap"),
   grab("currentLegLine"), grab("accumLineTime"),
   // linePhase splits a committed line into lead-in / coverage / lead-out; currentActivity

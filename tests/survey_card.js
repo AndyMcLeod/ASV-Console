@@ -94,7 +94,11 @@ function check(name, cond, detail) {
 var M_PER_DEG_LAT = 111320;
 var mission = { lines: [] }, planKind = "survey";
 // eslint-disable-next-line no-eval
-eval(grab("committedPatternInfo"));
+// committedPatternInfo counts DRAWN lines (review #18): the page's own numbering with it, not a stub
+const __decl = (re) => { const m = H.match(re); if (!m) throw new Error("test setup: " + re + " not found"); return "var " + m[0].replace(/^(const|let) /, ""); };
+eval([__decl(/^const LINE_PART_OFFSET_M = [^;]*;/m), __decl(/^let _drawnLines = [^;]*;/m), grab("lineSetKey"),
+      grab("linePartContinues"), grab("drawnLines"), grab("lineNo"), grab("lineCount"),
+      grab("committedPatternInfo")].join("\n"));
 
 // Build a committed boustrophedon at a real latitude: `n` lines of `len` m running due
 // north/south, `sp` m apart, alternating end for end exactly as the real plan does.

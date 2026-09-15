@@ -55,11 +55,37 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#17 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#18 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-15: REVIEW ITEM #17 - THE COMMIT GATE HAS NO GAPS.**
+**NEWEST, 2026-09-15: REVIEW ITEM #18 - A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT.**
+Punch Out cuts a pattern line around a keep-out into segments, and each became a "line": an 8-line pattern read as 9
+(the old open-list note in MEMORY) - in the LINES table, the chart's L# labels, every "line N of M" - and
+`committedPatternInfo` divided the width by segments - 1, UNDERSTATING the spacing (3 lines, one cut: 13.3 m, not 20).
+
+* `linePartContinues(k)`: segment k+1 continues k when it is on the same straight line (both ends within
+  `LINE_PART_OFFSET_M` 1 m), further along it (starts at or beyond k's end) and the same direction (cos > 0.9998).
+  `drawnLines()` (memo on `lineSetKey()`) -> {lines: [[seg...]...], of: [line per seg]}; `lineNo(k)`, `lineCount()`,
+  `linePartTxt(k)` (" (part 1 of 2)"). Geometric, so Andy's EXISTING plans need no schema change.
+* SEGMENTS stay what the boat runs and times: `lineActual`, `runLineIdx`, `turnSeg` are unchanged. Every number SHOWN
+  changed: LINES rows (one per drawn line - "120 + 120 (60 m gap)", title naming the parts, plan/actual summed, under
+  way while any part is), `RTH L<lineCount>`, turn labels, chart labels (both parts "L2"), line tip, currentActivity
+  ("line 2 of 3 (part 2 of 2)"), held-survey bar, resume notes, offTrack, and the survey card's count and spacing.
+  Logs: `survey_lines` rows keep `line` (segment) and add `drawn`; the `activity` and `resume` events' `line` is now
+  the DRAWN line (activity adds `segment`).
+* ⚠ resumeRun HAD A LOCAL `const lineNo` - my calls above it threw in its temporal dead zone; pause_resume.js caught
+  it on the first run. Renamed `resumeLine`; drawn_lines.js 8 fails on any `const/let/var lineNo`.
+* Ten suites that eval the changed functions now grab the REAL helpers (not stubs); end_action's fixture `lines:
+  [{}, {}, {}, {}]` got real geometry; the RTH row hoists `lastLine` because two suites extract `transitRowHtml(...)`
+  with a regex that stops at the first ")".
+* Tests: NEW tests/drawn_lines.js (9 checks; 15 sidecar mutations, 15 caught).
+* LIVE (port 8796, temp copy seeded with a 4-segment plan): the LINES panel read "2 · 120 + 120 (60 m gap) · 1:06",
+  Σ 840, "RTH L3"; zoomed in, the chart labelled the lines L3, L2, L2, L1.
+* Verified: all 75 suites in the scratch clone.
+* Next: #19, the unsaved preview looks like the uploaded route.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #17 - THE COMMIT GATE HAS NO GAPS.**
 Four holes in `.githooks/pre-commit` and the suites it runs: its list of paths that count had drifted (a commit touching
 only `currents.py`, `vessels/*.json` or `ports.default.json` ran NOTHING); `track_edge.js` and `amend_plan.py` had two
 advice entries each, the second never reachable, and ten suites had none; a hung suite held the commit for ever; and
@@ -86,7 +112,7 @@ because a DNS hiccup printed "[ports] geocoder unreachable: URLError ...".
   window with an Event whose next wait times out and sets on its way out; 3 mutations (one per loop), 3 caught.
   A kept refresh is the THIRD round for water/weather (they fetch after every wait anyway) and the second look for
   the current - a threshold of 2 let the water and weather mutations survive the first try.
-* Next: #18, the LINES table shows a split line as two lines.
+* Committed and pushed as `488626a7`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #15 - THE PAGE AND THE PROGRAM SAY WHEN THEY ARE DIFFERENT VERSIONS.**
 The page and its modules are read from disk on every request; the Python only when the console starts. After a commit

@@ -90,6 +90,8 @@ const GUARDS = {
     "That a committed survey plan is still described rather than blanking when its pattern anchors are dropped, and that the figures are DERIVED from the committed lines and self-validating on parallelism",
   "frame_health.js":
     "The page half of review #12: that the safety loop does not fail without a sign. It drives the page's own onFrame, consoleHealth and connect with the clock, the banner and fetch stubbed, evaluated strict as the module runs: a failed frame never escapes; three say CONSOLE FAULT naming the error and are logged once; the fault stays up through seven clean frames and comes down on the eighth in a row, and a fault on every other frame is a fault, not a flicker; a message that is not a state frame is no fault and no update; no frame for over 2 s while the console says it streams says TELEMETRY STALE with the dot red and the pill stale - with the link lost too - but not with no link or before the first frame; the console's own loop fault is said, after the page's when both hold, and neither is said while stale; and a banner that is not its own is never taken down.",
+  "drawn_lines.js":
+    "That a line is what the operator drew, not what the keep-outs left of it (review #18): a line Punch Out cut into two parts is one line with one number, and the numbering follows plan edits; a part must lie on the same straight line, further along it, in the same direction - the next pass beside it, the line run back, or a segment starting inside the last one is not; the LINES table has one row per drawn line, reading its parts and the gap, summing its plan and actual, under way while either part is, with the RTH row leaving from the last drawn line; the session log keeps the segment as line and adds the drawn one; the survey card counts drawn lines and their true spacing; the activity names the part; and the chart labels, turn table, line tip, held-survey bar and resume notes all use the numbering, which nothing in the page shadows",
   "precommit_hook.py":
     "That the commit gate has no gaps (review #17), by running a copy of the real hook with a stand-in git: the suites run for a commit touching only the current model, a vessel file, the default ports, a module or a tool - paths the old list never named - and for one that stages nothing, and are skipped only when everything staged is Markdown or git metadata; a failing suite blocks the commit with its advice, and one that hangs is stopped after the time limit as TIMED OUT; every suite has exactly one advice entry; and the shared console-output check counts tracebacks, socketserver's handler report and routes that raised, never a deliberate note that names an error",
   "build_check.js":
@@ -347,7 +349,7 @@ c.push(TBL(["Card", "Purpose"], [
   ["Mission status", "Live telemetry, water level, nogo, comms — and the RUN block: one readout for every commanded run (type, waypoint progress, routed length, time to end, end mode, run time, status), shown only while there is a run to describe"],
   ["ROC · HOME", "Remote Operations Centers, recovery offsets, and HOME selection"],
   ["Chart source (`SRC`)", "Every ENC cell in view + the zone-of-confidence under the vessel"],
-  ["Survey lines (`LINES`)", "Per-line planned versus actual run times"],
+  ["Survey lines (`LINES`)", "Per-line planned versus actual run times - one row per DRAWN line, a line a keep-out cut read as its parts (`drawnLines` / `lineNo`)"],
   ["AIS", "Nearby traffic from the AIS service"],
 ], [2200, 7160]));
 c.push(H2("6.2  Multi-monitor split"));

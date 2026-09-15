@@ -366,13 +366,20 @@ check("16. ... and a stopped boat does not re-arm anything either",
 // because the distinction is what any continuously-collected data must be segmented by:
 // sonar cannot tell coverage from transit by looking at itself.
 {
-  eval(grab("alongLineM") + "\n" + grab("linePhase") + "\n" + grab("currentActivity"));
+  eval(grab("alongLineM") + "\n" + grab("linePhase") + "\n" + grab("currentActivity") + "\n" +
+       // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
+       [grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("lineSetKey"), grab("linePartContinues"),
+        grab("drawnLines"), grab("lineNo"), grab("lineCount"), grab("linePartTxt")].join("\n"));
   var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
   // A real position rather than null: currentActivity asks linePhase where on the line the
   // boat is, and a null boat would answer "coverage" for the trivial reason that it cannot
   // measure. These lines carry no lead, so the answer is coverage on the real reason.
   var asv = { lat: 43.0718, lon: -70.7626 };
-  mission = { completion: "rth", lines: [{}, {}, {}, {}] };
+  // Four real lines, 50 m apart and alternating end for end: "line N of M" is the DRAWN line now (review #18),
+  // which is read off the geometry, so a placeholder line with no ends is no longer a plan the page could hold.
+  const __ln = (k) => { const lat = 43.0718 + k * 0.00045, w = { lat, lon: -70.7650 }, e = { lat, lon: -70.7600 };
+                        return k % 2 ? { a: e, b: w } : { a: w, b: e }; };
+  mission = { completion: "rth", lines: [__ln(0), __ln(1), __ln(2), __ln(3)] };
   const act = (over, set) => {
     Object.assign({runLineIdx:-1, curTurn:-1, lastRunLine:-1}, set || {});
     runLineIdx = (set && set.runLineIdx !== undefined) ? set.runLineIdx : -1;
