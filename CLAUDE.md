@@ -55,29 +55,22 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#19 built, #20 half-built on a branch; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#20 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` = `a39344cd` (#19), clean, pushed; 76 suites; Andy's mission.json / ports.json / comms_config.json
-  unchanged by any of this (hash-checked before every commit). His console was OFF at handoff (nothing on 8790-8799).
-* **⚠ APPROVAL MODE IS UNSETTLED - ASK.** The review ran one item at a time: build, verify (suites + mutations +
-  live check + docs + this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from
-  his iPhone, "Carry on all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in
-  without per-item approval.
-  That session has ended; at handoff he had not said whether to carry on or go back to approving each item.
-* **#20 IS HALF-BUILT ON A LOCAL BRANCH, NOT ON MASTER: `wip/review-20-line-table` (`98a33418`), made with plumbing, no
-  hook run, not pushed.** Its commit message says what is done and what is left. Done: renderLineTable builds the
-  body once per SHAPE (drawn lines, their parts and leads, turn count) via `lineTableSkeleton`, then writes only
-  changed cells by id through `setCellText` / `setHtmlIfChanged`; drawn_lines.js reads the patched cells through a
-  body stub (9/9). Left: tests/line_table_patch.js, sidecar mutations, a live check with LINES open on a running
-  survey, a GUARDS entry, an advice_for entry (precommit_hook.py 5 fails without one), docs, a PICK UP HERE block,
-  the full run. Bring it over with `git checkout wip/review-20-line-table -- static/asv.html tests/drawn_lines.js`.
+* **STATE:** `master` carries #20, pushed; 77 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+  any of this (hash-checked before every commit). His console was OFF through #20 (nothing on 8790-8799).
+* **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
+  this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from his iPhone, "Carry on
+  all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
+  The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
+  taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
+* **#20 IS DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried it half-built across
+  the context change is superseded by the commit and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **#20** "The LINES table is rebuilt four times a second. This is the flicker you had fixed on the AIS card; update
-    the cells in place instead." (in progress, above)
   * **#21** "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy
     saves only after 800 ms without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it
     never saves. A reload mid-survey loses the trail back to the last slow-down."
@@ -113,7 +106,11 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     ports.default.json, vessels/, static/) with `--sim --browser none --port 8796 --no-ais-service --no-log --state-dir
     <temp>`. NEVER open a page on his console (8791). The in-app browser's javascript tool runs in an ISOLATED world and
     the page's bindings are module-scoped: to read page state, put a probe hook in the COPY's asv.html and read it
-    through an injected `<script>` that writes to a DOM data attribute.
+    through an injected `<script>` that writes to a DOM data attribute. The DOM itself IS shared: that tool can click
+    the page's own buttons (`#linesBtn`, `#b_arm`, `#b_upload`, `#b_start`) and run a MutationObserver (how #20 was
+    measured). ⚠ Andy's Eastport home is AT THE PIER, so a Start there hands the boat to the guard's HELM rung (an
+    escape, "holding clear, awaiting the operator") before any line - to watch a survey run, POST `/api/cmd/spawn`
+    `{lat, lon}` of the plan's first waypoint to the TEMP console first, then Arm / Upload / Start in the page.
   * A new suite needs, in the SAME commit: a GUARDS entry in tools/build_tech_manual.js, an `advice_for` entry in
     .githooks/pre-commit, a TEETH list of RECORDED mutation results in its header, and a docs rebuild (`cd tools &&
     node build_docs.js`, then `git checkout --` the docx files whose builders did not change).
@@ -121,7 +118,37 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #19 - A PREVIEW NEVER LOOKS LIKE THE ROUTE.**
+**NEWEST, 2026-09-15: REVIEW ITEM #20 - THE LINES TABLE IS PATCHED IN PLACE, NOT REBUILT EVERY FRAME.**
+Andy: "The LINES table is rebuilt four times a second. This is the flicker you had fixed on the AIS card; update the cells
+in place instead." `renderLineTable` runs from `onState` on every telemetry frame and assigned the body's whole innerHTML:
+measured on the old page, 50 body rebuilds in 15 s of a running survey, the row node replaced, a text selection lost.
+
+* `lineTableSkeleton(lines, anyLead, tt, total)` builds the body with id'd cells (`lt_speed`, `lt_transit`, `lt_r<i>` +
+  `_mark` / `_plan` / `_act`, `lt_sum_plan` / `_act`, `lt_t<j>` + `_mark` / `_lbl` / `_sec`, `lt_tsum`, `lt_rth`) only when
+  `_lineTableShape` changes - JSON of each drawn line's len / tip / lead, `anyLead`, the turn count. The empty note is its
+  own shape ("empty"), written once. Cells are collected into `_lineTableCells` ONCE PER BUILD (`querySelectorAll("[id]")`).
+* A frame then writes only what changed: `setCellText` (the AIS card's text-node editor) for figures, `setHtmlIfChanged` for
+  the transit and RTH rows (their markup carries spans), and NEW `setStyleIfChanged(node, prop, v)` for the highlight and
+  ink.
+* ⚠ TWO FAULTS IN THE HALF-BUILT BRANCH, FIXED BEFORE IT LANDED: its style test compared against the READBACK
+  (`row.style.background !== bg`), and a browser hands a color back in its own spelling ("rgba(63,192,255,.14)" reads
+  "rgba(63, 192, 255, 0.14)", "#bfe8c8" reads "rgb(191, 232, 200)") - never equal, so the highlight and ink were
+  rewritten on every frame; `setStyleIfChanged` compares with what it last WROTE. And it looked each cell up with a scoped
+  `querySelector` per frame - five a line, four a turn, about a thousand a frame on a 100-line plan.
+* Tests: NEW tests/line_table_patch.js (11 checks) over a DOM stub that counts body builds, text / markup / style writes,
+  text-node creation and lookups, and reads colors back the browser's way; 18 sidecar mutations, 18 caught. ⚠ The first
+  draft of check 6 added a lead without moving a line end, so the coverage length changed too and rebuilt the body for
+  the wrong reason - "the shape ignores the lead" survived it (confirmed by running it). Punch Out EXTENDS the run for a
+  lead and leaves the coverage length alone; the fixture does that now. drawn_lines.js's body stub gained `id` and
+  `querySelectorAll`.
+* Words: README's Lines card paragraph and the ops manual's 9.7 say the table is updated in place.
+* LIVE (port 8796, temp copy running Andy's 14-line Eastport plan, spawned at its first waypoint, LINES open, the boat on
+  line 1 at 6.9 kn), a MutationObserver on the body for 15 s: 0 body rebuilds, 0 attribute writes, line 1's clock and
+  the total edited in place 15 times each (the same text node), the transit row re-rendered twice as the boat moved,
+  the row and table the same nodes, and a selection of "9:20" still selected. The old page on the same console: 50
+  rebuilds, the row replaced, the selection gone.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #19 - A PREVIEW NEVER LOOKS LIKE THE ROUTE.**
 A punched survey pattern and a clipped search pattern were drawn solid GREEN - the green of the UPLOADED route
 (`runRoute`, dashed `rgba(63,191,107,0.7)`) - while committed lines are yellow. That is what the Eastport "line heading out
 to the northwest" investigation (2026-09-11) turned on; the question to Andy stays open in the Eastport note.

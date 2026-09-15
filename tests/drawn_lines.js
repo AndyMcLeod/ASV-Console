@@ -65,7 +65,24 @@ const LINES = [
   { a: P(0, 40), b: P(300, 40) },                      // line 3
 ];
 
-const els = { "#lineTablePanel": { style: { display: "block" } }, "#lineTableBody": { innerHTML: "" } };
+// The table's body is built once and then PATCHED by id (review #20): a body whose innerHTML setter registers every
+// id'd cell it is given, so the checks read what was written into them.
+function bodyStub() {
+  let html = "";
+  const nodes = {};
+  return {
+    nodes, writes: 0,
+    get innerHTML() { return html; },
+    set innerHTML(v) {
+      html = v; this.writes++;
+      for (const k of Object.keys(nodes)) delete nodes[k];
+      for (const m of v.matchAll(/id="([^"]+)"/g)) nodes[m[1]] = { id: m[1], textContent: "", innerHTML: "", style: {}, firstChild: null };
+    },
+    querySelector(sel) { return nodes[sel.replace(/^#/, "")] || null; },
+    querySelectorAll() { return Object.values(nodes); },
+  };
+}
+const els = { "#lineTablePanel": { style: { display: "block" } }, "#lineTableBody": bodyStub() };
 const world = {
   $: (s) => els[s], llEN: G.llEN, distTo: G.distTo, toEN: G.toEN, azTo: G.azTo, alignDeg: G.alignDeg,
   fmtDist: (m) => Math.round(m) + " m", fmtMS: (s) => s + "s", roleSpeed: () => "Survey", roleSpeedMS: () => 2,
@@ -80,8 +97,9 @@ const page = eval("(function(){ \"use strict\";\n"
   + " lineActual = [], transitEst = { transit: null, rth: null };\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
   + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n" + decl(/^let _drawnLines = [^;]*;/m) + "\n"
-  + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt",
-     "buildLineTable", "buildTurnTable", "renderLineTable", "committedPatternInfo", "currentActivity"].map(grab).join("\n")
+  + decl(/^let _lineTableShape = [^;]*;/m) + "\n"
+  + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "setCellText", "setHtmlIfChanged", "setStyleIfChanged",
+     "lineTableSkeleton", "buildLineTable", "buildTurnTable", "renderLineTable", "committedPatternInfo", "currentActivity"].map(grab).join("\n")
   + "\nreturn { drawnLines, lineNo, lineCount, linePartTxt, linePartContinues, buildLineTable, renderLineTable,"
   + " committedPatternInfo, currentActivity,"
   + " set: (o) => { if ('lines' in o) mission.lines = o.lines; if ('run' in o) runLineIdx = o.run;"
@@ -117,7 +135,7 @@ check("2. a part must lie on the SAME straight line, further along it, in the sa
 // 3-4. the table
 page.set({ lines: LINES, actual: [100, 60, 55, 140], run: 2, S: { run: "running", behavior: "survey" }, turns: [] });
 page.renderLineTable();
-const html = els["#lineTableBody"].innerHTML;
+const html = els["#lineTableBody"].innerHTML, cellOf = (id) => els["#lineTableBody"].nodes[id] || {};
 const rows = html.split("<tr").slice(2, -1);                  // past the header row, before the sum row
 check("3. the LINES table has ONE row per drawn line, and the cut line reads as its parts with the gap between them",
       () => rows.length === 3 && /120 \+ 120 <span[^>]*>\(60 m gap\)<\/span>/.test(rows[1])
@@ -125,10 +143,11 @@ check("3. the LINES table has ONE row per drawn line, and the cut line reads as 
       () => rows.length + " rows; row 2: " + (rows[1] || "").replace(/style="[^"]*"/g, "").slice(0, 160));
 check("4. ... its plan and actual are its parts' sums, it is under way while either part is, and the totals do not "
       + "move - the RTH row leaves from line 3, the last drawn line",
-      () => /<td[^>]*>120s<\/td><td[^>]*>1m55s<\/td>|<td[^>]*>120s<\/td><td[^>]*>115s<\/td>/.test(rows[1])
-            && /▸<\/span>2<\/td>/.test(rows[1]) && !/▸/.test(rows[0]) && /<row>RTH L3 → home:<\/row>/.test(html)
-            && /Σ<\/td><td[^>]*>840<\/td>/.test(html),
-      () => "row 2 cells: " + (rows[1] || "").replace(/style="[^"]*"/g, "").replace(/<[^>]+>/g, "|").replace(/\|+/g, "|")
+      () => cellOf("lt_r1_plan").textContent === "120s" && cellOf("lt_r1_act").textContent === "115s"
+            && cellOf("lt_r1_mark").textContent === "▸" && cellOf("lt_r0_mark").textContent === ""
+            && /<row>RTH L3 → home:<\/row>/.test(cellOf("lt_rth").innerHTML) && /Σ<\/td><td[^>]*>840<\/td>/.test(html),
+      () => "row 2: plan " + cellOf("lt_r1_plan").textContent + ", actual " + cellOf("lt_r1_act").textContent
+            + ", mark '" + cellOf("lt_r1_mark").textContent + "'; RTH " + cellOf("lt_rth").innerHTML
             + "; sum: " + (html.match(/Σ<\/td><td[^>]*>(\d+)/) || [])[1]);
 
 // 5. the log keeps both

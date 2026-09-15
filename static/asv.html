@@ -3956,13 +3956,52 @@ function transitRowHtml(label, est, spd, spdKey){
     txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
   return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}</div>`;
 }
+// ⚠ PATCHED IN PLACE, NOT REBUILT (review #20, 2026-09-15). renderLineTable runs on every telemetry frame, and it
+// assigned the whole body's innerHTML each time: four times a second the table was destroyed and re-parsed - a
+// tooltip being read vanished, a selection was dropped mid-copy, and the rows flickered. The AIS card had the same
+// fault and the same fix. The body is now built once for a SHAPE - its lines, their parts and leads, how many turns
+// - and after that only the text, color and highlight of the cells that changed are written (setCellText writes a
+// text node, not the node). A new plan or a new turn changes the shape and builds it again; a frame does not.
+// ⚠ A STYLE IS COMPARED WITH WHAT WAS LAST WRITTEN, NOT WITH WHAT IT READS BACK: the browser normalizes it, so
+// `row.style.background` set to "rgba(63,192,255,.14)" reads "rgba(63, 192, 255, 0.14)" and "#bfe8c8" reads
+// "rgb(191, 232, 200)" - a readback test is never equal and rewrites the style on every frame.
+// ⚠ AND THE CELLS ARE LOOKED UP ONCE PER BUILD: a scoped querySelector walks the body, five of them a line and four a
+// turn, and a 100-line plan asked it about a thousand times a frame.
+let _lineTableShape = null, _lineTableCells = {};
+function setHtmlIfChanged(node, html){ if(node && node._html !== html){ node.innerHTML = html; node._html = html; } }
+function setStyleIfChanged(node, prop, v){ if(node && node["_st_"+prop] !== v){ node.style[prop] = v; node["_st_"+prop] = v; } }
+function lineTableSkeleton(lines, anyLead, tt, total){
+  const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
+  const rows = lines.map(r=>
+    `<tr id="lt_r${r.i}"${r.tip ? ` title="${r.tip}"` : ""}><td style="${cell}"><span id="lt_r${r.i}_mark" style="color:#39c0ff"></span>${r.i+1}</td><td style="${cell}">${r.len}</td>`+
+    (anyLead?`<td style="${cell};color:var(--ink-faint)">${r.lead||''}</td>`:``)+
+    `<td id="lt_r${r.i}_plan" style="${cell}"></td><td id="lt_r${r.i}_act" style="${cell}"></td></tr>`).join("");
+  let html=`<span id="lt_speed" style="color:var(--ink-faint)"></span><div id="lt_transit"></div>`+
+    `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td>`+
+    (anyLead?`<td style="${head}" title="Lead-in + lead-out on this line: run distance that is NOT coverage. The plan column times the whole run; the len column is the coverage inside it.">lead m</td>`:``)+
+    `<td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
+    `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${total.len}</td>`+
+    (anyLead?`<td style="${cell};color:var(--ink-faint)">${total.lead}</td>`:``)+
+    `<td id="lt_sum_plan" style="${cell}"></td><td id="lt_sum_act" style="${cell}"></td></tr></table>`;
+  // TURNS - independent components between lines, timed separately from the lines.
+  if(tt.length){
+    const trs=tt.map((r,j)=>`<tr id="lt_t${j}"><td style="${cell}"><span id="lt_t${j}_mark">↻</span>${r.turn}</td>`+
+      `<td id="lt_t${j}_lbl" style="${cell};color:var(--ink-faint)"></td><td id="lt_t${j}_sec" style="${cell}"></td></tr>`).join("");
+    html+=`<div style="color:var(--ink-faint);margin-top:7px">turns</div>`+
+      `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
+      `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td id="lt_tsum" style="${cell}"></td></tr></table>`;
+  }
+  return html + `<div id="lt_rth"></div>`;
+}
 function renderLineTable(){
   const panel=$("#lineTablePanel"); if(!panel || panel.style.display==="none") return;
   const el=$("#lineTableBody"); if(!el) return;   // header ("Survey lines" + drag grip) is a sibling, kept intact
   const t=buildLineTable();
-  if(!t.length){ el.innerHTML="Punch Out + Add to plan to populate."; return; }
+  if(!t.length){
+    if(_lineTableShape !== "empty"){ el.innerHTML="Punch Out + Add to plan to populate."; _lineTableShape = "empty"; _lineTableCells = {}; }
+    return;
+  }
   scheduleTransitEst();                          // off-tick; re-renders when it lands
-  const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
   const runningSurvey = S && S.run==="running" && S.behavior==="survey";
   // THE LEAD COLUMN APPEARS ONLY WHEN THERE IS A LEAD. A plan with none is the plan every
   // committed mission before this feature was, and its table must look exactly as it did —
@@ -3971,59 +4010,58 @@ function renderLineTable(){
   const anyLead = t.some(r=>r.lead_m>0);
   // ONE ROW PER DRAWN LINE (review #18): a line the keep-outs cut reads as its parts, "833 + 1115", with the gap
   // between them - its plan and actual are the parts' sums, and it is under way while any part is.
-  const rows=drawnLines().lines.map((ks,i)=>{
+  const lines=drawnLines().lines.map((ks,i)=>{
     const parts = ks.map(k=>t[k]);
     const sum = f => parts.reduce((a,r)=>a+r[f],0);
-    const active = runningSurvey && ks.includes(runLineIdx);   // highlight the line being RUN (not merely nearest)
-    const tr = active ? ' style="background:rgba(63,192,255,.14)"' : '';
-    const mark = active ? '<span style="color:#39c0ff">▸</span>' : '';   // ▸ line under way
     const gaps = ks.slice(1).map((k,j)=>Math.round(distTo(mission.lines[ks[j]].b, mission.lines[k].a)));
-    const len = parts.length > 1
-      ? parts.map(r=>r.len_m).join(" + ") + ` <span style="color:var(--ink-faint)">(${gaps.join(" + ")} m gap)</span>`
-      : String(sum("len_m"));
-    const tip = parts.length > 1
-      ? ` title="Line ${i+1} is cut by a keep-out into ${parts.length} parts: ${parts.map(r=>r.len_m+" m").join(" + ")}, with ${gaps.map(g=>g+" m").join(" and ")} between them."` : "";
-    const act = sum("actual_s");
-    return `<tr${tr}${tip}><td style="${cell}">${mark}${i+1}</td><td style="${cell}">${len}</td>`+
-      (anyLead?`<td style="${cell};color:var(--ink-faint)">${sum("lead_m")||''}</td>`:``)+
-      `<td style="${cell}">${fmtMS(sum("plan_s"))}</td><td style="${cell};color:${act?'#bfe8c8':'var(--ink-faint)'}">${act?fmtMS(act):'--'}</td></tr>`;
-  }).join("");
-  const T={len:t.reduce((a,r)=>a+r.len_m,0),lead:t.reduce((a,r)=>a+r.lead_m,0),
-           plan:t.reduce((a,r)=>a+r.plan_s,0),act:t.reduce((a,r)=>a+r.actual_s,0)};
-  const estSpd=roleSpeedMS("survey");    // this table is the COVERAGE lines; turns have their own row
+    return {i, lead: sum("lead_m"), plan: sum("plan_s"), act: sum("actual_s"),
+      active: runningSurvey && ks.includes(runLineIdx),        // the line being RUN (not merely nearest)
+      len: parts.length > 1
+        ? parts.map(r=>r.len_m).join(" + ") + ` <span style="color:var(--ink-faint)">(${gaps.join(" + ")} m gap)</span>`
+        : String(sum("len_m")),
+      tip: parts.length > 1
+        ? `Line ${i+1} is cut by a keep-out into ${parts.length} parts: ${parts.map(r=>r.len_m+" m").join(" + ")}, with ${gaps.map(g=>g+" m").join(" and ")} between them.` : ""};
+  });
+  const tt=buildTurnTable();
+  const shape = JSON.stringify([lines.map(r=>[r.len, r.tip, r.lead]), anyLead, tt.length]);
+  if(shape !== _lineTableShape){
+    el.innerHTML = lineTableSkeleton(lines, anyLead, tt,
+                                     {len: t.reduce((a,r)=>a+r.len_m,0), lead: t.reduce((a,r)=>a+r.lead_m,0)});
+    _lineTableShape = shape;
+    _lineTableCells = {};
+    for(const n of el.querySelectorAll("[id]")) _lineTableCells[n.id] = n;
+  }
+  const q = id => _lineTableCells[id];
   // ⚠ THE TWO TRANSIT ROWS ARE TRANSITS, AND THEY WERE TIMED AT THE SURVEY SPEED. They are
   // the exact two legs Andy names - "Lines from home to the first survey line waypoint and
   // from the last survey waypoint to home ... are transit lines and accept transit speed
   // inputs" - and the row said "transit" while dividing by the coverage speed. On a DriX
   // that is 7.0 kn where the boat will actually run 14.0, so both figures read DOUBLE.
   const trSpd=roleSpeedMS("transit");
-  let html=`<span style="color:var(--ink-faint)">${roleSpeed("survey")} speed</span>`+
-    transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit"))+
-    `<table style="border-collapse:collapse;margin-top:5px"><tr><td style="${head}">#</td><td style="${head}">len m</td>`+
-    (anyLead?`<td style="${head}" title="Lead-in + lead-out on this line: run distance that is NOT coverage. The plan column times the whole run; the len column is the coverage inside it.">lead m</td>`:``)+
-    `<td style="${head}">plan</td><td style="${head}">actual</td></tr>${rows}`+
-    `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}">${T.len}</td>`+
-    (anyLead?`<td style="${cell};color:var(--ink-faint)">${T.lead}</td>`:``)+
-    `<td style="${cell}">${fmtMS(T.plan)}</td><td style="${cell}">${T.act?fmtMS(T.act):'--'}</td></tr></table>`;
-  // TURNS - independent components between lines, timed separately from the lines.
-  const tt=buildTurnTable();
-  if(tt.length){
-    const trs=tt.map((r,i)=>{
-      const act=(i===curTurn);                                  // ↻ turn under way
-      const tr=act?' style="background:rgba(63,192,255,.14)"':'';
-      const mark=act?'<span style="color:#39c0ff">↻</span>':'↻';
-      const no=n=>n>=1?lineNo(n-1):n;                          // drawn-line numbers (review #18)
-      const lbl=r.to?`${no(r.from)}→${no(r.to)}`:`${no(r.from)}→·`;
-      return `<tr${tr}><td style="${cell}">${mark}${r.turn}</td><td style="${cell};color:var(--ink-faint)">${lbl}</td><td style="${cell};color:${r.sec?'#e8d9a0':'var(--ink-faint)'}">${r.sec?fmtMS(r.sec):'--'}</td></tr>`;
-    }).join("");
-    const TT=tt.reduce((a,r)=>a+r.sec,0);
-    html+=`<div style="color:var(--ink-faint);margin-top:7px">turns</div>`+
-      `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
-      `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${TT?fmtMS(TT):'--'}</td></tr></table>`;
+  setCellText(q("lt_speed"), roleSpeed("survey")+" speed");
+  setHtmlIfChanged(q("lt_transit"), transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit")));
+  for(const r of lines){
+    setStyleIfChanged(q("lt_r"+r.i), "background", r.active ? "rgba(63,192,255,.14)" : "");
+    setCellText(q("lt_r"+r.i+"_mark"), r.active ? "▸" : "");                 // ▸ line under way
+    setCellText(q("lt_r"+r.i+"_plan"), fmtMS(r.plan));
+    setCellText(q("lt_r"+r.i+"_act"), r.act ? fmtMS(r.act) : "--");
+    setStyleIfChanged(q("lt_r"+r.i+"_act"), "color", r.act ? "#bfe8c8" : "var(--ink-faint)");
   }
+  const act = t.reduce((a,r)=>a+r.actual_s,0);
+  setCellText(q("lt_sum_plan"), fmtMS(t.reduce((a,r)=>a+r.plan_s,0)));
+  setCellText(q("lt_sum_act"), act ? fmtMS(act) : "--");
+  const no=n=>n>=1?lineNo(n-1):n;                            // drawn-line numbers (review #18)
+  tt.forEach((r,j)=>{
+    const on = (j===curTurn);                                  // ↻ turn under way
+    setStyleIfChanged(q("lt_t"+j), "background", on ? "rgba(63,192,255,.14)" : "");
+    setStyleIfChanged(q("lt_t"+j+"_mark"), "color", on ? "#39c0ff" : "");
+    setCellText(q("lt_t"+j+"_lbl"), r.to ? `${no(r.from)}→${no(r.to)}` : `${no(r.from)}→·`);
+    setCellText(q("lt_t"+j+"_sec"), r.sec ? fmtMS(r.sec) : "--");
+    setStyleIfChanged(q("lt_t"+j+"_sec"), "color", r.sec ? "#e8d9a0" : "var(--ink-faint)");
+  });
+  if(tt.length){ const TT=tt.reduce((a,r)=>a+r.sec,0); setCellText(q("lt_tsum"), TT ? fmtMS(TT) : "--"); }
   const lastLine=lineCount();                    // the DRAWN line the return leaves from (review #18)
-  html+=transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit"));
-  el.innerHTML=html;
+  setHtmlIfChanged(q("lt_rth"), transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit")));
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
   const lines=buildLineTable(), turns=buildTurnTable();

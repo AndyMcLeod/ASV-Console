@@ -608,6 +608,11 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    marked **direct**. A plan-speed change re-times both rows instantly from the
    cached routed distance — no re-route — and the transit row stays **live during
    the run**, re-routing once per 50 m of real motion as the boat closes on line 1.
+   **The table is updated in place**: a telemetry frame rewrites only the figures
+   that changed — a line's clock, the highlight on the line under way, the transit
+   rows — so a tooltip, a selection and the scroll position survive the run (it
+   used to be rebuilt four times a second). It is built afresh only when the plan,
+   its leads or its number of turns change.
 
    **The chart menu + the measuring tool (right-click).** Right-clicking the chart
    opens the **point commands** — its header names the position you clicked:
