@@ -463,7 +463,7 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
         + "after them leaves the note quoting metres for a duration");
 
   const pyLoad = PY.slice(PY.indexOf("def load_mission()"), PY.indexOf("def plan_completion()"));
-  const pySave = PY.slice(PY.indexOf("def save_mission("), PY.indexOf("def save_mission(") + 1400);
+  const pySave = PY.slice(PY.indexOf("def save_mission("), PY.indexOf("\ndef ", PY.indexOf("def save_mission(") + 1));   // to the next def, not a fixed length: review #10's docstring pushed the fields past 1400 chars
   // The KEY position, not the word — the read path writes "lead_mode" twice on one line
   // (once as the key, once inside m.get), and counting the word would call one literal two.
   const nLoad = (pyLoad.match(/^\s*"lead_mode":/gm) || []).length;
@@ -656,7 +656,7 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
   // The usual four whitelists.
   const load = grab("loadMission");
   const pyLoad = PY.slice(PY.indexOf("def load_mission()"), PY.indexOf("def plan_completion()"));
-  const pySave = PY.slice(PY.indexOf("def save_mission("), PY.indexOf("def save_mission(") + 1600);
+  const pySave = PY.slice(PY.indexOf("def save_mission("), PY.indexOf("\ndef ", PY.indexOf("def save_mission(") + 1));   // to the next def, not a fixed length: review #10's docstring pushed the fields past 1400 chars
   check("42. the turn shape survives a reload — client, server, default and save",
         () => /turn_ease:\(m\.turn_ease === "eased" \? "eased" : "arc"\)/.test(load)
               // The KEY form, not the word: `m.get("turn_ease")` sits on the same line as

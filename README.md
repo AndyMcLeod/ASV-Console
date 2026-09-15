@@ -555,6 +555,16 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    plan's geometry keeps the previous plan as `mission.json.bak1`..`bak5`. A live speed command
    never writes the file - the commanded speed is the vessel's.
 
+   **A save is checked, and it is said when it is not kept.** A body posted as the plan that is
+   not one - no waypoint list, a position that is not a position, a negative buffer - is refused
+   in words and writes nothing (an explicitly empty plan, CLR PLAN, is still saved). The plan
+   carries a **revision**: every save bumps it and the page sends back the one it holds, so a
+   page whose copy is older than the plan on disk - another tab, or a window left open - is
+   refused rather than writing over the newer plan, and it says **PLAN NOT SAVED** and stops
+   saving until it is reloaded. Any other failed save is said too and retried with the next
+   change. And every request the console serves answers: an error in any of them is a 500 in
+   words, never a dropped connection with nothing in the session log.
+
    **Chart source (`SRC`).** The ENC's answer to a paper chart's title block, as a
    card: **every cell in view, one row each** (broadest scale first, usage band
    spelled out), with the cell the vessel is actually in marked and named — where

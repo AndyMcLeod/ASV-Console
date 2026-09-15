@@ -2415,13 +2415,46 @@ function cpaText(c){
 }
 let nogoInit = false;                           // one-shot startup extraction guard
 
+// ⚠ THE PLAN IS SAVED AGAINST THE REVISION THIS PAGE HOLDS, ONE SAVE AT A TIME, AND THE ANSWER IS
+// READ (review #10, 2026-09-14). Two pages that had loaded the same plan each autosaved over the
+// other's edits without a word, and nothing here ever looked at what the server said. Every save now
+// carries `missionRev`; one made to an older revision than the console holds is refused, and this page
+// then STOPS saving and says so - saving on would only keep failing, and the operator has to know the
+// edits made here are not being kept. A save still in flight when the next is due waits for it, so the
+// page cannot race its own revision. Any other failure is said too, and the next edit tries again.
+let missionRev = null, missionSaving = false, missionSaveAgain = false, missionConflict = false;
 function saveMission(){
   clearTimeout(saveTimer);
-  // fold the survey-area boundary into the persisted plan so it survives a reload
-  const payload = ()=>({...mission, boundary, boundary_closed: boundaryClosed});
-  saveTimer = setTimeout(()=>{ fetch("/api/mission",
-    {method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify(payload())}).catch(()=>{}); }, 400);
+  saveTimer = setTimeout(flushMission, 400);
+}
+async function flushMission(){
+  if(missionConflict) return;
+  if(missionSaving){ missionSaveAgain = true; return; }
+  missionSaving = true;
+  try{
+    // fold the survey-area boundary into the persisted plan so it survives a reload
+    const body = {...mission, boundary, boundary_closed: boundaryClosed};
+    if(missionRev != null) body.rev = missionRev;
+    let r = null, j = {};
+    try{
+      r = await fetch("/api/mission", {method:"POST", headers:{"Content-Type":"application/json"},
+                                        body: JSON.stringify(body)});
+      j = await r.json().catch(()=>({}));
+    }catch(e){ r = null; }
+    if(r && r.ok){
+      if(Number.isInteger(j.rev)) missionRev = j.rev;
+    } else if(r && r.status === 409){
+      missionConflict = true;
+      showBanner("⚠ PLAN NOT SAVED — " + (j.error || "the plan was changed from somewhere else")
+        + ". Edits made on this page are NOT being kept: reload it to pick up the newer plan.");
+    } else {
+      showBanner("⚠ PLAN NOT SAVED — " + ((j && j.error) || (r ? "the console answered " + r.status
+        : "the console did not answer")) + ". It is tried again with your next change.");
+    }
+  } finally {
+    missionSaving = false;
+    if(missionSaveAgain){ missionSaveAgain = false; flushMission(); }
+  }
 }
 async function loadMission(){
   try{ const r = await fetch("/api/mission"); const m = await r.json();
@@ -2450,6 +2483,8 @@ async function loadMission(){
                  turn_ease:(m.turn_ease === "eased" ? "eased" : "arc")};
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
+      // The revision the next save is made against (review #10) - null from a console that keeps none.
+      missionRev = Number.isInteger(m.rev) ? m.rev : null;
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
       $("#c_approach").value = mission.approach_radius_m ?? 1;
       // MIGRATE FORWARD, so an upgrade is a no-op: a mission that only has the legacy

@@ -844,6 +844,85 @@ class MissionUnavailable(Exception):
     or not a JSON object. Deliberately NOT an empty plan: see _read_mission_file."""
 
 
+class PlanRefused(ValueError):
+    """A body posted as the plan that is not one - refused in words, nothing written (review #10)."""
+
+
+class PlanConflict(Exception):
+    """A save made to an older revision of the plan than the one on disk (review #10)."""
+
+    def __init__(self, msg, rev):
+        super().__init__(msg)
+        self.rev = rev
+
+
+def _is_position(p):
+    return (isinstance(p, dict)
+            and all(isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool)
+                    and math.isfinite(p[k]) for k in ("lat", "lon"))
+            and -90.0 <= p["lat"] <= 90.0 and -180.0 <= p["lon"] <= 180.0)
+
+
+def check_plan_body(m):
+    """Refuse a posted plan that is not a plan, BEFORE anything is written (review #10, 2026-09-14).
+
+    POST /api/mission saved whatever arrived: an unreadable body came back from _read_json as {},
+    and {} was written as an EMPTY PLAN over the real one - the one outcome review #5 spent a
+    whole item making impossible on the READ side. A plan now has to carry its waypoints list (an
+    explicitly empty list is a real edit - CLR PLAN - and is saved), every waypoint, line end and
+    boundary vertex has to be a position, and the numeric settings have to be numbers."""
+    if not isinstance(m, dict) or not isinstance(m.get("waypoints"), list):
+        raise PlanRefused("a plan must carry its list of waypoints - nothing was saved (an empty or "
+                          "unreadable body is never saved as an empty plan)")
+    for i, w in enumerate(m["waypoints"]):
+        if not _is_position(w):
+            raise PlanRefused("waypoint %d is not a position (%r) - nothing was saved" % (i + 1, w))
+    lines = m.get("lines")
+    if lines is not None:
+        if not isinstance(lines, list):
+            raise PlanRefused("the plan's survey lines are not a list - nothing was saved")
+        for i, ln in enumerate(lines):
+            if not (isinstance(ln, dict) and _is_position(ln.get("a")) and _is_position(ln.get("b"))):
+                raise PlanRefused("survey line %d is missing a position at one end - nothing was saved" % (i + 1))
+    boundary = m.get("boundary")
+    if boundary is not None and not (isinstance(boundary, list) and all(_is_position(p) for p in boundary)):
+        raise PlanRefused("the survey-area boundary is not a list of positions - nothing was saved")
+    for k in ("arrival_radius_m", "approach_radius_m", "buffer_m", "min_depth_m", "lead_in", "lead_out"):
+        v = m.get(k)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                              or not math.isfinite(v) or v < 0):
+            raise PlanRefused("%s must be a finite, non-negative number (got %r) - nothing was saved" % (k, v))
+    rev = m.get("rev")
+    if rev is not None and (isinstance(rev, bool) or not isinstance(rev, int) or rev < 0):
+        raise PlanRefused("rev must be the revision of the plan this edit was made to (got %r) - "
+                          "nothing was saved" % (rev,))
+
+
+def _stored_rev():
+    """The revision of the plan on disk: 0 for a plan saved before revisions existed, None when
+    there is no plan to be stale against (no file, or one that is not a JSON object - the save
+    replaces it and _keep_previous_plan copies it aside). A file that stays LOCKED is retried and
+    then refused, like every other read (review #5): a failed read must not restart the count."""
+    for _attempt in range(_MISSION_IO_TRIES):
+        try:
+            with open(MISSION_PATH, "rb") as f:
+                raw_b = f.read()
+        except FileNotFoundError:
+            return None
+        except OSError:
+            time.sleep(_MISSION_IO_WAIT_S)
+            continue
+        try:
+            old = json.loads(raw_b.decode("utf-8"))
+        except ValueError:
+            return None
+        if not isinstance(old, dict):
+            return None
+        r = old.get("rev")
+        return r if isinstance(r, int) and not isinstance(r, bool) and r >= 0 else 0
+    raise MissionUnavailable("mission.json could not be read to check its revision, so nothing was saved")
+
+
 _MISSION_CACHE = None      # the last plan read or written successfully - see mission_params
 _MISSION_IO_TRIES = 6      # a Windows sharing violation clears in milliseconds: ~0.3 s in all
 _MISSION_IO_WAIT_S = 0.05
@@ -1011,6 +1090,9 @@ def load_mission():
             # plan drawn at the dock survives a reload / a session at sea.
             "boundary": m.get("boundary") or [],
             "boundary_closed": bool(m.get("boundary_closed")),
+            # the revision a page sends back with its next save - see save_mission (review #10)
+            "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
+                    and m.get("rev") >= 0 else 0),
         }
         return dict(_MISSION_CACHE)
     _MISSION_CACHE = {"waypoints": [], "lines": [], "arrival_radius_m": ARRIVAL_DEFAULT_M,
@@ -1018,7 +1100,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False}
+            "boundary": [], "boundary_closed": False, "rev": 0}
     return dict(_MISSION_CACHE)
 
 
@@ -1034,7 +1116,16 @@ def plan_completion():
 
 
 def save_mission(m):
+    """Write the plan and return its new revision. Refuses (PlanRefused) a body that is not a plan,
+    and (PlanConflict) an edit made to an older revision than the one on disk.
+
+    ⚠ THE REVISION (review #10). Every save bumps `rev`, and a page sends back the revision it
+    loaded or last saved. Two pages - two tabs, or a window left open overnight - each loaded the
+    same plan, and whichever autosaved LAST wrote its copy over the other's edits without a word.
+    A save carrying an older revision is refused now and nothing is written; a save carrying NO
+    revision (a script, a test, a page from before this) is written as before."""
     global _MISSION_CACHE
+    check_plan_body(m)
     doc = {
         "waypoints": m.get("waypoints") or [],
         "lines": m.get("lines") or [],
@@ -1042,7 +1133,10 @@ def save_mission(m):
         "approach_radius_m": m.get("approach_radius_m", WP_APPROACH_M),
         "speed": m.get("speed") or "survey",
         "speeds": _norm_speeds(m.get("speeds"), m.get("speed") or "survey"),
-        "completion": _cache_plan_completion(m.get("completion")),
+        # Validated here, CACHED only once the file is written (below): a save refused as stale must not
+        # change the End-of-Plan setting the console reports and runs by (review #10).
+        "completion": (m.get("completion") if m.get("completion") in ("complete", "loiter", "repeat", "rth")
+                       else "rth"),
         "buffer_m": m.get("buffer_m", 3.0),
         "min_depth_m": m.get("min_depth_m", 2.0),
         "lead_mode": ("s" if m.get("lead_mode") == "s" else "m"),
@@ -1052,16 +1146,26 @@ def save_mission(m):
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
     }
-    data = json.dumps(doc, indent=1)
     # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
-    # file per writer, and the replace retried - review #5, see _read_mission_file.
+    # file per writer, and the replace retried - review #5, see _read_mission_file. The revision is
+    # read and written inside the same lock, so two saves cannot both pass as the next one.
     with _mission_lock:
+        cur = _stored_rev()
+        if m.get("rev") is not None and cur is not None and m["rev"] != cur:
+            raise PlanConflict("the plan was changed from somewhere else after this page loaded it - "
+                               "another tab or window saved revision %d, and this edit was made to "
+                               "revision %d - so nothing was saved; reload to pick up the newer plan"
+                               % (cur, m["rev"]), cur)
+        doc["rev"] = (cur or 0) + 1
+        data = json.dumps(doc, indent=1)
         _keep_previous_plan(doc)
         tmp = "%s.%d.%d.part" % (MISSION_PATH, os.getpid(), threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(data)
         _replace_retrying(tmp, MISSION_PATH)
         _MISSION_CACHE = doc
+        _cache_plan_completion(doc["completion"])
+    return doc["rev"]
 
 
 # --------------------------------------------------------------------------- #
@@ -4444,6 +4548,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_json(self):
+        # ⚠ AN UNREADABLE BODY STILL READS AS {} HERE, AND THAT IS DELIBERATE. Refusing every
+        # malformed body at this layer would refuse a garbled Stop as well; each route checks the
+        # fields it needs instead, and the PLAN route refuses a body that is not a plan
+        # (check_plan_body, review #10) - {} was being saved there as an empty plan.
         try:
             n = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(n) if n else b"{}"
@@ -4688,7 +4796,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self._read_json()
-        code, obj = self._dispatch_post(self.path, body)
+        try:
+            code, obj = self._dispatch_post(self.path, body)
+        except Exception as e:
+            # ⚠ EVERY ROUTE ANSWERS, AND IS RECORDED (review #10). Eight routes - the plan, the session
+            # log, vessel, ports, comms, water level, environment and ROC - sit above the dispatcher's
+            # own try, and an exception in any of them dropped the connection: no response for the page
+            # (a "network error"), and nothing in the session log, because this line was never reached.
+            code, obj = 500, {"error": "the console failed handling %s: %s: %s" % (self.path, type(e).__name__, e)}
+            print("[http] %s raised: %s: %s" % (self.path, type(e).__name__, e), file=sys.stderr)
         # Record every command / setting / action + its outcome for playback.
         if LOG is not None:
             LOG.command(self.path, body, code,
@@ -4700,10 +4816,14 @@ class Handler(BaseHTTPRequestHandler):
         out of do_POST so the session recorder can log a single uniform outcome."""
         if path == "/api/mission":
             try:
-                save_mission(body)
-            except OSError as e:
+                rev = save_mission(body)
+            except PlanRefused as e:
+                return 400, {"error": str(e)}
+            except PlanConflict as e:
+                return 409, {"error": str(e), "rev": e.rev}
+            except (OSError, MissionUnavailable) as e:
                 return 503, {"error": "the plan could not be saved: %s" % e}
-            return 200, {"ok": True}
+            return 200, {"ok": True, "rev": rev}
         if path == "/api/logevent":
             # Client-supplied structured event for the session log (e.g. the
             # per-survey-line plan-vs-actual table). Recorded as a clean event.

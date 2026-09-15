@@ -55,11 +55,48 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#9 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#10 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #9 - A ROUTE GOES WHOLE OR NOT AT ALL.**
+**NEWEST, 2026-09-14: REVIEW ITEM #10 - A PLAN SAVE IS CHECKED, MADE AGAINST A REVISION, AND SAID WHEN IT IS NOT KEPT.**
+POST /api/mission saved whatever arrived: an unreadable body came back from `_read_json` as {} and was written as an
+EMPTY plan - #5 hardened the READ side only. Two pages that had loaded the same plan each autosaved over the other's
+edits without a word, because `saveMission` never read the answer. And eight POST routes (plan, logevent, vessel,
+ports, comms, waterlevel, env, roc) sit above `_dispatch_post`'s own try: an exception there dropped the connection,
+with no answer and nothing in the session log.
+
+* `check_plan_body` refuses a body with no waypoints list, a waypoint / line end / boundary vertex that is not a
+  position, a negative or non-finite setting, or a bad `rev` (`PlanRefused` -> 400, nothing written). An explicitly
+  EMPTY plan (CLR PLAN) is still saved.
+* `save_mission` compares and bumps `rev` under `_mission_lock`: an older revision raises `PlanConflict` (409, with
+  the revision on disk); NO revision (scripts, tests, an older page) is written as before. `_stored_rev` retries a
+  locked file and then refuses (503) - it never reads a locked file as 'no plan'. `load_mission` carries `rev`.
+  ⚠ The End-of-Plan cache (`_cache_plan_completion`) is updated only AFTER the write: it used to be set while the
+  document was built, so a save refused as stale would still have changed the setting the console runs by.
+* `do_POST` wraps `_dispatch_post`: any exception is a 500 in words, and the session-log line is reached.
+* `_read_json` is UNCHANGED on purpose - refusing every malformed body there would refuse a garbled Stop as well. A
+  first cut did exactly that and was reverted.
+* Page: `saveMission` debounces into `flushMission`, which sends `missionRev`, adopts the answer's `rev` and sends
+  one save at a time; a 409 banners PLAN NOT SAVED ... reload and stops saving (`missionConflict`); any other failure
+  banners and is retried with the next change. `loadMission` takes `rev`. The UI split is unaffected: only the main
+  window saves (the controls window forwards its gestures), so the two windows never conflict.
+* This takes in the first half of #11 ("plan saving in the page fails silently"). #11's remainder: loadMission
+  accepting an empty reply, and RESET wiping the plan with no confirmation in the simulator.
+* Tests: mission_store.py 9 hardened, 11-14 and 12b; NEW tests/plan_save.js. TEETH: 10 scratch-clone server
+  mutations and 8 sidecar page mutations, 18 killed. The first page run scored 2 SURVIVED because a mutated save
+  waited for ever and Node exited 0 printing nothing - plan_save.js bounds every wait now and reports FAIL 0 from
+  `beforeExit`, and the runner flags a missing summary line.
+* ⚠ ANDY'S LIVE CONSOLE RUNS THE WORKING TREE. It was restarted at 16:50 from D:\Claude\ASV, so this item's
+  UNCOMMITTED save path wrote his new 719-waypoint plan as `rev` 13. Nothing was lost. But the suites that launch
+  the console in the app dir (hold_station, run_link_control, http_contract, completion_modes and others) snapshot
+  and RESTORE mission.json, and some POST test plans into it: an edit he makes while the hook runs can be
+  overwritten at the restore, and with revisions the restore also rolls `rev` back, so his page then says PLAN NOT
+  SAVED. #16 (the suites get their own state dir) removes it; until then do not run the hook while he is editing.
+  This item's server suites were verified in a scratch clone for that reason.
+* Next: #16, committed straight after this (Andy chose #16 first so the hook never touches his files).
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #9 - A ROUTE GOES WHOLE OR NOT AT ALL.**
 `Engine._sanitize_route` kept the first 1000 waypoints of any route and dropped the rest with a 200 - a survey
 that ended wherever waypoint 1000 fell, which is also where an end-of-plan RTH would fire. The session logs
 hold 350 route commands; 9 were over 1000, all uploads the server took and cut: 6,435 (2026-08-01), 3,388,
@@ -77,7 +114,7 @@ hold 350 route commands; 9 were over 1000, all uploads the server took and cut: 
   covers 6,435) and 16 (saved plan, in-process with the store stubbed); pause_resume.js 1h-1j. TEETH: 4
   scratch-clone mutations of the server and 5 sidecar mutations of the page, 9 killed.
 * Andy approved #9 before its final report; it was committed after the verification finished.
-* Next up: #10, POST /api/mission accepts any body.
+* Committed and pushed as `320f1ab7`.
 
 **BEFORE THAT, 2026-09-14: A FRAME READ BEFORE A COMMAND IS NEVER APPLIED AFTER IT (found fixing review #8).**
 `Engine._run` asks the link for its frame OUTSIDE the lock (a real link's read can block, and a Stop must not wait on

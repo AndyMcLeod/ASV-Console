@@ -23,6 +23,16 @@ THE RULES:
 
   python tests/mission_store.py      # exit 0 = pass, 1 = fail   (stdlib only)
 
+REVIEW #10 (11-14): a body that is not a plan is refused, an edit to an older revision is refused,
+and every POST route answers. TEETH - 10 mutations RUN in a scratch clone, 10 killed, no crash:
+  the plan body not checked -> 11, 13     waypoint positions not checked -> 11
+  an explicitly empty plan refused -> 9, 11b     the revision compare removed -> 12, 13
+  the revision not bumped -> 12, 13     load_mission drops the revision -> 12, 13
+  the POST catch-all removed -> 14     a conflict answered as a refusal -> 13
+  a LOCKED file read as 'no plan' by the revision check -> 12b
+  End of Plan taken up from a save before its revision is checked -> 12 (a stale tab could change the
+  setting the console runs by without writing a byte - found reading the code after the first 9)
+
 Everything runs against a TEMP mission path - the module's MISSION_PATH is re-pointed before
 anything is read or written, and the last check asserts the app directory's file was never
 touched.
@@ -84,7 +94,8 @@ _C.MISSION_PATH = os.path.join(TMP, "mission.json")
 _C._MISSION_CACHE = None
 
 PLAN = {"waypoints": [{"lat": 44.9 + i * 1e-4, "lon": -67.0} for i in range(385)],
-        "lines": [[{"lat": 44.9, "lon": -67.0}, {"lat": 44.91, "lon": -67.01}]] * 9,
+        # the page's own line shape (review #10 checks it: {a, b}, not a bare pair)
+        "lines": [{"a": {"lat": 44.9, "lon": -67.0}, "b": {"lat": 44.91, "lon": -67.01}}] * 9,
         "speeds": {"transit": "high", "turn": "low", "survey": "survey"}, "buffer_m": 3}
 
 print("The plan file - concurrency, corruption and speed commands:")
@@ -256,7 +267,18 @@ for n in os.listdir(TMP):
     if ".bak" in n:
         os.remove(os.path.join(TMP, n))
 _C.save_mission(PLAN)
-_C.save_mission({"waypoints": [], "lines": []})     # the plan wiped by an empty save...
+
+
+def attempt(fn, *a):
+    """(value, None) or (None, the exception) - so a mutation that raises where a value was expected
+    fails the CHECK that asked, instead of crashing the suite before any check says so."""
+    try:
+        return fn(*a), None
+    except Exception as e:                        # noqa: BLE001 - reported, never swallowed
+        return None, e
+
+
+_, wipe_err = attempt(_C.save_mission, {"waypoints": [], "lines": []})   # the plan wiped by an empty save...
 wiped_kept = json.load(open(os.path.join(TMP, "mission.json.bak1"), encoding="utf-8")) \
     if os.path.exists(os.path.join(TMP, "mission.json.bak1")) else {}
 for n in os.listdir(TMP):
@@ -265,9 +287,142 @@ for n in os.listdir(TMP):
 _C.save_mission(PLAN)                               # ...and a plan saved over an empty one
 check("9. an EMPTY save over a real plan keeps the real plan in .bak1 - and an empty previous plan "
       "takes no slot",
-      len(wiped_kept.get("waypoints") or []) == 385 and not [n for n in os.listdir(TMP) if ".bak" in n],
-      "bak1 after the wipe holds %d waypoints; backups after saving over empty: %s"
-      % (len(wiped_kept.get("waypoints") or []), [n for n in os.listdir(TMP) if ".bak" in n]))
+      wipe_err is None and len(wiped_kept.get("waypoints") or []) == 385
+      and not [n for n in os.listdir(TMP) if ".bak" in n],
+      "the empty save %s; bak1 after the wipe holds %d waypoints; backups after saving over empty: %s"
+      % ("was refused: %s" % wipe_err if wipe_err else "was taken", len(wiped_kept.get("waypoints") or []),
+         [n for n in os.listdir(TMP) if ".bak" in n]))
+
+# 11-14. A BODY THAT IS NOT A PLAN IS REFUSED, AN EDIT TO AN OLDER REVISION IS REFUSED, AND EVERY
+# ROUTE ANSWERS (review #10). POST /api/mission saved whatever arrived: an unreadable body came back
+# from _read_json as {} and was written as an EMPTY plan; two pages that had loaded the same plan each
+# autosaved over the other's edits; and an exception in any of the eight routes above the dispatcher's
+# own try dropped the connection, unanswered and unlogged.
+for n in os.listdir(TMP):
+    if ".bak" in n:
+        os.remove(os.path.join(TMP, n))
+_C.save_mission(PLAN)
+before = open(_C.MISSION_PATH, "rb").read()
+
+
+def refused(body):
+    """The refusal's words, or "" when the body was SAVED or raised anything but a refusal."""
+    _, err = attempt(_C.save_mission, body)
+    return str(err) if isinstance(err, _C.PlanRefused) else ""
+
+
+def outcome(body):
+    _, err = attempt(_C.save_mission, body)
+    return "saved" if err is None else "%s: %s" % (type(err).__name__, err)
+
+
+bad = {"no body": {}, "waypoints not a list": {"waypoints": "x"},
+       "a waypoint that is not a position": {"waypoints": [{"lat": "abc", "lon": -67.0}]},
+       "a latitude off the globe": {"waypoints": [{"lat": 95.0, "lon": -67.0}]},
+       "a NaN longitude": {"waypoints": [{"lat": 44.9, "lon": float("nan")}]},
+       "a line with one end missing": dict(PLAN, lines=[{"a": {"lat": 44.9, "lon": -67.0}}]),
+       "a negative buffer": dict(PLAN, buffer_m=-1),
+       "a revision that is not a number": dict(PLAN, rev="7")}
+said = {k: refused(v) for k, v in bad.items()}
+check("11. a body that is not a plan is REFUSED in words and nothing is written - no waypoints list, or a "
+      "waypoint, line end, setting or revision that is not what it claims",
+      all(said.values()) and open(_C.MISSION_PATH, "rb").read() == before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in said.items()))
+cleared = outcome({"waypoints": [], "lines": []})
+check("11b. ... while an explicitly EMPTY plan (CLR PLAN) is a real edit, and is saved",
+      cleared == "saved" and _C.load_mission()["waypoints"] == [], cleared[:80])
+
+_C.save_mission(PLAN)
+r0 = _C.load_mission().get("rev")
+r1, e1 = attempt(_C.save_mission, dict(PLAN, rev=r0, buffer_m=5))       # this page's edit, made to what it loaded
+on_disk = open(_C.MISSION_PATH, "rb").read()
+completion_before = _C.plan_completion()
+# the OTHER page, still holding r0 - and changing End of Plan, which the console runs by
+_, conflict = attempt(_C.save_mission, dict(PLAN, rev=r0, buffer_m=9, completion="complete"))
+after_conflict = open(_C.MISSION_PATH, "rb").read()
+completion_after = _C.plan_completion()
+r_legacy, e3 = attempt(_C.save_mission, dict(PLAN, buffer_m=5))         # no revision: a script, a test, an older page
+check("12. every save bumps the revision; an edit made to an OLDER revision is refused naming both, and "
+      "nothing is written OR taken up - End of Plan stays what the file says; a save carrying no revision is "
+      "written as before",
+      isinstance(r0, int) and e1 is None and r1 == r0 + 1 and isinstance(conflict, _C.PlanConflict)
+      and conflict.rev == r1 and ("revision %d" % r1) in str(conflict) and ("revision %d" % r0) in str(conflict)
+      and after_conflict == on_disk and completion_after == completion_before == "rth"
+      and e3 is None and r_legacy == r1 + 1 and _C.load_mission().get("rev") == r_legacy,
+      "r0=%s r1=%s (%s) other page: %s; End of Plan %s -> %s; legacy=%s (%s)"
+      % (r0, r1, e1, (str(conflict) if conflict else "SAVED")[:50], completion_before, completion_after,
+         r_legacy, e3))
+
+# 12b. A plan file LOCKED while its revision is read is not "no plan": the save is refused, not let
+#      through unchecked. Only the plan file's reads are refused, the way a reader in another process
+#      blocks them; the save's own temp file and the replace are left alone, so a check that skipped
+#      the revision would write.
+stale_now = max(0, (_C.load_mission().get("rev") or 0) - 1)
+on_disk = open(_C.MISSION_PATH, "rb").read()
+builtins.open = _locked_open
+try:
+    _, lock_err = attempt(_C.save_mission, dict(PLAN, rev=stale_now, buffer_m=13))
+    locked_rev = "SAVED" if lock_err is None else "%s: %s" % (type(lock_err).__name__, lock_err)
+finally:
+    builtins.open = _real_open
+check("12b. a plan file LOCKED while its revision is read refuses the save - it is not read as 'no plan' "
+      "and let through unchecked",
+      "could not be read to check its revision" in locked_rev and open(_C.MISSION_PATH, "rb").read() == on_disk,
+      locked_rev[:90])
+
+import socket                                       # noqa: E402  (the HTTP half only)
+import urllib.error                                 # noqa: E402
+import urllib.request                               # noqa: E402
+
+_s = socket.socket()
+_s.bind(("127.0.0.1", 0))
+PORT = _s.getsockname()[1]
+_s.close()
+srv = _C.Server(("127.0.0.1", PORT), _C.Handler)          # the console's own handler, on the TEMP plan
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+
+def post(path, raw):
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (PORT, path), data=raw, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode() or "{}")
+    except Exception as e:                            # no answer at all: the dropped connection
+        return None, {"error": "no response (%s)" % e}
+
+
+try:
+    before = open(_C.MISSION_PATH, "rb").read()
+    c_bad, _ = post("/api/mission", b'{"waypoints": [ ,,, not json')
+    c_arr, _ = post("/api/mission", b"[1, 2, 3]")
+    unchanged = open(_C.MISSION_PATH, "rb").read() == before
+    got = json.loads(urllib.request.urlopen("http://127.0.0.1:%d/api/mission" % PORT, timeout=10).read())
+    g_rev = got.get("rev") if isinstance(got.get("rev"), int) else None
+    # a plan was saved before this, so the revision on disk is at least 1 and one below it is a real stale edit
+    c_stale, j_stale = post("/api/mission", json.dumps(dict(PLAN, rev=max(0, (g_rev or 1) - 1))).encode())
+    c_ok, j_ok = post("/api/mission", json.dumps(dict(PLAN, rev=g_rev or 0)).encode())
+    check("13. over HTTP: an unreadable or non-object body is a 400 that writes nothing; GET carries the "
+          "revision; a stale edit is a 409 naming the revision on disk, the current one a 200 with the next",
+          c_bad == 400 and c_arr == 400 and unchanged and isinstance(g_rev, int) and g_rev >= 1
+          and c_stale == 409 and j_stale.get("rev") == g_rev and c_ok == 200 and j_ok.get("rev") == g_rev + 1,
+          "unreadable %s, array %s, unchanged %s, GET rev %s, stale %s rev %s, current %s rev %s"
+          % (c_bad, c_arr, unchanged, got.get("rev"), c_stale, j_stale.get("rev"), c_ok, j_ok.get("rev")))
+    real_save = _C.save_mission
+    _C.save_mission = lambda body: 1 / 0              # a fault in a route above the dispatcher's try
+    try:
+        c_boom, j_boom = post("/api/mission", json.dumps(PLAN).encode())
+    finally:
+        _C.save_mission = real_save
+    check("14. a route above the dispatcher's own try that RAISES answers a 500 in words - it used to drop the "
+          "connection, with no answer and nothing in the session log",
+          c_boom == 500 and "ZeroDivisionError" in str(j_boom.get("error")),
+          "code %s: %s" % (c_boom, str(j_boom.get("error"))[:80]))
+finally:
+    srv.shutdown()
+    srv.server_close()
 
 # 10. None of it touched the operator's own plan.
 check("10. the app directory's own mission.json was never touched",
