@@ -222,6 +222,18 @@ a re-derivation would describe the console's current state rather than the route
 flown. A plan committed before the page was loaded therefore says so outright rather than
 showing an empty section.
 
+**History — last 20.** Below Intent, the Mission Status card lists what the console **did**,
+newest first, each line with its time: every command it sent with the answer it got — the
+server's own words (`Upload — Run plan uploaded (719 waypoints · ENC-routed, rth).`) or the
+refusal (`Return home — refused: ARM before commanding the boat`, in red) — every note it
+flashed, and every banner it posted (in amber). A note is on screen for four seconds and some
+fifty messages share the one banner slot; the history keeps them. Twenty are kept per
+browser, and a reload keeps them. A command sent again straight away is one line counted up
+(`Speed low ×5`); a banner posted again moves its line to the top and counts up rather than
+taking another, matched with its numbers set aside, so the two banners every page load posts
+stay two lines (`Nogo established (583 nogo zone(s) …) ×3`). Commands are never merged past
+the newest line, because their order is the record. Hover a line for the full text and date.
+
 **Surface current** (Mission Status card, `Current` row). The console also reads the surface
 current **forecast at the boat's own position**, from a NOAA **Operational Forecast
 System** — `dbofs` (Delaware Bay) by default, `--currents-ofs` for a hull working

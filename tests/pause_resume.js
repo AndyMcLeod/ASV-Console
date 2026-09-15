@@ -389,6 +389,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
   {
     const fnotes = [];
     const flashNote = (m) => fnotes.push(m);
+    // Since review #22 cmd records each command in the history and flashes its own refusal through showNote. The
+    // history is tests/action_history.js's to prove; here it only has to exist, and the label is the page's own.
+    const showNote = (m) => fnotes.push(m), recordAction = () => {};
+    // eslint-disable-next-line no-eval
+    const cmdLabel = eval("(" + grab("cmdLabel") + ")");
     let fetch = () => Promise.reject(new Error("socket hang up"));
     // eslint-disable-next-line no-eval
     const realCmd = eval("(" + grab("cmd") + ")");

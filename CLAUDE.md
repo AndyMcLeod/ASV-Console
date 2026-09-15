@@ -55,24 +55,22 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#21 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#22 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #21, pushed; 78 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
-  any of this (hash-checked before every commit). His console was OFF through #20 and #21 (nothing on 8790-8799).
+* **STATE:** `master` carries #22, pushed; 79 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+  any of this (hash-checked before every commit). His console was OFF through #20-#22 (nothing on 8790-8799).
 * **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
   this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from his iPhone, "Carry on
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20 AND #21 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20 half-built
-  across the context change is superseded by its commit (`a3a1db57`) and was deleted.
+* **#20, #21 AND #22 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20
+  half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **#22** "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that
-    about 40 different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card."
   * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
     session logs are records he analyzes - anything that deletes them automatically is his call, not a default)
   * **#25** "POST requests don't require JSON. The page already sends JSON, so requiring it costs nothing and blocks
@@ -115,7 +113,47 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #21 - THE TRAIL IS SAVED WHILE THE BOAT MOVES, AND A LONG DAY OF IT IS KEPT.**
+**NEWEST, 2026-09-15: REVIEW ITEM #22 - THE MISSION STATUS CARD KEEPS A HISTORY OF WHAT THE CONSOLE DID.**
+Andy: "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that about 40
+different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card." (Counted: 51
+`showBanner` call sites and 48 `flashNote`.)
+
+* ONE RECORDER, `recordAction(kind, label, answer)`, fed by the three ways the console speaks: `cmd` records every command
+  with `cmdLabel` (the operator's word: Arm/Disarm, E-STOP/E-STOP released, "Speed low", "Route amended — <the guard's
+  deviation note>", "ROC select home") and the ANSWER - the server's note from the reply when the command CHANGED it
+  (`S.note` is read before the fetch; an unchanged note belongs to an earlier command), or "refused: <error>" / "network
+  error" as kind `refused`. `flashNote` = `recordAction("note")` + the old body, renamed `showNote`; cmd flashes its own
+  refusal through `showNote`, so a refusal is ONE line. `showBanner` records only when those words are not already on
+  screen (consoleHealth re-asserts its banner every frame).
+* MERGING: a repeat of the NEWEST line (same kind + label, answer empty or equal) counts up ("×5", the time the last). A
+  BANNER posted again anywhere in the list moves its line to the top and counts up, matched with digit runs set aside
+  (`unnumbered`) and showing the newest words. Commands and notes are never merged past the newest line - their order is
+  the record (Start, Pause, Start is three lines).
+* `actionLog` (not `history`, which would shadow the History API) lives in localStorage `asv_history_v1`, newest first,
+  `HISTORY_MAX` 20; entries without a string label or finite time are dropped at load. ⚠ THE BLOCK SITS JUST BELOW
+  `lsDel`, near the TOP of the module, with `renderHistory()` called there: a `let` declared 8,000 lines down would be in
+  its temporal dead zone for any banner posted during load (action_history.js 12 holds the order).
+* The card: `#v_history` / `#historyBody` after Intent. `renderHistory(changed)` PATCHES - `{op:"top"}` rewrites the top
+  row, `{op:"move", from}` refills and moves that row node, `{op:"new"}` inserts one row and drops the last - and writes
+  text through `setCellText`, never markup (a server error is not HTML). Rows: inline faint time, text cut at
+  `HISTORY_SHOW` (120) with the full text and date in the title; refusals red, banners amber.
+* Tests: NEW tests/action_history.js (13 checks) over a DOM stub that counts inserts, removes and markup writes (its
+  insertBefore MOVES a child, as a browser does - the first stub copied it and 5b found that); 33 sidecar mutations, 33
+  caught - the first run caught 24 of 27, and all three misses were the suite (see its TEETH). pause_resume.js 12d/12e
+  lift the real `cmd`, which needs `recordAction` (stubbed there), `cmdLabel` (the page's) and `showNote` now.
+* Words: README (History - last 20, after Intent) and the operations manual (4.4, NOTHING IT SAID IS LOST).
+* LIVE (port 8796, temp copy running Andy's Eastport plan): Arm, Upload, Start, Pause, E-STOP on and off, then a Return home
+  the E-STOP had disarmed read on the card, newest first: "Return home — refused: ARM before commanding the boat" (red),
+  "E-STOP released — Command E-STOP released (still SAFE/disarmed).", "E-STOP — COMMAND E-STOP latched...", "Pause — Paused
+  (next waypoint held).", "Speed high — Speed: high (14.0 kn) - applied live." (the governor's own command), "Start —
+  Survey started (will Return-to-Home at the end).", "Upload — Run plan uploaded (719 waypoints · ENC-routed, rth).", "Arm
+  — ARMED...", and the load banners; a reload brought all of it back. ⚠ TWO FAULTS WERE FOUND ONLY BY LOOKING AT IT: a time
+  column left ~23 characters a line in the 196 px card (a banner took seven lines) - the time runs inline now; and every
+  page load posts "Extracting ENC nogo boundaries..." and "Nogo established (N zones)" - four reloads had taken eight
+  lines, and N differed each time (585, 599, 737), which is why banners merge with their numbers set aside. After both:
+  three reloads, two lines, each ×3.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #21 - THE TRAIL IS SAVED WHILE THE BOAT MOVES, AND A LONG DAY OF IT IS KEPT.**
 Andy: "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy saves only
 after 800 ms without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it never saves. A reload
 mid-survey loses the trail back to the last slow-down."
@@ -147,6 +185,7 @@ mid-survey loses the trail back to the last slow-down."
   within 1-3 points of the trail on screen for 40 s; 170 points on screen just before a mid-run reload, 170 restored (a
   probe at `loadTrack`). The old page on the same console: 105 on screen, 65 restored, its stored copy unchanged for 15 s
   at a time - written only when a frame happened to arrive more than 800 ms after the last.
+* Verified: all 78 suites through the hook (9 min). Committed and pushed as `616841ed`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #20 - THE LINES TABLE IS PATCHED IN PLACE, NOT REBUILT EVERY FRAME.**
 Andy: "The LINES table is rebuilt four times a second. This is the flicker you had fixed on the AIS card; update the cells

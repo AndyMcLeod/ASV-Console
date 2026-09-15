@@ -123,6 +123,13 @@
   .vcard .vv.warn{color:var(--warn);} .vcard .vv.critical{color:var(--bad);} .vcard .vv.ok{color:var(--ok);}
   .vcard .vsec{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;display:flex;flex-direction:column;gap:4px;}
   .vcard .vsechead{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.08em;}
+  /* the time runs INLINE, not as a column: a wrapped line then uses the card's whole width - in a 196 px card a time
+     column left ~23 characters a line and a 160-character banner took seven */
+  .vcard .hrow{font-size:10px;line-height:1.3;}
+  .vcard .hrow .ht{color:var(--ink-faint);margin-right:5px;font-variant-numeric:tabular-nums;}
+  .vcard .hrow .hx{color:var(--ink);overflow-wrap:anywhere;}
+  .vcard .hrow.refused .hx{color:#d9958f;} .vcard .hrow.banner .hx{color:#e8d9a0;}
+  .vcard .hempty{color:var(--ink-faint);font-size:10px;}
   .vcard .vcomms{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;}
   .vcard .vcommsline{display:flex;align-items:center;justify-content:space-between;font-size:10px;}
   .vcard .vbar{height:5px;border-radius:2px;background:var(--line2);margin:4px 0 3px;overflow:hidden;}
@@ -758,6 +765,14 @@
              still hidden. One scroller: the card. -->
         <div id="intentBody"></div>
       </div>
+      <!-- HISTORY (review #22, 2026-09-15): what the console DID, newest first - every command it sent with the
+           answer it got, every note it flashed, every banner it posted. Notes vanish after 4 s and ~50 messages share
+           the one banner slot, so until this a refusal or a warning the operator looked away from was simply gone.
+           Written by recordAction() / renderHistory(), never by the telemetry frame. -->
+      <div class="vsec" id="v_history">
+        <div class="vsechead">History — last 20</div>
+        <div id="historyBody"></div>
+      </div>
       <div class="vcomms">
         <div class="vcommsline"><span class="vk" id="v_commsmode">COMMS</span><span class="vv" id="v_commspct">--</span></div>
         <div class="vbar"><i id="v_commsbar"></i></div>
@@ -877,6 +892,83 @@ function lsGet(key, fallback){
 }
 function lsSet(key, value){ try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){} }
 function lsDel(key){ try{ localStorage.removeItem(key); }catch(e){} }
+// --- HISTORY: what the console did (review #22, 2026-09-15) ------------------------------ //
+// Andy: "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that about
+// 40 different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card."
+// ONE RECORDER, FED BY THE THREE WAYS THE CONSOLE SPEAKS: a command it sends (cmd, with the answer - the server's own
+// note, or the refusal in words), a note it flashes (flashNote), a banner it posts (showBanner). Newest first, kept per
+// viewer in localStorage so a reload keeps it. A repeat of the NEWEST entry counts up ("×3") instead of pushing the
+// others out: the speed governor re-sending one key, or one refusal clicked five times, is one line.
+// An entry is a LABEL ("Upload", or a note's words) and an ANSWER ("Run plan uploaded ...", "refused: not armed"), kept
+// apart because a repeat is a repeat of the label: the first "Speed low" changes the server's note and carries it as its
+// answer, and the next four leave the note as it was - they are the same command, not four new ones.
+// ⚠ A BANNER POSTED AGAIN MOVES ITS LINE UP, it does not add one - seen live: every page load posts "Extracting ENC
+// nogo boundaries..." and "Nogo established...", and four reloads had filled eight of the twenty lines with those two.
+// "Again" is matched with its NUMBERS set aside, because the second one differed on every load ("585 nogo zone(s)",
+// "599", "737" as the model filled in) and went on taking a line each; the merged line shows the newest words.
+// Commands and notes are NOT merged past the newest line, because their ORDER is the record: Start, Pause, Start is
+// three lines, and moving the first Start up would say the boat was started twice after it was paused.
+// ⚠ AND IT IS PATCHED, NOT REBUILT (the #20 lesson): a repeat rewrites that row's text (and moves the row, for a
+// banner), a new entry inserts one row and drops the last, and a message is written as TEXT - a server error is not
+// markup.
+const HISTORY_MAX = 20, HISTORY_KEY = "asv_history_v1", HISTORY_SHOW = 120;   // SHOW: characters a row shows
+let actionLog = (()=>{ const h = lsGet(HISTORY_KEY, []);
+  return Array.isArray(h) ? h.filter(e => e && typeof e.label === "string" && Number.isFinite(e.t)).slice(0, HISTORY_MAX) : []; })();
+function recordAction(kind, label, answer){
+  const l = String(label == null ? "" : label).trim(), ans = String(answer == null ? "" : answer).trim();
+  if(!l) return;
+  const top = actionLog[0], now = Date.now(), unnumbered = s => s.replace(/\d+(?:[.,]\d+)*/g, "#");
+  const at = kind === "banner" ? actionLog.findIndex(a => a.kind === "banner" && unnumbered(a.label) === unnumbered(l))
+           : (top && top.kind === kind && top.label === l && (!ans || !top.answer || ans === top.answer)) ? 0 : -1;
+  let changed;
+  if(at >= 0){
+    const e = actionLog[at]; e.n = (e.n || 1) + 1; e.t = now; e.label = l; if(ans) e.answer = ans;
+    if(at > 0){ actionLog.splice(at, 1); actionLog.unshift(e); }
+    changed = {op: at > 0 ? "move" : "top", from: at};
+  } else { actionLog.unshift({t: now, kind, label: l, answer: ans, n: 1});
+    if(actionLog.length > HISTORY_MAX) actionLog.length = HISTORY_MAX; changed = {op: "new"}; }
+  lsSet(HISTORY_KEY, actionLog);
+  renderHistory(changed);
+}
+function historyText(a){ return a.label + (a.answer ? " — " + a.answer : ""); }
+function fillHistoryRow(row, a){
+  const d = new Date(a.t), p = n => String(n).padStart(2, "0"), txt = historyText(a);
+  setCellText(row.firstChild, p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()));
+  setCellText(row.lastChild, (txt.length > HISTORY_SHOW ? txt.slice(0, HISTORY_SHOW - 1) + "…" : txt) + (a.n > 1 ? " ×" + a.n : ""));
+  row.title = d.toLocaleString() + " — " + txt + (a.n > 1 ? " (" + a.n + " times; the time is the last)" : "");
+}
+function historyRow(a){
+  const row = document.createElement("div"), tm = document.createElement("span"), tx = document.createElement("span");
+  row.className = "hrow " + a.kind; tm.className = "ht"; tx.className = "hx";
+  row.appendChild(tm); row.appendChild(tx); fillHistoryRow(row, a);
+  return row;
+}
+// changed: {op:"top"} the newest entry counted up | {op:"move", from} an older banner counted up and moved to the top |
+// {op:"new"} one added at the top | nothing (build it all)
+function renderHistory(changed){
+  const el = $("#historyBody"); if(!el) return;
+  const rows = el.firstChild && el.firstChild.className && /\bhrow\b/.test(el.firstChild.className);
+  const op = changed && changed.op;
+  if(op === "top" && rows){ fillHistoryRow(el.firstChild, actionLog[0]); return; }
+  if(op === "move" && rows && el.childNodes[changed.from]){
+    const row = el.childNodes[changed.from];
+    fillHistoryRow(row, actionLog[0]); el.insertBefore(row, el.firstChild);
+    return;
+  }
+  if(op === "new" && rows){
+    el.insertBefore(historyRow(actionLog[0]), el.firstChild);
+    while(el.childNodes.length > actionLog.length) el.removeChild(el.lastChild);
+    return;
+  }
+  el.textContent = "";
+  if(!actionLog.length){ const e = document.createElement("div"); e.className = "hempty";
+    e.textContent = "Nothing yet. Commands, refusals, notes and warnings are listed here as they happen."; el.appendChild(e); return; }
+  for(const a of actionLog) el.appendChild(historyRow(a));
+}
+// (HERE, beside the storage helpers, because its declarations must exist before ANY top-level code of this module
+// runs: a banner posted during load reaches recordAction, and a `let` further down would still be in its temporal
+// dead zone.)
+renderHistory();
 // The display toggles were stored as the RAW strings "1"/"0", which predate the JSON
 // store. A preference written by an older build has to keep working, so this accepts
 // both: JSON.parse reads "1"/"0" back as 1/0, and a value written now comes back as a
@@ -7086,7 +7178,11 @@ async function punchOut(){
   }catch(e){ $("#sp_hint").textContent="Punch Out failed: "+e; }
   finally{ punchBusy=false; $("#sp_punch").disabled=false; }
 }
-function showBanner(t){ const b=$("#encbanner"); b.textContent=t; b.style.display="block"; }
+// A banner goes in the history when it is POSTED, not every time a per-frame check puts the same words back on the slot
+// (consoleHealth re-asserts its banner on every frame while the fault stands).
+function showBanner(t){ const b=$("#encbanner");
+  if(!(b.style.display === "block" && b.textContent === t)) recordAction("banner", t);
+  b.textContent=t; b.style.display="block"; }
 
 // --- survey plan editing (drag / delete waypoints & lines) --------------- //
 // mission.waypoints is the run plan; mission.lines is the drawn survey structure.
@@ -8653,27 +8749,65 @@ makeDraggablePanel($("#chartPanel"), $("#chartPanelHead"),
 
 // --- command surface ----------------------------------------------------- //
 async function cmd(path, body){
+  const noteBefore = S.note;          // the server's note before this command, so the reply's own can be told apart
   try{
     const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
                                  body: JSON.stringify(body||{})});
     const j = await r.json().catch(()=>({}));
     // ⚠ A REFUSAL IS ANSWERED AS ONE (review #6). This returned the bare body, and a network
     // error as {} - which every `r.error` check in the page read as success.
-    if(!r.ok){ const err = j.error || ("command failed ("+r.status+")"); flashNote(err); return {...j, ok:false, error:err}; }
+    if(!r.ok){ const err = j.error || ("command failed ("+r.status+")");
+      recordAction("refused", cmdLabel(path, body), "refused: " + err); showNote(err); return {...j, ok:false, error:err}; }
+    // The server answers with its state, and its note says what it did ("Run plan uploaded (722 waypoints ...)").
+    // Only a note this command CHANGED is its answer; an unchanged one belongs to an earlier command.
+    const said = (j && j.state && typeof j.state.note === "string") ? j.state.note : "";
+    recordAction("cmd", cmdLabel(path, body), said !== noteBefore ? said : "");
     return j;
-  }catch(e){ flashNote("network error"); return {ok:false, error:"network error"}; }
+  }catch(e){ recordAction("refused", cmdLabel(path, body), "network error"); showNote("network error");
+    return {ok:false, error:"network error"}; }
+}
+// What a command is called in the history: the operator's word for it, not the route.
+function cmdLabel(path, body){
+  const b = body || {}, name = String(path).replace(/^\/api\/(cmd\/)?/, "");
+  switch(name){
+    case "arm":        return b.on ? "Arm" : "Disarm";
+    case "estop":      return b.on ? "E-STOP" : "E-STOP released";
+    case "upload":     return "Upload";
+    case "start":      return "Start";
+    case "pause":      return "Pause";
+    case "stop":       return "Stop";
+    case "hold":       return "Hold";
+    case "rth":        return "Return home";
+    case "goto":       return "Go-To";
+    case "transit":    return "Transit";
+    case "escape":     return "Escape (in extremis)";
+    case "reapproach": return "Re-approach";
+    case "sethome":    return "Set home";
+    case "spawn":      return "Spawn";
+    case "reset":      return "Reset";
+    case "speed":      return "Speed " + (b.speed || "?");
+    case "amend":      return b.note ? "Route amended — " + b.note : "Route amended";
+    case "approach":   return "Approach radius " + b.m + " m";
+    case "energy":     return b.unlimited ? "Unlimited energy on" : "Unlimited energy off";
+    case "roc":        return "ROC " + String(b.op || "").replace(/_/g, " ");
+    default:           return name;
+  }
 }
 let noteTimer = null;
 // SHOWS AND THEN HIDES. It used to only fade the COLOUR back after 4 s, because the box was
 // always on screen anyway carrying the server's standing note. With that gone the element is
 // hidden by default, so a flash has to put it up and take it down again - otherwise the last
 // refusal of the session stays on the chart for ever.
-function flashNote(msg){
+function showNote(msg){
   const el = $("#note"); el.textContent = msg; el.style.color = "var(--warn)";
   el.style.display = "block";
   clearTimeout(noteTimer);
   noteTimer = setTimeout(()=>{ el.style.color = ""; el.style.display = "none"; el.textContent = ""; }, 4000);
 }
+// ... and a flashed note is kept: it is on screen for 4 s and in the history after that. (cmd flashes its own refusal
+// through showNote, having recorded the command WITH the refusal - one line, not two.)
+function flashNote(msg){ recordAction("note", msg); showNote(msg); }
+
 
 let S = {};   // latest server state
 // In-GUI confirmation. Native confirm() is suppressed by some embedded/kiosk
