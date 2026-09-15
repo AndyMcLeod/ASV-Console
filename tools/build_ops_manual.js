@@ -118,7 +118,7 @@ c.push(P("Escape closes the menu, as does clicking elsewhere. A click that close
 c.push(H2("4.2  The top status bar"));
 c.push(P("Always visible, and the fastest read on the vessel:"));
 c.push(TBL(["Field", "Meaning"], [
-  ["link dot + text", "Connection mode and health"],
+  ["link dot + text", "Connection mode and health. The dot turns red and the text reads `stale` when no update has arrived for two seconds - see 13.8"],
   ["autonomy pill", "SAFE / ARMED / AUTO / HOLD / E-STOP — the safety state from 2.4"],
   ["`POS`", "Position"],
   ["`SOG`", "Speed over ground"],
@@ -373,6 +373,9 @@ c.push(H2("13.6  The turn is reported untrackable"));
 c.push(P("See 9.5.1. The plan is asking the vessel to reverse inside a radius it cannot hold. Widen the line spacing or lower the plan speed and Punch Out again."));
 c.push(H2("13.7  Something on the card looks stale"));
 c.push(P("The water level updates on the tide service's own cadence, not instantly — a station change can leave the previous value standing for a few minutes, which is why the reading is banded by distance. Traffic type information also lags, because vessels broadcast their static data on a slow cycle."));
+c.push(H2("13.8  CONSOLE FAULT or TELEMETRY STALE"));
+c.push(P("TELEMETRY STALE means no update has reached this page for more than two seconds while the console should be sending them. The chart and every readout are frozen where they were, the link dot is red and the text beside it reads `stale` - and the clearance guard, which runs on every update, is not watching. If the vessel is under way, TAKE THE TRANSMITTER, then find out whether the console is still running. The banner goes by itself when updates arrive again."));
+c.push(P("CONSOLE FAULT means something failed and kept running, and the banner says which. `This page has failed to process N recent telemetry frames` is the page's own handling of each update - where the clearance guard, the speed governor and the end-of-plan chain run - failing, so those protections may not be running: reload the page, and take the transmitter if the vessel is under way. `The console's telemetry loop has failed N time(s) since HH:MM:SS` is the console itself hitting an error while it produces updates and carrying on: readings may be wrong, and the console's own window and the session log have the detail. Either banner goes after two seconds without a failure. One that keeps coming back is a defect to report, with the error it names."));
 
 // 14 --------------------------------------------------------------------------
 c.push(H1("14  Session recording and playback"));

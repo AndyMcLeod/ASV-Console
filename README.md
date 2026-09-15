@@ -1295,6 +1295,16 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    already run to its end runs it again from the first waypoint, rather than setting off on
    whatever heading the boat had.
 
+   **A console that has stopped is never shown as a live one.** Every telemetry frame runs the
+   clearance guard, the speed governor and the end-of-plan chain, and the console's telemetry loop
+   produces the frames - and a failure in either used to be invisible: the page caught and dropped
+   every error, and a dead loop left the link dot green over readouts that no longer moved. Now no
+   frame for 2 s while the console is streaming reads **TELEMETRY STALE** (the dot red, the pill
+   `stale`); a page that fails to process three frames says **CONSOLE FAULT**, naming the error and
+   logging it once; and the console's loop survives its own faults and reports them on the state
+   (`loop_fault`: the latest error, a count and when it began) as **CONSOLE FAULT** too. A fault
+   comes down only after 2 s without a failure, so one that fails on every other frame is a fault,
+   not a flicker.
    **Pause is a toggle, and it flashes until it is answered.** A held run is a boat
    sitting in the tide with the prop stopped and a hole growing in its coverage, so the
    one control that ends it says so: while paused the button reads **RESUME** and blinks

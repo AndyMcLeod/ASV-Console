@@ -9291,10 +9291,73 @@ function onState(s){
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)
 }
+// ⚠ THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN (review #12, 2026-09-14). Every telemetry frame runs the
+// clearance guard, the speed governor, the re-approach and the end-of-plan chain inside onState - and every
+// error in it was caught and dropped, so a guard that had stopped running looked exactly like one with
+// nothing to do. And a console whose telemetry loop had died kept its event stream alive with comments, so
+// the link dot stayed GREEN over readouts that no longer moved. Three conditions are said now:
+//   * no frame for STALE_AFTER_MS while the console says it streams - TELEMETRY STALE, and the dot goes red;
+//   * this page failed FRAME_FAULT_AFTER frames - CONSOLE FAULT, naming the error, logged once;
+//   * the console's own loop survived a fault (S.loop_fault) - CONSOLE FAULT, with the count.
+// A fault is taken down only after FRAME_CLEAR_AFTER clean frames in a row, so one that fails every other
+// frame is a fault and not a flicker - the console's loop clears its own the same way.
+const FRAME_FAULT_AFTER = 3, FRAME_CLEAR_AFTER = 8, STALE_AFTER_MS = 2000;
+let frameFaults = 0, frameClean = 0, frameFaultMsg = "", frameFaultLogged = false, lastFrameAt = 0;
+const HEALTH_BANNER = /^⚠ (CONSOLE FAULT|TELEMETRY STALE)/;
+function onFrame(ev){
+  let m;
+  try{ m = JSON.parse(ev.data); }catch(e){ return; }             // not a frame at all
+  if(!m || m.type !== "state") return;
+  lastFrameAt = Date.now();
+  try{
+    onState(m);
+    if(frameFaults && ++frameClean >= FRAME_CLEAR_AFTER){ frameFaults = 0; frameClean = 0; frameFaultLogged = false; }
+  }catch(e){
+    frameFaults++; frameClean = 0;
+    frameFaultMsg = (e && e.message) || String(e);
+    if(frameFaults === 1) console.error("[asv] a telemetry frame failed:", e);
+    if(frameFaults >= FRAME_FAULT_AFTER && !frameFaultLogged){
+      frameFaultLogged = true;
+      fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({kind:"page_frame_fault", data:{error: frameFaultMsg, frames: frameFaults}})}).catch(()=>{});
+    }
+  }
+  consoleHealth();
+}
+// Said on every frame and every second, so it follows the conditions both ways; it takes down only its own
+// banner, never another one that happens to be up.
+function consoleHealth(){
+  const now = Date.now();
+  const st = S || {};
+  let say = "";
+  if(lastFrameAt && st.streaming && now - lastFrameAt > STALE_AFTER_MS){
+    // what the page holds is the last frame - so nothing it says about a fault is current either; and the
+    // pill beside the dot said "sim · ok" over a red dot until the next frame rewrote it (seen live)
+    $("#dot").className = "dot lost";
+    $("#linktext").textContent = (st.mode ? st.mode + " · " : "") + "stale";
+    say = "⚠ TELEMETRY STALE — no update from the console for " + Math.round((now - lastFrameAt) / 1000)
+      + " s. The chart and every readout are frozen, and the clearance guard is not watching. The console "
+      + "may have stopped; take the RC transmitter if the boat is under way.";
+  } else {
+    if(frameFaults >= FRAME_FAULT_AFTER)
+      say = "⚠ CONSOLE FAULT — this page has failed to process " + frameFaults + " recent telemetry frames ("
+        + frameFaultMsg + "). The clearance guard and the speed governor may not be running. Reload the page; "
+        + "take the RC transmitter if the boat is under way.";
+    const lf = st.loop_fault;
+    if(lf)
+      say = (say ? say + " And the console's" : "⚠ CONSOLE FAULT — the console's") + " telemetry loop has failed "
+        + lf.count + " time(s) since " + lf.since + " (" + lf.error + ") and keeps running. Readings may be "
+        + "wrong; the console's own output and the session log have the detail.";
+  }
+  const b = $("#encbanner");
+  if(say) showBanner(say);
+  else if(b && HEALTH_BANNER.test(b.textContent || "")) b.style.display = "none";
+}
 function connect(){
   const es = new EventSource("/events");
-  es.onmessage = ev=>{ try{ const m=JSON.parse(ev.data); if(m.type==="state") onState(m); }catch(e){} };
+  es.onmessage = onFrame;
   es.onerror = ()=>{ $("#dot").className="dot lost"; };
+  setInterval(consoleHealth, 1000);
 }
 function updateWaterUI(wl){
   const off = (wl.ok && wl.offset_m!=null) ? wl.offset_m : null;

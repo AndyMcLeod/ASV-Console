@@ -69,6 +69,24 @@ TEETH for 3c and 16 (review #9, the route waypoint limit) - 4 mutations RUN in a
   * the saved plan's bound removed                       -> caught by 16
   * the state stops publishing the limit                 -> caught by 3c
 
+TEETH for 17-17g (review #12, the telemetry loop survives its own faults) - 15 mutations RUN in a scratch clone
+against this file trimmed to its setup and 17-17g, 15/15 caught (recorded results):
+  * Engine._run with no handler again                     -> caught by 17, 17b, 17c, 17d, 17e, 17f, 17g
+  * a fault not pushed to the page                        -> caught by 17
+  * a fault in the state snapshot itself ends the loop    -> caught by 17d, 17e
+  * the fault taken down on the first clean tick          -> caught by 17b, 17c, 17d
+  * a fault does not restart the run of clean ticks       -> caught by 17c, 17d
+  * a fault never taken down                              -> caught by 17b, 17c, 17d, 17e, 17g
+  * printed per message rather than per raising line      -> caught by 17e
+  * the state keeps the first message, not the latest     -> caught by 17e
+  * every fault a new episode (count and since reset)     -> caught by 17, 17c, 17e, 17g
+  * the state does not carry loop_fault                   -> caught by 17, 17d
+  * a new link keeps the old link's fault                 -> caught by 17f
+  * streaming always true                                 -> caught by 17f
+  * printed on every fault                                -> caught by 17, 17e
+  * the fault report unguarded (a closed stderr raises)   -> caught by 17g
+  * the recovery report unguarded                         -> caught by 17g
+
 Harness rules as estop_chain: every condition is a THUNK and a throw is a failed check;
 the server's output goes to a temp file and the last check reads it.
 """
@@ -538,6 +556,178 @@ try:
           lambda: over_err is not None and ("saved plan has %d waypoints" % (lim + 1)) in over_err
           and at_err is None and E.wp_total == lim,
           "over: %s; at: %s, wp_total=%s" % ((over_err or "taken")[:60], at_err or "taken", E.wp_total))
+
+    # ── 17-17f. THE TELEMETRY LOOP SURVIVES ITS OWN FAULTS, AND SAYS SO (review #12) ──
+    # One exception anywhere in a tick ended Engine._run's thread: telemetry stopped, and the event stream's
+    # keep-alive comments kept the page's link dot GREEN over readouts that no longer moved. In-process, with
+    # the fault put into the tick through the home provider - the callable the loop asks for the ROC's arrival
+    # point on every tick - and into the state snapshot itself. The page half is tests/frame_health.js.
+    import io as _io
+    import queue as _queue
+    import re as _re
+
+    _fault = {"mode": None, "n": 0}
+
+    def _provider():
+        _fault["n"] += 1
+        mode = _fault["mode"]
+        if mode == "always" or (mode == "alternate" and _fault["n"] % 2):
+            raise ZeroDivisionError("a monitor fell over")
+        if mode == "varying":
+            raise ValueError("reading %d" % _fault["n"])
+        return None
+
+    def _until(pred, limit):
+        t0 = time.time()
+        while time.time() - t0 < limit:
+            if pred():
+                return time.time() - t0
+            time.sleep(0.01)
+        return None
+
+    def _discard(q):
+        while True:
+            try:
+                q.get_nowait()
+            except _queue.Empty:
+                return
+
+    def _drain(q, secs):
+        got, t0 = [], time.time()
+        while time.time() - t0 < secs:
+            try:
+                got.append(json.loads(q.get(timeout=0.02)))
+            except _queue.Empty:
+                pass
+        return got
+
+    E.set_home_provider(_provider)
+    q = E.subscribe()
+    err, real_err = _io.StringIO(), sys.stderr
+    raised = lambda: err.getvalue().count("the telemetry loop raised")
+    sys.stderr = err                      # what the loop prints about its faults, for the length of 17
+    try:
+        _fault["mode"] = "always"
+        time.sleep(0.5)                   # past any tick that asked for home before the fault went in
+        _discard(q)
+        s0 = E.status
+        frames = _drain(q, 1.6)
+        lf = dict(E.loop_fault or {})
+        alive = E._thread is not None and E._thread.is_alive()
+        frozen = E.status is s0
+        told = [f for f in frames if (f.get("loop_fault") or {}).get("error") == "ZeroDivisionError: a monitor fell over"]
+        check("17. a fault on every tick does not end the telemetry loop: it keeps publishing, and every frame carries "
+              "the fault - error, a count and the time it began - printed once, not per tick",
+              lambda: alive and lf.get("error") == "ZeroDivisionError: a monitor fell over" and lf.get("count", 0) >= 6
+              and _re.match(r"^\d\d:\d\d:\d\d$", lf.get("since", "")) and len(told) >= 5 and len(told) == len(frames)
+              and frozen and raised() == 1,
+              "loop alive=%s; fault %s; %d of %d frames carry it; telemetry frozen under it=%s; printed %d time(s)"
+              % (alive, lf, len(told), len(frames), frozen, raised()))
+
+        _fault["mode"] = None
+        cleared_after = _until(lambda: E.loop_fault is None, 6.0)
+        check("17b. ... when the fault stops, telemetry is applied again and the fault is taken down after a run of 8 "
+              "clean ticks (2 s) - not on the first one",
+              lambda: cleared_after is not None and 1.5 <= cleared_after <= 5.0 and E.status is not s0
+              and err.getvalue().count("runs clean again after") == 1,
+              "cleared after %s s; telemetry applied again=%s; recovery printed %d time(s)"
+              % (None if cleared_after is None else round(cleared_after, 2), E.status is not s0,
+                 err.getvalue().count("runs clean again after")))
+
+        _fault["mode"] = "alternate"
+        first_up = _until(lambda: E.loop_fault is not None, 3.0)
+        dropped, since0, t0 = 0, (E.loop_fault or {}).get("since"), time.time()
+        while time.time() - t0 < 2.5:
+            if E.loop_fault is None:
+                dropped += 1
+            time.sleep(0.01)
+        lf = dict(E.loop_fault or {})
+        _fault["mode"] = None
+        cleared_alt = _until(lambda: E.loop_fault is None, 6.0)
+        check("17c. a fault on every other tick is ONE fault that stays up and keeps counting from when it began - "
+              "the clean ticks between do not take it down",
+              lambda: first_up is not None and dropped == 0 and lf.get("count", 0) >= 4 and lf.get("since") == since0
+              and cleared_alt is not None,
+              "up after %s s; samples with no fault while it alternated: %d; fault %s; cleared after it stopped: %s"
+              % (first_up and round(first_up, 2), dropped, lf, cleared_alt is not None))
+
+        def _no_state():
+            raise RuntimeError("the state cannot be built")
+        E._autonomy_label = _no_state     # the snapshot itself - and so every frame - now raises
+        _drain(q, 0.3)                    # past any frame built before it went in
+        during = _drain(q, 1.2)
+        alive = E._thread is not None and E._thread.is_alive()
+        del E._autonomy_label
+        after = _drain(q, 1.0)
+        said = (after[-1].get("loop_fault") or {}).get("error", "") if after else ""
+        cleared_state = _until(lambda: E.loop_fault is None, 6.0)
+        check("17d. a fault in the state snapshot itself publishes nothing - there is no frame to say it in, which the "
+              "page reads as TELEMETRY STALE - and still does not end the loop: frames resume, carrying the fault",
+              lambda: not during and alive and len(after) >= 2 and said == "RuntimeError: the state cannot be built"
+              and cleared_state is not None,
+              "frames while the state raised: %d; loop alive=%s; frames after: %d saying '%s'; cleared: %s"
+              % (len(during), alive, len(after), said, cleared_state is not None))
+
+        before = raised()
+        _fault["mode"] = "varying"
+        msgs, t0 = set(), time.time()
+        while time.time() - t0 < 1.6:
+            m = (E.loop_fault or {}).get("error")
+            if m:
+                msgs.add(m)
+            time.sleep(0.01)
+        lf = dict(E.loop_fault or {})
+        _fault["mode"] = None
+        _until(lambda: E.loop_fault is None, 6.0)
+        check("17e. a fault whose message changes every tick (it carries a value) is printed ONCE for its line, and the "
+              "state follows the latest message",
+              lambda: raised() - before == 1 and len(msgs) >= 3 and lf.get("count", 0) >= 4
+              and all(_re.match(r"^ValueError: reading \d+$", m) for m in msgs),
+              "printed %d time(s); %d distinct messages carried, e.g. %s; count %s"
+              % (raised() - before, len(msgs), sorted(msgs)[:2], lf.get("count")))
+
+        _fault["mode"] = "always"
+        up = _until(lambda: E.loop_fault is not None, 3.0)
+        _fault["mode"] = None
+        E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+        fresh_fault, streaming_on = E.loop_fault, E.state().get("streaming")
+        E.disconnect()
+        gone = E.state()
+        check("17f. a fresh link starts with no fault from the last link's loop - and the state says whether frames are "
+              "streaming (true on a link, false once it is gone), which is what the page's STALE is keyed to",
+              lambda: up is not None and fresh_fault is None and streaming_on is True and gone.get("streaming") is False,
+              "fault before the reconnect: %s; after it: %s; streaming on a link=%s, after disconnect=%s"
+              % (up is not None, fresh_fault, streaming_on, gone.get("streaming")))
+
+        class _ClosedHandle:
+            """A console window that has gone: every write raises."""
+            def write(self, *_a):
+                raise OSError(22, "the console handle is closed")
+
+            def flush(self):
+                raise OSError(22, "the console handle is closed")
+
+        E.connect("sim", "", _C.DEFAULT_VCU_PORT, "tcp")
+        sys.stderr = _ClosedHandle()
+        _fault["mode"] = "always"
+        up = _until(lambda: (E.loop_fault or {}).get("count", 0) >= 3, 4.0)
+        alive = E._thread is not None and E._thread.is_alive()
+        _fault["mode"] = None
+        cleared = _until(lambda: E.loop_fault is None, 6.0)
+        time.sleep(0.75)                  # three more ticks, for a fault the clearing report itself raised
+        back = E.loop_fault
+        alive_after = E._thread is not None and E._thread.is_alive()
+        sys.stderr = err
+        E.disconnect()
+        check("17g. a report that cannot be written - the console's own window gone - does not end the loop either: "
+              "the fault is still carried, still comes down, and does not come straight back",
+              lambda: up is not None and alive and cleared is not None and back is None and alive_after,
+              "3 faults carried: %s; loop alive under them=%s; cleared: %s; a fault 0.75 s later: %s; alive=%s"
+              % (up is not None, alive, cleared is not None, back, alive_after))
+    finally:
+        sys.stderr = real_err
+        _fault["mode"] = None
+        E.unsubscribe(q)
 finally:
     try:
         E.disconnect()

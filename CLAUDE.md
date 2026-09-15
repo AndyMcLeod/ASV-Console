@@ -55,11 +55,49 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#11 and #16 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#12 and #16 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #11 - AN EMPTY PAGE NEVER SAVES OVER A REAL PLAN, AND WHAT DESTROYS WORK ASKS FIRST.**
+**NEWEST, 2026-09-14: REVIEW ITEM #12 - THE SAFETY LOOP DOES NOT FAIL WITHOUT A SIGN.**
+Every telemetry frame runs the clearance guard, the speed governor, the re-approach and the end-of-plan chain inside
+`onState`, and `connect()`'s handler caught and dropped every error in it - a guard that had stopped running looked
+exactly like one with nothing to do. And `Engine._run` had no handler: one exception in a tick ended the thread,
+telemetry stopped, and the event stream's keep-alive comments kept the link dot GREEN over frozen readouts.
+
+* Server: `_run` restarts `_run_loop` after `_loop_faulted`, which sets `loop_fault` {error (the latest), count,
+  since}, prints the traceback once per raising LINE per episode (not per message - a value in the message differs
+  on every tick; at most LOOP_FAULT_SITES_MAX 8), logs `loop_fault`, and pushes the state in its own try (a fault IN
+  the state publishes nothing - the page's stale check covers that). Both reports sit in a try: a print to a console
+  window that has gone raises, and inside the handler it would end the loop after all. `_loop_clean` takes it down after
+  LOOP_FAULT_CLEAR_TICKS (8) clean ticks IN A ROW and logs `loop_recovered`; connect() clears it. The state adds
+  `loop_fault` (read once - the loop can clear it between the test and the copy) and `streaming` (`_link is not None`:
+  the loop publishes on every tick while a link exists, healthy or lost).
+* Page: `onFrame` / `consoleHealth` (every frame, and `setInterval` 1 s from connect). TELEMETRY STALE after 2 s with
+  `S.streaming` - dot `lost`, pill `<mode> · stale`, and nothing said about faults (the page holds only the last
+  frame). CONSOLE FAULT after 3 failed frames (named; console.error once; `page_frame_fault` logged once per streak),
+  down after 8 clean frames in a row; the console's `loop_fault` is said after it. Only a banner matching
+  HEALTH_BANNER is ever taken down.
+* ⚠ THE PAGE IS `<script type="module">` - STRICT, and its top-level bindings are NOT globals. The browser pane's
+  javascript tool runs in an isolated world; an injected `<script>` element runs in the page's world but still
+  cannot see module bindings, so the live check put a probe hook into the SCRATCH CLONE's copy of the page. ⚠ Ten or
+  more JS suites carry the note "the console's classic browser <script> runs sloppy" and eval page code sloppy;
+  frame_health.js evals strict. The technical manual's "one classic script scope" is corrected. (For #27.)
+* Tests: NEW tests/frame_health.js (10 checks; 17 sidecar mutations, 17 caught, none by a crash) and
+  run_link_control.py 17-17g, in-process (a fault through the home provider, through the state snapshot, and
+  under a stderr that raises; 15 scratch-clone mutations, 15 caught).
+* LIVE, on an isolated console (port 8796, scratch clone, temp state folder): a fault switched into the loop showed
+  CONSOLE FAULT counting at 4 Hz, printed once for 184 faults, and came down after it stopped; a page whose onState
+  threw showed CONSOLE FAULT, still up after 4 clean frames and down after 8; killing the console showed TELEMETRY
+  STALE with the dot red within 3 s - and the pill beside the dot still read "sim · ok", so it reads "stale" now.
+* Verified: all 69 suites in the scratch clone. data_routes 13 failed once on a transient DNS failure - the
+  console printed "[ports] geocoder unreachable: URLError ...", and eleven suites' "logged NO exception" checks
+  match any line containing "Error" - and passed on re-run. That over-broad match is a hook flake (for #17).
+* Andy, 2026-09-14: "Carry on all updates until the following session ends" - items go in one after another,
+  each verified, committed and pushed; the "your call" items (#14, #23, #28-30) are left for him.
+* Next: #13, water, weather and current readings can freeze with no age shown.
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #11 - AN EMPTY PAGE NEVER SAVES OVER A REAL PLAN, AND WHAT DESTROYS WORK ASKS FIRST.**
 #10 took the first half of #11 (the page reads its save's answer). The rest: `loadMission` took any reply - an
 error body, an unreadable answer or a network failure left the page holding its EMPTY default plan with no
 revision, and the operator's first edit saved that over the real one (a no-revision save is accepted by design).
@@ -74,8 +112,7 @@ CLR PLAN had no question at all; dropping a held survey's remainder was not aske
   both, and `dropHeldSurvey`, pass `{always: true}`. CLR PLAN names what it deletes and skips the question for
   an empty plan. Arm / Start / E-STOP still answer themselves in the simulator - they destroy nothing.
 * Tests: plan_save.js 7-11 (checks 1-6 now run on a loaded page). TEETH: 9 sidecar mutations, 9 killed.
-* Next up after approval: #12, the safety loop can fail without any sign (per-frame state handler errors
-  swallowed; the server telemetry loop has no error handling).
+* Committed and pushed as `3a9be4e4`.
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #16 - NO TEST WRITES THE OPERATOR'S FILES.**
 Seventeen suites started a console in the app folder, and a console keeps its plan, comms settings, port registry,

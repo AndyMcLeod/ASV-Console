@@ -3595,6 +3595,10 @@ class Engine:
         # run is doing; the telemetry loop notes it before it asks the link for a frame, and a
         # frame read before a command is never applied after it - see _commanded and _run.
         self._cmd_gen = 0
+        # A fault the telemetry loop survived, for the page to show - see _run (review #12).
+        self.loop_fault = None
+        self._loop_clean_ticks = 0
+        self._loop_fault_sites = set()
         # Identity of the current link session. A fresh value on every connect() -
         # and Reset reconnects - so the browser can tell a power-cycle from a resume
         # and drop the stale trail (see checkBoot in asv.html). Starts at BOOT_ID.
@@ -3663,6 +3667,8 @@ class Engine:
             self.run = "idle"
             self.wp_index = self.wp_total = 0
             self._misses = 0
+            self.loop_fault = None           # it described the previous link's loop
+            self._loop_clean_ticks = 0
             # ... and with NO telemetry: status was only ever ASSIGNED on a frame, so
             # the previous link's last fix survived into the new link's life - and a
             # link that never produces telemetry (RealVcu in Phase 0) served the DEAD
@@ -4244,7 +4250,75 @@ class Engine:
                 self._rth_last_target = dict(home)
 
     # -- telemetry loop ---------------------------------------------------- #
+    # ⚠ THE TELEMETRY LOOP SURVIVES ITS OWN FAULTS, AND SAYS SO (review #12, 2026-09-14). It had no
+    # handler: one exception anywhere in a tick - a monitor fed a position, the state snapshot, the
+    # moving-home chase - ended the thread. Telemetry stopped, and because the event stream keeps its
+    # connection alive with comments, the page's link dot stayed GREEN over readouts that no longer
+    # moved. Now the fault is carried on the state as `loop_fault` (the latest error, a count, and when
+    # it began), the loop restarts on the next tick, and the fault is taken down only after
+    # LOOP_FAULT_CLEAR_TICKS clean ticks in a row - so a fault that fires on every other tick is one
+    # fault, not a flicker. Each distinct fault site is printed and logged once per episode, never 4 Hz.
+    LOOP_FAULT_CLEAR_TICKS = 8          # 2 s of clean ticks at 4 Hz
+    LOOP_FAULT_SITES_MAX = 8            # distinct sites printed per episode; the count keeps counting
+
     def _run(self):
+        while not self._stop.is_set():
+            try:
+                self._run_loop()
+                return
+            except Exception as e:      # noqa: BLE001 - reported and survived, never swallowed
+                self._loop_faulted(e)
+
+    def _loop_faulted(self, e):
+        import traceback
+        msg = "%s: %s" % (type(e).__name__, e)
+        tb = traceback.extract_tb(e.__traceback__)
+        where = "%s line %d" % (tb[-1].name, tb[-1].lineno) if tb else "?"
+        with self._lock:
+            if self.loop_fault is None:
+                self.loop_fault = {"error": msg, "count": 0, "since": time.strftime("%H:%M:%S")}
+                self._loop_fault_sites = set()
+            self.loop_fault["count"] += 1
+            self.loop_fault["error"] = msg      # the LATEST error: the one to look into now
+            self._loop_clean_ticks = 0
+            # keyed on the raising line, not the message: a message carrying a value differs every tick
+            site = (type(e).__name__, where)
+            fresh = site not in self._loop_fault_sites and len(self._loop_fault_sites) < self.LOOP_FAULT_SITES_MAX
+            if fresh:
+                self._loop_fault_sites.add(site)
+        if fresh:
+            try:                        # this runs in _run's except: a report that raised would end the loop after all
+                print("[engine] the telemetry loop raised in %s, and carries on: %s%s%s"
+                      % (where, msg, os.linesep, "".join(traceback.format_exception(type(e), e, e.__traceback__))[-1500:]),
+                      file=sys.stderr, flush=True)
+            except Exception:           # noqa: BLE001 - a closed console handle; the state still carries it
+                pass
+            if LOG is not None:
+                LOG.event("loop_fault", error=msg, where=where)
+        try:
+            self._push_state()          # tell the page, if the state can still be built
+        except Exception:               # noqa: BLE001 - the fault itself may be in the state
+            pass
+
+    def _loop_clean(self):
+        """One clean tick. A fault is taken down only after a run of them, so one that fires on every
+        other tick reads as a fault rather than flickering on and off."""
+        if self.loop_fault is None:
+            return
+        with self._lock:
+            self._loop_clean_ticks += 1
+            if self._loop_clean_ticks < self.LOOP_FAULT_CLEAR_TICKS or self.loop_fault is None:
+                return
+            gone, self.loop_fault = self.loop_fault, None
+        try:
+            print("[engine] the telemetry loop runs clean again after %d fault(s): %s" % (gone["count"], gone["error"]),
+                  file=sys.stderr, flush=True)
+        except Exception:               # noqa: BLE001 - as in _loop_faulted
+            pass
+        if LOG is not None:
+            LOG.event("loop_recovered", error=gone["error"], count=gone["count"])
+
+    def _run_loop(self):
         period = 1.0 / self.TICK_HZ
         last = time.time()
         while not self._stop.is_set():
@@ -4353,6 +4427,7 @@ class Engine:
                         self.note = ("LINK LOST - commanding halted. ASV failsafe: "
                                      "motors to 0, steering straight. Take the RC.")
             self._push_state()
+            self._loop_clean()
 
     # -- state snapshot for SSE ------------------------------------------- #
     def _autonomy_label(self):
@@ -4403,6 +4478,7 @@ class Engine:
                 st["battery_pct"] = 100.0
                 st["battery_state"] = "ok"
         st["unlimited_energy"] = self.energy_override
+        lf = self.loop_fault            # read ONCE: the loop can clear it between a test and a copy
         return {
             "type": "state",
             "boot_id": self.boot_id,
@@ -4417,6 +4493,11 @@ class Engine:
             # paused) - the page enables Start for it even though the run reads "running".
             "plan_staged": bool(self._link is not None and self._link.plan_staged),
             "route_max_wpts": ROUTE_MAX_WPTS,          # a longer route is refused whole (review #9)
+            # a fault the telemetry loop survived: {error, count, since}, or None (review #12)
+            "loop_fault": dict(lf) if lf else None,
+            # The loop publishes a frame on EVERY tick while a link exists, healthy or lost, so frames
+            # that stop while this is true mean the console stopped - the page says TELEMETRY STALE.
+            "streaming": self._link is not None,
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
