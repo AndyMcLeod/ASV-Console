@@ -55,9 +55,71 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#19 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#19 built, #20 half-built on a branch; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
+
+**HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
+
+* **STATE:** `master` = `a39344cd` (#19), clean, pushed; 76 suites; Andy's mission.json / ports.json / comms_config.json
+  unchanged by any of this (hash-checked before every commit). His console was OFF at handoff (nothing on 8790-8799).
+* **⚠ APPROVAL MODE IS UNSETTLED - ASK.** The review ran one item at a time: build, verify (suites + mutations +
+  live check + docs + this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from
+  his iPhone, "Carry on all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in
+  without per-item approval.
+  That session has ended; at handoff he had not said whether to carry on or go back to approving each item.
+* **#20 IS HALF-BUILT ON A LOCAL BRANCH, NOT ON MASTER: `wip/review-20-line-table` (`98a33418`), made with plumbing, no
+  hook run, not pushed.** Its commit message says what is done and what is left. Done: renderLineTable builds the
+  body once per SHAPE (drawn lines, their parts and leads, turn count) via `lineTableSkeleton`, then writes only
+  changed cells by id through `setCellText` / `setHtmlIfChanged`; drawn_lines.js reads the patched cells through a
+  body stub (9/9). Left: tests/line_table_patch.js, sidecar mutations, a live check with LINES open on a running
+  survey, a GUARDS entry, an advice_for entry (precommit_hook.py 5 fails without one), docs, a PICK UP HERE block,
+  the full run. Bring it over with `git checkout wip/review-20-line-table -- static/asv.html tests/drawn_lines.js`.
+* **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
+  * **#20** "The LINES table is rebuilt four times a second. This is the flicker you had fixed on the AIS card; update
+    the cells in place instead." (in progress, above)
+  * **#21** "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy
+    saves only after 800 ms without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it
+    never saves. A reload mid-survey loses the trail back to the last slow-down."
+  * **#22** "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that
+    about 40 different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card."
+  * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
+    session logs are records he analyzes - anything that deletes them automatically is his call, not a default)
+  * **#25** "POST requests don't require JSON. The page already sends JSON, so requiring it costs nothing and blocks
+    simple posts from other websites." (⚠ the #10 note on `_read_json`: a garbled Stop must still be honored)
+  * **#26** "`CLAUDE.md` is 7,105 lines, and START HERE alone is about 1,200. Archiving the handoffs from before 09-05
+    would make every session's start cheaper." (it has grown since)
+  * **#27** Small cleanups: a crashed AIS service is never restarted; the NDBC weather-station cache is written
+    non-atomically; ENC cache writes share one fixed temp-file name; E-STOP sets its flag before commanding the boat;
+    `CLAUDE.md` still says "no GitHub remote". Found since: ten or more JS suites say "the console's classic
+    browser <script> runs sloppy" (the page is `<script type="module">`, STRICT) and eval page code sloppy;
+    amend_plan.py and mission_store.py leave empty temp folders behind (154 in %TEMP% by 2026-09-15).
+  * **Andy's call:** #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
+    hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #23 "`runElapsed`
+    spans back-to-back runs" (time each commanded motion, or each job?); #28 the Eastport north-west line (his SURV ->
+    RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
+    isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
+    service is enabled and has a sample response with the key removed).
+* **HOW THE ITEMS WERE BUILT (the next context has none of the session scratchpad):**
+  * A SCRATCH CLONE of this repo (`git clone D:\Claude\ASV <scratch>`, reset to the tip) for building and for
+    mutation runs, so a killed runner can never leave the real source mutated. Copy the changed files back with
+    patch scripts (exact-anchor replace, EOL detected per file - asv.html is CRLF, static/js/chart.js is LF) or
+    whole files, and diff the result against the clone. Docs in the clone need `NODE_PATH=D:/Claude/ASV/tools/node_modules`.
+  * Write patch scripts with the Write tool, never a bash heredoc: heredocs mangled `\n` escapes and backslashes, twice.
+  * Before any run that WRITES, copy mission.json / ports.json / comms_config.json aside and hash them; check the
+    hashes before every commit. `--state-dir` keeps test consoles out of his files; in-process suites call
+    `use_state_dir`.
+  * LIVE CHECKS on a temp COPY of the program (asv_console.py, currents.py, roc_tracks.py, gps_sim.py, ais_service.py,
+    ports.default.json, vessels/, static/) with `--sim --browser none --port 8796 --no-ais-service --no-log --state-dir
+    <temp>`. NEVER open a page on his console (8791). The in-app browser's javascript tool runs in an ISOLATED world and
+    the page's bindings are module-scoped: to read page state, put a probe hook in the COPY's asv.html and read it
+    through an injected `<script>` that writes to a DOM data attribute.
+  * A new suite needs, in the SAME commit: a GUARDS entry in tools/build_tech_manual.js, an `advice_for` entry in
+    .githooks/pre-commit, a TEETH list of RECORDED mutation results in its header, and a docs rebuild (`cd tools &&
+    node build_docs.js`, then `git checkout --` the docx files whose builders did not change).
+  * Commit: stage BY NAME, `git commit -F <msg>` in the background (the hook runs every suite, ~15 min; Markdown-only
+    commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
+    The "geometric repack" error on fetch/commit is harmless.
 
 **NEWEST, 2026-09-15: REVIEW ITEM #19 - A PREVIEW NEVER LOOKS LIKE THE ROUTE.**
 A punched survey pattern and a clipped search pattern were drawn solid GREEN - the green of the UPLOADED route
@@ -75,8 +137,8 @@ to the northwest" investigation (2026-09-11) turned on; the question to Andy sta
   caught.
 * LIVE (port 8796, temp copy): a drawn pattern showed cyan dashed lines under PREVIEW — not in plan; after Punch Out, solid
   cyan lines clipped around the islands, amber detours, the label, and no green.
-* Verified: all 76 suites in the scratch clone.
-* Next: #20, the LINES table is rebuilt four times a second.
+* Verified: all 76 suites in the scratch clone. The overnight commit's hook was CUT OFF when that session ended
+  (63/76, the item still staged); re-run 2026-09-15 and pushed as `a39344cd`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #18 - A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT.**
 Punch Out cuts a pattern line around a keep-out into segments, and each became a "line": an 8-line pattern read as 9
