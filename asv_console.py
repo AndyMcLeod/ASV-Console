@@ -1096,6 +1096,43 @@ def _replace_retrying(tmp, dst):
             time.sleep(_MISSION_IO_WAIT_S)
 
 
+def _write_json_atomic(path, obj):
+    """Write a cache file whole or not at all (review #27, 2026-09-15). The ENC caches (extract, metadata, layer map)
+    and the water-station list all wrote `<path>.part`, ONE name per cache - so two writers of one file, a fetch and
+    its background top-up, wrote into the same temp file, and one either replaced the cache with what the interleaving
+    left or failed on a temp the other had already moved. And the NDBC station list was written straight over the old
+    file, so an interrupted write left a truncated cache. Each writer has a temp of its own now (process and thread),
+    and the replace retries, because on Windows any reader holding the file refuses it."""
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = "%s.%d.%d.part" % (path, os.getpid(), threading.get_ident())
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+        _replace_retrying(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _cache_json(path, obj):
+    """_write_json_atomic for a CACHE. The data is already in hand, so a write that fails - the replace retries run out
+    while a reader holds the file, or the disk refuses - is said and let go, never raised into the fetch that produced
+    it. Measured (tests/cache_writes.py 1): with a reader looping on the file, 12 of 300 writes still ran out of retries;
+    the ENC extract and layer map let that raise into their fetch, and the water-station list returned [] - throwing
+    away the stations it had just fetched."""
+    try:
+        _write_json_atomic(path, obj)
+        return True
+    except OSError as e:
+        print("[cache] could not write %s: %s" % (os.path.basename(path), e), file=sys.stderr)
+        return False
+
+
 def mission_params():
     """The last good plan, for command paths that must not fail on a file read - a Go-To, a hold,
     the in-extremis escape. Reads the file only when nothing has been read yet, and answers {}
@@ -1694,11 +1731,7 @@ def _enc_layer_map(band, timeout=20.0):
         for L in info.get("layers", []):
             if L.get("geometryType"):            # skip group layers
                 m[(L.get("name") or "").split(".")[-1]] = L["id"]
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".part"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(m, f)
-        os.replace(tmp, path)
+        _cache_json(path, m)
     with _enc_layermap_lock:
         _enc_layermaps[band] = m
     return m
@@ -1890,11 +1923,7 @@ def fetch_enc_features(bbox, min_depth=0.0):
         for ft in feats:
             counts[ft["cls"]] = counts.get(ft["cls"], 0) + 1
         data = {"band": band, "features": feats, "counts": counts}
-        os.makedirs(ENC_DIR, exist_ok=True)
-        tmp = cache + ".part"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        os.replace(tmp, cache)
+        _cache_json(cache, data)
     md = float(min_depth or 0.0)
     for ft in data["features"]:
         if ft["role"] == "depth_area":
@@ -1956,14 +1985,7 @@ def fetch_chart_info(bbox):
             if not kept:
                 continue
             out[key_name].append({"props": kept, "geometry": ft.get("geometry")})
-    os.makedirs(ENC_DIR, exist_ok=True)
-    tmp = cache + ".part"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(out, f)
-        os.replace(tmp, cache)
-    except OSError:
-        pass
+    _cache_json(cache, out)
     return out
 
 
@@ -2059,11 +2081,7 @@ def _load_water_stations(timeout=30.0):
                      "gl": bool(s.get("greatlakes"))}
                     for s in raw.get("stations", []) if s.get("lat") and s.get("lng")]
             if data:
-                os.makedirs(CHART_DIR, exist_ok=True)
-                tmp = WATER_STATIONS_CACHE + ".part"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(data, f)
-                os.replace(tmp, WATER_STATIONS_CACHE)
+                _cache_json(WATER_STATIONS_CACHE, data)
         except (OSError, ValueError, KeyError, http.client.HTTPException):
             return []
     with _water_stations_lock:
@@ -2502,11 +2520,7 @@ def _load_ndbc_stations(timeout=30.0):
             stations.append({"id": sid.group(1).upper(), "lat": float(la.group(1)),
                              "lon": float(lo.group(1))})
     if stations:
-        try:
-            with open(NDBC_STATIONS_CACHE, "w", encoding="utf-8") as f:
-                json.dump({"_ts": time.time(), "stations": stations}, f)
-        except OSError:
-            pass
+        _cache_json(NDBC_STATIONS_CACHE, {"_ts": time.time(), "stations": stations})
     return stations
 
 
@@ -4349,20 +4363,39 @@ class Engine:
         self._push_state()
 
     def set_estop(self, on):
+        # ⚠ THE VESSEL IS TOLD FIRST, AND WHAT IT SAID DECIDES WHAT THE CONSOLE SHOWS (review #27, 2026-09-15). The flag
+        # was set before the link was commanded, so a link that refused - the real VCU link refuses every command
+        # today - left `estop` saying whatever was asked: a LATCH showed E-STOP with the console still armed and the
+        # run still under way (the disarm below the raise never ran), and a RELEASE cleared the flag on a boat nobody
+        # had released. Now a latch holds on the console whatever the link did - disarmed, idle, the flag set - and
+        # says the vessel did not take it; a release clears the flag only when the vessel has taken it. The refusal
+        # is still raised, so the operator is answered in words.
+        on = bool(on)
+        refused = None
         with self._lock:
             link = self._link
-            self.estop = bool(on)
             if link:
-                link.estop(bool(on))
+                try:
+                    link.estop(on)
+                except Exception as e:
+                    refused = e
             self._commanded()
             if on:
+                self.estop = True
                 self.armed = False
                 self.run = "idle"
                 self.note = ("COMMAND E-STOP latched. NOTE: the RC transmitter E-stop "
-                             "is the true failsafe - use it for a real emergency.")
-            else:
+                             "is the true failsafe - use it for a real emergency.") if refused is None else (
+                             "E-STOP latched on the console, but the vessel did not take the command (%s) - use the "
+                             "RC transmitter E-stop." % refused)
+            elif refused is None:
+                self.estop = False
                 self.note = "Command E-STOP released (still SAFE/disarmed)."
+            else:
+                self.note = "E-STOP NOT released - the vessel did not take the command (%s)." % refused
         self._push_state()
+        if refused is not None:
+            raise refused
 
     def reset(self, spawn=None):
         """Simulator power-cycle: a clean slate as if the boat were shut down and
@@ -5585,6 +5618,20 @@ def watch_station_report(kind, stop=None):
 
 # --- auto-started AIS provider (ais_service.py as a child process) ---------- #
 _ais_proc = None
+# ⚠ A SERVICE THAT DIES IS STARTED AGAIN (review #27, 2026-09-15). It was started once, at launch, and nothing looked at
+# it after: a crash left the AIS layer empty for the rest of the session, reading exactly like a quiet sea. The
+# watchdog looks every AIS_WATCH_S, waits AIS_RESTART_MIN_S before the first restart, doubles the wait on each one up
+# to AIS_RESTART_MAX_S so a service that dies at start does not spin, and goes back to the shortest wait once a
+# restarted service has stayed up AIS_STABLE_S. It restarts only a service THIS console started and has not stopped:
+# `_ais_wanted` is cleared by _stop_ais_service (exit, and the stop half of a rescope).
+AIS_WATCH_S, AIS_RESTART_MIN_S, AIS_RESTART_MAX_S, AIS_STABLE_S = 2.0, 5.0, 300.0, 120.0
+_ais_lock = threading.RLock()
+_ais_wanted = False
+_ais_started_at = None
+_ais_down_since = None
+_ais_restart_wait = AIS_RESTART_MIN_S
+_ais_restarts = 0
+_ais_watchdog = None
 
 
 def _ais_local_port():
@@ -5615,13 +5662,15 @@ def _start_ais_service():
     scopes the aisstream subscription to the operating area (whole lake on a Great
     Lake, else a box around spawn), and is reaped when the console exits (the service
     runs a --parent-pid watchdog, robust to a hard kill)."""
-    global _ais_proc
+    global _ais_proc, _ais_wanted
     hp = _ais_local_port()
     if not hp:
         return                                    # remote --ais: the user runs their own
     host, port = hp
     if _port_alive(host, port):
         print("[ais] using the AIS service already on %s:%d" % (host, port))
+        with _ais_lock:
+            _ais_wanted = False                   # not ours to restart
         return
     script = os.path.join(APP_DIR, "ais_service.py")
     if not os.path.isfile(script):
@@ -5656,8 +5705,10 @@ def _start_ais_service():
             cmd += ["--opencpn-host", h]
         cmd += ["--opencpn-port", p]
     try:
-        _ais_proc = subprocess.Popen(cmd, cwd=APP_DIR, stdout=logf,
-                                     stderr=subprocess.STDOUT)
+        with _ais_lock:
+            _ais_proc = subprocess.Popen(cmd, cwd=APP_DIR, stdout=logf,
+                                         stderr=subprocess.STDOUT)
+            _ais_wanted_now(_ais_proc)
         atexit.register(_stop_ais_service)
         print("[ais] auto-started ais_service.py on %s:%d (source %s, bbox %s)"
               % (host, port, AIS_SOURCE_ARG, bbox))
@@ -5665,18 +5716,72 @@ def _start_ais_service():
         print("[ais] could not auto-start ais_service.py: %s" % e)
 
 
-def _stop_ais_service():
-    global _ais_proc
-    if _ais_proc and _ais_proc.poll() is None:
+def _ais_wanted_now(proc):
+    """Mark `proc` as the service this console wants running, and make sure something is watching it."""
+    global _ais_wanted, _ais_started_at, _ais_down_since, _ais_watchdog
+    with _ais_lock:
+        _ais_wanted = proc is not None
+        _ais_started_at = time.monotonic()
+        _ais_down_since = None
+        if _ais_watchdog is None:
+            _ais_watchdog = threading.Thread(target=_ais_watch_loop, name="ais-watchdog", daemon=True)
+            _ais_watchdog.start()
+
+
+def _ais_watch_loop():
+    while True:
+        time.sleep(AIS_WATCH_S)
         try:
-            _ais_proc.terminate()
+            _ais_watch_once()
+        except Exception as e:                    # the watchdog must not die of what it is watching
+            print("[ais] watchdog: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+
+
+def _ais_watch_once(now=None):
+    """One look at the service this console started. Returns None (nothing to do), "down" (it has exited and a
+    restart is waiting out its delay) or "restarted"."""
+    global _ais_proc, _ais_down_since, _ais_restart_wait, _ais_restarts
+    now = time.monotonic() if now is None else now
+    with _ais_lock:
+        proc = _ais_proc
+        if not _ais_wanted or proc is None:
+            _ais_down_since = None
+            return None
+        code = proc.poll()
+        if code is None:
+            if _ais_started_at is not None and now - _ais_started_at >= AIS_STABLE_S:
+                _ais_restart_wait = AIS_RESTART_MIN_S      # it has stayed up: the next failure starts short again
+            _ais_down_since = None
+            return None
+        if _ais_down_since is None:
+            _ais_down_since = now
+            print("[ais] the AIS service exited (code %s) - starting it again in %.0f s" % (code, _ais_restart_wait))
+            if LOG is not None:
+                LOG.event("ais_service_exit", code=code, restart_in_s=_ais_restart_wait)
+            return "down"
+        if now - _ais_down_since < _ais_restart_wait:
+            return "down"
+        _ais_down_since = None
+        _ais_restart_wait = min(AIS_RESTART_MAX_S, _ais_restart_wait * 2)
+        _ais_restarts += 1
+        _start_ais_service()          # replaces _ais_proc when it starts; a failed start leaves the dead one to try again
+        return "restarted" if _ais_proc is not proc else "down"
+
+
+def _stop_ais_service():
+    global _ais_proc, _ais_wanted
+    with _ais_lock:
+        _ais_wanted = False                       # a service we stopped is not one that died
+        if _ais_proc and _ais_proc.poll() is None:
             try:
-                _ais_proc.wait(timeout=3)
+                _ais_proc.terminate()
+                try:
+                    _ais_proc.wait(timeout=3)
+                except Exception:
+                    _ais_proc.kill()
             except Exception:
-                _ais_proc.kill()
-        except Exception:
-            pass
-    _ais_proc = None
+                pass
+        _ais_proc = None
 
 
 def _rescope_ais_service():

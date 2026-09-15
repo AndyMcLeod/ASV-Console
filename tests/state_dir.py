@@ -127,6 +127,65 @@ check("1. every suite that starts a console gives it a state folder of its own -
                                                  ("; NO state folder: " + ", ".join(bare)) if bare else "",
                                                  ("; could not parse: " + ", ".join(unparsed)) if unparsed else ""))
 
+# ── 1b. A TEMP FOLDER A SUITE MAKES, IT REMOVES (review #27, 2026-09-15) ──────────────────
+# 190 empty asv_amend_* and asv_mission_store_* folders had piled up in %TEMP%, and five suites made one without ever
+# removing it - amend_plan.py's was not even used. By AST, in every suite: each tempfile.mkdtemp() is assigned to a
+# plain name, and that name is handed to rmtree (directly, or through atexit.register). JS suites: each
+# fs.mkdtempSync() is assigned to a name that reaches fs.rmSync. A folder made inside ConsoleState (tests/lib) is
+# removed at exit by the class itself.
+def temp_leaks(src):
+    tree = ast.parse(src)
+    named, leaks = {}, []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", None)) == "mkdtemp":
+            named.setdefault(id(node), None)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and id(node.value) in named \
+                and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            named[id(node.value)] = node.targets[0].id
+    removed = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fname = getattr(node.func, "attr", getattr(node.func, "id", None))
+        args = list(node.args)
+        if fname == "register" and args and getattr(args[0], "attr", getattr(args[0], "id", None)) == "rmtree":
+            args = args[1:]
+        elif fname != "rmtree":
+            continue
+        if args and isinstance(args[0], ast.Name):
+            removed.add(args[0].id)
+    for call_id, name in named.items():
+        if name is None:
+            leaks.append("an unnamed mkdtemp()")
+        elif name not in removed:
+            leaks.append(name)
+    return leaks
+
+
+temp_report = {}
+for fn in sorted(os.listdir(HERE)):
+    p = os.path.join(HERE, fn)
+    if fn.endswith(".py"):
+        with open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        if "mkdtemp" in src:
+            temp_report[fn] = temp_leaks(src)
+    elif fn.endswith(".js"):
+        with open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        names = re.findall(r"(?:const|let|var)\s+(\w+)\s*=\s*fs\.mkdtempSync\(", src)
+        if "mkdtempSync(" in src:
+            temp_report[fn] = [n for n in names if not re.search(r"rmSync\(\s*%s\b" % re.escape(n), src)] \
+                              + (["an unnamed mkdtempSync()"] if src.count("mkdtempSync(") > len(names) else [])
+leaky = {k: v for k, v in temp_report.items() if v}
+check("1b. every temp folder a suite makes, the suite removes - each mkdtemp is named, and the name reaches rmtree "
+      "(or rmSync)",
+      lambda: len(temp_report) >= 8 and not leaky,
+      lambda: "%d suites make temp folders; leaking: %s" % (len(temp_report),
+                                                          "; ".join("%s: %s" % (k, ", ".join(v)) for k, v in leaky.items())
+                                                          or "none"))
+
 # ── 2-3b. the flag moves every file - proved on a COPY of the program ─────────────────────
 COPY = tempfile.mkdtemp(prefix="asv_program_copy_")
 for name in ("asv_console.py", "currents.py", "roc_tracks.py", "gps_sim.py", "ais_service.py",

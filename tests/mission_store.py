@@ -114,7 +114,10 @@ def _recording_remove(path, *a, **k):
 
 
 builtins.open, os.replace, os.remove = _recording_open, _recording_replace, _recording_remove
+import atexit  # noqa: E402
+import shutil  # noqa: E402
 TMP = tempfile.mkdtemp(prefix="asv_mission_store_")
+atexit.register(shutil.rmtree, TMP, True)  # a suite leaves no temp folder behind (review #27; tests/state_dir.py 1b)
 _C.MISSION_PATH = os.path.join(TMP, "mission.json")
 _C._MISSION_CACHE = None
 

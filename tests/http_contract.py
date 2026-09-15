@@ -366,7 +366,11 @@ STATE = ConsoleState()
 # This suite POSTs ROC ops against a live console. Without its own registry file
 # every run left a staged ROC behind in the OPERATOR's roc_config.json - that is
 # how the ROC card came to open on 198 stale rows.
-ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+_TMP_ROC = tempfile.mkdtemp(prefix="asv_http_contract_")
+atexit.register(shutil.rmtree, _TMP_ROC, True)  # a suite leaves no temp folder behind (review #27; tests/state_dir.py 1b)
+ROC_CFG = os.path.join(_TMP_ROC, "roc_config.json")
 srvlog = tempfile.TemporaryFile(mode="w+")
 port = free_port()
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",

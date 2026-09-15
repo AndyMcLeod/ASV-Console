@@ -68,7 +68,7 @@ c.push(TBL(["Safety state", "What it means", "How you leave it"], [
   ["`auto`", "Running an autonomous survey / search / transit.", "Pause, Stop, or let it finish"],
   ["`hold`", "Station-keeping — arrived at a point, or a loiter.", "Command something else"],
   ["`paused`", "Mid-run, holding the next waypoint.", "Start resumes; Stop aborts"],
-  ["`e-stop`", "Command-side motor cut latched, force-disarmed.", "Clear E-STOP, then re-arm"],
+  ["`e-stop`", "Command-side motor cut latched, force-disarmed. It latches on the console even when the vessel does not take the command - the note then says so - and a release the vessel does not take leaves it latched.", "Clear E-STOP, then re-arm; if the vessel did not take it, use the transmitter"],
   ["`failsafe`", "Telemetry lost ~3 s. Auto-disarmed, vessel failsafe surfaced.", "Take the transmitter"],
 ], [1500, 5560, 2300]));
 

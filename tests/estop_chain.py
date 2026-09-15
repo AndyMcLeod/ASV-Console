@@ -346,6 +346,50 @@ check("14. the console logged NO exception while serving those requests",
       ("%d line(s), first: %s" % (len(tb), tb[0][:90])) if tb
       else "an answered request can still kill its handler")
 
+# 15-15b. A LINK THAT REFUSES (review #27, 2026-09-15). The real VCU link refuses every command today (RealVcu's
+# _blocked), and Engine.set_estop set the flag BEFORE commanding it - so a refused LATCH showed E-STOP on a console still
+# armed with its run under way (the disarm sat below the raise and never ran), and a refused RELEASE cleared the flag on
+# a boat nobody had released. In-process: an Engine on a link whose estop() refuses, its state in the suite's folder.
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location("asv_console_estop_refused", os.path.join(APP, "asv_console.py"))
+_C = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_C)
+_C.use_state_dir(STATE.dir)
+
+
+class _RefusingLink(_C.VcuLink):                   # the real base, so everything but estop() is the link's own default
+    def estop(self, on):
+        raise _C.VcuProtocolError("the link refused the command")
+
+    def set_neutral(self):
+        pass
+
+
+E = _C.Engine()
+E._link, E.armed, E.run = _RefusingLink(), True, "running"
+
+
+def _attempt(fn):
+    try:
+        fn()
+        return None
+    except Exception as e:
+        return e
+
+
+latch_err = _attempt(lambda: E.set_estop(True))
+latched = (E.estop, E.armed, E.run, E.note or "")
+release_err = _attempt(lambda: E.set_estop(False))
+check("15. a latch the link REFUSES still latches the console - E-STOP set, disarmed, idle - says the vessel did not take "
+      "it, and still answers with the refusal",
+      lambda: isinstance(latch_err, _C.VcuProtocolError) and latched[:3] == (True, False, "idle")
+      and "did not take" in latched[3],
+      "raised %r; estop=%s armed=%s run=%s; note: %s" % (latch_err, latched[0], latched[1], latched[2], latched[3][:70]))
+check("15b. ... and a release the link refuses leaves it LATCHED, saying so - a flag is not cleared on a boat nobody "
+      "released",
+      lambda: isinstance(release_err, _C.VcuProtocolError) and E.estop is True and "NOT released" in (E.note or ""),
+      "raised %r; estop=%s; note: %s" % (release_err, E.estop, (E.note or "")[:70]))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

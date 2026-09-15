@@ -70,7 +70,6 @@ import os
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -258,7 +257,6 @@ def _free_port():
 
 
 PORT = _free_port()
-LOGDIR = tempfile.mkdtemp(prefix="asv_amend_")
 # THIS SUITE AMENDS A PLAN AGAINST A LIVE CONSOLE RUNNING IN THE APP DIRECTORY, so it
 # writes the OPERATOR'S OWN mission.json - measured 2026-09-05: every run of the hook
 # flipped his plan speed from `low` to `high` and left it that way. mission.json is

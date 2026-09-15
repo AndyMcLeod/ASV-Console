@@ -30,8 +30,10 @@
 // TEETH: flip the starboard unit in channelLaneRoute (sbe/sbn), drop LANE_FRAC to 0, or
 // neuter the function, and the side / lane-position assertions below fail.
 //
-// NOTE: no "use strict" - the console's classic browser <script> runs sloppy in one
-// global scope; the eval below reproduces that.
+// NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
+// file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
+// here and throws in the page. tests/page_strict.js parses the page and its modules as strict modules; that runtime
+// difference is not checked anywhere.
 
 // --- crash guard: a throw outside a check() must still REPORT ------------------------
 // check() turns a throw inside its own thunk into a failed check. Scenario SETUP is not

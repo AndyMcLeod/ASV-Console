@@ -171,12 +171,18 @@ before = set(os.listdir(LOG_DIR)) if os.path.isdir(LOG_DIR) else set()
 # file it writes into the OPERATOR's roc_config.json - the accumulation that had the ROC
 # card opening on 198 stale rows. It removes what it adds, but a suite that fails part
 # way through would still leave one behind, and no test should be able to reach that file.
-ROC_CFG = os.path.join(tempfile.mkdtemp(), "roc_config.json")
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+_TMP_ROC = tempfile.mkdtemp(prefix="asv_data_routes_roc_")
+atexit.register(shutil.rmtree, _TMP_ROC, True)  # a suite leaves no temp folder behind (review #27; tests/state_dir.py 1b)
+ROC_CFG = os.path.join(_TMP_ROC, "roc_config.json")
 # SAME RULE FOR PORTS, and for the same reason. Switching or adding an operating port
 # SAVES the registry, so a suite run against the app directory would rewrite the
 # operator's own bases. It gets a COPY of the shipped file in a temp dir; the checks
 # below then add and switch freely without the real ports.json ever being reachable.
-PORTS_CFG = os.path.join(tempfile.mkdtemp(), "ports.json")
+_TMP_PORTS = tempfile.mkdtemp(prefix="asv_data_routes_ports_")
+atexit.register(shutil.rmtree, _TMP_PORTS, True)
+PORTS_CFG = os.path.join(_TMP_PORTS, "ports.json")
 # SEEDED FROM WHAT THE REPO SHIPS, not from the live registry. ports.json carries the
 # OPERATOR's own bases and whichever one they are working from; seeding off it made a
 # check on the shipped defaults fail the moment someone was working from another port

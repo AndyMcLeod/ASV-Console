@@ -94,7 +94,10 @@ def names(path):
         return [r.get("name") for r in json.load(f).get("rocs", [])]
 
 
-TMP = tempfile.mkdtemp()
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+TMP = tempfile.mkdtemp(prefix="asv_roc_persist_")
+atexit.register(shutil.rmtree, TMP, True)  # a suite leaves no temp folder behind (review #27; tests/state_dir.py 1b)
 
 
 def fresh(fname):

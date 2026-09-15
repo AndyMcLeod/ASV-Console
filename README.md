@@ -546,6 +546,14 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
 `http://127.0.0.1:8788`). If the service isn't running, the layer simply shows
 "AIS service offline" and no vessels.
 
+**A service the console started that exits is started again** — 5 s after it goes, the wait
+doubling on each failure up to 5 minutes and dropping back to 5 s once a restarted service has
+run two minutes, so one that dies at start does not spin. Each exit is printed with its code
+and written to the session log. The console restarts only a service it started and has not
+stopped; one already listening on the port when the console starts is used, and never taken
+on. Until this a crashed service left the layer empty for the rest of the session, reading
+exactly like a quiet sea.
+
 ## Using it
 
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
@@ -1321,6 +1329,12 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    E-STOP body that cannot be read or does not say *off* **latches** — only `"on": false`
    (or `0`) releases, and a release must be JSON. It used to read a garbled E-STOP as a
    release.
+
+   **An E-STOP the vessel does not take still latches the console** — disarmed, idle, the
+   flag set — and the note says the vessel did not take it (use the RC transmitter); a
+   release the vessel does not take leaves it latched, and says so. The console used to set
+   the flag before telling the vessel, so a refused latch left it armed with its run under
+   way, and a refused release cleared the flag on a boat nobody had released.
 
    **None of them leaves a boat station-keeping behind your back.** Stop, E-STOP and a
    disarm end the hold along with the run, and the console's routed way back onto station

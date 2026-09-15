@@ -66,7 +66,10 @@
 // the operator-facing half of the feature deleted. A guard acting on a quantity nobody can
 // see is most of the way back to the defect it was written for.
 //
-// NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
+// NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
+// file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
+// here and throws in the page. tests/page_strict.js parses the page and its modules as strict modules; that runtime
+// difference is not checked anywhere.
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +

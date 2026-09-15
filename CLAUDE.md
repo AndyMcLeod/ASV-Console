@@ -55,31 +55,26 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22 and #25 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22, #25 and #27 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #25, pushed; 80 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
-  any of this (hash-checked before every commit). His console was OFF through #20-#25 (nothing on 8790-8799).
+* **STATE:** `master` carries #27, pushed; 83 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+  any of this (hash-checked before every commit). His console was OFF through #20-#27 (nothing on 8790-8799).
 * **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
   this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from his iPhone, "Carry on
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20, #21, #22 AND #25 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20
-  half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
+* **#20, #21, #22, #25 AND #27 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried
+  #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
   * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
     session logs are records he analyzes - anything that deletes them automatically is his call, not a default)
   * **#26** "`CLAUDE.md` is 7,105 lines, and START HERE alone is about 1,200. Archiving the handoffs from before 09-05
     would make every session's start cheaper." (it has grown since)
-  * **#27** Small cleanups: a crashed AIS service is never restarted; the NDBC weather-station cache is written
-    non-atomically; ENC cache writes share one fixed temp-file name; E-STOP sets its flag before commanding the boat;
-    `CLAUDE.md` still says "no GitHub remote". Found since: ten or more JS suites say "the console's classic
-    browser <script> runs sloppy" (the page is `<script type="module">`, STRICT) and eval page code sloppy;
-    amend_plan.py and mission_store.py leave empty temp folders behind (154 in %TEMP% by 2026-09-15).
   * **Andy's call:** #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
     hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #23 "`runElapsed`
     spans back-to-back runs" (time each commanded motion, or each job?); #28 the Eastport north-west line (his SURV ->
@@ -111,7 +106,43 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #25 - A POST MUST SAY IT IS JSON, AND A STOP IS NEVER REFUSED.**
+**NEWEST, 2026-09-15: REVIEW ITEM #27 - THE SMALL CLEANUPS, AND WHAT THREE OF THEM TURNED OUT TO BE.**
+The list's own words: "a crashed AIS service is never restarted; the NDBC weather-station cache is written non-atomically;
+ENC cache writes share one fixed temp-file name; E-STOP sets its flag before commanding the boat; `CLAUDE.md` still says
+'no GitHub remote'", and found since: JS suites that say the page "runs sloppy" and eval it sloppy, and suites that leave
+temp folders behind.
+
+* AIS: `_ais_watch_once(now)` on a daemon `ais-watchdog` thread (started once by `_ais_wanted_now`, looking every
+  `AIS_WATCH_S` 2 s, surviving a look that raises): restart `AIS_RESTART_MIN_S` 5 s after an exit, doubling per failure to
+  `AIS_RESTART_MAX_S` 300 s, back to 5 s after `AIS_STABLE_S` 120 s up. Only a service this console started and has not
+  stopped (`_ais_wanted`, cleared by `_stop_ais_service` and by finding another service already on the port). A restart
+  that produced nothing keeps the dead proc, so it is tried again. The exit is printed and logged (`ais_service_exit`).
+* CACHES: `_write_json_atomic(path, obj)` - a temp named for process and thread, `_replace_retrying`, the temp removed on
+  any failure - and `_cache_json` over it for every cache (`_enc_layer_map`, `fetch_enc_features`, `fetch_chart_info`,
+  `_load_water_stations`, `_load_ndbc_stations`), which reports a failed write and never raises it. ⚠ THE FIRST RUN OF
+  THE NEW SUITE FAILED ON THE FIXED CODE, AND WAS RIGHT: under a reader looping on the file, 12 of 300 writes still ran
+  out of retries, and three cache writers let that raise into their fetch - the water-station list came back EMPTY with
+  the stations in hand. Measured on the old shared `.part`: 67 writes failed on a temp the other writer had moved and 721
+  reads found a cache that was not whole JSON.
+* E-STOP: `set_estop` commands the link FIRST. A latch holds on the console whatever the link answered (set, disarmed,
+  idle; the note says the vessel did not take it), a release clears the flag only when the link took it, and the refusal
+  is still raised. RealVcu refuses every command today, so on a real link the old order showed E-STOP on an ARMED console
+  with its run under way (the disarm sat below the raise).
+* JS SUITES: 27 notes corrected to what is true (the page is a STRICT module; these suites eval sloppy; an assignment to an
+  undeclared name is the runtime difference, and nothing checks it). NEW tests/page_strict.js parses the page and every
+  static/js module as a module with `node --check` on temp .mjs copies - measured: ais_table.js passes all 31 checks on a
+  page with an octal literal in setCellText, a page the browser refuses to run at all.
+* TEMP FOLDERS: data_routes, http_contract, roc_persist and mission_store now remove theirs at exit; amend_plan's was never
+  used and is gone. tests/state_dir.py 1b audits by AST that every mkdtemp is named and reaches rmtree (JS: rmSync).
+* CLAUDE.md's "Not yet done" names the private remote.
+* Tests: NEW tests/ais_restart.py (9 checks; 11 mutations, 11 caught - the first run HUNG on its first mutant, an unbounded
+  wait in check 2, now bounded), tests/cache_writes.py (6; 7 mutations, 7 caught - one first CRASHED the suite and is a
+  failed check now), tests/page_strict.js (4; 6 sidecar mutations, 6 caught); estop_chain.py 15-15b (3 mutations, 3
+  caught); state_dir.py 1b.
+* Words: README (the AIS service restart; the E-STOP refusal), the operations manual's e-stop row, the technical manual's
+  module table and GUARDS.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #25 - A POST MUST SAY IT IS JSON, AND A STOP IS NEVER REFUSED.**
 Andy: "POST requests don't require JSON. The page already sends JSON, so requiring it costs nothing and blocks simple posts
 from other websites." (With the #10 caution in the list: a garbled Stop must still be honored.)
 
@@ -138,6 +169,7 @@ from other websites." (With the #10 caution in the list: a garbled Stop must sti
   text/plain POST of {"on": true} to /api/cmd/arm was sent and refused - the session log reads "/api/cmd/arm 415 a POST must
   be sent as JSON", still disarmed; the same POST labeled JSON never left the browser ("Failed to fetch", no second arm in
   the log). The console's own page then armed, latched and released E-STOP as before.
+* Verified: all 80 suites through the hook (8.5 min). Committed and pushed as `3682458b`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #22 - THE MISSION STATUS CARD KEEPS A HISTORY OF WHAT THE CONSOLE DID.**
 Andy: "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that about 40
@@ -7654,7 +7686,8 @@ document-set table in the tech manual AND `README.md`.
 
 ## Not yet done
 
-Git repo (local, no GitHub remote). `RealVcu` command/telemetry codecs are
+Git repo with a PRIVATE GitHub remote, `AndyMcLeod/ASV-Console` (branch `master`; this line said "no GitHub
+remote" long after one existed - corrected in review #27). `RealVcu` command/telemetry codecs are
 unimplemented by design (this is a simulator). Design docs: `PLAN.md`,
 `ASV_BEHAVIORS_PLAN.md`, `ENC_PUNCHOUT_PLAN.md`.
 

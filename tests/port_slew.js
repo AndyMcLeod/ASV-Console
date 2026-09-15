@@ -58,7 +58,10 @@
 //     property (the chart sets off and comes to rest), so check 10b measures it where it
 //     shows: ground covered in the first tenth of the pan against the middle tenth.
 //
-// NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
+// NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
+// file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
+// here and throws in the page. tests/page_strict.js parses the page and its modules as strict modules; that runtime
+// difference is not checked anywhere.
 
 function __crash(e) {
   console.log("  FAIL 0. the suite itself CRASHED before finishing - " +

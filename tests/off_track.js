@@ -54,8 +54,10 @@
 // evidence. Checks 14-16 guard the page's source text and no mutation of offTrack's body
 // can reach them; they are what fails if the old global or the old row is pasted back.
 //
-// NOTE: no "use strict" - the console's classic browser <script> runs sloppy, and this
-// suite eval()s page functions into that same sloppy scope.
+// NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
+// file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
+// here and throws in the page. tests/page_strict.js parses the page and its modules as strict modules; that runtime
+// difference is not checked anywhere.
 
 // --- crash guard: a throw outside a check() must still REPORT ------------------------
 // "No FAIL lines" and "the process died" are indistinguishable to anything reading stdout,
