@@ -70,6 +70,7 @@ process.on("unhandledRejection", __crash);
 
 const fs = require("fs");
 const path = require("path");
+const G = require("../static/js/geodesy.js");     // distTo: the trail's step is in metres (review #21)
 
 // ASV_HTML lets a mutation run point at a sidecar copy. Unset = the real page.
 const HTML = process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html");
@@ -109,6 +110,7 @@ const PUSH_HEAD   = "    const last = track[track.length-1];";
 const TRACK_BLOCK = between("const TRACK_KEY =", "let asv = null;");
 const PUSH        = between(PUSH_HEAD, "\n    }") + "\n    }";     // onState's own append
 const MAX_TRACK   = Number(/MAX_TRACK\s*=\s*(\d+)/.exec(H)[1]);
+const TRACK_SAVE_MS = Number(/TRACK_SAVE_MS\s*=\s*(\d+)/.exec(H)[1]);
 
 // The page has all of this in ONE lexical scope, so the world is built as one function body
 // rather than as separately-eval'd pieces - nothing is rewritten to be testable.
@@ -137,7 +139,7 @@ function makeWorld(stored) {
     "return { checkBoot, clearTrack, saveTrack, push: __push,",
     "         get track(){ return track; }, get renders(){ return renders; } };",
   ].join("\n");
-  const w = new Function("localStorage", body)(store);
+  const w = new Function("localStorage", "distTo", body)(store, G.distTo);
   w.store = store;
   return w;
 }
@@ -271,14 +273,18 @@ check("14. dropping the trail redraws the chart - the line goes at once",
       () => W5.renders > r0,
       () => "renders " + r0 + " -> " + W5.renders);
 
-// Check 13 has to outlive saveTrack's 800 ms throttle, so it settles last. It is a real
-// check, not a formality: without clearTrack's clearTimeout the armed write fires here and
-// puts the trail back in the store a second after the operator was told it was gone.
+// Check 13 has to outlive saveTrack's throttle (TRACK_SAVE_MS, read off the page - it was a
+// literal 900 ms here while the page waited 800, and review #21 made the page wait 3000: a
+// fixed wait shorter than the throttle passes whether or not the write was cancelled), so it
+// settles last. It is a real check, not a formality: without clearTrack's clearTimeout the
+// armed write fires here and puts the trail back in the store after the operator was told it
+// was gone.
 (async () => {
-  const held = await new Promise(r => setTimeout(() => r(W4.store.getItem("asv_track_v1")), 900));
+  const wait = TRACK_SAVE_MS + 150;
+  const held = await new Promise(r => setTimeout(() => r(W4.store.getItem("asv_track_v1")), wait));
   check("13. ...and cancels the pending save, so the trail cannot be written back",
         () => held === null,
-        () => "after 900 ms the store holds: " + (held === null ? "nothing" : held));
+        () => "after " + wait + " ms the store holds: " + (held === null ? "nothing" : held));
 
   console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
   process.exit(fails ? 1 : 0);
@@ -307,3 +313,13 @@ check("14. dropping the trail redraws the chart - the line goes at once",
 // at all. And "drop lsDel" takes out 13 as well as 12, because 13 asks whether the store is
 // empty AFTER the throttle window and both halves of clearTrack feed that. 13 still has its
 // own teeth: the clearTimeout mutation is caught by 13 ALONE.
+//
+// ⚠ SINCE REVIEW #21 (2026-09-15) "drop clearTrack's clearTimeout" SURVIVES, AND IT IS AN
+// EQUIVALENT MUTANT, NOT A GAP. The old armed write serialized whatever `track` was when it
+// fired - after a clear, `{bootId, track: []}` - so an uncancelled timer put an entry back and
+// 13 saw it. writeTrack now writes nothing for an empty trail, so the timer that fires after
+// a clear finds nothing to put back, and a timer that fires after NEW points were laid writes
+// those points under the new boot - which is what the next write would have done anyway. 13
+// still holds the property it names; trail_persist.js 10 holds the rest (the trail laid after
+// a clear is saved again). clearTimeout stays in clearTrack as the plain statement of intent.
+// The 800 ms / 900 ms in check 13 became TRACK_SAVE_MS read off the page for the same review.

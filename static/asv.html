@@ -953,7 +953,7 @@ document.body.classList.add("ui-" + UIROLE);
 
 // --- map config ---------------------------------------------------------- //
 const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
-const MINZ = 3, MAXZ = 20, MAX_TRACK = 8000;   // TILE + M_PER_DEG_LAT: geodesy.js
+const MINZ = 3, MAXZ = 20, MAX_TRACK = 40000;  // TILE + M_PER_DEG_LAT: geodesy.js. The trail: 80 km at TRACK_STEP_M
 
 let zoom = 13;
 // Chart centre until the first fix arrives. THIS USED TO BE A HARD-CODED ERIE
@@ -988,16 +988,49 @@ let haveFix = false, follow = true;
 // joined. ONE mechanism covers every path that reboots the sim, and it rests on a server
 // contract already under test both ways (tests/home_spawn.py: an accepted spawn mints a
 // new boot_id, check 7; a REFUSED one leaves it alone, check 6b).
-const TRACK_KEY = "asv_track_v1";
+//
+// ⚠ THE TRAIL IS SAVED WHILE THE BOAT MOVES, AND A LONG DAY OF IT IS KEPT (review #21, 2026-09-15). Andy: "The trail
+// isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy saves only after 800 ms
+// without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it never saves. A reload
+// mid-survey loses the trail back to the last slow-down."
+// * saveTrack was a DEBOUNCE: every new point cancelled the pending write and started the wait again, so a boat laying
+//   points faster than the wait never wrote at all. It is a THROTTLE now - the first new point arms ONE write
+//   TRACK_SAVE_MS later and the points after it ride along - and the page flushes a pending write when it is hidden
+//   or unloaded (pagehide / visibilitychange, wired below `let asv`), so a reload keeps the whole trail.
+// * A point was laid every 5e-6 DEGREES of movement and 8,000 were kept - about 4 km at survey speeds. Measured across
+//   Andy's 189 session logs (413 boots with a fix), the longest boot laid 68 km in 8.5 h, the next 67 km and 56 km,
+//   and 35 boots passed 4 km. A point is laid every TRACK_STEP_M now and MAX_TRACK of them are kept: 80 km.
+// * THE STORED COPY IS COMPACT, because at that length the old one would not fit: 40,000 {lat,lon} objects are 2 MB
+//   of JSON, in a store browsers cap at a few megabytes per site, and a quota error was swallowed without a word.
+//   Microdegree DELTAS are 226 KB (measured in Node: 9.7 ms to encode, 0.07 m worst round-trip error). A write that
+//   still does not fit keeps the NEWEST half of the trail, then a quarter - never nothing while something fits.
+const TRACK_KEY = "asv_track_v1", TRACK_STEP_M = 2, TRACK_SAVE_MS = 3000;
 let savedBootId = null, sessionBootId = null, bootChecked = false;
+// "dLat,dLon,dLat,dLon,..." in microdegrees, from 0,0: a 2 m step is a pair of two- or three-digit numbers.
+function encodeTrack(t){ const out = new Array(2*t.length); let a0 = 0, o0 = 0;
+  for(let i=0;i<t.length;i++){ const a = Math.round(t[i].lat*1e6), o = Math.round(t[i].lon*1e6);
+    out[2*i] = a - a0; out[2*i+1] = o - o0; a0 = a; o0 = o; }
+  return out.join(","); }
+// Total, because it runs at module load: a stored copy that is not what this build wrote gives back the points before
+// the damage, never an exception that would stop the page.
+function decodeTrack(s){ const v = String(s).split(","), t = []; let a = 0, o = 0;
+  for(let i=0;i+1<v.length;i+=2){ a += Number(v[i]); o += Number(v[i+1]);
+    if(!Number.isFinite(a) || !Number.isFinite(o)) break; t.push({lat:a/1e6, lon:o/1e6}); }
+  return t; }
 function loadTrack(){ const raw = lsGet(TRACK_KEY, null);
   if(Array.isArray(raw)) return raw.slice(-MAX_TRACK);                 // legacy (untagged)
-  if(raw && Array.isArray(raw.track)){ savedBootId=raw.bootId||null; return raw.track.slice(-MAX_TRACK); }
+  if(raw && typeof raw.d === "string"){ savedBootId=raw.bootId||null; return decodeTrack(raw.d).slice(-MAX_TRACK); }
+  if(raw && Array.isArray(raw.track)){ savedBootId=raw.bootId||null; return raw.track.slice(-MAX_TRACK); }  // before #21
   return []; }
 let trackSaveTimer=null;
-function saveTrack(){ clearTimeout(trackSaveTimer);      // throttle writes (trail grows fast)
-  trackSaveTimer=setTimeout(()=>lsSet(TRACK_KEY, {bootId:sessionBootId, track}), 800); }
-function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); lsDel(TRACK_KEY); }
+function writeTrack(){ clearTimeout(trackSaveTimer); trackSaveTimer=null;
+  for(let n=track.length; n>0; n=Math.floor(n/2)){
+    try{ localStorage.setItem(TRACK_KEY, JSON.stringify({bootId:sessionBootId, d:encodeTrack(n < track.length ? track.slice(-n) : track)}));
+         return; }
+    catch(e){ if(!/quota/i.test(String(e && (e.name || e.message)))) return; } } }   // storage off: once, not ~15 tries
+function saveTrack(){ if(trackSaveTimer === null) trackSaveTimer = setTimeout(writeTrack, TRACK_SAVE_MS); }
+function flushTrack(){ if(trackSaveTimer !== null) writeTrack(); }
+function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); trackSaveTimer=null; lsDel(TRACK_KEY); }
 // Drop the trail whenever the boot it belongs to is gone. `prev` is what the trail ON
 // SCREEN was drawn under: the RESTORED trail's stored id on the first frame after load,
 // and the live id on every frame after that. One comparison serves both - a page refresh
@@ -1008,6 +1041,9 @@ function checkBoot(id){
   if(prev && sessionBootId && prev !== sessionBootId){ clearTrack(); render(); } }
 let track = loadTrack();                      // restore the trail from the last session
 let asv = null;                              // {lat,lon,hdg}
+// The trail's pending write goes out when the page goes away or out of sight - a reload, a closed tab, a sleeping one.
+addEventListener("pagehide", flushTrack);
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "hidden") flushTrack(); });
 
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
@@ -3077,6 +3113,34 @@ function originPx(){
   return {x: c.x - w/2, y: c.y - h/2};
 }
 function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+// ⚠ A LONG TRAIL IS DRAWN BY WHAT SHOWS, NOT BY EVERY POINT (review #21). Keeping a long day (MAX_TRACK) made drawing
+// the trail cost 9-14 ms a render in the live page with 40,000 points at zoom 13, and render runs on every telemetry
+// frame and every pan. Measured in that page, the time was mostly PROJECTION - 7 ms to put 40,000 points through
+// worldPx, against 2 ms to stroke every seventh of them - so two things:
+// * each point keeps its zoom-0 world position (`wx`, `wy`) from the first time it is drawn: worldPx at zoom z is
+//   exactly that times 2^z, so a render is a multiply and a subtract per point, with no trig and no object made;
+// * a vertex under a pixel from the last one DRAWN is left out, and so is one whose segments on both sides lie beyond
+//   the same edge of the view - tested against the last vertex drawn, not the original neighbor: a run that leaves by
+//   the left and comes back by the top through a corner shares no one edge end to end, and joining its ends straight
+//   would cut across the view. The first point and the boat's end are always drawn.
+function trailScreenPath(pts, zoom, o, w, h){
+  const n = pts.length, out = [];
+  if(n < 2) return out;
+  const k = Math.pow(2, zoom), pad = 4;            // pad: the 2 px line, and a margin
+  const edge = (x, y) => (x < -pad ? 1 : 0) | (x > w + pad ? 2 : 0) | (y < -pad ? 4 : 0) | (y > h + pad ? 8 : 0);
+  let lx = 0, ly = 0, cLast = 0, have = false, nx = 0, ny = 0, cNext = 0;
+  const at = i => { const p = pts[i];
+    if(p.wx === undefined){ const q = worldPx(p.lat, p.lon, 0); p.wx = q.x; p.wy = q.y; }
+    nx = p.wx * k - o.x; ny = p.wy * k - o.y; cNext = edge(nx, ny); };
+  at(0);
+  for(let i = 0; i < n; i++){
+    const x = nx, y = ny, c = cNext;
+    const more = i + 1 < n; if(more) at(i + 1);
+    const skip = have && more && ((cLast & c & cNext) || (Math.abs(x - lx) < 1 && Math.abs(y - ly) < 1));
+    if(!skip){ out.push({x, y}); lx = x; ly = y; cLast = c; have = true; }
+  }
+  return out;
+}
 
 function render(){
   const {w,h} = viewSize();
@@ -3105,7 +3169,7 @@ function render(){
   drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
   if(track.length > 1){
     ctx.beginPath();
-    track.forEach((p,i)=>{ const s = toScreen(p.lat,p.lon); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
+    trailScreenPath(track, zoom, o, w, h).forEach((s,i)=>{ i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
     ctx.strokeStyle = getCSS("--track"); ctx.lineWidth = 2; ctx.globalAlpha = .9; ctx.stroke(); ctx.globalAlpha = 1;
   }
   ctx.font = "10px Consolas,monospace";
@@ -9382,7 +9446,7 @@ function onState(s){
     asv = {lat:st.lat_deg, lon:st.lon_deg, hdg: st.heading_deg!=null?st.heading_deg:null};
     $("#p_pos").textContent = fmtLL(asv.lat, asv.lon);
     const last = track[track.length-1];
-    if(!last || Math.hypot(last.lat-asv.lat, last.lon-asv.lon) > 5e-6){
+    if(!last || distTo(last, asv) >= TRACK_STEP_M){
       track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift(); saveTrack();
     }
     // ⚠ THE SLEW OWNS THE CENTRE WHILE IT FLIES, and this is the line that would take it

@@ -55,25 +55,22 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#20 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13 and #15-#21 built; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #20, pushed; 77 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
-  any of this (hash-checked before every commit). His console was OFF through #20 (nothing on 8790-8799).
+* **STATE:** `master` carries #21, pushed; 78 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
+  any of this (hash-checked before every commit). His console was OFF through #20 and #21 (nothing on 8790-8799).
 * **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
   this handoff), report, WAIT for Andy's "approved", commit, push. Late 2026-09-14 he said, from his iPhone, "Carry on
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20 IS DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried it half-built across
-  the context change is superseded by the commit and was deleted.
+* **#20 AND #21 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`) that carried #20 half-built
+  across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **#21** "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy
-    saves only after 800 ms without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it
-    never saves. A reload mid-survey loses the trail back to the last slow-down."
   * **#22** "There's no history of what the console did. Notes disappear after 4 s, and banners share one slot that
     about 40 different messages overwrite. Add a timestamped list of the last 20 actions to the Mission Status card."
   * **#24** "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." (his
@@ -118,7 +115,40 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #20 - THE LINES TABLE IS PATCHED IN PLACE, NOT REBUILT EVERY FRAME.**
+**NEWEST, 2026-09-15: REVIEW ITEM #21 - THE TRAIL IS SAVED WHILE THE BOAT MOVES, AND A LONG DAY OF IT IS KEPT.**
+Andy: "The trail isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy saves only
+after 800 ms without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it never saves. A reload
+mid-survey loses the trail back to the last slow-down."
+
+* THE SAVE: `saveTrack` was a DEBOUNCE (every point restarted the 800 ms wait). Now a THROTTLE - the first new point arms
+  ONE `writeTrack` `TRACK_SAVE_MS` (3000) later - plus `flushTrack` on `pagehide` and on `visibilitychange` to hidden (wired
+  just below `let asv = null;`, OUTSIDE spawn_trail's lifted block, which ends at that line).
+* THE LENGTH, MEASURED FIRST: across Andy's 189 session logs (413 boots with a fix; telemetry records carry no boot id, so
+  each is filed under the last `state` record's), the longest boot laid 68 km in 8.5 h, then 67 and 56 km; 35 boots passed
+  4 km. A point is laid once `distTo(last, asv) >= TRACK_STEP_M` (2 m; it was 5e-6 DEGREES) and `MAX_TRACK` is 40,000 (80 km).
+* THE STORED COPY: 40,000 `{lat,lon}` are 2 MB of JSON (19 ms to write) in a store browsers cap at a few megabytes per
+  site, with the old quota error swallowed. `encodeTrack` / `decodeTrack` store MICRODEGREE DELTAS under the same key as
+  `{bootId, d}`: 226 KB, 9.7 ms, 0.07 m worst round trip (Node). A quota error halves to the NEWEST half, then a quarter; any
+  other error (storage off) gives up after one try. `loadTrack` still reads the bare-array and `{bootId, track}` shapes;
+  `decodeTrack` is total (it runs at module load), stopping at damage.
+* ⚠ THE LENGTH HAD A COST, AND IT WAS FOUND LIVE, NOT PREDICTED: with 40,000 points restored the trail took 12.9 ms a
+  render (median, zoom 13). A pixel rule and an off-view rule (`trailScreenPath`) took it to 6.6 ms - and the page itself
+  then showed why that was all: PROJECTION was 7 ms of it (40,000 `worldPx` calls) against 2 ms to stroke a seventh of the
+  points. Each point now caches its zoom-0 world position (`wx`, `wy`; worldPx at zoom z is exactly that times 2^z) the
+  first time it is drawn: 2.1 ms (zoom 13), 2.3 (17), 2.6 (19). The off-view rule tests against the LAST VERTEX DRAWN, not
+  the original neighbor - a run leaving by the left and returning by the top through a corner shares no single edge, and
+  joining its ends would cut across the view (13b).
+* Tests: NEW tests/trail_persist.js (16 checks) over a fake clock, a store that refuses by size or refuses everything, and a
+  flat worldPx; spawn_trail.js gains `distTo` in its world and waits `TRACK_SAVE_MS` (read off the page) in 13, not a
+  literal 900 ms. 25 sidecar mutations across both suites, 24 caught; ⚠ "clearTrack does not cancel the armed write" is now
+  an EQUIVALENT mutant (an empty trail writes nothing) - recorded in both TEETH notes rather than propped up with a check.
+* Words: the operations manual's chart paragraph says what is kept and when it is saved.
+* LIVE (port 8796, temp copy running Andy's Eastport plan, the boat spawned on line 1 at 6.9 kn): the stored copy stayed
+  within 1-3 points of the trail on screen for 40 s; 170 points on screen just before a mid-run reload, 170 restored (a
+  probe at `loadTrack`). The old page on the same console: 105 on screen, 65 restored, its stored copy unchanged for 15 s
+  at a time - written only when a frame happened to arrive more than 800 ms after the last.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #20 - THE LINES TABLE IS PATCHED IN PLACE, NOT REBUILT EVERY FRAME.**
 Andy: "The LINES table is rebuilt four times a second. This is the flicker you had fixed on the AIS card; update the cells
 in place instead." `renderLineTable` runs from `onState` on every telemetry frame and assigned the body's whole innerHTML:
 measured on the old page, 50 body rebuilds in 15 s of a running survey, the row node replaced, a text selection lost.
@@ -147,6 +177,7 @@ measured on the old page, 50 body rebuilds in 15 s of a running survey, the row 
   the total edited in place 15 times each (the same text node), the transit row re-rendered twice as the boat moved,
   the row and table the same nodes, and a selection of "9:20" still selected. The old page on the same console: 50
   rebuilds, the row replaced, the selection gone.
+* Verified: all 77 suites through the hook (9 min). Committed and pushed as `a3a1db57`.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #19 - A PREVIEW NEVER LOOKS LIKE THE ROUTE.**
 A punched survey pattern and a clipped search pattern were drawn solid GREEN - the green of the UPLOADED route

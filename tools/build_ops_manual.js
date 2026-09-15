@@ -104,6 +104,7 @@ c.push(P("OPENING A CARD NEVER CHANGES WHAT YOU ARE DRAWING. A card — `LINES`,
 c.push(H1("4  Reading the display"));
 c.push(H2("4.1  The chart"));
 c.push(P("A slippy nautical chart centered on the vessel. `+` / `−` zoom; drag to pan; BOAT re-centers and keeps the vessel centered as it moves. The vessel draws as a filled marker with a heading line. Its track paints behind it and persists across a page refresh within a session — it is dropped when the simulator is power-cycled, because that track belongs to a run that no longer exists."));
+c.push(P("The track keeps a point every 2 meters and the last 80 km of them - longer than the longest day in this console's own session logs (68 km) - and it is saved while the boat moves: every few seconds, and again whenever the page is reloaded, closed or hidden, so a refresh in the middle of a survey brings the whole track back."));
 c.push(P("RIGHT-CLICK ANYWHERE ON THE CHART for a menu of the point commands. Its header shows the position you clicked, and this is where GO-TO, SPAWN and SET HOME now live — they are no longer on the command bar, because each was a two-step control (arm a button, then click the chart) and the menu already carries the point."));
 c.push(TBL(["Row", "Does"], [
   ["Measure distance", "The chart ruler — click, move, click. See 4.5"],
