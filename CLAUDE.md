@@ -55,11 +55,29 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#10 and #16 built, plus the frame race; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-14 — review items #1-#11 and #16 built, plus the frame race; one Eastport question OPEN)
 
 ### ➤ PICK UP HERE
 
-**NEWEST, 2026-09-14: REVIEW ITEM #16 - NO TEST WRITES THE OPERATOR'S FILES.**
+**NEWEST, 2026-09-14: REVIEW ITEM #11 - AN EMPTY PAGE NEVER SAVES OVER A REAL PLAN, AND WHAT DESTROYS WORK ASKS FIRST.**
+#10 took the first half of #11 (the page reads its save's answer). The rest: `loadMission` took any reply - an
+error body, an unreadable answer or a network failure left the page holding its EMPTY default plan with no
+revision, and the operator's first edit saved that over the real one (a no-revision save is accepted by design).
+And in the simulator `guiConfirm` answers yes by itself, so RESET wiped the saved plan and the trail on one click;
+CLR PLAN had no question at all; dropping a held survey's remainder was not asked about either.
+
+* `missionLoaded` (with `missionLoadRetry`, `MISSION_LOAD_RETRY_MS` 3000): set only when `/api/mission` answers
+  200 with a `waypoints` LIST (an empty plan is a plan). Until then `flushMission` saves nothing and banners PLAN
+  NOT SAVED; a failed load banners PLAN NOT LOADED with the reason and retries; the load that succeeds takes that
+  banner down. A later failed RE-load (vessel switch) keeps the plan the page already has.
+* `resetMission()` and `clearPlan()` are named functions now (were inline onclick) so they can be driven;
+  both, and `dropHeldSurvey`, pass `{always: true}`. CLR PLAN names what it deletes and skips the question for
+  an empty plan. Arm / Start / E-STOP still answer themselves in the simulator - they destroy nothing.
+* Tests: plan_save.js 7-11 (checks 1-6 now run on a loaded page). TEETH: 9 sidecar mutations, 9 killed.
+* Next up after approval: #12, the safety loop can fail without any sign (per-frame state handler errors
+  swallowed; the server telemetry loop has no error handling).
+
+**BEFORE THAT, 2026-09-14: REVIEW ITEM #16 - NO TEST WRITES THE OPERATOR'S FILES.**
 Seventeen suites started a console in the app folder, and a console keeps its plan, comms settings, port registry,
 ROC registry and session logs beside the program. Thirteen "protected" mission.json by reading it at the start and
 writing it back at the end - a write of its own, which lost any edit Andy made in his console while the hook ran,
@@ -83,8 +101,7 @@ his plan; log_routes and data_routes wrote test sessions into his logs/.
 * Knock-ons: roc_persist 9 accepts a ConsoleState suite as ROC-isolated; survey_lead 27 and 42 read save_mission
   to the next def instead of a fixed 1400/1600-char window (#10's docstring had pushed the fields past it).
 * Verified: all 68 suites in the scratch clone with its state files fingerprinted before and after - unchanged.
-* Next up after approval: #11's remainder - loadMission accepting an empty reply, RESET wiping the plan with no
-  confirmation in the simulator.
+* Committed and pushed as `2fe00a96` (#10 as `e779cad9` just before it).
 
 **BEFORE THAT, 2026-09-14: REVIEW ITEM #10 - A PLAN SAVE IS CHECKED, MADE AGAINST A REVISION, AND SAID WHEN IT IS NOT KEPT.**
 POST /api/mission saved whatever arrived: an unreadable body came back from `_read_json` as {} and was written as an

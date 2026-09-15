@@ -19,6 +19,14 @@
 // never gave, and Node exited 0 with nothing printed. Every wait is bounded now, and a suite that
 // stops before its summary line reports FAIL 0.
 //
+// REVIEW #11 (7-11): a page that has not loaded the plan saves nothing and retries the load; RESET, CLR PLAN
+// and dropping a held survey ask even in the simulator. TEETH - 9 more sidecar mutations, 9 killed:
+//   saves go before the plan has loaded -> 7      a failed load taken as a plan -> 8, 8b
+//   no retry after a failed load -> 8, 8b         the banner left up after the plan loads -> 8b
+//   an empty plan taken as a failed load -> 5, 8c RESET answered by the simulator again -> 9
+//   CLR PLAN with no question -> 10               CLR PLAN answered by the simulator -> 10
+//   dropping a held survey answered by the simulator -> 11
+//
 // NOTE: no "use strict" - the console's classic browser <script> runs sloppy.
 
 // --- crash guard: a throw outside a check() must still REPORT ------------------------
@@ -66,8 +74,12 @@ function grab(name) {
   for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
   return H.slice(start, k + 1);
 }
-const DECL = (H.match(/^let missionRev = [^;]*;/m) || [])[0];
-if (!DECL) throw new Error("test setup: the missionRev declaration was not found (renamed?)");
+const DECL = ["^let missionRev = [^;]*;", "^let missionLoaded = [^;]*;", "^const MISSION_LOAD_RETRY_MS = [^;]*;"]
+  .map((re) => {
+    const m = H.match(new RegExp(re, "m"));
+    if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
+    return m[0];
+  }).join("\n");
 
 console.log("Saving the plan - against a revision, one at a time, and said when it is not kept:");
 
@@ -98,9 +110,12 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const page = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
     + grab("loadMission") + "\n"
     + "return { saveMission, flushMission, loadMission, get: () => ({ missionRev, missionSaving, "
-    + "missionSaveAgain, missionConflict }), setRev: (v) => { missionRev = v; } }; })()");
+    + "missionSaveAgain, missionConflict, missionLoaded }), setRev: (v) => { missionRev = v; }, "
+    + "setLoaded: (v) => { missionLoaded = v; } }; })()");
 
-  // 1. The revision goes out with the save, and the answer's revision is the next one.
+  // 1. The revision goes out with the save, and the answer's revision is the next one. (Checks 1-6 are
+  // made on a page that HAS loaded its plan - 7 and 8 are the one that has not.)
+  page.setLoaded(true);
   page.setRev(7);
   const f1 = page.flushMission();
   await settle();
@@ -153,7 +168,9 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   // 4. Any other failure is said too, and the next edit tries again. A fresh page: the one above
   // has stopped saving, which is what check 3 wants of it.
   const page2 = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
-    + "return { flushMission, get: () => ({ missionRev, missionConflict }), setRev: (v) => { missionRev = v; } }; })()");
+    + "return { flushMission, get: () => ({ missionRev, missionConflict }), setRev: (v) => { missionRev = v; }, "
+    + "setLoaded: (v) => { missionLoaded = v; } }; })()");
+  page2.setLoaded(true);
   page2.setRev(20);
   banners.length = 0;
   const n2 = calls.length;
@@ -194,7 +211,8 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   // 6. The debounce is kept: a burst of edits is ONE save, 400 ms after the last.
   const n3 = calls.length;
   const page3 = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
-    + "return { saveMission }; })()");
+    + "return { saveMission, setLoaded: (v) => { missionLoaded = v; } }; })()");
+  page3.setLoaded(true);
   page3.saveMission(); page3.saveMission(); page3.saveMission();
   await new Promise((r) => setTimeout(r, 250));
   const early = calls.length - n3;
@@ -203,6 +221,134 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   if (late) answer(calls.length - 1, 200, { ok: true, rev: 1 });
   check("6. a burst of edits is still ONE save, sent after the pause - the revision did not cost the debounce",
         () => early === 0 && late === 1, () => "at 250 ms " + early + " sent; at 550 ms " + late);
+
+  // ── 7-8c. NEVER A PLAN THIS PAGE DID NOT LOAD (review #11) ───────────────────────────────────
+  // A page whose load failed - the console still starting, the plan file locked for a moment - carried on
+  // with an EMPTY plan, and its first edit saved that over the real one.
+  const page4 = eval("(function(){ " + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n"
+    + "return { flushMission }; })()");
+  banners.length = 0;
+  const n4 = calls.length;
+  await within(page4.flushMission());
+  check("7. a page that has NOT loaded the plan saves nothing - it never writes its empty plan over the real one - and says so",
+        () => calls.length === n4 && /PLAN NOT SAVED — this page has not loaded the plan/.test(banners.join(" ")),
+        () => "saves sent " + (calls.length - n4) + "; banner: " + (banners[0] || "none"));
+
+  const timers = [];
+  const els = { "#encbanner": { textContent: "", style: { display: "none" } } };
+  const loadingPage = () => eval("(function(){ const setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };"
+    + " const clearTimeout = () => {}; const $ = (sel) => els[sel] || { value: 0 };"
+    + " const showBanner = (t) => { banners.push(t); els['#encbanner'].textContent = t; els['#encbanner'].style.display = 'block'; };\n"
+    + DECL + "\n" + grab("saveMission") + "\n" + grab("flushMission") + "\n" + grab("loadMission") + "\n"
+    + "return { loadMission, flushMission, get: () => ({ missionLoaded, missionRev }) }; })()");
+  const page5 = loadingPage();
+  const tryLoad = async (p, reply) => {        // reply: [status, body] or "no answer"
+    banners.length = 0;
+    const t0 = timers.length;
+    if (reply === "no answer") fetchFails = true;
+    const f = p.loadMission();
+    await settle();
+    fetchFails = false;
+    if (reply !== "no answer") calls[calls.length - 1].resolve({ ok: reply[0] >= 200 && reply[0] < 300, status: reply[0],
+                                                               json: () => Promise.resolve(reply[1]) });
+    await within(f);
+    return { loaded: p.get().missionLoaded, said: banners.join(" "), retry: timers.slice(t0).map((t) => t.ms) };
+  };
+  const locked = await tryLoad(page5, [503, { error: "mission.json could not be read (locked)" }]);
+  const silent = await tryLoad(page5, "no answer");
+  const notPlan = await tryLoad(page5, [200, { hello: "not a plan" }]);
+  check("8. a load that fails - an error, no answer, or an answer that is not a plan - leaves the page NOT loaded, says "
+        + "why, and tries again in 3 s",
+        () => [locked, silent, notPlan].every((o) => !o.loaded && /PLAN NOT LOADED/.test(o.said) && o.retry.join() === "3000")
+              && /could not be read \(locked\)/.test(locked.said) && /did not answer/.test(silent.said)
+              && /was not a plan/.test(notPlan.said),
+        () => [locked, silent, notPlan].map((o) => "loaded=" + o.loaded + " retry=" + o.retry + " '" + o.said.slice(17, 60) + "'").join(" | "));
+  const nBefore = calls.length;
+  // no retry scheduled (a mutation) must fail 8b, not crash it
+  const lastTimer = timers[timers.length - 1];
+  const retryDone = lastTimer ? lastTimer.fn() : Promise.resolve();
+  await settle();
+  if (calls.length > nBefore) calls[calls.length - 1].resolve({ ok: true, status: 200,
+    json: () => Promise.resolve({ waypoints: [{ lat: 44.9, lon: -67.0 }, { lat: 44.91, lon: -67.0 }], lines: [], rev: 5 }) });
+  await within(retryDone);
+  const bannerAfter = els["#encbanner"].style.display;
+  const fs5 = page5.flushMission();
+  await settle();
+  const sentRev = calls.length > nBefore + 1 ? calls[calls.length - 1].body.rev : "(no save)";
+  if (calls.length > nBefore + 1) calls[calls.length - 1].resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, rev: 6 }) });
+  await within(fs5);
+  check("8b. ... and the retry that succeeds loads the plan, takes the banner down, and saves go again - with its revision",
+        () => page5.get().missionLoaded === true && bannerAfter === "none" && sentRev === 5,
+        () => "loaded=" + page5.get().missionLoaded + " banner " + bannerAfter + " save sent rev " + sentRev);
+  const page6 = loadingPage();
+  const empty = await tryLoad(page6, [200, { waypoints: [], lines: [], rev: 0 }]);
+  check("8c. ... while an EMPTY plan is a plan - no file yet is not a failed load, and nothing is said",
+        () => empty.loaded === true && empty.said === "" && empty.retry.length === 0,
+        () => "loaded=" + empty.loaded + " said '" + empty.said + "' retries " + empty.retry.length);
+
+  // ── 9-11. WHAT DESTROYS WORK ASKS FIRST, IN THE SIMULATOR TOO (review #11) ─────────────────
+  // guiConfirm answers yes by itself in the simulator unless asked with {always: true} - so RESET wiped the
+  // saved plan and the trail on one click, CLR PLAN had no question at all, and dropping a held survey's
+  // remainder was not asked about either. Each is driven with the answer NO, then YES.
+  const asked = [];
+  let answerYes = false;
+  const guiConfirm = (title, msg, opts) => { asked.push({ title, opts: opts || {} }); return Promise.resolve(answerYes); };
+  const posted = [], commanded = [], replaced = [];
+  const resetPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }], lines: [] }, boundary = [], "
+    + "boundaryClosed = false, saveTimer = null; const clearTrack = () => {}, flashNote = () => {}, clearTimeout = () => {};"
+    + " const fetch = (u, o) => { posted.push(JSON.parse(o.body)); return Promise.resolve({ ok: true }); };"
+    + " const cmd = (p) => { commanded.push(p); return Promise.resolve({ ok: true }); };"
+    + " const location = { pathname: '/', replace: (u) => replaced.push(u) };\n"
+    + grab("resetMission") + "\nreturn { resetMission, plan: () => mission }; })()");
+  answerYes = false;
+  await within(resetPage.resetMission());
+  const resetNo = { q: asked[asked.length - 1], posted: posted.length, commanded: commanded.length, replaced: replaced.length,
+                    kept: resetPage.plan().waypoints.length };
+  answerYes = true;
+  await within(resetPage.resetMission());
+  check("9. RESET asks even in the simulator ({always: true}); a NO keeps the plan and sends nothing, a YES clears the plan, "
+        + "power-cycles the boat and reloads",
+        () => resetNo.q && resetNo.q.title === "Reset the mission" && resetNo.q.opts.always === true
+              && resetNo.posted === 0 && resetNo.commanded === 0 && resetNo.replaced === 0 && resetNo.kept === 1
+              && posted.length === 1 && posted[0].waypoints.length === 0 && commanded.join() === "/api/cmd/reset"
+              && replaced.length === 1,
+        () => "no: " + JSON.stringify(resetNo) + "; yes: posted " + posted.length + " commanded " + commanded + " reloaded " + replaced.length);
+
+  const saves = [];
+  const clearPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }, { lat: 1, lon: 3 }], "
+    + "lines: [{ a: { lat: 1, lon: 2 }, b: { lat: 1, lon: 3 } }] }, runRoute = [1], planIntent = {}, runUnsafe = [];"
+    + " const resetPattern = () => {}, render = () => {}, saveMission = () => saves.push(1);\n"
+    + grab("clearPlan") + "\nreturn { clearPlan, plan: () => mission, empty: () => { mission = { waypoints: [], lines: [] }; } }; })()");
+  const q0 = asked.length;
+  answerYes = false;
+  await within(clearPage.clearPlan());
+  const clearNo = { q: asked[q0], kept: clearPage.plan().waypoints.length, saves: saves.length };
+  answerYes = true;
+  await within(clearPage.clearPlan());
+  const clearYes = { cleared: clearPage.plan().waypoints.length === 0 && clearPage.plan().lines.length === 0, saves: saves.length };
+  clearPage.empty();
+  const q1 = asked.length;
+  await within(clearPage.clearPlan());
+  check("10. CLR PLAN asks even in the simulator, naming what it deletes; a NO keeps the plan unsaved, a YES clears and saves - "
+        + "and an EMPTY plan is cleared without a question",
+        () => clearNo.q && clearNo.q.title === "Clear the plan" && clearNo.q.opts.always === true && clearNo.kept === 2
+              && clearNo.saves === 0 && clearYes.cleared && clearYes.saves === 1 && asked.length === q1 && saves.length === 2,
+        () => "no: " + JSON.stringify(clearNo) + "; yes: " + JSON.stringify(clearYes) + "; empty asked " + (asked.length - q1));
+
+  const dropPage = eval("(function(){ let guardHeld = { route: [1, 2, 3], idx: 1 }; const guardLevel = 'hold', clearance = {};"
+    + " const guardHeldOffer = () => guardHeld, flashNote = () => {}, renderGuardBar = () => {};\n"
+    + grab("dropHeldSurvey") + "\nreturn { dropHeldSurvey, held: () => guardHeld }; })()");
+  const q2 = asked.length;
+  answerYes = false;
+  await within(dropPage.dropHeldSurvey());
+  const dropNo = { q: asked[q2], kept: dropPage.held() !== null };
+  answerYes = true;
+  await within(dropPage.dropHeldSurvey());
+  check("11. dropping a held survey's remainder asks even in the simulator; a NO keeps it, a YES forgets it",
+        () => dropNo.q && dropNo.q.title === "Leave the boat holding" && dropNo.q.opts.always === true && dropNo.kept
+              && dropPage.held() === null,
+        () => "no: asked " + (dropNo.q && dropNo.q.title) + " always=" + (dropNo.q && dropNo.q.opts.always) + " kept=" + dropNo.kept
+              + "; yes: held=" + JSON.stringify(dropPage.held()));
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

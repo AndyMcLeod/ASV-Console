@@ -2423,12 +2423,23 @@ let nogoInit = false;                           // one-shot startup extraction g
 // edits made here are not being kept. A save still in flight when the next is due waits for it, so the
 // page cannot race its own revision. Any other failure is said too, and the next edit tries again.
 let missionRev = null, missionSaving = false, missionSaveAgain = false, missionConflict = false;
+// ⚠ AND NEVER A PLAN THIS PAGE DID NOT LOAD (review #11). A page whose load failed - the console still
+// starting, the plan file locked for a moment - carried on with an EMPTY plan, and its first edit saved that
+// over the real one. Until loadMission has read the plan once, this page saves nothing and says so, and it
+// keeps trying to load.
+let missionLoaded = false, missionLoadRetry = null;
+const MISSION_LOAD_RETRY_MS = 3000;
 function saveMission(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushMission, 400);
 }
 async function flushMission(){
   if(missionConflict) return;
+  if(!missionLoaded){
+    showBanner("⚠ PLAN NOT SAVED — this page has not loaded the plan from the console yet, so it will not "
+      + "write over it. Edits made before it loads are not kept.");
+    return;
+  }
   if(missionSaving){ missionSaveAgain = true; return; }
   missionSaving = true;
   try{
@@ -2457,8 +2468,13 @@ async function flushMission(){
   }
 }
 async function loadMission(){
-  try{ const r = await fetch("/api/mission"); const m = await r.json();
-    if(m && m.waypoints){
+  let why = null;
+  try{ const r = await fetch("/api/mission"); const m = await r.json().catch(()=>null);
+    // ONLY A PLAN IS A PLAN (review #11): an error body, an unreadable answer or a network failure is not
+    // an empty plan - see missionLoaded. A genuinely empty plan (no file yet) is a list of no waypoints.
+    if(!(r.ok && m && Array.isArray(m.waypoints))){
+      why = (m && m.error) || (r.ok ? "the console's answer was not a plan" : "the console answered " + r.status);
+    } else {
       // ⚠ `speeds` MUST BE CARRIED THROUGH, and leaving it out of this list is a data-loss
       // bug rather than a missing feature. This rebuild is an explicit whitelist, so a
       // field absent from it is DROPPED - and the migration below then refilled all three
@@ -2485,6 +2501,14 @@ async function loadMission(){
       boundaryClosed = !!m.boundary_closed;
       // The revision the next save is made against (review #10) - null from a console that keeps none.
       missionRev = Number.isInteger(m.rev) ? m.rev : null;
+      // Loaded - set here, before the controls are refreshed, so a control that fails to refresh below
+      // cannot leave a plan that DID load marked as not loaded.
+      if(!missionLoaded){
+        missionLoaded = true;
+        clearTimeout(missionLoadRetry);
+        const b = $("#encbanner");
+        if(b && /PLAN NOT LOADED/.test(b.textContent || "")) b.style.display = "none";
+      }
       $("#c_arrival").value = mission.arrival_radius_m ?? 2;
       $("#c_approach").value = mission.approach_radius_m ?? 1;
       // MIGRATE FORWARD, so an upgrade is a no-op: a mission that only has the legacy
@@ -2520,7 +2544,14 @@ async function loadMission(){
       updateLeadNote(); updateEaseNote();
       // The plan just came back from the server, so the survey card can describe it
       // again - without this, a committed plan reads blank after every page refresh.
-      updatePatReadout(); render(); } }catch(e){}
+      updatePatReadout(); render(); } }catch(e){ if(!missionLoaded) why = why || "the console did not answer"; }
+  if(why != null && !missionLoaded){
+    showBanner("⚠ PLAN NOT LOADED — " + why + ". This page will not save the plan until it has loaded it, so "
+      + "nothing here can write over the plan on the console. Trying again every "
+      + (MISSION_LOAD_RETRY_MS / 1000) + " s.");
+    clearTimeout(missionLoadRetry);
+    missionLoadRetry = setTimeout(loadMission, MISSION_LOAD_RETRY_MS);
+  }
 }
 // --- active vessel: the single source of truth for the boat's parameters ---- //
 // Fetched from /api/vessel (which the server derives from vessels/<id>.json), so
@@ -7427,8 +7458,18 @@ $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo nev
   if(!nogo.ready && !nogo.busy){ refreshNogo(); return; }
   nogoShow=!nogoShow; updateNogoUI(); render();
 };
-$("#ln_clr").onclick = ()=>{ mission.waypoints=[]; mission.lines=[]; resetPattern();
-  runRoute=null; planIntent=null; runUnsafe=[]; saveMission(); render(); };
+// CLR PLAN. ⚠ IT ASKS, IN THE SIMULATOR TOO (review #11): it deletes every waypoint and survey line of the saved
+// plan, and it used to do that on one click with no question at all. An empty plan has nothing to lose, so it
+// is cleared without asking.
+async function clearPlan(){
+  const nW = (mission.waypoints || []).length, nL = (mission.lines || []).length;
+  if((nW || nL) && !await guiConfirm("Clear the plan",
+      "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
+      + "is kept on the console as mission.json.bak1.", {always: true})) return;
+  mission.waypoints=[]; mission.lines=[]; resetPattern();
+  runRoute=null; planIntent=null; runUnsafe=[]; saveMission(); render();
+}
+$("#ln_clr").onclick = clearPlan;
 $("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
 $("#c_approach").onchange = ()=>{
   const v = Math.max(0.5, Math.min(50, parseFloat($("#c_approach").value)||1));
@@ -8912,10 +8953,11 @@ $("#gb_low").onclick = ()=>{
 async function dropHeldSurvey(){
   const g = guardHeldOffer(); if(!g) return;
   const left = Math.max(0, g.route.length - g.idx);
+  // {always: true} - it forgets the survey's remainder, so it asks in the simulator too (review #11).
   if(!await guiConfirm("Leave the boat holding",
       "The " + left + " unflown waypoint(s) of this survey are forgotten. The boat keeps "
       + "station-keeping where it is; to survey them you would re-plan and run again from "
-      + "waypoint one.")) return;
+      + "waypoint one.", {always: true})) return;
   guardHeld = null;
   flashNote("Held survey dropped — the boat is still station-keeping.");
   renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
@@ -8961,10 +9003,13 @@ async function doSpawn(ll){
   flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
   render();
 }
-$("#b_reset").onclick = async ()=>{
+// ⚠ IT ASKS, IN THE SIMULATOR TOO (review #11). This button only exists in the simulator, and there every
+// guiConfirm answered yes by itself - so one click wiped the saved plan and the trail with no question asked.
+async function resetMission(){
   if(!await guiConfirm("Reset the mission",
     "Clears ALL plans and survey / search / transit / Go-To lines and the trail, refills the energy, "
-    +"returns the sim boat to its spawn point, and reloads the page fresh — as if shut down and restarted. (Simulator only.)")) return;
+    +"returns the sim boat to its spawn point, and reloads the page fresh — as if shut down and restarted. (Simulator only.)",
+    {always: true})) return;
   // clear the persisted plan + the trail so the reloaded page comes up clean
   mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
              speed: "survey", completion: "rth", buffer_m: 3};
@@ -8978,7 +9023,8 @@ $("#b_reset").onclick = async ()=>{
   // cache-busting reload: a unique URL can't be served from any browser cache, and the
   // server sends no-store, so the page (all inline JS/CSS) always comes back fresh.
   location.replace(location.pathname + "?cb=" + Date.now());
-};
+}
+$("#b_reset").onclick = resetMission;
 
 // Energy override: click the energy pill (BATT/FUEL) anywhere to toggle "report the
 // energy as full" (and stop the sim drain/burn). Applies in every mode/behaviour,

@@ -562,7 +562,11 @@ Point the console at a non-default service with `--ais http://host:port` (defaul
    page whose copy is older than the plan on disk - another tab, or a window left open - is
    refused rather than writing over the newer plan, and it says **PLAN NOT SAVED** and stops
    saving until it is reloaded. Any other failed save is said too and retried with the next
-   change. And every request the console serves answers: an error in any of them is a 500 in
+   change. A page that could not LOAD the plan - the console still starting, the file locked for a
+   moment - saves nothing until it has, says **PLAN NOT LOADED**, and tries again every 3 s, so an
+   empty page can never be saved over a real plan. And what destroys work asks first even in the
+   simulator, where every other confirmation answers itself: **Reset**, **CLR PLAN** (naming what it
+   deletes) and dropping a held survey's remainder. And every request the console serves answers: an error in any of them is a 500 in
    words, never a dropped connection with nothing in the session log.
 
    **Chart source (`SRC`).** The ENC's answer to a paper chart's title block, as a

@@ -239,7 +239,7 @@ c.push(NOTE("CHECK WHERE YOU PUT IT — RETURN-TO-HOME DRIVES THERE",
 c.push(H2("8.6  Simulator-only controls"));
 c.push(TBL(["Control", "Does"], [
   ["SPAWN HERE (chart menu)", "Right-click a point to place the vessel there — a clean slate where you choose"],
-  ["`Reset`", "Power-cycle the simulator: full energy, back at the profile's spawn, plans cleared, SAFE"],
+  ["`Reset`", "Power-cycle the simulator: full energy, back at the profile's spawn, plans cleared, SAFE. It asks first - the one simulator confirmation that does not answer itself, with CLR PLAN and dropping a held survey"],
   ["energy pill", "Click to report energy as full and stop the drain, for rehearsing a long mission quickly"],
 ], [1500, 7860]));
 
@@ -283,7 +283,7 @@ c.push(TBL(["Gesture", "Does"], [
 c.push(H2("9.7  The LINES table"));
 c.push(P("`LINES` opens a per-line table: length, planned time at the plan speed, and — once running — the ACTUAL time accrued on each line. Actuals are keyed to the leg the vessel is genuinely on, so a transit across or alongside a line does not bank time against it. The table is written into the session record when the run ends."));
 c.push(H2("9.8  Committing"));
-c.push(P("`Add to plan` commits the lines and waypoints. The plan persists on the server, so a browser refresh does not lose it. `CLR PLAN` clears it. Each time the plan's lines or waypoints change, the previous plan is kept beside it in the console folder — mission.json.bak1 is the newest, back to mission.json.bak5 — so a plan cleared or overwritten by mistake can be recovered. The plan also carries a revision: if it was changed from another tab or window after this page loaded it, this page's next save is refused and a banner says PLAN NOT SAVED - reload the page to pick up the newer plan before editing again. Any other save that fails is also said, and is tried again with your next change."));
+c.push(P("`Add to plan` commits the lines and waypoints. The plan persists on the server, so a browser refresh does not lose it. `CLR PLAN` clears it, after asking - it names how many waypoints and survey lines it will delete. Each time the plan's lines or waypoints change, the previous plan is kept beside it in the console folder — mission.json.bak1 is the newest, back to mission.json.bak5 — so a plan cleared or overwritten by mistake can be recovered. The plan also carries a revision: if it was changed from another tab or window after this page loaded it, this page's next save is refused and a banner says PLAN NOT SAVED - reload the page to pick up the newer plan before editing again. Any other save that fails is also said, and is tried again with your next change. If the page could not LOAD the plan when it opened - the console still starting, say - it says PLAN NOT LOADED, saves nothing until it has, and tries again every few seconds, so an empty page never overwrites your plan."));
 c.push(P("Committing removes the draggable pattern overlay, but THE CARD KEEPS DESCRIBING THE PLAN — spacing, direction, line length, across-plan width and line count stay on it through Upload and across a page refresh, so you can check what you are about to run. The figures are read back off the committed lines, so if you edit the plan in `WPT` mode they describe what the plan now IS. They clear when the plan does, with `CLR PLAN`."));
 c.push(P("The survey panel's own `Reset` discards only a pattern you are part-way through drawing. A plan already committed is untouched, and the card goes back to describing it."));
 
