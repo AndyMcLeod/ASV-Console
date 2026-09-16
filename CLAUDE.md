@@ -64,7 +64,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 * **ANDY: "the supervisory tab process is broken. Look at current running instance and fix it."** Fixed in one commit
   (the newest block below). He declined a screen view twice; the diagnosis came from his session recording,
   `logs/asv_20260916-082026.jsonl`, and was then reproduced and checked on a throwaway console in headless Edge.
-* **STATE:** `master` carries the fix, `34326641`, pushed; 89 suites (all green through the hook); his mission.json / ports.json / comms_config.json
+* **STATE:** `master` carries the fix, `34326641`, and the route-order write-up, `18033a5b`, both pushed; 89 suites (all green through the hook); his mission.json / ports.json / comms_config.json
   hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
   pattern he drew that morning); that is his work, not ours.
 * **⚠ HOW IT GOES LIVE ON HIS MACHINE - SAY THIS TO HIM EVERY TIME:** his console (started 08:20 with `--sim`) runs
@@ -156,6 +156,8 @@ rule they state. "Uploaded" was read as the plan built in the console and sent w
   the order added; a survey line that the model now blocks gets a detour at Upload and stops counting as a line.
 * The stale `regionOrder` header ("Option 1 flags rather than auto-routing around") is corrected - punchOut never used
   its `unsafe`. Docs rebuilt; pages not rasterized (no LibreOffice); text read back out of both built manuals.
+  Commit `18033a5b`, pushed. Andy's own edit to the technical manual that evening (one comma, 8.1) was ported into
+  the builder first - his saved copy is in that session's scratchpad, not the repo.
 
 **BEFORE THAT, 2026-09-16: "THE SUPERVISORY TAB PROCESS IS BROKEN" - REVIEW #14 AS BUILT FOUGHT THE CONSOLE'S OWN TWO WINDOWS.**
 His console had run #14 for twelve minutes when he said it. The recording shows the post changing hands TEN times,
