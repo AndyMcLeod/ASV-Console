@@ -67,7 +67,7 @@ function makeWorld() {
     .map((id) => Object.assign(el(id), { className: "cbtn" }));
   const els = { "#supPill": el("supPill"), "#encbanner": el("encbanner"), "#note": el("note") };
   const posts = [], banners = [], notes = [], recorded = [];
-  let clock = 1000000;
+  let clock = 1000000, visibility = "hidden";        // a tab that missed its beats was, as a rule, not on screen
   const body = [
     "\"use strict\";",
     "const $ = (s) => els[s] || null;",
@@ -90,13 +90,14 @@ function makeWorld() {
   const w = new Function("els", "document", "fetch", "posts", "banners", "notes", "recorded", "Date", "setInterval",
                          "addEventListener", "navigator", "crypto", body)(
     els,
-    { querySelectorAll: (sel) => (sel === ".cbtn" ? buttons : []) },
+    { querySelectorAll: (sel) => (sel === ".cbtn" ? buttons : []), get visibilityState() { return visibility; } },
     (url, opt) => { posts.push({ url, opt }); return Promise.resolve({ ok: true, status: 200,
                                                                       json: async () => ({ ok: true }) }); },
     posts, banners, notes, recorded,
     { now: () => clock }, () => {}, () => {}, { sendBeacon: () => true }, { randomUUID: () => "this-tab" });
   return Object.assign(w, { els, buttons, posts, banners, notes, recorded,
-                            advance: (ms) => { clock += ms; } });
+                            advance: (ms) => { clock += ms; },
+                            show: (v) => { visibility = v; } });
 }
 
 // 1-2. a tab that has the post commands; one that does not is refused HERE, in words
@@ -169,7 +170,7 @@ W7.supervisorTick();                                  // the first beat: nothing
 W7.advance(2000); W7.supervisorTick();                // a normal beat
 const quietBanners = W7.banners.length;
 W7.advance(45000); W7.supervisorTick();               // the browser slept this tab for 45 s
-const slept = W7.banners.filter((b) => /STOPPED RUNNING/.test(b));
+const slept = W7.banners.filter((b) => /WAS ASLEEP/.test(b));
 const throttlePost = W7.posts.filter((p) => p.url === "/api/logevent"
   && /page_throttled/.test(String(p.opt && p.opt.body)));
 check("7. a tab that stopped running says so when it comes back - with how long it was gone - and writes it to the "
@@ -180,6 +181,23 @@ check("7. a tab that stopped running says so when it comes back - with how long 
 check("7b. ... and a beat goes out on every tick, asleep or not, so the console can see the tab is back",
       () => W7.posts.filter((p) => p.url === "/api/supervisor").length === 3,
       () => W7.posts.filter((p) => p.url === "/api/supervisor").length + " beats sent");
+
+// 7c. ONE EVENT, ONE BANNER: a VISIBLE page that stopped is a stall, and review #29's watchdog says that in its own
+// words with what the page was doing. The record is still written here, because only this one knows whether the tab
+// that stopped was the supervising one.
+const W7c = makeWorld();
+W7c.show("visible");
+W7c.applySupervisor({ holder: W7c.CLIENT_ID, stale: false, tabs: 1 });
+W7c.supervisorTick();
+W7c.advance(2000); W7c.supervisorTick();
+W7c.advance(45000); W7c.supervisorTick();
+check("7c. ... and a VISIBLE page that stopped does not ALSO say it here - that is a stall, review #29 says it with "
+      + "what the page was doing, and two banners for one freeze is one too many. The record is written either way",
+      () => W7c.banners.filter((b) => /WAS ASLEEP/.test(b)).length === 0
+            && W7c.posts.filter((p) => p.url === "/api/logevent"
+                 && /page_throttled/.test(String(p.opt && p.opt.body))).length === 1,
+      () => W7c.banners.length + " banner(s); "
+            + W7c.posts.filter((p) => /page_throttled/.test(String(p.opt && p.opt.body))).length + " record(s)");
 
 // 8. wiring: what the guard and the governor do about it, and the way out
 check("8. the guard and the speed governor ACT only in the supervising tab - they still assess, draw and alarm, which "

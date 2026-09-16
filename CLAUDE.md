@@ -55,13 +55,13 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — review items #1-#13, #15-#22 and #24-#27 built; one Eastport question OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-15 — every review item but #28 and #30 is built; the Eastport question is OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries review #23, pushed; 86 suites; Andy's mission.json / ports.json /
+* **STATE:** `master` carries review #29, pushed; 88 suites; Andy's mission.json / ports.json /
   comms_config.json unchanged by any of this (hash-checked before every commit). His console was OFF throughout
   (nothing on 8790-8799).
   **Everything in this file from before 2026-09-05 is in `HANDOFF_ARCHIVE.md` now (review #26) - see the pointer
@@ -77,7 +77,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   account details). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Still open:** #24's retention question, #23 and #14 are ANSWERED and built (below); what is left is
+  * **Still open:** #24's retention question, #23, #14 and #29 are ANSWERED and built (below); what is left is
     #28 the Eastport north-west line (his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
     isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
@@ -107,7 +107,31 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #14 - ONE TAB IS IN CHARGE.**
+**NEWEST, 2026-09-15: REVIEW ITEM #29 - A PAGE THAT STOPS RESPONDING LEAVES EVIDENCE.**
+Andy reported the page hanging while placing survey corners A / B / C. It has never been isolated - it was first seen
+under SYNTHETIC clicks, which is itself the prime suspect, and it has not been reproduced on demand since.
+
+* ⚠ SO NOTHING HERE FIXES IT. Guessing at a cause nobody can reproduce would have been the worst of both: a change
+  with no evidence behind it, and a report still unexplained. What the console does now is make the NEXT one
+  diagnosable. `stallWatch` runs on its own `setInterval` - not on the telemetry frames, which is the thing it exists
+  to outlive - and measures how late it was.
+* A VISIBLE page gone longer than `STALL_MS` (1.5 s) writes `page_stall` with the gap AND the state that would name
+  the cause: the editing `mode`, which pattern corners were down (`pattern_anchors`), the punched runs, waypoints,
+  lines, boundary, route, track, keep-out zone count, zoom, run state and the operator's last action. Over
+  `STALL_SAY_MS` (5 s) it also says so on screen, once per half minute.
+* ⚠ A HIDDEN TAB IS NOT A STALL - a browser throttles a background tab deliberately, which is review #14's
+  `page_throttled`. ⚠ AND ONE EVENT GETS ONE BANNER: #14's "THIS TAB WAS ASLEEP" is now said only when the tab was
+  actually hidden, because a visible freeze is this watchdog's to report, in its own words.
+* LIVE, blocking the page's main thread for 6.5 s on the temp console: `page_stall` recorded
+  `{gap_ms: 7521, mode: "pan", nogo: 1308, zoom: 13, run: "idle", ...}` and the banner read "THE PAGE STOPPED
+  RESPONDING for 7.5 s (pan mode)". ⚠ THE FIRST LIVE RUN SHOWED A FLAW THE SUITE DID NOT: `last_action` was reading
+  the newest HISTORY line, which is often a banner the page posted to itself - including this watchdog's own. It skips
+  banners now. (The in-app browser pane reports the page HIDDEN when it is not on screen, which is why the hidden
+  branch had to be proved first and the visible one with `visibilityState` overridden.)
+* Tests: tests/frame_health.js 9-12b (10 mutations, 10 caught). Words: README, the operations manual's 15.1, the
+  technical manual's GUARDS, the hook's advice.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #14 - ONE TAB IS IN CHARGE.**
 Andy: "All supervision lives in one browser tab", with three options named - a heartbeat with a server alarm or hold,
 one controlling page with the others view-only, or excluding the console from Edge's sleeping tabs. ALL THREE, minus
 the hold: the post is held by one tab, the others are view-only, a lapse is an ALARM, and the browser's own setting is

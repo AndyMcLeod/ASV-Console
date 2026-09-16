@@ -8831,8 +8831,11 @@ function supervisorTick(){
   if(supLastBeat && now - supLastBeat > SUPERVISOR_SLEPT_MS){
     const gap = Math.round((now - supLastBeat) / 1000);
     const wasSupervising = supervising();
-    if(wasSupervising)
-      showBanner("⚠ THIS TAB STOPPED RUNNING for " + gap + " s — its clearance guard and speed governor were not "
+    // ⚠ ONE EVENT, ONE BANNER. A VISIBLE page that stopped is a STALL, and stallWatch (review #29) says that in its
+    // own words with what the page was doing; saying both would be two banners for one freeze. The record is written
+    // either way, because only this one knows whether the tab that stopped was the supervising one.
+    if(wasSupervising && document.visibilityState !== "visible")
+      showBanner("⚠ THIS TAB WAS ASLEEP for " + gap + " s — its clearance guard and speed governor were not "
         + "running while it slept. Nothing was stopped and the vessel kept its own safety systems; read the chart and "
         + "the Mission Status card before relying on this tab again.");
     fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -9834,6 +9837,52 @@ function storageCheck(){
     if(b && (b.textContent || "").indexOf(STORAGE_WARN_PREFIX) === 0) b.style.display = "none";
   }
 }
+// --- THE PAGE'S OWN WATCHDOG: A STALL IS RECORDED (review #29, 2026-09-15) --------------- //
+// Andy reported the page hanging while placing survey corners A / B / C, and it has never been isolated - it was first
+// seen under SYNTHETIC clicks, which is itself a suspect, and it has not been reproduced on demand since. So this does
+// not try to fix a fault nobody can produce. It makes the NEXT one leave evidence: a timer that should fire every
+// STALL_TICK_MS records how late it actually was, with what the page was doing when the main thread stopped - the
+// editing mode, which pattern anchors were down, how much geometry was on the chart, and the operator's last action.
+// ⚠ IT MEASURES THE MAIN THREAD, NOT THE CONSOLE. A stall here is the BROWSER not getting round to us; telemetry
+// staleness is consoleHealth's job and the two must not be confused in the record.
+// ⚠ AND A HIDDEN TAB IS NOT A STALL - a browser throttles a background tab deliberately, which review #14 records as
+// page_throttled. Only a VISIBLE page stopping counts here.
+const STALL_TICK_MS = 500, STALL_MS = 1500, STALL_SAY_MS = 5000, STALL_SAY_EVERY_MS = 30000;
+let stallLast = 0, stallSaidAt = 0;
+function stallContext(gap){
+  const m = (typeof mission === "object" && mission) || {};
+  const ko = (nogo && nogo.ko) || {};
+  const anchors = ["A", "B", "C"].filter(k => pat && pat[k]).join("") || "none";
+  return {gap_ms: Math.round(gap), mode: mode, pattern_anchors: anchors,
+          pattern_runs: (patClip || []).length,        // the punched runs on the chart, which is the heavy geometry
+          waypoints: (m.waypoints || []).length, lines: (m.lines || []).length,
+          boundary: (m.boundary || []).length, route: (runRoute || []).length, track: (track || []).length,
+          nogo: ((ko.polys || []).length + (ko.lines || []).length + (ko.points || []).length),
+          zoom: zoom, run: (S && S.run) || null,
+          // the last thing the OPERATOR did, skipping the banners the page posts to itself - including this
+          // watchdog's own, which was otherwise the "last action" of the next stall (seen in the live check)
+          last_action: (() => { const a = (actionLog || []).find(x => x && x.kind !== "banner");
+                                return a ? a.label : null; })()};
+}
+function stallWatch(){
+  const now = Date.now();
+  const gap = stallLast ? now - stallLast : 0;
+  stallLast = now;
+  if(gap <= STALL_MS || document.visibilityState !== "visible") return;
+  const ctx = stallContext(gap);
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"page_stall", data: ctx})}).catch(()=>{});
+  console.warn("[asv] the page stalled for " + gap + " ms", ctx);
+  // Said only when it is long enough to have been felt, and not more than once every half minute: the operator
+  // reporting "it hung" is the thing this exists to turn into a record, not a thing to interrupt them about.
+  if(gap >= STALL_SAY_MS && now - stallSaidAt > STALL_SAY_EVERY_MS){
+    stallSaidAt = now;
+    showBanner("⚠ THE PAGE STOPPED RESPONDING for " + (gap / 1000).toFixed(1) + " s (" + mode + " mode). It is running "
+      + "again and nothing was commanded while it was stopped. What it was doing has been written to the session log.");
+  }
+}
+setInterval(stallWatch, STALL_TICK_MS);
+
 // ⚠ THE PAGE AND THE PROGRAM MUST BE THE SAME VERSION (review #15, 2026-09-14). The page and its modules are read
 // from disk on every request, but the console's Python only when it starts - so a refresh after a commit or an edit
 // paired a NEW page with the OLD program: fields the page sent were dropped, routes it called answered 404, and

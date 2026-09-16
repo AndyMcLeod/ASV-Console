@@ -573,6 +573,15 @@ asleep says how long it was gone and writes `page_throttled` to the session log;
 console out of Edge's sleeping tabs (Settings → System and performance → "Never put these
 sites to sleep") (`tests/supervisor.py`, `tests/supervisor_page.js`).
 
+**And a page that stops responding leaves evidence.** A watchdog on its own timer measures how
+late it was, so a freeze the operator felt becomes a record instead of a memory: a VISIBLE page
+gone for more than 1.5 s writes `page_stall` with the gap, the editing mode, which pattern
+corners were down, how much geometry was on the chart (waypoints, lines, route, track, keep-out
+zones, zoom) and the operator's last action; over 5 s it also says so on screen, once per half
+minute. A HIDDEN tab going quiet is not a stall — that is the throttle above. This does not fix
+the hang reported while placing survey corners, which has never been reproduced on demand; it
+makes the next one diagnosable (`tests/frame_health.js`).
+
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
    3-click survey pattern**: click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the

@@ -23,6 +23,13 @@
 //   the console's loop fault not said -> 6, 6b     a page fault hides the console's -> 6b
 //   stale does not replace the faults -> 6b        the pill still says ok when stale -> 4
 //   the old swallow-everything handler -> 8
+// TEETH for 9-12b (review #29, the page's own watchdog) - 10 sidecar mutations, 10/10 caught:
+//   a stall is never recorded -> 10, 11, 12           every tick is a stall (no threshold) -> 9, 10, 11, 12
+//   a hidden tab counts as a stall -> 11, 12          the record says how long but not what the page was doing -> 10
+//   the last thing the operator did is left out -> 10 the pattern corners are left out -> 10
+//   a felt stall is never said -> 12                  said on every stall, however short -> 10, 11, 12
+//   said again and again while it keeps happening -> 12
+//   the watchdog rides the telemetry frames it is meant to outlive -> 12b
 //
 // NOTE: the page's script is <script type="module">, which runs STRICT - so the functions under test are evaluated
 // strict here too, where an assignment to an undeclared name throws exactly as it would on the page.
@@ -212,6 +219,75 @@ check("8. connect() hands every message to onFrame and checks the console's heal
       () => /es\.onmessage = onFrame;/.test(conn) && /setInterval\(consoleHealth, 1000\)/.test(conn)
             && !/catch\(e\)\{\}/.test(conn),
       () => conn.replace(/\s+/g, " ").slice(0, 160));
+
+// ── 9-12. THE PAGE'S OWN WATCHDOG: A STALL LEAVES EVIDENCE (review #29, 2026-09-15) ──────────────────
+// Andy reported the page hanging while placing survey corners A / B / C. It has never been isolated - it was first
+// seen under SYNTHETIC clicks, which is itself a suspect - so nothing here fixes it. What it does is make the NEXT
+// one leave a record: how long the main thread was gone, and what the page was doing when it went.
+const STALL_DECLS = ["^const STALL_TICK_MS = [^;]*;", "^let stallLast = [^;]*;"]
+  .map((re) => {
+    const m = H.match(new RegExp(re, "m"));
+    if (!m) throw new Error("test setup: declaration " + re + " not found (renamed?)");
+    return m[0];
+  }).join("\n");
+let sclock = 5e8, visible = "visible";
+const sbanners = [], slogged = [];
+// eslint-disable-next-line no-eval
+const stall = eval("(function(){ \"use strict\";"
+  + " const Date = { now: () => sclock };"
+  + " const document = { get visibilityState(){ return visible; } };"
+  + " const fetch = (url, opts) => { slogged.push({ url, body: JSON.parse(opts.body) }); return Promise.resolve({ ok: true }); };"
+  + " const console = { warn: () => {} };"
+  + " const showBanner = (t) => { sbanners.push(t); };"
+  + " let mode = 'survey'; const pat = { A: {}, B: {}, C: null }; const patClip = [[1], [2]];"
+  + " const mission = { waypoints: new Array(212), lines: new Array(9), boundary: [] };"
+  + " const nogo = { ko: { polys: new Array(40), lines: new Array(5), points: new Array(3) } };"
+  + " const runRoute = new Array(645), track = new Array(1200), zoom = 15, S = { run: 'running' };"
+  // newest first, and the newest is a BANNER the page posted to itself - which is what the operator did NOT do
+  + " const actionLog = [{ kind: 'banner', label: '3 transit(s) auto-routed' }, { kind: 'cmd', label: 'Pattern corner B' }];\n"
+  + STALL_DECLS + "\n" + grab("stallContext") + "\n" + grab("stallWatch") + "\n"
+  + "return { stallWatch, setMode: (m) => { mode = m; } }; })()");
+const stallTick = (ms) => { sclock += ms; stall.stallWatch(); };
+
+stallTick(0); stallTick(500); stallTick(500);
+check("9. a page that is keeping up records nothing - the watchdog is not a metronome writing a line every half second",
+      () => slogged.length === 0 && sbanners.length === 0,
+      () => slogged.length + " record(s), " + sbanners.length + " banner(s)");
+
+stallTick(2200);
+const rec = slogged[0] && slogged[0].body;
+check("10. a VISIBLE page that stopped for longer than STALL_MS writes page_stall - with how long, what mode it was "
+      + "in, which pattern corners were down, how much geometry was on the chart, and the last thing the operator did",
+      () => slogged.length === 1 && rec.kind === "page_stall" && rec.data.gap_ms === 2200
+            && rec.data.mode === "survey" && rec.data.pattern_anchors === "AB" && rec.data.pattern_runs === 2
+            && rec.data.waypoints === 212 && rec.data.lines === 9 && rec.data.route === 645
+            && rec.data.nogo === 48 && rec.data.track === 1200 && rec.data.zoom === 15
+            // the last thing the OPERATOR did, not the last banner the page posted to itself - and this watchdog's
+            // own banner was that banner, in the live check, for every stall after the first
+            && rec.data.last_action === "Pattern corner B" && sbanners.length === 0,
+      () => JSON.stringify(rec && rec.data).slice(0, 170));
+
+visible = "hidden";
+stallTick(9000);
+check("11. a HIDDEN tab going quiet is not a stall - a browser throttles a background tab on purpose, and review "
+      + "#14's page_throttled is where that belongs",
+      () => slogged.length === 1 && sbanners.length === 0,
+      () => slogged.length + " record(s) after 9 s hidden");
+
+visible = "visible";
+stallTick(9000);
+const said = sbanners.length;
+stallTick(9000);
+check("12. a stall long enough to be FELT is said once, in the operator's words, and not again every time it "
+      + "happens in the next half minute",
+      () => said === 1 && /STOPPED RESPONDING for 9\.0 s \(survey mode\)/.test(sbanners[0])
+            && /nothing was commanded/.test(sbanners[0]) && sbanners.length === 1 && slogged.length === 3,
+      () => (sbanners[0] || "(nothing said)").slice(0, 110));
+
+check("12b. and it is WIRED: the watchdog runs on its own timer, not off the telemetry frames it is there to "
+      + "outlive",
+      () => /setInterval\(stallWatch, STALL_TICK_MS\)/.test(H),
+      "a frame-driven watchdog cannot see the page stop between frames");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
