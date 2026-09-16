@@ -300,6 +300,10 @@
        see openChartMenu(). -->
   <div id="chartMenu" class="cmenu">
     <div class="cmhd" id="cmPos">--</div>
+    <!-- WHAT IS THIS LINE? (review #28): the console draws seven things that look like lines and only their colour
+         tells them apart. This row names the layer under the click. It reads; it commands nothing, so it is never
+         gated on the link, the arm state or which tab is supervising. -->
+    <div class="cmi" id="cmWhat"><span>What is this line?</span><span class="cmk" id="cmWhatK">names the layer</span></div>
     <div class="cmi" id="cmMeasure"><span id="cmMeasureLbl">Measure distance</span><span class="cmk" id="cmMeasureK"></span></div>
     <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
     <div class="cmsep"></div>
@@ -7487,6 +7491,102 @@ function cmGate(rowId, allowed, why){
   const k = row.querySelector(".cmk"); if(k) k.textContent = off ? why : "";
   return !off;
 }
+// --- WHAT IS THIS LINE? (review #28, 2026-09-15) ----------------------------------------- //
+// Andy, on his own console at Eastport: "This should be a simple survey pattern. What is the story with the line
+// heading out to the northwest?", then "there is a line drawn from buoy 7 to buoy 9", then "its a green dashed line
+// like a survey line". THAT question is a LAYER question, and it cost most of a session to answer by inference: the
+// console draws seven things that look like lines, and only their COLOUR and DASH tell them apart (review #19 made
+// the pattern preview cyan and labelled it for the same reason). Whatever that particular line was, the operator
+// should never have to ask a second time - so the chart answers it: right-click the line and the console says which
+// layer it is, in the same words the legend uses, with what to do about it.
+// ⚠ IT READS, IT DOES NOT COMMAND. This row is available with no link, disarmed, in any tab, view-only included.
+const IDENTIFY_PX = 14;                     // how near the click must be, in screen pixels, at any zoom
+function idScreen(ll){ const o = originPx(), p = worldPx(ll.lat, ll.lon, zoom); return {x: p.x - o.x, y: p.y - o.y}; }
+function idSegDist(p, a, b){                // point-to-SEGMENT in screen pixels, clamped to the ends
+  const vx = b.x - a.x, vy = b.y - a.y, wx = p.x - a.x, wy = p.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, (wx * vx + wy * vy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
+/** The drawn thing nearest the point, or null: {layer, what, d}. Ordered by what an operator is most likely asking
+ *  about, and ties go to the nearer one - a survey line under the trail is still the survey line. */
+function identifyAt(ll){
+  const P = idScreen(ll);
+  let best = null;
+  const at = (pt) => idScreen(pt);
+  const consider = (d, layer, what) => { if(d <= IDENTIFY_PX && (!best || d < best.d)) best = {d, layer, what}; };
+  const scan = (pts, closed, layer, what) => {           // a polyline, as screen points
+    for(let i = 0; i + 1 < pts.length; i++) consider(idSegDist(P, pts[i], pts[i + 1]), layer, what);
+    if(closed && pts.length > 2) consider(idSegDist(P, pts[pts.length - 1], pts[0]), layer, what);
+  };
+  // 1. the committed survey lines - YELLOW, the only lines the vessel will actually run
+  for(let k = 0; k < (mission.lines || []).length; k++){
+    const L = mission.lines[k];
+    if(!L || !L.a || !L.b) continue;
+    const d = idSegDist(P, at(L.a), at(L.b));
+    consider(d, "survey", "a COMMITTED survey line — L" + lineNo(k) + " of " + lineCount() + linePartTxt(k)
+      + ", " + fmtDist(distTo(L.a, L.b)) + " long, heading " + Math.round(azTo(L.a, L.b)) + "°. Yellow: this is the "
+      + "plan, and the vessel will run it.");
+  }
+  // 2. the uploaded route - GREEN, and the ONLY green line: what the boat is actually flying
+  if((runRoute || []).length > 1)
+    scan(runRoute.map(at), false, "route", "the UPLOADED ROUTE the vessel is running — " + runRoute.length
+      + " waypoints, green. This is what is on the boat, turns and transits included.");
+  // 3. the pattern preview - CYAN, drawn straight over whatever is committed, and NOT in the plan. This is the layer
+  //    that produced the Eastport question, and the answer names the control that clears it.
+  for(const seg of (patClip || [])){
+    if(!seg || seg.length < 2) continue;
+    scan(seg.map(at), false, "preview",
+      "the PATTERN PREVIEW, which is NOT in the plan — cyan, redrawn from the A / B / C anchors every time they move. "
+      + "It is not committed and the vessel will not run it: press ADD TO PLAN to commit it, or SURV then RESET to "
+      + "clear the anchors and the preview with them.");
+  }
+  // 4. the survey-area boundary the pattern is clipped to (the LIVE one the page holds, not the saved copy)
+  if((boundary || []).length > 1)
+    scan(boundary.map(at), !!boundaryClosed, "boundary",
+      "the SURVEY AREA boundary — the polygon the pattern is clipped to, not a line the vessel runs. CLR BND clears it.");
+  // 5. a measurement the operator drew - MAGENTA, the mariner's own ink, never uploaded
+  for(const m of measures.concat(measPend && measPend.b ? [measPend] : [])){
+    if(!m || !m.a || !m.b) continue;
+    consider(idSegDist(P, at(m.a), at(m.b)), "measure", "a MEASUREMENT you drew — " + fmtDist(distTo(m.a, m.b))
+      + ", " + String(Math.round(azTo(m.a, m.b))).padStart(3, "0") + "° true, magenta. It is an annotation: never "
+      + "uploaded, never saved, and Escape clears it.");
+  }
+  // 6. the vessel's own trail
+  if((track || []).length > 1)
+    scan(track.map(at), false, "trail", "the VESSEL'S TRAIL — where she has been since this boot, blue. It is a "
+      + "record, not a plan; a respawn drops it.");
+  // 7. the keep-out model, last: it is drawn under everything and is the least likely question.
+  // ⚠ IT LIVES IN THE CONSOLE'S FLAT PLANE, NOT IN LAT/LON, and its entries are {pts} / {ring} rather than bare
+  // arrays - the model is built in EN because every clearance test is metric. Reading it as lat/lon found NOTHING,
+  // silently, and the suite agreed because its fixture had copied the shape from this code instead of from the model.
+  // The live check is what caught it: a grid of clicks over New Castle's 1,306 zones identified not one.
+  const ko = (nogo && nogo.ko) || {}, fr = nogo && nogo.frame;
+  if(fr){
+    // ⚠ AND THE MODEL'S OWN BOUNDING BOXES DO THE SKIPPING. Measured live at New Castle, 778 lines + 300 areas:
+    // 210-320 ms a click without this, which is a visible pause on a menu row - and review #29 exists because the
+    // page froze. `inBB` is the model's own test, with the reach converted from pixels to metres at this zoom.
+    const en = fr.toEN(ll);
+    const mPerPx = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+    const reach = IDENTIFY_PX * mPerPx + 1;
+    const enAt = (p) => at(fr.fromEN(p.e, p.n));
+    for(const L of (ko.lines || [])) if(L && (L.pts || []).length > 1 && (!L.bb || inBB(en, L.bb, reach)))
+      scan(L.pts.map(enAt), false, "keepout",
+        "a KEEP-OUT the console routes around — a charted structure or shoal edge, red. It is not something the "
+        + "vessel runs; the plan is kept clear of it by the buffer on the SURV card.");
+    for(const A of (ko.polys || [])) if(A && (A.ring || []).length > 2 && (!A.bb || inBB(en, A.bb, reach)))
+      scan(A.ring.map(enAt), true, "keepout",
+        "the edge of a KEEP-OUT AREA — water the console will not take the vessel into, red.");
+  }
+  return best;
+}
+function sayWhatIsHere(ll){
+  const hit = identifyAt(ll);
+  showBanner(hit ? "◈ " + hit.what
+                 : "◈ Nothing the console drew is within " + IDENTIFY_PX + " pixels of that point — no survey line, "
+                   + "route, preview, boundary, measurement, trail or keep-out edge. Try clicking nearer the line.");
+}
+
 function openChartMenu(clientX, clientY, ll){
   if(!cmenuEl) return;
   menuLL = {lat: ll.lat, lon: ll.lon};
@@ -7525,6 +7625,7 @@ cmRow("#cmMeasure", ()=>{
     ? "Measure: click a point, move, click again. Esc clears. Dragging still pans."
     : "Measure tool off.");                        // (setMode already re-rendered)
 });
+cmRow("#cmWhat",  ll => sayWhatIsHere(ll));
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
 cmRow("#cmHome",  ll => doSetHome(ll));

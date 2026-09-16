@@ -61,7 +61,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries review #29, pushed; 88 suites; Andy's mission.json / ports.json /
+* **STATE:** `master` carries review #28, pushed; 89 suites; Andy's mission.json / ports.json /
   comms_config.json unchanged by any of this (hash-checked before every commit). His console was OFF throughout
   (nothing on 8790-8799).
   **Everything in this file from before 2026-09-05 is in `HANDOFF_ARCHIVE.md` now (review #26) - see the pointer
@@ -77,8 +77,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   account details). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Still open:** #24's retention question, #23, #14 and #29 are ANSWERED and built (below); what is left is
-    #28 the Eastport north-west line (his SURV ->
+  * **Still open:** only #30. #24's retention question, #23, #14, #29 and #28 are built (below) - and #28 answers
+    the CLASS of the Eastport question rather than that one line, which still needs his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
     isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
     service is enabled and has a sample response with the key removed).
@@ -107,7 +107,31 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #29 - A PAGE THAT STOPS RESPONDING LEAVES EVIDENCE.**
+**NEWEST, 2026-09-15: REVIEW ITEM #28 - THE CHART SAYS WHAT A LINE IS.**
+Andy, at Eastport: "What is the story with the line heading out to the northwest?" ... "its a green dashed line like a
+survey line". ⚠ THE ANSWER TO THAT PARTICULAR LINE IS STILL WITH HIM (SURV -> RESET tells him whether it was the
+uncommitted pattern preview). What is built is the answer to the CLASS: he should never have to ask again.
+
+* RIGHT-CLICK -> "What is this line?" names the layer under the click, in the legend's own words: a committed survey
+  line (yellow, with its number, length and heading), the uploaded route (green, the only green), the PATTERN PREVIEW
+  (cyan, NOT in the plan - and it names both ways out, ADD TO PLAN or SURV then RESET), the survey boundary, a
+  measurement (magenta, never uploaded), the trail, or a keep-out. The NEAREST feature within `IDENTIFY_PX` (14 px)
+  wins - across layers, not by scan order - and a click near nothing says so rather than naming the nearest line.
+* It READS: `#cmWhat` is gated on nothing - no link, disarmed, and in a view-only tab (review #14) alike.
+* ⚠⚠ THE LIVE CHECK CAUGHT A BUG THE SUITE HAD AGREED WITH. The keep-out model's entries are `{pts}` / `{ring}` of
+  `{e,n}` IN THE CONSOLE'S FLAT PLANE; the first version read them as bare lat/lon arrays, found nothing, and said
+  nothing - and the fixture had copied its shape from my code instead of from the model, so the suite passed. A grid
+  of clicks over New Castle's 1,083 features identified NOT ONE. The fixture goes through a real `planeFrame` and real
+  `bbOf` boxes now, and three mutations cover the shape, the plane and the box test.
+* ⚠ AND THE FIRST FIX WAS TOO SLOW TO SHIP: 210-320 ms a click on that model, which is a visible pause on a menu row
+  in the console review #29 exists for. It skips by the model's OWN bounding boxes (`inBB`, with the 14 px reach
+  converted to metres at the current zoom) - measured live again: 1-36 ms. ⚠ A KEEP-OUT LINE'S BOX HAS ZERO HEIGHT, so
+  the reach has to be carried INTO the box test; check 3b is the only fixture shape that can tell that from a dead-on
+  click.
+* Tests: NEW tests/identify_layer.js (10 checks; 13 mutations, 13 caught). Words: README, the operations manual's new
+  4.5, the technical manual's GUARDS, the hook's advice.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #29 - A PAGE THAT STOPS RESPONDING LEAVES EVIDENCE.**
 Andy reported the page hanging while placing survey corners A / B / C. It has never been isolated - it was first seen
 under SYNTHETIC clicks, which is itself the prime suspect, and it has not been reproduced on demand since.
 

@@ -573,6 +573,15 @@ asleep says how long it was gone and writes `page_throttled` to the session log;
 console out of Edge's sleeping tabs (Settings → System and performance → "Never put these
 sites to sleep") (`tests/supervisor.py`, `tests/supervisor_page.js`).
 
+**Ask the chart what a line is.** Right-click a line → **What is this line?** and the console
+names the layer it belongs to: a committed survey line (yellow, with its number, length and
+heading), the uploaded route (green, the only green), the **pattern preview** (cyan, *not in the
+plan* — ADD TO PLAN commits it, SURV → RESET clears it), the survey boundary, a measurement you
+drew (magenta, never uploaded), the vessel's trail, or a keep-out read off the chart. The
+NEAREST thing within 14 px wins, and a click near nothing says so rather than naming the nearest
+line. The row reads rather than commands, so it is never gated on the link, the arm state or
+which tab is supervising (`tests/identify_layer.js`).
+
 **And a page that stops responding leaves evidence.** A watchdog on its own timer measures how
 late it was, so a freeze the operator felt becomes a record instead of a memory: a VISIBLE page
 gone for more than 1.5 s writes `page_stall` with the gap, the editing mode, which pattern
