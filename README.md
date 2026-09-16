@@ -559,19 +559,30 @@ exactly like a quiet sea.
 **One tab is in charge.** The clearance guard, the speed governor and the end-of-plan
 Return-to-Home all run in the PAGE, so a second browser tab would be a second set of them
 commanding the same boat — and a tab the browser has put to sleep is a set that has quietly
-stopped, with nothing on screen to say so. Each tab tells the console which tab it is and
-reports in every 2 s; the console grants supervision to ONE of them, refuses the others'
-commands in words (HTTP 409), and says on its own window when the supervising tab goes
-quiet. A view-only tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command
-bar, and draws everything else exactly as before — a second screen is what it is for, and
-you can still draw and save a plan from it. Click the pill to supervise from there instead;
-the handover is immediate and recorded. **Stop, Pause and E-STOP work from every tab**, in
-both directions — the page never withholds them and the console never refuses them. A lapse
-is an **alarm, not a hold**: nothing the vessel does depends on the page, and a browser
-hiccup halting a survey mid-line would be its own hazard. A tab that comes back from being
-asleep says how long it was gone and writes `page_throttled` to the session log; keep the
-console out of Edge's sleeping tabs (Settings → System and performance → "Never put these
-sites to sleep") (`tests/supervisor.py`, `tests/supervisor_page.js`).
+stopped, with nothing on screen to say so. Each chart window tells the console which tab it
+is and reports in as it handles the console's telemetry stream (at most every 2 s); the
+console grants supervision to ONE of them, refuses the others' commands in words (HTTP 409),
+and says on its own window when the supervising tab has not reported for 10 s. A view-only
+tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command bar, and draws
+everything else exactly as before — a second screen is what it is for, and you can still
+draw and save a plan from it. Click the pill to supervise from there instead; the handover
+is immediate and recorded. **Stop, Pause and E-STOP work from every tab**, in both
+directions — the page never withholds them and the console never refuses them. A lapse is an
+**alarm, not a hold**: nothing the vessel does depends on the page, and a browser hiccup
+halting a survey mid-line would be its own hazard.
+
+The **controls window** the console opens beside the chart is not a second tab in this sense:
+it runs none of those checks, and every control in it is carried out BY the chart window
+supervising in the same browser, so it never takes supervision itself. (Until 2026-09-16 it
+did report in, and took the post from the chart window ten times in twelve minutes of one
+session; while it held it, nothing ran the guard.) A window
+that is merely **out of sight** keeps supervising: the browser slows its timers but keeps
+delivering the telemetry stream, and the checks run on the stream. A tab the browser actually
+put to **sleep** is the lapse — when it wakes it says how long it was gone and writes
+`page_asleep` to the session log — so keep the console out of Edge's sleeping tabs
+(Settings → System and performance → "Never put these sites to sleep"). A tab that has only
+just come back from a silence of its own cannot take supervision on that report
+(`tests/supervisor.py`, `tests/supervisor_page.js`).
 
 **Ask the chart what a line is.** Right-click a line → **What is this line?** and the console
 names the layer it belongs to: a committed survey line (yellow, with its number, length and
@@ -583,13 +594,14 @@ line. The row reads rather than commands, so it is never gated on the link, the 
 which tab is supervising (`tests/identify_layer.js`).
 
 **And a page that stops responding leaves evidence.** A watchdog on its own timer measures how
-late it was, so a freeze the operator felt becomes a record instead of a memory: a VISIBLE page
-gone for more than 1.5 s writes `page_stall` with the gap, the editing mode, which pattern
-corners were down, how much geometry was on the chart (waypoints, lines, route, track, keep-out
-zones, zoom) and the operator's last action; over 5 s it also says so on screen, once per half
-minute. A HIDDEN tab going quiet is not a stall — that is the throttle above. This does not fix
-the hang reported while placing survey corners, which has never been reproduced on demand; it
-makes the next one diagnosable (`tests/frame_health.js`).
+late it was, so a freeze the operator felt becomes a record instead of a memory: a gap of more
+than 1.5 s that BEGAN while the page was on screen writes `page_stall` — wherever it ended —
+with the gap, the editing mode, which pattern corners were down, how much geometry was on the
+chart (waypoints, lines, route, track, keep-out zones, zoom) and the operator's last action;
+over 5 s it also says so on a page that is on screen, once per half minute. A gap that began
+OFF screen is the browser's throttling, not a stall, even when the page is back on screen by
+its end. This does not fix the hang reported while placing survey corners; it makes each one
+diagnosable (`tests/frame_health.js`).
 
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
    3-click survey pattern**: click the start corner, the opposite (diagonal)

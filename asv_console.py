@@ -5520,10 +5520,15 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 try:
-                    data = q.get(timeout=5.0)
+                    data = q.get(timeout=SUPERVISOR_BEAT_S)
                     self.wfile.write(b"data: " + data.encode() + b"\n\n")
                 except queue.Empty:
-                    self.wfile.write(b": keep-alive\n\n")
+                    # ⚠ AN IDLE STREAM TICKS WHERE IT USED TO SEND A COMMENT (2026-09-16). The page reports in to the
+                    # supervision registry as it handles THIS stream, so a console with no frame to send - no link
+                    # yet, a link lost - must still send something the page can see, once a beat. A named event is
+                    # that and no more: it never reaches onmessage, so it cannot pass for a telemetry frame and hold
+                    # a link dot green over readouts that have stopped (review #12).
+                    self.wfile.write(b"event: tick\ndata: {}\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
@@ -6002,8 +6007,24 @@ STORAGE = StorageWatch()
 # ⚠ AND A LAPSE IS AN ALARM, NOT A HOLD. When the supervising tab stops beating, the console says so on every page,
 # prints it and logs it - it does not stop the boat. A browser hiccup halting a survey mid-line is its own hazard, and
 # nothing the VESSEL does depends on the page. Whether a lapse should ever hold the boat is the operator's call.
+#
+# ⚠ WHAT WAS WRONG WITH IT, 2026-09-16. Andy: "the supervisory tab process is broken." His session had the post change
+# hands ten times in twelve minutes, between the two windows this console opens itself, and three things did it:
+#   * THE CONTROLS WINDOW REPORTED IN. It is the same page under ?panel=controls, it opens no event stream and runs no
+#     ladder, and every control in it is carried out BY the chart window. Holding the post, it made the chart window
+#     view-only - which then refused the very clicks the controls window forwarded to it - and left NO page running the
+#     guard, the governor or the RTH chain - 3 min 33 s at a stretch with the boat armed. It no longer reports in.
+#   * THE PAGE REPORTED FROM A TIMER. A browser slows the timers of a page that is off screen to one wake-up a minute,
+#     but keeps delivering this console's event stream to it, and the ladder runs on that stream - so a running ladder
+#     was called stale once a minute and its post handed to whoever reported next. The page reports as it handles the
+#     stream now, and an idle stream sends a named `tick` (_serve_events), so "has not reported" means "is not running".
+#   * A TAB THAT HAD ITSELF BEEN SILENT COULD TAKE THE POST. Two throttled windows each woke once a minute, found the
+#     other stale, and took over - and went quiet again. A stale post now goes only to a tab that is reporting STEADILY
+#     (its previous report within SUPERVISOR_STALE_S); the first report after a silence only says the tab is back.
+# And SUPERVISOR_STALE_S went from 6 s to 10 s: every lapse in that session was 6.3-6.9 s old - one late beat - and a
+# page carrying his plan (465 waypoints, 1,460 keep-out features) was measured stalling 1.5-4.1 s at a time while idle.
 SUPERVISOR_BEAT_S = 2.0          # what a supervising page keeps to - published, so one number governs both ends
-SUPERVISOR_STALE_S = 6.0         # no heartbeat for this long and that tab is not watching
+SUPERVISOR_STALE_S = 10.0        # no report for this long and that tab is not running its ladder - published too
 SUPERVISOR_FORGET_S = 120.0      # silent this long and the tab is forgotten: it was closed
 SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
 LOG_QUIET_POSTS = ("/api/supervisor",)   # the heartbeat is not a command; the registry logs what matters about it
@@ -6025,17 +6046,24 @@ class Supervision:
 
     def beat(self, client_id, take=False, now=None):
         """A tab reports in. It becomes the supervisor if the post is empty, if it asked to TAKE OVER, or if the
-        holder has gone stale - a tab that is not watching cannot keep the post from one that is."""
+        holder has gone stale while this tab has been reporting steadily - a tab that is not running its ladder
+        cannot keep the post from one that is, and a tab that has only just come back from its own silence is not
+        yet one that is."""
         now = time.time() if now is None else now
         cid = str(client_id or "")[:64]
         if not cid:
             return self.snapshot(now)
         with self._lock:
+            prev = self._seen.get(cid)
             self._seen[cid] = now
             self._prune(now)
             held = self._holder
             stale = held is not None and held != cid and (now - self._seen.get(held, 0.0)) > SUPERVISOR_STALE_S
-            if held != cid and (held is None or take or stale):
+            # ⚠ STEADY, NOT MERELY PRESENT (2026-09-16): two throttled windows woke once a minute, each found the other
+            # stale, took the post, and went quiet again - ten handovers in twelve minutes. A tab's first report after
+            # a silence of its own proves it is back, not that it will stay; its next one, within a beat, does.
+            steady = prev is not None and now - prev <= SUPERVISOR_STALE_S
+            if held != cid and (held is None or take or (stale and steady)):
                 self._holder, self._since, self._said_stale = cid, now, False
                 why = "took over from a tab that had stopped reporting" if stale else (
                     "took over" if take else "is supervising")

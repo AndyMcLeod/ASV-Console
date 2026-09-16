@@ -18,6 +18,15 @@ WHAT IS DELIBERATELY NOT GATED, and each has a check here:
   * The boat. A lapsed heartbeat is an ALARM, not a hold: a browser hiccup stopping a survey mid-line is its own
     hazard, and nothing the vessel does depends on the page. Whether it should ever hold is the operator's call.
 
+2026-09-16, Andy: "the supervisory tab process is broken." In his session the post changed hands ten times in twelve
+minutes between the two windows the console opens itself. The console's half of the fix has checks here:
+  * A STALE POST GOES ONLY TO A TAB THAT IS REPORTING STEADILY (8b, 8c). Two throttled windows each woke once a minute,
+    found the other stale and took over. A first report after a silence - or a first report ever - takes nothing.
+  * ONE LATE BEAT IS NOT A LAPSE (8). Every lapse in that session was 6.3-6.9 s old against a 6 s limit.
+  * AN IDLE STREAM TICKS (10b). The page reports as it handles the event stream now, so a console with no frame to
+    send must still send something the page can see - a named event, which a page's onmessage never receives.
+(The page's half - the controls window never reports, and reports ride the stream - is tests/supervisor_page.js.)
+
     python tests/supervisor.py      # exit 0 = pass, 1 = fail   (stdlib only)
 
 TEETH - 12 mutations RUN in a scratch clone (sidecar original, atomic writes, no bytecode, byte-compared afterwards),
@@ -32,8 +41,18 @@ TEETH - 12 mutations RUN in a scratch clone (sidecar original, atomic writes, no
 checks read state()["supervisor"] directly, so a console publishing none killed the run before a FAIL line printed -
 which a mutation runner scores as a SURVIVAL. Everything outside a check() thunk reads with .get now. The same trap is
 recorded in tests/log_compress.py's header, three items earlier, which is how it was spotted here.
+(Written when 8b said "another tab takes the post by simply reporting in"; that line is now 8b + 8c, below.)
+
+TEETH for the 2026-09-16 fix - 9 mutations RUN the same way, 9/9 caught, none by a crash:
+    a stale post goes to any tab that reports (the old rule) -> 8b
+    a stale post goes to nobody -> 8c, 9, 10               steady ignores how old the previous report is -> 8b
+    a first-ever report counts as steady -> 8b, 8c, 9, 10  stale after 6 s again -> 8
+    an idle stream sends a comment again -> 10b            the idle tick is an unnamed message -> 10b
+    the idle tick has no data line (a page never dispatches it) -> 10b
+    the stream ticks every 5 s again -> 10b
 """
 
+import http.client
 import json
 import os
 import socket
@@ -183,35 +202,56 @@ try:
           lambda: r3["supervisor"]["holder"] == "tab-two" and r3["you"] is True and c_one2 == 409,
           lambda: "holder %s; the old tab now gets %d" % (r3["supervisor"]["holder"], c_one2))
 
+    # A third tab reports ONCE, now, and then goes as quiet as the holder is about to - the throttled window of
+    # 2026-09-16, which woke once a minute. (Tab-two has just taken the post, so this report takes nothing.)
+    beat(port, "tab-three")
+
     # 8. THE ONE THE ITEM IS ABOUT: the supervising tab stops reporting (asleep, throttled, crashed).
     # ⚠ READ WITH .get FROM HERE DOWN: this is setup, not a check, and a console that published no supervision at
     # all would kill the suite before a FAIL line printed - which a mutation runner scores as a SURVIVAL.
-    stale_s = (r3.get("supervisor") or {}).get("stale_s", 6.0)
+    stale_s = (r3.get("supervisor") or {}).get("stale_s", 10.0)
     t0 = time.time()
     snap = state(port).get("supervisor") or {}
     while not snap.get("stale") and time.time() - t0 < stale_s + 6:
         time.sleep(0.5)
         snap = state(port).get("supervisor") or {}
     check("8. a supervising tab that stops reporting is STALE in the state after stale_s - the console says the page "
-          "is not watching, and says it without being asked",
-          lambda: snap.get("stale") is True and snap.get("holder") == "tab-two" and snap.get("age_s") >= stale_s,
-          lambda: "stale=%s after %.1f s (holder %s, age %s)"
-                  % (snap.get("stale"), time.time() - t0, snap.get("holder"), snap.get("age_s")))
+          "is not watching, and says it without being asked. And stale_s is at least four beats: one late beat, or "
+          "two, is a page that was busy, not one that stopped (every lapse on 2026-09-16 was one beat late)",
+          lambda: snap.get("stale") is True and snap.get("holder") == "tab-two" and snap.get("age_s") >= stale_s
+          and snap.get("stale_s", 0) >= 4 * snap.get("beat_s", 1e9),
+          lambda: "stale=%s after %.1f s (holder %s, age %s; stale_s %s, beat_s %s)"
+                  % (snap.get("stale"), time.time() - t0, snap.get("holder"), snap.get("age_s"),
+                     snap.get("stale_s"), snap.get("beat_s")))
 
     # Leave it stale a moment before anyone takes over: the console's own watch looks once a second, and a post that
     # is taken back inside that second is not a lapse anybody needed telling about (checks 10 and 11 read what it said).
     time.sleep(2.5)
-    r4 = beat(port, "tab-three")
-    check("8b. ... and another tab takes the post by simply reporting in - a tab that is not watching cannot keep "
-          "supervision from one that is",
-          lambda: r4["supervisor"]["holder"] == "tab-three" and r4["you"] is True and r4["supervisor"]["stale"] is False,
-          lambda: json.dumps(r4["supervisor"]))
+    r4 = beat(port, "tab-three")          # its first report since it went quiet with the holder
+    r4n = beat(port, "tab-new")           # a tab reporting for the very first time
+    check("8b. a tab reporting after a silence of its OWN does not take the stale post on that report, and nor does a "
+          "tab reporting for the first time - either may be about to go quiet again, which is how two throttled "
+          "windows passed the post back and forth once a minute",
+          lambda: r4["supervisor"]["holder"] == "tab-two" and r4["you"] is False
+          and r4n["supervisor"]["holder"] == "tab-two" and r4n["you"] is False,
+          lambda: "after tab-three: %s; after tab-new: %s" % (r4["supervisor"]["holder"], r4n["supervisor"]["holder"]))
+
+    r4b = beat(port, "tab-three")         # ... and again, a beat later: it is reporting steadily now
+    check("8c. ... but its NEXT report, while it keeps reporting, does take it - a tab that is not running its ladder "
+          "cannot keep supervision from one that is",
+          lambda: r4b["supervisor"]["holder"] == "tab-three" and r4b["you"] is True
+          and r4b["supervisor"]["stale"] is False,
+          lambda: json.dumps(r4b["supervisor"]))
 
     rel = post(port, "/api/supervisor", {"id": "tab-three", "release": True})[1]
     r5 = beat(port, "tab-four")
-    check("9. a tab that is closing RELEASES the post, so the next tab does not wait out the stale timer",
+    check("9. a tab that is closing RELEASES the post, so the next tab does not wait out the stale timer - an EMPTY "
+          "post goes to the first tab that reports, steady or not",
           lambda: rel["supervisor"]["holder"] is None and r5["supervisor"]["holder"] == "tab-four",
           lambda: "after release: %s; next tab: %s" % (rel["supervisor"]["holder"], r5["supervisor"]["holder"]))
+    # let it go again, so a holder nobody is reporting for cannot lapse while check 10b idles the stream (check 11
+    # counts lapses)
+    post(port, "/api/supervisor", {"id": "tab-four", "release": True})
 
     # 10. what is written down - and what is NOT
     new = sorted(set(os.listdir(LOG_DIR)) - before)
@@ -226,6 +266,36 @@ try:
           and "supervisor_lapsed" in kinds,
           lambda: "%d heartbeat records; took %d; %s" % (len(beats), len(took),
                                                          ", ".join(k for k in kinds if k.startswith("supervisor"))))
+    # 10b. AN IDLE STREAM TICKS. With no link there is no telemetry to publish, so the event stream would carry nothing
+    # a page can see between frames - and the page reports in as it handles that stream.
+    post(port, "/api/disconnect", {})
+    time.sleep(0.5)
+    beat_s = (r3.get("supervisor") or {}).get("beat_s", 2.0)
+    lines = []
+    sse = http.client.HTTPConnection("127.0.0.1", port, timeout=beat_s + 2)
+    try:
+        sse.request("GET", "/events")
+        resp = sse.getresponse()
+        t_sse = time.time()
+        while time.time() - t_sse < 2 * beat_s + 2.5:
+            ln = resp.readline()
+            if not ln:
+                break
+            lines.append(ln.decode("utf-8", "replace").rstrip("\r\n"))
+    except (socket.timeout, OSError) as e:
+        lines.append("(stream: %s)" % e)
+    finally:
+        sse.close()
+    # a tick whose data line fell after the read stopped is not counted either way
+    ticks = [i for i, ln in enumerate(lines) if ln == "event: tick" and i + 1 < len(lines)]
+    check("10b. a console with nothing to stream still TICKS, at least once a beat, as a NAMED event with a data line - "
+          "a page's onmessage never receives it, so it cannot pass for a telemetry frame, and a comment would be "
+          "invisible to the page altogether",
+          lambda: len(ticks) >= 2 and all(lines[i + 1].startswith("data: ") and '"type"' not in lines[i + 1]
+                                          for i in ticks)
+          and not any(ln.startswith(":") for ln in lines),
+          lambda: "%d tick(s) in %.1f s; %s" % (len(ticks), 2 * beat_s + 2.5,
+                                                 " | ".join(ln[:24] for ln in lines if ln)[:150]))
 finally:
     try:
         proc.terminate()

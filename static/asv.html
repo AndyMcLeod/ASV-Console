@@ -8885,21 +8885,41 @@ makeDraggablePanel($("#chartPanel"), $("#chartPanelHead"),
 // says so in the state. The others assess, draw and ALARM exactly as before, and command nothing.
 // ⚠ EXCEPT A STOP. Stop, Pause and E-STOP are taken from any tab, supervising or not - a control that reduces risk is
 // never gated on bookkeeping - and the console enforces the same rule on its side.
-// ⚠ AND A TAB THAT WAS ASLEEP SAYS SO, because that is the failure the operator cannot see: if this tab stops running
-// for longer than SUPERVISOR_SLEPT_MS, it raises a banner and writes page_throttled to the session log. The browser's
-// own setting is the cure (Edge: Settings > System > "Never put these sites to sleep"), and the console cannot reach
-// it - what the console can do is refuse to pretend the tab was watching.
+// ⚠ AND A TAB THAT WAS ASLEEP SAYS SO, because that is the failure the operator cannot see: if this tab stops handling
+// the console's stream for longer than the console's stale time, it raises a banner and writes page_asleep to the
+// session log. The browser's own setting is the cure (Edge: Settings > System > "Never put these sites to sleep"), and
+// the console cannot reach it - what the console can do is refuse to pretend the tab was watching.
+//
+// ⚠ ONLY THE CHART WINDOW REPORTS IN (Andy, 2026-09-16: "the supervisory tab process is broken"). The console opens
+// this page twice, and the controls window (?panel=controls) runs no ladder: it opens no stream, and every control in
+// it is carried out BY the chart window. When it reported in it became a rival tab. In his session the post changed
+// hands ten times in twelve minutes; while the controls window held it NO page ran the guard, the governor or the RTH
+// chain - 3 min 33 s at a stretch with the boat armed - and the chart window refused every command, the clicks the
+// controls window had forwarded to it included.
+// ⚠ AND A REPORT RIDES THE STREAM, NOT A TIMER. The ladder runs in onState, once per telemetry frame, and a browser
+// keeps delivering the stream to a page that is off screen while it slows that page's timers - measured on a hidden
+// tab, 91 s in: ONE timer wake-up in 30 s, against 121 frames handled. Reporting from a timer called a running ladder
+// stale about once a minute and handed its post to whichever tab reported next. So the page reports as it handles the
+// stream - each frame, or the console's idle `tick` when there is no frame - at most once a beat. A page that has
+// really stopped handles nothing and reports nothing, and then the console's lapse is true.
 const CLIENT_ID = (()=>{ try{ return crypto.randomUUID(); }catch(e){ return "tab-" + Math.random().toString(36).slice(2); } })();
-const SUPERVISOR_BEAT_MS = 2000, SUPERVISOR_SLEPT_MS = 6000;
+// Until the console says its own (S.supervisor.beat_s / stale_s), which it publishes so one number governs both ends.
+const SUPERVISOR_BEAT_MS = 2000, SUPERVISOR_STALE_MS = 10000;
 const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];   // never gated, in either direction
-let supHolder = null, supStale = false, supSaidViewOnly = false, supLastBeat = 0;
+const SUPERVISES = UIROLE === "main";               // the controls window never holds the post - see above
+let supHolder = null, supStale = false, supSaidViewOnly = false;
+let supBeatMs = SUPERVISOR_BEAT_MS, supStaleMs = SUPERVISOR_STALE_MS;
+let supLastReport = 0, supLastStream = 0, supStreamOnScreen = true;
 // Nobody supervising (a console that has not been told yet, or one from before this existed) means this tab is not
-// being held back - the console decides within one beat, and it enforces the rule on its own side regardless.
-function supervising(){ return supHolder === null || supHolder === CLIENT_ID; }
+// being held back - the console decides within one beat, and it enforces the rule on its own side regardless. The
+// controls window is held back always: it commands nothing itself.
+function supervising(){ return SUPERVISES && (supHolder === null || supHolder === CLIENT_ID); }
 function applySupervisor(sup){
   if(!sup) return;
   supHolder = sup.holder || null;
   supStale = !!sup.stale;
+  if(sup.beat_s > 0) supBeatMs = sup.beat_s * 1000;
+  if(sup.stale_s > 0) supStaleMs = sup.stale_s * 1000;
   const pill = $("#supPill");
   if(pill){
     const viewOnly = !supervising();
@@ -8927,28 +8947,44 @@ async function supervisorBeat(take){
     return j;
   }catch(e){ return null; }        // the console is unreachable; consoleHealth is what says so
 }
-function supervisorTick(){
+// The stream's pulse, from onFrame and from the console's idle tick: was this page gone long enough to have slept?
+function supervisorStreamed(){
+  if(!SUPERVISES) return;
   const now = Date.now();
-  if(supLastBeat && now - supLastBeat > SUPERVISOR_SLEPT_MS){
-    const gap = Math.round((now - supLastBeat) / 1000);
-    const wasSupervising = supervising();
-    // ⚠ ONE EVENT, ONE BANNER. A VISIBLE page that stopped is a STALL, and stallWatch (review #29) says that in its
-    // own words with what the page was doing; saying both would be two banners for one freeze. The record is written
-    // either way, because only this one knows whether the tab that stopped was the supervising one.
-    if(wasSupervising && document.visibilityState !== "visible")
-      showBanner("⚠ THIS TAB WAS ASLEEP for " + gap + " s — its clearance guard and speed governor were not "
-        + "running while it slept. Nothing was stopped and the vessel kept its own safety systems; read the chart and "
-        + "the Mission Status card before relying on this tab again.");
-    fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({kind:"page_throttled", data:{gap_s: gap, supervising: wasSupervising}})}).catch(()=>{});
-  }
-  supLastBeat = now;
+  const gap = supLastStream ? now - supLastStream : 0;
+  const beganHidden = !supStreamOnScreen;        // what the page was when the gap BEGAN
+  supLastStream = now;
+  supStreamOnScreen = document.visibilityState === "visible";
+  if(gap > supStaleMs) supervisorSlept(gap, beganHidden);
+}
+// A gap that spans a broken stream is the console's, not this page's: the first event after a reconnect measures nothing.
+function supervisorStreamLost(){ supLastStream = 0; }
+// Handling the stream IS the report: one per beat, however many frames arrive in it.
+function supervisorReport(){
+  if(!SUPERVISES) return;
+  const now = Date.now();
+  if(now - supLastReport < supBeatMs) return;
+  supLastReport = now;
   supervisorBeat(false);
 }
-supervisorTick();
-setInterval(supervisorTick, SUPERVISOR_BEAT_MS);
+function supervisorSlept(gapMs, beganHidden){
+  const gap = Math.round(gapMs / 1000);
+  const wasSupervising = supervising();
+  // ⚠ ONE EVENT, ONE BANNER. A gap that began ON SCREEN is the page's own STALL, and stallWatch (review #29) says that
+  // in its own words with what the page was doing. One that began off screen is the browser putting the tab to sleep,
+  // which is this banner's - whether or not the operator is looking by the time the page wakes. The record is written
+  // either way, because only this one knows whether the tab that stopped was the supervising one.
+  if(wasSupervising && beganHidden)
+    showBanner("⚠ THIS TAB WAS ASLEEP for " + gap + " s — its clearance guard and speed governor were not "
+      + "running while it slept. Nothing was stopped and the vessel kept its own safety systems; read the chart and "
+      + "the Mission Status card before relying on this tab again.");
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"page_asleep",
+                          data:{gap_s: gap, supervising: wasSupervising, began_hidden: beganHidden}})}).catch(()=>{});
+}
 // Give the post up on the way out, so the next tab does not wait out the stale timer.
 addEventListener("pagehide", ()=>{
+  if(!SUPERVISES) return;
   try{
     navigator.sendBeacon("/api/supervisor",
       new Blob([JSON.stringify({id: CLIENT_ID, release: true})], {type: "application/json"}));
@@ -8960,7 +8996,8 @@ async function cmd(path, body){
   // ⚠ ONE TAB COMMANDS (review #14). The console refuses a non-supervising tab's commands too; this is the half that
   // says so in the operator's own words instead of surfacing a 409, and that keeps the stop-class always live.
   if(!supervising() && SUPERVISOR_ANY.indexOf(path) < 0){
-    const why = "this tab is VIEW ONLY — another tab is supervising. Press TAKE OVER to command from here.";
+    const why = SUPERVISES ? "this tab is VIEW ONLY — another tab is supervising. Press TAKE OVER to command from here."
+      : "the controls window commands nothing itself — its controls are carried out by the chart window.";
     recordAction("refused", cmdLabel(path, body), "refused: " + why);
     showNote(why);
     return {ok:false, error:why};
@@ -9883,8 +9920,10 @@ function onFrame(ev){
   try{ m = JSON.parse(ev.data); }catch(e){ return; }             // not a frame at all
   if(!m || m.type !== "state") return;
   lastFrameAt = Date.now();
+  supervisorStreamed();                 // review #14: handled the stream - was this page gone long enough to have slept?
   try{
     onState(m);
+    supervisorReport();                 // ... and the ladder ran on this frame, which is what a report stands for
     if(frameFaults && ++frameClean >= FRAME_CLEAR_AFTER){ frameFaults = 0; frameClean = 0; frameFaultLogged = false; }
   }catch(e){
     frameFaults++; frameClean = 0;
@@ -9946,10 +9985,15 @@ function storageCheck(){
 // editing mode, which pattern anchors were down, how much geometry was on the chart, and the operator's last action.
 // ⚠ IT MEASURES THE MAIN THREAD, NOT THE CONSOLE. A stall here is the BROWSER not getting round to us; telemetry
 // staleness is consoleHealth's job and the two must not be confused in the record.
-// ⚠ AND A HIDDEN TAB IS NOT A STALL - a browser throttles a background tab deliberately, which review #14 records as
-// page_throttled. Only a VISIBLE page stopping counts here.
+// ⚠ AND A HIDDEN TAB IS NOT A STALL - a browser throttles a background tab deliberately (review #14's page_asleep is
+// the record of a tab that really slept). WHICH GAP IS WHICH IS DECIDED BY WHERE IT BEGAN (2026-09-16), not where it
+// ended. A browser slows the timers of a page that has just left the screen to one wake-up a second, and further only
+// after it has been off screen a while - so a gap over STALL_MS that BEGAN on screen is this page's own main thread,
+// wherever it ended. Andy's session that day had one of 219 s that began a moment after he pressed Arm and ended off
+// screen, and it was recorded only as throttling. And a gap that began OFF screen is throttling even when it ends on
+// screen: that one used to be written up, and said, as a stall every time the operator came back to the tab.
 const STALL_TICK_MS = 500, STALL_MS = 1500, STALL_SAY_MS = 5000, STALL_SAY_EVERY_MS = 30000;
-let stallLast = 0, stallSaidAt = 0;
+let stallLast = 0, stallSaidAt = 0, stallOnScreen = true;
 function stallContext(gap){
   const m = (typeof mission === "object" && mission) || {};
   const ko = (nogo && nogo.ko) || {};
@@ -9968,15 +10012,18 @@ function stallContext(gap){
 function stallWatch(){
   const now = Date.now();
   const gap = stallLast ? now - stallLast : 0;
+  const began = stallOnScreen;                   // on screen when this gap BEGAN - see above
   stallLast = now;
-  if(gap <= STALL_MS || document.visibilityState !== "visible") return;
+  stallOnScreen = document.visibilityState === "visible";
+  if(gap <= STALL_MS || !began) return;
   const ctx = stallContext(gap);
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({kind:"page_stall", data: ctx})}).catch(()=>{});
   console.warn("[asv] the page stalled for " + gap + " ms", ctx);
   // Said only when it is long enough to have been felt, and not more than once every half minute: the operator
-  // reporting "it hung" is the thing this exists to turn into a record, not a thing to interrupt them about.
-  if(gap >= STALL_SAY_MS && now - stallSaidAt > STALL_SAY_EVERY_MS){
+  // reporting "it hung" is the thing this exists to turn into a record, not a thing to interrupt them about. And only
+  // to a page on screen - one that stalled and ended off screen is recorded, and nobody is there to be told.
+  if(stallOnScreen && gap >= STALL_SAY_MS && now - stallSaidAt > STALL_SAY_EVERY_MS){
     stallSaidAt = now;
     showBanner("⚠ THE PAGE STOPPED RESPONDING for " + (gap / 1000).toFixed(1) + " s (" + mode + " mode). It is running "
       + "again and nothing was commanded while it was stopped. What it was doing has been written to the session log.");
@@ -10045,7 +10092,10 @@ function consoleHealth(){
 function connect(){
   const es = new EventSource("/events");
   es.onmessage = onFrame;
-  es.onerror = ()=>{ $("#dot").className="dot lost"; };
+  // The console's IDLE tick (review #14): a named event, so it never reaches onFrame and touches no readout. It says
+  // only that this page is still handling the stream when there is no telemetry to handle - which is a report.
+  es.addEventListener("tick", ()=>{ supervisorStreamed(); supervisorReport(); });
+  es.onerror = ()=>{ $("#dot").className="dot lost"; supervisorStreamLost(); };
   setInterval(consoleHealth, 1000);
 }
 // HOW OLD A READING IS, for the water, weather and current rows (review #13): whole minutes, then hours. The

@@ -30,6 +30,10 @@
 //   a felt stall is never said -> 12                  said on every stall, however short -> 10, 11, 12
 //   said again and again while it keeps happening -> 12
 //   the watchdog rides the telemetry frames it is meant to outlive -> 12b
+// TEETH for 11-11c (2026-09-16: WHERE A GAP BEGAN decides what it is) - 4 sidecar mutations, 4/4 caught:
+//   the old rule, where the gap ENDED -> 11b, 11c, 12      no visibility test at all -> 11, 11b, 11c, 12
+//   the watchdog's visibility never updated -> 11, 11b, 11c, 12
+//   a stall that ended off screen is said anyway -> 11c
 //
 // NOTE: the page's script is <script type="module">, which runs STRICT - so the functions under test are evaluated
 // strict here too, where an assignment to an undeclared name throws exactly as it would on the page.
@@ -89,6 +93,8 @@ const world = {
 // eslint-disable-next-line no-eval
 const page = eval("(function(){ \"use strict\"; let S = {}; const $ = world.$, showBanner = world.showBanner, fetch = world.fetch;"
   + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const storageCheck = () => {};"
+  // onFrame also pulses the supervision report (review #14) - tests/supervisor_page.js 8c checks that
+  + " const supervisorStreamed = () => {}, supervisorReport = () => {};"
   + " const onState = (m) => { stateSeen++; S = m; if (throwNext > 0) { throwNext--; throw new TypeError(\"guard fell over\"); } };\n"
   + DECL + "\n" + grab("onFrame") + "\n" + grab("consoleHealth") + "\n"
   + "return { onFrame, consoleHealth, faults: () => frameFaults, lastAt: () => lastFrameAt }; })()");
@@ -177,7 +183,8 @@ clock += 10000; page.consoleHealth();
 const idleSaid = banner();
 // eslint-disable-next-line no-eval
 const fresh = eval("(function(){ \"use strict\"; let S = {}; const $ = world.$, showBanner = world.showBanner, fetch = world.fetch;"
-  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const storageCheck = () => {}; const onState = (m) => { S = m; };\n"
+  + " const Date = { now: () => clock }; const console = { error: () => {} }; const buildCheck = () => {}; const storageCheck = () => {}; const onState = (m) => { S = m; };"
+  + " const supervisorStreamed = () => {}, supervisorReport = () => {};\n"
   + DECL + "\n" + grab("onFrame") + "\n" + grab("consoleHealth") + "\n return { consoleHealth }; })()");
 clock += 10000; fresh.consoleHealth();
 check("5. ... but not when the console says nothing is streaming (no link: no frames to go stale), nor before the first frame",
@@ -267,21 +274,45 @@ check("10. a VISIBLE page that stopped for longer than STALL_MS writes page_stal
             && rec.data.last_action === "Pattern corner B" && sbanners.length === 0,
       () => JSON.stringify(rec && rec.data).slice(0, 170));
 
+// WHERE A GAP BEGAN decides what it is (2026-09-16). A browser slows the timers of a page that has just left the
+// screen to one wake-up a second, and further only after a while - so a long gap that began ON screen is the
+// page itself, and one that began OFF screen is the browser.
 visible = "hidden";
-stallTick(9000);
-check("11. a HIDDEN tab going quiet is not a stall - a browser throttles a background tab on purpose, and review "
-      + "#14's page_throttled is where that belongs",
+stallTick(500);                                 // the page leaves the screen, still keeping up
+stallTick(9000);                                // ... and its timers are slowed
+check("11. a gap that BEGAN off screen is not a stall - a browser throttles a background tab on purpose, and "
+      + "review #14's page_asleep is the record of one that really slept",
       () => slogged.length === 1 && sbanners.length === 0,
       () => slogged.length + " record(s) after 9 s hidden");
 
 visible = "visible";
+stallTick(60000);                               // the operator comes back to a tab slowed to a wake-up a minute
+check("11b. ... not even when the page is back ON screen when it ends - the old rule wrote that up, and said it, "
+      + "as a stall every time the operator came back to a tab that had been in the background",
+      () => slogged.length === 1 && sbanners.length === 0,
+      () => slogged.length + " record(s), " + sbanners.length + " banner(s) after a minute's gap that ended on screen");
+
+stallTick(500);                                 // on screen, keeping up
+visible = "hidden";                             // the operator moves away while the main thread is stuck
+stallTick(9000);
+const rec11c = slogged[1] && slogged[1].body;
+check("11c. a gap that BEGAN on screen is the page's own stall WHEREVER it ended - recorded, with what the page was "
+      + "doing (Andy's 219 s one on 2026-09-16 ended off screen and was recorded only as throttling) - but not said "
+      + "to a page nobody is looking at",
+      () => slogged.length === 2 && rec11c.kind === "page_stall" && rec11c.data.gap_ms === 9000
+            && rec11c.data.mode === "survey" && sbanners.length === 0,
+      () => slogged.length + " record(s); " + JSON.stringify(rec11c && rec11c.data).slice(0, 60) + "; "
+            + sbanners.length + " banner(s)");
+
+visible = "visible";
+stallTick(500);                                 // back on screen
 stallTick(9000);
 const said = sbanners.length;
 stallTick(9000);
 check("12. a stall long enough to be FELT is said once, in the operator's words, and not again every time it "
       + "happens in the next half minute",
       () => said === 1 && /STOPPED RESPONDING for 9\.0 s \(survey mode\)/.test(sbanners[0])
-            && /nothing was commanded/.test(sbanners[0]) && sbanners.length === 1 && slogged.length === 3,
+            && /nothing was commanded/.test(sbanners[0]) && sbanners.length === 1 && slogged.length === 4,
       () => (sbanners[0] || "(nothing said)").slice(0, 110));
 
 check("12b. and it is WIRED: the watchdog runs on its own timer, not off the telemetry frames it is there to "

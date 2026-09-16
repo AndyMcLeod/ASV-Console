@@ -55,11 +55,27 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-15 — every review item but #28 and #30 is built; the Eastport question is OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-16 — supervision (#14) FIXED after Andy found it broken; #30 waits on him; the Eastport question is OPEN)
 
 ### ➤ PICK UP HERE
 
-**HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
+**HANDOFF, 2026-09-16. READ THIS BLOCK FIRST, THEN THE 09-15 ONE UNDER IT (how items are built still holds).**
+
+* **ANDY: "the supervisory tab process is broken. Look at current running instance and fix it."** Fixed in one commit
+  (the newest block below). He declined a screen view twice; the diagnosis came from his session recording,
+  `logs/asv_20260916-082026.jsonl`, and was then reproduced and checked on a throwaway console in headless Edge.
+* **STATE:** `master` carries the fix, pushed; 89 suites; his mission.json / ports.json / comms_config.json
+  hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
+  pattern he drew that morning); that is his work, not ours.
+* **⚠ HOW IT GOES LIVE ON HIS MACHINE - SAY THIS TO HIM EVERY TIME:** his console (started 08:20 with `--sim`) runs
+  the working tree. The PAGE half needs BOTH windows reloaded and the SERVER half needs a restart - and a restart OPENS
+  TWO NEW WINDOWS while the old two reconnect, so: close both console windows, restart the console, use the two it
+  opens. An old page left open keeps the old timer-driven report, and an old controls window will still compete.
+* **OPEN, NOT DONE (each is written up at the end of the newest block):** a woken page acting on stale buffered
+  frames; `render()` on every frame whatever the visibility; the first real record of #29's hang; connect/disconnect
+  ungated. #30 and the Eastport line are unchanged.
+
+**HANDOFF, 2026-09-15 (context window change).**
 
 * **STATE:** `master` carries review #28, pushed; 89 suites; Andy's mission.json / ports.json /
   comms_config.json unchanged by any of this (hash-checked before every commit). His console was OFF throughout
@@ -107,7 +123,66 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-16: REVIEW ITEM #30 - MARINETRAFFIC IS NOT BUILT, AND WHY.**
+**NEWEST, 2026-09-16: "THE SUPERVISORY TAB PROCESS IS BROKEN" - REVIEW #14 AS BUILT FOUGHT THE CONSOLE'S OWN TWO WINDOWS.**
+His console had run #14 for twelve minutes when he said it. The recording shows the post changing hands TEN times,
+between his two pages: `7d444994` is the CONTROLS window (its page_stall records carry 0 waypoints and `run: null` -
+it opens no stream) and `5d61fe94` the chart window (the only one with a TAKE OVER pill, pressed at 08:25:25).
+
+* **THREE FAULTS, THREE RULES** (asv_console.py's SUPERVISION header and static/asv.html's supervision block say each
+  in full):
+  1. **THE CONTROLS WINDOW REPORTED IN.** It is the same page under `?panel=controls`: no stream, no ladder, every
+     click forwarded to the chart window over the `asv_ui` BroadcastChannel. Holding the post it made the chart window
+     refuse everything - the forwarded clicks included - and left NO page acting: 08:25:54-08:29:27 with the boat
+     armed. **`SUPERVISES = UIROLE === "main"`**: the controls window never reports or releases, its `supervising()`
+     is always false, and its own `cmd()` refusal says so in its own words.
+  2. **THE REPORT RODE A TIMER; THE LADDER RIDES THE STREAM.** Measured (headless Edge 153, own temp profile, a CDP
+     background tab): 91 s hidden, ONE timer wake-up in 30 s against 121 frames handled - and the old code logged a
+     lapse and a recovery every minute while onState ran four times a second. **`supervisorReport()`** now runs from
+     `onFrame` AFTER `onState` (a frame whose ladder threw is no report) and from the stream's named **`tick`**,
+     which `_serve_events` sends whenever a beat passes with no frame (no link yet, a link lost) - once per beat,
+     never from a timer. **`supervisorStreamed()`** measures the gap between stream events: over the stale time it
+     writes **`page_asleep`** {gap_s, supervising, began_hidden} (`page_throttled` is gone) and raises the ASLEEP
+     banner when the gap BEGAN off screen. `supervisorStreamLost()` (the stream's onerror) drops the measurement, so
+     a console restart is not a sleep. The page adopts the state's `beat_s` / `stale_s`.
+  3. **A TAB BACK FROM ITS OWN SILENCE TOOK THE STALE POST** - the once-a-minute ping-pong of 08:29-08:32.
+     `Supervision.beat` now gives a STALE post only to a **steady** reporter (previous report within
+     `SUPERVISOR_STALE_S`); an EMPTY post still goes to the first tab that reports.
+  And **`SUPERVISOR_STALE_S` 6 -> 10 s**: every lapse in that session was 6.3-6.9 s old, and a page carrying his plan
+  (465 waypoints, 1,460 keep-out features) was measured stalling 1.5-4.1 s at a time while idle.
+* **AND REVIEW #29'S WATCHDOG, BECAUSE THE SAME SESSION BROKE IT:** a gap is a stall iff it BEGAN on screen
+  (`stallOnScreen`, taken at the tick before the gap). His 219 s gap began a second after he pressed Arm (08:25:47)
+  and ended off screen - recorded only as throttling, with nothing about what the page was doing - and the old rule
+  also wrote up (and said) a stall every time the operator came back to a background tab. The stall banner is said
+  only on a page that is on screen.
+* **LIVE** (throwaway console on 8796 with a probe in the COPY; headless Edge driven over CDP by a 60-line client in
+  the session scratchpad; chart and controls windows opened as hidden background tabs): one `supervisor_took`,
+  `tabs: 1`, no lapse for 2+ minutes with timers at 0-1 per 30 s; a 15 s CDP freeze of the chart window lapsed at
+  10.1 s, the controls window did not take over, and the thaw wrote page_asleep 15 s began_hidden, put up the ASLEEP
+  banner and reported back; a SECOND chart window took the post 10 s after the holder froze, and the thawed one
+  showed VIEW ONLY; with the link dropped the holder kept reporting on ticks (age never over 2 s in 70 s).
+  ⚠ HEADLESS EDGE PUT BOTH HIDDEN BACKGROUND TABS TO SLEEP about five minutes in (a MessageChannel post and a fetch
+  both went unanswered) - true lapses, correctly alarmed. The remedy stays Edge's "Never put these sites to sleep".
+* **BUILT, THEN DROPPED: a VIEW ONLY mark on the controls column** (a mirrored class). The controls window's clicks
+  go to EVERY chart window in the browser, and it mirrors whichever pushed last - so with two chart windows the mark
+  flickered while the clicks worked (the holder carries them out). Not shipped; the docs say what does happen.
+* **TESTS:** supervisor.py 8 / 8b / 8c / 10b (15 checks; 9 mutations run, 9 caught); supervisor_page.js rewritten
+  around the stream (16 checks; 22 mutations, 22 caught, none by a crash); frame_health.js 11 / 11b / 11c and two
+  onFrame stubs (17 checks; 4 mutations, 4 caught). The other 53 JS suites unchanged and green. WORDS: README
+  ("Using it", and the stall paragraph), the operations manual's 15.1, the technical manual's 6.2b (two new
+  paragraphs) and three GUARDS entries, the hook's advice for all three suites. Pages not rasterized: no LibreOffice
+  on this machine; the text was read back out of the built documents instead.
+* **OPEN - SEEN, NOT FIXED:**
+  * A PAGE WOKEN FROM A FREEZE RUNS ITS LADDER ON STALE FRAMES. The browser buffers the stream while the page is
+    frozen and delivers it on waking, and onState acts on every one of them (with `act` true, since the page still
+    holds the post) before its first report can come back. Frames carry no server time to judge them by. The old
+    code did the same; this fix does not change it. Worth a staleness guard of its own.
+  * `render()` REDRAWS THE WHOLE CHART SYNCHRONOUSLY ON EVERY FRAME, visible or not - with his plan loaded that is
+    the 1.5-4.1 s stalls above, off screen included.
+  * THE FIRST REAL RECORD OF #29's HANG: `page_stall` 20.2 s at 08:24:08, survey mode, corners A, B and C down,
+    40 runs, 1,314 keep-out features - he was placing a pattern at New Castle. Reproducible from those numbers.
+  * `/api/connect` and `/api/disconnect` are not under `/api/cmd/`, so supervision does not gate them.
+
+**BEFORE THAT, 2026-09-16: REVIEW ITEM #30 - MARINETRAFFIC IS NOT BUILT, AND WHY.**
 Andy's item: MarineTraffic AIS. It stayed on hold because it CANNOT be built honestly from here, and guessing would
 put an adapter in the repo that looks supported and fails on the water.
 
