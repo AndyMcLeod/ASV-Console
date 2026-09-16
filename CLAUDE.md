@@ -137,6 +137,14 @@ folders." All three done.
   (his item 3). 73 NON-empty ones (~3 MB of old test data) were left alone, and the two hook runs since #27 added none.
 * Words: README, the operations manual (4.4 and a new 14.2), the technical manual (chapter 11 and its constants), GUARDS,
   the hook's advice.
+* Verified: all 86 suites through the hook (0 FAIL lines), and LIVE on three of his own recordings copied into a temp
+  state dir - 144 MB to 3 MB, each decompressing byte for byte to his file, the playback list reading the same sizes as
+  before and a compressed session playing on the chart. Committed and pushed as `602a7eeb`.
+* ⚠ HIS PLAN CHANGED WHILE THIS WAS BEING BUILT, AND IT WAS HIS OWN DOING: mission.json was saved at 19:26 and twice
+  around 19:33 (67 KB -> 73 KB -> 25 KB, now 262 waypoints over 8 lines), his console adding a session recording as it
+  started. The pre-session copy is `mission.json.bak2` and also in the scratch backup; the baseline was re-hashed, not
+  reverted. ⚠ AND HIS CONSOLE RUNS THE WORKING TREE: the next time he starts it, the first storage pass compresses the
+  118 recordings older than 30 days - measured at about 14 s for 309.6 MB, inside one 30 s budget.
 
 **BEFORE THAT, 2026-09-15: REVIEW ITEM #24 - THE CONSOLE SAYS WHAT IT KEEPS ON DISK, AND REMOVES NOTHING.**
 Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." His session logs
