@@ -4229,15 +4229,38 @@ function logLineTable(reason){ if(!mission.lines.length) return;
       total_turn_s:turns.reduce((a,r)=>a+r.sec,0)}})}).catch(()=>{});
 }
 
-// --- whole-run elapsed + ETA (ticks from Start, through the approach) ------
+// --- elapsed + ETA for the motion under way (ticks from Start, through the approach) ------
 // Elapsed accrues wall-clock ONLY while the run is running (freezes on Pause),
 // so it lines up with the distance-based ETA (remaining route / plan speed).
+// ⚠ IT TIMES THE COMMANDED MOTION, NOT WHATEVER HAS HAPPENED SINCE THE BOAT LAST STOOD STILL (review #23,
+// 2026-09-15). Andy: "`runElapsed` spans back-to-back runs" - 3:48 across two Go-Tos. The row carries three numbers,
+// and the other two (time left, percent complete) have always measured THIS route: an elapsed measured from an
+// earlier command cannot be reconciled with them, which is what made it read as a fault. The motion is named by the
+// console (`S.run_seq`), which moves on a new command and not on a resume or a re-approach - the page cannot tell
+// those apart from `run`, which says "running" throughout. The JOB is not thrown away: jobElapsed keeps the whole
+// chain from the boat's standing start (a survey that chains an end-of-plan RTH is two motions, one job) and the
+// row's tooltip says so as soon as they differ.
 let runElapsed=0, runClock=null, runTotalM=0, runTotalKey=null;
-function resetRunTimer(){ runElapsed=0; runClock=null; runTotalM=0; runTotalKey=null; }
+// The job keeps its OWN clock, so a new motion can zero the motion's without the job losing the quarter second
+// between the last telemetry frame and the command.
+let runSeq=null, jobElapsed=0, jobClock=null, runMotions=0;
+const RUNTIME_TIP = "Live once Started: time elapsed, estimated time remaining to finish the whole run, and percent "
+  + "complete. Ticks from Start, including the approach to the survey.";
+function resetRunTimer(){ runElapsed=0; runClock=null; runTotalM=0; runTotalKey=null; jobElapsed=0; jobClock=null; runMotions=1; }
+// The motion's clock starts AT the command, not at the frame after it: the frame that reports a new run_seq is up to
+// a quarter second late, and that is time this motion has been running.
+function startNewMotion(){ runElapsed=0; runClock=performance.now()/1000; runTotalM=0; runTotalKey=null; runMotions++; }
 function accumRunTime(){
-  const now=performance.now()/1000;
-  if(S && S.run==="running" && runClock!=null) runElapsed += (now-runClock);
-  runClock = (S && S.run==="running") ? now : null;
+  const now=performance.now()/1000, running=!!(S && S.run==="running");
+  if(running && runClock!=null) runElapsed += (now-runClock);
+  if(running && jobClock!=null) jobElapsed += (now-jobClock);
+  runClock = jobClock = running ? now : null;
+}
+function runTimeTip(){
+  return runMotions>1
+    ? "This commanded motion: "+fmtMS(runElapsed)+". Since the boat last got under way: "+fmtMS(jobElapsed)
+      +" over "+runMotions+" commanded motions. " + RUNTIME_TIP
+    : RUNTIME_TIP;
 }
 // Distance still to run and total route length, from the boat's current target
 // waypoint onward. Uses the drawn ENC-routed path when present, else the raw plan.
@@ -4255,6 +4278,7 @@ function routeRemainingM(){
 function updateRunTime(){
   const el=$("#v_runtime"); if(!el) return;
   const run=S&&S.run;
+  el.title = runTimeTip();
   if(run!=="running" && run!=="paused"){
     el.textContent = (run==="complete" && runElapsed>0) ? ("done · "+fmtMS(runElapsed)) : "--";
     return;
@@ -9442,11 +9466,18 @@ function applyCmdState(s){
 function onState(s){
   S = s;
   checkBoot(s.boot_id);                          // drop a stale trail if the sim rebooted
-  if(prevRun!=="running" && prevRun!=="paused" && s.run==="running"){ resetLineStats(); resetRunTimer();
+  const freshRun = prevRun!=="running" && prevRun!=="paused" && s.run==="running";
+  if(freshRun){ resetLineStats(); resetRunTimer();
     if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
+  // A command given while the boat is already running never makes that transition, so the MOTION is taken from the
+  // console's own counter (review #23). A page that opened mid-run adopts the number it finds without resetting.
+  if(s.run_seq!=null && s.run_seq!==runSeq){
+    if(!freshRun && runSeq!=null) startNewMotion();
+    runSeq = s.run_seq;
+  }
   if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
   prevRun=s.run;
-  accumRunTime();                                // accrue whole-run elapsed (ticks while running)
+  accumRunTime();                                // accrue the motion's elapsed, and the job's (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
   // The tide / weather windows follow the station on every poll, so a port change, a long

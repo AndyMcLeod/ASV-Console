@@ -144,7 +144,7 @@ c.push(TBL(["Row", "Reads"], [
   ["Length", "Total routed run length, including the approach"],
   ["To end", "Distance and time remaining, from live speed when moving"],
   ["End mode", "WHERE THIS RUN LEAVES THE VESSEL — see 11.5"],
-  ["Run time", "Elapsed, estimated remaining, percent complete"],
+  ["Run time", "Elapsed, estimated remaining, percent complete — all three for the COMMANDED MOTION under way. A Go-To, a return home or a transit ordered while the boat is already running starts a new one, and the clock starts with it; a pause and resume do not. Hover the row for the total since the boat last got under way, when that is a different number"],
   ["Survey / Approach", "Estimated coverage time and transit-in time from the last Punch Out"],
   ["status line", "Plain language: running with percent, paused, loading, arrived, drifting, or the end state"],
 ], [1900, 7460]));

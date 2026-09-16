@@ -63,6 +63,13 @@ against this file trimmed to its in-process part, 8/8 caught, each by the check 
   * Stop / Pause / Start / E-STOP / disarm / _run_route not marking the command
                                           -> caught by 15 / 15b / 15c / 15d / 15e / 15f
 
+TEETH for 7c, 15g and 15h (review #23, WHICH COMMANDED MOTION the page's clock is timing) - 4 mutations RUN in a
+scratch clone, 4/4 caught:
+  * run_seq never moves on a command                     -> caught by 15g
+  * a resume counts as a new motion                      -> caught by 7c, 15g, 15h
+  * a re-approach counts as a new motion                 -> caught by 15h
+  * the state stops publishing run_seq                   -> caught by 7c
+
 TEETH for 3c and 16 (review #9, the route waypoint limit) - 4 mutations RUN in a scratch clone, 4/4 caught:
   * the route cut short again with no refusal            -> caught by 3c
   * the limit back to 1000                               -> caught by 3c (it must fit the largest plan logged)
@@ -293,6 +300,7 @@ try:
           "behavior=%s run=%s wpts=%s sog=%.1f end=%s"
           % (st.get("behavior"), st.get("run"), st.get("wp_total"),
              st["status"].get("sog_kn") or 0, st.get("run_completion")))
+    seq_transit = st.get("run_seq")               # which commanded motion this is (review #23, checked at 7c)
 
     # ---- PAUSE --------------------------------------------------------------------- #
     st = wait_for(port, lambda s: (s.get("wp_index") or 0) >= 1, limit=120)
@@ -324,6 +332,10 @@ try:
           and (st["status"].get("sog_kn") or 0) > 1.0,
           "run=%s wp_index=%s sog=%.1f" % (st.get("run"), st.get("wp_index"),
                                            st["status"].get("sog_kn") or 0))
+    check("7c. ... and the console still calls it the SAME commanded motion - run_seq is published and did not "
+          "move across the pause (review #23: the page's elapsed clock keys on it)",
+          lambda: st.get("run_seq") is not None and st.get("run_seq") == seq_transit,
+          "run_seq %s at the transit, %s after the resume" % (seq_transit, st.get("run_seq")))
     check("7b. ... from where it paused, not from anywhere else",
           lambda: dist_m(pos_paused, (status(port)["lat_deg"], status(port)["lon_deg"])) < 200,
           lambda: "%.0f m from the pause point" %
@@ -529,6 +541,32 @@ try:
     check("15f. ... and a Go-To from rest reads RUNNING - not 'complete', which is what a frame from before "
           "it made of a run that had just started",
           lambda: seen == ["running"], "run after the Go-To: %s" % seen)
+
+    # 15g-15h. WHICH COMMANDED MOTION THIS IS (review #23). Andy: "`runElapsed` spans back-to-back runs" - 3:48 across
+    # two Go-Tos. The page cannot key its clock on `run`, which reads "running" through a second command, a resume and
+    # a re-approach alike; it keys on this counter, so what the counter counts is the whole of the fix.
+    E.stop()
+    time.sleep(0.4)
+    seq_idle = E.run_seq
+    E.go_to(*far)
+    seq_goto = E.run_seq
+    E.pause()
+    time.sleep(0.3)
+    E.start()                                     # a RESUME: the same motion carrying on
+    seq_resume = E.run_seq
+    E.go_to(far[0] + 0.001, far[1])               # a second command with the first still under way
+    seq_second = E.run_seq
+    E._run_route(E._sanitize_route([{"lat": far[0], "lon": far[1]}]), E.behavior,
+                 "re-approach", continuing=True)  # a leg of the motion in progress
+    seq_reapproach = E.run_seq
+    check("15g. a NEW commanded motion moves run_seq - a Go-To from rest, and a second one commanded while the first "
+          "is still under way, which `run` cannot tell apart",
+          lambda: seq_goto == seq_idle + 1 and seq_second == seq_goto + 1,
+          "idle %s -> Go-To %s -> a second Go-To under way %s" % (seq_idle, seq_goto, seq_second))
+    check("15h. ... and a RESUME and a RE-APPROACH do NOT move it: they are that motion still running, and a clock "
+          "that restarted on them would be lying the other way",
+          lambda: seq_resume == seq_goto and seq_reapproach == seq_second,
+          "resume %s (was %s); re-approach %s (was %s)" % (seq_resume, seq_goto, seq_reapproach, seq_second))
 
     # 16. ... AND THE SAVED PLAN MEETS THE SAME BOUND (review #9). An upload with no route sends the
     # saved plan's own waypoints, which never passed the route check. In-process, with the store

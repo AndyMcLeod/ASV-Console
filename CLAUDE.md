@@ -61,7 +61,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries the log compression, pushed; 86 suites; Andy's mission.json / ports.json /
+* **STATE:** `master` carries review #23, pushed; 86 suites; Andy's mission.json / ports.json /
   comms_config.json unchanged by any of this (hash-checked before every commit). His console was OFF throughout
   (nothing on 8790-8799).
   **Everything in this file from before 2026-09-05 is in `HANDOFF_ARCHIVE.md` now (review #26) - see the pointer
@@ -71,13 +71,15 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   all updates until the following session ends", and #12, #13, #15, #17, #18 and #19 went in without per-item approval.
   The next context (2026-09-15) opened with "carry on with updates from previous ASV Console Refinement context window",
   taken as the answer: items go in back to back (build -> verify -> commit -> push), reported as each lands.
-* **#20, #21, #22, #24, #25, #26 AND #27 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`)
+* **#20-#27 ARE ALL DONE** (below), #23 and #24 included. 2026-09-15, after answering the retention question, Andy
+  said **"carry on with the remaining items from the list of 30. Act on your own best recommendation"** - so what he
+  had reserved is being worked in the order #23, #14, #29, #28, with #30 STATED rather than guessed (it needs his
+  account details). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Andy's call:** #24's retention question is ANSWERED and built (the newest block below); what is left is
+  * **Still open:** #24's retention question is ANSWERED and built, and so is #23 (both below); what is left is
     #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
-    hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #23 "`runElapsed`
-    spans back-to-back runs" (time each commanded motion, or each job?); #28 the Eastport north-west line (his SURV ->
+    hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #28 the Eastport north-west line (his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
     isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
     service is enabled and has a sample response with the key removed).
@@ -106,7 +108,31 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: HIS RETENTION DECISION - OLD RECORDINGS ARE COMPRESSED, THE CHART CACHE IS NOT CAPPED.**
+**NEWEST, 2026-09-15: REVIEW ITEM #23 - THE RUN CLOCK TIMES THE COMMANDED MOTION.**
+Andy: "`runElapsed` spans back-to-back runs" - measured at 3:48 across two Go-Tos - and his own question with it:
+"time each commanded motion, or each job?"
+
+* THE MOTION, and the row itself is the argument: the other two numbers on it (time left, percent complete) have
+  always measured the CURRENT route, so an elapsed measured from an earlier command cannot be reconciled with the
+  numbers beside it. That is what made it read as a fault rather than as a longer clock.
+* ⚠ THE PAGE CANNOT SEE A NEW COMMAND IN `run`: `_run_route` sets "running" unconditionally, so a Go-To ordered inside
+  a run makes no transition at all. The console counts the motion now (`run_seq`, published in the state): it moves on
+  a staged-plan Start and on every Go-To / RTH / Transit / Hold / escape, and NOT on a resume (pause then Start) or a
+  re-approach (`continuing=True`), which are that motion still running. The ELAPSED clock keys on it; the ETA and the
+  percentage stay keyed on the route's own geometry, so a mid-motion amendment (the guard's edge nudge, the pause
+  backtrack) rebases those without restarting the clock.
+* THE JOB IS NOT THROWN AWAY: `jobElapsed` keeps its own clock across the whole chain from the boat's standing start
+  (a survey that chains an end-of-plan RTH is two motions, one job), and the row's tooltip says both as soon as they
+  differ. The motion's clock starts AT the command, not at the frame that reports it, which is up to 250 ms later.
+* LIVE on the temp console: the row read 0:41 through the first Go-To, then 0:10 the moment a second one went out with
+  `run` never leaving "running" - tooltip "This commanded motion: 0:10. Since the boat last got under way: 1:02 over 2
+  commanded motions" - and a pause and resume left the count at 2 with the clock running on.
+* Tests: line_stats.js 12-15 (6 mutations, 6 caught - ⚠ TWO OF THEM BY THE WIRING CHECK ALONE, recorded in its header;
+  the behaviour behind those two is asserted against a real console instead) and run_link_control.py 7c / 15g / 15h (4
+  mutations, 4 caught). line_stats.js takes `ASV_HTML` now, so its mutants run against a sidecar page.
+* Words: the operations manual's status-bar row, the technical manual's GUARDS entry, the hook's advice.
+
+**BEFORE THAT, 2026-09-15: HIS RETENTION DECISION - OLD RECORDINGS ARE COMPRESSED, THE CHART CACHE IS NOT CAPPED.**
 Shown #24's figures he answered: "1. Compress logs over 30 days. 2. Do not limit chart cache size. 3. delete the empty
 folders." All three done.
 

@@ -3772,6 +3772,15 @@ class Engine:
         self._staged_completion = None   # the completion a STAGED upload runs with (see upload)
         self.run = "idle"          # idle | running | paused | stopped | complete
         self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
+        # ⚠ WHICH COMMANDED MOTION THIS IS (review #23, 2026-09-15). Andy: "`runElapsed` spans back-to-back runs" -
+        # measured at 3:48 across two Go-Tos. The page had nothing else to key the clock on: `run` is "running" for
+        # both, because _run_route sets it unconditionally, so a Go-To commanded while another is under way produces
+        # NO transition at all. This counter names the motion: it moves when a NEW one is commanded (a staged plan
+        # started, a Go-To, an RTH, a Transit, a Hold, the guard's escape) and deliberately does NOT move for a
+        # RESUME (the same motion, after a pause) or a re-approach leg (`continuing`), which are that motion still
+        # running. The elapsed clock, and only it, is keyed on this; the ETA and the percentage stay keyed on the
+        # route's own geometry, because an amendment mid-motion rebases those and must not restart the clock.
+        self.run_seq = 0
         # WHAT THE RUN CURRENTLY IN PROGRESS DOES AT ITS END - transient, and rewritten
         # by every command. It is NOT the operator's end-of-plan SETTING: that lives in
         # the mission store and is read via plan_completion(). One field serving both
@@ -4098,6 +4107,8 @@ class Engine:
             link.start()
             self.run = "running"
             self._commanded()
+            if not resuming:
+                self.run_seq += 1          # a staged plan is a new motion; a resume is the old one carrying on
             if resuming:
                 self.note = "Resumed."
             else:
@@ -4146,6 +4157,8 @@ class Engine:
             self.wp_total = len(route)
             self.wp_index = 0
             self.run = "running"
+            if not continuing:
+                self.run_seq += 1          # a re-approach is this motion still running, not another one
             self.behavior = behavior
             self.note = note
         self._push_state()
@@ -4725,6 +4738,7 @@ class Engine:
             "run": self.run,
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
+            "run_seq": self.run_seq,                   # which commanded motion this is (review #23)
             # Two DIFFERENT things, deliberately both published:
             #   completion      - the operator's END-OF-PLAN SETTING (the mission store).
             #                     The command-bar selector and the end-of-plan RTH chain

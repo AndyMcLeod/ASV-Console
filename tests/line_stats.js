@@ -48,6 +48,15 @@
 //   the route signature drops its length                            -> 8, 9
 //   routeRemainingM stops reporting the route's length              -> 7
 //   resetRunTimer does not clear the key                            -> 10
+// TEETH for 12-15 (review #23, the clock that spanned back-to-back runs) - 6 sidecar mutations, 6/6 caught:
+//   the clock spans motions again (the old code)                    -> 15    a page opening mid-run restarts it -> 15
+//   the job shares the motion's clock (one clock, as before)        -> 12, 13, 14
+//   a new motion zeroes the job too                                 -> 13, 14
+//   the motion's clock starts at the next frame, not the command    -> 13, 14
+//   the tooltip never says the job                                  -> 14
+//   ⚠ THE FIRST TWO ARE CAUGHT BY THE WIRING CHECK ALONE, which is a source grep: it sees the call go missing but
+//   could not see it made unreachable. The behaviour those two describe is asserted where it can be - against a real
+//   console - in tests/run_link_control.py 7c / 15g / 15h, which drive run_seq itself.
 //
 // ⚠ AND ONE MUTATION SURVIVES, RECORDED RATHER THAN PAPERED OVER: disabling the run-state
 // reset with `if(false)` leaves check 11 green, because 11 is a WIRING check and a source
@@ -67,7 +76,9 @@ process.on("unhandledRejection", __crash);
 
 const fs = require("fs");
 const path = require("path");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML lets a mutation run point this at a sidecar copy, so a killed runner can never leave the real page mutated
+const ASV_HTML = process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html");
+const H = fs.readFileSync(ASV_HTML, "utf8");
 
 function grab(name) {
   let start = H.indexOf("function " + name + "(");
@@ -97,6 +108,13 @@ let lineActual = [], lineClock = null, loggedLines = false;
 let turnSeg = [], curTurn = -1, lastRunLine = -1, runLineIdx = -1;
 let lineStatsKey = null;
 let runElapsed = 0, runClock = null, runTotalM = 0, runTotalKey = null;
+// review #23: the clock times the COMMANDED MOTION, and the job is kept beside it. Declared here, not beside the
+// checks that use them, because resetRunTimer is evaluated above and reads them - a `let` further down would be in
+// its temporal dead zone the moment check 10 calls it.
+let runSeq = null, jobElapsed = 0, jobClock = null, runMotions = 0;
+let clockNow = 0;                                   // the page reads performance.now()/1000; this scope supplies it
+const performance = { now: () => clockNow * 1000 };
+const { fmtMS } = require("../static/js/units.js");
 let asv = { lat: 43.0, lon: -70.0 };
 let runRoute = null, S = { run: "running" };
 // routeRemainingM reads the vessel's reported waypoint index off `window`, which node does
@@ -220,6 +238,62 @@ check("11. the run-state reset is KEPT, but it is no longer the only thing that 
       "it still does the right thing at a real start; it was never sufficient on its own. " +
       "⚠ A WIRING CHECK: a source grep cannot see reachability, so an `if(false)` around " +
       "these calls survives it - see the header");
+
+// ── 12-15. THE COMMANDED MOTION, NOT EVERYTHING SINCE THE BOAT LAST STOOD STILL (review #23) ─────────
+// Andy: "`runElapsed` spans back-to-back runs" - 3:48 across two Go-Tos, while the other two numbers on that row
+// measured the CURRENT route. The clock is keyed on the console's own motion counter now; the job total survives.
+// eslint-disable-next-line no-eval
+eval(grab("startNewMotion"));
+// eslint-disable-next-line no-eval
+eval(grab("accumRunTime"));
+// the VALUE, bound in this scope: `const` inside an eval() belongs to the eval, and runTimeTip could not see it
+// eslint-disable-next-line no-eval
+const RUNTIME_TIP = eval(H.match(/^const RUNTIME_TIP = ([\s\S]*?);$/m)[1]);
+// eslint-disable-next-line no-eval
+eval(grab("runTimeTip"));
+
+S = { run: "running" };
+resetRunTimer();
+clockNow = 0; accumRunTime();
+clockNow = 10; accumRunTime();
+S = { run: "paused" };
+clockNow = 20; accumRunTime();                      // paused: neither clock moves
+const atPause = [runElapsed, jobElapsed];
+S = { run: "running" };
+accumRunTime();
+clockNow = 25; accumRunTime();
+check("12. both clocks tick only while the boat is running, and both freeze on a pause",
+      () => atPause[0] === 10 && atPause[1] === 10 && runElapsed === 15 && jobElapsed === 15,
+      () => "at the pause " + atPause + ", after it " + [runElapsed, jobElapsed]);
+
+runTotalM = 500; runTotalKey = "5:500";
+startNewMotion();
+const afterCmd = [runElapsed, jobElapsed, runMotions, runTotalM, runTotalKey];
+clockNow = 30; accumRunTime();
+check("13. a NEW commanded motion restarts the motion's clock and the percentage baseline — and the job keeps " +
+      "counting, because the boat never stopped",
+      () => afterCmd[0] === 0 && afterCmd[1] === 15 && afterCmd[2] === 2 && afterCmd[3] === 0 && afterCmd[4] === null &&
+            runElapsed === 5 && jobElapsed === 20,
+      () => "at the command " + afterCmd.slice(0, 3) + ", five seconds later " + [runElapsed, jobElapsed]);
+
+const tipTwo = runTimeTip();
+runMotions = 1;
+const tipOne = runTimeTip();
+check("14. the row's tooltip says BOTH as soon as there is more than one — the job is not thrown away, it is just " +
+      "not the number on the row",
+      () => /This commanded motion: 0:05\./.test(tipTwo) && /Since the boat last got under way: 0:20 over 2 /.test(tipTwo) &&
+            tipOne === RUNTIME_TIP && !/commanded motion:/.test(tipOne),
+      () => tipTwo.slice(0, 96));
+
+check("15. and it is WIRED to the console's counter, not to the run state: onState starts a new motion when " +
+      "s.run_seq moves, a page that opened mid-run adopts the number it finds, and the row writes the tooltip",
+      () => {
+        const os = H.slice(H.indexOf("function onState"), H.indexOf("function onState") + 1400);
+        return /s\.run_seq!=null && s\.run_seq!==runSeq/.test(os) &&
+               /if\(!freshRun && runSeq!=null\) startNewMotion\(\)/.test(os) &&
+               /runSeq = s\.run_seq/.test(os) && /el\.title = runTimeTip\(\)/.test(grab("updateRunTime"));
+      },
+      "the page cannot tell a resume from a new command by `run` alone — it reads \"running\" through both");
 
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
