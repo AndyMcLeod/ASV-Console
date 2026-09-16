@@ -9646,8 +9646,9 @@ function onFrame(ev){
   storageCheck();
 }
 // ⚠ A DRIVE THE CONSOLE WRITES TO IS RUNNING OUT (review #24, 2026-09-15). The console measures logs/ and charts/ and the
-// room left, on its own thread (S.storage), and NOTHING on either side removes anything: the session logs are records the
-// operator analyzes, and thinning them or the chart cache is the operator's call. Said once when a drive goes low - the
+// room left, on its own thread (S.storage). NOTHING IS EVER DELETED; the only retention the console has is the one Andy
+// asked for on 2026-09-15 - a session recording over S.storage.old_days is COMPRESSED in place, and the chart cache is
+// not capped - so the banner says whichever of those two is true (S.storage.log_compress). Said once when a drive goes low - the
 // plan, the session log and the chart cache would be the first writes to fail there - and taken down, if it is still
 // the banner up, when there is room again.
 // ⚠ AND A PILL STAYS UP WHILE IT LASTS, because the banner slot is shared: in the live check the chart's own "Nogo
@@ -9664,7 +9665,8 @@ function storageCheck(){
     + (st.free_drive || "the console's drive") + ", where " + (uses.join(", ") || "the console")
     + (uses.length > 1 ? " write" : " writes") + ". logs/ occupies " + fmtStorageMb(st.logs_mb)
     + " (" + fmtStorageMb(st.logs_old_mb) + " of it older than " + st.old_days + " days) and charts/ "
-    + fmtStorageMb(st.charts_mb) + ". Nothing is removed automatically.";
+    + fmtStorageMb(st.charts_mb) + (st.log_compress ? ". Recordings over " + st.old_days
+      + " days are compressed, but nothing is deleted." : ". Nothing is removed automatically.");
   const pill = $("#diskPill");
   if(pill && pill._said !== said){
     pill._said = said;

@@ -1420,10 +1420,8 @@ Passwords are redacted; the file is append-only and line-buffered, so a crash or
 kill still leaves a complete record. It's on by default (both sim and live);
 `--no-log` disables it. `logs/` is gitignored.
 
-**What the console keeps on disk, and the room left.** Nothing removes a session log or a
-cached chart automatically: the logs are your records, and the chart cache is what lets an
-area already seen plan with the network down, so what to thin and when is your call. The
-console MEASURES instead - at start and every 30 minutes, on its own thread - what `logs/` and
+**What the console keeps on disk, and the room left.** Nothing is ever deleted. The console
+MEASURES - at start and every 30 minutes, on its own thread - what `logs/` and
 `charts/` occupy on the drive and what they hold (on a drive with large allocation units,
 thousands of small chart tiles occupy several times their content, and the on-disk figure is
 the one a folder's Properties shows as "size on disk"), how much of `logs/` is older than 30
@@ -1436,6 +1434,21 @@ long as it lasts (hover it for the whole warning; the banner slot is shared, and
 banner can take it within seconds). The session log records `storage_low` / `storage_ok`. A
 folder that is a link or junction is measured and named by the drive it leads to
 (`tests/storage_watch.py`, `tests/storage_banner.js`).
+
+**Old recordings are compressed, and that is the only retention there is.** On the same thread,
+a session recording older than 30 days is gzipped in place: `asv_<ts>.jsonl` becomes
+`asv_<ts>.jsonl.gz` and keeps its own date. Measured on a real `logs/`: 118 recordings, 309.6 MB
+to 8.9 MB, about 35x. **It is still the same record, and it still opens the same way** -
+`/api/logs` lists it under its own name at the size of the RECORD, the playback view picks it and
+plays it with no idea it was ever compressed, and outside the console any gzip tool reads it
+(`gzip -d`, 7-Zip, `gzip.open` in Python). The original is removed ONLY after the compressed copy
+has been written, read back and compared byte for byte; a failure at any step leaves the
+recording exactly as it was and says so on stderr. The recording being written now is never
+touched, nor is anything in `logs/` that is not a session recording. A pass compresses at least
+one recording and then stops after 30 seconds, carrying on at the next check, and prints and logs
+what it did (`logs_compressed`). **`--no-log-compress`** turns it off - and the readouts then say
+so, rather than claiming a policy the console no longer has. **The chart cache is not capped**:
+it is what lets an area already seen plan with the network down (`tests/log_compress.py`).
 
 **`--state-dir DIR`** keeps this console's own state - the plan (`mission.json` and its backups),
 `comms_config.json`, `ports.json`, `roc_config.json` and `logs/` - in DIR instead of beside the

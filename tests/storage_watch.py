@@ -2,10 +2,15 @@
 (review #24, 2026-09-15).
 
 Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." His session
-logs are records he analyzes, and thinning them - or the chart cache - on a schedule is his call, not a default. So the
-console MEASURES: logs/ and charts/ (on disk, and the content in them), how much of the log is older than
-STORAGE_OLD_DAYS, and the room left on each drive it writes to; it prints that at start and whenever a drive goes low
-or recovers, puts it in the state, and the page raises a banner when a drive runs low (tests/storage_banner.js).
+logs are records he analyzes, so what to keep was his call, not a default. The console MEASURES: logs/ and charts/ (on
+disk, and the content in them), how much of the log is older than STORAGE_OLD_DAYS, and the room left on each drive it
+writes to; it prints that at start and whenever a drive goes low or recovers, puts it in the state, and the page raises
+a banner when a drive runs low (tests/storage_banner.js).
+⚠ THE MEASUREMENT ITSELF STILL TOUCHES NOTHING (check 9). Shown the figures he answered "1. Compress logs over 30 days.
+2. Do not limit chart cache size", so recordings over STORAGE_OLD_DAYS are compressed in place - that is the console's
+only retention, it lives in compress_old_logs, and tests/log_compress.py guards it. What this suite holds about it is
+that the report and the state SAY which of the two is in force (checks 5, 5b): a readout claiming a policy the console
+does not have is worse than no readout.
 ⚠ ON DISK, NOT JUST CONTENT: Andy's D: has 256 KB allocation units, so charts/ holds 861 MB of tiles and occupies 4.6 GB -
 his "4.4 GB" can only have been the size on disk. A content-only readout would have contradicted what he measured.
 
@@ -18,8 +23,10 @@ nothing in it removes anything.
 
     python tests/storage_watch.py      # exit 0 = pass, 1 = fail   (stdlib only)
 
-TEETH - 13 mutations RUN in a scratch clone (sidecar original, atomic writes, no bytecode, byte-compared afterwards),
-13/13 caught:
+TEETH - 15 mutations RUN in a scratch clone (sidecar original, atomic writes, no bytecode, byte-compared afterwards),
+15/15 caught - the last two are the retention readout, with tests/log_compress.py:
+    the report claims the compression whatever the console does -> 5b
+    the state does not say which policy is in force -> 5, 5b
     content only, no allocation units -> 1, 6            the old log not split off -> 1, 3
     an unreadable folder raises -> 2                     never low -> 5, 7
     the report forgets that nothing is removed -> 5      the allocation units go unexplained -> 6
@@ -174,11 +181,22 @@ try:
     low_line = _C.STORAGE.report(low)
 finally:
     _C.shutil.disk_usage = real_usage
-check("5. with less than STORAGE_LOW_MB free it is LOW, and the report says which writes are there and that nothing is "
-      "removed automatically",
+check("5. with less than STORAGE_LOW_MB free it is LOW, and the report says which writes are there and what the console "
+      "does about it - compress the old recordings (his decision), delete nothing",
       lambda: low["low"] is True and round(low["free_mb"]) == 1024 and "LOW" in low_line
-      and "nothing is removed automatically" in low_line and "the session log" in low_line,
+      and "recordings over 30 days are compressed, but nothing is deleted" in low_line
+      and "the session log" in low_line,
       lambda: low_line)
+_C.LOG_COMPRESS = False                                    # --no-log-compress: it must not claim what it no longer does
+try:
+    off = _C.STORAGE.measure()
+    off_line = _C.STORAGE.report(dict(off, low=True, free_uses=["the session log"], free_mb=1024.0))
+finally:
+    _C.LOG_COMPRESS = True
+check("5b. ... and with --no-log-compress it says the other thing, because then nothing is touched at all",
+      lambda: off["log_compress"] is False and "nothing is removed automatically" in off_line
+      and "compressed" not in off_line.split(" - LOW:")[1],
+      lambda: off_line.split(" - LOW:")[-1].strip())
 
 # 6. the report explains the gap between content and occupied - on a tile cache like Andy's: 300 small tiles on a drive
 #    with 256 KB allocation units occupy ~77 MB for 30 KB of content
@@ -247,8 +265,9 @@ for node in ast.walk(tree):
                 if name in removers or (name == "open" and any(isinstance(a, ast.Constant) and isinstance(a.value, str)
                                                                 and any(m in a.value for m in "wax+") for a in c.args[1:2])):
                     found.append("%s in %s" % (name, node.name))
-check("9. nothing in the storage watch can remove or rewrite a file: no remove, unlink, rmdir, rmtree or truncate, and no "
-      "file opened for writing",
+check("9. nothing in the MEASUREMENT can remove or rewrite a file: no remove, unlink, rmdir, rmtree or truncate, and no "
+      "file opened for writing - the one thing that takes a file away is the log compression Andy asked for, which is "
+      "not in here and is guarded by tests/log_compress.py",
       lambda: not found, lambda: "found: %s" % (", ".join(found) or "none"))
 
 

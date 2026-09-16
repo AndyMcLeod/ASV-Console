@@ -44,6 +44,7 @@ opens a browser tab. See --help.
 import argparse
 import atexit
 import calendar
+import gzip
 import hashlib
 import json
 import math
@@ -63,6 +64,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -4772,32 +4774,70 @@ INDEX_HTML = load_static("asv.html")
 # --------------------------------------------------------------------------- #
 #  Playback: read-only access to the recorded session logs (logs/*.jsonl)     #
 # --------------------------------------------------------------------------- #
-def list_logs():
-    """Newest-first list of session recordings in LOG_DIR (name/size/mtime)."""
-    out = []
+def _gz_raw_size(path):
+    """What a .gz says it holds, from its own trailer (ISIZE - exact for anything under 4 GiB), or None. A compressed
+    recording is listed at the size of the RECORD, not of the file: the operator picks a session off that list by when
+    it ran and how long it is, and neither of those changed when the file did."""
     try:
-        names = os.listdir(LOG_DIR)
+        if os.path.getsize(path) < 18:
+            return None
+        with open(path, "rb") as f:
+            f.seek(-4, os.SEEK_END)
+            return int.from_bytes(f.read(4), "little")
+    except OSError:
+        return None
+
+
+def list_logs():
+    """Newest-first list of session recordings in LOG_DIR (name/size/mtime). A recording compressed by
+    compress_old_logs is listed ONCE, under its own .jsonl name, with compressed:true and what it takes on disk - so
+    the playback page names and fetches it exactly as it did before it was compressed."""
+    out, seen = [], set()
+    try:
+        names = sorted(os.listdir(LOG_DIR))     # .jsonl sorts before .jsonl.gz: an interrupted pass lists the original
     except OSError:
         return out
     for name in names:
-        if name.startswith("asv_") and name.endswith(".jsonl"):
-            try:
-                stat = os.stat(os.path.join(LOG_DIR, name))
-            except OSError:
-                continue
-            out.append({"name": name, "size": stat.st_size, "mtime": stat.st_mtime})
+        gz = name.endswith(".gz")
+        base = name[:-3] if gz else name
+        if not (base.startswith("asv_") and base.endswith(".jsonl")) or base in seen:
+            continue
+        p = os.path.join(LOG_DIR, name)
+        try:
+            stat = os.stat(p)
+        except OSError:
+            continue
+        seen.add(base)
+        row = {"name": base, "size": stat.st_size, "mtime": stat.st_mtime}
+        if gz:
+            row["compressed"], row["on_disk"] = True, stat.st_size
+            row["size"] = _gz_raw_size(p) or stat.st_size
+        out.append(row)
     out.sort(key=lambda r: r["mtime"], reverse=True)
     return out
 
 
 def safe_log_path(name):
     """Resolve a client-supplied log filename to a path inside LOG_DIR, or None.
-    Guards against path traversal - only a bare asv_*.jsonl basename is valid."""
+    Guards against path traversal - only a bare asv_*.jsonl basename is valid.
+    A recording that has been compressed answers to THE SAME NAME: the .gz beside it is returned and read_log_text
+    decompresses it, so nothing that asks for a recording has to know which way it is stored."""
     base = os.path.basename(name or "")
     if base != name or not (base.startswith("asv_") and base.endswith(".jsonl")):
         return None
     p = os.path.join(LOG_DIR, base)
-    return p if os.path.isfile(p) else None
+    if os.path.isfile(p):
+        return p
+    return p + ".gz" if os.path.isfile(p + ".gz") else None
+
+
+def read_log_text(path):
+    """The recording's text, stored either way."""
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return f.read()
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 # The page's ES modules (static/js/*.js). SAME GUARD SHAPE AS safe_log_path, and for the
@@ -5011,9 +5051,8 @@ class Handler(BaseHTTPRequestHandler):
         if not p:
             return self._send(404, json.dumps({"error": "log not found"}))
         try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = f.read()
-        except OSError as e:
+            data = read_log_text(p)             # served as the recording either way - compressed is not a second format
+        except (OSError, EOFError, gzip.BadGzipFile, zlib.error) as e:
             return self._send(500, json.dumps({"error": str(e)}))
         self._send(200, data, "application/x-ndjson; charset=utf-8")
 
@@ -5621,16 +5660,23 @@ def watch_station_report(kind, stop=None):
 
 # --- STORAGE: what the console keeps on disk, and the room it has left (review #24) --- #
 # Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB."
-# ⚠ NOTHING HERE REMOVES ANYTHING, and that is the design, not an omission. The session logs are records the operator
-# analyzes, and the chart cache is what lets an area already seen plan with the network down; whether either should
-# ever be thinned on a schedule is the operator's call, not a default. What the console owes him is to SAY - how much
-# each holds, how much of the log is older than a month - and to warn when a drive it writes to runs low, which is the
-# moment growth turns into a fault: a plan save refused (review #10's PLAN NOT SAVED), a session that stops recording.
-# The trees are walked on a thread started by main(), never at import: tests import this module by the dozen, and the
-# chart cache runs to a hundred thousand files.
+# ⚠ NOTHING HERE DELETES A RECORD OR A CACHED CHART. The measurement removes nothing whatsoever. The one action the
+# console takes is the one the operator asked for on 2026-09-15, having been shown the figures: "1. Compress logs over
+# 30 days. 2. Do not limit chart cache size." So a session recording older than STORAGE_OLD_DAYS is COMPRESSED IN PLACE
+# (compress_old_logs) - the same record at a thirty-fifth of the size, still listed and still served to playback under
+# its own name, and readable with any gzip tool - and the original is removed only after the compressed copy has been
+# read back and compared byte for byte. THE CHART CACHE IS NOT CAPPED, by the same decision: it is what lets an area
+# already seen plan with the network down, and on his drive it costs 4.6 GB of 477.
+# What the console owes him besides is to SAY - how much each holds, how much of the log is older than a month - and to
+# warn when a drive it writes to runs low, which is the moment growth turns into a fault: a plan save refused (review
+# #10's PLAN NOT SAVED), a session that stops recording.
+# The trees are walked, and the compression runs, on a thread started by main(), never at import: tests import this
+# module by the dozen, and the chart cache runs to a hundred thousand files.
 STORAGE_CHECK_S = 1800.0          # re-measured this often
-STORAGE_OLD_DAYS = 30             # a session log older than this is counted apart
+STORAGE_OLD_DAYS = 30             # a session log older than this is counted apart - and compressed
 STORAGE_LOW_MB = 2048.0           # less free than this on a drive the console writes to is low
+LOG_COMPRESS = True               # --no-log-compress leaves the old recordings as they are
+LOG_COMPRESS_BUDGET_S = 30.0      # one pass spends at most this long; the rest waits for the next check
 
 
 def _cluster_bytes(path):
@@ -5701,6 +5747,115 @@ def _fmt_mb(mb):
     return ("%.1f GB" % (mb / 1024.0)) if mb >= 1024 else ("%d MB" % round(mb))
 
 
+_LOG_NAME_RE = re.compile(r"^asv_[0-9]{8}-[0-9]{6}\.jsonl$")   # a session recording, and nothing else in logs/
+
+
+def _compress_one(path, st):
+    """Gzip ONE recording beside itself, read the compressed copy back, compare it byte for byte, and only then remove
+    the original. True when the recording is now compressed; on any failure the recording is left exactly as it was and
+    the temp file is taken away. The mtime comes across, because the age of a record is the record's, not today's."""
+    gz = path + ".gz"
+    tmp = "%s.%d.%d.gz.part" % (path, os.getpid(), threading.get_ident())
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        print("[logs] %s could not be read, left as it is: %s" % (os.path.basename(path), e), file=sys.stderr)
+        return False
+    try:
+        with open(tmp, "wb") as f:
+            # filename="" and an explicit mtime: the header carries no name or clock, so the same recording always
+            # compresses to the same bytes and a re-run is not a different file.
+            with gzip.GzipFile(filename="", mode="wb", fileobj=f, mtime=int(st.st_mtime)) as g:
+                g.write(raw)
+        with gzip.open(tmp, "rb") as g:
+            back = g.read()
+        if back != raw:
+            raise OSError("the compressed copy does not read back as the recording (%d of %d bytes)" % (len(back), len(raw)))
+        _replace_retrying(tmp, gz)
+        os.utime(gz, (st.st_atime, st.st_mtime))
+        os.remove(path)                                        # the record exists compressed before this line runs
+        return True
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error) as e:
+        print("[logs] %s NOT compressed, left as it is: %s" % (os.path.basename(path), e), file=sys.stderr)
+        return False
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def compress_old_logs(now=None, budget_s=None):
+    """Compress the session recordings older than STORAGE_OLD_DAYS, one at a time, and report what was done:
+    {files, raw, gz, failed, left}.
+    ⚠ ANDY ASKED FOR THIS ON 2026-09-15, shown review #24's figures: 118 recordings older than 30 days held 309.6 MB and
+    gzip to 8.9 MB - 35x. It is the only thing in this console that takes a file away, and it takes away only a
+    recording it has already written a verified copy of (_compress_one).
+    NEVER the session being recorded now, and never anything in logs/ that is not a session recording: the child
+    processes append to their own logs in here while this runs. One pass always compresses at least one recording and
+    then stops at the budget, so a slow disk cannot starve the work and cannot hold the thread either."""
+    out = {"files": 0, "raw": 0, "gz": 0, "failed": 0, "left": 0}
+    if not LOG_COMPRESS:
+        return out
+    now = time.time() if now is None else now
+    budget = LOG_COMPRESS_BUDGET_S if budget_s is None else budget_s
+    cut = now - STORAGE_OLD_DAYS * 86400.0
+    started = time.monotonic()
+    current = os.path.abspath(LOG.path) if (LOG is not None and getattr(LOG, "path", None)) else None
+    try:
+        names = sorted(os.listdir(LOG_DIR))
+    except OSError:
+        return out
+    for name in names:
+        if not _LOG_NAME_RE.match(name):
+            continue
+        path = os.path.join(LOG_DIR, name)
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_mtime >= cut or os.path.abspath(path) == current:
+            continue
+        if (out["files"] or out["failed"]) and time.monotonic() - started >= budget:
+            out["left"] += 1
+            continue
+        if _compress_one(path, st):
+            out["files"] += 1
+            out["raw"] += st.st_size
+            try:
+                out["gz"] += os.path.getsize(path + ".gz")
+            except OSError:
+                pass
+        else:
+            out["failed"] += 1
+    return out
+
+
+def _fmt_bytes(n):
+    """MB for the figures that matter (his backlog is 309.6 MB), KB below that - "0 MB -> 0 MB" says nothing.
+    ⚠ The megabyte is written 1048576.0 rather than 1048576 throughout this file on purpose: tests/station_windows.py 1
+    refuses any 7-DIGIT INT constant in the console, because that is the shape of a NOAA station id. It caught this."""
+    mb = n / 1048576.0
+    return _fmt_mb(mb) if mb >= 1 else ("%d KB" % max(1, round(n / 1024.0)))
+
+
+def run_log_compression():
+    """A pass, said once if it did anything - and written to the session log, because a record that changed shape
+    without the recording saying so is exactly what an operator cannot reconstruct afterwards."""
+    res = compress_old_logs()
+    if res["files"] or res["failed"]:
+        print("[logs] compressed %d session recording(s) older than %d days: %s -> %s%s%s"
+              % (res["files"], STORAGE_OLD_DAYS, _fmt_bytes(res["raw"]), _fmt_bytes(res["gz"]),
+                 (", %d left for the next pass" % res["left"]) if res["left"] else "",
+                 (", %d left as they are after a failure" % res["failed"]) if res["failed"] else ""), flush=True)
+        if LOG is not None:
+            LOG.event("logs_compressed", files=res["files"], raw_mb=round(res["raw"] / 1048576.0, 1),
+                      gz_mb=round(res["gz"] / 1048576.0, 1), failed=res["failed"], left=res["left"])
+    return res
+
+
 class StorageWatch:
     def __init__(self):
         self._lock = threading.Lock()
@@ -5727,12 +5882,17 @@ class StorageWatch:
             d = drives.setdefault(dev, {"drive": name, "free_mb": usage.free / 1048576.0,
                                         "total_mb": usage.total / 1048576.0, "uses": []})
             d["uses"].append(use)
+        try:                                  # how many of the recordings are compressed (his retention decision)
+            gz_files = sum(1 for n in os.listdir(LOG_DIR) if n.startswith("asv_") and n.endswith(".jsonl.gz"))
+        except OSError:
+            gz_files = 0
         tightest = min(drives.values(), key=lambda d: d["free_mb"]) if drives else None
         mb = lambda b: round(b / 1048576.0, 1)  # noqa: E731
         snap = {"ok": True, "at": now,
                 # ON DISK is what each holds on the drive; the content is what a copy elsewhere would take
                 "logs_mb": mb(logs["disk"]), "logs_content_mb": mb(logs["bytes"]), "logs_files": logs["files"],
                 "logs_old_mb": mb(logs["old_disk"]), "logs_old_files": logs["old_files"], "old_days": STORAGE_OLD_DAYS,
+                "logs_gz_files": gz_files, "log_compress": bool(LOG_COMPRESS),
                 "charts_mb": mb(charts["disk"]), "charts_content_mb": mb(charts["bytes"]), "charts_files": charts["files"],
                 "cluster_kb": (charts["cluster"] or logs["cluster"] or 0) // 1024,
                 "free_mb": round(tightest["free_mb"], 1) if tightest else None,
@@ -5760,13 +5920,18 @@ class StorageWatch:
             extra = (" (%s of content: each small file takes a whole%s allocation unit)" % (_fmt_mb(content), unit)
                      if disk >= 2 * content and disk - content >= 64 else "")
             return "%s %s on disk in %d files%s" % (name, _fmt_mb(disk), files, extra)
-        line = ("[storage] %s (%s of it older than %d days); %s; %s free on %s"
+        line = ("[storage] %s (%s of it older than %d days%s); %s; %s free on %s"
                 % (held("logs", s["logs_mb"], s["logs_content_mb"], s["logs_files"]), _fmt_mb(s["logs_old_mb"]),
-                   s["old_days"], held("charts", s["charts_mb"], s["charts_content_mb"], s["charts_files"]),
+                   s["old_days"], (", %d compressed" % s["logs_gz_files"]) if s.get("logs_gz_files") else "",
+                   held("charts", s["charts_mb"], s["charts_content_mb"], s["charts_files"]),
                    _fmt_mb(s["free_mb"] or 0), s["free_drive"]))
         if s.get("low"):
-            line += (" - LOW: %s write%s there, and nothing is removed automatically"
-                     % (", ".join(s["free_uses"]), "" if len(s["free_uses"]) > 1 else "s"))
+            # ⚠ WHAT IT SAYS HERE MUST BE WHAT THE CONSOLE DOES. It compresses old recordings (his decision) and
+            # deletes nothing - and with --no-log-compress it does not even do that.
+            line += (" - LOW: %s write%s there, and %s"
+                     % (", ".join(s["free_uses"]), "" if len(s["free_uses"]) > 1 else "s",
+                        ("recordings over %d days are compressed, but nothing is deleted" % s["old_days"])
+                        if s.get("log_compress") else "nothing is removed automatically"))
         return line
 
     def check_once(self):
@@ -5786,8 +5951,9 @@ class StorageWatch:
         def loop():
             while True:
                 try:
-                    self.check_once()
-                except Exception as e:            # a measurement must never end the watch
+                    run_log_compression()         # his retention decision, and the only writer here
+                    self.check_once()             # measured after it, so the readout is of what is there now
+                except Exception as e:            # neither must ever end the watch
                     print("[storage] %s: %s" % (type(e).__name__, e), file=sys.stderr)
                 time.sleep(STORAGE_CHECK_S)
         self._thread = threading.Thread(target=loop, name="storage-watch", daemon=True)
@@ -6098,6 +6264,11 @@ def main():
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
     ap.add_argument("--no-log", action="store_true",
                     help="disable the session recorder (logs/*.jsonl for future playback)")
+    ap.add_argument("--no-log-compress", action="store_true",
+                    help="leave session recordings older than %d days as they are. By default they are gzipped in "
+                         "place - the same record, listed and played back under the same name, readable with any gzip "
+                         "tool - and the original goes only once the copy has been read back and compared"
+                         % STORAGE_OLD_DAYS)
     ap.add_argument("--no-tide-window", action="store_true",
                     help="do not open the third window (the NOAA CO-OPS page for the "
                          "water-level station nearest the vessel)")
@@ -6155,7 +6326,8 @@ def main():
     # Session recorder: capture every command/setting/action + telemetry trace
     # for a future playback mode. Created here (not at import) so --help /
     # --fetch-charts never spawn a log file. Best-effort; never fatal.
-    global LOG
+    global LOG, LOG_COMPRESS
+    LOG_COMPRESS = not args.no_log_compress
     AIS_BASE = args.ais
     # The service's runtime shape must be FINAL before the child starts: the collect
     # radius scales the subscription bbox and the source flags are its command line.

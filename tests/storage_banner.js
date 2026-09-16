@@ -10,7 +10,8 @@
 //
 //   node tests/storage_banner.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
-// TEETH - 10 sidecar mutations RUN, 10/10 caught:
+// TEETH - 11 sidecar mutations RUN, 11/11 caught:
+//   the banner claims the compression whatever the console does -> 6
 //   posted on every frame -> 2c, 3, 3b, 4             never taken down -> 3, 3b, 4
 //   takes down any banner -> 3                        not measured read as low -> 4
 //   onFrame never asks -> 5                           one use read in the plural (the old code) -> 3b
@@ -75,7 +76,7 @@ const page = eval("(function(){ \"use strict\";\n"
   + "\nreturn { storageCheck, fmtStorageMb, set: (s) => { S = s; } }; })()");
 
 const OK = { ok: true, low: false, free_mb: 432708, free_drive: "D:", free_uses: ["the plan", "the session log", "the chart cache"],
-             logs_mb: 475, logs_old_mb: 329, old_days: 30, charts_mb: 4696 };
+             logs_mb: 475, logs_old_mb: 329, old_days: 30, charts_mb: 4696, log_compress: true };
 const LOW = Object.assign({}, OK, { low: true, free_mb: 1500 });
 
 // 1. room enough
@@ -91,11 +92,11 @@ const writesBefore = pillWrites;
 for (let i = 0; i < 20; i++) page.storageCheck();        // twenty telemetry frames while it stays low
 const pillAt2 = { display: pill.style.display, text: pill.textContent, title: pill.title, writes: pillWrites - writesBefore };
 check("2. a drive gone low raises ONE banner in twenty frames - naming the room left, the drive, what writes there, what "
-      + "logs/ and charts/ occupy, and that nothing is removed automatically",
+      + "logs/ and charts/ occupy, and what the console does about it: compress the old recordings, delete nothing",
       () => posted.length === 1 && banner.style.display === "block" && /^⚠ DISK SPACE LOW/.test(banner.textContent)
             && /1\.5 GB free on D:/.test(banner.textContent) && /the plan, the session log, the chart cache write\./.test(banner.textContent)
             && /logs\/ occupies 475 MB \(329 MB of it older than 30 days\) and charts\/ 4\.6 GB/.test(banner.textContent)
-            && /Nothing is removed automatically/.test(banner.textContent),
+            && /Recordings over 30 days are compressed, but nothing is deleted\.$/.test(banner.textContent),
       () => posted.length + " posted: " + banner.textContent.slice(0, 200));
 check("2b. ... and the pill on the top bar goes up with the room left on it and the whole warning on hover - written once in "
       + "those twenty frames, not on every one",
@@ -148,6 +149,15 @@ const onFrame = grab("onFrame");
 check("5. every telemetry frame asks - onFrame calls storageCheck - and the top bar has the pill it writes",
       () => /buildCheck\(\);\s*storageCheck\(\);/.test(onFrame) && /<div class="pill" id="diskPill"/.test(H),
       () => onFrame.slice(-80).replace(/\s+/g, " ") + " | pill in the markup: " + /id="diskPill"/.test(H));
+
+// 6. a console told not to compress must not claim it does (--no-log-compress)
+page.set({ storage: Object.assign({}, LOW, { log_compress: false }) });
+page.storageCheck();
+check("6. with the compression turned off the banner says THAT - the page says what the console does, never what it "
+      + "was built to do",
+      () => posted.length === 3 && /\. Nothing is removed automatically\.$/.test(posted[2] || "")
+            && !/compressed/.test(posted[2] || ""),
+      () => (posted[2] || "").slice(-70));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

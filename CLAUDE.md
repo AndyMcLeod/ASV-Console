@@ -61,8 +61,9 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 **HANDOFF, 2026-09-15 (context window change). READ THIS BLOCK FIRST.**
 
-* **STATE:** `master` carries #24, pushed; 85 suites; Andy's mission.json / ports.json / comms_config.json unchanged by
-  any of this (hash-checked before every commit). His console was OFF through #20-#27 (nothing on 8790-8799).
+* **STATE:** `master` carries the log compression, pushed; 86 suites; Andy's mission.json / ports.json /
+  comms_config.json unchanged by any of this (hash-checked before every commit). His console was OFF throughout
+  (nothing on 8790-8799).
   **Everything in this file from before 2026-09-05 is in `HANDOFF_ARCHIVE.md` now (review #26) - see the pointer
   section below the 09-05 handoff.**
 * **APPROVAL MODE: CARRY ON.** The review ran one item at a time: build, verify (suites + mutations + live check + docs +
@@ -73,9 +74,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 * **#20, #21, #22, #24, #25, #26 AND #27 ARE DONE** (below). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Andy's call:** #24's RETENTION question - #24 measures and warns and removes nothing, as he asked; whether old
-    session logs are ever compressed, moved or deleted (and after how long), whether the chart cache gets a cap, and
-    whether 2 GB / 30 days are the right thresholds are his (numbers in the #24 block); #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
+  * **Andy's call:** #24's retention question is ANSWERED and built (the newest block below); what is left is
+    #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
     hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #23 "`runElapsed`
     spans back-to-back runs" (time each commanded motion, or each job?); #28 the Eastport north-west line (his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
@@ -106,7 +106,39 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #24 - THE CONSOLE SAYS WHAT IT KEEPS ON DISK, AND REMOVES NOTHING.**
+**NEWEST, 2026-09-15: HIS RETENTION DECISION - OLD RECORDINGS ARE COMPRESSED, THE CHART CACHE IS NOT CAPPED.**
+Shown #24's figures he answered: "1. Compress logs over 30 days. 2. Do not limit chart cache size. 3. delete the empty
+folders." All three done.
+
+* COMPRESSION (`compress_old_logs`, on the storage thread, before each measurement): a session recording older than
+  `STORAGE_OLD_DAYS` is gzipped in place - `asv_<ts>.jsonl` -> `asv_<ts>.jsonl.gz`, keeping its own mtime. ⚠ THE
+  ORIGINAL IS REMOVED ONLY AFTER THE COPY HAS BEEN WRITTEN, READ BACK AND COMPARED BYTE FOR BYTE (`_compress_one`); a
+  failure at any step leaves the recording as it was, takes the temp away and says so on stderr. Never `LOG.path`, never
+  anything in logs/ that is not a recording (`_LOG_NAME_RE`) - the child processes append to theirs in there. A pass
+  always does at least ONE and then stops at `LOG_COMPRESS_BUDGET_S` (30 s), so a slow disk can neither starve the work
+  nor hold the thread. Announced once with the figures and logged as `logs_compressed`. `--no-log-compress` turns it off.
+* ⚠ IT IS STILL THE SAME RECORD, AND THAT IS THE POINT - his logs are what he analyzes. `list_logs` lists a compressed
+  recording ONCE under its own `.jsonl` name at the size from the gzip trailer (`_gz_raw_size`) with `on_disk` beside
+  it; `safe_log_path` resolves that name to the `.gz`; `read_log_text` decompresses it. So `/api/log`, the playback
+  page and any gzip tool are unchanged - measured live through a real console's own routes (check 11).
+* THE READOUTS SAY WHICH POLICY IS IN FORCE, because a console claiming a retention it does not have is worse than one
+  that says nothing: the state carries `log_compress`, and the low-disk report and the page banner read "recordings over
+  30 days are compressed, but nothing is deleted" or "nothing is removed automatically" accordingly.
+* NOT CAPPED: the chart cache, by his decision. `storage` also carries `logs_gz_files`, and the `[storage]` line says
+  "(X of it older than 30 days, N compressed)".
+* Tests: NEW tests/log_compress.py (13 checks, the last through a REAL console; 14 mutations, 14 caught). ⚠ THREE OF
+  THOSE MUTANTS FIRST CRASHED THE SUITE INSTEAD OF FAILING A CHECK - setup between checks is not inside a `check()`
+  thunk, and a crash scores as a SURVIVAL in a runner that reads FAIL lines. `safely()` now turns those reads into
+  values no check can match. storage_watch.py 5/5b and storage_banner.js 6 hold the readout half (2 + 1 mutations).
+* ⚠ THE HOOK BLOCKED THE FIRST COMMIT OF THIS, AND WAS RIGHT TO: tests/station_windows.py 1 refuses any 7-DIGIT INT
+  constant in asv_console.py, because that is the shape of a NOAA station id - and `1048576` is one. Every megabyte in
+  that file is written `1048576.0`; the existing code already did, which is why only the new helper tripped it.
+* The 161 EMPTY `asv_amend_*` / `asv_mission_store_*` folders left in %TEMP% by suites from before #27 were removed
+  (his item 3). 73 NON-empty ones (~3 MB of old test data) were left alone, and the two hook runs since #27 added none.
+* Words: README, the operations manual (4.4 and a new 14.2), the technical manual (chapter 11 and its constants), GUARDS,
+  the hook's advice.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #24 - THE CONSOLE SAYS WHAT IT KEEPS ON DISK, AND REMOVES NOTHING.**
 Andy: "Logs and caches grow without limit. `logs/` is 471 MB across 190 files, and `charts/` is 4.4 GB." His session logs
 are records he analyzes, and anything that deletes them automatically is his call, not a default - so this item MEASURES
 and WARNS, and retention is a question for him.
