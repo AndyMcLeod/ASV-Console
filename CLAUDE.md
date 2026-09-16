@@ -77,7 +77,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   account details). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Still open:** only #30. #24's retention question, #23, #14, #29 and #28 are built (below) - and #28 answers
+  * **Still open:** only #30, and only for want of his account details (the newest block says exactly what). #24's retention question, #23, #14, #29 and #28 are built (below) - and #28 answers
     the CLASS of the Eastport question rather than that one line, which still needs his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
     isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
@@ -107,7 +107,23 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #28 - THE CHART SAYS WHAT A LINE IS.**
+**NEWEST, 2026-09-16: REVIEW ITEM #30 - MARINETRAFFIC IS NOT BUILT, AND WHY.**
+Andy's item: MarineTraffic AIS. It stayed on hold because it CANNOT be built honestly from here, and guessing would
+put an adapter in the repo that looks supported and fails on the water.
+
+* WHAT THE CONSOLE ALREADY HAS: ais_service.py carries five sources behind ONE MMSI-keyed Registry - aisstream,
+  digitraffic, aishub, nmea, opencpn - each a `Source` subclass with a name, an endpoint, a poll interval, a fetch
+  and a normalize, plus an entry in `Registry.PRIORITY`. MarineTraffic would be a sixth of about a hundred lines,
+  beside `DigitrafficSource`, with its own suite. The KEY never leaves the service: the console proxies /api/ais so
+  the browser never sees a key, and no key is ever put in a URL the page holds.
+* ⚠ WHAT IS MISSING IS NOT EFFORT, IT IS THE SHAPE OF THE ANSWER. MarineTraffic sells several products that return
+  DIFFERENT fields at different rates (a fleet's positions, an area export, a live stream), and an adapter written
+  against the wrong one is wrong in a way no test here would catch.
+* SO, THREE THINGS FROM HIM, and it is an afternoon's work after that: (1) which product/endpoint his account has
+  enabled, by name; (2) ONE sample response with the key removed - two or three vessels is plenty; (3) the plan's
+  rate limit (calls per minute, or credits) and whether it is polled or streamed.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #28 - THE CHART SAYS WHAT A LINE IS.**
 Andy, at Eastport: "What is the story with the line heading out to the northwest?" ... "its a green dashed line like a
 survey line". ⚠ THE ANSWER TO THAT PARTICULAR LINE IS STILL WITH HIM (SURV -> RESET tells him whether it was the
 uncommitted pattern preview). What is built is the answer to the CLASS: he should never have to ask again.
