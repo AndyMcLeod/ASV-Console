@@ -77,9 +77,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   account details). The local branch `wip/review-20-line-table` (`98a33418`)
   that carried #20 half-built across the context change is superseded by its commit (`a3a1db57`) and was deleted.
 * **THE REST OF ANDY'S 2026-09-14 LIST, IN ITS OWN WORDS** (the list itself lives only in that conversation):
-  * **Still open:** #24's retention question is ANSWERED and built, and so is #23 (both below); what is left is
-    #14 "All supervision lives in one browser tab" (options: a page heartbeat with a server alarm or
-    hold; one controlling page, others view-only; exclude the console from Edge's sleeping tabs); #28 the Eastport north-west line (his SURV ->
+  * **Still open:** #24's retention question, #23 and #14 are ANSWERED and built (below); what is left is
+    #28 the Eastport north-west line (his SURV ->
     RESET answer; #19 addresses the confusion behind it); #29 the page hang placing survey corners A/B/C (never
     isolated; first question: does it happen with a real mouse?); #30 MarineTraffic AIS (on hold until he knows which
     service is enabled and has a sample response with the key removed).
@@ -108,7 +107,49 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-15: REVIEW ITEM #23 - THE RUN CLOCK TIMES THE COMMANDED MOTION.**
+**NEWEST, 2026-09-15: REVIEW ITEM #14 - ONE TAB IS IN CHARGE.**
+Andy: "All supervision lives in one browser tab", with three options named - a heartbeat with a server alarm or hold,
+one controlling page with the others view-only, or excluding the console from Edge's sleeping tabs. ALL THREE, minus
+the hold: the post is held by one tab, the others are view-only, a lapse is an ALARM, and the browser's own setting is
+documented because the console cannot reach it.
+
+* WHY IT MATTERS, in one line: the clearance guard, the speed governor and the end-of-plan RTH chain all run IN THE
+  PAGE. A second tab is a second ladder commanding the same boat, and a slept tab is a ladder that stopped with
+  nothing on screen to say so - and at the console both look like ordinary traffic.
+* SERVER (`Supervision`, `supervisor_refusal`, `/api/supervisor`, a 1 s watch thread started by `main()`): a tab
+  claims the post by reporting in with its own id every `SUPERVISOR_BEAT_S` (2 s); the state carries `supervisor`
+  {holder, age_s, tabs, stale, beat_s, stale_s}; a KNOWN non-holder's command is refused 409 in words. A holder that
+  stops beating is `stale` after `SUPERVISOR_STALE_S` (6 s) and loses the post to any tab that reports in; `pagehide`
+  releases it at once; `SUPERVISOR_FORGET_S` (120 s) forgets a closed tab entirely.
+* ⚠ THREE THINGS ARE DELIBERATELY NOT GATED, each with its own check: STOP / PAUSE / E-STOP from any tab (review
+  #25's rule extended - a control that reduces risk is never gated on bookkeeping); a caller with NO tab name (a
+  script, a suite, curl - refusing those would break every harness); and `/api/mission`, so a second screen can plan
+  while the first supervises (the plan's revision guard already stops two tabs overwriting each other).
+* PAGE: `supervising()` gates exactly three things - `cmd()` (stop-class exempt), the `act` flags in the guard and the
+  governor (AFTER `renderGuardBar`, so a view-only tab still assesses and ALARMS), and `canCommand`, which every
+  chart-menu row reads. `applyViewOnly` sweeps `.cbtn` by class rather than by a list of ids, so a control added later
+  is gated by default. `#supPill` says 👁 VIEW ONLY · TAKE OVER and hands over on a click - asked even in the simulator
+  (`{always:true}`), because what changes is which window is in charge, not what the boat does.
+* ⚠ AND A SLEPT TAB SAYS SO: `supervisorTick` compares its own beats, and a gap over `SUPERVISOR_SLEPT_MS` raises a
+  banner naming the seconds and writes `page_throttled`. The Edge setting ("Never put these sites to sleep") is in the
+  operations manual; the console cannot set it, but it can refuse to pretend the tab was watching.
+* ⚠ A LAPSE IS AN ALARM, NOT A HOLD - said on the console, logged, and shown on every page, with the boat untouched. A
+  browser hiccup stopping a survey mid-line is its own hazard, and nothing the vessel does depends on the page.
+  Whether it should EVER hold is Andy's call; it is stated in the docs and left to him.
+* ⚠ THE HEARTBEAT IS NOT A COMMAND: `LOG_QUIET_POSTS` keeps 30 records a minute out of his session recording, while
+  every supervision CHANGE (took / took over / released / lapsed / back) is written as an event.
+* LIVE, two real tabs on the temp console: the second opened VIEW ONLY with its command bar dead and its E-STOP live;
+  TAKE OVER moved the post and the first tab became view-only within a beat; the console's own log read "a browser tab
+  is supervising", "a browser tab took over", and - when a tab was closed without a release getting through - "the
+  supervising tab has not reported for 6 s ... Nothing was stopped."
+* Tests: NEW tests/supervisor.py (13 checks against a real console; 12 mutations, 12 caught) and
+  tests/supervisor_page.js (11 checks; 10 mutations, 10 caught). ⚠ SIX EXISTING SUITES had to say which kind of tab
+  their world is (action_history, clearance_guard, guard_resume, measure_tool, pause_resume, speed_modes): a global
+  predicate that the page's gates consult is a global the suites must declare.
+* Words: README ("Using it"), the operations manual's new 15.1, the technical manual's 6.2b and two GUARDS entries,
+  the hook's advice.
+
+**BEFORE THAT, 2026-09-15: REVIEW ITEM #23 - THE RUN CLOCK TIMES THE COMMANDED MOTION.**
 Andy: "`runElapsed` spans back-to-back runs" - measured at 3:48 across two Go-Tos - and his own question with it:
 "time each commanded motion, or each job?"
 

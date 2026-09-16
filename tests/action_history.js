@@ -137,6 +137,10 @@ function makeWorld(store) {
     "\"use strict\";",
     "const $ = (s) => els[s];",
     "let S = { note: fetchStub.note };",
+    // review #14: cmd() asks whether this tab is the supervising one. This world is a supervising tab - the
+    // view-only refusal is tests/supervisor_page.js's subject, not this suite's.
+    "const supervising = () => true; const CLIENT_ID = \"test-tab\";",
+    "const SUPERVISOR_ANY = [\"/api/cmd/stop\", \"/api/cmd/pause\", \"/api/cmd/estop\"];",
     grab("lsGet"), grab("lsSet"), grab("lsDel"), grab("setCellText"),
     HIST_DECLS,
     ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory"].map(grab).join("\n"),

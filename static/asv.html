@@ -349,6 +349,7 @@
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
     <div class="pill" id="diskPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
+    <div class="pill" id="supPill" style="display:none;cursor:pointer;color:var(--warn);border-color:var(--warn);" title=""></div>
     <div class="pill state safe" id="p_autonomy"><b id="autonomy">SAFE</b></div>
     <a class="pill" href="/playback" target="_blank" title="Open the session playback viewer — review a recorded run" style="text-decoration:none;color:var(--ink-dim);">▶ Playback</a>
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
@@ -1807,7 +1808,9 @@ function clearanceGuard(){
                 : {level:"clear", tEntry:null};
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
   clearance.onPlan = !!a.onPlan;
-  const act = !!(S && S.armed && !S.estop);
+  // ⚠ A VIEW-ONLY TAB ASSESSES AND ALARMS, BUT DOES NOT COMMAND (review #14): the bar above is already drawn, so a
+  // second tab shows the same ladder and the same hazard - it just does not fight the supervising tab for the boat.
+  const act = !!(S && S.armed && !S.estop) && supervising();
   const rose = a.level !== "clear" && a.level !== guardLevel;
   const RUNG = {clear:0, edge:1, slow:2, hold:3, helm:4};
   const escalated = RUNG[a.level] > RUNG[guardLevel];
@@ -2159,8 +2162,8 @@ function speedReconcile(s, st){
 let commandedSpeed = null;
 function speedGovernor(){
   const st = (S && S.status) || {};
-  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding);
-  if(!act){ commandedSpeed = null; return null; }     // a stopped boat is re-governed on start
+  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding) && supervising();
+  if(!act){ commandedSpeed = null; return null; }     // a stopped boat - or a view-only tab - governs nothing
   if(clearance.slowed) return null;                   // safety owns the throttle
   // ⚠ AND THE OPERATOR OWNS IT AFTER A PAUSE. A resumed run is held at low until they say
   // otherwise, so the governor must not re-assert the role's speed the moment the boat
@@ -8772,11 +8775,97 @@ const CHARTPANEL_KEY = "asv_chartpanel_pos_v1";
 makeDraggablePanel($("#chartPanel"), $("#chartPanelHead"),
                    {key: CHARTPANEL_KEY, unanchor: "right", ignore: "#chartClose"});
 
+// --- supervision: ONE TAB COMMANDS, THE OTHERS WATCH (review #14, 2026-09-15) ------------ //
+// Andy: "All supervision lives in one browser tab."
+// ⚠ TWO TABS ARE TWO SAFETY LADDERS. The clearance guard, the speed governor and the end-of-plan RTH chain all run
+// HERE, in the page, so a second tab commands the same boat from its own reading of the world - and a tab the browser
+// has throttled or slept is a ladder that has quietly stopped, with nothing on screen to say so. Each tab tells the
+// console which tab it is and reports in every SUPERVISOR_BEAT_MS; the console grants supervision to exactly one and
+// says so in the state. The others assess, draw and ALARM exactly as before, and command nothing.
+// ⚠ EXCEPT A STOP. Stop, Pause and E-STOP are taken from any tab, supervising or not - a control that reduces risk is
+// never gated on bookkeeping - and the console enforces the same rule on its side.
+// ⚠ AND A TAB THAT WAS ASLEEP SAYS SO, because that is the failure the operator cannot see: if this tab stops running
+// for longer than SUPERVISOR_SLEPT_MS, it raises a banner and writes page_throttled to the session log. The browser's
+// own setting is the cure (Edge: Settings > System > "Never put these sites to sleep"), and the console cannot reach
+// it - what the console can do is refuse to pretend the tab was watching.
+const CLIENT_ID = (()=>{ try{ return crypto.randomUUID(); }catch(e){ return "tab-" + Math.random().toString(36).slice(2); } })();
+const SUPERVISOR_BEAT_MS = 2000, SUPERVISOR_SLEPT_MS = 6000;
+const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];   // never gated, in either direction
+let supHolder = null, supStale = false, supSaidViewOnly = false, supLastBeat = 0;
+// Nobody supervising (a console that has not been told yet, or one from before this existed) means this tab is not
+// being held back - the console decides within one beat, and it enforces the rule on its own side regardless.
+function supervising(){ return supHolder === null || supHolder === CLIENT_ID; }
+function applySupervisor(sup){
+  if(!sup) return;
+  supHolder = sup.holder || null;
+  supStale = !!sup.stale;
+  const pill = $("#supPill");
+  if(pill){
+    const viewOnly = !supervising();
+    pill.style.display = viewOnly ? "" : "none";
+    if(viewOnly){
+      pill.textContent = "👁 VIEW ONLY · TAKE OVER";
+      pill.title = "Another browser tab is supervising this console: its clearance guard and speed governor are the "
+        + "ones commanding the boat. This tab shows everything and commands nothing, except Stop, Pause and E-STOP, "
+        + "which are taken from any tab. Click to take supervision over here.";
+    }
+  }
+  if(!supervising() && !supSaidViewOnly){
+    supSaidViewOnly = true;
+    showBanner("👁 VIEW ONLY — another browser tab is supervising this console. Everything is shown here and nothing "
+      + "is commanded from here, except Stop, Pause and E-STOP. Press TAKE OVER in the top bar to command from this tab.");
+  }
+  if(supervising()) supSaidViewOnly = false;
+}
+async function supervisorBeat(take){
+  try{
+    const r = await fetch("/api/supervisor", {method:"POST", headers:{"Content-Type":"application/json"},
+                                              body: JSON.stringify({id: CLIENT_ID, take: !!take})});
+    const j = await r.json().catch(()=>({}));
+    if(j && j.supervisor) applySupervisor(j.supervisor);
+    return j;
+  }catch(e){ return null; }        // the console is unreachable; consoleHealth is what says so
+}
+function supervisorTick(){
+  const now = Date.now();
+  if(supLastBeat && now - supLastBeat > SUPERVISOR_SLEPT_MS){
+    const gap = Math.round((now - supLastBeat) / 1000);
+    const wasSupervising = supervising();
+    if(wasSupervising)
+      showBanner("⚠ THIS TAB STOPPED RUNNING for " + gap + " s — its clearance guard and speed governor were not "
+        + "running while it slept. Nothing was stopped and the vessel kept its own safety systems; read the chart and "
+        + "the Mission Status card before relying on this tab again.");
+    fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({kind:"page_throttled", data:{gap_s: gap, supervising: wasSupervising}})}).catch(()=>{});
+  }
+  supLastBeat = now;
+  supervisorBeat(false);
+}
+supervisorTick();
+setInterval(supervisorTick, SUPERVISOR_BEAT_MS);
+// Give the post up on the way out, so the next tab does not wait out the stale timer.
+addEventListener("pagehide", ()=>{
+  try{
+    navigator.sendBeacon("/api/supervisor",
+      new Blob([JSON.stringify({id: CLIENT_ID, release: true})], {type: "application/json"}));
+  }catch(e){}
+});
+
 // --- command surface ----------------------------------------------------- //
 async function cmd(path, body){
+  // ⚠ ONE TAB COMMANDS (review #14). The console refuses a non-supervising tab's commands too; this is the half that
+  // says so in the operator's own words instead of surfacing a 409, and that keeps the stop-class always live.
+  if(!supervising() && SUPERVISOR_ANY.indexOf(path) < 0){
+    const why = "this tab is VIEW ONLY — another tab is supervising. Press TAKE OVER to command from here.";
+    recordAction("refused", cmdLabel(path, body), "refused: " + why);
+    showNote(why);
+    return {ok:false, error:why};
+  }
   const noteBefore = S.note;          // the server's note before this command, so the reply's own can be told apart
   try{
-    const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+    const r = await fetch(path, {method:"POST",
+                                 // the tab's own name, so the console can tell the supervising tab from another one
+                                 headers:{"Content-Type":"application/json", "X-ASV-Client": CLIENT_ID},
                                  body: JSON.stringify(body||{})});
     const j = await r.json().catch(()=>({}));
     // ⚠ A REFUSAL IS ANSWERED AS ONE (review #6). This returned the bare body, and a network
@@ -9311,6 +9400,18 @@ $("#gb_drop").onclick = dropHeldSurvey;
 // place that has to say so by name. It also drops the drawn route, which is the remainder.
 $("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; guardHeld=null; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
+// TAKE OVER: supervision moves to this tab, now, and the console writes who took it (review #14). It asks first,
+// because the tab losing it is somebody's open window - possibly on another screen with the operator in front of it.
+$("#supPill").onclick = async ()=>{
+  if(supervising()) return;
+  // ASKED EVEN IN THE SIMULATOR ({always}), for review #11's reason: what this changes is not what the BOAT does but
+  // which window is in charge of it, and the window losing it may have somebody sitting in front of it.
+  if(!await guiConfirm("Supervise from this tab",
+    "The tab supervising now stops commanding the moment this one takes over: its clearance guard and speed governor "
+    + "stand down and this tab's take their place. The vessel is not touched by the handover.", {always: true})) return;
+  const j = await supervisorBeat(true);
+  showNote(j && j.you ? "This tab is supervising." : "The console did not hand supervision over.");
+};
 $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
   if(on && !await guiConfirm("Latch the command E-STOP",
@@ -9418,10 +9519,27 @@ window.addEventListener("storage", e=>{
 function linkConnected(s){ s = s || S; return !!((s.link && s.link !== "idle") || s.mode); }
 // May the operator command MOTION? The safety model's core gate, shared by Go-To, Hold and
 // RTH — RTH adds a home to go to, and that is the only difference.
-function canCommand(s){ s = s || S; return !!(s.armed && !s.estop); }
+// ⚠ AND THE TAB HAS TO BE THE ONE IN CHARGE (review #14): every control this gates commands the boat, so a view-only
+// tab offers none of them. The stop-class controls are gated separately, and never on this.
+function canCommand(s){ s = s || S; return !!(s.armed && !s.estop) && supervising(); }
 function canSpawn(s){   s = s || S; return s.mode === "sim"; }        // a real boat can't be teleported
 function canSetHome(s){ return linkConnected(s); }                    // needs a live fix, not an arm
 
+// ⚠ VIEW ONLY: the command bar is dead in a tab that is not supervising (review #14), except the three controls that
+// STOP the boat - those stay live in every tab, and the console takes them from any tab. Written as a sweep over the
+// bar rather than a condition on each button, so a control added later is gated by default rather than by memory.
+const VIEW_ONLY_LIVE = ["b_stop", "b_pause", "b_estop"];
+function applyViewOnly(){
+  const viewOnly = !supervising();
+  for(const b of document.querySelectorAll(".cbtn")){
+    if(VIEW_ONLY_LIVE.indexOf(b.id) >= 0) continue;
+    if(viewOnly){
+      b.disabled = true;
+      b.title = "VIEW ONLY — another browser tab is supervising this console. Press TAKE OVER in the top bar to "
+        + "command from this tab. Stop, Pause and E-STOP work from any tab.";
+    }
+  }
+}
 function applyCmdState(s){
   const connected = linkConnected(s);
   const armed = !!s.armed, estop = !!s.estop, run = s.run;
@@ -9606,7 +9724,9 @@ function onState(s){
   updateEnvUI(s.env || {}, st);
   updateCurrentUI(s.current);                    // real water, both modes (not sim-gated)
 
+  applySupervisor(s.supervisor);                 // which tab is in charge (review #14) - before the controls are set
   applyCmdState(s);
+  applyViewOnly();                               // ... and a tab that is not in charge offers no command but a stop
 
   if(st.lat_deg!=null && st.lon_deg!=null){
     asv = {lat:st.lat_deg, lon:st.lon_deg, hdg: st.heading_deg!=null?st.heading_deg:null};

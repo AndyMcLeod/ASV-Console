@@ -533,6 +533,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const EDGE_REASSESS_MS = 2000, GUARD_REASSESS_MS = 6000;
   const edgeCapM2 = edgeCapM;
   const updateClearance = () => clearance;
+  // review #14: the ladder ACTS only in the supervising tab, and this world is that tab. A view-only one is
+  // tests/supervisor_page.js's subject: it assesses, draws and alarms, and commands nothing.
+  const supervising = () => true;
   // eslint-disable-next-line no-eval
   const NL2 = String.fromCharCode(10);
   const guard = eval("(function(){ " + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2

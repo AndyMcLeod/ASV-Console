@@ -393,6 +393,9 @@ function menu(opts) {
   // them. That is the whole point: if canCommand() changes, this test changes with it.
   // eslint-disable-next-line no-new-func
   new Function("G", "with(G){" +
+    // review #14: the gate predicates also ask whether this tab is the supervising one. This world is that tab -
+    // what a view-only tab offers is tests/supervisor_page.js's subject.
+    "const supervising = () => true;" +
     grab("linkConnected") + grab("canCommand") + grab("canSpawn") + grab("canSetHome") +
     grab("chartMenuOpen") + grab("closeChartMenu") + grab("cmGate") + grab("openChartMenu") + grab("cmRow") +
     "G.openChartMenu=openChartMenu; G.closeChartMenu=closeChartMenu;" +

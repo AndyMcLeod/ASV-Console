@@ -137,6 +137,8 @@ eval([
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
+  // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
+  "const supervising = () => true;",
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
@@ -395,6 +397,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // Since review #22 cmd records each command in the history and flashes its own refusal through showNote. The
     // history is tests/action_history.js's to prove; here it only has to exist, and the label is the page's own.
     const showNote = (m) => fnotes.push(m), recordAction = () => {};
+    // review #14: cmd() asks whether this tab supervises. This world is the supervising tab; the view-only refusal
+    // belongs to tests/supervisor_page.js.
+    const supervising = () => true;
+    const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];
+    const CLIENT_ID = "test-tab";      // cmd() sends the tab's own name; without it every call reads as a throw
     // eslint-disable-next-line no-eval
     const cmdLabel = eval("(" + grab("cmdLabel") + ")");
     let fetch = () => Promise.reject(new Error("socket hang up"));

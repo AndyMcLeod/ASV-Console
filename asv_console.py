@@ -4739,6 +4739,7 @@ class Engine:
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
             "run_seq": self.run_seq,                   # which commanded motion this is (review #23)
+            "supervisor": SUPERVISION.snapshot(),      # which tab is in charge, and whether it is still there (#14)
             # Two DIFFERENT things, deliberately both published:
             #   completion      - the operator's END-OF-PLAN SETTING (the mission store).
             #                     The command-bar selector and the end-of-plan RTH chain
@@ -5193,6 +5194,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._read_json()
         refused = post_refusal(self.path, self.headers.get("Content-Type"), body)   # review #25: JSON, or a stop
+        if not refused:              # review #14: one tab supervises; the others watch (a stop is still taken)
+            refused = supervisor_refusal(self.path, self.headers.get("X-ASV-Client"))
         try:
             code, obj = refused if refused else self._dispatch_post(self.path, body)
         except Exception as e:
@@ -5202,8 +5205,11 @@ class Handler(BaseHTTPRequestHandler):
             # (a "network error"), and nothing in the session log, because this line was never reached.
             code, obj = 500, {"error": "the console failed handling %s: %s: %s" % (self.path, type(e).__name__, e)}
             print("[http] %s raised: %s: %s" % (self.path, type(e).__name__, e), file=sys.stderr)
-        # Record every command / setting / action + its outcome for playback.
-        if LOG is not None:
+        # Record every command / setting / action + its outcome for playback. ⚠ EXCEPT THE HEARTBEAT (review #14):
+        # a supervising tab reports in every SUPERVISOR_BEAT_S, and thirty records a minute of "a tab is still here"
+        # would bury the record the operator actually reads. What MATTERS about supervision - a tab taking the post,
+        # taking over, letting it go, going quiet, coming back - is written by the registry itself, as events.
+        if LOG is not None and self.path not in LOG_QUIET_POSTS:
             LOG.command(self.path, body, code,
                         obj.get("error") if isinstance(obj, dict) else None)
         self._send(code, json.dumps(obj))
@@ -5221,6 +5227,12 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, MissionUnavailable) as e:
                 return 503, {"error": "the plan could not be saved: %s" % e}
             return 200, {"ok": True, "rev": rev}
+        if path == "/api/supervisor":
+            # A tab reporting in (review #14). `take` claims the post; `release` gives it up on unload.
+            cid = body.get("id")
+            snap = (SUPERVISION.release(cid) if body.get("release")
+                    else SUPERVISION.beat(cid, take=bool(body.get("take"))))
+            return 200, {"ok": True, "supervisor": snap, "you": bool(cid and snap.get("holder") == str(cid)[:64])}
         if path == "/api/logevent":
             # Client-supplied structured event for the session log (e.g. the
             # per-survey-line plan-vs-actual table). Recorded as a clean event.
@@ -5977,6 +5989,143 @@ class StorageWatch:
 STORAGE = StorageWatch()
 
 
+# --- SUPERVISION: WHICH TAB IS IN CHARGE (review #14, 2026-09-15) ----------- #
+# Andy: "All supervision lives in one browser tab."
+# ⚠ TWO PAGES ARE TWO SUPERVISORS. The clearance guard, the speed governor and the end-of-plan RTH chain all live in
+# the PAGE, so a second tab is a second safety ladder commanding the same boat - and a tab the browser has throttled
+# or put to sleep is a ladder that has quietly stopped, with nothing on screen to say so. The console could see
+# neither from the commands alone: they arrive looking identical. So every page says which tab it is and keeps a
+# heartbeat, and the console grants supervision to exactly ONE of them. The rest are view-only and say so; any of them
+# can TAKE OVER, which is deliberate, immediate, and written into the session log.
+# ⚠ A STOP IS NEVER REFUSED - review #25's rule, extended: Stop, Pause and E-STOP are taken from any tab, supervising
+# or not. A control that reduces risk must never be gated on bookkeeping.
+# ⚠ AND A LAPSE IS AN ALARM, NOT A HOLD. When the supervising tab stops beating, the console says so on every page,
+# prints it and logs it - it does not stop the boat. A browser hiccup halting a survey mid-line is its own hazard, and
+# nothing the VESSEL does depends on the page. Whether a lapse should ever hold the boat is the operator's call.
+SUPERVISOR_BEAT_S = 2.0          # what a supervising page keeps to - published, so one number governs both ends
+SUPERVISOR_STALE_S = 6.0         # no heartbeat for this long and that tab is not watching
+SUPERVISOR_FORGET_S = 120.0      # silent this long and the tab is forgotten: it was closed
+SUPERVISOR_ANY = ("/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop")
+LOG_QUIET_POSTS = ("/api/supervisor",)   # the heartbeat is not a command; the registry logs what matters about it
+
+
+class Supervision:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._holder = None          # the tab in charge
+        self._since = None           # when it took charge
+        self._seen = {}              # every tab that has spoken -> when it last did
+        self._said_stale = False
+
+    def _prune(self, now):
+        for cid in [c for c, t in self._seen.items() if now - t > SUPERVISOR_FORGET_S]:
+            del self._seen[cid]
+            if cid == self._holder:  # the supervising tab was closed or crashed: the post is open again
+                self._holder, self._since, self._said_stale = None, None, False
+
+    def beat(self, client_id, take=False, now=None):
+        """A tab reports in. It becomes the supervisor if the post is empty, if it asked to TAKE OVER, or if the
+        holder has gone stale - a tab that is not watching cannot keep the post from one that is."""
+        now = time.time() if now is None else now
+        cid = str(client_id or "")[:64]
+        if not cid:
+            return self.snapshot(now)
+        with self._lock:
+            self._seen[cid] = now
+            self._prune(now)
+            held = self._holder
+            stale = held is not None and held != cid and (now - self._seen.get(held, 0.0)) > SUPERVISOR_STALE_S
+            if held != cid and (held is None or take or stale):
+                self._holder, self._since, self._said_stale = cid, now, False
+                why = "took over from a tab that had stopped reporting" if stale else (
+                    "took over" if take else "is supervising")
+                print("[supervisor] a browser tab %s (%s)" % (why, cid[:8]), flush=True)
+                if LOG is not None:
+                    LOG.event("supervisor_took", tab=cid[:8], took_over=bool(take or stale),
+                              from_tab=(held or "")[:8], stale=bool(stale))
+        return self.snapshot(now)
+
+    def release(self, client_id, now=None):
+        """A tab says it is going away (the operator closed it). The post is open for the next heartbeat."""
+        now = time.time() if now is None else now
+        cid = str(client_id or "")[:64]
+        with self._lock:
+            self._seen.pop(cid, None)
+            if self._holder == cid:
+                self._holder, self._since, self._said_stale = None, None, False
+                if LOG is not None:
+                    LOG.event("supervisor_released", tab=cid[:8])
+        return self.snapshot(now)
+
+    def snapshot(self, now=None):
+        now = time.time() if now is None else now
+        with self._lock:
+            held, since = self._holder, self._since
+            last = self._seen.get(held) if held else None
+            tabs = sum(1 for t in self._seen.values() if now - t <= SUPERVISOR_STALE_S)
+        age = round(now - last, 1) if last else None
+        return {"holder": held, "since": since, "age_s": age, "tabs": tabs,
+                "stale": bool(held is not None and age is not None and age > SUPERVISOR_STALE_S),
+                "beat_s": SUPERVISOR_BEAT_S, "stale_s": SUPERVISOR_STALE_S}
+
+    def is_holder(self, client_id):
+        with self._lock:
+            return bool(client_id) and self._holder == str(client_id or "")[:64]
+
+    def knows(self, client_id):
+        """A tab this console has heard from. An anonymous caller - a script, a suite, curl - is not what this guards
+        against, and refusing one would break every harness that drives the console directly."""
+        with self._lock:
+            return str(client_id or "")[:64] in self._seen
+
+    def check_once(self, now=None):
+        """Said once when supervision lapses, and once when it comes back."""
+        snap = self.snapshot(now)
+        with self._lock:
+            if snap["holder"] is None:
+                self._said_stale = False
+                return snap
+            if snap["stale"] and not self._said_stale:
+                self._said_stale = True
+                print("[supervisor] ⚠ the supervising tab has not reported for %.0f s - the page's clearance guard "
+                      "and speed governor are not running. Nothing was stopped." % (snap["age_s"] or 0),
+                      file=sys.stderr, flush=True)
+                if LOG is not None:
+                    LOG.event("supervisor_lapsed", tab=(snap["holder"] or "")[:8], age_s=snap["age_s"])
+            elif not snap["stale"] and self._said_stale:
+                self._said_stale = False
+                print("[supervisor] the supervising tab is reporting again", flush=True)
+                if LOG is not None:
+                    LOG.event("supervisor_back", tab=(snap["holder"] or "")[:8])
+        return snap
+
+    def start(self):
+        def loop():
+            while True:
+                try:
+                    self.check_once()
+                except Exception as e:                # the watch must outlive a bad check
+                    print("[supervisor] %s: %s" % (type(e).__name__, e), file=sys.stderr)
+                time.sleep(1.0)
+        threading.Thread(target=loop, name="supervisor-watch", daemon=True).start()
+
+
+SUPERVISION = Supervision()
+
+
+def supervisor_refusal(path, client_id):
+    """(409, {error}) when a tab the console KNOWS, and which is not the supervisor, commands anything but a stop.
+    An anonymous caller passes: this guards the operator's own second tab, not the API."""
+    if not path.startswith("/api/cmd/") or path in SUPERVISOR_ANY:
+        return None
+    cid = str(client_id or "")[:64]
+    if not cid or SUPERVISION.is_holder(cid) or not SUPERVISION.knows(cid):
+        return None
+    return 409, {"error": "another browser tab is supervising this console. Command from that tab, or press "
+                          "TAKE OVER here - Stop, Pause and E-STOP are taken from any tab.",
+                 "supervisor": SUPERVISION.snapshot()}
+
+
 # --- auto-started AIS provider (ais_service.py as a child process) ---------- #
 _ais_proc = None
 # ⚠ A SERVICE THAT DIES IS STARTED AGAIN (review #27, 2026-09-15). It was started once, at launch, and nothing looked at
@@ -6395,6 +6544,7 @@ def main():
     # --state-dir could move LOG_DIR (review #16).
     LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR)
     STORAGE.start()                               # sizes of logs/ and charts/, and a warning when a drive runs low
+    SUPERVISION.start()                           # says when the supervising tab stops reporting (review #14)
     if LOG.enabled:
         LOG.event("session_start", pid=os.getpid(), argv=sys.argv[1:],
                   host=args.host, port=args.port)

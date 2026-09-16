@@ -195,6 +195,9 @@ eval([
   // module scope so it assigns to the SAME `clearance` the guard reads. A stub outside would
   // have written a different binding and every rung would have run on a null clearance.
   "function updateClearance(){ clearance = {...clearance, ...__clr}; return clearance; }",
+  // review #14: the guard and the governor act only in the SUPERVISING tab. This world is that tab - a view-only
+  // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
+  "const supervising = () => true;",
   grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),

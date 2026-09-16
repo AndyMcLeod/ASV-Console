@@ -556,6 +556,23 @@ exactly like a quiet sea.
 
 ## Using it
 
+**One tab is in charge.** The clearance guard, the speed governor and the end-of-plan
+Return-to-Home all run in the PAGE, so a second browser tab would be a second set of them
+commanding the same boat — and a tab the browser has put to sleep is a set that has quietly
+stopped, with nothing on screen to say so. Each tab tells the console which tab it is and
+reports in every 2 s; the console grants supervision to ONE of them, refuses the others'
+commands in words (HTTP 409), and says on its own window when the supervising tab goes
+quiet. A view-only tab shows **👁 VIEW ONLY · TAKE OVER** in the top bar, greys its command
+bar, and draws everything else exactly as before — a second screen is what it is for, and
+you can still draw and save a plan from it. Click the pill to supervise from there instead;
+the handover is immediate and recorded. **Stop, Pause and E-STOP work from every tab**, in
+both directions — the page never withholds them and the console never refuses them. A lapse
+is an **alarm, not a hold**: nothing the vessel does depends on the page, and a browser
+hiccup halting a survey mid-line would be its own hazard. A tab that comes back from being
+asleep says how long it was gone and writes `page_throttled` to the session log; keep the
+console out of Edge's sleeping tabs (Settings → System and performance → "Never put these
+sites to sleep") (`tests/supervisor.py`, `tests/supervisor_page.js`).
+
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
    3-click survey pattern**: click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the

@@ -152,6 +152,9 @@ eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhas
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
      grab("commandSpeed") + "\n" + grab("speedReconcile") + "\n" +
      "function __want(){ return speedWant; }\n" +
+     // review #14: the governor acts only in the SUPERVISING tab, and this world is that tab. A view-only one is
+     // tests/supervisor_page.js's subject - it holds that the governor assesses and commands nothing.
+     "const supervising = () => true;\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
