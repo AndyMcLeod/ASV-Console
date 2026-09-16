@@ -6983,8 +6983,9 @@ async function punchOut(){
         // A lead pushes the turn outboard - `max(lead_in, lead_out) + R` past the coverage
         // end instead of `R` (see LEAD_GIVE) - so a lead can take a reversal that fitted
         // and make it not fit. The alternative to shortening it is shipping the pair as
-        // UNSAFE, which blocks Upload over a settling distance the operator would have
-        // given up in a heartbeat if asked. So ask, in code: shrink both leads together
+        // UNSAFE - a red plan defect the operator must fix - over a settling distance they
+        // would have given up in a heartbeat if asked. (Red does not block anything by
+        // itself: see the ⚠ on the reversal branch below.) So ask, in code: shrink both leads together
         // and re-try the whole ladder at each step.
         //
         // THE LAST RUNG IS ZERO ON PURPOSE. With no lead the pair IS the pair this console
@@ -7038,8 +7039,14 @@ async function punchOut(){
       // and by the time the ladder above has exhausted outboard, inboard and both slow
       // radii, the console knows the water for that loop is foul on every side. Shipping
       // it anyway hands the boat a manoeuvre it cannot perform next to the one feature
-      // that refused it. Flagged red like any other unroutable leg, so Upload blocks and
-      // the operator moves the line, widens the spacing or slows the plan.
+      // that refused it. Flagged red like any other unroutable leg, so the operator moves the
+      // line, widens the spacing or slows the plan.
+      // ⚠ AND NOTHING ENFORCES THE RED (found 2026-09-16, when the running order was written
+      // up). `patUnsafe` is drawn and bannered; commitPattern's resetPattern clears it; the
+      // committed plan keeps a straight leg here (no joining points); and Upload's routePlan
+      // finds that leg clear - so a red reversal CAN be committed and uploaded as exactly the
+      // 180 this branch refuses to ship. This comment used to say "Upload blocks". The
+      // manuals now say it does not, and Andy has been asked whether it should.
       if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); nUnsafeTurn++; continue; }
       // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
       // a real leg and this is the right answer; for a reversal it is the degenerate

@@ -99,9 +99,24 @@ export function channelLaneRoute(pathLL, ref, ko, buf, opts){
 // through a keep-out. Boustrophedon Cellular Decomposition: a keep-out that splits
 // a line puts the near/far parts in DIFFERENT coverage cells, so they are never
 // numbered back-to-back; each cell is covered as a continuous serpentine (turn
-// onto the adjacent line) and only left via a validated transit. Any residual
-// transit that still crosses a keep-out is returned in `unsafe` for the operator
-// to review (Option 1 flags rather than auto-routing around).
+// onto the adjacent line) and left for the next cell by a hop.
+//
+// THE RULES, AS MEASURED (tests/survey_order.js; the technical manual's 8.3 writes them up):
+//   * A run's line index is round((across - the smallest across) / spacing), and
+//     "across" is positive to starboard of `legHeading` - toward the pattern's third
+//     click, seen from its start corner - so index 0 is the outermost line on the side
+//     AWAY from that click. The survey STARTS in the cell holding index 0 (ties: the
+//     smallest along-track start), on that run as it was handed in. That is line 1 at
+//     the start corner only when the pattern fills toward the click; when it fills
+//     away from it, the survey starts on the far side of the box.
+//   * The NEXT cell is whichever has a run end nearest the previous exit - greedy, not
+//     an optimal tour - and every cell is swept from its lowest index up, each run
+//     entered at its end nearer the previous exit.
+//   * A line index with no runs at all is skipped, so a struck line does not break a cell.
+// `unsafe` lists the exit-to-entry hops `legSafe` refuses, and punchOut does NOT use it:
+// its pair loop re-judges every consecutive pair itself and joins it with a generated
+// turn, a straight hop, a routed detour or a red flag. (This comment used to say the
+// crossings were flagged "rather than auto-routing around"; the pair loop routes them.)
 // Returns {ordered:[[entry,exit]..] (traversal-oriented), unsafe:[[a,b]..]}.
 export function regionOrder(segs, ref, legHeading, spacing, legSafe){
   if(segs.length <= 1) return {ordered: segs.map(s=>[s[0],s[1]]), unsafe: []};

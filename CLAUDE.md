@@ -71,7 +71,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   the working tree. The PAGE half needs BOTH windows reloaded and the SERVER half needs a restart - and a restart OPENS
   TWO NEW WINDOWS while the old two reconnect, so: close both console windows, restart the console, use the two it
   opens. An old page left open keeps the old timer-driven report, and an old controls window will still compete.
-* **OPEN, NOT DONE (each is written up at the end of the newest block):** a woken page acting on stale buffered
+* **LATER THE SAME DAY: "how a route plan is made" WRITTEN DOWN** (the newest block below) - and it found two things now WITH ANDY: a punched survey can start on the FAR side of the box, and a RED reversal is not blocked from being committed or uploaded.
+* **OPEN, NOT DONE (each is written up at the end of the supervision block):** a woken page acting on stale buffered
   frames; `render()` on every frame whatever the visibility, and the first real record of #29's hang - both offered to
   Andy as separate tasks the same day. #30 and the Eastport line are unchanged.
 
@@ -123,7 +124,40 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-16: "THE SUPERVISORY TAB PROCESS IS BROKEN" - REVIEW #14 AS BUILT FOUGHT THE CONSOLE'S OWN TWO WINDOWS.**
+**NEWEST, 2026-09-16: HOW A SURVEY PLAN BECOMES THE ROUTE THE BOAT RUNS - WRITTEN DOWN, AND WHAT THAT FOUND.**
+Andy: "Describe in detail how a route plan is made based on an uploaded survey plan. What determines waypoint and line
+sequencing. If this is in the documentation already tell me where. If its not then add it in." It was NOT - the README
+had one sentence ("re-ordered (Boustrophedon Cellular Decomposition)") and the technical manual one bullet. Now:
+README "How the plan becomes the route the boat runs" (replacing that sentence), the operations manual's new 9.9, the
+technical manual's new 8.3 (8.3.1-8.3.6), and `tests/survey_order.js` (13 checks; 20 mutations, 20 caught) pinning every
+rule they state. "Uploaded" was read as the plan built in the console and sent with Upload - there is no file import.
+
+* **THE CHAIN:** surveyPattern (line 1 at A, alternating, stepping toward B) -> boundary + keep-out clip (direction kept)
+  -> keptRuns (strikes) -> `regionOrder` (static/js/passage.js: BCD cells, first cell = lowest across-index, next cell =
+  greedy nearest, each cell swept from its lowest index, each run entered at the end nearer the last exit, empty indexes
+  skipped) -> shorten by max(2, spacing/2) -> drop short -> leads -> the pair loop (reversal: headings 180 +/- 50 and a gap
+  under GAP_LINES + 0.6 spacings -> turnWithRetry; else straight / routeAround / red) -> commitPattern APPENDS (ends, then
+  `turn:true` joining points) -> doUpload/routePlan in order from the fix (Rule 9 on leg 0 only; positions only) -> the
+  vessel steps through by index -> currentLegLine calls a leg a line only when both ends match within 5 m.
+* **⚠ FOUND 1 - THE START CORNER IS NOT ALWAYS THE START.** The across axis points toward the THIRD click, so index 0 is
+  the outermost line AWAY from it: line 1 at A only when the pattern fills toward C. When B and C lie on opposite sides
+  of line 1 the punched survey starts on the FAR side of the box and works back (with an even line count, from the far
+  end of that line). An un-punched plan always starts at A. Measured with the page's own functions (checks 1-2), and the
+  UI calls A the "start corner". Documented as it is; ANDY ASKED whether the punched order should start at A.
+* **⚠ FOUND 2 - A RED REVERSAL IS NOT ENFORCED, THOUGH THREE PLACES SAID IT WAS.** `patUnsafe` is only drawn and
+  bannered; `commitPattern`'s resetPattern clears it; the committed plan keeps a straight leg between the two line ends
+  (no joining points); and Upload's routePlan finds that leg clear - so a pair every turn rung refused can be committed
+  and uploaded as exactly the unflyable 180 the pair loop refuses to ship (the wharf class). The README ("flagged unsafe
+  and Upload blocks") and two punchOut comments said otherwise; all three now say what happens, the operations manual's
+  9.5.1 note warns operators, and ANDY ASKED whether to block Add to plan (page-only) or carry the red into the plan and
+  block Upload. Found by reading the code - not reproduced live.
+* **ALSO WRITTEN DOWN:** SHIFT-deleting a committed line removes its two ENDS only, so the turns either side stay and the
+  boat still travels that line's track, uncounted (check 7b); a WPT click appends at the END; several patterns run in
+  the order added; a survey line that the model now blocks gets a detour at Upload and stops counting as a line.
+* The stale `regionOrder` header ("Option 1 flags rather than auto-routing around") is corrected - punchOut never used
+  its `unsafe`. Docs rebuilt; pages not rasterized (no LibreOffice); text read back out of both built manuals.
+
+**BEFORE THAT, 2026-09-16: "THE SUPERVISORY TAB PROCESS IS BROKEN" - REVIEW #14 AS BUILT FOUGHT THE CONSOLE'S OWN TWO WINDOWS.**
 His console had run #14 for twelve minutes when he said it. The recording shows the post changing hands TEN times,
 between his two pages: `7d444994` is the CONTROLS window (its page_stall records carry 0 waypoints and `run: null` -
 it opens no stream) and `5d61fe94` the chart window (the only one with a TAKE OVER pill, pressed at 08:25:25).

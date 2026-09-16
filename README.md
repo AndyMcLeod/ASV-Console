@@ -766,12 +766,52 @@ diagnosable (`tests/frame_health.js`).
    empty to a naïve query — the console fetches them by object-id so they aren't
    silently missed.)
 
-   **Obstacle-aware order + line-to-line turns.** Where a keep-out splits a line, the
-   waypoints are re-ordered (Boustrophedon Cellular Decomposition) so the ASV never
-   runs a leg straight through the punched-out area — each obstacle-free region is a
-   serpentine. At each line-to-line reversal Punch Out inserts a **generated turn**
-   that rolls the boat onto the next line *aligned* with its heading instead of
-   pivoting hard, and **shortens the survey lines** slightly to give the turn room.
+   **How the plan becomes the route the boat runs.** The plan runs in the order its
+   waypoints were committed, and nothing re-orders it afterwards — not Upload, not the
+   boat. Five steps decide that order (the operations manual's 9.9 is the operator's
+   version, the technical manual's 8.3 has the rules in full, and
+   `tests/survey_order.js` pins them):
+
+   - *The pattern.* Line 1 starts at your first click and runs square to the bearing of
+     your third; every further line is one spacing further toward your second click and
+     runs back the other way. So the drawn pattern is already a serpentine from the
+     start corner — and **that is the order an un-punched plan commits in**, with no
+     generated turns, no leads and nothing clipped.
+   - *Punch Out's order* (Boustrophedon Cellular Decomposition), so the boat never runs
+     a leg straight through a punched-out area. The clipped runs are numbered across the
+     pattern starting from the **outermost line on the side away from your third
+     click**. That is line 1 at the start corner when the pattern fills *toward* that
+     click — and the **far side of the box** when it fills *away* from it, in which case
+     the survey works back toward the start corner. Where a keep-out splits lines, the
+     runs on either side become separate **cells**: each is run as its own serpentine,
+     always starting from its line nearest the survey's first line, and the next cell is
+     whichever has a run end nearest to where the last one finished — so a cell passed
+     over early is reached last, with a transit back to it. Every run after the first is
+     entered at its end nearer the previous exit, and a line with no runs left (struck
+     off, or clipped away whole) does not break a cell.
+   - *Trimming and joining.* Every run loses half a line spacing (at least 2 m) at each
+     end to give the turn room, runs under the hull's minimum survey line are dropped,
+     and the lead-in / lead-out are added. Each consecutive pair is then joined: a
+     **generated turn** when the next run is a reversal (headings 180° ± 50°, less than
+     about four and a half spacings away, so a reversal across a missing line still gets
+     one), which rolls the boat onto the next line *aligned* with its heading instead of
+     pivoting hard; otherwise a straight leg if that is clear, a routed **detour** (amber)
+     if not, and **red** if nothing gets through.
+   - *Add to plan* **appends**: each run's two ends, then its joining points to the next
+     run. A second pattern runs after the first, in the order you added them. Editing
+     never re-orders: a `WPT` click adds a waypoint at the **end**, and SHIFT-deleting a
+     committed line removes its two ends but **leaves the turns either side** — so the
+     boat still travels that line's track, uncounted. Strike the run off *before* Add to
+     plan to have the order, the turns and the transits rebuilt around the gap.
+   - *Upload* walks the waypoints in order from where the boat is **now**. The
+     **approach** is routed clear of the chart and keeps to the starboard side of any
+     channel; every other leg keeps its planned track and gets a detour only if it now
+     crosses a keep-out (a survey line that needs one is no longer counted as a line —
+     punch again instead). A leg with no way through blocks the upload. The boat then
+     runs the waypoints strictly in order, turning onto each next leg within the
+     approach radius, and the End of plan setting applies at the last one. While it
+     runs, a leg is a **survey line** only when it runs between the two ends of a
+     committed line; everything else is timed and speed-set as a turn or a transit.
 
    **Speed is chosen per job, not once for the plan.** A survey run is three different
    things and they do not want the same speed, so the SURV card carries three: **Survey**
@@ -797,7 +837,11 @@ diagnosable (`tests/frame_health.js`).
    console tries the same turn swept the **other way** — back over water the plan has
    just surveyed, and so known clear — and then both sides again at the **slow-speed
    radius**, which reaches less far. Only if every one of those is refused is there no
-   turn, and then the pair is flagged **unsafe** and Upload blocks.
+   turn, and then the pair is flagged **unsafe** — drawn red, with the banner naming what
+   to change. ⚠ **Nothing stops that plan being added and uploaded** (found 2026-09-16):
+   the red is not carried into the plan, and at Upload the straight leg left between the
+   two line ends is clear of the chart model, so the boat would be sent a 180° it cannot
+   track, beside whatever refused the turn. Fix a red reversal before **Add to plan**.
 
    *This matters more than it looks.* Until 2026-08-31 a refused reversal fell back to
    a straight leg between the two line ends. That leg is genuinely clear of the model —
@@ -957,11 +1001,12 @@ diagnosable (`tests/frame_health.js`).
    surveyed water, beats refusing — refusing a turn is what once put a boat alongside a
    pier at 0.6 m.
 
-   Both shapes are **nogo-validated** before use. If even the teardrop can't fit clear
-   of the keep-outs the reversal falls back to a straight hop, and the banner says so
-   plainly — a straight hop between anti-parallel line ends is a 180° reversal at half
-   the spacing, i.e. the radius that was just rejected, so that case is a warning to
-   act on (widen the lines, slow down, or move the line ends), not a working turn.
+   Both shapes are **nogo-validated** before use. Where no rung of the ladder fits, the
+   pair is flagged red instead of given a turn, and the committed plan would carry a
+   straight hop between anti-parallel line ends there — a 180° reversal at half the
+   spacing, i.e. the radius that was just rejected. Treat it as a defect to fix before
+   Add to plan (widen the lines, slow the turn, shorten the lead, or move the line ends),
+   not a working turn.
 
    **What is AHEAD, and taking the helm in extremis.** Every telemetry frame the console
    projects the vessel's *ground* track forward and asks what it warrants, on four rungs:
@@ -1343,7 +1388,8 @@ diagnosable (`tests/frame_health.js`).
    is longer than the console's waypoint limit is blocked before anything is sent, and the
    banner gives both numbers (the console used to keep the first 1000 waypoints and drop the
    rest). The transit is
-   routed clear of obstacles at Upload; **completion** (command bar) sets what happens
+   routed clear of obstacles at Upload, which never re-orders the plan (see *How the plan
+   becomes the route the boat runs*, above); **completion** (command bar) sets what happens
    at the end — **RTH** (chain the ENC-routed Return-to-Home and station-keep at home;
    the default), **Complete** (stop), **Loiter** (station-keep at the last waypoint), or
    **Repeat** (loop the route). Watch waypoint progress, track, and battery.
