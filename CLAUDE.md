@@ -64,7 +64,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 * **ANDY: "the supervisory tab process is broken. Look at current running instance and fix it."** Fixed in one commit
   (the newest block below). He declined a screen view twice; the diagnosis came from his session recording,
   `logs/asv_20260916-082026.jsonl`, and was then reproduced and checked on a throwaway console in headless Edge.
-* **STATE:** `master` carries the fix, pushed; 89 suites; his mission.json / ports.json / comms_config.json
+* **STATE:** `master` carries the fix, `34326641`, pushed; 89 suites (all green through the hook); his mission.json / ports.json / comms_config.json
   hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
   pattern he drew that morning); that is his work, not ours.
 * **⚠ HOW IT GOES LIVE ON HIS MACHINE - SAY THIS TO HIM EVERY TIME:** his console (started 08:20 with `--sim`) runs
@@ -72,8 +72,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   TWO NEW WINDOWS while the old two reconnect, so: close both console windows, restart the console, use the two it
   opens. An old page left open keeps the old timer-driven report, and an old controls window will still compete.
 * **OPEN, NOT DONE (each is written up at the end of the newest block):** a woken page acting on stale buffered
-  frames; `render()` on every frame whatever the visibility; the first real record of #29's hang; connect/disconnect
-  ungated. #30 and the Eastport line are unchanged.
+  frames; `render()` on every frame whatever the visibility, and the first real record of #29's hang - both offered to
+  Andy as separate tasks the same day. #30 and the Eastport line are unchanged.
 
 **HANDOFF, 2026-09-15 (context window change).**
 
@@ -170,7 +170,7 @@ it opens no stream) and `5d61fe94` the chart window (the only one with a TAKE OV
   onFrame stubs (17 checks; 4 mutations, 4 caught). The other 53 JS suites unchanged and green. WORDS: README
   ("Using it", and the stall paragraph), the operations manual's 15.1, the technical manual's 6.2b (two new
   paragraphs) and three GUARDS entries, the hook's advice for all three suites. Pages not rasterized: no LibreOffice
-  on this machine; the text was read back out of the built documents instead.
+  on this machine; the text was read back out of the built documents instead. Commit `34326641`.
 * **OPEN - SEEN, NOT FIXED:**
   * A PAGE WOKEN FROM A FREEZE RUNS ITS LADDER ON STALE FRAMES. The browser buffers the stream while the page is
     frozen and delivers it on waking, and onState acts on every one of them (with `act` true, since the page still
@@ -180,7 +180,9 @@ it opens no stream) and `5d61fe94` the chart window (the only one with a TAKE OV
     the 1.5-4.1 s stalls above, off screen included.
   * THE FIRST REAL RECORD OF #29's HANG: `page_stall` 20.2 s at 08:24:08, survey mode, corners A, B and C down,
     40 runs, 1,314 keep-out features - he was placing a pattern at New Castle. Reproducible from those numbers.
-  * `/api/connect` and `/api/disconnect` are not under `/api/cmd/`, so supervision does not gate them.
+  * CHECKED, NOT A GAP: `/api/connect` and `/api/disconnect` sit outside `/api/cmd/`, so supervision does not gate
+    them - but the console page never calls them (only playback.html names them, to label recorded commands), and a
+    caller with no tab name is exempt by design.
 
 **BEFORE THAT, 2026-09-16: REVIEW ITEM #30 - MARINETRAFFIC IS NOT BUILT, AND WHY.**
 Andy's item: MarineTraffic AIS. It stayed on hold because it CANNOT be built honestly from here, and guessing would
