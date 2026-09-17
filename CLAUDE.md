@@ -55,23 +55,28 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-16 — supervision (#14) FIXED after Andy found it broken; #30 waits on him; the Eastport question is OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-16, evening — Add to plan now REFUSES an unflyable reversal (Andy's call); supervision (#14) FIXED; #30 waits on him; the Eastport question is OPEN)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-16. READ THIS BLOCK FIRST, THEN THE 09-15 ONE UNDER IT (how items are built still holds).**
 
+* **LATEST - ADD TO PLAN REFUSES A RED REVERSAL** (the newest block below): Andy answered the question the route-order
+  write-up left him - refuse at Add to plan, leave red hops to Upload, stagger gate as a separate follow-up - and it is
+  built, with a second hole the live check found (a tide update used to swap a punch for the UN-punched pattern).
+  ⚠ PAGE-ONLY: it goes live on his machine when BOTH console windows are reloaded; no server restart is needed.
 * **ANDY: "the supervisory tab process is broken. Look at current running instance and fix it."** Fixed in one commit
   (the newest block below). He declined a screen view twice; the diagnosis came from his session recording,
   `logs/asv_20260916-082026.jsonl`, and was then reproduced and checked on a throwaway console in headless Edge.
-* **STATE:** `master` carries the fix, `34326641`, and the route-order write-up, `18033a5b`, both pushed; 89 suites (all green through the hook); his mission.json / ports.json / comms_config.json
-  hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
+* **STATE:** `master` carries the supervision fix, `34326641`, the route-order write-up, `18033a5b`, and the Add-to-plan
+  refusal (the newest block; its hash is recorded in the commit after it), all pushed; 91 suites (55 JS + 36 Python), all
+  green through the hook; his mission.json / ports.json / comms_config.json hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
   pattern he drew that morning); that is his work, not ours.
 * **⚠ HOW IT GOES LIVE ON HIS MACHINE - SAY THIS TO HIM EVERY TIME:** his console (started 08:20 with `--sim`) runs
   the working tree. The PAGE half needs BOTH windows reloaded and the SERVER half needs a restart - and a restart OPENS
   TWO NEW WINDOWS while the old two reconnect, so: close both console windows, restart the console, use the two it
   opens. An old page left open keeps the old timer-driven report, and an old controls window will still compete.
-* **LATER THE SAME DAY: "how a route plan is made" WRITTEN DOWN** (the newest block below) - and it found two things now WITH ANDY: a punched survey can start on the FAR side of the box, and a RED reversal is not blocked from being committed or uploaded.
+* **LATER THE SAME DAY: "how a route plan is made" WRITTEN DOWN** (its block is below the newest) - and it found two things: a punched survey can start on the FAR side of the box (still WITH ANDY), and a RED reversal was not blocked from being committed or uploaded (ANSWERED and built - the newest block).
 * **OPEN, NOT DONE (each is written up at the end of the supervision block):** a woken page acting on stale buffered
   frames; `render()` on every frame whatever the visibility, and the first real record of #29's hang - both offered to
   Andy as separate tasks the same day. #30 and the Eastport line are unchanged.
@@ -124,7 +129,86 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     commits skip it), then push. A session that ends mid-hook leaves the item STAGED, not committed - check `git log`.
     The "geometric repack" error on fetch/commit is harmless.
 
-**NEWEST, 2026-09-16: HOW A SURVEY PLAN BECOMES THE ROUTE THE BOAT RUNS - WRITTEN DOWN, AND WHAT THAT FOUND.**
+**NEWEST, 2026-09-16 (EVENING): ADD TO PLAN REFUSES A REVERSAL WITH NO FLYABLE TURN - ANDY'S ANSWER TO "FOUND 2", BUILT.**
+Asked (with the two options the route-order block set out), Andy chose: **refuse Add to plan** (page-only - not "save the
+red pairs and refuse Upload"); **red HOPS do not refuse** (Upload's `legPath` routes every hop again and refuses the upload
+if it still cannot); **staggered reversals are a separate follow-up** (see OPEN below).
+
+* **IT HAD ALREADY HAPPENED ON HIS CONSOLE THAT EVENING.** `mission.json.bak1` (rev 70) is the 74-line Honolulu plan he added
+  at 19:04 (Z-Boat, 10 m spacing, 5 m buffer, min depth 3, no lead): 18 reversal pairs inside the reversal gate with NO
+  joining points - with no lead that can only mean every rung refused, i.e. drawn red. His recording
+  (`logs/asv_20260916-185954.jsonl`) has both uploads (19:04:23 and 19:04:55): 17 of the 18 went to the vessel as ONE
+  straight leg each. The run never reached them - the in-extremis escape fired at 19:11:50 in the turn off line 1 (not
+  investigated - OPEN below) and he sent her home. His live plan is empty now (rev 71); bak1 still carries those pairs.
+* **WHY PAGE-ONLY IS RIGHT, TRACED:** after commit nothing can fix a red pair short of CLR PLAN - WPT cannot insert a turn,
+  and deleting either line of the pair (or both) leaves a zero-radius reversal at the next waypoint, because the remaining
+  joining points still expect a line there. At Add to plan the pattern is still live and every remedy is one re-punch away.
+* **BUILT (static/asv.html):** `patRed` - one {run, turn, why, by, a, b} per red join, pushed in the same statement as its
+  `patUnsafe` pair (`turn` = a refused REVERSAL; `why` = turnWithRetry's first-rung reason; `by` = the keep-out kind
+  firstBlockAlong found). `punchRefusal()` - keyed on `patClip`; refuses while any reversal stands, while `patJoined` is
+  false (a punch that threw part-way), and while `patDropped` is set (below). `updatePatReadout` grays out `#sp_add`, sets
+  its title, and fills a new `#sp_refuse` row under it (in #linePanel, so the controls window mirrors it - verified).
+  `commitPattern` asks AFTER flushing the pending re-punch and touches nothing when refused (banner + note). The punch
+  banner for red IS the refusal text, plus a hop sentence that no longer claims "the ASV would cross the obstacle" (false:
+  Upload re-routes or refuses) and no longer claims "the straight line is clear" (on his plan 1 of the 18 got a detour at
+  Upload); the summary line counts refused reversals, folded detours and red hops apart and ends "NOT READY"; the
+  folded-detour banner stopped saying "fall back to a straight hop". Right-click -> What is this line? names a RED JOIN
+  (its runs, and reversal vs hop) - that is where "runs 3-4" in the note meets the chart.
+* **THE REMEDIES ARE ONLY THE ONES THAT CAN WORK** - the old banner offered "shorten the lead" to EVERY refused reversal,
+  and LEAD_GIVE has already tried the pair at zero lead before anything goes red. Now: pull the line ends back / strike a
+  run always; the low TURN speed only for a `track` refusal or a teardrop plan the low radius fits (the outboard arc is
+  flyability-checked at the turn speed, so slowing CAN help a track refusal); a wider spacing only below 2 x minR (a
+  semicircle only grows); channel standoff (ceil(2.75 minR)) when a channel refused it. At Honolulu (minR 2.1 m, 10 m
+  spacing) that is just the first two - spacing and speed were never the problem there, the pier faces were.
+* **⚠ THE LIVE CHECK FOUND A SECOND HOLE THAT 16 CHECKS AND 32 MUTATIONS HAD NOT.** `applyWaterOffset` sets
+  `patClip = null` on ANY change of level (a station update, cm), silently. On the throwaway console the Honolulu punch
+  (15 red) vanished under a tide tick; one chart click refreshed the readout, the refusal lifted (it keys on patClip), and
+  Add to plan committed the UN-punched pattern - 23 lines through the piers, 46 waypoints, no turns. That fallback predates
+  this work (any tide tick between Punch Out and Add to plan did it). Now `patDropped` records the drop with the levels,
+  the readout is refreshed at once, and Add to plan refuses until Punch Out produces runs again (a no-coverage punch and
+  Reset clear it; a level change with no punch records nothing); the drag hint stops offering Add to plan meanwhile.
+  **General lesson: a background invalidation of the thing a gate keys on can turn a refusal into an acceptance.**
+* **LIVE (throwaway console on 8796, program from the scratch clone, `--state-dir`, his ports.json COPIED in for
+  `--base honolulu_harbor`; charts/ junction removed afterwards; launch.json created in his Starlink/.claude and deleted):**
+  a 23-line pattern rebuilt from bak1's geometry (A/B/C from the lines' box, 10 m, 185 deg) punched to 38 runs with 15
+  refused reversals - the same pairs his plan went up with (4-5 ... 24-25) plus 1-2; button grayed with the tooltip, the
+  note, the banner and "NOT READY" all present (screenshots, both windows); right-click on the 5-6 join named it; the REAL
+  Add to plan press committed nothing; typing 0.80 into Water m dropped the punch and refused it "(+0.33 m to +0.80 m)", a
+  chart click no longer lifted it, the real Punch Out restored the reversal refusal; the controls window (`?panel=controls`)
+  showed the same note and a disabled button, and a press there committed nothing; restoring the auto level dropped it
+  again "(+0.80 m to +0.33 m)". His mission.json / ports.json / comms_config.json hashes unchanged throughout.
+* **TESTS:** NEW `tests/turn_refusal.js` - 21 checks through a REAL punch (page punchOut over the real modules; a dock
+  feature the real builder turns into a finger pier between runs 3 and 4). Changed: identify_layer 9 (red joins),
+  clearance_guard 12/12b (the new statement; neither banner sentence claims a crossing), survey_order 7 (its commit world
+  goes through the real punchRefusal), min_depth_floor (world declares patDropped / updatePatReadout - it evals the real
+  applyWaterOffset), direct_turn and clearance_guard comments (both said "blocks Upload"). ⚠ strike_run 13 had been
+  PASSING WITHOUT READING THE STROKE since review #19 turned the preview cyan - its detail said "could not read the
+  widths" - fixed (reads PREVIEW_INK, requires both widths). **MUTATIONS: 40 sidecar mutants across six suites, 39
+  caught, none by a crash, 1 inert and recorded (resetPattern not clearing patRed - every reader keys on patClip).** Two
+  first-sweep false passes, both from reading state LATE (13 saw check 4's commit post the same banner text; 8 failed its
+  FIRST punch, so "never cleared" looked like "cleared"). 55 JS suites green; docs_valid, precommit_hook (91 suites, 91
+  advice entries) green.
+* **WORDS:** README (the refused-turn paragraph, the joining / committing bullets, the "treat as a defect" paragraph, the
+  right-click list); operations 4.5 (+ COLOUR -> COLOR), 9.5.1 (NOTE rewritten, red hop, channel, a punch going stale),
+  9.6 (new NOTE: a committed turn is not checked again), 9.8, 9.9 (x2), 13.6; technical 8.2, 8.3.3 (three paragraphs),
+  8.3.4 (+ nothing re-checks the turns after commit), GUARDS (new turn_refusal.js; direct_turn, clearance_guard,
+  identify_layer, survey_order, strike_run updated - direct_turn's said "blocked at upload"); the hook's advice (new +
+  identify_layer). Docs rebuilt; the quick-start / dev-guide docx restored; text read back out of both manuals (no
+  LibreOffice to rasterize).
+* **OPEN - SEEN, NOT DONE:**
+  * STAGGERED REVERSALS ARE JUDGED AS HOPS (Andy: follow-up). bak1 lines 34 -> 35: headings 5/185 deg, the next entry
+    81.9 m BEHIND the exit and 10 m across - the gate measures the straight gap (82.5 m > 49 m), so no turn is tried and
+    a ~173 deg reversal ships unflagged (or red as a hop). punchOut's 2026-09-08 comment records why measuring across was
+    rejected then (0 -> 2 red on a harbour plan); with red now refusing, that trade needs measuring on his plans first.
+  * THE ESCAPE IN THE TURN OFF LINE 1 (19:11:50, Honolulu): a turn the punch judged flyable was escaped from 17 s in. Not
+    investigated; the recording has the route and the telemetry.
+  * A FOLDED DETOUR (nKnotFold) still ships with its fold and a banner - not refused. Not asked about.
+  * A punch is dropped on ANY change of level, however small (the model itself rebuilds only at TIDE_REBUILD_M, 0.1 m);
+    the refusal now says so, but dropping only at the rebuild threshold would make it rarer. His call.
+  * As chosen: turn points deleted in WPT after commit, and plans committed before today, are not re-checked (both
+    manuals say so).
+
+**BEFORE THAT, 2026-09-16: HOW A SURVEY PLAN BECOMES THE ROUTE THE BOAT RUNS - WRITTEN DOWN, AND WHAT THAT FOUND.**
 Andy: "Describe in detail how a route plan is made based on an uploaded survey plan. What determines waypoint and line
 sequencing. If this is in the documentation already tell me where. If its not then add it in." It was NOT - the README
 had one sentence ("re-ordered (Boustrophedon Cellular Decomposition)") and the technical manual one bullet. Now:
@@ -150,7 +234,8 @@ rule they state. "Uploaded" was read as the plan built in the console and sent w
   and uploaded as exactly the unflyable 180 the pair loop refuses to ship (the wharf class). The README ("flagged unsafe
   and Upload blocks") and two punchOut comments said otherwise; all three now say what happens, the operations manual's
   9.5.1 note warns operators, and ANDY ASKED whether to block Add to plan (page-only) or carry the red into the plan and
-  block Upload. Found by reading the code - not reproduced live.
+  block Upload. Found by reading the code - not reproduced live. -> ANSWERED THE SAME EVENING (Add to plan) AND BUILT -
+  the block above; his own 19:04 Honolulu upload turned out to have carried 17 of them.
 * **ALSO WRITTEN DOWN:** SHIFT-deleting a committed line removes its two ENDS only, so the turns either side stay and the
   boat still travels that line's track, uncounted (check 7b); a WPT click appends at the END; several patterns run in
   the order added; a survey line that the model now blocks gets a detour at Upload and stops counting as a line.

@@ -40,7 +40,8 @@
 //     "turn away from the dock", and it is the whole fix.
 //   * ... and then at the SLOW radius, which is his second lever.
 //   * Every rung answers to the SAME keep-out model (also pinned in turn_channel 10b).
-//   * A reversal with no turn left on any rung is UNSAFE and is not shipped.
+//   * A reversal with no turn left on any rung is UNSAFE and is not shipped: it is recorded
+//     red, and Add to plan refuses the pattern while it stands (tests/turn_refusal.js).
 //   * The console slows, and never steers. It commands nothing unless the boat is under
 //     autonomous command.
 //
@@ -56,6 +57,10 @@
 //   turns: report the LAST refusal instead of the first      -> 11
 //   turns: a later rung gets a LOOSER keep-out model         -> 10, 11
 //   page: ship the straight leg again - THE REPORTED DEFECT  -> 12
+//   page: the refused reversal not recorded red (2026-09-16) -> 12 (and turn_refusal)
+//   page: ... recorded as a hop                              -> 12 (and turn_refusal)
+//   page: the red banner drops the refusal                   -> 12b (and turn_refusal 13)
+//   page: the hop banner back to "would cross the obstacle"  -> 12b (and turn_refusal 7b)
 //   page: slow-down with no autonomy gate                    -> 14
 //   page: hand the speed back at the buffer edge             -> 15
 //   page: the guard also commands a HEADING                  -> 16
@@ -346,12 +351,16 @@ const PO = grab(H, "punchOut");
 // 12. THE STRAIGHT LEG IS NO LONGER SHIPPED. This is the line that put the boat on the
 // pier: a refused reversal fell through to `legSafe(Ap,Bp)` and pushed an empty transit,
 // with a comment admitting it was "a 180 the boat cannot track". It must be UNSAFE now -
-// flagged red, blocking Upload - because the console has just established that the water
-// for that loop is foul on every side and at every radius it can fly.
+// flagged red - because the console has just established that the water for that loop is
+// foul on every side and at every radius it can fly.
+// ⚠ AND THIS COMMENT USED TO SAY "blocking Upload", which was never true: the red was only
+// drawn, commitPattern cleared it, and Upload found the straight leg clear (found 2026-09-16).
+// The pair is recorded in patRed now, and Add to plan refuses while it stands - driven end to
+// end in tests/turn_refusal.js; this check pins the statement that records it.
 check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped straight",
-      () => /if\(reversalRefused\)\{ patTransits\.push\(\[\]\); patUnsafe\.push\(\[Ap,Bp\]\); nUnsafeTurn\+\+; continue; \}/.test(PO) &&
+      () => /if\(reversalRefused\)\{ patTransits\.push\(\[\]\); patUnsafe\.push\(\[Ap,Bp\]\); nUnsafeTurn\+\+;\s*patRed\.push\(\{run:k\+1, turn:true, why:refusedWhy, by:refusedBy, a:Ap, b:Bp\}\); continue; \}/.test(PO) &&
             PO.indexOf("reversalRefused") < PO.indexOf("if(legSafe(Ap,Bp))"),
-      "and the guard sits BEFORE the legSafe straight-leg fallback, or it would never run");
+      "recorded as a red REVERSAL, and the guard sits BEFORE the legSafe straight-leg fallback, or it would never run");
 // 12b. ...AND THE BANNER SAYS WHICH OF THE TWO FAULTS IT IS. A red leg means either a
 // transit blocked by a keep-out or a reversal with no flyable turn, and until 2026-09-08
 // the banner called every one of them the first: "the ASV would cross the obstacle on
@@ -366,15 +375,22 @@ check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped st
   // sentence in order to explain why it was wrong, so a whole-function indexOf finds the
   // explanation rather than the code and orders them backwards. First cut of this check
   // failed for exactly that reason.
-  const body = PO.slice(PO.indexOf("const nUnsafeLeg = nU - nUnsafeTurn;"));
-  const iLeg = body.indexOf("nUnsafeLeg?"), iCross = body.indexOf("would cross the obstacle on those legs");
-  check("12b. ... and named as its own fault, counted apart from a blocked transit",
-        () => /let nUnsafeTurn=0;/.test(PO) && iLeg >= 0
-              && /reversal\(s\) have NO FLYABLE TURN/.test(body)
-              && /The straight line between those line ends is clear/.test(body)
-              && iCross > iLeg,
-        "two counts, two sentences — and 'would cross the obstacle' sits INSIDE the "
-        + "blocked-transit branch instead of being said about every red leg");
+  // ⚠ AND BOTH OLD SENTENCES ARE GONE (2026-09-16). "Would cross the obstacle" is false for a
+  // red hop too - Upload routes every hop again, or refuses the upload - and "the straight
+  // line between those line ends is clear" was not always true: on Andy's Honolulu plan one
+  // of the 18 straight legs got a detour at Upload. The refused reversal is said in
+  // punchRefusal's words (tests/turn_refusal.js), the hop in its own sentence.
+  const iBranch = PO.indexOf("const hopBlocks = patRed.filter(r=>!r.turn && r.block)");
+  const body = iBranch < 0 ? "" : PO.slice(iBranch, PO.indexOf("else if(nNoTurn)", iBranch));
+  check("12b. ... and named as its own fault, counted apart from a red hop - and neither sentence says the boat "
+        + "would cross anything",
+        () => /let nUnsafeTurn=0;/.test(PO) && /const nUnsafeLeg = nU - nUnsafeTurn;/.test(PO)
+              && /\(nUnsafeTurn && refusal\?`\$\{refusal\.text\} `:``\)/.test(body)
+              && /\(nUnsafeLeg\?`\$\{nUnsafeLeg\} hop\(s\) between runs are blocked by \$\{kindsSummary\(hopBlocks\)\}/.test(body)
+              && !/would cross/.test(body) && !/straight line between those line ends is clear/.test(body),
+        // A STRING: this suite's check() prints a function detail as its source rather than calling it.
+        "two counts, two sentences: the refusal's text for the reversals, the hop sentence for the rest ("
+        + body.length + " chars of branch read)");
 }
 check("13. punchOut climbs the ladder rather than making one attempt",
       () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly\)/.test(PO) &&

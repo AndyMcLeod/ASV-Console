@@ -476,6 +476,9 @@
     </div>
     <button class="ctl small punch" id="sp_punch" title="Trim survey-line extents to ENC chart features (shoreline, docks, aids, hazards, water below min depth)">Punch Out</button>
     <button class="ctl small" id="sp_add" disabled>Add to plan</button>
+    <!-- WHY ADD TO PLAN IS REFUSED (punchRefusal), directly under the button it explains - in amber like the
+         truncated-pattern hint: nothing has reached the boat, the pattern is what has to change. -->
+    <div class="phint" id="sp_refuse" style="display:none;color:var(--warn)"></div>
     <div class="prow" style="gap:4px">
       <button class="ctl small" id="sp_reset" title="Discard the pattern being drawn" style="flex:1">Reset</button>
       <button class="ctl small" id="ln_clr" title="Delete all waypoints and planned lines" style="flex:1">CLR&nbsp;PLAN</button>
@@ -2378,6 +2381,19 @@ let patClip = null;                            // Punch-Out result: the RUNS, le
 let patLead = [];
 const NO_LEAD = {in:0, out:0};
 let patUnsafe = [];                            // transits with no clear route (flagged red)
+// ONE ENTRY PER RED JOIN, pushed in the same statement as its patUnsafe pair: {run, turn, why, by, a, b} - the join
+// runs from run `run` to run `run`+1 of the preview, `turn` says it is a REVERSAL every turn rung refused (rather than
+// a hop the punch could not route), `why` / `by` say what refused it. ADD TO PLAN IS REFUSED WHILE ANY REVERSAL STANDS
+// (punchRefusal); a red hop is left to Upload, which routes it again and refuses the upload if it still cannot
+// (Andy, 2026-09-16).
+let patRed = [];
+// Did the pair loop finish joining the runs now in patClip? A punch that throws part-way leaves patClip rebuilt and
+// its joins half-built, and Add to plan would have committed that: runs with no turn between them, said nowhere.
+let patJoined = false;
+// WHY THE PAGE THREW A PUNCH AWAY ITSELF, or null (applyWaterOffset). With no patClip, Add to plan commits the pattern
+// un-punched - right for a pattern the operator never punched, wrong for one whose punch vanished under them - so
+// punchRefusal refuses while this is set. Cleared when Punch Out produces runs again, and by resetPattern.
+let patDropped = null;
 let patRoutes = [];                            // transits auto-routed around obstacles (amber polylines)
 let patTransits = [];                          // per-gap detour waypoints, interleaved on commit
 // Gaps whose turn only fits at the SLOW radius, keyed by gap index. The run commands the
@@ -4852,13 +4868,27 @@ function committedPatternInfo(){
 }
 function updatePatReadout(){
   const sp = currentPattern();
-  $("#sp_add").disabled = !(pat.A && pat.B);
   // CLEAR THE WARNING COLOUR FIRST, unconditionally. The capped branch below
   // paints `sp_hint` amber, and `.phint` is deliberately faint — so a hint left
   // amber after the operator widens the spacing would say "still truncated"
   // about a pattern that now fits. Resetting here rather than in each of the
   // five branches that write this element means a new branch cannot forget.
   $("#sp_hint").style.color = "";
+  // ── ADD TO PLAN, and WHY IT IS REFUSED when it is (punchRefusal) ──────────────────────
+  // ⚠ REFUSED WHILE THE PUNCH HAS A REVERSAL WITH NO FLYABLE TURN. Said in the button's own
+  // state and tooltip and in the row under it, because that row is in the panel the controls
+  // window mirrors - the chart window's banner is not - and a grayed-out button with no reason
+  // beside it reads as broken.
+  const refused = punchRefusal();
+  $("#sp_add").disabled = !(pat.A && pat.B) || !!refused;
+  // Always a title, never removed: the hover code puts back the title it stashed unless one
+  // was written meanwhile, so removing a refusal's title under the cursor would bring it back
+  // on a button that is no longer refused.
+  const addTip = refused ? "Refused: " + refused.short + " — the note under this button says why and what fixes it"
+                         : "Add the pattern to the plan: its runs, and the turns between them if it was punched";
+  if($("#sp_add").title !== addTip) $("#sp_add").title = addTip;
+  { const el = $("#sp_refuse");
+    if(el){ el.textContent = refused ? refused.text : ""; el.style.display = refused ? "" : "none"; } }
   // ── THE STRIKE ROW, rendered in ONE place for every branch below ──────────────────
   // What is selected and what Delete will do; then, separately, how many runs the
   // operator has taken out and the way to put them back. Both are read off the same
@@ -4918,8 +4948,12 @@ function updatePatReadout(){
       // boat is not in danger.
       $("#sp_hint").style.color = "var(--warn)";
     }
-    else if(!patClip) $("#sp_hint").textContent = pat.C ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out / Add to plan."
-      : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out / Add). Centre grip moves the whole pattern.";
+    // With no punch, Add to plan is refused only when the page threw the punch away (patDropped) - and then this line
+    // must not offer it: the note under the button says why, and Punch Out is the way on.
+    else if(!patClip) $("#sp_hint").textContent = pat.C
+      ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out" + (refused ? " again." : " / Add to plan.")
+      : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out" + (refused ? " again" : " / Add")
+        + "). Centre grip moves the whole pattern.";
   } else {
     // No pattern being drawn. If one is COMMITTED, keep describing it rather than
     // blanking the card - the plan is still there, and so is the operator's need to
@@ -4943,13 +4977,82 @@ function updatePatReadout(){
   }
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
-  patUnsafe=[]; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
+  patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
   // scheduled for it — a timer left running would re-punch a pattern that no longer
   // exists and end in a render against state this just cleared.
   patStruck=[]; patStruckKey=null; patSel=null; patClipMemo=null;
   clearTimeout(patRepunchT); patRepunchT=null;
   ["#v_surveydur","#v_approach"].forEach(id=>{ const el=$(id); if(el) el.textContent="--"; }); updatePatReadout(); }
+/**
+ * WHY ADD TO PLAN IS REFUSED, or null. The button (disabled, the reason as its tooltip), the row under it and
+ * commitPattern itself all ask this one function, so the three cannot disagree.
+ *
+ * ⚠ A REVERSAL EVERY TURN RUNG REFUSED IS NOT ADDED TO THE PLAN (Andy, 2026-09-16). Until then the red was drawn and
+ * bannered and nothing else: commitPattern's resetPattern cleared it, the committed plan kept a straight leg between
+ * the two line ends, and Upload's routePlan found that leg clear and sent it - a 180 at zero radius beside the very
+ * feature that refused the turn, the wharf class tests/clearance_guard.js exists for. It happened on his own console
+ * that evening: a 74-line Honolulu plan was uploaded twice carrying 17 of them. Asked whether to refuse here, or to save
+ * the red pairs into the plan and refuse Upload, he chose here. The pattern is still live here, so every remedy is one
+ * re-punch away; once committed, nothing short of CLR PLAN fixes a red pair - WPT cannot insert a turn, and deleting
+ * either line of the pair (or both) only moves the zero-radius reversal to the next waypoint.
+ *
+ * A RED HOP DOES NOT REFUSE (his call, the same day): Upload routes every hop again with legPath, and refuses the upload
+ * if it still finds no way round.
+ *
+ * ⚠ KEYED ON THE LIVE PUNCH. Every change that makes different runs nulls patClip, and an un-punched pattern was never
+ * judged at all - so with no patClip there is nothing here to refuse, whatever patRed still holds.
+ *
+ * ⚠ AND THE REMEDIES ARE ONLY THE ONES THAT CAN WORK. The red banner used to offer "shorten the lead" for every refused
+ * reversal, and the ladder has already tried the pair at ZERO lead before it gives up (LEAD_GIVE ends at 0); a slower
+ * TURN speed only helps a turn the boat could not TRACK, or a teardrop plan; a wider spacing only helps a teardrop.
+ */
+function punchRefusal(){
+  // No punch: an un-punched pattern is the operator's to add, as it always was - unless the page threw the punch away
+  // under them (patDropped), in which case adding would commit something they never saw.
+  if(!patClip) return !patDropped ? null : {short: "the punch was thrown away when the water level moved",
+    text: "ADD TO PLAN REFUSED — Punch Out's runs were thrown away when " + patDropped + ": they were cut against "
+        + "the chart at the old level. Adding now would commit the pattern UN-punched - its lines as drawn, through "
+        + "anything in the way, with no turns between them. Punch Out again."};
+  if(!patJoined) return {short: "the last Punch Out stopped part-way",
+    text: "ADD TO PLAN REFUSED — the last Punch Out stopped part-way, so the turns between these runs were never all "
+        + "built, and adding them would hand the boat straight legs where its turns belong. Punch Out again."};
+  const turns = patRed.filter(r => r.turn);
+  const n = turns.length;
+  if(!n) return null;
+  const pairs = turns.slice(0, 12).map(r => r.run + "–" + (r.run + 1)).join(", ")
+              + (n > 12 ? " and " + (n - 12) + " more" : "");
+  const count = why => turns.filter(r => r.why === why).length;
+  const nNogo = count("nogo"), nTrack = count("track"), nSkew = count("skew");
+  const nDegen = n - nNogo - nTrack - nSkew;
+  const nogoBy = turns.filter(r => r.why === "nogo").map(r => ({info: {kind: r.by}}));
+  const causes = [
+    nNogo ? nNogo + " where every loop the boat could fly enters " + kindsSummary(nogoBy) + " (highlighted)" : "",
+    nTrack ? nTrack + " where a loop fits on paper but the boat, flown along it at the TURN speed, enters the buffer" : "",
+    nSkew ? nSkew + " where the two runs are more than " + SKEW_LIMIT_DEG + "° off a true reversal" : "",
+    nDegen ? nDegen + " where the run ends are too close together to loop between" : ""].filter(Boolean);
+  const sp = currentPattern(), turnKey = roleSpeed("turn");
+  const minR = minTurnRadiusM(turnKey), need = 2 * minR, needLow = 2 * minTurnRadiusM("low");
+  const fixes = ["draw the box so those lines end short of what refused the turn", "strike off one of the two runs"];
+  // A CHANNEL LOOKS LIKE OPEN WATER, so it gets its own words: the turn-water rule keeps every turn out of a channel the
+  // survey's own lines do not enter, and the sure remedies are standoff or surveying the channel on purpose.
+  if(turns.some(r => r.by === "a navigation channel"))
+    fixes.push("end the lines about " + Math.ceil(2.75 * minR) + " m short of the navigation channel (or draw the "
+               + "survey into it, if it is meant to be covered)");
+  // Below `need` every reversal is a TEARDROP at the hull's radius, and a wider spacing turns it back into a
+  // semicircle that reaches less far outboard; at or above it, widening only swings the arc further out.
+  const teardrop = !!sp && sp.spacing < need;
+  if(teardrop) fixes.push("widen the spacing to " + Math.ceil(need) + " m");
+  // A slower turn is a tighter one: it helps a loop the boat could not TRACK, and a teardrop plan whose spacing the
+  // low-speed radius already fits. The punch reruns by itself when the TURN speed changes (recalcForSpeed).
+  if(turnKey !== "low" && (nTrack || (teardrop && needLow < sp.spacing)))
+    fixes.push("set the TURN speed to low (the punch reruns by itself)");
+  return {short: n + " reversal(s) with no flyable turn (red)",
+    text: "ADD TO PLAN REFUSED — " + n + " reversal(s) have NO FLYABLE TURN (dashed red; runs " + pairs + "): "
+        + causes.join("; ") + ". Added, each would hand the boat a 180° at zero radius beside what refused its turn. "
+        + "To fix: " + fixes.slice(0, -1).join(", ") + " or " + fixes[fixes.length - 1]
+        + ". Right-click a red join to see which runs it joins."};
+}
 async function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
   // ⚠ THE PENDING RE-PUNCH IS SETTLED BEFORE ANY OF THIS IS READ. Striking a run
@@ -4965,6 +5068,16 @@ async function commitPattern(){
     try { await flushRepunch(); }
     finally { updatePatReadout(); }
     if(!currentPattern()) return;              // the pattern went while we waited
+  }
+  // ⚠ ASKED AFTER THE FLUSH, NEVER BEFORE IT. A strike made a moment ago is only in the punch once its re-punch has
+  // run, and that re-punch is what decides whether a red reversal still stands - so the button's state from before the
+  // press is not the answer. Nothing below this line runs for a refused punch: the plan is not touched at all.
+  const refused = punchRefusal();
+  if(refused){
+    showBanner(refused.text);
+    flashNote("Not added to the plan — " + refused.short + ".");
+    updatePatReadout();
+    return;
   }
   planKind = "survey";                        // the committed plan is a survey (Mission card Type)
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
@@ -5320,7 +5433,21 @@ function applyWaterOffset(wl){
   sea.waterOffset = effectiveWaterOffset(wl);
   // The punched survey clip was cut against the old level (the trust gate flipping when the
   // station changes included), so any change at all invalidates it.
-  if(sea.waterOffset !== prev) patClip = null;
+  // ⚠ AND THE PAGE SAYS SO, AND ADD TO PLAN WAITS FOR A NEW PUNCH (2026-09-16). This was
+  // `patClip = null` and nothing more, on a frame the operator neither caused nor saw - a station
+  // update moves the level a few centimeters at a time. The next readout then lifted any refusal
+  // and Add to plan committed the pattern UN-punched: its lines as drawn, through the piers, with
+  // no turn between any two of them. Seen live on the Honolulu pattern that evening: a punch
+  // refused for 15 reversals became a committed plan of 23 unclipped lines and no turns after one
+  // tide update and one click on the chart. patDropped keeps Add to plan refused (punchRefusal)
+  // until Punch Out runs again; the readout is refreshed here so the button and the note say so
+  // now, not at whatever the operator touches next.
+  if(sea.waterOffset !== prev && patClip){
+    patClip = null;
+    const lvl = v => (v >= 0 ? "+" : "") + v.toFixed(2) + " m";
+    patDropped = "the water level moved (" + lvl(prev) + " to " + lvl(sea.waterOffset) + ")";
+    updatePatReadout();
+  }
   // The 1e-9: 0.3 - 0.2 is 0.0999... in floating point, and a 0.1 m move must count as one.
   if(nogo.features && nogo.features.length && nogo.builtOffset != null
      && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9) rebuildNogo();
@@ -6724,7 +6851,9 @@ async function punchOut(){
     const ok=await ensureNogoArea();
     encShow=true; $("#chrtBtn").classList.add("on"); render();
     if(!ok || !nogo.features || !nogo.features.length){
-      patClip=null;
+      // THIS punch's answer, said in the banner below: no chart, so the un-punched pattern is what Add to plan
+      // commits, as it always has - which is why a punch the tide threw away earlier stops refusing here.
+      patClip=null; patDropped=null;
       const why=nogo.note||"no ENC features returned";
       $("#sp_hint").textContent="Punch Out: "+why+" — lines unchanged.";
       showBanner("Punch Out found no ENC coverage here ("+why+") — survey lines were NOT trimmed. Verify the plan manually.");
@@ -6868,6 +6997,9 @@ async function punchOut(){
     const minLine = V.MIN_SURVEY_LINE_M || 0;
     const shortened = ro.ordered.map(seg=>shortenSeg(seg[0], seg[1], turnMargin))
                                 .filter(s=>distTo(s[0],s[1])>1);
+    // ⚠ NOT JOINED UNTIL THE PAIR LOOP BELOW HAS FINISHED. patClip changes on the next line; a throw anywhere between
+    // here and the end of that loop leaves new runs beside old or half-built joins, and punchRefusal refuses them.
+    patJoined = false; patDropped = null;       // new runs, cut against the level in force now
     patClip = minLine > 0 ? shortened.filter(s=>distTo(s[0],s[1]) >= minLine) : shortened;
     // NEVER SILENTLY. Dropping coverage the operator asked for is exactly the kind of
     // thing that must be said out loud, with the number and the threshold, or a thin
@@ -6904,7 +7036,7 @@ async function punchOut(){
         return [gi.p, go.p];
       });
     }
-    patTransits=[]; patRoutes=[]; patUnsafe=[];
+    patTransits=[]; patRoutes=[]; patUnsafe=[]; patRed=[];
     // nNoTurn is the total; the three beside it are WHY, because the banner used to
     // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nRace=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
@@ -6961,7 +7093,9 @@ async function punchOut(){
       // A REVERSAL and everything standing in for one answers to koTurn (the turn
       // water rule); only a genuine region-hop transit may use the channel (ko).
       const koHere = antiParallel ? koTurn : ko;
-      let via=null, reversalRefused=false;
+      // What refused a reversal, for patRed: turnWithRetry's reason (the FIRST rung's - see its header) and, when a
+      // keep-out took it, that keep-out's kind.
+      let via=null, reversalRefused=false, refusedWhy=null, refusedBy=null;
       // `gapSpan`, not 1.6 — see its declaration. A pair separated by a MISSING line is
       // still a reversal, and one that is not attempted is one that falls through to a
       // straight 180 nothing counts and nothing reports.
@@ -6983,10 +7117,10 @@ async function punchOut(){
         // A lead pushes the turn outboard - `max(lead_in, lead_out) + R` past the coverage
         // end instead of `R` (see LEAD_GIVE) - so a lead can take a reversal that fitted
         // and make it not fit. The alternative to shortening it is shipping the pair as
-        // UNSAFE - a red plan defect the operator must fix - over a settling distance they
-        // would have given up in a heartbeat if asked. (Red does not block anything by
-        // itself: see the ⚠ on the reversal branch below.) So ask, in code: shrink both leads together
-        // and re-try the whole ladder at each step.
+        // UNSAFE - a red plan defect the operator must fix, which Add to plan refuses (see
+        // punchRefusal) - over a settling distance they would have given up in a heartbeat if
+        // asked. So ask, in code: shrink both leads together and re-try the whole ladder at
+        // each step.
         //
         // THE LAST RUNG IS ZERO ON PURPOSE. With no lead the pair IS the pair this console
         // punched before the feature existed, so the ladder is guaranteed to end no worse
@@ -7023,12 +7157,13 @@ async function punchOut(){
                    // SLOWED for. Recorded against the gap so the run commands it there and
                    // nowhere else - a plan-wide speed drop would cost the whole survey.
                    if(t.slow){ nTurnSlow++; turnSlowAt[k]=true; } }
-        else { nNoTurn++; reversalRefused=true;  // every rung refused - the boat will improvise
+        else { nNoTurn++; reversalRefused=true; refusedWhy=t.why;  // every rung refused - see punchRefusal
           if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++;
           else if(t.why==="track") nTurnTrack++; else nTurnDegen++;
           if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
             const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
-            if(fb) turnBlocks.push({mode:"leg", info:fb.info, at:fb.at}); } }
+            if(fb){ turnBlocks.push({mode:"leg", info:fb.info, at:fb.at});
+                    refusedBy = fb.info ? fb.info.kind : null; } } }
       }
       if(via){ patTransits.push(via); patRoutes.push([Ap,...via,Bp]); continue; }
       // ⚠ A REVERSAL WITH NO TURN LEFT IS UNSAFE, AND IS NO LONGER SHIPPED AS A STRAIGHT
@@ -7041,17 +7176,22 @@ async function punchOut(){
       // it anyway hands the boat a manoeuvre it cannot perform next to the one feature
       // that refused it. Flagged red like any other unroutable leg, so the operator moves the
       // line, widens the spacing or slows the plan.
-      // ⚠ AND NOTHING ENFORCES THE RED (found 2026-09-16, when the running order was written
-      // up). `patUnsafe` is drawn and bannered; commitPattern's resetPattern clears it; the
-      // committed plan keeps a straight leg here (no joining points); and Upload's routePlan
-      // finds that leg clear - so a red reversal CAN be committed and uploaded as exactly the
-      // 180 this branch refuses to ship. This comment used to say "Upload blocks". The
-      // manuals now say it does not, and Andy has been asked whether it should.
-      if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); nUnsafeTurn++; continue; }
+      // ⚠ AND THE RED IS ENFORCED WHERE IT CAN STILL BE FIXED: ADD TO PLAN (Andy, 2026-09-16).
+      // Until then nothing enforced it - found writing up the running order: `patUnsafe` was drawn
+      // and bannered, commitPattern's resetPattern cleared it, the committed plan kept a straight
+      // leg here (no joining points), and Upload's routePlan found that leg clear and sent it,
+      // exactly the 180 this branch refuses to ship (this comment used to claim "Upload blocks").
+      // The pair goes into patRed with what refused it, and punchRefusal keeps Add to plan
+      // refused while it stands.
+      if(reversalRefused){ patTransits.push([]); patUnsafe.push([Ap,Bp]); nUnsafeTurn++;
+        patRed.push({run:k+1, turn:true, why:refusedWhy, by:refusedBy, a:Ap, b:Bp}); continue; }
       // No generated turn. For a NON-reversal (region hop, skew pair) a straight leg is
-      // a real leg and this is the right answer; for a reversal it is the degenerate
-      // fallback the nNoTurn banner warns about - clear of nogo, but a 180 the boat
-      // cannot track. Kept so the plan stays complete and the operator sees the flag.
+      // a real leg and this is the right answer. A reversal inside the gate never gets here
+      // (it has a turn, or it is red above). ⚠ ONE STILL DOES, SAID NOWHERE: a pair whose
+      // runs reverse but whose ends are further apart than the gate - two runs the chart
+      // clipped to different extents, 82 m apart along track and 10 m across on Andy's
+      // Honolulu plan of 2026-09-16 - is judged a HOP here, no turn is tried, and the
+      // straight leg ships. Left for its own change: widening the gate moves real routes.
       if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
       const around=routeAround(Ap,Bp,ref,koHere,buffer);
       if(around){
@@ -7077,8 +7217,19 @@ async function punchOut(){
         }
         patTransits.push(via); patRoutes.push([Ap,...via,Bp]);
       }
-      else { patTransits.push([]); patUnsafe.push([Ap,Bp]); }
+      // A RED HOP: no straight leg and no detour. It does NOT refuse Add to plan (Andy, 2026-09-16) -
+      // Upload routes it again with legPath, which searches further than routeAround, and refuses
+      // the upload if it still finds no way round. Recorded with what blocks the straight line, so
+      // the chart can say so when it is right-clicked - and the banner names and highlights what
+      // THIS model found, not what a second model might.
+      else { const fb=firstBlockAlong(Ap, Bp, ref, koHere, buffer);
+        const block = fb ? {mode:"leg", info:fb.info, at:fb.at} : null;
+        patTransits.push([]); patUnsafe.push([Ap,Bp]);
+        patRed.push({run:k+1, turn:false, why:"nogo", by:block && block.info ? block.info.kind : null, block, a:Ap, b:Bp}); }
     }
+    // EVERY PAIR IS JOINED - a turn, a straight leg, a detour or a red flag each - so Add to plan
+    // may now read these joins (punchRefusal).
+    patJoined = true;
     // ⚠ EVERY GENERATED TURN MUST BE SUBTRACTED HERE, AND A NEW SHAPE IS EASY TO FORGET.
     // `patRoutes` holds one entry per leg that got waypoints of ANY kind, so "routed around
     // obstacles" is what is left after the turns are taken out. Adding the eased shape
@@ -7087,6 +7238,7 @@ async function punchOut(){
     // the identical arc run claimed none. A count the operator cannot reconcile with what
     // they can see on the chart reads as a fault in the plan.
     const nRoute=patRoutes.length-nSemi-nTear-nRace-nEased, nU=patUnsafe.length;
+    const nUnsafeLeg = nU - nUnsafeTurn;          // the red HOPS; the rest of the red are refused reversals
     const nChanTurn = turnBlocks.filter(r=>r.info && r.info.kind==="a navigation channel").length;
     // Turn-radius advisory. The spacing a plain semicircle needs is twice the minimum
     // radius the boat can hold at the plan speed; below that the reversals become
@@ -7161,22 +7313,30 @@ async function punchOut(){
       // implies — and whether that water is acceptable is their call, which they can only
       // make if they are told the turns are there.
       (nGapTurn?`, ${nGapTurn} reversal(s) swing across a gap where a line is missing (wider, reaching further outboard)`:``)+
-      (nNoTurn?`, ${nNoTurn} turn(s) with no clear loop (straight${nChanTurn?`; ${nChanTurn} refused by a navigation channel`:``})`:``)+
-      (nRoute?`, ${nRoute} routed around obstacles`:``)+(nU?`, ${nU} unroutable (red)`:``)+
+      // THE TWO KINDS OF MISSING TURN, COUNTED APART. A refused reversal is red and keeps the
+      // pattern out of the plan (punchRefusal); a detour folded at a line end ships with its
+      // fold. This used to count both as "turn(s) with no clear loop (straight" - and since
+      // 2026-09-16 neither of them is a straight leg.
+      (nUnsafeTurn?`, ${nUnsafeTurn} reversal(s) with NO flyable turn (red)`:``)+
+      (nKnotFold?`, ${nKnotFold} detour(s) folded back at a line end`:``)+
+      (nChanTurn?`, ${nChanTurn} missing turn(s) refused by a navigation channel`:``)+
+      (nRoute?`, ${nRoute} routed around obstacles`:``)+
+      (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found (red; Upload tries again)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       (!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
       ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
-      `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+`. Add to plan.`;
+      `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+
+      (nUnsafeTurn?`. NOT READY for the plan — the note under Add to plan says why.`:`. Add to plan.`);
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
     const widenTxt = !canWiden ? `` : `Widen the spacing to ${Math.ceil(needSpacing)} m`+
       (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;
-    // ⚠ A RED LEG HAS TWO CAUSES AND THEY NEED DIFFERENT WORDS. This branch called every
-    // one of them a blocked transit — "the ASV would cross the obstacle on those legs" —
-    // and for a refused REVERSAL that sentence is false in both halves. The straight line
-    // between two line ends is clear; this file says so itself, three screens up ("The
-    // straight line IS clear - it is the loop the boat flies INSTEAD of it that is not").
-    // What has no answer is the TURN, and the remedies are different too: a blocked transit
-    // wants the line moved, a refused reversal wants spacing, speed, or lead.
+    // ⚠ A RED LEG HAS TWO CAUSES AND THEY NEED DIFFERENT WORDS. This branch once called
+    // every one of them a blocked transit — "the ASV would cross the obstacle on those legs" —
+    // which is false for a refused REVERSAL (what has no answer is the TURN, not the line
+    // between the two ends) and, since Upload routes every hop again or refuses the upload,
+    // false for a red hop as well. The remedies differ too: a hop is Upload's to route; a
+    // refused reversal keeps the pattern out of the plan until the line ends move or a run
+    // is struck (punchRefusal says which other levers can work - never the lead).
     //
     // It went unnoticed because a refused reversal used to be rare. Building the turn from
     // the two poses (2026-09-08) makes the console honest about the water a turn really
@@ -7184,13 +7344,22 @@ async function punchOut(){
     // all: two pairs the chart had clipped to different extents, offset 53.9 m and 22 m
     // along track, whose old chord arc reached 60.5 m past the line end while any shape
     // actually tangent to both lines needs 68-74 m. That water is foul. The old plan was
-    // not fitting the turn in, it was cutting the corner.
-    if(nU){ const reasons=legReasons(patUnsafe); setViolations([...reasons, ...turnBlocks]);
-      const nUnsafeLeg = nU - nUnsafeTurn;
+    // not fitting the turn in, it was cutting the corner. And on Andy's Honolulu plan of
+    // 2026-09-16 (10 m spacing, a 2 m turn radius) it was 18 of its 73 joins.
+    if(nU){
+      // Named from what the punch itself found on each HOP, against the model it refused the hop
+      // with. (A refused reversal's blocker is in turnBlocks; its straight line is not what refused it.)
+      const hopBlocks = patRed.filter(r=>!r.turn && r.block).map(r=>r.block);
+      setViolations([...hopBlocks, ...turnBlocks]);
+      const refusal = punchRefusal();            // the same words as the note under Add to plan
       showBanner(
-        (nUnsafeLeg?`${nUnsafeLeg} transit(s) blocked by ${kindsSummary(reasons)} with no clear detour (highlighted) — the ASV would cross the obstacle on those legs. `:``)+
-        (nUnsafeTurn?`${nUnsafeTurn} reversal(s) have NO FLYABLE TURN (highlighted). The straight line between those line ends is clear; what is foul is the water every loop needs to get from one to the other — outboard, inboard, and both again at the slow radius were all refused. Widen the spacing, slow the turn, shorten the lead, or move the line. `:``)+
-        `Edit the plan.`); }
+        (nUnsafeTurn && refusal?`${refusal.text} `:``)+
+        (nUnsafeLeg?`${nUnsafeLeg} hop(s) between runs are blocked by ${kindsSummary(hopBlocks)} with no detour found here (dashed red). A red hop does not keep the pattern out of the plan: Upload routes every hop again with the full router, and refuses the upload if it still finds no way round.`:``)); }
+    // ⚠ ONLY A FOLDED DETOUR REACHES THIS BRANCH NOW: every refused reversal is red and takes
+    // the one above, so what is left of nNoTurn is nKnotFold - a routed detour that folds back
+    // on itself at a line end, round an obstacle it had to clear. It ships WITH its fold (the
+    // fold is the only way round), and this banner used to say those legs "fall back to a
+    // straight hop", which they do not, and to offer a wider spacing, which cannot reach them.
     else if(nNoTurn){ setViolations(turnBlocks);
       // The channel case earns its own sentence: the "keep-out" the loop hit LOOKS
       // like open water on the chart, and widening the spacing may not cure a line
@@ -7208,7 +7377,7 @@ async function punchOut(){
                       nTurnTrack?`${nTurnTrack} the hull cannot TRACK without entering it - the shape fits on paper, the boat flown along it does not`:``,
                       nKnotFold?`${nKnotFold} folded by an obstacle the detour had to round`:``]
                      .filter(Boolean).join(", ");
-      showBanner(`${nNoTurn} reversal(s) have no generated turn (${whyTxt}), so those legs fall back to a straight hop the ASV CANNOT actually track.${chanTxt}${widenTxt?` ${widenTxt}`:``}`); }
+      showBanner(`${nNoTurn} join(s) have no clean turn (${whyTxt}): the route folds back there tighter than the ASV can turn, so expect it to swing wide. Review those before adding the plan.${chanTxt}`); }
     else if(nTear){ clearViolation();
       showBanner(`${nTear} turn(s) are teardrops at the ASV's ${minTurnR.toFixed(1)} m minimum radius — ${sp.spacing.toFixed(1)} m line spacing is below the ${needSpacing.toFixed(0)} m a plain semicircle needs at ${spdKey} speed. They swing up to ${maxOutboard.toFixed(0)} m past the line ends; confirm that water is clear.${widenTxt?` ${widenTxt}`:``}`); }
     else if(nRoute){ clearViolation(); showBanner(`${nRoute} transit(s) auto-routed around obstacles (amber). Review the detours before committing.`); }
@@ -7539,7 +7708,21 @@ function identifyAt(ll){
   if((runRoute || []).length > 1)
     scan(runRoute.map(at), false, "route", "the UPLOADED ROUTE the vessel is running — " + runRoute.length
       + " waypoints, green. This is what is on the boat, turns and transits included.");
-  // 3. the pattern preview - CYAN, drawn straight over whatever is committed, and NOT in the plan. This is the layer
+  // 3. a RED JOIN in the preview (2026-09-16) - named before the runs it joins, because it touches their ends and a tie
+  //    goes to the first asked: the refusal under Add to plan numbers these, and this is where a number meets the chart.
+  if(patClip){
+    for(const r of patRed){
+      if(!r || !r.a || !r.b) continue;
+      consider(idSegDist(P, at(r.a), at(r.b)), "red", r.turn
+        ? "a RED JOIN in the pattern preview: the reversal from run " + r.run + " to run " + (r.run + 1) + " has NO "
+          + "FLYABLE TURN" + (r.by ? " — every loop the boat could fly there enters " + r.by : "") + ". It is not in the "
+          + "plan, and ADD TO PLAN is refused until it is fixed (the note under that button says how)."
+        : "a RED HOP in the pattern preview: from run " + r.run + " to run " + (r.run + 1) + " no way round "
+          + (r.by || "the obstacle") + " was found here. It does not keep the pattern out of the plan — Upload routes "
+          + "every hop again with the full router, and refuses the upload if it still finds none.");
+    }
+  }
+  // 3b. the pattern preview - CYAN, drawn straight over whatever is committed, and NOT in the plan. This is the layer
   //    that produced the Eastport question, and the answer names the control that clears it.
   for(const seg of (patClip || [])){
     if(!seg || seg.length < 2) continue;

@@ -587,7 +587,9 @@ just come back from a silence of its own cannot take supervision on that report
 **Ask the chart what a line is.** Right-click a line → **What is this line?** and the console
 names the layer it belongs to: a committed survey line (yellow, with its number, length and
 heading), the uploaded route (green, the only green), the **pattern preview** (cyan, *not in the
-plan* — ADD TO PLAN commits it, SURV → RESET clears it), the survey boundary, a measurement you
+plan* — ADD TO PLAN commits it, SURV → RESET clears it), a **red join** in that preview (which two
+runs it joins, and whether it is a reversal with no flyable turn — Add to plan refused — or a
+hop Upload will route again), the survey boundary, a measurement you
 drew (magenta, never uploaded), the vessel's trail, or a keep-out read off the chart. The
 NEAREST thing within 14 px wins, and a click near nothing says so rather than naming the nearest
 line. The row reads rather than commands, so it is never gated on the link, the arm state or
@@ -796,9 +798,11 @@ diagnosable (`tests/frame_health.js`).
      about four and a half spacings away, so a reversal across a missing line still gets
      one), which rolls the boat onto the next line *aligned* with its heading instead of
      pivoting hard; otherwise a straight leg if that is clear, a routed **detour** (amber)
-     if not, and **red** if nothing gets through.
-   - *Add to plan* **appends**: each run's two ends, then its joining points to the next
-     run. A second pattern runs after the first, in the order you added them. Editing
+     if not, and **red** if nothing gets through. A red *reversal* keeps the pattern out of
+     the plan until it is fixed; a red hop is routed again at Upload.
+   - *Add to plan* **appends** (once nothing red is a reversal, and not after the water
+     level has moved since Punch Out): each run's two ends, then its joining points to the
+     next run. A second pattern runs after the first, in the order you added them. Editing
      never re-orders: a `WPT` click adds a waypoint at the **end**, and SHIFT-deleting a
      committed line removes its two ends but **leaves the turns either side** — so the
      boat still travels that line's track, uncounted. Strike the run off *before* Add to
@@ -837,11 +841,27 @@ diagnosable (`tests/frame_health.js`).
    console tries the same turn swept the **other way** — back over water the plan has
    just surveyed, and so known clear — and then both sides again at the **slow-speed
    radius**, which reaches less far. Only if every one of those is refused is there no
-   turn, and then the pair is flagged **unsafe** — drawn red, with the banner naming what
-   to change. ⚠ **Nothing stops that plan being added and uploaded** (found 2026-09-16):
-   the red is not carried into the plan, and at Upload the straight leg left between the
-   two line ends is clear of the chart model, so the boat would be sent a 180° it cannot
-   track, beside whatever refused the turn. Fix a red reversal before **Add to plan**.
+   turn, and then the pair is flagged **unsafe** — drawn red — and **Add to plan is
+   refused** while it stands. The button grays out, and the note under it names the pairs
+   (right-click a red join to see which runs it joins), what refused each turn, and only
+   the fixes that can work there: draw the box so those lines end short of what refused
+   it, or strike off one of the two runs; a slower **Turn** speed where the boat could not
+   *track* the loop; a wider spacing where every turn is a teardrop; standoff from a
+   navigation channel. Never a shorter lead — the ladder has already tried the pair with
+   none. A red **hop** (two runs that do not reverse, with no detour found) does not stop
+   Add to plan: Upload routes every hop again with the full router, and refuses the upload
+   if it still finds no way through.
+
+   ⚠ Until 2026-09-16 **nothing stopped a red reversal being added and uploaded**: the red
+   was not carried into the plan, and at Upload the straight leg left between the two
+   line ends was clear of the chart model, so the boat was sent a 180° it cannot track,
+   beside whatever refused the turn — 17 times in one Honolulu plan uploaded that
+   evening. A plan added before then can still carry them, and so can one whose turn
+   points were deleted in `WPT` (nothing re-checks a committed turn): clear it and draw
+   it again. And **a punch the water level throws away** — every tide update does, since
+   the runs were cut against the old level — now keeps Add to plan refused until Punch
+   Out runs again; it used to leave the *un-punched* pattern to be added in its place,
+   lines straight through the piers and no turns at all.
 
    *This matters more than it looks.* Until 2026-08-31 a refused reversal fell back to
    a straight leg between the two line ends. That leg is genuinely clear of the model —
@@ -1002,11 +1022,10 @@ diagnosable (`tests/frame_health.js`).
    pier at 0.6 m.
 
    Both shapes are **nogo-validated** before use. Where no rung of the ladder fits, the
-   pair is flagged red instead of given a turn, and the committed plan would carry a
-   straight hop between anti-parallel line ends there — a 180° reversal at half the
-   spacing, i.e. the radius that was just rejected. Treat it as a defect to fix before
-   Add to plan (widen the lines, slow the turn, shorten the lead, or move the line ends),
-   not a working turn.
+   pair is flagged red instead of given a turn, and Add to plan refuses the pattern until
+   it is fixed — see *A refused turn is retried, not abandoned* above for the remedies it
+   offers. A shorter lead is never one of them: the ladder has already tried the pair with
+   no lead.
 
    **What is AHEAD, and taking the helm in extremis.** Every telemetry frame the console
    projects the vessel's *ground* track forward and asks what it warrants, on four rungs:

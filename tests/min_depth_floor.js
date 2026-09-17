@@ -219,6 +219,10 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
   const sea = { waterOffset: 0 };
   const nogo = { features: feats, ko: null, builtOffset: null };
   let patClip = "punched", rebuilds = 0;
+  // A punch the tide throws away is RECORDED and SAID (2026-09-16) - what that means for Add to plan is
+  // tests/turn_refusal.js 14; here it only has to exist for the page's function to run.
+  let patDropped = null, readouts = 0;
+  const updatePatReadout = () => { readouts++; };
   const rebuildNogo = () => { rebuilds++;
     nogo.ko = K.buildKeepouts(F, feats, { minDepthM: 4, bufferM: 3, wreckRadiusM: 50, waterOffsetM: sea.waterOffset });
     nogo.builtOffset = sea.waterOffset; };

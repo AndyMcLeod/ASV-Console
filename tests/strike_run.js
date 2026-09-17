@@ -54,6 +54,8 @@
 //   a stray survey-mode click discards the punch    -> 17
 //   the selection stops claiming the click          -> 18
 //   the halo shrinks back under the coverage stroke -> 13
+//   (2026-09-16, re-run after 13 was found reading no stroke at all - see it) the halo back to 5 px -> 13;
+//   the cyan stroke over it grown to 6 px -> 13, which only a check that READS that stroke can see
 //   resetPattern leaves the strikes + timer behind  -> 21
 //   the card stops re-resolving the selection       -> 24
 //   Delete handled before the typing guard          -> 25
@@ -276,14 +278,19 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
 // pins the thing that made the ink too thin: the halo must be substantially wider than
 // the stroke drawn over it, and the run must carry end caps so a SHORT run — the kind an
 // operator most wants rid of — still has a visible selection.
+//
+// ⚠ AND FROM REVIEW #19 (2026-09-15) IT PASSED WITHOUT READING THE STROKE AT ALL (found the
+// next day). #19 turned the preview from green to PREVIEW_INK (cyan), this regex still asked
+// for the green, `over` came back null, the coverage width defaulted to 0 - and 9 >= 0 + 5
+// passed while the detail line said "could not read the widths". Both widths are required now.
 {
   const draw = grab("drawPattern");
   const sel = draw.slice(draw.indexOf("if(patSel)"));
   const halo = /strokeStyle="rgba\(255,215,106,0\.95\)"; ctx\.lineWidth=(\d+(?:\.\d+)?)/.exec(sel);
-  const over = /strokeStyle="rgba\(63,191,107,0\.95\)"; ctx\.lineWidth=(\d+(?:\.\d+)?)/.exec(sel);
+  const over = /strokeStyle=PREVIEW_INK; ctx\.lineWidth=(\d+(?:\.\d+)?)/.exec(sel);
   const w = halo ? parseFloat(halo[1]) : 0, o = over ? parseFloat(over[1]) : 0;
   check("13. the selection halo is wide enough to see past the stroke drawn over it",
-        () => w >= o + 5 && /ctx\.arc\(/.test(sel),
+        () => halo && over && o > 0 && w >= o + 5 && /ctx\.arc\(/.test(sel),
         halo && over ? "halo " + w + " px vs coverage " + o + " px (fringe "
                        + ((w - o) / 2) + " px each side)" + (/ctx\.arc\(/.test(sel) ? " + end caps" : " — NO END CAPS")
           : "could not read the widths");

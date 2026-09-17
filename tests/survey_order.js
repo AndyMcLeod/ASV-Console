@@ -26,6 +26,8 @@
 //   deleting a line takes the turns with it -> 7b                   a leg matches a line one way only -> 9
 //   the line-match tolerance 10 m -> 9                              the reversal test at 60 degrees -> 10
 //   the reversal gap three spacings -> 10                           the turn margin a whole spacing -> 10
+//   (2026-09-16) Add to plan refusing EVERY punch -> 7 - its world commits a finished punch with nothing red, through
+//   the real punchRefusal; what IS refused, and when, is tests/turn_refusal.js
 // ⚠ ONE PREDICTION WAS WRONG, AND THE RUN SAID SO: "the survey starts in the highest cell" was expected to redden 1 and
 // 2 and reddened 4 and 4b instead - with no keep-outs a pattern is ONE cell, so which cell comes first cannot move its
 // start. What does is the sweep inside the cell, which is why that mutation was added and does redden 1 and 2.
@@ -183,15 +185,19 @@ check("6. the drawn pattern is already a serpentine that starts at the start cor
             && away.lines.every((l, i) => i === 0 || antiParallel(away.lines[i - 1], l)),
       "line 1 starts at A and each line runs back the other way");
 
-// 7. committing - the page's own commitPattern, over a plan that already holds something
+// 7. committing - the page's own commitPattern, over a plan that already holds something. The punch it commits is a
+// FINISHED one with nothing red (patJoined, an empty patRed), asked through the real punchRefusal: what Add to plan
+// refuses, and when, is tests/turn_refusal.js.
 // eslint-disable-next-line no-new-func
 const commitWorld = new Function("\"use strict\";\n"
   + "const mission = {lines: [], waypoints: []}; let planKind = null; const NO_LEAD = {in: 0, out: 0};\n"
   + "let patClip = null, patTransits = [], patLead = [], patRepunchT = null, punchInFlight = null, drawn = [];\n"
+  + "let patRed = [], patJoined = true, patDropped = null;\n"
   + "const $ = () => ({disabled: false}); const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
-  + "const render = () => {};\n"
+  + "const render = () => {}; const showBanner = () => {}; const flashNote = () => {};\n"
+  + grab(H, "punchRefusal") + "\n"
   + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
   + " patLead = o.lead || []; drawn = o.drawn || []; } };")();

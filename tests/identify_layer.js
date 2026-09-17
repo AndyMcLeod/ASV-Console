@@ -23,6 +23,9 @@
 //   the committed line no longer names its colour -> 1
 //   the keep-outs read as lat/lon again, not in the model's plane -> 3   the model read with the wrong shape -> 3
 //   the box skip rejects a keep-out that IS in reach -> 3b
+// 2026-09-16, THE RED JOIN (check 9) - 4 more, 4 caught: a red join never identified -> 9; scanned after the preview
+//   runs, so a tie at the shared run end names the run -> 9; the reversal and hop wording swapped -> 9; a stale red
+//   list answered with no punch on the chart -> 9
 // ⚠ THE KEEP-OUT BRANCH WAS WRONG AND THIS SUITE AGREED WITH IT. The model's entries are {pts} / {ring} of {e,n} in
 // the console's FLAT PLANE; the first version read them as bare lat/lon arrays, found nothing, said nothing, and the
 // fixture had copied its shape from the code rather than from the model. THE LIVE CHECK is what caught it - a grid of
@@ -121,7 +124,7 @@ const banners = [];
 // would be a test of the harness rather than of the page (check 6 caught exactly that).
 // eslint-disable-next-line no-new-func
 const makePage = (W) => new Function("W", "banners", "distTo", "azTo", "\"use strict\";" +
-  "const mission = W.mission, runRoute = W.runRoute, patClip = W.patClip, boundary = W.boundary," +
+  "const mission = W.mission, runRoute = W.runRoute, patClip = W.patClip, patRed = W.patRed || [], boundary = W.boundary," +
   "      boundaryClosed = W.boundaryClosed, measures = W.measures, measPend = W.measPend, track = W.track," +
   "      nogo = W.nogo, zoom = 15;" +
   // the page's projection, replaced by a flat one so a pixel distance in the checks is a stated number
@@ -223,6 +226,33 @@ check("7. the answer is put on the banner - including 'nothing here', which is a
       () => banners.length === 2 && /NOT in the plan/.test(banners[0])
             && /Nothing the console drew is within 14 pixels/.test(banners[1]),
       () => banners.map((b) => b.slice(0, 50)).join(" | "));
+
+// 9. A RED JOIN (2026-09-16). Add to plan refuses a punch holding a reversal with no flyable turn, and its note numbers
+//    the pair ("runs 3–4") - which only means something if the chart can say which dashed red line that is. The join
+//    touches the ends of the runs it joins, so the one scanned first wins a tie AT the shared end: it must be the join.
+const redPage = makePage(Object.assign({}, world, {
+  patClip: [[P(0.003, 0), P(0.003, 0.01)], [P(0.0031, 0.01), P(0.0031, 0)]],
+  patRed: [
+    { run: 1, turn: true, why: "nogo", by: "a dock / pier", a: P(0.003, 0.01), b: P(0.0031, 0.01) },
+    { run: 4, turn: false, why: "nogo", by: "land", a: P(0.015, 0.02), b: P(0.017, 0.02) },
+  ],
+}));
+const onJoin = redPage.identifyAt(P(0.00305, 0.01));        // on the red reversal, 5 px from either run end
+const atEnd = redPage.identifyAt(P(0.003, 0.01));           // exactly on the end it shares with run 1
+const onHop = redPage.identifyAt(P(0.016, 0.02));
+const noClip = makePage(Object.assign({}, world, { patClip: null,
+  patRed: [{ run: 1, turn: true, why: "nogo", by: "a dock / pier", a: P(0.015, 0.02), b: P(0.017, 0.02) }] }))
+  .identifyAt(P(0.016, 0.02));
+check("9. a RED JOIN in the preview names its runs and what it is: a refused reversal says Add to plan is refused, a "
+      + "red hop says Upload tries again - the join wins a tie at the run end it shares, and with no punch there is none",
+      () => onJoin && onJoin.layer === "red" && /reversal from run 1 to run 2 has NO FLYABLE TURN/.test(onJoin.what)
+            && /enters a dock \/ pier/.test(onJoin.what) && /ADD TO PLAN is refused/.test(onJoin.what)
+            && atEnd && atEnd.layer === "red"
+            && onHop && onHop.layer === "red" && /RED HOP .* from run 4 to run 5 no way round land/.test(onHop.what)
+            && /Upload routes every hop again/.test(onHop.what) && !/refused/.test(onHop.what)
+            && noClip === null,
+      () => [onJoin, atEnd, onHop].map((h) => (h ? h.layer + ": " + h.what.slice(0, 70) : "(nothing)")).join(" | ")
+            + " | stale list, no punch: " + (noClip ? noClip.layer : "nothing"));
 
 // 8. wired into the chart menu, and never gated: it reads, it does not command
 check("8. the row is in the chart menu, wired to the point the menu was opened over, and gated on NOTHING - it is "

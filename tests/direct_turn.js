@@ -253,10 +253,11 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
 
   // 10b. THE OTHER EDGE, AND IT IS NEW. Squeeze it to where no turn can be FLOWN and the
   // ladder must refuse rather than ship a loop the hull would clip. That is only safe
-  // because a refused reversal has not shipped as a straight leg since punchOut started
-  // flagging it UNSAFE - it blocks Upload and the operator moves the line, widens the
-  // spacing or slows the plan. Shipping an unflyable loop next to the one feature that
-  // refused it is the wharf incident itself.
+  // because a refused reversal does not ship at all: punchOut flags it UNSAFE, and Add to
+  // plan refuses the pattern until the operator moves the line ends or strikes a run
+  // (tests/turn_refusal.js). This comment used to say it "blocks Upload" - it never did, and
+  // until 2026-09-16 the refusal here was shipped as the straight leg after all. Shipping an
+  // unflyable loop next to the one feature that refused it is the wharf incident itself.
   const noneFly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
                                 MIN_R, MAXHALF, MIN_R_SLOW);
   const geomOnly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
