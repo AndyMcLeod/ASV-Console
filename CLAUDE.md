@@ -69,9 +69,10 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   (the newest block below). He declined a screen view twice; the diagnosis came from his session recording,
   `logs/asv_20260916-082026.jsonl`, and was then reproduced and checked on a throwaway console in headless Edge.
 * **STATE:** `master` carries the supervision fix, `34326641`, the route-order write-up, `18033a5b`, and the Add-to-plan
-  refusal (the newest block; its hash is recorded in the commit after it), all pushed; 91 suites (55 JS + 36 Python), all
-  green through the hook; his mission.json / ports.json / comms_config.json hash-checked unchanged. ⚠ His own console changed his plan at 08:24:44 (now 465 waypoints over 48 lines - the SURV
-  pattern he drew that morning); that is his work, not ours.
+  refusal, `035878f1`, all pushed; 91 suites (55 JS + 36 Python), all green through the hook; his mission.json /
+  ports.json / comms_config.json hash-checked unchanged by any of it. ⚠ His own console changed his plan through the day -
+  465 waypoints over 48 lines at 08:24 (New Castle), the 74-line Honolulu plan at 19:04 (now `mission.json.bak1`), and
+  CLEARED at 19:20 (rev 71, empty); that is his work, not ours.
 * **⚠ HOW IT GOES LIVE ON HIS MACHINE - SAY THIS TO HIM EVERY TIME:** his console (started 08:20 with `--sim`) runs
   the working tree. The PAGE half needs BOTH windows reloaded and the SERVER half needs a restart - and a restart OPENS
   TWO NEW WINDOWS while the old two reconnect, so: close both console windows, restart the console, use the two it
