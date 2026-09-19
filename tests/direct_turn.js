@@ -79,8 +79,11 @@
 // GREEN on all of them except the always-FALSE line, which is noted where it sits:
 //
 //   turnFlyable always true                              -> 10d;  tg 47, 47b
-//        THE HEADLINE. This is the mutation 10b cannot see, and 10d is the only
-//        ladder-level check in the estate that reds on it.
+//        THE HEADLINE - the mutation 10b cannot see. ⚠ AND "THE ONLY LADDER-LEVEL CHECK
+//        IN THE ESTATE" IS A RUN, NOT AN INFERENCE: this one was re-run against ALL 91
+//        SUITES afterwards, because a claim about the estate cannot rest on the four
+//        suites that seemed likely. Exactly three checks red, and 47/47b call turnFlyable
+//        directly rather than through the ladder.
 //   turnFlyable dropped from the ladder's gate           -> 10d;  tg 50
 //   turnFlyable always FALSE - it refuses everything     -> 8, 9, 9b, 10a, 10d, 10e;
 //                                                           tg 43, 46, 47; tr 1-14;
@@ -90,9 +93,12 @@
 //        console that can build no turn at all - so the breadth of the red is expected
 //        and says nothing about 10e on its own. What it does establish is that 10e is
 //        not inert.
-//   the projection ignores the hull's approach radius    -> 10d ALONE - tg is GREEN,
-//        and reads a flat 1 m                               because every fixture there
-//                                                           is already a 1 m hull.
+//   the projection ignores the hull's approach radius    -> 10d ALONE, and this one was
+//        and reads a flat 1 m                               ALSO re-run against all 91
+//                                                           suites: ONE check reds in the
+//        whole estate. tg is green because every fixture there is already a 1 m hull, so
+//        the mutation is a no-op on it. This is the property 10d holds that nothing else
+//        does - the punch and the guard agreeing about which boat is being projected.
 //   thinTrack removed: the dense shape is shipped        -> 9, 9b;  tg 46
 //   flyability judged on the shape as BUILT while the    -> 9, 9b ALONE - tg is GREEN
 //        THINNED one ships

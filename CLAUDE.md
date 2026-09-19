@@ -145,7 +145,9 @@ asserts that the code has not established.
 * **THE COVERAGE 10b LOST IS BACK: `direct_turn.js` 10d/10e, BUILT AND MUTATION-VERIFIED (newest block below).**
   10b still reaches its verdict through the JOIN gate and still says so; 10d is the ladder-level fixture that
   isolates `turnFlyable`, and neutering it reds 10d. ⚠ It is the only ladder-level check in the estate that does,
-  and the only check anywhere that catches the projection reading a flat 1 m approach radius instead of the hull's.
+  and the only check ANYWHERE that catches the projection reading a flat 1 m approach radius instead of the hull's -
+  **both of those are 91-suite runs, not inferences from the four turn suites** (`55a731e1` shipped them as the
+  narrower claim; the estate runs came after and are recorded in the suite header).
 
 * **ANDY: "start with the escapes."** His console had been taking the helm on his own runs. Investigated with
   two agent workflows (7 agents on the recordings and the guard path, 9 on the design). **NO CODE CHANGED.** Two
