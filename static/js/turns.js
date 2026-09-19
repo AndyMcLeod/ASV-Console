@@ -55,7 +55,7 @@
 // #sp_punch, flips encShow, calls render() and showBanner(). One is UI and the other is
 // algorithm. What corresponds to WorldView's is the ASSEMBLY INSIDE the handler, and
 // separating those is its own job with its own decisions.
-import { distTo } from "./geodesy.js";
+import { azTo, distTo } from "./geodesy.js";
 import { legClear } from "./chart.js";
 import { V } from "./state.js";
 // THE RUNTIME GUARD'S OWN PROJECTION, borrowed at PLAN time - see turnFlyable.
@@ -111,7 +111,23 @@ export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, side){
     clear: (a, b) => legClear(a, b, ref, ko, buf),
     arcStepM: ARC_STEP_M,
     maxHalfM,
-    side,          // 'inboard' sweeps a semicircle the other way; see turnWithRetry
+    // ⚠ 'inboard' SWEEPS THE SEMICIRCLE THE OTHER WAY ROUND A CENTRE THAT DOES NOT MOVE,
+    // AND THAT IS NOT A MIRRORED TURN - IT IS THE ARC FOR THE OPPOSITE TRANSITION
+    // (established 2026-09-19, see turnJoinable). The center stays midway between the two
+    // lines, so reversing the sweep keeps both endpoints and reverses BOTH tangents: the
+    // shape enters on hF and leaves on hE, i.e. the boat is asked to reverse at the line
+    // end, fly the arc backwards, and reverse again onto the next line. To sweep the other
+    // way AND stay tangent, the center has to move to the far side of the line - and a
+    // semicircle from there ends 2R on the wrong side of the next line, not on it. That is
+    // the same geometric fact racetrackTurn's header states for its own shape below: there
+    // is no inboard variant of a tangent reversal, and it is not an omission.
+    //
+    // The option is kept, and the ladder's join gate refuses what it returns, because it
+    // is the only specimen of a non-joining shape the suites have to test that gate with.
+    // ⚠ DO NOT "FIX" THIS BY MIRRORING THE SHAPE. Reversing the point order was measured
+    // and is worse (10 bad joints on bak5 become 12); the shape is not reversed, it is the
+    // wrong shape.
+    side,
   });
 }
 
@@ -168,9 +184,13 @@ export function spiralTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, Ls){
 // remains, and each rung is one of the two things Andy named:
 //
 //   1. OUTBOARD at the plan speed - the normal turn, past the end of the line just run.
-//   2. INBOARD  at the plan speed - the SAME semicircle swept the other way round the
-//      E-F chord, back over water the plan has just surveyed and therefore knows is
-//      clear. This is "turn AWAY from the dock", exactly.
+//   2. INBOARD  at the plan speed - INTENDED as the same semicircle swept the other way
+//      round the E-F chord, back over water the plan has just surveyed and therefore knows
+//      is clear: "turn AWAY from the dock". ⚠ IT IS NOT THAT SHAPE AND NEVER WAS - see
+//      turnJoinable, which refuses every one of them. The rung is kept so the ladder still
+//      ASKS, and so the suites have a non-joining shape to test the gate with; what
+//      actually answers Andy's "turn away" are rungs 3 and 4, which reach `minR` and
+//      `minRSlow` past the line end instead of half the line spacing.
 //   3+4. Both sides again at the SLOW-SPEED radius - a tighter loop reaches less far
 //      outboard, so water that refuses the turn at survey speed may not refuse it at
 //      low. The caller is told (`slow`) and commands that speed for the turn.
@@ -178,6 +198,12 @@ export function spiralTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, Ls){
 // Only when every rung is refused is there genuinely no turn - and that is the case the
 // caller must flag UNSAFE rather than ship, because it is the one where the boat
 // improvises a loop of its own and nothing has said where.
+// ⚠ AND SINCE 2026-09-19 THAT CASE IS COMMONER, ON PURPOSE. The inboard rungs used to
+// answer it with a shape the hull cannot join (4 of 17 reversals in Andy's own bak5, 4 of
+// 62 at Honolulu), so pairs that used to ship a cusped turn now go RED instead. That is
+// the intended trade and it is only safe because `035878f1` made a refused reversal a
+// visible plan defect: punchOut flags it UNSAFE, the card says so, and Add to plan refuses
+// the pattern until the operator moves the line ends, strikes a run or widens the spacing.
 // ⚠ EASING IS AN EXTRA RUNG AT THE TOP, NEVER A REPLACEMENT (2026-09-08). `easeLs > 0`
 // puts the clothoid-arc-clothoid ahead of the plain arc; everything below it is untouched,
 // so a plan whose water will not take the eased shape gets EXACTLY the turn it would have
@@ -292,6 +318,111 @@ export function turnFlyable(E, F, pts, hE, ref, ko, buf, fly){
                        {turnRateDegS: rate, approachM, horizonS});
 }
 
+/**
+ * DOES THE SHAPE JOIN THE TWO LINES, OR IS THE BOAT ASKED TO REVERSE AT EACH END?
+ *
+ * ⚠ THIS IS THE CHECK NOTHING WAS DOING, AND A WHOLE CLASS OF UNFLYABLE REVERSAL SHIPPED
+ * THROUGH THE GAP (2026-09-19). `turnFlyable` above asks whether the projected track
+ * CLEARS the keep-outs; `legClear` asks whether each chord is lawful water. Neither asks
+ * the question a generated turn exists to answer, which tests/turn_geometry.js has stated
+ * as its first clause since the day it was written: does the turn LEAVE the line on `hE`
+ * and ARRIVE on the next line's `hF`? In open water a 176° cusp clears everything and
+ * projects clean, so both existing tests pass it.
+ *
+ * THE RUNG THAT SHIPPED THROUGH IT was `teardropTurn(..., 'inboard')` - rungs 5 and 6 of
+ * the ladder below. Its semicircle branch reverses the SWEEP about a center that stays
+ * midway between the two lines, which preserves the endpoints and reverses BOTH tangents:
+ * the shape is the arc for the OPPOSITE transition, entering on hF and leaving on hE. See
+ * the `side` note in teardropTurn's wrapper above for the geometry.
+ *
+ * MEASURED against Andy's own plans, 2026-09-19 - every shipped turn re-derived from the
+ * stored lines and matched to its rung to the millimetre: `mission.json.bak5` 4 of 17
+ * reversals on this rung, `bak1` 1, `bak4` 1, and the Honolulu route of 2026-09-16 4 of
+ * 62. The in-extremis escape at 19:11:50 fired at route vertex 18 - the 4th arc vertex of
+ * one of them - after the boat had been asked to reverse 165° at the join and had lost
+ * half its way doing it (sog 1.98 -> 0.94 kn, recorded).
+ *
+ * THE TEST IS THE HULL'S OWN RATE, NOT AN ANGLE, because an angle alone cannot say whether
+ * a corner is flyable - 165° over 60 m is a gentle swing and over 3 m is a pirouette. So:
+ * the heading change at each join must be one the vessel can make while it runs the leg it
+ * has to make it in, at `MAX_TURN_RATE_DEG_S` - the same vessel figure `minTurnRadiusM`
+ * already builds every one of these shapes from.
+ *
+ * ⚠ THE JOINS ONLY, AND THAT IS DELIBERATE. The INTERIOR of every shape here is already
+ * built at a radius the hull holds - minR for the teardrop, racetrack and spiral, and half
+ * the lateral offset for the semicircle, which its own branch gate keeps at or above minR.
+ * The joins were the one place nothing checked. Gating the interior on the same rule would
+ * have almost no margin and would start refusing good turns: measured across the sweep
+ * below, the racetrack's interior corners ask 58 deg/s of a 60 deg/s hull BY CONSTRUCTION
+ * (they are cut at minR - that is what minR means), while its joins ask 22.
+ *
+ * MEASURED SEPARATION, 450 reversal geometries (5 headings x 6 lateral offsets x 5
+ * along-track offsets) x 3 vessel profiles, worst JOIN demand of either end:
+ *
+ *            zboat_1800hs (60 deg/s)   drix08 (20 deg/s)   example_usv_4m (25 deg/s)
+ *   eased              3 deg/s                 0 deg/s              1 deg/s
+ *   arc outboard      11                       7                    9
+ *   racetrack         22                       7                    9
+ *   arc INBOARD      101  (all 150 over)     212  (all 50 over)   140  (all 100 over)
+ *
+ * Every legitimate shape asks at most 22 of a 60 deg/s hull - a 2.7x margin on the
+ * tightest vessel - and every inboard semicircle exceeds the hull outright. Zero of the
+ * 1,350 legitimate cases are refused by this gate.
+ *
+ * ⚠⚠ AND THE SPEED IS THE PLAN'S, NEVER THE RUNG'S. A SLOWED RUNG MAY NOT BUY A JOIN.
+ * This is the hole the first cut of this gate had, and tests/direct_turn.js 10 found it:
+ * with the turn judged at the rung's own speed, the SLOW inboard rung passed. The same
+ * 175 deg reversal over the same 2.91 m is 93 deg/s at 3 kn and 46 deg/s at 1.5 kn, so
+ * halving the speed halved the demand and the cusp shipped on rung 5 instead of rung 4.
+ * That reasoning is wrong about the boat: a join is where the turn meets the SURVEY LINE,
+ * and the hull arrives at it doing the speed it ran the line at. It cannot be at 1.5 kn on
+ * arrival because a later rung would prefer it to be - deceleration is not instant, and
+ * nothing has commanded it yet. So `turnWithRetry` passes this the LADDER's speed, not the
+ * per-rung `f`. The interior of a slowed shape is still judged slow, correctly: by then the
+ * boat really is doing that speed.
+ */
+export function turnJoinable(E, F, pts, hE, hF, fly){
+  if(fly === false) return true;                       // explicit opt-out, for geometry tests
+  const o = fly || {};
+  const kn = (V.SPEED_KN && V.SPEED_KN[o.spdKey]) || (V.SPEED_KN && V.SPEED_KN.survey) || 3.0;
+  const twMs = kn * 0.514444;
+  const rate = V.MAX_TURN_RATE_DEG_S || 20;
+  const chain = [E, ...(pts || []), F];
+  if(chain.length < 2) return true;
+  const dev = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  // Each join gets the leg it actually has to turn on: the first chord on the way out of
+  // E, the last chord on the way in to F. A shape with a straight run-out is turning on
+  // that run-out, which is exactly the water it has to do it in.
+  const legs = [[dev(azTo(chain[0], chain[1]), hE), distTo(chain[0], chain[1])],
+                [dev(hF, azTo(chain[chain.length-2], chain[chain.length-1])),
+                 distTo(chain[chain.length-2], chain[chain.length-1])]];
+  for(const [turnDeg, legM] of legs){
+    // ⚠ CLAUSE 1, AND IT IS THE ONE THAT CATCHES THE MIRRORED SHAPE: A TURN MAY NOT BEGIN
+    // BY SENDING THE BOAT BACK DOWN THE LINE IT HAS JUST RUN. Past a quarter turn the
+    // shape is no longer joining this pair of lines at all - it is the arc for the
+    // opposite transition - and no speed makes that true or false. THIS IS A SIGN CHANGE,
+    // NOT A TUNED THRESHOLD: 90 deg is the boundary between leaving the line forwards and
+    // leaving it backwards. Worst legitimate join MEASURED anywhere - the sweep in the
+    // header and the suite fixtures both - is 45 deg: the racetrack at the SLOW radius,
+    // whose corner is tight by construction (on the same pair, eased 0.8, arc outboard
+    // 5.3, racetrack 28.1). Every mirrored semicircle is 175-176. So the rule sits 45 deg
+    // above the worst shape it must pass and 85 below the one it must stop.
+    if(turnDeg >= 90) return false;
+    // ⚠ CLAUSE 2 IS PHYSICAL AND CANNOT STAND ALONE - that was the first cut of this gate.
+    // A rate test scales with speed, so a rung that asks for a slower turn buys itself a
+    // looser join, and an operator who sets the TURN speed to `low` (which the punch card
+    // itself offers as an advisory) would buy it for the whole plan: the same 175 deg
+    // reversal over 2.91 m is 93 deg/s at 3 kn and 46 deg/s at 1.5 kn. MEASURED with only
+    // this clause: all 150 mirrored semicircles passed at low on the small-class boat.
+    // It stays because it is the right question for a corner that is merely too tight for
+    // the hull rather than facing the wrong way - clause 1 cannot see those.
+    const secs = legM / twMs;
+    if(!(secs > 0)) return false;                      // coincident points cannot be turned on
+    if(turnDeg / secs > rate) return false;
+  }
+  return true;
+}
+
 export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSlow, easeLs, fly){
   // ⚠ THE RACETRACK RUNGS SIT ABOVE THE INBOARD ONE, AND THAT ORDER IS THE FIX Andy
   // ASKED FOR (2026-09-01): *"the turns are implemented as inverted teardrop turns.
@@ -371,7 +502,15 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
       const pts = chain.slice(1, -1);
       let ok = true;
       for(let j = 1; ok && j < chain.length; j++) ok = legClear(chain[j-1], chain[j], ref, ko, buf);
-      if(ok && turnFlyable(E, F, pts, hE, ref, ko, buf, f))
+      // ⚠ JOINABLE BEFORE FLYABLE, AND BOTH ON THE THINNED CHAIN. turnJoinable asks whether
+      // the shape meets the two survey lines at all; turnFlyable asks whether the water it
+      // crosses is clear. A shape that fails the first is not a turn, wherever it is - so
+      // asking the keep-out question about it would answer the wrong one, and in open water
+      // it answers YES (measured: turnFlyable passed 120 of 120 cusped shapes).
+      // ⚠ `fly`, NOT `f` - the ladder's speed, not this rung's. See turnJoinable's header:
+      // a rung may not buy a join by slowing down, because the boat reaches the join at the
+      // speed it ran the line at.
+      if(ok && turnJoinable(E, F, pts, hE, hF, fly) && turnFlyable(E, F, pts, hE, ref, ko, buf, f))
         return {...r, pts, slow: t.slow, rung: i + 1};
       if(!first && t.shape !== 'eased') first = {why: "track", seg: [E, F]};
       continue;

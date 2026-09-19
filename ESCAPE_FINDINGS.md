@@ -71,20 +71,72 @@ The arc is correctly ORDERED and correctly PLACED: its points run monotonically 
 (1.1 m away) to line 2's start (2.8 m away), bulging south of the 20 m gap. What is wrong is the SIDE it
 bulges: **its entry tangent matches the outgoing line's stored direction and its exit tangent matches the
 incoming one** — i.e. the shape belongs to the opposite transition. Reversing the point order does NOT
-fix it (measured: 10 bad joints become 12); the shape itself is mirrored. The likely origin is the pair's
-headings being taken from the lines' stored `a->b` direction rather than the direction the runs are
-FLOWN after `regionOrder` re-orients them — **unverified, and the first thing to establish.**
+fix it (measured: 10 bad joints become 12); the shape itself is mirrored.
+
+### ⇒ ESTABLISHED 2026-09-19, THE GUESS BELOW IT WAS WRONG, AND IT IS FIXED
+
+This paragraph used to end: *"the likely origin is the pair's headings being taken from the lines' stored
+`a->b` direction rather than the direction the runs are FLOWN after `regionOrder` re-orients them —
+unverified, and the first thing to establish."* **That is not the cause and `regionOrder` is not
+involved.** What was done instead of reading: `mission.json.bak5` carries BOTH the flown `waypoints` and
+its 20 source `lines`, so every turn can be re-derived from its own pair and matched to the rung that
+produced it. Fed the pair's real `(E, F, hE, hF)`, the page's own `turnWithRetry` returns a **correct**
+turn every time — including for all six that shipped wrong. The shape functions and the headings are
+both fine.
+
+**Every shipped turn matches a LADDER RUNG to the millimetre** (max vertex deviation <= 5 mm):
+
+| plan | arc outboard | racetrack | racetrack slow | **arc INBOARD** |
+|---|---|---|---|---|
+| `mission.json.bak5` | 11 | 2 | - | **4** |
+| `mission.json.bak4` | 11 | 3 | 2 | **1** |
+| `mission.json.bak1` | 8 | - | 1 | **1** |
+| Honolulu 2026-09-16 (415 wpts) | 21 | 14 | 4 | **4** |
+
+The mirrored shape is `teardropTurn(..., 'inboard')` — **rungs 5 and 6**, the "turn AWAY from the dock"
+rung the wharf incident bought. Its semicircle branch reverses the **sweep** about a center that stays
+midway between the two lines. That keeps both endpoints and reverses **both tangents**, so the boat is
+told to reverse at the line end, fly the arc backwards, and reverse again onto the next line. To sweep
+the other way *and* stay tangent, the center has to move to the far side of the line — and a semicircle
+from there ends 2R on the wrong side of the next line, not on it. **There is no inboard variant of a
+tangent reversal**, which is exactly what `racetrackTurn`'s own header has said about its own shape all
+along; the semicircle's `side` option contradicted it. Over 450 reversal geometries x 3 vessel profiles,
+**every** inboard semicircle asks more of the hull than it can hold (93-212 deg/s against a 60/20/25
+deg/s hull); every other shape asks at most 22.
+
+**⚠ WHERE THE HONOLULU ESCAPE FIRED, AND WHAT THE TURN DID NOT DO.** Route vertex 18 — the 4th of the six
+arc vertices of the rung-5 turn at wpts 14-23 — with the boat tracking the commanded polyline to
+**0.26 m**. So the turn did **not** throw her off her route, and any account that says so is wrong (an
+earlier draft of this work said it). What it did was ask for a 165-degree reversal at the join, which
+cost her half her way (**sog 1.98 -> 0.94 kn**, recorded) and swung her COG through ~205 degrees — and an
+instantaneous COG mid-pirouette is exactly what the guard's reach test projects on. That is the seam with
+H1, and it is why the turns were worth doing first.
 
 Joints over 90 degrees, counted over whole plans: Honolulu route 38 of 413; `bak5` 10; `bak4` 4;
-`bak1` 6. The Honolulu escape fired on the 4th of six such arc vertices, with the boat's heading
-swinging ~205 degrees in 3 s at a 20-degree crab angle.
+`bak1` 6. ⚠ **Those counts are TWO defects, not one.** On Honolulu only 8 of the 38 come from the four
+inboard turns; **19 more are reversal pairs that shipped with ZERO turn points** — the straight-180 class
+that falls outside the reversal gate. That is the still-open "staggered reversals judged as hops" chip
+and this work does NOT fix it.
 
-**Why nothing catches it:** `turnFlyable` (static/js/turns.js:277) asks whether the *projected track
-clears keep-outs*, not whether the hull can *track* the shape — a 172-degree snap in open water passes.
-And `junctionKnot` / `pruneJunctionKnots` (static/js/passage.js:249-269), which is exactly a
-">150 degrees with <12 m on the shorter leg" detector, is applied ONLY to routed detours in punchOut's
-`around` branch, never to generated turns. The Add-to-plan refusal (`035878f1`) does not check turn
-shape either — only that a turn exists.
+**Why nothing caught it:** `turnFlyable` (static/js/turns.js) asks whether the *projected track clears
+keep-outs*, not whether the hull can *join* the shape — measured, it passed **120 of 120** cusped shapes.
+`legClear` passes every chord, because every chord is lawful water. And `junctionKnot` /
+`pruneJunctionKnots` (static/js/passage.js), exactly a ">150 degrees with <12 m on the shorter leg"
+detector, is applied ONLY to routed detours in punchOut's `around` branch, never to generated turns. The
+Add-to-plan refusal (`035878f1`) does not check turn shape either — only that a turn exists.
+
+**THE FIX, SHIPPED:** `turnJoinable` in `static/js/turns.js`, asked by `turnWithRetry` ahead of
+`turnFlyable`. A generated reversal must leave the line on `hE` and arrive on `hF`. Clause 1 refuses a
+join past a quarter turn — a sign change rather than a tuned threshold, and the populations are nowhere
+near it (worst legitimate join 45 deg, mirrored 175). Clause 2 refuses a join tighter than the hull's own
+rate over the leg it has to turn on, judged at the PLAN's speed so a slowed rung cannot buy itself a
+join. Held by `tests/turn_geometry.js` 50-57 (nine mutations recorded, nothing surviving) and
+`tests/direct_turn.js` 10/10a/10b/10c.
+
+**⚠ OPERATIONAL CONSEQUENCE: the 10 turns in the table above now REFUSE.** Those pairs go red and Add to
+plan refuses the pattern until the operator moves the line ends, strikes a run or widens the spacing.
+That is the intended trade, and it is only safe because `035878f1` made a refused reversal visible
+instead of shipping it as a straight leg.
 
 ## THE RANKED CAUSES (from the reconstruction; measurements are the agents')
 
@@ -138,10 +190,12 @@ shape either — only that a turn exists.
 - That `enforce.area` explains New Castle: tested and killed — `escapeCourse` then returns null
   (BOXED IN, no command) and the zone count comes out 1547 against a logged 1463.
 
-## ORDER OF WORK (recommended 2026-09-19, not yet Andy's decision)
+## ORDER OF WORK — ANDY'S, 2026-09-19: turns, then the helm rung, then the seam, then the launch grant
 
-1. **The turn geometry.** A plan defect, in his current plans, independent of the guard, and the most
-   likely reason the boat is close enough to alarm at all. Establish the mirrored-tangent origin first.
+1. ~~**The turn geometry.**~~ **DONE 2026-09-19** — see the ESTABLISHED block above. It was the INBOARD
+   rung, not a heading-derivation bug; `turnJoinable` now refuses any shape that does not join both
+   lines. ⚠ The other half of the over-90-degree joints is the zero-turn straight-180 class and is
+   untouched (see STILL OPEN).
 2. **The helm rung's selection test** — reach versus danger, plus a dwell and a margin. Firing on a 1 cm
    clip is not danger, and the banner asserts a cause the code has not established.
 3. **The planner/guard seam (H3)** — reconcile the buffer the planner guarantees with the band the guard

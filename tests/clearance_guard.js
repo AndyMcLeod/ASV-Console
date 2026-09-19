@@ -275,7 +275,11 @@ const world = (...polys) => ({ polys, lines: [], points: [], marks: [], sys: [],
         "old: refused (" + old.why + ") -> punchOut shipped a straight 180. new: "
           + t.pts.length + " waypoints, swept the other way");
   const foul = (t.pts || []).filter(p => clearanceM(F.toEN(p), W) < BUF);
-  check("9b. ... and every waypoint of the inboard turn is outside the buffer",
+  // ⚠ THE NAME READ "the inboard turn" UNTIL 2026-09-19, AND `t` HAS NOT BEEN INBOARD
+  // SINCE 2026-09-01 - it is the racetrack check 8b just pinned. Harmless while an inboard
+  // turn was still something the ladder could return; misleading now that turnJoinable
+  // refuses every one of them (tests/turn_geometry.js 50-57).
+  check("9b. ... and every waypoint of that turn is outside the buffer",
         () => t.pts && foul.length === 0,
         (t.pts || []).length + " waypoints, " + foul.length + " inside the " + BUF + " m buffer");
 }

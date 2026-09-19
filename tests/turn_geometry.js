@@ -30,7 +30,13 @@
 // 22/23 fail; neuter pruneJunctionKnots (return the via unchanged) and 23/24 fail;
 // drop its legClear bridge guard and 25 fails (an obstacle-forced fold gets pruned
 // into an unlawful leg); unwire it from punchOut's routed branch - the shipped
-// 2026-08-10 fault - and 27 fails.
+// 2026-08-10 fault - and 27 fails. THE JOIN GATE (50-57, added 2026-09-19): its own
+// recorded mutation table sits above check 50, nine mutations, nothing surviving.
+//
+// ⚠ AND THE FIRST CLAUSE OF THE CONTRACT ABOVE WENT UNENFORCED FOR THE LADDER'S WHOLE
+// LIFE. "It ENDS ON THE NEXT LINE, aligned with that line's heading" was tested of the
+// shapes the CONSTRUCTORS return and never of the shape `turnWithRetry` hands back - and
+// two of its rungs hand back one that joins neither line. See checks 50-57.
 //
 // NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
 // file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
@@ -75,7 +81,8 @@ const { V, nogo } = require("../static/js/state.js");
 // copy - and the checks below exercise the function that actually ships.
 const { blocked, legClear } = require("../static/js/chart.js");
 // The turn geometry itself, from the module it moved to out of asv.html.
-const { arcPts, minTurnRadiusM, shortenSeg, teardropTurn, thinTrack, trackGapM, turnFlyable,
+const { arcPts, minTurnRadiusM, racetrackTurn: rtt, shortenSeg, spiralTurn: spt, teardropTurn,
+        thinTrack, trackGapM, turnFlyable, turnJoinable,
         turnWithRetry: twr } = require("../static/js/turns.js");
 const { bbOf } = require("../static/js/geometry.js");
 
@@ -162,9 +169,24 @@ const maxStep = (pts) => pts.reduce((m, p, i) => i ? Math.max(m, Math.hypot(p.e 
 
 // --- assertions ------------------------------------------------------------ //
 let fails = 0;
+// ⚠⚠ A THUNK IS EVALUATED, NOT COUNTED AS TRUTHY - AND THAT COST SIX CHECKS THEIR TEETH
+// (2026-09-19). This helper used to take `cond` as a plain value only. Every other turn
+// suite in this repo (tests/direct_turn.js, tests/turn_refusal.js) takes `() => ...`, so
+// checks 50-56 were written that way out of habit - and an arrow function IS TRUTHY, so
+// all six printed "ok" without evaluating anything at all. They were caught by the
+// mutation run that was supposed to confirm them: loosening the rule they exist to hold
+// changed nothing, three separate mutations SURVIVED, and the detail lines went on
+// printing measured numbers beside a condition nobody had run.
+//
+// So: evaluate a function, and turn a throw inside it into a FAILED check rather than a
+// dead process - the same contract direct_turn.js's has. A plain value still works, which
+// is what the 49 checks above pass.
 function check(name, cond, detail) {
-  console.log((cond ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
-  if (!cond) fails++;
+  let ok;
+  try { ok = !!(typeof cond === "function" ? cond() : cond); }
+  catch (e) { ok = false; detail = (detail ? detail + " — " : "") + "THREW: " + e.message; }
+  console.log((ok ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
+  if (!ok) fails++;
 }
 const near = (x, y, tol) => Math.abs(x - y) <= tol;
 const f1 = (x, d) => (typeof x === "number" ? x.toFixed(d === undefined ? 2 : d) : "--");   // survives a refused turn
@@ -879,6 +901,181 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         "a 2.31 m settle length thinned to a 1.0 m approach radius keeps two vertices, "
         + "which is an arc - the plain rung below takes the turn instead, exactly as it "
         + "would have before easing existed");
+}
+
+// ── 50-55. DOES THE TURN JOIN THE TWO LINES? ────────────────────────────────────────
+//
+// THE FIRST CLAUSE OF THIS FILE'S OWN CONTRACT, AND UNTIL 2026-09-19 NOTHING ENFORCED IT.
+// The header says a reversal "ENDS ON THE NEXT LINE, aligned with that line's heading (the
+// whole reason a turn is generated at all instead of a straight hop)". Every check above
+// tests a shape the constructors PRODUCE; none tested the shape the LADDER hands back, and
+// the ladder had two rungs that hand back a shape joining neither line.
+//
+// `teardropTurn(..., 'inboard')` reverses the semicircle's SWEEP about a center that stays
+// midway between the two lines. That keeps both endpoints and reverses both tangents, so
+// the shape is the arc for the OPPOSITE transition: it enters on hF and leaves on hE. The
+// boat is told to reverse at the line end, fly the arc backwards, and reverse again onto
+// the next line. `legClear` passed it (every chord is lawful water) and `turnFlyable`
+// passed it (a cusp in open water projects clean - measured, 120 of 120), so both existing
+// gates said yes.
+//
+// MEASURED IN ANDY'S OWN PLANS, 2026-09-19, by re-deriving every shipped turn from the
+// stored survey lines and matching each to the rung that produced it, to the millimetre:
+// mission.json.bak5 4 of 17 reversals on this rung, bak1 1, bak4 1, and the Honolulu route
+// of 2026-09-16 4 of 62. The in-extremis escape at 19:11:50 fired at route vertex 18 - the
+// 4th arc vertex of one of them.
+//
+// ⚠⚠ AND THE FIRST DRAFT OF THESE CHECKS HAD NO TEETH AT ALL - read `check` above. They
+// were written as `() => ...` thunks, which this file's helper did not evaluate, so all
+// six printed "ok" while testing nothing. Three mutations SURVIVED, and that is the only
+// reason it was found. The TEETH list below is what the mutation run RECORDED after the
+// helper was fixed - not what the checks were expected to do.
+//
+// TEETH (recorded 2026-09-19; each mutation applied to static/js/turns.js, all four turn
+// suites re-run, source restored and verified byte-identical after each. tg =
+// turn_geometry, dt = direct_turn; nothing survived):
+//   drop `turnJoinable(...)` from turnWithRetry's accept condition  -> tg 50,53; dt 10
+//   clause 1 loosened:  `turnDeg >= 90` -> `> 179`                  -> tg 56
+//   clause 1 tightened: `turnDeg >= 90` -> `>= 20`                  -> tg 51; dt CRASHES
+//   clause 2 (the hull-rate test) neutered                          -> tg 55
+//   joins judged at the RUNG's speed (`f`) not the ladder's (`fly`) -> tg 50 ONLY, and
+//       that is a source assertion rather than a behavioural one. Honest note: with
+//       clause 1 in place the `f`/`fly` distinction changes no OUTCOME in these fixtures,
+//       because clause 1 is speed-independent and already refuses the mirrored shape. It
+//       still matters for a join that faces the right way and is merely too tight, which
+//       is why the argument is `fly` - but only check 50 is holding it.
+//   turnJoinable returns true unconditionally             -> tg 52,53,55,56,57; dt 10,10c
+//   an omitted `fly` opts out (`!fly` for `fly === false`)          -> tg 48,53; dt 10
+//   the EXIT join dropped (only the departure checked)              -> tg 57
+//   the ENTRY join dropped (only the arrival checked)               -> tg 55
+{
+  const sav = { s: V.SPEED_KN, r: V.MAX_TURN_RATE_DEG_S, v: V.VESSEL };
+  V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
+  V.MAX_TURN_RATE_DEG_S = 60;
+  V.VESSEL = { maneuvering: { approach_m: 1.0 } };
+  const minR = minTurnRadiusM("survey"), minRSlow = minTurnRadiusM("low");
+  const SP = 31.5, MAXH = Math.max(60, SP * 1.6), BUF = 3;
+  const clear = { polys: [], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const Ej = enLL(0, 0), Fj = enLL(SP, 0);          // line k ends at Ej heading 0; k+1 starts SP east, heading 180
+  const flyJ = { spdKey: "survey", approachM: 1 };
+  const join = (r, fly) => turnJoinable(Ej, Fj, thinTrack([Ej, ...r.pts, Fj], trackGapM(fly || flyJ), ref)
+                                          .slice(1, -1), 0, 180, fly || flyJ);
+  const src = fs.readFileSync(path.join(STATIC, "js", "turns.js"), "utf8");
+
+  check("50. the ladder asks whether the shape JOINS the lines, before asking about the water",
+        /turnJoinable\(E, F, pts, hE, hF, fly\) && turnFlyable\(/.test(src)
+        && /if\(fly === false\) return true;/.test(src),
+        "turnWithRetry's accept condition is `ok && turnJoinable(...) && turnFlyable(...)`, "
+        + "and an omitted `fly` still checks - only an explicit false opts out");
+
+  // 51. THE ACCEPTANCE, AND IT COMES FIRST. A gate that refused everything would pass 52-55.
+  const good = [["eased", spt(Ej, Fj, 0, 180, ref, clear, BUF, minR, MAXH, 2.31)],
+                ["arc outboard", teardropTurn(Ej, Fj, 0, 180, ref, clear, BUF, minR, MAXH)],
+                ["racetrack", rtt(Ej, Fj, 0, 180, ref, clear, BUF, minR, MAXH)],
+                ["racetrack slow", rtt(Ej, Fj, 0, 180, ref, clear, BUF, minRSlow, MAXH)]];
+  const slowFly = { spdKey: "low", approachM: 1 };
+  check("51. every shape that is tangent to both lines passes it — at the plan speed and slowed",
+        () => good.every(([, r]) => r.pts && join(r) && join(r, slowFly)),
+        good.map(([n, r]) => n + ":" + (r.pts ? (join(r) ? "join" : "REFUSED") : "no shape")).join("  ")
+        + "  (and the same four at the low turn speed: "
+        + good.map(([, r]) => r.pts && join(r, slowFly) ? "join" : "REFUSED").join(" ") + ")");
+
+  // 52. THE REFUSAL, in water that refuses nothing — so it is the TANGENTS being judged.
+  const inb = teardropTurn(Ej, Fj, 0, 180, ref, clear, BUF, minR, MAXH, "inboard");
+  check("52. the mirrored semicircle is refused, though every chord of it is lawful water",
+        () => inb.pts && inb.kind === "semicircle" && !join(inb),
+        (inb.pts || []).length + " waypoints, all clear; it leaves E on "
+        + azTo(Ej, inb.pts[0]).toFixed(0) + "° where the line runs 0°, and arrives on "
+        + azTo(inb.pts[inb.pts.length - 1], Fj).toFixed(0) + "° where the next line runs 180°");
+
+  // 53. ⚠ THE HOLE THE FIRST CUT OF THE GATE HAD, and direct_turn.js 10 is what found it.
+  // Judged at the rung's own speed the SLOW inboard rung passed: the same 175° reversal
+  // over the same 2.91 m is 93 °/s at 3 kn and 46 °/s at 1.5 kn. A join is where the turn
+  // meets the SURVEY LINE and the hull arrives at it doing the speed it ran the line at,
+  // so the ladder passes `fly`, not the per-rung `f`.
+  const wall = { polys: [{ ring: [{ e: -40, n: 4 }, { e: 80, n: 4 }, { e: 80, n: 40 }, { e: -40, n: 40 }],
+                           bb: bbOf([{ e: -40, n: 4 }, { e: 80, n: 4 }, { e: 80, n: 40 }, { e: -40, n: 40 }]),
+                           kind: "a dock / pier" }],
+                 lines: [], points: [], marks: [], sys: [], chans: [] };
+  const walled = twr(Ej, Fj, 0, 180, ref, wall, BUF, minR, MAXH, minRSlow);
+  check("53. a rung may not buy a join by slowing down — every outboard shape refused means REFUSED",
+        () => !walled.pts,
+        "outboard water cut to 4 m -> " + (walled.pts
+          ? "SHIPPED " + walled.kind + "/" + walled.side + " on rung " + walled.rung
+          : "refused (" + walled.why + ") after " + walled.rung + " rungs")
+        + "; the same pair in clear water still turns: "
+        + (() => { const t = twr(Ej, Fj, 0, 180, ref, clear, BUF, minR, MAXH, minRSlow);
+                   return t.pts ? t.kind + "/" + t.side + " rung " + t.rung : "REFUSED"; })());
+
+  // 54. CLAUSE 1 IS A SIGN CHANGE, NOT A TUNED NUMBER. 90° is the boundary between leaving
+  // the line forwards and leaving it backwards, and the margin either side is enormous.
+  const joinDeg = (r) => { const c = thinTrack([Ej, ...r.pts, Fj], trackGapM(flyJ), ref);
+    const d = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+    return Math.max(d(azTo(c[0], c[1]), 0), d(180, azTo(c[c.length - 2], c[c.length - 1]))); };
+  const goodDeg = good.map(([n, r]) => [n, joinDeg(r)]);
+  const worstGood = Math.max(...goodDeg.map(([, v]) => v)), worstBad = joinDeg(inb);
+  // ⚠ THE BOUND IS 60, NOT THE MEASURED WORST. The first draft asserted `< 45` against a
+  // population whose worst is 44.6 - a check sitting ON its own boundary, which reds on any
+  // harmless re-sampling. 60 leaves 15° of headroom above the worst joining shape and still
+  // sits 30° below the 90° rule and 115° below the shape being excluded.
+  check("54. ... and the two populations are nowhere near the boundary",
+        () => worstGood < 60 && worstBad > 150,
+        goodDeg.map(([n, v]) => n + " " + v.toFixed(1) + "°").join(", ")
+        + "  vs mirrored semicircle " + worstBad.toFixed(1) + "° — boundary 90°. "
+        + "The steepest joining shape is the racetrack at the SLOW radius, whose corner is "
+        + "tight by construction; it is still less than half the rule");
+
+  // ── 55-56. EACH CLAUSE ON ITS OWN, because they mask each other and a masked clause is
+  // one nothing is holding. Both of these were rewritten after the mutation run: the first
+  // draft of 55 put its tight corner where clause 1 ALSO refused it (the exit join came out
+  // at 89.4°), so deleting the rate test entirely changed nothing and the mutation SURVIVED.
+  //
+  // 55. CLAUSE 2 ALONE. A corner that faces the right way but is tighter than the hull is
+  // invisible to clause 1. Entry 45° - well inside the 90° rule - over half a meter.
+  const tight = [enLL(0.354, 0.354), enLL(SP, 30)];     // 45° out of E in 0.5 m, then 0° into F over 30 m
+  check("55. a join that faces the right way but is tighter than the hull is refused — clause 1 sees nothing here",
+        () => !turnJoinable(Ej, Fj, tight, 0, 180, flyJ)
+              && turnJoinable(Ej, Fj, [enLL(0, 30), enLL(SP, 30)], 0, 180, flyJ),
+        "entry 45° (inside the 90° rule) over 0.50 m needs "
+        + (45 / (0.5 / (3.0 * 0.514444))).toFixed(0) + " °/s of a 60 °/s hull -> refused; "
+        + "exit 0° over 30 m is clean, so ONLY the rate test can be refusing it. The same "
+        + "pair joined straight -> accepted");
+
+  // 56. CLAUSE 1 ALONE. At the LOW turn speed the mirrored semicircle is inside the hull's
+  // rate - 175° over 2.91 m is 46 °/s of 60 - so the rate test passes it and only the 90°
+  // rule refuses it. This is the configuration an operator reaches by setting the TURN
+  // speed to low, which the punch card itself offers as an advisory (tests/turn_refusal 12).
+  // ⚠ THE NUMBERS BELOW ARE MEASURED OFF THE SHAPE, NOT QUOTED. The first draft of this
+  // check asserted "175° over 2.91 m is 46 °/s" as literal text beside a condition that
+  // never computed it - so when the mutation run loosened clause 1 and the check went on
+  // passing, its detail line still read as though it had proved something. Derive both.
+  const inbChain = [Ej, ...inb.pts, Fj];
+  const dJ = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  const inbDeg = dJ(azTo(inbChain[0], inbChain[1]), 0);
+  const inbLeg = distTo(inbChain[0], inbChain[1]);
+  const lowRate = inbDeg / (inbLeg / (V.SPEED_KN.low * 0.514444));
+  check("56. ... and the mirrored semicircle is still refused at the LOW turn speed, where the rate test passes it",
+        () => lowRate < V.MAX_TURN_RATE_DEG_S
+              && !turnJoinable(Ej, Fj, inb.pts, 0, 180, slowFly),
+        inbDeg.toFixed(1) + "° over " + inbLeg.toFixed(2) + " m is " + lowRate.toFixed(0)
+        + " °/s at " + V.SPEED_KN.low + " kn — inside a " + V.MAX_TURN_RATE_DEG_S
+        + " °/s hull, so clause 2 says yes here and clause 1 is the only thing refusing it. "
+        + "Measured before clause 1 existed: all 150 mirrored semicircles in the sweep "
+        + "passed at this speed");
+  // 57. BOTH ENDS, SEPARATELY. A turn that leaves the line perfectly and arrives at the
+  // next one backwards is just as unflyable as the reverse, and every shape in 51-56 is
+  // wrong at BOTH ends at once - so a gate that only looked at the entry would pass all of
+  // them and nothing would notice. It did not notice: dropping the exit join from
+  // turnJoinable SURVIVED the first mutation run. These two fixtures differ only in the
+  // last chord.
+  const goodExit = [enLL(0, 30), enLL(SP, 30)];               // ...arrives on 180, the next line's heading
+  const badExit  = [enLL(0, 30), enLL(SP, 30), enLL(SP, -30)]; // ...arrives on 000, straight back up the line
+  check("57. the ARRIVAL on the next line is judged too, not just the departure from this one",
+        () => turnJoinable(Ej, Fj, goodExit, 0, 180, flyJ)
+              && !turnJoinable(Ej, Fj, badExit, 0, 180, flyJ),
+        "identical entry (0° over 30 m) in both; last chord 180° -> accepted, 000° -> refused. "
+        + "Everything 51-56 is wrong at both ends at once, so only this tells the two joins apart");
+  V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

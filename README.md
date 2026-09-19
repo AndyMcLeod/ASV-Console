@@ -1016,16 +1016,35 @@ diagnosable (`tests/frame_health.js`).
 
    The ladder, when a reversal is refused: outboard arc → outboard racetrack →
    racetrack at the slow-speed radius → **inboard** arc → inboard at the slow radius.
-   The gentle arc is always tried first and every unobstructed turn still flies it. The
-   inboard rungs remain at the bottom: turning *away* from a feature, even back over
-   surveyed water, beats refusing — refusing a turn is what once put a boat alongside a
-   pier at 0.6 m.
+   The gentle arc is always tried first and every unobstructed turn still flies it.
+
+   **⚠ THE TWO INBOARD RUNGS NO LONGER PRODUCE ANYTHING, AND THAT IS THE 2026-09-19 FIX.**
+   They were meant to be "the same semicircle swept the other way" — turning *away* from a
+   feature, back over surveyed water. They are not that shape. Reversing the sweep about a
+   center that stays midway between the two lines keeps both endpoints and reverses **both
+   tangents**, so what came back was the arc for the *opposite* transition: the boat was
+   told to reverse ~175° at the line end, fly the arc backwards, and reverse ~175° again
+   onto the next line. Nothing caught it, because every chord of it is lawful water and a
+   reversal cusp in open water projects perfectly cleanly. Ten such turns shipped in saved
+   plans, and an in-extremis escape fired four vertices inside one of them.
+
+   A generated reversal must now **leave the line on its own heading and arrive on the next
+   line's** before any rung is accepted. The rule has two parts: a turn may not begin by
+   sending the boat back down the line it has just run (a quarter turn is the boundary —
+   the worst legitimate join measures 45°, the mirrored shape 175°), and a join may not be
+   tighter than the hull's own turn rate over the leg it has to turn on, judged at the
+   *plan's* speed so a slowed rung cannot buy itself a join. What answers "turn away from
+   the dock" is the **racetrack** rung above it, which reaches only `minR` past the line
+   end. The inboard rungs are kept so the ladder still asks, and because they are the only
+   specimen the suites have of a shape that joins neither line.
 
    Both shapes are **nogo-validated** before use. Where no rung of the ladder fits, the
    pair is flagged red instead of given a turn, and Add to plan refuses the pattern until
    it is fixed — see *A refused turn is retried, not abandoned* above for the remedies it
    offers. A shorter lead is never one of them: the ladder has already tried the pair with
-   no lead.
+   no lead. **This is the path those ten turns now take** — a real change to plans that
+   used to punch clean, and one that is only safe because a refused reversal stopped
+   shipping as a straight 180 the hull cannot track.
 
    **What is AHEAD, and taking the helm in extremis.** Every telemetry frame the console
    projects the vessel's *ground* track forward and asks what it warrants, on four rungs:

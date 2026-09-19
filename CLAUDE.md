@@ -55,23 +55,62 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 — THE ESCAPES ARE DIAGNOSED AND NOTHING IS FIXED: read `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`, then pick the order of work with Andy)
+## ⇒ START HERE (handoff refreshed 2026-09-19 EVENING — THE TURNS ARE FIXED, items 2-5 of the order of work are NOT: read this block, then `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`)
 
 ### ➤ PICK UP HERE
 
-**HANDOFF, 2026-09-19, TO THE WINDOW ANDY NAMED "ASV Console Refinement". START WITH THIS BLOCK AND THE TWO NEW
-DOCUMENTS; the 09-16 block under it is the last code that landed.**
+**HANDOFF, 2026-09-19 (EVENING), IN THE WINDOW ANDY NAMED "ASV Console Refinement".**
 
-**THE FIRST FIVE MINUTES IN THAT WINDOW:**
-1. Read `ESCAPE_FINDINGS.md` end to end, then this block, then `DEPARTURE_PARADIGM.md`. Do not re-derive any of
-   it - it cost two workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
-2. `git log --oneline -3` and `git status` (expect clean at the docs commit), and check nothing is listening on
-   8788-8799 before any live work.
-3. Put the ORDER OF WORK question to Andy before building anything. My recommendation, in his words on the day:
-   the TURNS first (a plan defect, in his current plans, independent of the guard), then the helm rung's
-   selection test, then the planner/guard seam, then the launch grant, then the New Castle chart ink.
-4. If he takes the turns: start by establishing WHY the arc is mirrored (see the bullet below), with a node
-   harness over `mission.json.bak5` and the page's own `teardropTurn` / `turnWithRetry` - not by reading alone.
+**ANDY'S ORDER OF WORK, GIVEN ON THE DAY:** *"1. The turn geometry... 2. The helm rung's selection test...
+3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."* **ITEM 1 IS DONE AND
+COMMITTED. ITEM 2 IS NEXT** — the helm rung: reach versus danger, no dwell, no margin, and a cause the banner
+asserts that the code has not established.
+
+**THE FIRST FIVE MINUTES:**
+1. Read this block, then `ESCAPE_FINDINGS.md` end to end (its turn section now carries the ESTABLISHED answer
+   and the operational consequence), then `DEPARTURE_PARADIGM.md`. Do not re-derive any of it - it cost two
+   workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
+2. `git log --oneline -3` and `git status`, and check nothing is listening on 8788-8799 before any live work.
+3. Item 2 is the helm rung. The evidence is H1/H5 in `ESCAPE_FINDINGS.md`; the numbers there are measured.
+
+* **⇒ ITEM 1, THE TURN GEOMETRY: IT WAS THE INBOARD RUNG, AND THE HANDOFF'S OWN GUESS WAS WRONG.** The previous
+  block said to establish whether the mirrored arc came from headings taken off the lines' stored `a->b`
+  instead of the flown direction after `regionOrder`. **It does not, and `regionOrder` is not involved.**
+  `mission.json.bak5` carries BOTH the flown `waypoints` and its 20 source `lines`, so every turn can be
+  re-derived from its own pair and matched to the rung that produced it. Fed the pair's real `(E,F,hE,hF)`, the
+  page's own `turnWithRetry` returns a CORRECT turn every time, including for all six that shipped wrong.
+  **Every shipped turn instead matches a ladder rung to within 5 mm**, and the bad ones are all
+  `teardropTurn(..., 'inboard')` - rungs 5 and 6: bak5 4 of 17, bak4 1, bak1 1, Honolulu 4 of 62. That shape
+  reverses the SWEEP about a center that does not move, which keeps the endpoints and reverses BOTH tangents,
+  so it is the arc for the opposite transition. **There is no inboard variant of a tangent reversal** - exactly
+  what `racetrackTurn`'s own header has always said about its own shape.
+* **THE FIX:** `turnJoinable` in `static/js/turns.js`, asked by `turnWithRetry` ahead of `turnFlyable`. Two
+  clauses, each with its own hole covered: (1) a turn may not begin by sending the boat back down the line it
+  has just run - a SIGN CHANGE at 90 deg, not a tuned threshold (worst legitimate join 45, mirrored 175);
+  (2) a join may not be tighter than the hull's own rate over the leg it turns on, **judged at the PLAN's speed,
+  never a rung's reduced one** - a slowed rung must not be able to buy itself a join. Measured: 0 wrong verdicts
+  over 4,700 shape/vessel/speed cases.
+* **⚠ OPERATIONAL, TELL HIM: those 10 turns now REFUSE.** The pairs go red, and Add to plan refuses the pattern
+  until he moves the line ends, strikes a run or widens the spacing. Page-only - live when he reloads BOTH
+  console windows; no server restart. Safe only because `035878f1` made a refused reversal visible instead of
+  shipping it as a straight 180.
+* **⚠ AND THE ESCAPE LINK IS NARROWER THAN IT LOOKS.** The Honolulu escape fired at route vertex 18, the 4th arc
+  vertex of a rung-5 turn - but the boat was tracking that polyline to **0.26 m**. The turn did not throw her
+  off her route. It asked for a 165-deg reversal at the join, which cost her half her way (sog 1.98 -> 0.94 kn,
+  recorded) and swung her COG ~205 deg, and an instantaneous COG mid-pirouette is what the guard's reach test
+  projects on. **That is item 2's territory, not item 1's** - do not claim the turn fix closes the escapes.
+* **⚠ THE 38 OVER-90-DEGREE JOINTS AT HONOLULU WERE TWO DEFECTS.** Only 8 came from the four inboard turns;
+  **19 more are reversal pairs that shipped with ZERO turn points** - the straight-180 class outside the
+  reversal gate. That is the still-open "staggered reversals judged as hops" chip and this work does NOT fix it.
+* **⚠⚠ AND THE FIRST DRAFT OF THE NEW CHECKS HAD NO TEETH AT ALL.** `tests/turn_geometry.js`'s `check()` took a
+  plain value, not a thunk - every other turn suite takes `() => ...` - so six new checks printed "ok" while
+  evaluating nothing, and three mutations SURVIVED. Found only by running the mutations. The helper is
+  thunk-aware now and a scan confirmed no other suite had the mismatch. **Read what a check prints, and run the
+  mutations before writing the TEETH list, not after.**
+* **ONE PRE-EXISTING CHECK LOST COVERAGE AND SAYS SO:** `direct_turn.js` 10b no longer isolates `turnFlyable`
+  (the join gate refuses its fixture first - measured, neutering turnFlyable leaves it green). The property is
+  still held by `turn_geometry.js` 46/47/47b. A ladder-level fixture that isolates flyability - a shape that
+  joins both lines but whose flown track cuts into something - is worth building and is not built.
 
 * **ANDY: "start with the escapes."** His console had been taking the helm on his own runs. Investigated with
   two agent workflows (7 agents on the recordings and the guard path, 9 on the design). **NO CODE CHANGED.** Two

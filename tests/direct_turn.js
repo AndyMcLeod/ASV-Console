@@ -41,11 +41,28 @@
 //   arc step back to a flat 3 m                          -> 1b, 12
 //   accepts a pair tighter than 2R                       -> 6
 //   accepts a skew pair                                  -> 7
-//   racetrack rung removed from the ladder               -> 9, 9b, 10
-//   racetrack rung moved BELOW the inboard one           -> 8, 9, 9b, 10
-//   BOTH inboard rungs deleted                           -> 10, 11
 //   punchOut tallies a racetrack as a semicircle         -> 13
 //   lane capture radius scaled by hw again (buoy_lane)   -> 30
+//
+// ⚠ THE LADDER-ORDER AND INBOARD LINES WERE RE-RUN ON 2026-09-19, because check 10 now
+// asserts the opposite of what it did (see its own note) and three of them named it. These
+// are the results that run printed, not the old predictions - cg = clearance_guard:
+//
+//   BOTH racetrack rungs removed from the ladder         -> both suites CRASH
+//        (it used to read "racetrack rung removed -> 9, 9b, 10". Removing only the
+//        survey-speed one is INERT: the minRSlow racetrack below it still answers.)
+//   racetrack rungs moved BELOW the inboard one          -> 9      (was 8, 9, 9b, 10)
+//   BOTH inboard rungs deleted                           -> 10b, 11; cg 10, 11
+//   only ONE inboard rung deleted                        -> the first: INERT;
+//                                                           the slow one: cg 10
+//   turnJoinable dropped from the ladder                 -> 10
+//   turnJoinable always true                             -> 10, 10c
+//   an omitted `fly` opts out of the join test           -> 10
+//
+// ⚠ AND DELETING BOTH INBOARD RUNGS NO LONGER CHANGES A PLAN, only these fixtures.
+// turnJoinable refuses every shape they produce (tests/turn_geometry.js 50-57), so the
+// rungs are kept for two reasons only: the ladder still ASKS, and they are the suites'
+// one specimen of a shape that joins neither line.
 //
 // ⚠ TWO OF THOSE FOUND HOLES IN THIS FILE, NOT IN THE CODE. Centring both arcs on the
 // midpoint produces a shape that does not START AT THE LINE END, and checks 1-5 all stayed
@@ -56,9 +73,11 @@
 // wide channel the bug was actually reported on.
 //
 // ⚠ AND ONE MUTATION IS INERT BY DESIGN: making the standoff a no-op-wrapped constant
-// kills nothing, correctly. Deleting only ONE of the two inboard rungs is inert too - the
-// slow rung still inverts, so the safety property survives, which is the check doing its
-// job rather than failing to.
+// kills nothing, correctly. Deleting only the FIRST inboard rung is inert too, but the
+// reason has changed: it used to be "the slow rung still inverts, so the safety property
+// survives". It no longer inverts - turnJoinable refuses it - so what survives is only the
+// REFUSAL, which the remaining rung reaches by the same path. Deleting the slow one alone
+// still reds clearance_guard 10, which counts the rungs.
 
 // --- crash guard: a throw outside a check() must still REPORT --------------------------
 function __crash(e) {
@@ -70,10 +89,11 @@ function __crash(e) {
 process.on("uncaughtException", __crash);
 process.on("unhandledRejection", __crash);
 
-const { planeFrame } = require("../static/js/geodesy.js");
+const { azTo, planeFrame } = require("../static/js/geodesy.js");
 const { bbOf } = require("../static/js/geometry.js");
 const { SKEW_LIMIT_DEG } = require("../static/js/core_turns.js");
-const { racetrackTurn, teardropTurn, turnWithRetry } = require("../static/js/turns.js");
+const { racetrackTurn, teardropTurn, turnJoinable,
+        turnWithRetry } = require("../static/js/turns.js");
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -174,8 +194,14 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
 }
 
 // ── 5. IT NEVER SWEEPS BACK OVER THE SURVEY ─────────────────────────────────────────
-// The complaint in one number. The inboard arc exists to turn away from a feature and it
-// pays for that by re-crossing surveyed water; this shape does not pay it.
+// The complaint in one number. The inboard arc pays for turning away from a feature by
+// re-crossing surveyed water; this shape does not pay it.
+// ⚠ AND SINCE 2026-09-19 THAT IS THE LESSER OF THE INBOARD ARC'S TWO PROBLEMS. It never
+// turned away from anything: it is the arc for the OPPOSITE transition, joining neither
+// line, and turnJoinable now refuses it (tests/turn_geometry.js 50-57). This check still
+// compares the two EXTENTS - the shape is still constructible and still sweeps back - but
+// it is no longer a comparison between two turns the ladder might ship. It is one turn
+// against a shape that cannot ship at all.
 {
   const rt = racetrackTurn(E, at(SPACING), 0, 180, F, CLEAR, BUF, MIN_R, MAXHALF);
   const inb = teardropTurn(E, at(SPACING), 0, 180, F, CLEAR, BUF, MIN_R, MAXHALF, "inboard");
@@ -225,49 +251,98 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
         (t.pts || []).length + " waypoints, max reach " + reach(t).fwd
           + " m against a wharf at 6 m, " + reach(t).backOverSurvey + " m back over the survey");
 
-  // 10. THE WHARF RUNG IS STILL THERE. Squeeze the outboard water below even the tight
-  // radius and the ladder must still turn AWAY rather than refuse - refusing is what put
-  // the boat on the pier, and no amount of new geometry may take that rung out.
-  // ⚠ THE WINDOW HERE IS NARROW AND BOTH EDGES OF IT COST A WRONG RESULT. The slab has to
-  // sit far enough out that the LINE END itself is clear (else the first chord of every
-  // shape is refused and the check reddens for a reason that is not the ladder — the first
-  // draft used 0.6 m and did exactly that), and close enough to refuse the racetrack at
-  // BOTH radii: 2.06 + BUF = 5.06 m at survey speed, 1.03 + BUF = 4.03 m slowed. A second
-  // draft at 4.5 m left the SLOW racetrack fitting, so the ladder rightly took rung 3 and
-  // never reached the inboard rung this check exists to prove is still there.
-  // ⚠ THE WINDOW MOVED FROM 3.5 m TO 4.0 m ON 2026-09-10, AND THE REASON IS THAT THIS IS
-  // NOW A TEST ABOUT A BOAT RATHER THAN ABOUT A POLYLINE. turnWithRetry asks the runtime
-  // guard's own projection whether each candidate can be TRACKED (turnFlyable), and with the
-  // slab 3.5 m off the line end there is 0.5 m of clear water in front of a hull that needs
-  // 1.47 m of radius at 3 kn: it cannot make ANY turn there, and the inboard semicircle the
-  // old check demanded was a shape the boat would have clipped. Swept across the fixture,
-  // the two answers are IDENTICAL from 4.5 m out - the flyability test costs nothing in
-  // ordinary water and bites only in the last half-metre.
+  // 10. ⚠⚠ THIS CHECK USED TO DEMAND THE OPPOSITE, AND IT WAS PASSING FOR THE WRONG
+  // REASON (rewritten 2026-09-19). It read "when even the tight shape will not fit, it
+  // STILL inverts rather than refusing", and asserted `inv.side === "inboard"` - so it
+  // certified as the wharf fix a shape the boat cannot join. The inboard semicircle
+  // reverses the SWEEP about a center that does not move, which keeps the two endpoints
+  // and reverses BOTH tangents: the boat is told to turn 176 deg at the line end, fly the
+  // arc backwards, and turn 176 deg again onto the next line. `turnFlyable` passed it
+  // (a cusp in open water projects clean - measured, 120 of 120) and `legClear` passed it
+  // (every chord is lawful water), so both of this suite's existing tests said yes.
+  //
+  // IT WAS NOT HYPOTHETICAL. Re-deriving every turn in Andy's own plans from their stored
+  // lines and matching each to its rung, 2026-09-19: mission.json.bak5 shipped 4 of 17
+  // reversals on this rung, bak1 1, bak4 1, and the Honolulu route of 2026-09-16 4 of 62 -
+  // and the in-extremis escape at 19:11:50 fired at route vertex 18, the 4th arc vertex of
+  // one of them, after the boat had lost half its way at the join (sog 1.98 -> 0.94 kn).
+  //
+  // SO THE SAFE ANSWER HERE IS THE REFUSAL, and that is only true because `035878f1` made
+  // a refused reversal a VISIBLE plan defect rather than a silent straight leg: punchOut
+  // flags it UNSAFE, the card says which pair and why, and Add to plan refuses the pattern
+  // until the operator moves the line ends, strikes a run or widens the spacing. The wharf
+  // incident was never "the ladder refused" - it was "the ladder refused and punchOut
+  // shipped a straight 180 anyway". What still answers Andy's "turn AWAY from the dock"
+  // are rungs 2 and 3, checked at 9/9b above: they reach minR and minRSlow past the line
+  // end instead of half the line spacing, and they DO join.
+  //
+  // ⚠ THE WINDOW IS NARROW AND BOTH EDGES COST A WRONG RESULT. The slab must sit far
+  // enough out that the LINE END itself is clear (else the first chord of every shape is
+  // refused and this reddens for a reason that is not the ladder - the first draft used
+  // 0.6 m and did exactly that), and close enough to refuse the racetrack at BOTH radii:
+  // 2.06 + BUF = 5.06 m at survey speed, 1.03 + BUF = 4.03 m slowed. A draft at 4.5 m left
+  // the SLOW racetrack fitting, so the ladder rightly took rung 3 and never reached the
+  // rung under test.
   const TIGHT = 4.0;                       // > BUF, < MIN_R_SLOW + BUF, and flyable
   const tightW = slab(TIGHT, 40);
   const inv = turnWithRetry(E, at(SPACING), 0, 180, F, tightW, BUF, MIN_R, MAXHALF, MIN_R_SLOW);
-  check("10. when even the tight shape will not fit, it STILL inverts rather than refusing",
-        () => inv.pts && inv.side === "inboard" && inv.rung > 2,
-        "outboard water cut to " + TIGHT + " m -> " + (inv.pts ? inv.kind + "/" + inv.side
-          + " on rung " + inv.rung : "REFUSED (" + inv.why + ") — the wharf bug returning"));
+  check("10. with every joining shape refused, the ladder REFUSES — it does not ship the one that cannot join",
+        () => !inv.pts && inv.why === "nogo",
+        "outboard water cut to " + TIGHT + " m -> " + (inv.pts ? "SHIPPED " + inv.kind + "/"
+          + inv.side + " on rung " + inv.rung + " — a shape the boat cannot join"
+          : "refused (" + inv.why + ") after " + inv.rung + " rungs"));
+  // 10a. THE ACCEPTANCE THAT MAKES 10 MEAN SOMETHING. "Refuses everything" would pass 10
+  // on its own; give the same pair the water back and the turn must return, unchanged.
+  const roomy = turnWithRetry(E, at(SPACING), 0, 180, F, slab(20, 40), BUF, MIN_R, MAXHALF, MIN_R_SLOW);
+  check("10a. ... and with the water back it is the ordinary turn again, on rung 1",
+        () => roomy.pts && roomy.side === "outboard" && roomy.rung === 1,
+        "slab moved to 20 m -> " + (roomy.pts ? roomy.kind + "/" + roomy.side + " on rung "
+          + roomy.rung + ", " + roomy.pts.length + " waypoints" : "REFUSED (" + roomy.why + ")"));
+  // 10c. AND THE GATE IS WHAT DOES IT, not the keep-out. Same geometry, NO keep-out at all,
+  // the inboard shape asked for directly: it is still refused, because the defect is the
+  // shape's own tangents and has nothing to do with the water.
+  const inbOnly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(-40, -0.6), BUF,
+                                MIN_R, MAXHALF, MIN_R_SLOW);
+  const inbShape = teardropTurn(E, at(SPACING), 0, 180, F, CLEAR, BUF, MIN_R, MAXHALF, "inboard");
+  check("10c. the mirrored semicircle is refused for its TANGENTS, in water that refuses nothing",
+        () => inbShape.pts && !turnJoinable(E, at(SPACING), inbShape.pts, 0, 180,
+                                            { spdKey: "survey", approachM: 1 }),
+        "the shape is drawn (" + (inbShape.pts || []).length + " waypoints, all clear) and "
+          + "leaves E on " + azTo(E, inbShape.pts[0]).toFixed(0) + "° where the line runs 0° — "
+          + "turnJoinable says " + turnJoinable(E, at(SPACING), inbShape.pts, 0, 180,
+                                                { spdKey: "survey", approachM: 1 })
+          + "; with the survey water walled off instead the ladder answers "
+          + (inbOnly.pts ? inbOnly.kind + "/" + inbOnly.side : "refused (" + inbOnly.why + ")"));
 
-  // 10b. THE OTHER EDGE, AND IT IS NEW. Squeeze it to where no turn can be FLOWN and the
-  // ladder must refuse rather than ship a loop the hull would clip. That is only safe
+  // 10b. A DRAWN SHAPE THAT FITS IS NOT A TURN THE BOAT CAN MAKE. Squeeze the water to
+  // where the polyline still fits and the ladder must still refuse. That is only safe
   // because a refused reversal does not ship at all: punchOut flags it UNSAFE, and Add to
   // plan refuses the pattern until the operator moves the line ends or strikes a run
   // (tests/turn_refusal.js). This comment used to say it "blocks Upload" - it never did, and
   // until 2026-09-16 the refusal here was shipped as the straight leg after all. Shipping an
   // unflyable loop next to the one feature that refused it is the wharf incident itself.
+  //
+  // ⚠⚠ THIS CHECK NO LONGER ISOLATES `turnFlyable`, AND SAYING SO IS THE POINT (2026-09-19).
+  // It was written as "where nothing can be TRACKED it refuses" and its fixture reaches
+  // that verdict through the INBOARD shape - the only one whose extent fits at 3.5 m. Now
+  // that turnJoinable refuses that shape first, on its tangents, the flyability test is no
+  // longer what decides here: MEASURED, neutering turnFlyable entirely leaves this check
+  // GREEN. What still holds the flyability property is tests/turn_geometry.js 46, 47 and
+  // 47b, which exercise it directly and DO red under that mutation. A fixture that isolates
+  // it at the LADDER level - a shape that joins both lines but whose flown track cuts into
+  // something - was looked for and not found in the obvious places (a pile inside the loop
+  // just pushes the ladder to the racetrack); it is worth building, and is not built.
   const noneFly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
                                 MIN_R, MAXHALF, MIN_R_SLOW);
   const geomOnly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
                                  MIN_R, MAXHALF, MIN_R_SLOW, 0, false);
-  check("10b. ... and where nothing can be TRACKED it refuses, though the polyline fits",
+  check("10b. ... and where the drawn polyline fits but nothing can be FLOWN, it still refuses",
         () => !noneFly.pts && geomOnly.pts && geomOnly.side === "inboard",
         "at 3.5 m the drawn shape is clear (" + (geomOnly.pts ? geomOnly.kind + "/"
           + geomOnly.side + ", " + geomOnly.pts.length + " waypoints, no fouled chord" : "?")
-          + ") but the hull flown along it enters, so the ladder gives up: "
-          + (noneFly.pts ? "SHIPPED ANYWAY" : "refused (" + noneFly.why + ")"));
+          + ") and the ladder still gives up: "
+          + (noneFly.pts ? "SHIPPED ANYWAY" : "refused (" + noneFly.why + ")")
+          + " — though it is now the JOIN gate refusing it, not the flyability one");
 
   // 11. And when there is genuinely nothing, it is refused as unsafe with rung ONE's
   // reason - the turn the operator expected, and the feature that took it away.
