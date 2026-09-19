@@ -117,15 +117,30 @@ H1, and it is why the turns were worth doing first.
 Joints over 90 degrees, counted over whole plans: Honolulu route 38 of 413; `bak5` 10; `bak4` 4;
 `bak1` 6. ⚠ **Those counts are THREE defects, not one**, and all 38 of Honolulu's are now attributed:
 
-| cause | joints | pairs |
+| producer | joints | vertices |
 |---|---|---|
-| inside an INBOARD turn — **the only one this work fixes** | 8 | 4 |
-| at a ZERO-TURN reversal join (the straight-180 class outside the reversal gate) | 19 | 19 |
-| approach / region-hop junctions (vertices 14, 32, 36, 42, 70, 301, 304, 329, 332, 365, 397) | 11 | — |
+| **A** — inside a mirrored INBOARD arc (rungs 5/6) — **the only one this work fixes** | 8 | 15, 21, 59, 65, 286, 292, 372, 378 |
+| **B** — a reversal INSIDE the gate that got no turn at all (18 pairs, the straight-180) | 19 | 31, 32, 35, 36, 39, 40, 42, 46, 56, 57, 67, 79, 88, 97, 106, 301, 333, 365, 397 |
+| **C** — a reversal that FAILED the gate, so no turn was attempted | 7 | 174, 304 (straight); 138, 329, 332, 342, 406 (routed by `around`) |
+| **D** — a same-direction hop between two parallel runs | 3 | 28, 29 (straight); 70 (routed by `around`) |
+| **E** — the ENC-routed approach meeting coverage line 1 | 1 | 14 |
 
-**So this removes 8 of the 38.** The 19 are the still-open "staggered reversals judged as hops" chip.
-The 11 are a class nobody has looked at: they are not reversals, so no turn is generated for them at all,
-and `pruneJunctionKnots` reaches only the ones that came out of `routeAround`.
+**So this removes 8 of the 38.** B is the still-open "staggered reversals judged as hops" chip.
+C + D + E = 11 are the junction class: they are not reversals the gate accepted, so no turn is
+generated for them at all, and `pruneJunctionKnots` reaches only the ones that came out of
+`routeAround`.
+
+**⚠ THE FIRST CUT OF THIS TABLE HAD SIX VERTICES IN THE WRONG BUCKET, AND IT IS FIXED HERE
+(2026-09-19).** Its counts — 8 / 19 / 11 — were right and stand. Its enumerated list for the third
+class was a clean six-for-six swap: `32, 36, 42, 301, 365, 397` are B (the chip's class, not a new
+one) and `28, 29, 138, 174, 342, 406` are the junction class. Re-derived from the plan's own
+structure, not from the route alone: the session log carries the committed plan beside the upload
+(`/api/mission` rev 69 — 398 waypoints, 74 lines, buffer 5, min depth 3, lead 0/0, ease arc, every
+speed `survey`), all 398 plan waypoints match into the 415-point route, each of the 74 lines is
+exactly two ADJACENT waypoints, and the 17 remaining route points are Upload's own insertions. So
+every join is either "n joining points" or "none", with no inference. Spacing measures 10.00 m, so
+punchOut's gate is `10.00 × 4.6 + 3 + 0 = 49.00 m`; the 18 B-pairs inside it with zero joining
+points are exactly the 18 the 2026-09-16 handoff counted on his console that evening.
 
 **Why nothing caught it:** `turnFlyable` (static/js/turns.js) asks whether the *projected track clears
 keep-outs*, not whether the hull can *join* the shape — measured, it passed **120 of 120** cusped shapes.
@@ -146,6 +161,78 @@ join. Held by `tests/turn_geometry.js` 50-57 (nine mutations recorded, nothing s
 plan refuses the pattern until the operator moves the line ends, strikes a run or widens the spacing.
 That is the intended trade, and it is only safe because `035878f1` made a refused reversal visible
 instead of shipping it as a straight leg.
+
+### ⇒ THE JUNCTION CLASS (C + D + E), MEASURED 2026-09-19 — THEY ARE ALL FLYABLE
+
+The 11 were opened on the assumption that they were knots nobody had measured. They are not knots,
+and they are not unflyable. **Nothing was changed for them; what follows is the measurement.**
+
+**The hull tracks every one of them at the plan speed.** The recorded route was flown through the
+REAL simulator in-process (`SimVcu.tick` on a temp copy of the program, `zboat_1800hs`, calm —
+`ENV.field()` None, `CURRENTS.snapshot().ok` false), so the only question asked is whether the hull
+can hold the corner. Departure from the commanded polyline:
+
+| | @ low 1.5 kn | @ survey 3.0 kn (the plan) | @ high 6.0 kn |
+|---|---|---|---|
+| the 11 junctions | 0.18–0.56 m | **0.90–1.95 m** | 2.55–4.48 m |
+| the 8 A-joints (now refused) | 1.22–1.27 m | 2.69–2.77 m | 4.23–5.84 m |
+| max over all 414 vertices | **1.41 m** | **2.88 m** | **5.88 m** |
+
+29 403 m of route flown in 19 099 s against 19 052 s of pure transit — **+47 s over 414 corners, and
+the follower captures every leg.** The plan-wide maximum is `1.4 × minTurnRadiusM(planSpeed)`
+(measured ratios 1.37 / 1.40 / 1.42), i.e. the 2R overshoot — a number the planner already holds.
+
+**Checked against the recording, not only against itself.** She flew vertices 14 and 15 at speed key
+`low` (the console commanded it at 19:10:35, four seconds after the 103 s page stall ended). Recorded
+departure at v14 **0.32 m** against 0.19 m simulated; at v15 **1.58 m** against 1.27 m; every other
+flown vertex agrees within ~0.3 m. The calm model understates, as it must with a set running.
+
+**What the corner costs, against his own chart.** The keep-out model was rebuilt from
+`charts/enc/features_v5_-157.9177_21.2616_-157.8212_21.3515.json` at buffer 5 / min depth 3: **1044
+zones against the 1043 the page logged that session**, minimum waypoint clearance 5.03 m, and **265 of
+415 waypoints within 10 m of a keep-out** — the same 265 H3 reports, so it is his model.
+
+* commanded route: **0 waypoints inside the buffer** (H3 again).
+* flown at 1.5 kn: **0 of 413 vertices** take the hull inside the buffer.
+* flown at 3.0 kn: **12 of 413 — and all 12 are at over-90 joints, none anywhere else.**
+
+Those 12 are 4 in A (already refused), **7 in B** (the chip), and **exactly one of the 11** — v332,
+5.10 m of commanded clearance down to 3.93 m flown.
+
+**⚠ THE KNOT RULE CANNOT REACH THEM AT ANY WIRING, AND THAT IS THE ANSWER TO "SHOULD IT".**
+`junctionKnot` over all 38 fires at **15, 21, 59, 65, 286, 292, 372, 378 and nothing else** — the 8
+`turnJoinable` already refuses at generation. So wiring `pruneJunctionKnots` into the `legSafe`
+branch, the parallel-hop branch or `routePlan`'s approach seam would change **nothing** on this route.
+At v70, v138, v329/332, v342 and v406 it ALREADY RAN (they came out of `around`) and correctly
+declined: none exceeds 150° and the legs are 15–65 m, not under 12. Reaching the 11 needs about
+120° / 30 m, which flags 29 of the 38 — at which point it is not a knot detector, it is "every joint
+over 90°". **Do not widen the thresholds.**
+
+**WHAT IS ACTUALLY MISSING IS A CALL THE CONSOLE ALREADY OWNS.** `projectRoute`'s own header states
+this failure — *"a corner waypoint the hull cannot turn at … routeAround puts its corner waypoints ON
+the buffer edge, 7 m off a pier face, where a 10 m turn circle reaches 3 m INSIDE the structure"* —
+and `turnFlyable` asks it, at the vessel's real rate, for every GENERATED TURN. No junction ever gets
+that call, at plan time or at Upload. The measured harm is not a knot; it is an unasked projection.
+
+**⚠ AND THE COVERAGE STANDOFF (`ea5e361f`) DOES NOT COVER IT — BY THAT COMMIT'S OWN STATED SCOPE.**
+The measurements above were taken at `3b15a8d4`, before item 3 landed, so the question has to be asked
+again against the tip. Two things keep the answer the same. (1) `guardStandoffM(buf, 0)` =
+`max(buf, buf/2 + 0)` = **the buffer**: in calm water the clip is exactly where it was, so all 12
+breaches stand unchanged. The set that would buy enough room to swallow a 2.88 m corner on a 5 m
+buffer is **0.52 kn** (`2.5 + 20d >= 7.88`), and the census says the 13 sessions at or under 0.46 kn
+produced no escapes at all — so the low-set case is precisely the one the standoff does not help and
+precisely the one nothing else was watching. (2) Item 3's own note says it: *"It is the COVERAGE LINES
+only: turns and transits still answer to the plain buffer."* Every junction here is a line END joined
+by a transit or a turn — the water the clip deliberately did not move.
+
+**NO OVERLAP WITH `DEPARTURE_PARADIGM.md`, STRUCTURALLY.** R2 would latch no grant at Honolulu at all
+— the 19:04:48 launch point has `holdClearM` **48.30 m** against `need0` 6.00 m, so the console
+certifies that water for itself. And R6 caps the corridor at `snapCapM(5) = 150 m` while the nearest
+of the 11 (v14) is **518 m** along the route; the rest are 876 m, 1171 m, 1698 m, 3987 m and 21–28 km.
+**One thing goes back the other way:** R5's half-width is `max(loa 1.90, minTurnRadiusM("low") 1.03)
+= 1.90 m` for this hull, and the measured corner departure is 1.41 m at low but **2.88 m at survey**.
+R5's corridor holds only because R8 flies the departure at `low`. The two rules are load-bearing on
+each other and the document does not say so.
 
 ## THE RANKED CAUSES (from the reconstruction; measurements are the agents')
 
@@ -242,7 +329,14 @@ instead of shipping it as a straight leg.
 
 - Staggered reversals judged as hops (task chip, 2026-09-16): `bak1`-era lines 34->35, next entry 81.9 m
   behind the exit and 10 m across, gap beyond the 4.6-spacing gate, so no turn is tried and nothing is
-  flagged.
+  flagged. **It is also class B + C above, i.e. 26 of Honolulu's 38 bad joints and 7 of the 12 places
+  the hull leaves the certified water — the largest remaining share of both counts.**
+- THE CORNER PROJECTION IS NEVER ASKED AT PLAN TIME (opened 2026-09-19, the junction measurement
+  above). `turnFlyable` asks `projectRoute` for every generated turn; no junction gets that call, so
+  the flown corner is unchecked at the approach seam, at every hop, and at every reversal that did
+  not get a turn. Measured consequence at Honolulu: 12 of 413 vertices take the hull inside the
+  operator's 5 m buffer at the plan speed, 0 of 413 at `low`. Andy's call, 2026-09-19: **slow through
+  the breaching corner** rather than refuse it — the flyability is not in doubt, the speed is.
 - A folded detour (`nKnotFold`) still ships with its fold and a banner.
 - A punch is dropped on ANY water-level change (`TIDE_REBUILD_M` is 0.1 m for the model rebuild, but
   `patClip` goes on any delta).

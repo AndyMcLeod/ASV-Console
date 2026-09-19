@@ -181,12 +181,35 @@ DONE AND COMMITTED. ITEM 4 IS NEXT** — the LAUNCH GRANT for the berth cases; i
   recorded) and swung her COG ~205 deg, and an instantaneous COG mid-pirouette is what the guard's reach test
   projects on. **That is item 2's territory, not item 1's** - do not claim the turn fix closes the escapes.
 * **⚠ THE 38 OVER-90-DEGREE JOINTS AT HONOLULU WERE THREE DEFECTS, AND THIS FIXES 8 OF THE 38.** Every one
-  is now attributed: **8** inside the four inboard turns (fixed here); **19** at reversal pairs that shipped
-  with ZERO turn points - the straight-180 class outside the reversal gate, i.e. the open "staggered
-  reversals judged as hops" chip; **11** at approach / region-hop junctions (vertices 14, 32, 36, 42, 70,
-  301, 304, 329, 332, 365, 397), a class nobody has looked at - they are not reversals, so no turn is
-  generated for them at all, and `pruneJunctionKnots` reaches only the ones `routeAround` produced.
-  **Do not report this fix as closing the over-90 count.**
+  is attributed in `ESCAPE_FINDINGS.md`'s producer table: **8** inside the four mirrored INBOARD arcs (fixed
+  here); **19** at reversal pairs INSIDE the gate that shipped with ZERO turn points - the straight-180
+  class, i.e. the open "staggered reversals judged as hops" chip; **11** at junctions (7 failed-gate
+  reversals, 3 parallel hops, 1 approach seam). **Do not report this fix as closing the over-90 count.**
+* **⚠ THE ATTRIBUTION'S VERTEX LIST WAS WRONG IN SIX PLACES AND IS FIXED (2026-09-19).** The counts
+  8 / 19 / 11 were right and stand; the list published for the junction class was a clean six-for-six swap
+  (`32, 36, 42, 301, 365, 397` are the straight-180 class; `28, 29, 138, 174, 342, 406` are the junctions).
+  Re-derived from the plan's own structure - the log carries the committed plan (`/api/mission` rev 69) beside
+  the upload, all 398 plan waypoints match into the 415-point route, and each of the 74 lines is exactly two
+  ADJACENT waypoints - so every join is "n joining points" or "none", with nothing inferred.
+* **⇒ AND THE JUNCTION CLASS IS FLYABLE - THE KNOT RULE MUST NOT REACH IT.** Flown through the REAL
+  simulator in-process, calm, at the plan speed: the 11 depart the commanded polyline by **0.90-1.95 m**, the
+  whole 414-vertex route by at most **2.88 m**, and the follower captures every leg (+47 s over 29.4 km).
+  Checked against the recording (v14 flown 0.32 m against 0.19 simulated; v15 1.58 against 1.27). The
+  keep-out model was rebuilt and verified against two published H3 figures (1044 zones vs the logged 1043;
+  **265 of 415** waypoints within 10 m, exactly H3's 265). **12 of 413 vertices take the hull inside the 5 m
+  buffer at the plan speed and 0 of 413 do at `low`** - 4 of the 12 in the fixed class, 7 in the chip's, one
+  in the 11 - and `ea5e361f`'s standoff does NOT cover this: `guardStandoffM(buf, 0)` floors at the
+  buffer, so in calm water the clip is exactly where it was, and that commit's own scope note says
+  turns and transits still answer to the plain buffer. `junctionKnot` fires on the 8 already-refused joints and nothing else, so wiring
+  `pruneJunctionKnots` anywhere further would change NOTHING; reaching the 11 needs ~120 deg / 30 m, which
+  flags 29 of 38. **What is missing is a call the console already owns:** `turnFlyable` asks `projectRoute`
+  for every generated turn, no junction ever gets it, and `projectRoute`'s own header names this exact
+  failure. **ANDY'S CALL, 2026-09-19: slow through the breaching corner, do not refuse it.** NOT BUILT.
+* **⚠ NO OVERLAP WITH `DEPARTURE_PARADIGM.md`:** R2 latches no grant at Honolulu (launch `holdClearM`
+  48.30 m against `need0` 6.00), and R6 caps the corridor at `snapCapM(5) = 150 m` while the nearest of the 11
+  is 518 m along the route. One finding goes back the OTHER way: R5's half-width is 1.90 m for this hull and
+  the corner departure is 1.41 m at low but 2.88 m at survey - **R5 holds only because R8 flies the departure
+  at `low`**, and the document does not say the two are load-bearing on each other.
 * **⚠⚠ AND THE FIRST DRAFT OF THE NEW CHECKS HAD NO TEETH AT ALL.** `tests/turn_geometry.js`'s `check()` took a
   plain value, not a thunk - every other turn suite takes `() => ...` - so six new checks printed "ok" while
   evaluating nothing, and three mutations SURVIVED. Found only by running the mutations. The helper is
