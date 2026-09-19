@@ -67,6 +67,28 @@
 //   page: the guard is never called from the tick            -> 17
 //   page: the clearance row never reaches the Intent card    -> 18
 //
+// TEETH, 2026-09-19 - THE HELM RUNG'S DWELL AND ITS BANNER (Andy: *"no dwell... and a cause
+// the banner asserts that the code hasn't established"*). Five mutations landing here, run
+// against a sidecar page with every guard suite re-run; nothing survived:
+//   the dwell unwired from the action                       -> 15r, 15t
+//   helmSettled always true                                 -> 15r, 15t
+//   the dwell ACCUMULATES instead of restarting             -> 15t
+//   the dwell moved so it gags the ALARM as well            -> 15r
+//   the banner asserting a set again                        -> 16c
+//   firstOfEpisode reverted to `escalated`                  -> 15u
+//   firstOfEpisode always true (re-solve throttle gone)     -> 15v
+//   the first-action clause dropped (throttle only)         -> 15u
+// Five more are on guard.js's side of the same change and red in tests/in_extremis.js 5,
+// 5c, 6 and 6b.
+//
+// ⚠ AND THREE LATENT HARNESS BUGS CAME OUT OF WIRING THOSE. `guardEscapeAt` was never
+// reset between scenarios, so the SECOND scenario to reach the helm had its escape silently
+// throttled - invisible while every fixture escaped on its first frame, which is exactly why
+// it survived until a dwell made a second frame necessary. `runRoute` likewise persisted, so
+// a frame steaming directly AWAY from the wall was judged along a stale route and read
+// `hold`. And 16c's first draft matched the page's own COMMENT recording the old wording and
+// reported the defect as still present; it strips comments now.
+//
 // THE LAST ONE SURVIVED THE FIRST PASS and is why 18 exists: every check here passed with
 // the operator-facing half of the feature deleted. A guard acting on a quantity nobody can
 // see is most of the way back to the defect it was written for.
@@ -528,8 +550,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
   let guardEdgeAt = 0, edgeSpentM = 1e9, edgeCount = 0, guardOverride = null, guardHeld = null;
   let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false, slowLieu = null;
+  let helmHoldAt = 0;
   const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
   const SLOW_ANSWER_MS = +(H.match(/const SLOW_ANSWER_MS = (\d+)/) || [])[1];
+  // READ FROM THE PAGE, NOT RETYPED — a dwell this suite believes is 1.5 s while the page
+  // uses some other number is a suite testing a console that does not exist.
+  const HELM_DWELL_MS = +(H.match(/const HELM_DWELL_MS = (\d+)/) || [])[1];
   let planIntent = { why: [] }, sent = [], notes = [];
   const guardAssess = G4.assess, groundVel = G4.groundVel, restoreVel = G4.restoreVel;
   const edgeCapM = G4.edgeCapM, edgeText = G4.edgeText, GUARD_HORIZON_S = G4.HORIZON_S;
@@ -558,7 +584,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const supervising = () => true;
   // eslint-disable-next-line no-eval
   const NL2 = String.fromCharCode(10);
+  // ⚠ EVERY PAGE FUNCTION clearanceGuard CALLS HAS TO BE PULLED IN HERE, and a new one is
+  // easy to forget: `helmSettled` (the in-extremis dwell, 2026-09-19) crashed this whole
+  // suite with a bare ReferenceError until it was added, which the crash guard above reports
+  // as one failed check rather than as silence.
   const guard = eval("(function(){ " + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+                     + grab(H, "helmSettled") + NL2
                      + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
@@ -607,7 +638,11 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     return { sent: sent.slice(), level: clearance.level };
   };
   const tooClose = runAt(18, 6.0, 0);
-  const beingSet = runAt(30, 6.0, 2.0);
+  // ⚠ 18 m, NOT 30 (2026-09-19). At 30 m a 2 kn set is no longer in extremis: stopping
+  // postpones contact by 27 s, which is longer than a decision needs, so the ladder holds and
+  // escalates instead. The rung this check is about starts at 18 m on the same set - see
+  // tests/in_extremis.js 5 and 5b, which pin both sides of that boundary.
+  const beingSet = runAt(18, 6.0, 2.0);
   check("15i. ... and never when slowing would NOT answer it - then it still stops",
         tooClose.sent.includes("/api/cmd/hold") && !tooClose.sent.includes("/api/cmd/speed:low"),
         "pier 18 m off: at 1.5 kn the entry is still inside the hold time, so low is not an "
@@ -666,7 +701,16 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     return { sent: sent.slice(), notes: notes.slice(), level: clearance.level };
   };
   const fresh = () => { guardLevel = "clear"; clearance = { ...clearance, slowed: false };
-    slowLieu = null; clearHoldAt = 0; clearAlarmAt = 0; planIntent = { why: [] }; };
+    slowLieu = null; clearHoldAt = 0; clearAlarmAt = 0; planIntent = { why: [] };
+    // ⚠ THE HELM DWELL RESETS WITH EVERYTHING ELSE (2026-09-19). Left armed, one
+    // scenario's in-extremis frame would let the NEXT scenario's first frame steer the boat,
+    // and the check that noticed would be an unrelated one three fixtures later.
+    // ⚠ AND SO DOES guardEscapeAt, WHICH WAS ALREADY A LATENT BUG IN THIS HARNESS. It
+    // throttles the escape to one per GUARD_REASSESS_MS; carried between scenarios it
+    // silently suppressed the SECOND scenario's escape entirely. Invisible while every
+    // fixture escaped on its first frame, which is exactly how it survived until the dwell
+    // made a second frame necessary.
+    helmHoldAt = 0; guardEscapeAt = 0; };
   const held = (r) => r.sent.includes("/api/cmd/hold");
   try {
     // A. the speed command never lands: the vessel keeps reporting survey, and keeps making 6 kn
@@ -746,16 +790,110 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                       holding: false, drifting: false } };
       clearance = { m: n0, kind: "a dock / pier", slowed: false, prev: null, info: null };
       sent = []; notes = [];
+      // ⚠ TWO FRAMES, BECAUSE THE HELM RUNG NOW HAS A DWELL (2026-09-19). The first frame
+      // arms HELM_DWELL_MS and alarms; the escape - and so the BOXED IN banner this check
+      // reads - comes on a later frame. Driving one frame here tested a console that had just
+      // started paying attention, and got an empty banner list for its trouble.
+      guard();
+      clock += HELM_DWELL_MS + 250;
       guard();
       return { level: clearance.level, said: banners.filter((b) => /BOXED IN/.test(b)).join(" | ") };
     };
-    const off30 = boxedIn(30), in3 = boxedIn(3);
+    // 18 m rather than 30, for the same reason as 15j: at 30 m a 2 kn set is a hold now.
+    const off30 = boxedIn(18), in3 = boxedIn(3);
     check("15q. a refused escape says WHICH refusal: from inside the buffer, no way OUT - not 'every heading enters'",
           off30.level === "helm" && /every heading enters a keep-out within 45 s/.test(off30.said)
           && in3.level === "helm" && /no heading gets out of the 5 m buffer and stays out for 45 s/.test(in3.said)
           && !/every heading enters/.test(in3.said),
           "30 m off (" + off30.level + "): \"" + off30.said + "\"; 3 m off, inside (" + in3.level + "): \""
           + in3.said + "\"");
+
+    // 15r-15t. THE IN-EXTREMIS DWELL (2026-09-19). Andy: *"no dwell"*. Every gentler rung on
+    // this ladder is damped and the one that TAKES THE BOAT was not: it steered on the first
+    // frame it read. What follows pins the three properties that matter, and the third is the
+    // one a reader would not think to write.
+    const helmRun = (frames) => {          // frames = [ms offset from the first, ...]
+      fresh(); banners = []; sent = []; notes = [];
+      // ⚠ runRoute IS NOT RESET BY fresh(), and a stale one from an earlier scenario makes
+      // guardTrack hand `assess` a ROUTE projection instead of the straight one - which read
+      // `hold` on a frame steaming directly away from the wall. Cleared by name here rather
+      // than in fresh(), because other scenarios in this block rely on theirs persisting.
+      runRoute = null;
+      nogo = { ready: true, frame: ref, ko: wall(18), buffer: 5 };
+      asv = { lat: ref.lat, lon: ref.lon };
+      clearance = { m: 13, kind: "a dock / pier", slowed: false, prev: null, info: null };
+      const seen = [];
+      for (const f of frames) {
+        clock = T0 + 60000 + Math.abs(f);
+        // a NEGATIVE offset means "this frame reads clear" - the water goes good for a beat
+        S = { armed: true, estop: false, run: "running", behavior: "survey",
+              status: { cog_deg: f < 0 ? 180 : 0, sog_kn: 6.0, heading_deg: f < 0 ? 180 : 0,
+                        env_set_deg: f < 0 ? 180 : 0, env_set_kn: f < 0 ? 0 : 2.0,
+                        holding: false, drifting: false } };
+        guard();
+        seen.push(clearance.level);
+      }
+      return { sent: sent.slice(), seen, said: banners.join(" | ") };
+    };
+    // ⚠ WHAT IS OBSERVABLE HERE IS THE BANNER, NOT THE COMMAND. `escapeCourse` is stubbed
+    // to null for this whole block (it is what 15q is about), so no /api/cmd/escape can ever
+    // be sent in it. The BOXED IN banner is emitted ONLY from inside the gated branch, which
+    // makes it an exact witness for "the console got as far as taking the helm" - and using
+    // the command instead would have made 15s unfalsifiable rather than passing.
+    const one = helmRun([0]);
+    check("15r. ONE frame of in extremis alarms but does not steer — the dwell is on the ACTION",
+          one.seen[0] === "helm" && /HELM/.test(one.said) && !/BOXED IN/.test(one.said),
+          "level " + one.seen[0] + "; the frame alarm fired ("
+          + (/HELM/.test(one.said) ? "yes" : "NO") + ") and the helm branch did not ("
+          + (/BOXED IN/.test(one.said) ? "IT DID" : "correct")
+          + "). The operator is told on the frame the console knew; the helm waits a beat");
+    const two = helmRun([0, HELM_DWELL_MS + 250]);
+    check("15s. ... and a SECOND frame that still reads it does take the helm",
+          /BOXED IN/.test(two.said),
+          "after " + (HELM_DWELL_MS + 250) + " ms of continuous in extremis the helm branch "
+          + (/BOXED IN/.test(two.said) ? "ran" : "DID NOT RUN"));
+    // ⚠ 15t IS THE ONE WITH TEETH. The dwell must RESTART when the water reads good, not
+    // merely accumulate: a clock that only counted up would let two in-extremis frames half a
+    // minute apart, with clear water between them, steer the boat on the second.
+    const broken = helmRun([0, -(HELM_DWELL_MS - 200), HELM_DWELL_MS + 250]);
+    check("15t. ... but a frame that reads CLEAR in between restarts it, it does not accumulate",
+          !/BOXED IN/.test(broken.said) && broken.seen[1] !== "helm",
+          "in extremis, one clear frame (" + broken.seen[1] + "), then in extremis again "
+          + (HELM_DWELL_MS + 250) + " ms from the FIRST: the helm branch "
+          + (/BOXED IN/.test(broken.said) ? "RAN ANYWAY" : "did not run")
+          + " — the clock restarted at the third frame");
+    // 15u. ⚠ THE ESCAPE IS NOT THROTTLED OUT OF A *NEW* EPISODE. `escalated` used to be the
+    // "first action" test, and the dwell moved the action off the escalating frame - so by the
+    // time the dwell is satisfied, guardLevel already reads helm and `escalated` is false. On
+    // its own that leaves the 6 s re-solve throttle deciding, which is wrong straight after a
+    // previous escape: the boat would sit in extremis, alarm up, commanding nothing, for the
+    // remainder of GUARD_REASSESS_MS. Driven here as two episodes 3 s apart - well inside the
+    // 6 s throttle - with clear water between them.
+    const twoEpisodes = helmRun([0, HELM_DWELL_MS + 250,          // episode 1: takes the helm
+                                 -(HELM_DWELL_MS + 900),          // clear for a frame
+                                 HELM_DWELL_MS + 1400, HELM_DWELL_MS + 2950]);
+    check("15u. ... and a NEW episode inside the re-solve window is not throttled out of its escape",
+          (twoEpisodes.said.match(/BOXED IN/g) || []).length >= 2,
+          "two in-extremis episodes 3 s apart with clear water between: the helm branch ran "
+          + (twoEpisodes.said.match(/BOXED IN/g) || []).length + " time(s). Judged on `escalated` "
+          + "alone the second would have been suppressed by GUARD_REASSESS_MS");
+    // 15v. ... AND THE OTHER EDGE: within ONE episode the escape is re-solved at most every
+    // GUARD_REASSESS_MS. Without this, "first of episode" could simply be made always-true
+    // and the console would re-command the escape on every telemetry frame - which is the
+    // command-spam the governor's send-on-change rule exists to prevent, at the one rung that
+    // can least afford it. MEASURED: that mutation SURVIVED until this check existed.
+    const oneEpisode = helmRun([0, HELM_DWELL_MS + 250,          // takes the helm
+                                HELM_DWELL_MS + 1250,            // 1 s later - must NOT re-solve
+                                HELM_DWELL_MS + 2250,            // 2 s later - still not
+                                HELM_DWELL_MS + 250 + 6500]);    // past GUARD_REASSESS_MS - does
+    check("15v. ... but WITHIN one episode it re-solves on the throttle, not on every frame",
+          (oneEpisode.said.match(/BOXED IN/g) || []).length === 2
+          && oneEpisode.seen.slice(1).every((l) => l === "helm"),
+          "five continuous in-extremis frames spanning "
+          + (HELM_DWELL_MS + 250 + 6500) + " ms: the helm branch ran "
+          + (oneEpisode.said.match(/BOXED IN/g) || []).length
+          + " time(s) - once on the dwell and once past the " + GUARD_REASSESS_MS
+          + " ms re-solve, not on all five");
   } finally { Date.now = realNow; roleKey = "survey"; }
 }
 
@@ -776,7 +914,11 @@ check("16b. ... and the helm rung is unreachable unless STOPPING would not answe
         const wall = (n0) => { const r = [{e:-400,n:n0},{e:400,n:n0},{e:400,n:n0+300},{e:-400,n:n0+300}];
           return {polys:[{ring:r, bb:bbOf(r), kind:"a dock / pier"}], lines:[], points:[],
                   marks:[], sys:[], chans:[]}; };
-        const W = wall(30), P = {e:0,n:0};
+        // 18 m, not 30: at 30 m a 2 kn set is a HOLD since 2026-09-19 (the rung asks
+        // whether stopping buys a decision's worth of time, not whether the drift reaches at
+        // all). The discrimination this check exists for - set off vs set on vs stopped - is
+        // unchanged, and is now made where the rung actually lives.
+        const W = wall(18), P = {e:0,n:0};
         const inShore = A.groundVel(0, 6);
         const setOff  = {e:0, n:-1.03};        // the stream carries us AWAY
         const setOn   = {e:0, n:+1.03};        // the stream carries us ON
@@ -788,6 +930,29 @@ check("16b. ... and the helm rung is unreachable unless STOPPING would not answe
       "STOPPED boat being set on is the case that proves it");
 // 17. And it is actually WIRED - a guard nothing calls is worse than none, because the
 // card would still show a clearance while nothing acted on it.
+// 16c. AND THE BANNER SAYS WHAT WAS MEASURED (2026-09-19). Andy: *"a cause the banner
+// asserts that the code hasn't established."* Both the operator banner and the Intent card
+// read "IN EXTREMIS — being set onto <kind>", and the console had established no such
+// thing: the rung measures that the DRIFT-ONLY projection reaches within half the buffer
+// inside HELM_S, and never how much of the set closes the feature. MEASURED on the old rung
+// with a synthetic wall: a set 98.9% PARALLEL to a pier, closing it at 0.02 kn, produced
+// "being set onto a dock / pier". A SOURCE check because escapeCourse is stubbed to null in
+// the driven block above, so the escape banner cannot be produced there - the behavioural
+// half of this property is tests/in_extremis.js 6b, on assess's own reason string.
+// ⚠ COMMENTS STRIPPED FIRST, and the check caught itself needing that: the note in the
+// page that RECORDS the old wording contains the very phrase being forbidden, so a raw
+// source match reported the defect as still present when only its obituary was.
+const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+const Gc = codeOnly(G);
+check("16c. the escape banner and the Intent card quote the drift, not an asserted set",
+      () => !/being set onto/.test(Gc)
+            && /const driftSay =/.test(Gc)
+            && /the drift alone reaches within/.test(Gc)
+            && (Gc.match(/driftSay/g) || []).length >= 3,   // declared + banner + intent card
+      "\"being set onto\" in the guard's CODE: " + (/being set onto/.test(Gc) ? "STILL THERE" : "gone")
+      + "; driftSay used " + ((Gc.match(/driftSay/g) || []).length - 1) + " place(s) after its "
+      + "declaration (the banner and the Intent card must both read it, or one of them goes "
+      + "on asserting a cause while the other reports one)");
 check("17. the guard runs on every telemetry frame, before the readouts are drawn",
       // \r? because this file is CRLF: a literal \n here can never follow the \r that
       // actually sits between the two statements on disk.

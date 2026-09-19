@@ -90,6 +90,55 @@ import { blocked, clearanceM } from "./keepouts.js";
 
 /** How far ahead to look, in seconds of ground track. */
 export const HORIZON_S = 45;
+/**
+ * WHAT MAKES THE TOP RUNG IN EXTREMIS RATHER THAN MERELY WITHIN REACH.
+ *
+ * Andy, 2026-09-19, on the rung that takes the helm: *"reach versus danger, no dwell, no
+ * margin, and a cause the banner asserts that the code hasn't established. Firing on a
+ * 1 cm clip is not danger."* All four were MEASURED on this function before these two
+ * constants existed, with a synthetic wall and the real `assess`:
+ *
+ *   REACH   the trigger distance was EXACTLY `buf + HORIZON_S * |set|` - 15.7 m at a
+ *           0.46 kn set and 45.5 m at 1.75 kn, on a 5 m buffer. Those are the sets in his
+ *           own record. The planner meanwhile clips plans to the buffer to within
+ *           centimetres, so the two disagreed by 3-9x (ESCAPE_FINDINGS.md H3).
+ *   MARGIN  a drift track passing 5.001 m off read CLEAR; one passing 4.999 m off read IN
+ *           EXTREMIS. A 2 mm difference, skipping every rung in between, because
+ *           `timeToEntry` returns on `blocked()` - a boolean at exactly `buf`.
+ *   CAUSE   a set 98.9% PARALLEL to a pier, closing it at 0.02 kn, produced "being set
+ *           onto a dock / pier".
+ *
+ * So the rung asks two more questions, each anchored to something already established
+ * rather than to a new tunable:
+ *
+ * ⇒ HELM_S IS HOLD_S, AND THAT IS THE ARGUMENT RATHER THAN A COINCIDENCE. HOLD_S is
+ *   already this console's statement of how much time a decision needs. If taking the way
+ *   off leaves MORE than that before the drift alone reaches the feature, stopping HAS
+ *   answered it: there is a hold's worth of time to decide in, which is what the hold rung
+ *   is for. In extremis is the case where stopping does not buy even that. MEASURED on the
+ *   old rung: at 18 m off a wall with a 0.58 kn set, stopping turned an 8 s problem into a
+ *   44 s one - 5.9x - and the rung still said "stopping does not answer it".
+ *
+ * ⇒ HELM_ENTRY_FRAC IS A FRACTION OF THE OPERATOR'S OWN BUFFER, for the same reason
+ *   `edgeCapM` is anchored there: the buffer IS their stated standoff, so half of it means
+ *   the same thing to someone working to 3 m and someone working to 20. A drift track that
+ *   grazes the OUTSIDE of the buffer still clears the FEATURE by nearly the whole buffer.
+ *
+ * ⚠ THE DWELL IS NOT HERE, AND THAT IS DELIBERATE. `assess` is a pure function of one
+ * frame and stays one; a dwell needs history, and history belongs where the console ACTS,
+ * beside `releaseSettled`. See HELM_DWELL_MS in static/asv.html: the bar alarms on the
+ * frame it reads and the helm is taken a beat later.
+ */
+export const HELM_S = 20;                 // = HOLD_S; separate so the reason stays visible
+export const HELM_ENTRY_FRAC = 0.5;
+/**
+ * Through-water speed below which "take the way off" is not a different state.
+ *
+ * The same 0.05 m/s `guardTrack` uses to decide a boat is not being steered along anything.
+ * Shared here so the two judgements cannot drift apart: both are asking whether there is any
+ * way ON to take OFF.
+ */
+export const STOPPABLE_MS = 0.05;
 /** Sampling step along the projection. Fine enough not to step over a pile. */
 export const STEP_S = 0.5;
 /**
@@ -487,7 +536,31 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
   // THE SECOND PROJECTION IS THE WHOLE DESIGN. Would taking the way off actually help, or
   // is it the water carrying us in? `drift` is what remains when the engines stop.
   const tDrift = timeToEntry(p, drift, ko, buf, horizon, opts.stepS);
-  if (tDrift == null) {
+  // ⚠ AND THE SECOND PROJECTION IS NOT ENOUGH ON ITS OWN - see HELM_S / HELM_ENTRY_FRAC.
+  // `tDrift` answers "does the drift reach the buffer at all inside the look-ahead", which
+  // is a question about REACH. In extremis is a question about DANGER, and it needs two
+  // more: does it reach SOON (sooner than a hold's worth of decision time), and does it
+  // reach the feature PROPERLY rather than shaving the outside of the operator's standoff.
+  const helmS = opts.helmS ?? HELM_S;
+  const helmBuf = buf * (opts.helmEntryFrac ?? HELM_ENTRY_FRAC);
+  // Re-walked at the tighter standoff and the shorter horizon. Cheap: the walk stops at the
+  // first blocked step, and this horizon is under half the other one.
+  const tDriftNear = timeToEntry(p, drift, ko, helmBuf, helmS, opts.stepS);
+  // ⚠⚠ AND THE RELAXATION ONLY APPLIES WHERE STOPPING IS A DIFFERENT STATE FROM THIS ONE.
+  // The whole argument above is "taking the way off buys a decision's worth of time" - and
+  // that argument is VOID for a boat which has no way on. Its ground track IS its drift
+  // track: `hold` is not merely insufficient, it is what the boat is already doing, and
+  // softening the rung would leave the console commanding a stop to a vessel that is
+  // stopped while the water carries it in. That is the Eastport loop
+  // (tests/in_extremis.js 6), and it is the reason this line exists rather than a tidier
+  // version of the two tests above.
+  //
+  // The predicate is the one `guardTrack` already uses for the same judgement - is there
+  // any through-water speed at all - so the two cannot drift apart in meaning.
+  const twMs = Math.hypot(vel.e - drift.e, vel.n - drift.n);
+  const canStop = twMs > STOPPABLE_MS;
+  const inExtremis = tDrift != null && (canStop ? tDriftNear != null : true);
+  if (!inExtremis) {
     // ⚠ THE DEVIATION IS TRIED ONLY HERE, AND THE PLACEMENT IS THE SAFETY ARGUMENT. This
     // branch is the one where stopping would work - so anything gentler than stopping is a
     // strict improvement, and nothing about the in-extremis rung below is touched. Where
@@ -496,19 +569,51 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
     const edge = (onPlan && opts.edge !== false)
       ? edgeAround(p, opts.hdgDeg, opts.twMs, drift, route, ko, buf, opts) : null;
     if (edge) {
-      return { level: "edge", tEntry, tEntryDrift: null, onPlan, edge,
+      return { level: "edge", tEntry, tEntryDrift: tDrift, onPlan, edge,
                why: "entry in " + tEntry.toFixed(0) + " s " + track + ", but "
                     + edgeText(edge) + " clears it with " + edge.water.toFixed(1)
                     + " m of water — deviating, not stopping" };
     }
-    return { level: tEntry <= holdS ? "hold" : "slow", tEntry, tEntryDrift: null,
+    // ⚠ TWO DIFFERENT REASONS REACH THIS RETURN, AND SAYING THE WRONG ONE IS THE DEFECT
+    // ANDY NAMED ONE RUNG UP. It used to read "the drift-only track is clear" whatever
+    // brought it here, and that is now false for the commoner of the two cases: the drift
+    // DOES reach the buffer, just not soon enough or deep enough to be in extremis. A
+    // console that reports a cause it has not established is the thing being fixed, so the
+    // sentence has to distinguish them.
+    const stops = tDrift == null
+      ? "the drift-only track is clear — taking the way off answers it"
+      : "on drift alone it is " + tDrift.toFixed(0) + " s away"
+        + (tDriftNear == null ? " and stays outside half the buffer" : "")
+        + " — taking the way off buys more than the " + helmS + " s a decision needs";
+    return { level: tEntry <= holdS ? "hold" : "slow", tEntry, tEntryDrift: tDrift,
              onPlan, edge: null,
-             why: "entry in " + tEntry.toFixed(0) + " s under way, but the drift-only track "
-                  + "is clear — taking the way off answers it" };
+             why: "entry in " + tEntry.toFixed(0) + " s under way, but " + stops };
   }
-  return { level: "helm", tEntry, tEntryDrift: tDrift, onPlan, edge: null,
-           why: "entry in " + tEntry.toFixed(0) + " s under way AND " + tDrift.toFixed(0)
-                + " s on drift alone — stopping does not answer it" };
+  // ⚠ THE `why` IS WHAT WAS ESTABLISHED, AND NOTHING MORE. It used to say the drift entered
+  // inside the 45 s look-ahead, which was true and was not the point; the banner above it
+  // then asserted "being set onto <kind>", which the code had never measured at all. What is
+  // actually established by the three tests is quoted here in their own terms, so a reader
+  // can check the claim against the numbers instead of taking it.
+  // ⚠ AND THE TWO WAYS IN GET TWO DIFFERENT SENTENCES, because they are two different
+  // arguments. One is "stopping buys too little time"; the other is "there is nothing to
+  // stop". Collapsing them would put the console back to asserting a cause it had not
+  // established, one rung down from where it was doing it before.
+  return { level: "helm", tEntry, tEntryDrift: tDrift, tEntryDriftNear: tDriftNear,
+           helmBufM: canStop ? helmBuf : buf, canStop, onPlan, edge: null,
+           // ⚠ `tDriftNear` IS FORMATTED THROUGH A NULL GUARD, and that is not defensive
+           // clutter: when the stricter test was removed as a MUTATION this line threw, and
+           // a suite that dies before printing a FAIL scores that mutation as SURVIVED in
+           // any runner reading stdout. The same rule the detail strings in
+           // tests/in_extremis.js already live by.
+           why: canStop
+             ? "entry in " + tEntry.toFixed(0) + " s under way, and on drift ALONE it is "
+               + (tDriftNear == null ? "—" : tDriftNear.toFixed(0)) + " s from within "
+               + helmBuf.toFixed(1)
+               + " m of it — under the " + helmS + " s a decision needs, so stopping does "
+               + "not answer it"
+             : "entry in " + tEntry.toFixed(0) + " s with no way on to take off — the drift "
+               + "alone reaches it in " + tDrift.toFixed(0) + " s, and stopping is already "
+               + "what she is doing" };
 }
 
 /**

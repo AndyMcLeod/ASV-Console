@@ -1052,7 +1052,7 @@ diagnosable (`tests/frame_health.js`).
    - **clear** — nothing within the look-ahead. Show the number, command nothing.
    - **slow** — entry predicted, and taking the way off would avoid it. Buy time.
    - **hold** — the same, but close enough that slowing alone is no longer enough.
-   - **helm** — entry predicted **and** the drift-only track enters too. The console steers.
+   - **helm** — entry predicted, **and** stopping would not answer it. The console steers.
 
    The rung that matters is the last two, and what separates them is a **second projection
    made with the engines notionally stopped**. If the boat would drift clear, stopping
@@ -1064,6 +1064,35 @@ diagnosable (`tests/frame_health.js`).
    purpose only ever commands a **speed**, is permitted the helm at this one rung — and why
    it is not permitted it anywhere else.
 
+   **⚠ "Would not answer it" is a test about danger, and until 2026-09-19 it was a test
+   about reach.** The top rung fired on the mere *existence* of a drift-only entry anywhere
+   inside the 45 s look-ahead, with no margin and no dwell — so its trigger distance was
+   exactly `buffer + 45 s × set`: **15.7 m at a 0.46 kn set and 45.5 m at 1.75 kn** on a 5 m
+   buffer, which are the sets in the recorded sessions, against a planner that clips plans to
+   the buffer to within centimetres. Measured on the old rung, a drift track passing
+   **5.001 m** off read *clear* and one passing **4.999 m** off read *in extremis* — 2 mm,
+   skipping every rung in between. It now asks two more questions, each anchored to something
+   already established rather than to a new dial:
+
+   - **soon enough** — the drift must reach it inside the same decision margin the hold rung
+     has always used (20 s). If stopping buys more than that there is a hold's worth of time
+     to decide in, and the hold rung is the right answer.
+   - **deep enough** — the drift must reach within **half the operator's own buffer** of the
+     feature, not merely graze the outside of their standoff.
+
+   **Except where stopping is not a different state.** A boat with no way on — station-keeping
+   at the end of a run, engines stopped, being set down onto a pier — has a drift track that
+   *is* its ground track, so "take the way off" is not insufficient, it is what she is already
+   doing. That case skips both questions and goes to the helm exactly as it always did.
+
+   **And the banner says what was measured.** It used to read *"IN EXTREMIS — being set onto
+   a dock / pier"*, which the console had never established: it measures that the drift-only
+   projection reaches the feature, never how much of the set is closing it. A set 98.9%
+   *parallel* to a pier, closing it at 0.02 kn, produced exactly that sentence. It now quotes
+   the projection — and calls it the drift rather than a current, because `current.ok` was
+   false at every port in the record and what moves the boat there is the wind and wave
+   forcing.
+
    **The ladder is asymmetric: fast to protect, slow to release.** It slows on the frame it
    sees the trouble; it hands the throttle back only once the water has read clear for four
    seconds. One frame's opinion used to be enough, and on 2026-09-10 that put **36 speed
@@ -1072,6 +1101,13 @@ diagnosable (`tests/frame_health.js`).
    I am about to restore trigger it again?"); the dwell is the *settling* test, and they
    answer different questions. The dwell restarts every time the water goes bad, so an
    alternating reading never releases at all.
+
+   **And since 2026-09-19 the top rung is damped too — the only one that never was.** It
+   alarms on the frame it reads and takes the helm a beat later (1.5 s, about two telemetry
+   frames), so one frame's opinion cannot steer the boat. The dwell is on the *action*, never
+   on the alarm: the operator is told the moment the console knows, because they may be able
+   to answer it themselves. It restarts whenever a frame reads anything else, so two bad
+   frames either side of good water do not add up to an escape.
 
    **And before it stops the boat it asks whether going slower would do.** A deviation cannot
    answer a turn — the console may move a corner, and a reversal is a run of vertices a metre

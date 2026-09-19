@@ -55,18 +55,49 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 EVENING — THE TURNS ARE FIXED, items 2-5 of the order of work are NOT: read this block, then `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`)
+## ⇒ START HERE (handoff refreshed 2026-09-19 LATE — ITEMS 1 AND 2 ARE FIXED; item 3 (the planner/guard seam) IS NEXT: read this block, then `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`)
 
 ### ➤ PICK UP HERE
 
-**HANDOFF, 2026-09-19 (EVENING), IN THE WINDOW ANDY NAMED "ASV Console Refinement".**
+**HANDOFF, 2026-09-19 (LATE), IN THE WINDOW ANDY NAMED "ASV Console Refinement".**
 
 **ANDY'S ORDER OF WORK, GIVEN ON THE DAY:** *"1. The turn geometry... 2. The helm rung's selection test...
-3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."* **ITEM 1 IS DONE AND
-COMMITTED. ITEM 2 IS NEXT** — the helm rung: reach versus danger, no dwell, no margin, and a cause the banner
-asserts that the code has not established.
+3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."* **ITEMS 1 AND 2 ARE DONE
+AND COMMITTED. ITEM 3 IS NEXT** — the planner/guard seam: the planner clips plans to the buffer within
+centimetres while the guard alarms in a band around it, so one of the two numbers has to move and the guard's
+is the arbitrary one. ⚠ **Item 2 narrowed that band a lot** (the helm rung's reach went from
+`buf + 45 s x set` to `buf/2 + 20 s x set`), so RE-MEASURE H3's "3-12x further out" before designing to it.
 
-* **NEWEST, 2026-09-19 (LATE): THE FLYABILITY FIXTURE ITEM 1 LEFT OWING IS BUILT — `direct_turn.js` 10d/10e.**
+* **⇒ ITEM 2, THE HELM RUNG: ALL FOUR OF ANDY'S COMPLAINTS, ON SYNTHETIC EVIDENCE BY HIS DECISION.** Measured
+  on the real `assess` with a synthetic wall before anything was changed: the trigger distance was EXACTLY
+  `buf + HORIZON_S x |set|` (15.7 m at 0.46 kn, 45.5 m at 1.75 kn, on a 5 m buffer); a drift track passing
+  5.001 m off read CLEAR and one passing 4.999 m off read IN EXTREMIS; the rung held no history at all while
+  every gentler one is damped; and a set 98.9% PARALLEL to a pier, closing it at 0.02 kn, produced "being set
+  onto a dock / pier". Now: `HELM_S` (= `HOLD_S` = 20 s) and `HELM_ENTRY_FRAC` (half the operator's buffer) in
+  guard.js, `HELM_DWELL_MS` (1.5 s, on the ACTION only - the alarm still fires on the frame) in the page, and
+  both the banner and the Intent card quote the projection instead of asserting a set.
+* **⚠ THE ONE EXEMPTION, AND DO NOT TIDY IT AWAY:** a boat with NO WAY ON skips both new tests. Its drift
+  track IS its ground track, so "take the way off" is not insufficient - it is what she is already doing. That
+  is the Eastport loop (`tests/in_extremis.js` 6), and `canStop` in `assess` is the line that protects it.
+* **⚠ WHAT IT COSTS, SAID PLAINLY:** the rung now fires LATER. On the in_extremis fixture, 30 m off a pier
+  with 2 kn setting on is a HOLD where it used to be an escape; the escape comes at ~18 m. That is the trade
+  Andy asked for, and it is only defensible because the hold alarms and the ladder escalates.
+* **⚠⚠ AND IT IS UNVERIFIED AGAINST HIS RECORDINGS - HIS CALL, ASKED AND ANSWERED.** See the next bullet:
+  the escapes do not reproduce. Every number above is from synthetic fixtures on the real `assess`.
+* **⚠⚠ THE ESCAPES DO NOT REPRODUCE, AND HONOLULU IS NOW IN THAT CLASS TOO (not just New Castle).** At the
+  frame the Honolulu escape fired on, a keep-out model rebuilt from the cached ENC gives the boat **12.0 m and
+  `clear`**. The model is not wrong: it reproduces the console's own logged `hold_clear_m` at the escape target
+  to **4 mm**. The only input that differs is `chartInk`, and **nothing records it in any session log, ever**.
+  So item 5 (rebuild the chart ink) is a PREREQUISITE for verifying any guard change against the record, not a
+  tidy-up. Recording `chartInk` would at least make FUTURE escapes reproducible.
+* **⚠ THREE LATENT HARNESS BUGS came out of wiring the dwell, all in `tests/clearance_guard.js`:
+  `guardEscapeAt` and `runRoute` were never reset between scenarios** (the first silently throttled the second
+  scenario's escape; the second judged a frame steaming AWAY from the wall along a stale route), and 16c's
+  first draft matched the page's own comment recording the old wording. All three were invisible while every
+  fixture acted on its first frame.
+
+* **2026-09-19 (LATE), FROM THE TASK ITEM 1 SPAWNED - NOT the newest block, item 2 above it is:
+  THE FLYABILITY FIXTURE ITEM 1 LEFT OWING IS BUILT — `direct_turn.js` 10d/10e.**
   TESTS AND DOCS ONLY; **no behavior changed, nothing on his machine moves, no reload needed.** When `turnJoinable`
   landed it took 10b's verdict off `turnFlyable`, so the flyability test could be deleted outright and every
   ladder-level check stayed green. 10d is the fixture that isolates it: a semicircle TANGENT TO BOTH LINES
@@ -102,7 +133,8 @@ asserts that the code has not established.
    and the operational consequence), then `DEPARTURE_PARADIGM.md`. Do not re-derive any of it - it cost two
    workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
 2. `git log --oneline -3` and `git status`, and check nothing is listening on 8788-8799 before any live work.
-3. Item 2 is the helm rung. The evidence is H1/H5 in `ESCAPE_FINDINGS.md`; the numbers there are measured.
+3. Item 3 is the planner/guard seam. The evidence is H3 in `ESCAPE_FINDINGS.md` - but re-measure it: item
+   2 moved the guard's band, so H3's "3-12x further out" is stale.
 
 * **⇒ ITEM 1, THE TURN GEOMETRY: IT WAS THE INBOARD RUNG, AND THE HANDOFF'S OWN GUESS WAS WRONG.** The previous
   block said to establish whether the mirrored arc came from headings taken off the lines' stored `a->b`

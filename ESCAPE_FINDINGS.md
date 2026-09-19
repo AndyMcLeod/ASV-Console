@@ -1,8 +1,10 @@
 # WHY THE IN-EXTREMIS ESCAPE KEEPS FIRING — the evidence, 2026-09-19
 
 Andy, 2026-09-19: *"start with the escapes."* His console had been taking the helm on his own runs. This
-file is the evidence and what it indicts. **Nothing here is fixed yet.** `DEPARTURE_PARADIGM.md` is the
-design for one class of it, and this file's ORDER OF WORK outranks that file's staging.
+file is the evidence and what it indicts. **⚠ ITEMS 1 AND 2 OF THE ORDER OF WORK ARE NOW FIXED**
+(the turn geometry, `d7d3f905`; the helm rung's selection test, this commit) — each marked where it
+sits below, with what it does and does not close. `DEPARTURE_PARADIGM.md` is the design for one more
+class of it, and this file's ORDER OF WORK outranks that file's staging.
 
 Method: seven agents reconstructed every recorded escape from the session logs and read the guard path;
 one synthesized. Their measurements come from **rebuilding Andy's own keep-out model** in node from the
@@ -147,7 +149,8 @@ instead of shipping it as a straight leg.
 
 ## THE RANKED CAUSES (from the reconstruction; measurements are the agents')
 
-1. **H1 — the helm rung is a REACH test, not a danger test.** `assess` (guard.js:489, :509) returns
+1. **H1 — the helm rung is a REACH test, not a danger test. ⚠ FIXED 2026-09-19 — see item 2 of the
+   ORDER OF WORK; everything below describes the rung AS IT WAS.** `assess` (guard.js:489, :509) returns
    `helm` on the mere existence of a drift-only entry inside the 45 s horizon, with no margin, no
    depth-of-entry, and no comparison with `tEntry`. Its reach is `buffer + 45 s x |set|`.
    **Census:** every escaping session had max `status.env_set_kn` >= 0.58 kn (1.75, 0.58, 1.00, 1.75);
@@ -172,7 +175,17 @@ instead of shipping it as a straight leg.
    boat that arrives and station-keeps loses its route model (`guardTrack` null), so it is re-judged on
    the straight projection of its own wander plus the drift. Pago Pago 14:04:18 fired 3.5 s after
    arriving at the previous escape's hold point.
-6. **H4 — New Castle is UNEXPLAINED.** Both escapes fail to reproduce: the ENC-only rebuild gives the
+6. **H4 — New Castle is UNEXPLAINED. ⚠ AND SO IS HONOLULU (established 2026-09-19).**
+   The turn work re-derived the Honolulu escape from the record and could not reproduce its trigger
+   either: at the frame the escape fired on, a keep-out model rebuilt from the cached ENC gives the
+   boat **12.0 m of clearance and `clear`**. That model is not wrong - it reproduces the console's own
+   logged `hold_clear_m` at the escape target to **4 mm** (48.961 m raw against a logged 43.965 m,
+   which is the same number less the 5 m buffer). The only model input that differs is `chartInk`,
+   the raster-read structures `foldChartInk` pushes into `nogo.ko` - and **nothing records it, in any
+   session log, ever** (checked across all of `logs/`). So the class is wider than this entry said:
+   an escape that fired against chart ink cannot be reconstructed at all, which is why item 5 below
+   is now a prerequisite for VERIFYING any guard change against the recordings rather than a tidy-up.
+   The original New Castle wording follows. Both escapes fail to reproduce: the ENC-only rebuild gives the
    boat 10.87 m and 13.09 m of clearance, not blocked, drift-only track clear — `assess` would return
    `clear`. Yet the same model reproduces both escape targets' `hold_clear_m` exactly. The suspect is
    `foldChartInk` (asv.html:6612-6624) pushing raster-read structures into the same model, which
@@ -203,8 +216,16 @@ instead of shipping it as a straight leg.
    rung, not a heading-derivation bug; `turnJoinable` now refuses any shape that does not join both
    lines. ⚠ The other half of the over-90-degree joints is the zero-turn straight-180 class and is
    untouched (see STILL OPEN).
-2. **The helm rung's selection test** — reach versus danger, plus a dwell and a margin. Firing on a 1 cm
-   clip is not danger, and the banner asserts a cause the code has not established.
+2. ~~**The helm rung's selection test**~~ **DONE 2026-09-19.** All four: the reach test is now a danger
+   test (`HELM_S` = `HOLD_S` = 20 s, not the 45 s look-ahead), it needs a real depth of entry
+   (`HELM_ENTRY_FRAC` = half the operator's buffer, not a 2 mm graze), it is damped like every other
+   rung (`HELM_DWELL_MS` 1.5 s, on the ACTION - the alarm still fires on the frame), and the banner
+   quotes the projection instead of asserting a set it never measured.
+   ⚠ **Trigger distance drops from `buf + 45 s x set` to `buf/2 + 20 s x set`** - 18.4 m to 8.5 m at
+   his 0.58 kn set, 45.5 m to 20.5 m at 1.75 kn. A boat with NO WAY ON is exempt from both new tests
+   (its drift track IS its ground track, so a hold is what she is already doing - the Eastport case).
+   ⚠ **AND IT IS UNVERIFIED AGAINST THE RECORD**, by Andy's decision: see H4 below - the escapes do
+   not reproduce, so this is measured on synthetic fixtures only.
 3. **The planner/guard seam (H3)** — reconcile the buffer the planner guarantees with the band the guard
    alarms in.
 4. **The launch grant** (`DEPARTURE_PARADIGM.md`) for the berth/containment class.

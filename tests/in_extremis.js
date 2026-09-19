@@ -31,6 +31,30 @@
 //   the old run/holding gate comes back (clearance_guard)        -> 14
 //   restoreVel stops rescaling (the counterfactual release)      -> 11b, 11c
 //
+// TEETH, 2026-09-19 - THE RUNG'S SELECTION TEST (Andy: *"reach versus danger, no dwell, no
+// margin, and a cause the banner asserts that the code hasn't established"*). Ten more
+// mutations, run against sidecar copies of guard.js and the page with all the guard suites
+// re-run each time. NOTHING SURVIVED and nothing crashed. The five that land here:
+//   HELM_S back to the full 45 s look-ahead (the old REACH)      -> 5
+//   HELM_ENTRY_FRAC back to the whole buffer (the old MARGIN)    -> 5c
+//   the stricter drift test dropped entirely (the old rung)      -> 5, 5c
+//   the canStop exemption dropped (a stopped boat judged alike)  -> 6, 6b
+//   the helm `why` reverted to asserting a set                   -> 6b
+// The other five are on the page and red in tests/clearance_guard.js: the dwell unwired
+// -> 15r,15t; helmSettled always true -> 15r,15t; the dwell accumulating instead of
+// restarting -> 15t; the dwell gagging the ALARM as well as the action -> 15r; the banner
+// asserting a set again -> 16c.
+//
+// ⚠⚠ AND TWO OF THEM FOUND HOLES IN THIS FILE RATHER THAN IN THE CODE. 5c's first draft
+// PASSED with the margin widened straight back to the defect it exists for: its "outside"
+// case read `clear` for a reason that had nothing to do with the margin, because the
+// under-way projection STEPPED OVER the closest approach - 0.92 m per step past a track
+// shaving the buffer by 2 mm - so tEntry was null and `assess` returned before the drift
+// tests were reached at all. It now separates the two tracks and asserts the rung was
+// REACHED in both cases. And the third mutation first CRASHED guard.js instead of failing
+// it, by formatting a null into the helm reason; that is guarded there now, by the same
+// rule the detail strings in this file already follow.
+//
 // ⚠ TWO OF THOSE FIRST CRASHED THE SUITE RATHER THAN FAILING IT, AND THE FIX IS IN THIS
 // FILE. The detail strings read `.tEntryDrift.toFixed(0)` directly, and detail is evaluated
 // EAGERLY - so a mutation that makes the field null killed the process before a FAIL line
@@ -111,10 +135,68 @@ check("3. standing in fast, with little time, is HOLD — slowing alone is no lo
 check("4. the SAME approach with the set carrying you AWAY is still only HOLD",
       () => lvl(G.groundVel(0, 6), SET_OFF) === "hold",
       "the stream is helping — take the way off and you drift clear");
-check("5. ... and with the set carrying you ON it is HELM — stopping would not answer",
-      () => lvl(G.groundVel(0, 6), SET_ON) === "helm",
-      "drift-only entry at " + secs(G.assess(P, G.groundVel(0, 6), SET_ON, W, BUF).tEntryDrift)
-        + ": the water carries you in whatever the engines do");
+// ⚠⚠ CHECK 5 USED TO READ "...with the set carrying you ON it is HELM" ON THIS VERY
+// FIXTURE, AND IT NOW READS HOLD (2026-09-19). That is the change Andy asked for, not a
+// regression: *"reach versus danger... firing on a 1 cm clip is not danger."* The old rung
+// fired on the mere EXISTENCE of a drift entry inside the 45 s look-ahead, so its trigger
+// distance was exactly `buf + 45 s x |set|` - 45.5 m at the strongest set in his own record,
+// against a planner that clips plans to the buffer within centimetres. Here the boat is
+// 30 m off a pier face with 2 kn setting it on: stopping does not PREVENT contact, but it
+// postpones it by 27 s, and 27 s is more than the decision margin this console has always
+// used (HOLD_S). So the ladder holds, alarms, and escalates if it keeps closing - which is
+// what every other rung on it does. 5b is that escalation, on the same fixture and the same
+// set, and the two together are the boundary rather than one side of it.
+check("5. the set carrying you ON, with time still in hand, is HOLD — stopping postpones it by longer than a decision needs",
+      () => lvl(G.groundVel(0, 6), SET_ON) === "hold",
+      "30 m off, 2 kn setting on: drift-only entry at "
+        + secs(G.assess(P, G.groundVel(0, 6), SET_ON, W, BUF).tEntryDrift)
+        + ", and within half the buffer at "
+        + secs(G.assess(P, G.groundVel(0, 6), SET_ON, W, BUF).tEntryDriftNear)
+        + " — over the " + G.HELM_S + " s margin, so the answer is to stop and alarm");
+check("5b. ... and the SAME set, close enough that stopping no longer buys that, is HELM",
+      () => {
+        const near = wall(18);                       // 18 m to the face, 13 m to the buffer
+        const a = G.assess(P, G.groundVel(0, 6), SET_ON, near, BUF);
+        return a.level === "helm" && a.tEntryDriftNear != null
+               && a.tEntryDriftNear <= G.HELM_S;
+      },
+      (() => { const a = G.assess(P, G.groundVel(0, 6), SET_ON, wall(18), BUF);
+        return "18 m off, same 2 kn: within half the buffer in " + secs(a.tEntryDriftNear)
+               + " — under " + G.HELM_S + " s, so the water gets there before a decision can"; })());
+check("5c. ... and it is the DEPTH of the entry that separates them, not just the clock",
+      () => {
+        const graze = { polys: [], lines: [],
+                        points: [{ e: 0, n: 40, r: 0 }], marks: [], sys: [], chans: [] };
+        // ⚠⚠ THE FIRST DRAFT OF THIS CHECK PASSED FOR THE WRONG REASON AND THE MUTATION RUN
+        // IS WHAT SAID SO: widening HELM_ENTRY_FRAC back to the whole buffer - the exact
+        // defect this check exists for - SURVIVED. Its "outside" case read `clear` not
+        // because the margin refused it but because the under-way projection STEPPED OVER
+        // the closest approach: 0.92 m per step past a track shaving the buffer by 2 mm, so
+        // tEntry was null and `assess` returned before the drift tests were reached at all.
+        //
+        // So the two tracks are separated here. The DRIFT runs due east and its closest
+        // approach to the hazard is exactly `d`; the boat additionally makes way NORTH, so
+        // the under-way track climbs into the hazard and tEntry is non-null in both cases.
+        // The only thing that differs between them is `d` against the half-buffer.
+        const set = { e: 0.30, n: 0 };               // drifting past it, closing nothing
+        const way = { e: 0.30, n: 0.50 };            // ...while making way toward it
+        const at = (d) => G.assess({ e: -3, n: 40 - d }, way, set, graze, BUF);
+        const out = at(BUF - 0.002), inn = at(BUF / 2 - 0.002);
+        return out.tEntry != null && inn.tEntry != null       // the rung is REACHED in both
+               && out.level !== "helm" && inn.level === "helm";
+      },
+      (() => {
+        const graze = { polys: [], lines: [], points: [{ e: 0, n: 40, r: 0 }],
+                        marks: [], sys: [], chans: [] };
+        const at = (d) => G.assess({ e: -3, n: 40 - d }, { e: 0.30, n: 0.50 },
+                                   { e: 0.30, n: 0 }, graze, BUF);
+        const o = at(BUF - 0.002), i = at(BUF / 2 - 0.002);
+        return "drift shaving 2 mm inside the " + BUF + " m buffer -> " + o.level
+          + " (entry under way at " + secs(o.tEntry) + ", so the rung was reached); 2 mm "
+          + "inside HALF the buffer -> " + i.level + ". Before this the two were 'clear' and "
+          + "'in extremis' with 2 mm between them";
+      })());
+
 // ⚠ THE EASTPORT CASE. A boat station-keeping at the end of a run, engines stopped, being
 // set down onto a pier. Its ground track and its drift track are the SAME track - there is
 // no way on to take off - so `hold` is not merely insufficient, it is what it is already
@@ -125,6 +207,30 @@ check("6. a STOPPED boat being set onto it is HELM — 'stop' is already what it
         return a.level === "helm" && Math.abs(a.tEntry - a.tEntryDrift) < 1e-9;
       },
       "ground track and drift track are the same track — the Eastport loop");
+
+// ── 6b. AND THE REASON IT GIVES IS WHAT IT MEASURED ─────────────────────────────────
+// Andy, 2026-09-19: *"a cause the banner asserts that the code hasn't established."* The
+// rung established that the DRIFT-ONLY projection reaches within half the buffer inside
+// HELM_S; it never measured how much of the set is closing the feature and how much is
+// running past it, and `state.current.ok` was false at every port in the record, so it is
+// not established to be a current either. Both sentences it can produce are checked here,
+// and neither may claim to know which way the water is setting.
+check("6b. the reason quotes the measurement, and never asserts which way the water sets",
+      () => {
+        const a = G.assess(P, G.groundVel(0, 6), SET_ON, wall(18), BUF);   // stopping is an option
+        const b = G.assess(P, SET_ON, SET_ON, W, BUF);                     // nothing to stop
+        const bad = /set onto|setting onto|being set/i;
+        return a.level === "helm" && b.level === "helm"
+               && !bad.test(a.why) && !bad.test(b.why)
+               && /drift ALONE/.test(a.why) && /within/.test(a.why)
+               && /no way on to take off/.test(b.why)
+               && a.why !== b.why;                        // two ways in, two arguments
+      },
+      (() => {
+        const a = G.assess(P, G.groundVel(0, 6), SET_ON, wall(18), BUF);
+        const b = G.assess(P, SET_ON, SET_ON, W, BUF);
+        return "stoppable: \"" + a.why + "\" | stopped: \"" + b.why + "\"";
+      })());
 
 // ── 7. ALREADY INSIDE IS NOT 'NEVER' ────────────────────────────────────────────────
 check("7. a point already inside the buffer reports zero seconds, not 'no entry'",

@@ -206,6 +206,12 @@ eval([
   grabDecl("RELEASE_HOLD_MS"),
   "let clearHoldAt = 0;",
   grab("releaseSettled"),
+  // ⚠ THE IN-EXTREMIS DWELL (2026-09-19). clearanceGuard calls helmSettled on EVERY
+  // frame, above every branch, so a bundle without it is a bare ReferenceError on the first
+  // frame of every scenario - which is how this suite failed when the dwell landed.
+  grabDecl("HELM_DWELL_MS"),
+  "let helmHoldAt = 0;",
+  grab("helmSettled"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),

@@ -1674,6 +1674,35 @@ function releaseSettled(ok, now){
   if(!clearHoldAt) clearHoldAt = now;
   return now - clearHoldAt >= RELEASE_HOLD_MS;
 }
+/**
+ * AND THE SAME DAMPING ON THE RUNG THAT TAKES THE HELM - THE ONLY ONE THAT NEVER HAD IT.
+ *
+ * Andy, 2026-09-19: *"the helm rung's selection test - reach versus danger, no dwell, no
+ * margin."* Every gentler rung on this ladder is damped: the throttle comes back only after
+ * RELEASE_HOLD_MS of clear water, a slow-down offered in lieu of a hold has SLOW_ANSWER_MS
+ * to be taken, a deviation gets EDGE_REASSESS_MS to settle before anything may escalate
+ * past it. The rung that TAKES THE BOAT AWAY FROM THE OPERATOR fired on the first frame it
+ * read, with no history at all.
+ *
+ * ⚠ IT DAMPS THE ACTION, NOT THE ALARM, AND THAT ORDER IS THE POINT. The bar and the banner
+ * still say IN EXTREMIS on the frame the rung is first read - the operator is told
+ * immediately, because they may be able to answer it themselves, and because a console that
+ * saw something and waited before SAYING so is worse than one that waited before acting.
+ * What waits is the escape command.
+ *
+ * ⚠ SHORTER THAN EVERY OTHER DWELL ON THE LADDER, DELIBERATELY. 1.5 s is about two frames
+ * at the 1 Hz telemetry in his record - enough that one frame's opinion cannot steer the
+ * boat, and short enough that a real in-extremis case loses under 3 m at survey speed. A
+ * dwell on this rung is a delay to an emergency, so it buys exactly one thing (a second
+ * opinion) and is sized for that and nothing else.
+ */
+const HELM_DWELL_MS = 1500;
+let helmHoldAt = 0;                // when the helm rung first read, continuously
+function helmSettled(isHelm, now){
+  if(!isHelm){ helmHoldAt = 0; return false; }
+  if(!helmHoldAt) helmHoldAt = now;
+  return now - helmHoldAt >= HELM_DWELL_MS;
+}
 const GUARD_REASSESS_MS = 6000;     // while steering, re-solve the escape this often
 // THE DEVIATION SEARCH IS NOT FREE and it does not need to run at telemetry rate. It
 // projects a candidate track for every bearing at every offset from two bases - hundreds of
@@ -1828,6 +1857,12 @@ function clearanceGuard(){
   // can advance is for THIS frame to have read clear, so the property holds by construction
   // rather than by remembering.
   const clearRun = releaseSettled(a.level === "clear", Date.now());
+  // ⚠ AND THE HELM DWELL IS EVALUATED HERE FOR EXACTLY THE SAME REASON, on every frame and
+  // above every branch. A reset written inside the helm branch would never run on the frames
+  // that matter - the ones where the rung DROPS back - so a single bad frame would leave the
+  // clock armed and the next bad frame, however much later, would steer the boat. See
+  // HELM_DWELL_MS: this damps the ACTION only; the banner and the bar below are unaffected.
+  const helmRun = helmSettled(a.level === "helm", Date.now());
 
   if(a.level === "clear"){
     if(guardLevel !== "clear"){
@@ -2080,7 +2115,30 @@ function clearanceGuard(){
   // escape at 86.9 s. /api/cmd/escape marks the run "escape", which the chain below and
   // rthPending() both refuse to ever read as "the plan is over, go home" - the boat holds
   // at the escape point and waits for the operator, which is what taking the helm is FOR.
-  if(a.level === "helm" && (escalated || Date.now() - guardEscapeAt > GUARD_REASSESS_MS)){
+  // ⚠ `helmRun` IS THE DWELL, AND IT GATES THE COMMAND AND NOTHING ELSE (2026-09-19). The
+  // banner above has already fired, the bar already shows IN EXTREMIS, and setViolations has
+  // already marked the feature - the operator knows on the frame the console knew. What this
+  // buys is a second frame's agreement before the console steers. During the dwell nothing is
+  // commanded at all, which is about 2.3 m at survey speed and is the price of not handing
+  // the boat to one frame's opinion.
+  // ⚠⚠ AND `escalated` CANNOT BE THE FIRST-ACTION TEST ANY MORE, BECAUSE THE DWELL MOVED THE
+  // ACTION OFF THE ESCALATING FRAME. `escalated` is true only on the frame the rung RISES to
+  // helm - and that is now exactly the frame the dwell suppresses. By the time helmRun comes
+  // good, guardLevel already reads helm and `escalated` is false, so the whole condition fell
+  // through to the 6 s re-solve throttle. Harmless from a standing start (guardEscapeAt is
+  // stale, so the throttle passes), but NOT after a recent escape: a boat that escaped, read
+  // clear for a frame and went back into extremis would have waited out the remainder of
+  // GUARD_REASSESS_MS with the alarm up and nothing commanded - up to ~4 s, a regression this
+  // change would have introduced rather than found.
+  //
+  // `guardEscapeAt < helmHoldAt` says the same thing `escalated` used to and says it about
+  // the EPISODE rather than the frame: the last escape was issued before this run of
+  // in-extremis frames began, so this is the first action of a new episode. Once an escape
+  // HAS been issued in this episode, guardEscapeAt moves past helmHoldAt and the 6 s re-solve
+  // takes over exactly as before.
+  const firstOfEpisode = helmHoldAt > 0 && guardEscapeAt < helmHoldAt;
+  if(a.level === "helm" && helmRun
+     && (firstOfEpisode || Date.now() - guardEscapeAt > GUARD_REASSESS_MS)){
     guardEscapeAt = Date.now();
     const escKn = V.SPEED_KN.high || 6;
     const esc = escapeCourse(p, drift, nogo.ko, buf, escKn * 0.514444);
@@ -2108,12 +2166,26 @@ function clearanceGuard(){
     // say why the boat is where it is, not just that it moved.
     runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
     setPlanIntent("escape", null, runRoute);
-    planIntent.why.push({t:"bad", s:"IN EXTREMIS: being set onto "+(c.kind||"a keep-out")
-      +" and stopping would not answer it — steered "+esc.hdg+"° at high speed, then holds "
+    // ⚠⚠ SAY WHAT WAS MEASURED, NOT WHAT IT LOOKS LIKE. Andy, 2026-09-19: *"a cause the
+    // banner asserts that the code hasn't established."* Both of these read "being set onto
+    // <kind>", and the console had established no such thing. What it establishes is that
+    // the DRIFT-ONLY projection reaches within half the buffer of the feature inside
+    // HELM_S seconds; it never measures how much of the set is closing the feature and how
+    // much is running past it. MEASURED on the old rung: a set 98.9% PARALLEL to a pier,
+    // closing it at 0.02 kn, produced "being set onto a dock / pier".
+    // ⚠ AND IT IS NOT NECESSARILY A CURRENT EITHER. `state.current.ok` was FALSE at every
+    // port in the whole record, for three different reasons, so the drift this rung rests
+    // on is the simulator's wind and wave forcing - `env_set_kn` - not a tidal stream.
+    // "The drift" is the honest word for it and is what both strings say now.
+    const driftSay = "the drift alone reaches within " + (a.helmBufM != null
+        ? a.helmBufM.toFixed(1) + " m" : "half the buffer") + " of " + (c.kind || "a keep-out")
+      + (a.tEntryDriftNear != null ? " in " + a.tEntryDriftNear.toFixed(0) + " s" : "");
+    planIntent.why.push({t:"bad", s:"IN EXTREMIS: " + driftSay
+      +", so stopping would not answer it — steered "+esc.hdg+"° at high speed, then holds "
       +"here; does not chain a return, re-command when ready"});
     cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)});
-    showBanner("⚠⚠ IN EXTREMIS — being set onto " + (c.kind || "a keep-out")
-      + " and stopping would not answer it. TAKING THE HELM: steering "
+    showBanner("⚠⚠ IN EXTREMIS — " + driftSay
+      + ", so stopping would not answer it. TAKING THE HELM: steering "
       + esc.hdg + "° at high speed, then HOLDING clear — not chaining any return. "
       + "Stop, Hold or the RC transmitter override this.");
   }
