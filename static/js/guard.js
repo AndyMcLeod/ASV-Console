@@ -28,7 +28,7 @@
 //
 //   clear   nothing within the look-ahead. Say the number, command nothing.
 //   edge    entry is predicted, and a SLIGHT DEVIATION of the track answers it with water
-//           to spare. Keep going, a few metres over.
+//           to spare. Keep going, a few meters over.
 //   slow    entry is predicted, no small deviation answers it, and taking the way off
 //           WOULD avoid it. Buy time.
 //   hold    the same, but close enough that slowing is no longer enough on its own.
@@ -139,6 +139,48 @@ export const HELM_ENTRY_FRAC = 0.5;
  * way ON to take OFF.
  */
 export const STOPPABLE_MS = 0.05;
+
+/**
+ * THE STANDOFF A PLAN NEEDS SO THE HELM RUNG CANNOT FIRE ON IT, in the SET now running.
+ *
+ * ⚠ THIS IS THE PLANNER/GUARD SEAM, AND IT IS EXPORTED FROM THE GUARD ON PURPOSE. Andy,
+ * 2026-09-19, item 3 of four: *"The planner/guard seam - one of the two numbers has to
+ * move, and the guard's is the arbitrary one: a weather reading times a fixed 45 seconds."*
+ * The guard's number moved first (see HELM_S / HELM_ENTRY_FRAC), and then he chose the rest:
+ * **make the planner clip to what the guard needs.**
+ *
+ * The relationship is not a new dial - it falls out of the rung's own two constants. The
+ * helm rung fires when the drift-only track reaches within `buf * HELM_ENTRY_FRAC` of a
+ * feature inside `HELM_S` seconds. So a point is immune exactly while
+ *
+ *     clearance - HELM_S * |drift|  >=  buf * HELM_ENTRY_FRAC
+ *
+ * which is what this returns, floored at the operator's own buffer so a calm day plans
+ * exactly as it always did. MEASURED against his own record: 8.5 m at the 0.58 kn set in
+ * the Honolulu session, 20.5 m at the 1.75 kn seen at Pago Pago, both on a 5 m buffer.
+ *
+ * ⚠⚠ THE PLANNER MUST READ THIS RATHER THAN A COPY OF IT. Two numbers meant to agree, kept
+ * in two files, are the seam this exists to close - re-deriving `buf/2 + 20 * set` in
+ * punchOut would reopen it the first time either constant moved. That is the same argument
+ * `STOPPABLE_MS` above carries, and the same one `turnFlyable` carries for the approach
+ * radius: where the planner and the run-time guard must agree about a number, only one of
+ * them may own it.
+ *
+ * ⚠ AND IT IS NOT A PROMISE ABOUT THE WHOLE PLAN. It is applied to the COVERAGE LINES,
+ * which is where the boat spends its time; turns reach outboard past the line ends and
+ * transits go where the router sends them, and both are still validated against the
+ * operator's plain buffer. A plan clipped to this cannot have the helm rung fire ON A LINE
+ * in this set. It can still fire in a turn, on a transit, or if the set rises afterwards -
+ * the guard is what answers those, which is what it is for.
+ *
+ * @param {number} bufM      the operator's keep-clear buffer, meters
+ * @param {number} driftMs   the set now running, meters per second (0 if unknown)
+ */
+export function guardStandoffM(bufM, driftMs) {
+  const b = +bufM || 0;
+  const d = driftMs > 0 ? driftMs : 0;
+  return Math.max(b, b * HELM_ENTRY_FRAC + HELM_S * d);
+}
 /** Sampling step along the projection. Fine enough not to step over a pile. */
 export const STEP_S = 0.5;
 /**
@@ -196,7 +238,7 @@ export const PROJECT_APPROACH_M = 2.0;
  *
  * ⚠ IT IS ALSO THE PER-EPISODE BUDGET, not just the per-deviation cap. A persistent set can
  * ask for an edge every few seconds, and without a budget the console would walk the plan
- * sideways indefinitely, one defensible metre at a time. Past the budget it stops edging and
+ * sideways indefinitely, one defensible meter at a time. Past the budget it stops edging and
  * the ordinary rungs answer, which is the console admitting the situation is bigger than a
  * deviation.
  */
@@ -209,7 +251,7 @@ export const edgeStepM = (buf) => Math.max(1, (buf || 0) / 2);
  * Andy's condition, and it is the whole gate: *"when there is still plenty of available
  * water away from the nogo"*. Without it the search would happily answer a tight pass with
  * a slightly different tight pass, which is not an answer at all - it is the same situation
- * moved three metres and the operator no longer being told about it.
+ * moved three meters and the operator no longer being told about it.
  */
 export const edgeMarginM = (buf) => Math.max(2, (buf || 0) / 2);
 
@@ -317,7 +359,7 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
 }
 
 /**
- * THE SLIGHT DEVIATION: a few metres over, and keep going.
+ * THE SLIGHT DEVIATION: a few meters over, and keep going.
  *
  * Andy, 2026-09-04: *"Investigate forcing slight deviations in a given track to prevent
  * holds when there is still plenty of available water away from the nogo."*
@@ -363,7 +405,7 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
  * DIRECTIONS ARE SEARCHED, NOT SOLVED, for the reason escapeCourse gives: a gradient off the
  * nearest feature points away from ONE thing, and a boat in trouble at a corner has two.
  * Sides are not preferred by handedness either - Rule 9 keep-right is a PLANNER concern
- * (narrowChannelLane) and belongs to the route, not to a two-metre correction on it.
+ * (narrowChannelLane) and belongs to the route, not to a two-meter correction on it.
  *
  * Returns null when no amendment inside the cap answers it - and the caller must read that
  * as "the ordinary rungs now", not as "nothing to do".
@@ -424,7 +466,7 @@ export function edgeAround(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) {
   if (!bases.length) return null;
   // ⚠ THE DEVIATION IS VERIFIED AT A BIGGER BUFFER THAN THE ONE THAT TRIGGERED IT, AND THAT
   // IS WHAT STOPS IT CHATTERING. Taking the SMALLEST offset that merely clears `buf` leaves
-  // the boat a hair outside, so the next frame's projection - from a position three metres
+  // the boat a hair outside, so the next frame's projection - from a position three meters
   // further on - fouls again and asks for another deviation, and another. Measured live at
   // New Castle: three amendments in twelve seconds, then the budget was spent and the boat
   // held anyway. Verifying against `buf + margin` gives an accepted deviation that much give
@@ -564,7 +606,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
     // ⚠ THE DEVIATION IS TRIED ONLY HERE, AND THE PLACEMENT IS THE SAFETY ARGUMENT. This
     // branch is the one where stopping would work - so anything gentler than stopping is a
     // strict improvement, and nothing about the in-extremis rung below is touched. Where
-    // the drift-only track enters too, the water is doing the carrying and a few metres of
+    // the drift-only track enters too, the water is doing the carrying and a few meters of
     // track is not an answer to it; that case goes to the helm exactly as it did before.
     const edge = (onPlan && opts.edge !== false)
       ? edgeAround(p, opts.hdgDeg, opts.twMs, drift, route, ko, buf, opts) : null;

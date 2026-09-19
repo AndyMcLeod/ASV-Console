@@ -1,8 +1,8 @@
 # WHY THE IN-EXTREMIS ESCAPE KEEPS FIRING — the evidence, 2026-09-19
 
 Andy, 2026-09-19: *"start with the escapes."* His console had been taking the helm on his own runs. This
-file is the evidence and what it indicts. **⚠ ITEMS 1 AND 2 OF THE ORDER OF WORK ARE NOW FIXED**
-(the turn geometry, `d7d3f905`; the helm rung's selection test, this commit) — each marked where it
+file is the evidence and what it indicts. **⚠ ITEMS 1, 2 AND 3 OF THE ORDER OF WORK ARE NOW FIXED**
+(the turn geometry `d7d3f905`; the helm rung's selection test `f2fb80cd`; the planner/guard seam, this commit) — each marked where it
 sits below, with what it does and does not close. `DEPARTURE_PARADIGM.md` is the design for one more
 class of it, and this file's ORDER OF WORK outranks that file's staging.
 
@@ -162,7 +162,9 @@ instead of shipping it as a straight leg.
    The banner's asserted cause ("being set onto <kind>") is therefore not what the code established.
 2. **H2 — containment is scored in extremis with no projection at all** (verified above). Real danger at
    Pago Pago (4.67 m from a LAND polygon inside a 20 m buffer), answered with the wrong rung.
-3. **H3 — the planner/guard seam.** Plans are clipped to the buffer to within centimetres (measured
+3. **H3 — the planner/guard seam. ⚠ FIXED 2026-09-19 — see item 3 of the ORDER OF WORK.
+   ⚠ AND ITS HEADLINE RATIO IS STALE TWICE OVER: the 3-12x below was measured against the OLD helm
+   rung; item 2 cut it to about 1.7x, and item 3 then closed it for the coverage lines.** Plans are clipped to the buffer to within centimetres (measured
    minimum waypoint clearance: 5.05 m against a 5 m buffer; 20.28 m against 20 m; zero waypoints inside
    the buffer anywhere) while the guard's helm rung reaches 3-12x further. 34% and 67% of two routes'
    waypoints sit inside the helm band; 265 of Honolulu's 415 lie within 10 m of a keep-out.
@@ -226,8 +228,13 @@ instead of shipping it as a straight leg.
    (its drift track IS its ground track, so a hold is what she is already doing - the Eastport case).
    ⚠ **AND IT IS UNVERIFIED AGAINST THE RECORD**, by Andy's decision: see H4 below - the escapes do
    not reproduce, so this is measured on synthetic fixtures only.
-3. **The planner/guard seam (H3)** — reconcile the buffer the planner guarantees with the band the guard
-   alarms in.
+3. ~~**The planner/guard seam (H3)**~~ **DONE 2026-09-19.** Andy's choice of four options: make the PLANNER
+   clip to what the guard needs. The coverage clip is now taken at `guardStandoffM(buffer, set)` =
+   `max(buffer, buffer/2 + HELM_S x set)` - 8.5 m at his 0.58 kn set, 20.5 m at 1.75 kn, on a 5 m buffer -
+   and that number is DERIVED from the helm rung's own constants rather than written down twice.
+   ⚠ **It costs coverage and the card says so.** ⚠ **It is the COVERAGE LINES only**: turns and transits
+   still answer to the plain buffer, so a clipped plan cannot have the helm rung fire ON A LINE in that set,
+   but it can still fire in a turn, on a transit, or if the set rises afterwards.
 4. **The launch grant** (`DEPARTURE_PARADIGM.md`) for the berth/containment class.
 5. **Chart ink at New Castle** — rebuild it; nothing records it today.
 

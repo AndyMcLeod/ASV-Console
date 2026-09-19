@@ -857,7 +857,8 @@ import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
 import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
-         HORIZON_S as GUARD_HORIZON_S, edgeCapM } from "/static/js/guard.js";
+         HORIZON_S as GUARD_HORIZON_S, edgeCapM, guardStandoffM,
+         HELM_S as GUARD_HELM_S } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
 import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
@@ -4530,6 +4531,36 @@ const LEAD_GIVE = [0.6, 0.3, 0];
  * through, and that is the suspect its revert named. Nothing here writes: a stale list
  * simply stops being consulted, and is replaced the next time a strike is made.
  */
+/**
+ * THE STANDOFF THE COVERAGE LINES ARE CLIPPED AT: the operator's buffer in calm water, and
+ * the GUARD'S OWN requirement when there is a set running.
+ *
+ * ⚠ ITEM 3 OF ANDY'S LIST, AND HIS CHOICE OF THE FOUR ON OFFER (2026-09-19): *"The
+ * planner/guard seam - one of the two numbers has to move, and the guard's is the arbitrary
+ * one."* The guard's moved first; asked what to do about the rest, he chose to make the
+ * PLANNER clip to what the guard needs. WHAT THE SEAM WAS, measured on his own plans before
+ * this existed: the planner clipped to the buffer to within THREE CENTIMETRES (a 5.03 m
+ * minimum waypoint clearance against a 5 m buffer, zero waypoints inside it) while the guard
+ * judged the boat against a band reaching much further - so a plan could be legal by
+ * construction and still be one the console would take the helm on.
+ *
+ * ⚠ AND IT IS NOT THE BOAT'S TRACKING THAT CONSUMES THE MARGIN, which is the obvious
+ * reading and is wrong. Measured over 19,128 running frames in 18 upload windows of his own
+ * record, each cut at any escape / hold / RTH / Go-To because every one of those REPLACES the
+ * route: the boat is 0.03 m from its commanded route at the median, 0.09 m at p90 and 0.30 m
+ * at p95. It holds the line. What the planner never asked about is the SET - a line 5 m off a
+ * pier is "legal" however hard the water is setting onto it.
+ *
+ * `guardStandoffM` is the GUARD's, never a copy - see its header for why that matters here of
+ * all places. With no weather reading the drift is 0 and this returns the plain buffer, so a
+ * console that has never seen a set plans exactly as it did before.
+ */
+function patClipBufM(){
+  const st = (S && S.status) || {};
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  return guardStandoffM(nogo.buffer || 0, d ? Math.hypot(d.e, d.n) : 0);
+}
+
 function patStrikeKey(){
   if(!(pat.A && pat.B && pat.C)) return null;
   const c = p => p ? p.lat.toFixed(7)+","+p.lon.toFixed(7) : "-";
@@ -4537,6 +4568,11 @@ function patStrikeKey(){
   return [c(pat.A), c(pat.B), c(pat.C), pat.align,
           boundaryActive() ? boundary.map(c).join(";") : "-",
           nogo.band||"-", (nogo.features||[]).length, nogo.buffer,
+          // ⚠ THE CLIP STANDOFF, NOT JUST THE BUFFER (2026-09-19). The coverage clip is
+          // taken at patClipBufM(), which grows with the SET - so two punches at the same
+          // buffer in a different set are two different clips, and a key naming only the
+          // buffer would hand the second one the first one's runs.
+          patClipBufM().toFixed(2),
           JSON.stringify(nogo.enf||{}), dr.min, dr.max,
           (sea.waterOffset||0).toFixed(3)].join("|");
 }
@@ -6964,6 +7000,11 @@ async function punchOut(){
     // tried to memo and could not: they are derived from the LINE SET, so a detour cached
     // before a strike can be invalid after it. Those re-solve, every time, on purpose.
     let clipped;
+    // The standoff this punch clips its COVERAGE at, read once: patStrikeKey() names it too,
+    // so the memo cannot serve a clip taken in a different set.
+    const clipBuf = patClipBufM();
+    const setKnNow = (() => { const st = (S && S.status) || {};
+      return (st.env_set_kn != null && st.env_set_deg != null) ? +st.env_set_kn : 0; })();
     const clipKey = patStrikeKey();
     if(clipKey && patClipMemo && patClipMemo.key === clipKey){
       // A COPY, not the cached array. The caller sorts, re-orients and filters what it is
@@ -6971,7 +7012,11 @@ async function punchOut(){
       // one's edits — a cache that answers differently the second time is worse than none.
       clipped = patClipMemo.runs.map(s=>[s[0], s[1]]);
     } else {
-      clipped = []; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,buffer).forEach(s=>clipped.push(s)));
+      // ⚠ CLIPPED AT `clipBuf`, NOT AT `buffer` (2026-09-19, item 3). See patClipBufM: in a
+      // set, the standoff a line needs so the helm rung cannot fire on it is wider than the
+      // operator's buffer, and it is the GUARD that owns the relationship. Calm water leaves
+      // this exactly equal to `buffer`, so nothing about a no-weather plan moves.
+      clipped = []; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,clipBuf).forEach(s=>clipped.push(s)));
       patClipMemo = clipKey ? {key: clipKey, runs: clipped.map(s=>[s[0], s[1]])} : null;
     }
     // TURN WATER: channel polys that none of the clipped coverage lines occupy are
@@ -7346,6 +7391,19 @@ async function punchOut(){
     const depthLbl = dr.max>0 ? `${dr.min}-${dr.max} m` : `≥ ${dr.min} m`;
     $("#sp_hint").textContent=`Punched: ${src.length} lines → ${patClip.length} segments `+
       `(${depthLbl}, ${buffer} m buffer, −${turnMargin.toFixed(0)} m turn margin, nogo band ${(nogo.band||"?").replace("enc_","")})`+
+      // ⚠⚠ AND WHEN THE SET WIDENED THE CLIP, SAY SO AND SAY WHY (2026-09-19, item 3).
+      // Clipping the coverage at more than the operator asked for COSTS THEM SURVEY, and
+      // this console's standing rule is that dropping coverage somebody asked for is said
+      // out loud with the number and the threshold - the same rule `nShort` and `nLeadCut`
+      // answer to. Silently trimming to a figure derived from a weather reading would be
+      // the worst version of this feature: a thin survey that looks like a chart problem.
+      // The SET is quoted beside it because that is the input they can act on - wait for
+      // slack, or accept the standoff.
+      (clipBuf > buffer + 0.05
+        ? `, clipped at ${clipBuf.toFixed(1)} m not ${buffer} m: a ${setKnNow.toFixed(2)} kn set `+
+          `needs that standoff for the guard to leave the lines alone (${GUARD_HELM_S} s of drift `+
+          `plus half the buffer)`
+        : "")+
       // THE LEAD IS QUOTED AS RUN, NOT AS COVERAGE, and says so. Every other number on
       // this line is coverage the operator is getting or losing; this one is distance
       // they are paying for and will not be surveying, which is the opposite kind of

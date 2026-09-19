@@ -1080,6 +1080,34 @@ diagnosable (`tests/frame_health.js`).
    - **deep enough** — the drift must reach within **half the operator's own buffer** of the
      feature, not merely graze the outside of their standoff.
 
+   **And since the guard owns those two numbers, the planner now reads them.** The planner
+   used to clip a survey to the operator's buffer and nothing else — measured on a real
+   plan, to within **three centimetres** (a 5.03 m minimum waypoint clearance against a 5 m
+   buffer, with nothing inside it). The guard then judged the boat against a band reaching
+   further, so **96% of that plan's waypoints sat inside the band the guard alarms in**. A
+   plan could be legal by construction and still be one the console would take the helm on.
+
+   The obvious explanation — that the boat's own tracking eats the margin — is wrong, and
+   was measured to be wrong. Across **19,128 running frames in 18 upload windows** (each cut
+   at every escape, hold, RTH and Go-To, because each of those *replaces* the route), the
+   boat is **0.03 m from its commanded line at the median and 0.30 m at p95**. It holds the
+   line. What the planner never asked about is the **set**: a line 5 m off a pier is legal
+   however hard the water is setting onto it.
+
+   So the coverage clip now happens at the standoff the guard requires for the set actually
+   running — `max(buffer, buffer/2 + 20 s × set)`, which is 8.5 m at a 0.58 kn set and
+   20.5 m at 1.75 kn on a 5 m buffer. It is **derived from the guard's own constants, not
+   written down a second time**: two numbers meant to agree, kept in two files, is the seam
+   itself. With no weather reading the set is zero and the clip is the plain buffer, so a
+   console that has never seen one plans exactly as it always did.
+
+   **It costs coverage, so the card says so** — the standoff used, the buffer it replaced
+   and the set that caused it. A thin survey with no explanation reads as a chart problem.
+   And it is **the coverage lines only**: turns reach outboard past the line ends and
+   transits go where the router sends them, and both still answer to the plain buffer. A
+   plan clipped this way cannot have the helm rung fire *on a line* in that set; it can
+   still fire in a turn, on a transit, or if the set rises afterwards.
+
    **Except where stopping is not a different state.** A boat with no way on — station-keeping
    at the end of a run, engines stopped, being set down onto a pier — has a drift track that
    *is* its ground track, so "take the way off" is not insufficient, it is what she is already

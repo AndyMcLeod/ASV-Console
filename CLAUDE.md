@@ -55,18 +55,36 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 LATE — ITEMS 1 AND 2 ARE FIXED; item 3 (the planner/guard seam) IS NEXT: read this block, then `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`)
+## ⇒ START HERE (handoff refreshed 2026-09-19 LATE — ITEMS 1, 2 AND 3 ARE FIXED; item 4 (the LAUNCH GRANT) IS NEXT: read this block, then `DEPARTURE_PARADIGM.md`, then `ESCAPE_FINDINGS.md`)
 
 ### ➤ PICK UP HERE
 
 **HANDOFF, 2026-09-19 (LATE), IN THE WINDOW ANDY NAMED "ASV Console Refinement".**
 
 **ANDY'S ORDER OF WORK, GIVEN ON THE DAY:** *"1. The turn geometry... 2. The helm rung's selection test...
-3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."* **ITEMS 1 AND 2 ARE DONE
-AND COMMITTED. ITEM 3 IS NEXT** — the planner/guard seam: the planner clips plans to the buffer within
-centimetres while the guard alarms in a band around it, so one of the two numbers has to move and the guard's
-is the arbitrary one. ⚠ **Item 2 narrowed that band a lot** (the helm rung's reach went from
-`buf + 45 s x set` to `buf/2 + 20 s x set`), so RE-MEASURE H3's "3-12x further out" before designing to it.
+3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."* **ITEMS 1, 2 AND 3 ARE
+DONE AND COMMITTED. ITEM 4 IS NEXT** — the LAUNCH GRANT for the berth cases; its design, its 16 rules and the
+5 decisions that are his are already written up in `DEPARTURE_PARADIGM.md`, and his axiom below is the frame.
+
+* **⇒ ITEM 3, THE PLANNER/GUARD SEAM: HIS CHOICE OF FOUR, WHICH WAS "MAKE THE PLANNER CLIP TO WHAT THE GUARD
+  NEEDS".** What the seam was, measured: the planner clipped to the buffer to within THREE CENTIMETRES (5.03 m
+  minimum waypoint clearance against a 5 m buffer, zero inside) while 96% of that plan's waypoints sat in the
+  band the guard alarmed in. ⚠ **The obvious explanation is wrong and was measured to be wrong:** over 19,128
+  running frames in 18 upload windows - each CUT at every escape/hold/RTH/Go-To, because each REPLACES the route
+  - the boat is 0.03 m from its commanded line at the median and 0.30 m at p95. It holds the line. (A first cut
+  that did not cut at those commands measured a 98 m "tracking error", which was the escape legs.) The gap is
+  not error: it is a question the planner never asked, namely the SET.
+* **THE FIX:** `guardStandoffM(buf, drift)` in guard.js = `max(buf, buf*HELM_ENTRY_FRAC + HELM_S*drift)`, and
+  `patClipBufM()` in the page CALLS it - **it may never re-derive it**, because two numbers meant to agree kept
+  in two files IS the seam. punchOut clips the coverage at it and `patStrikeKey` names it, so a punch in one set
+  cannot be served the clip taken in another. Floored at the buffer, so a console with no weather reading plans
+  exactly as it always did.
+* **⚠ IT COSTS COVERAGE AND THE CARD SAYS SO** (the standoff, the buffer it replaced, and the set). ⚠ **IT IS
+  THE COVERAGE LINES ONLY** - turns and transits still answer to the plain buffer, and `tests/planner_guard_seam.js`
+  check 7 exists so nobody reads it as more than that. A clipped plan cannot have the helm rung fire ON A LINE in
+  that set; it can still fire in a turn, on a transit, or if the set rises afterwards.
+* **⚠ AND H3'S "3-12x FURTHER OUT" IS STALE TWICE OVER** - measured against the OLD helm rung; item 2 cut it to
+  about 1.7x and item 3 closed it for the lines. Do not design to that ratio.
 
 * **⇒ ITEM 2, THE HELM RUNG: ALL FOUR OF ANDY'S COMPLAINTS, ON SYNTHETIC EVIDENCE BY HIS DECISION.** Measured
   on the real `assess` with a synthetic wall before anything was changed: the trigger distance was EXACTLY
@@ -133,8 +151,8 @@ is the arbitrary one. ⚠ **Item 2 narrowed that band a lot** (the helm rung's r
    and the operational consequence), then `DEPARTURE_PARADIGM.md`. Do not re-derive any of it - it cost two
    workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
 2. `git log --oneline -3` and `git status`, and check nothing is listening on 8788-8799 before any live work.
-3. Item 3 is the planner/guard seam. The evidence is H3 in `ESCAPE_FINDINGS.md` - but re-measure it: item
-   2 moved the guard's band, so H3's "3-12x further out" is stale.
+3. Item 4 is the LAUNCH GRANT. Its design is `DEPARTURE_PARADIGM.md` - read it with his axiom in mind, and
+   note that 5 of its decisions are HIS and are listed there unanswered.
 
 * **⇒ ITEM 1, THE TURN GEOMETRY: IT WAS THE INBOARD RUNG, AND THE HANDOFF'S OWN GUESS WAS WRONG.** The previous
   block said to establish whether the mirrored arc came from headings taken off the lines' stored `a->b`

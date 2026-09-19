@@ -86,6 +86,9 @@ const G = require("../static/js/geodesy.js");
 const U = require("../static/js/units.js");
 const S = require("../static/js/state.js");
 const T = require("../static/js/turns.js");
+// The run-time guard, for `guardStandoffM` - the planner/guard seam reads the GUARD's own
+// constants, so this suite must hand punchOut the real module rather than a stand-in.
+const GU = require("../static/js/guard.js");
 const PS = require("../static/js/passage.js");
 const C = require("../static/js/chart.js");
 
@@ -134,6 +137,10 @@ const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m 
 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
+  // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
+  // clip standoff and from patStrikeKey. Missing from this list it is a bare ReferenceError
+  // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash.
+  "patClipBufM",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
@@ -152,7 +159,7 @@ function makeWorld(opts) {
   const log = { banners: [], notes: [], saves: 0, violations: [] };
   const turnWithRetry = o.turnWithRetry ? o.turnWithRetry(T.turnWithRetry) : T.turnWithRetry;
   // eslint-disable-next-line no-new-func
-  const W = new Function("G", "U", "S", "T", "PS", "C", "$", "document", "log", "turnWithRetry",
+  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "$", "document", "log", "turnWithRetry",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
     + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg} = T;\n"
@@ -169,6 +176,11 @@ function makeWorld(opts) {
     + "const mission = {lines: [], waypoints: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     + "const applyNogoControls = () => {}; const ensureNogoArea = async () => true; const render = () => {};\n"
     + "const foldChartInk = () => {};             // no chart image in this world\n"
+    // The REAL guard bodies, not stubs: patClipBufM derives the clip standoff from the
+    // guard's own constants, and a suite substituting its own would be testing a seam that
+    // is closed only inside the test.
+    + "const groundVel = GU.groundVel, guardStandoffM = GU.guardStandoffM;\n"
+    + "const GUARD_HELM_S = GU.HELM_S;\n"
     + "const showBanner = (t) => log.banners.push(t); const flashNote = (t) => log.notes.push(t);\n"
     + "const setViolations = (r) => log.violations.push(r); const clearViolation = () => {};\n"
     + "const saveMission = () => { log.saves++; }; const recalcCommittedForSpeed = () => {};\n"
@@ -184,7 +196,7 @@ function makeWorld(opts) {
     + " clearClip: () => { patClip = null; },"
     + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
     + " pending: () => { patRepunchT = setTimeout(() => {}, 0); } };")(
-    G, U, S, T, PS, C, $, document, log, turnWithRetry);
+    G, U, S, T, PS, C, GU, $, document, log, turnWithRetry);
   // The vessel and the chart, as the page holds them.
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
   S.V.MAX_TURN_RATE_DEG_S = o.turnRate || 60;
