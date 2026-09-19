@@ -1047,12 +1047,26 @@ diagnosable (`tests/frame_health.js`).
    shipping as a straight 180 the hull cannot track.
 
    **What is AHEAD, and taking the helm in extremis.** Every telemetry frame the console
-   projects the vessel's *ground* track forward and asks what it warrants, on four rungs:
+   projects the vessel's *ground* track forward and asks what it warrants, on five rungs:
 
    - **clear** — nothing within the look-ahead. Show the number, command nothing.
+   - **edge** — entry predicted, but a few meters of deviation clears it. Go a little wide.
    - **slow** — entry predicted, and taking the way off would avoid it. Buy time.
    - **hold** — the same, but close enough that slowing alone is no longer enough.
    - **helm** — entry predicted, **and** stopping would not answer it. The console steers.
+
+   And one state that is **not** a rung:
+
+   - **blind** — the vessel reports no course over the ground, so nothing can be projected at
+     all. Until 2026-09-19 this read **clear**: `groundVel(null, sog)` returns null, the guard
+     substituted a clear verdict, the bar keys on `clear` and went out, and the console showed
+     the operator the same nothing it shows in genuinely clear water — at the one moment it
+     could not see. A *stopped* vessel reports exactly that, so this was the state a boat
+     lying alongside a pier was in. Worse, those frames counted toward the four-second dwell
+     that hands the throttle back, so a boat the guard had slowed and which then lost her
+     course got her speed returned on the strength of frames that had measured nothing. The
+     bar now reads **GUARD BLIND**, carries the clearance it can still state (a distance from
+     a model needs no course), and offers no buttons — there is no rung to proceed past.
 
    The rung that matters is the last two, and what separates them is a **second projection
    made with the engines notionally stopped**. If the boat would drift clear, stopping

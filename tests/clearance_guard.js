@@ -78,6 +78,28 @@
 //   firstOfEpisode reverted to `escalated`                  -> 15u
 //   firstOfEpisode always true (re-solve throttle gone)     -> 15v
 //   the first-action clause dropped (throttle only)         -> 15u
+//
+// TEETH, 2026-09-19 - THE BLIND READOUT (stage 0 of the departure work). Seven mutations,
+// all four guard suites plus frame_health, off_track, end_action and page_strict re-run for
+// each; nothing survived:
+//   blind substituted back to clear (the defect itself)    -> 15w, 15y, 15z
+//   blind counted as clear for the release dwell           -> 15e
+//   blind ranked as an escalation rather than level        -> 15z
+//   the blind bar removed                                  -> 15z2
+//   the blind bar stops naming the state                   -> 15z2
+//   the blind bar still offers PROCEED                     -> 15z2
+//   the 8 s banner un-gated for blind                      -> 15z
+//
+// ⚠⚠ AND THREE OF THOSE FIRST SCORED AS *SURVIVED* BECAUSE THE MUTATION RUNNER COULD NOT
+// READ ITS OWN OUTPUT. Its id pattern was `[0-9]+[a-z]*\.`, which parses "15z2." as "15z"
+// followed by junk and matches nothing - so a real FAIL on check 15z2 was reported as a
+// surviving mutation, three times, and each looked like a coverage gap in this file. The
+// pattern must allow digits AFTER the letters. A runner that misreads a FAIL as a pass is
+// a broken instrument, not a weak check, and it fails in the direction that costs you.
+//
+// ⚠ AND 15z2's FIRST DRAFT BUILT ITS BUTTON TEST AS A CONSTRUCTED RegExp, lost the
+// backslashes in the concatenation, and so tested `$("#gb_low")...` with `$` meaning
+// end-of-string. It could never match. A literal is compared with indexOf.
 // Five more are on guard.js's side of the same change and red in tests/in_extremis.js 5,
 // 5c, 6 and 6b.
 //
@@ -137,6 +159,12 @@ function grab(src, name) {
   return src.slice(start, k + 1);
 }
 
+// ⚠ SOURCE CHECKS READ CODE, NOT COMMENTS, AND TWO OF THEM LEARNED THAT THE HARD WAY.
+// A check that counts `releaseSettled(` call sites, or greps for wording that was REMOVED,
+// matches the note in the page that records the very thing it is looking for - so 15e went
+// red for a comment that mentioned the call, and 16c reported a defect as still present
+// when only its obituary was. Strip first, then match.
+const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
 let fails = 0;
 function check(name, cond, detail) {
   let ok = false, err = "";
@@ -516,12 +544,13 @@ check("15. the release is the COUNTERFACTUAL, not a distance margin — it asks 
 // here the property holds by construction: the only way the dwell advances is for THIS
 // frame to have read clear.
 check("15e. the dwell is asked once a frame, above the branch, so no path can skip it",
-      () => (G.match(/releaseSettled\(/g) || []).length === 1
-            && G.indexOf("releaseSettled(") < G.indexOf('if(a.level === "clear")')
-            && /const clearRun = releaseSettled\(a\.level === "clear", Date\.now\(\)\);/.test(G)
-            && /release = release && clearRun;/.test(G),
-      (G.match(/releaseSettled\(/g) || []).length + " call site(s), "
-      + ((G.indexOf("releaseSettled(") < G.indexOf('if(a.level === "clear")')) ? "above" : "BELOW")
+      () => { const Gs = codeOnly(G);
+        return (Gs.match(/releaseSettled\(/g) || []).length === 1
+            && Gs.indexOf("releaseSettled(") < Gs.indexOf('if(a.level === "clear")')
+            && /const clearRun = releaseSettled\(a\.level === "clear", Date\.now\(\)\);/.test(Gs)
+            && /release = release && clearRun;/.test(Gs); },
+      (codeOnly(G).match(/releaseSettled\(/g) || []).length + " call site(s) in CODE, "
+      + ((codeOnly(G).indexOf("releaseSettled(") < codeOnly(G).indexOf('if(a.level === "clear")')) ? "above" : "BELOW")
       + " the clear branch. Two call sites, or one inside a branch, and the reset is "
       + "something a path has to remember rather than something it cannot avoid");
 
@@ -684,13 +713,16 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const T0 = 5e9;             // far from zero, or `settling` (now - guardEdgeAt < 2 s) gates the rung
   let clock = T0;
   Date.now = () => clock;
-  const step = (ms, n0, sogKn, key) => {
+  const step = (ms, n0, sogKn, key, cogArg) => {
     clock = T0 + ms;
     nogo = { ready: true, frame: ref, ko: wall(n0), buffer: 5 };
     const NM = 111320;
     asv = { lat: ref.lat, lon: ref.lon };
     runRoute = [{ lat: ref.lat + 60 / NM, lon: ref.lon }, { lat: ref.lat + 120 / NM, lon: ref.lon }];
-    const status = { cog_deg: 0, sog_kn: sogKn, heading_deg: 0, env_set_deg: 0, env_set_kn: 0,
+    // ⚠ `cog` NULL IS THE BLIND CASE, and it is what a STOPPED vessel reports. Passing
+    // null here is how 15w-15y drive it; every existing caller omits the argument and gets 0.
+    const status = { cog_deg: (cogArg === undefined ? 0 : cogArg), sog_kn: sogKn,
+                     heading_deg: 0, env_set_deg: 0, env_set_kn: 0,
                      holding: false, drifting: false };
     if (key !== undefined) status.speed_key = key;
     S = { armed: true, estop: false, run: "running", behavior: "survey", status };
@@ -717,6 +749,81 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     fresh();
     const a1 = step(0, 30, 6.0, "survey"), a2 = step(250, 29.5, 6.0, "survey");
     const a3 = step(2500, 25.5, 6.0, "survey");
+    // 15w-15y. BLIND IS NOT CLEAR (2026-09-19, stage 0 of the departure work). `groundVel`
+    // returns null for a null course, which is exactly what a STOPPED vessel reports, and
+    // clearanceGuard substituted `{level:"clear"}` for it. The bar keys on `level === "clear"`,
+    // so it went out, and the console showed the same nothing it shows in genuinely clear
+    // water - at the one moment it could not see. A boat alongside a pier is in that state.
+    fresh();
+    const blind1 = step(0, 30, 0, "survey", null);
+    check("15w. a frame with no course over the ground reads BLIND, not clear",
+          blind1.level === "blind",
+          "cog_deg null -> level '" + blind1.level + "'. `clear` there is the console telling "
+          + "the operator the water ahead is clear on a frame where it projected nothing");
+    check("15x. ... and it commands nothing, because nothing was measured",
+          blind1.sent.length === 0,
+          "sent " + JSON.stringify(blind1.sent) + " - there is no rung to act on and no "
+          + "measurement to act from");
+    // ⚠ 15y IS THE ONE THAT MATTERED MORE THAN THE READOUT. `releaseSettled` counted those
+    // substituted `clear` frames, so a boat the guard had SLOWED and which then lost her
+    // course had the throttle handed back after RELEASE_HOLD_MS of blindness, on the strength
+    // of frames that had measured nothing at all.
+    fresh();
+    const s1 = step(0, 30, 6.0, "survey");                       // slowed by the guard
+    const b1 = step(500, 30, 0, "low", null);                    // ...then blind
+    const b2 = step(RELEASE_HOLD_MS + 1500, 30, 0, "low", null); // ...still blind, past the dwell
+    check("15y. ... and a blind frame does not advance the release dwell: the throttle stays where it was",
+          s1.sent.includes("/api/cmd/speed:low")
+          && b1.level === "blind" && b2.level === "blind"
+          && !b2.notes.join(" ").includes("Clear ahead again"),
+          "slowed (" + JSON.stringify(s1.sent) + "), then blind for "
+          + (RELEASE_HOLD_MS + 1500) + " ms: hand-back said "
+          + (b2.notes.join(" ").includes("Clear ahead again") ? "YES - on frames that measured nothing"
+                                                             : "nothing") );
+    // 15z. BLIND IS A STATE, NOT AN EVENT, AND THE BAR IS WHERE IT BELONGS. A boat lying
+    // stopped reports no course for as long as she lies there, so an 8-second banner would
+    // repeat for the whole time she is alongside and teach the operator to ignore the banner
+    // that matters. It must also never read as an ESCALATION - it is the absence of a
+    // judgement, not a rung above one.
+    fresh(); banners = [];
+    const bz = step(0, 30, 0, "survey", null);
+    const bz2 = step(9000, 30, 0, "survey", null);          // well past the 8 s re-say
+    check("15z. blind never raises the 8 s banner, and never ranks as an escalation",
+          bz.level === "blind" && bz2.level === "blind"
+          && banners.filter((b) => /BLIND/i.test(b)).length === 0
+          && /const RUNG = \{blind:0, clear:0,/.test(codeOnly(G)),
+          "two blind frames " + (9000) + " ms apart raised "
+          + banners.filter((b) => /BLIND/i.test(b)).length + " banner(s); RUNG ranks blind "
+          + ((/const RUNG = \{blind:0,/.test(codeOnly(G))) ? "level with clear" : "ELSEWHERE")
+          + ". The bar carries it instead - persistent, in view and silent");
+    // 15z2. ...AND THE BAR ACTUALLY CARRIES IT. renderGuardBar is stubbed in this world, so
+    // this is a source check: without it, deleting the blind branch puts the console back to
+    // showing nothing at all and every behavioural check here stays green.
+    check("15z2. ... and renderGuardBar has a BLIND state that is shown, not hidden",
+          () => {
+            const R = codeOnly(grab(H, "renderGuardBar"));
+            const i = R.indexOf('a.level === "blind"');
+            if (i < 0) return false;
+            const branch = R.slice(i, i + 1400);
+            // shown, named, and offering NOTHING: there is no rung to proceed past and
+            // nothing to hand back, so PROCEED against a measurement that was never taken
+            // is the worst button on the page.
+            // ⚠ indexOf, NOT a constructed RegExp: the first cut built one by string
+            // concatenation and lost its backslashes, so it tested `$("#gb_low")...` as a
+            // REGEX - `$` as end-of-string - and could never match. A literal is a literal.
+            const hides = (id) => branch.indexOf('$("#' + id + '").style.display = "none"') >= 0;
+            return /bar\.style\.display = "block"/.test(branch)
+                   && /GUARD BLIND/.test(branch)
+                   && !/bar\.style\.display = "none"/.test(branch)
+                   && hides("gb_low") && hides("gb_proceed")
+                   && hides("gb_cancel") && hides("gb_drop");
+          },
+          "the blind branch shows the bar, names the state, and hides all four buttons. "
+          + "Before stage 0 the bar keyed "
+          + "on `level === \"clear\"` and simply went out, which is the same nothing it shows "
+          + "in genuinely clear water");
+    fresh();
+    fresh();
     check("15k. THE REPORTED DEFECT: a slow-down that is never TAKEN is followed by the hold",
           a1.sent.includes("/api/cmd/speed:low") && !held(a1) && !held(a2) && held(a3)
           && /was not taken within/.test(a3.notes.join(" ")),
@@ -939,11 +1046,7 @@ check("16b. ... and the helm rung is unreachable unless STOPPING would not answe
 // "being set onto a dock / pier". A SOURCE check because escapeCourse is stubbed to null in
 // the driven block above, so the escape banner cannot be produced there - the behavioural
 // half of this property is tests/in_extremis.js 6b, on assess's own reason string.
-// ⚠ COMMENTS STRIPPED FIRST, and the check caught itself needing that: the note in the
-// page that RECORDS the old wording contains the very phrase being forbidden, so a raw
-// source match reported the defect as still present when only its obituary was.
-const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-const Gc = codeOnly(G);
+const Gc = codeOnly(G);   // see codeOnly at the top of this file
 check("16c. the escape banner and the Intent card quote the drift, not an asserted set",
       () => !/being set onto/.test(Gc)
             && /const driftSay =/.test(Gc)

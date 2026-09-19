@@ -3771,7 +3771,10 @@ class Engine:
         self.plan_uploaded = False
         self._staged_completion = None   # the completion a STAGED upload runs with (see upload)
         self.run = "idle"          # idle | running | paused | stopped | complete
-        self.behavior = "survey"   # survey | goto | rth | hold (active behavior)
+        # ⚠ THE LIST WAS STALE: `escape` has been a behavior since the guard was given the
+        # helm, and `/api/cmd/escape` sets it (see the escape route). A comment that omits the
+        # one behavior the CONSOLE commands on its own authority is the one worth having.
+        self.behavior = "survey"   # survey | goto | rth | hold | escape (active behavior)
         # ⚠ WHICH COMMANDED MOTION THIS IS (review #23, 2026-09-15). Andy: "`runElapsed` spans back-to-back runs" -
         # measured at 3:48 across two Go-Tos. The page had nothing else to key the clock on: `run` is "running" for
         # both, because _run_route sets it unconditionally, so a Go-To commanded while another is under way produces

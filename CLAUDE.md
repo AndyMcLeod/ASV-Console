@@ -66,6 +66,31 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 DONE AND COMMITTED. ITEM 4 IS NEXT** — the LAUNCH GRANT for the berth cases; its design, its 16 rules and the
 5 decisions that are his are already written up in `DEPARTURE_PARADIGM.md`, and his axiom below is the frame.
 
+* **⇒ ITEM 4 IS STARTED: STAGE 0, THE BLIND READOUT, IS DONE.** `groundVel(null, sog)` returns null - which is
+  what a STOPPED vessel reports - and `clearanceGuard` substituted `{level:"clear"}` for it. The bar keys on
+  `clear`, so it went out, and the console showed the operator the same nothing it shows in genuinely clear water
+  at the one moment it could not see. ⚠ **And it was worse than a readout:** those frames counted toward
+  `releaseSettled`, so a boat the guard had SLOWED and which then lost her course had the throttle handed back
+  after RELEASE_HOLD_MS of blindness, on frames that had measured nothing. There is now a `blind` level, ranked
+  LEVEL WITH clear so it can never read as an escalation, with its own bar (`GUARD BLIND`, the clearance it can
+  still state, and no buttons - there is no rung to proceed past) and NO 8 s banner, because a boat lying
+  alongside is blind continuously and a repeating banner teaches the operator to ignore the one that matters.
+  Held by `tests/clearance_guard.js` 15w-15z2, seven mutations, nothing surviving.
+* **⚠ ANDY'S FIVE DEPARTURE DECISIONS ARE ANSWERED** and written at the head of DEPARTURE_PARADIGM.md's OPEN
+  DECISIONS section. The two that change the build: **DEPART UNDER THE CLOCK exists** (bounded, logged, no proof
+  end), and **after a stop at the berth the console keeps standing down** - it never steers her off a berth a
+  person put her on. The other three took the documented recommendations.
+* **⚠⚠ AND THE PARADIGM'S VERIFICATION PLAN WAS WRONG ABOUT THE REPO.** It says the ENC extracts those sessions
+  were flown against are NOT here. They are: `charts/enc/features_v5_<bbox>.json`, and a model rebuilt from them
+  reproduces the console's own logged `hold_clear_m` to 4 mm. Andy's call: build the replay from the REAL
+  extracts, **PER UPLOAD WINDOW**. ⚠ Per window is not a detail - **sessions span several ports** (130610 is
+  Pago Pago AND New Castle; 100307 is Erie AND New Castle; 102925 is Pago Pago AND Erie), so one extract per
+  session mis-charts three of seven and the off-chart frames read `clear` for want of FEATURES, not of hazard.
+  I made that mistake in an occupancy replay this session; the like-for-like ratio survives it, the absolute
+  rung levels do not.
+* **⚠ AND A MUTATION RUNNER THAT MISREADS A FAIL AS A PASS IS A BROKEN INSTRUMENT.** Mine used the id pattern
+  `[0-9]+[a-z]*\.`, which cannot parse `15z2.` - so three real FAILs were scored as SURVIVED and each looked
+  like a coverage gap. Allow digits AFTER the letters.
 * **⇒ ITEM 3, THE PLANNER/GUARD SEAM: HIS CHOICE OF FOUR, WHICH WAS "MAKE THE PLANNER CLIP TO WHAT THE GUARD
   NEEDS".** What the seam was, measured: the planner clipped to the buffer to within THREE CENTIMETRES (5.03 m
   minimum waypoint clearance against a 5 m buffer, zero inside) while 96% of that plan's waypoints sat in the
@@ -146,13 +171,18 @@ DONE AND COMMITTED. ITEM 4 IS NEXT** — the LAUNCH GRANT for the berth cases; i
   line that read *"BOTH racetrack rungs removed -> both suites CRASH"* now reads **9, 9b, 10d, 11**, re-run.
   ⚠ `clearance_guard` 8/8b still crash the same way on that mutation - left alone, that suite's to fix.
 
+**⚠⚠ A SPAWNED TASK WORKS IN *THIS* WORKING TREE, ON *THIS* BRANCH — NOT IN A WORKTREE OF ITS OWN (learned twice, 2026-09-19).** Two task chips spawned from this window committed to `master` in `D:\Claude\ASV` while a commit of mine was inside its ~15-minute pre-commit hook. Both times the INDEX had been staged before their commits landed, so my commit would have REVERTED their work on every file we both touched — `CLAUDE.md` each time, plus the hook advice, the GUARDS entry and the technical manual the first time. Both were caught before the write only because `git log` was checked while the hook ran.
+
+**THE RULE: before every commit, re-check `git log --oneline -1` against the HEAD you staged from.** If it moved, stop the commit (it is still inside the hook, there is time), verify by STRING that the other work is in your working tree, `git add` again from the merged tree, rebuild any generated document from it, and diff your staged change against their added lines to prove you remove none of them. Read-modify-write edits (Edit, or read-bytes/replace/write-bytes) survive this; anything that rewrites a whole file does not. And do not run a long hook and a chip over the same tree if it can be avoided.
+
 **THE FIRST FIVE MINUTES:**
 1. Read this block, then `ESCAPE_FINDINGS.md` end to end (its turn section now carries the ESTABLISHED answer
    and the operational consequence), then `DEPARTURE_PARADIGM.md`. Do not re-derive any of it - it cost two
    workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
 2. `git log --oneline -3` and `git status`, and check nothing is listening on 8788-8799 before any live work.
-3. Item 4 is the LAUNCH GRANT. Its design is `DEPARTURE_PARADIGM.md` - read it with his axiom in mind, and
-   note that 5 of its decisions are HIS and are listed there unanswered.
+3. Item 4 is the LAUNCH GRANT. Its design is `DEPARTURE_PARADIGM.md`; **all 5 of its open decisions are now
+   ANSWERED** at the head of that section, and **STAGE 0 (the blind readout) is DONE** - what remains is
+   STAGE 1, which that file says must land whole.
 
 * **⇒ ITEM 1, THE TURN GEOMETRY: IT WAS THE INBOARD RUNG, AND THE HANDOFF'S OWN GUESS WAS WRONG.** The previous
   block said to establish whether the mirrored arc came from headings taken off the lines' stored `a->b`

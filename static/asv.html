@@ -239,6 +239,10 @@
     box-shadow:0 2px 10px rgba(0,0,0,.5);}
   .guardbar.edge{background:#7fd6a0;}
   .guardbar.helm{background:#e07a6a;color:#180806;}
+  /* BLIND is not a rung and must not look like one: no alarm color, because nothing has
+     been measured and nothing is being commanded. Grey says "the console cannot see",
+     which is a different fact from "the console is acting". */
+  .guardbar.blind{background:#8a8f96;color:#0d1117;}
   .guardbar.over{background:#9fb6c8;}
   .guardbar .gb-row{display:flex;gap:8px;align-items:center;justify-content:center;
     margin:2px 0;flex-wrap:wrap;}
@@ -1551,6 +1555,26 @@ function renderGuardBar(a, c){
   const held = guardHeldOffer();
   if(held) return renderHeldBar(bar, held);
   if(!a || a.level === "clear"){ bar.style.display = "none"; return; }
+  // ⚠ BLIND IS ITS OWN BAR, AND IT SAYS WHAT IS NOT HAPPENING (2026-09-19). It is not a
+  // rung: nothing is being commanded and nothing is being offered, because nothing has been
+  // measured. What the operator needs is the one fact the console has - that it cannot see -
+  // and the clearance it CAN still state, which is a distance from a model and needs no
+  // course. Before this the bar simply went out and the console showed the same nothing it
+  // shows in genuinely clear water.
+  if(a.level === "blind"){
+    bar.className = "guardbar blind";
+    bar.style.display = "block";
+    $("#gb_rung").textContent = "GUARD BLIND";
+    $("#gb_why").textContent = ((c && c.m != null)
+        ? c.m.toFixed(1) + " m off " + (c.kind || "a keep-out") + " · " : "")
+      + "no course over the ground, so nothing ahead is being assessed — the clearance is "
+      + "still measured, the look-ahead is not";
+    // No buttons: there is no rung to proceed past and nothing to hand back. Offering
+    // PROCEED against a measurement that was never taken is the worst button on the page.
+    $("#gb_low").style.display = "none";  $("#gb_proceed").style.display = "none";
+    $("#gb_cancel").style.display = "none"; $("#gb_drop").style.display = "none";
+    return;
+  }
   const over = !!guardOverride;
   const slow = over && !!guardOverride.slow;
   bar.className = "guardbar" + (over ? " over" : (a.level === "edge" ? " edge"
@@ -1841,15 +1865,30 @@ function clearanceGuard(){
   // the water carrying the boat in.
   const settling = Date.now() - guardEdgeAt < EDGE_REASSESS_MS;
   const wantEdge = !settling && edgeSpentM < edgeCapM(buf);
+  // ⚠⚠ NO COURSE IS BLIND, NOT CLEAR, AND IT USED TO READ CLEAR (2026-09-19, stage 0 of the
+  // departure work). `groundVel(null, sog)` returns null (guard.js) whenever the vessel
+  // reports `cog_deg: null` - which is exactly what a STOPPED boat reports - so the guard
+  // cannot project anything at all. It substituted `{level:"clear"}`, the bar went out on
+  // `level === "clear"`, and the console told the operator the water ahead was clear at the
+  // one moment it could not see. That is the state a boat alongside a pier is in.
+  //
+  // ⚠ AND IT WAS WORSE THAN A WRONG READOUT: `releaseSettled(a.level === "clear", ...)`
+  // below counted those frames, so a boat that was SLOWED by the guard and then lost her
+  // course over the ground had the throttle handed back after RELEASE_HOLD_MS of blindness,
+  // on the strength of frames that had measured nothing. A blind frame is not evidence of
+  // clear water and must not advance that dwell.
   const a = vel ? guardAssess(p, vel, drift, nogo.ko, buf, {...(trk||{}), edge: wantEdge})
-                : {level:"clear", tEntry:null};
+                : {level:"blind", tEntry:null,
+                   why:"no course over the ground - nothing ahead is being assessed"};
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
   clearance.onPlan = !!a.onPlan;
   // ⚠ A VIEW-ONLY TAB ASSESSES AND ALARMS, BUT DOES NOT COMMAND (review #14): the bar above is already drawn, so a
   // second tab shows the same ladder and the same hazard - it just does not fight the supervising tab for the boat.
   const act = !!(S && S.armed && !S.estop) && supervising();
   const rose = a.level !== "clear" && a.level !== guardLevel;
-  const RUNG = {clear:0, edge:1, slow:2, hold:3, helm:4};
+  // `blind` sits at the bottom with `clear` so it can never read as an ESCALATION - it is
+  // the absence of a judgement, not a rung - but it is not `clear` anywhere else.
+  const RUNG = {blind:0, clear:0, edge:1, slow:2, hold:3, helm:4};
   const escalated = RUNG[a.level] > RUNG[guardLevel];
   // ⚠ ONE CALL, ABOVE THE BRANCH, AND THAT PLACEMENT IS THE WHOLE GUARANTEE. The dwell has
   // to restart every time the water goes bad, and a reset written on the not-clear path is a
@@ -1917,7 +1956,12 @@ function clearanceGuard(){
 
   // SAY IT, EVERY 8 s WHILE IT LASTS. A one-shot banner scrolls away and the boat is still
   // standing into it; a per-frame one is unreadable.
-  if(escalated || Date.now() - clearAlarmAt > 8000){
+  // ⚠ EXCEPT WHEN BLIND, WHICH IS A STATE AND NOT AN EVENT. A boat lying stopped reports
+  // no course for as long as she lies there, so an 8-second banner would repeat for the whole
+  // time she is alongside and teach the operator to ignore the banner that matters. The BAR
+  // carries it instead - persistent, in view, and silent - which is the right surface for a
+  // condition rather than an occurrence.
+  if(a.level !== "blind" && (escalated || Date.now() - clearAlarmAt > 8000)){
     clearAlarmAt = Date.now();
     const t = a.tEntry != null ? " in " + a.tEntry.toFixed(0) + " s" : "";
     showBanner("⚠ " + a.level.toUpperCase() + " — " + (c.kind || "a keep-out") + " ahead"
