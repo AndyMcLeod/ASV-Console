@@ -113,10 +113,17 @@ instantaneous COG mid-pirouette is exactly what the guard's reach test projects 
 H1, and it is why the turns were worth doing first.
 
 Joints over 90 degrees, counted over whole plans: Honolulu route 38 of 413; `bak5` 10; `bak4` 4;
-`bak1` 6. ⚠ **Those counts are TWO defects, not one.** On Honolulu only 8 of the 38 come from the four
-inboard turns; **19 more are reversal pairs that shipped with ZERO turn points** — the straight-180 class
-that falls outside the reversal gate. That is the still-open "staggered reversals judged as hops" chip
-and this work does NOT fix it.
+`bak1` 6. ⚠ **Those counts are THREE defects, not one**, and all 38 of Honolulu's are now attributed:
+
+| cause | joints | pairs |
+|---|---|---|
+| inside an INBOARD turn — **the only one this work fixes** | 8 | 4 |
+| at a ZERO-TURN reversal join (the straight-180 class outside the reversal gate) | 19 | 19 |
+| approach / region-hop junctions (vertices 14, 32, 36, 42, 70, 301, 304, 329, 332, 365, 397) | 11 | — |
+
+**So this removes 8 of the 38.** The 19 are the still-open "staggered reversals judged as hops" chip.
+The 11 are a class nobody has looked at: they are not reversals, so no turn is generated for them at all,
+and `pruneJunctionKnots` reaches only the ones that came out of `routeAround`.
 
 **Why nothing caught it:** `turnFlyable` (static/js/turns.js) asks whether the *projected track clears
 keep-outs*, not whether the hull can *join* the shape — measured, it passed **120 of 120** cusped shapes.

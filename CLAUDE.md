@@ -99,9 +99,13 @@ asserts that the code has not established.
   off her route. It asked for a 165-deg reversal at the join, which cost her half her way (sog 1.98 -> 0.94 kn,
   recorded) and swung her COG ~205 deg, and an instantaneous COG mid-pirouette is what the guard's reach test
   projects on. **That is item 2's territory, not item 1's** - do not claim the turn fix closes the escapes.
-* **⚠ THE 38 OVER-90-DEGREE JOINTS AT HONOLULU WERE TWO DEFECTS.** Only 8 came from the four inboard turns;
-  **19 more are reversal pairs that shipped with ZERO turn points** - the straight-180 class outside the
-  reversal gate. That is the still-open "staggered reversals judged as hops" chip and this work does NOT fix it.
+* **⚠ THE 38 OVER-90-DEGREE JOINTS AT HONOLULU WERE THREE DEFECTS, AND THIS FIXES 8 OF THE 38.** Every one
+  is now attributed: **8** inside the four inboard turns (fixed here); **19** at reversal pairs that shipped
+  with ZERO turn points - the straight-180 class outside the reversal gate, i.e. the open "staggered
+  reversals judged as hops" chip; **11** at approach / region-hop junctions (vertices 14, 32, 36, 42, 70,
+  301, 304, 329, 332, 365, 397), a class nobody has looked at - they are not reversals, so no turn is
+  generated for them at all, and `pruneJunctionKnots` reaches only the ones `routeAround` produced.
+  **Do not report this fix as closing the over-90 count.**
 * **⚠⚠ AND THE FIRST DRAFT OF THE NEW CHECKS HAD NO TEETH AT ALL.** `tests/turn_geometry.js`'s `check()` took a
   plain value, not a thunk - every other turn suite takes `() => ...` - so six new checks printed "ok" while
   evaluating nothing, and three mutations SURVIVED. Found only by running the mutations. The helper is
