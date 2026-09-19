@@ -55,9 +55,60 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-16, evening — Add to plan now REFUSES an unflyable reversal (Andy's call); supervision (#14) FIXED; #30 waits on him; the Eastport question is OPEN)
+## ⇒ START HERE (handoff refreshed 2026-09-19 — THE ESCAPES ARE DIAGNOSED AND NOTHING IS FIXED: read `ESCAPE_FINDINGS.md`, then `DEPARTURE_PARADIGM.md`, then pick the order of work with Andy)
 
 ### ➤ PICK UP HERE
+
+**HANDOFF, 2026-09-19, TO THE WINDOW ANDY NAMED "ASV Console Refinement". START WITH THIS BLOCK AND THE TWO NEW
+DOCUMENTS; the 09-16 block under it is the last code that landed.**
+
+**THE FIRST FIVE MINUTES IN THAT WINDOW:**
+1. Read `ESCAPE_FINDINGS.md` end to end, then this block, then `DEPARTURE_PARADIGM.md`. Do not re-derive any of
+   it - it cost two workflows and 3.5M subagent tokens, and its numbers are measured, not reasoned.
+2. `git log --oneline -3` and `git status` (expect clean at the docs commit), and check nothing is listening on
+   8788-8799 before any live work.
+3. Put the ORDER OF WORK question to Andy before building anything. My recommendation, in his words on the day:
+   the TURNS first (a plan defect, in his current plans, independent of the guard), then the helm rung's
+   selection test, then the planner/guard seam, then the launch grant, then the New Castle chart ink.
+4. If he takes the turns: start by establishing WHY the arc is mirrored (see the bullet below), with a node
+   harness over `mission.json.bak5` and the page's own `teardropTurn` / `turnWithRetry` - not by reading alone.
+
+* **ANDY: "start with the escapes."** His console had been taking the helm on his own runs. Investigated with
+  two agent workflows (7 agents on the recordings and the guard path, 9 on the design). **NO CODE CHANGED.** Two
+  documents were added and committed: **`ESCAPE_FINDINGS.md`** (the evidence, the ranked causes, what was tested
+  and killed, and the recommended order of work) and **`DEPARTURE_PARADIGM.md`** (the LAUNCH GRANT design, its 16
+  rules, and 5 decisions that are Andy's). READ THE FIRST BEFORE THE SECOND: the paradigm answers 2-4 of the 11
+  escapes, not the largest class.
+* **STATE:** `master` clean and pushed at the docs commit; the last CODE commit is still `035878f1` (the
+  Add-to-plan refusal) + its handoff `7da910c9`; 91 suites. His mission.json / ports.json / comms_config.json
+  untouched by any of this.
+* **⚠ HIS AXIOM, AND IT IS THE FRAME FOR THE WHOLE DEPARTURE PROBLEM (2026-09-19):** *"Assume all starts are close
+  to a pier or other feature. Assume this for water depth, too. If a user places the ASV in the water for a mission
+  start, it is by definition safe."* The console may not treat the launch point - structure OR charted depth - as a
+  hazard. It owns only how far that grant extends, what ends it, and what still protects inside it.
+* **⚠ STANDING PERMISSION, 2026-09-19:** *"console is not live. feel free to wipe any mission you need to wipe."*
+  His console was OFF all day (nothing on 8788-8799) and he has authorised wiping missions for reproduction. That
+  suspends the usual never-touch-his-plan rule FOR AS LONG AS THE CONSOLE IS OFF - check the ports first, and
+  `--state-dir` is still the cheaper habit.
+* **THE FOUR CORRECTIONS THE EVIDENCE FORCED ON MY OWN FIRST REPORT** (all four were stated to Andy and corrected
+  to him; do not re-import them): there are **11** escapes in the record, not 6; only **2 of 11** came within 2 s of
+  Start; **every** reconstructed escape was on a PUNCHED plan (the one un-punched plan ran 30 min clean); and a
+  stopped boat cannot be assessed at all (`cog` null -> `groundVel` null -> the guard reads CLEAR), so "it escaped
+  before she moved" was wrong - she had just begun to move.
+* **THE FINDING I VERIFIED BY HAND AND WOULD START FROM: THE GENERATED TURNS ARE MIRRORED.** A punched turn ships
+  with a ~172 degree snap at BOTH joins (Honolulu route and `mission.json.bak5`, `bak4`, `bak1` - measured). The arc
+  is correctly ordered and correctly placed between the two line ends, but its entry tangent matches the OUTGOING
+  line's stored direction and its exit tangent the INCOMING one, so it bulges to the wrong side. Reversing the point
+  order makes it worse (10 bad joints -> 12), so the shape itself is mirrored; the suspected origin is the pair's
+  headings coming from the lines' stored `a->b` rather than the FLOWN direction after `regionOrder` re-orients them
+  - UNVERIFIED. Nothing catches it: `turnFlyable` asks whether the projected track CLEARS keep-outs, not whether the
+  hull can TRACK the shape, and `junctionKnot` (>150 deg with <12 m) is applied only to routed detours, never to
+  generated turns.
+* **OPEN, EACH WRITTEN UP IN ESCAPE_FINDINGS.md:** the 2026-09-16 morning session (4 escapes in 5 starts) is
+  reconstructed by nobody; New Castle's two escapes do NOT reproduce from the ENC and need the chart ink rebuilt;
+  the helm rung is a REACH test with no dwell (it fired on a 5 cm buffer clip at Honolulu); the planner clips to
+  the buffer while the guard alarms 3-12x further out; escapes chain because the escape point never has to survive
+  the guard's own test.
 
 **HANDOFF, 2026-09-16. READ THIS BLOCK FIRST, THEN THE 09-15 ONE UNDER IT (how items are built still holds).**
 
