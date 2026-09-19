@@ -34,6 +34,15 @@
 // turn in every existing plan already flies, and nobody reported a problem with those.
 // This shape is what to fly when the gentle one has been REFUSED.
 //
+// ⚠ AND SINCE 2026-09-19 IT ALSO HOLDS FLYABILITY AT THE LADDER, which is a thing no
+// ladder-level fixture held between the join gate landing and 10d being built. `turnFlyable`
+// asks whether the track the HULL WOULD FLY clears the keep-outs, projected by the runtime
+// guard's own integrator; `legClear` asks whether the drawn POLYLINE does. 10d is a shape
+// where those two answer differently and the ladder has to take the flown answer - and 10e
+// is the same pile moved to where the flown answer agrees, so "refuses everything" cannot
+// pass either. 10b was the check that used to do this and no longer does; its own note
+// says so, and the two sit next to each other for that reason.
+//
 // TEETH - ten mutations RUN against a sidecar copy, and the predictions were corrected by
 // what the runs printed rather than the other way round:
 //
@@ -48,9 +57,13 @@
 // asserts the opposite of what it did (see its own note) and three of them named it. These
 // are the results that run printed, not the old predictions - cg = clearance_guard:
 //
-//   BOTH racetrack rungs removed from the ladder         -> both suites CRASH
-//        (it used to read "racetrack rung removed -> 9, 9b, 10". Removing only the
-//        survey-speed one is INERT: the minRSlow racetrack below it still answers.)
+//   BOTH racetrack rungs removed from the ladder         -> 9, 9b, 10d, 11; cg CRASHES
+//        (re-run 2026-09-19 EVENING. It used to read "both suites CRASH", and THIS suite
+//        no longer does: 9b's detail line dereferenced a refusal, so it threw before
+//        check 9's red could be printed - see the note at 9b. clearance_guard 8/8b still
+//        crash the same way, which is that suite's to fix. It also used to read
+//        "racetrack rung removed -> 9, 9b, 10"; removing only the survey-speed one is
+//        INERT, re-confirmed, because the minRSlow racetrack below it still answers.)
 //   racetrack rungs moved BELOW the inboard one          -> 9      (was 8, 9, 9b, 10)
 //   BOTH inboard rungs deleted                           -> 10b, 11; cg 10, 11
 //   only ONE inboard rung deleted                        -> the first: INERT;
@@ -58,6 +71,44 @@
 //   turnJoinable dropped from the ladder                 -> 10
 //   turnJoinable always true                             -> 10, 10c
 //   an omitted `fly` opts out of the join test           -> 10
+//
+// ⚠ THE FLYABILITY LINES ARE THE 2026-09-19 EVENING RUN, against the same sidecar clone,
+// and they are why 10d and 10e exist at all. Recorded from what each run PRINTED, the
+// predictions written after rather than before. All four suites were run against every
+// one - tg = turn_geometry, cg = clearance_guard, tr = turn_refusal - and cg and tr were
+// GREEN on all of them except the always-FALSE line, which is noted where it sits:
+//
+//   turnFlyable always true                              -> 10d;  tg 47, 47b
+//        THE HEADLINE. This is the mutation 10b cannot see, and 10d is the only
+//        ladder-level check in the estate that reds on it.
+//   turnFlyable dropped from the ladder's gate           -> 10d;  tg 50
+//   turnFlyable always FALSE - it refuses everything     -> 8, 9, 9b, 10a, 10d, 10e;
+//                                                           tg 43, 46, 47; tr 1-14;
+//                                                           cg CRASHES at 7/8/8b
+//        This is the one 10e is for: an acceptance is what stops "refuses everything"
+//        from passing a refusal check. It is also the bluntest mutation in the set - a
+//        console that can build no turn at all - so the breadth of the red is expected
+//        and says nothing about 10e on its own. What it does establish is that 10e is
+//        not inert.
+//   the projection ignores the hull's approach radius    -> 10d ALONE - tg is GREEN,
+//        and reads a flat 1 m                               because every fixture there
+//                                                           is already a 1 m hull.
+//   thinTrack removed: the dense shape is shipped        -> 9, 9b;  tg 46
+//   flyability judged on the shape as BUILT while the    -> 9, 9b ALONE - tg is GREEN
+//        THINNED one ships
+//   turnJoinable always true                             -> 10, 10c, and 10d/10e stay
+//                                                           GREEN. That is the point of
+//        10d: the gate refusing its fixture is the flyability one, not the join one, and
+//        this is the run that establishes it rather than the comment claiming it.
+//
+// TWO ARE INERT HERE, and both for a reason worth knowing rather than a gap:
+//
+//   an omitted `fly` disarms turnFlyable                 -> tg 48 only. NO ladder fixture
+//        can catch it: turnWithRetry synthesises `{...(fly||{}), spdKey}` for every rung,
+//        so what reaches turnFlyable is always a truthy object however the caller left it.
+//   the horizon capped at the guard's 45 s               -> tg 47b only. 10d's arc is
+//        93.8 m, which is 26 s at 7 kn, so the cap cannot bite on this fixture. 47b uses
+//        a 94 m arc for exactly that reason and is where the property lives.
 //
 // ⚠ AND DELETING BOTH INBOARD RUNGS NO LONGER CHANGES A PLAN, only these fixtures.
 // turnJoinable refuses every shape they produce (tests/turn_geometry.js 50-57), so the
@@ -92,8 +143,9 @@ process.on("unhandledRejection", __crash);
 const { azTo, planeFrame } = require("../static/js/geodesy.js");
 const { bbOf } = require("../static/js/geometry.js");
 const { SKEW_LIMIT_DEG } = require("../static/js/core_turns.js");
-const { racetrackTurn, teardropTurn, turnJoinable,
-        turnWithRetry } = require("../static/js/turns.js");
+const { legClear } = require("../static/js/chart.js");
+const { minTurnRadiusM, racetrackTurn, teardropTurn, thinTrack, trackGapM,
+        turnJoinable, turnWithRetry } = require("../static/js/turns.js");
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -246,10 +298,17 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
         () => t.pts && t.kind === "racetrack" && t.side === "outboard" && t.rung === 2,
         "gentle arc: " + (old.pts ? "ok" : "refused (" + old.why + ")")
           + " -> ladder gives " + t.kind + "/" + t.side + " on rung " + t.rung);
+  // ⚠ THE DETAIL IS BUILT BEFORE check() IS CALLED, so it may not dereference a refusal.
+  // `reach` returns null for a turn that was not produced, and this line used to read it
+  // blind: every mutation that made THIS ladder refuse crashed the suite here instead of
+  // reporting check 9's red, which is a check that stops being readable exactly when it
+  // matters. Two of the 2026-09-19 mutations landed on it.
+  const g9 = reach(t);
   check("9b. ... it stays clear of the wharf, and never crosses back over the survey",
         () => t.pts && t.pts.every((p) => F.toEN(p).n < 6 - BUF) && reach(t).backOverSurvey < 0.5,
-        (t.pts || []).length + " waypoints, max reach " + reach(t).fwd
-          + " m against a wharf at 6 m, " + reach(t).backOverSurvey + " m back over the survey");
+        g9 ? t.pts.length + " waypoints, max reach " + g9.fwd
+             + " m against a wharf at 6 m, " + g9.backOverSurvey + " m back over the survey"
+           : "the ladder produced no turn at all (" + t.why + "), so there is nothing to measure");
 
   // 10. ⚠⚠ THIS CHECK USED TO DEMAND THE OPPOSITE, AND IT WAS PASSING FOR THE WRONG
   // REASON (rewritten 2026-09-19). It read "when even the tight shape will not fit, it
@@ -322,16 +381,14 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
   // until 2026-09-16 the refusal here was shipped as the straight leg after all. Shipping an
   // unflyable loop next to the one feature that refused it is the wharf incident itself.
   //
-  // ⚠⚠ THIS CHECK NO LONGER ISOLATES `turnFlyable`, AND SAYING SO IS THE POINT (2026-09-19).
+  // ⚠⚠ THIS CHECK DOES NOT ISOLATE `turnFlyable`, AND SAYING SO IS THE POINT (2026-09-19).
   // It was written as "where nothing can be TRACKED it refuses" and its fixture reaches
   // that verdict through the INBOARD shape - the only one whose extent fits at 3.5 m. Now
   // that turnJoinable refuses that shape first, on its tangents, the flyability test is no
   // longer what decides here: MEASURED, neutering turnFlyable entirely leaves this check
-  // GREEN. What still holds the flyability property is tests/turn_geometry.js 46, 47 and
-  // 47b, which exercise it directly and DO red under that mutation. A fixture that isolates
-  // it at the LADDER level - a shape that joins both lines but whose flown track cuts into
-  // something - was looked for and not found in the obvious places (a pile inside the loop
-  // just pushes the ladder to the racetrack); it is worth building, and is not built.
+  // GREEN. The property is held directly by tests/turn_geometry.js 46, 47 and 47b, and
+  // AT THIS LADDER by 10d/10e below, which were built for that gap the same day - the
+  // note here used to end "it is worth building, and is not built".
   const noneFly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
                                 MIN_R, MAXHALF, MIN_R_SLOW);
   const geomOnly = turnWithRetry(E, at(SPACING), 0, 180, F, slab(3.5, 40), BUF,
@@ -343,6 +400,119 @@ console.log("Direct (racetrack) reversal — the shape a boat with a tight helm 
           + ") and the ladder still gives up: "
           + (noneFly.pts ? "SHIPPED ANYWAY" : "refused (" + noneFly.why + ")")
           + " — though it is now the JOIN gate refusing it, not the flyability one");
+
+  // 10d-10e. FLYABILITY, ISOLATED AT THE LADDER — the check 10b above stopped being.
+  //
+  // 10b reaches its verdict through the JOIN gate, so `turnFlyable` can be neutered and
+  // 10b stays green. This pair is the fixture that isolates flyability instead: a
+  // semicircle TANGENT TO BOTH LINES (turnJoinable passes it) whose every chord is lawful
+  // water (legClear passes it, on the thinned chain the ladder actually tests), which the
+  // ladder leaves anyway — because the track the HULL would fly cuts across the inside of
+  // its own loop and onto a pile the drawing clears. The two numbers, each measured where
+  // the CODE measures it: the pile is 3.57 m off the drawn polyline (legClear's own
+  // nearest sample of it, 3.68 m, is what passes the chord), and the projection's own
+  // integration steps bring the hull to 2.32 m of it — 0.68 m inside a 3 m buffer.
+  //
+  // ⚠ IT IS NOT THIS FILE'S HULL, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.
+  // Since `thinTrack` put a floor under the waypoint spacing there is no dense-sampling
+  // pathology left to exploit (that is turn_geometry 47's fixture, and it is 94 waypoints
+  // 0.2 m apart - a spacing the ladder can no longer emit). What is left is the corner the
+  // boat cuts because it steers at the NEXT waypoint from the moment it is within the
+  // approach radius of this one, and that scales as approach² / radius. Measured over
+  // fourteen line spacings from 2.5x to 9x each hull's own minimum radius and 69 bearings
+  // round each loop, the widest band of water anywhere that is more than a 3 m buffer from
+  // the DRAWN polyline and less than one from the FLOWN track is:
+  //
+  //     small-class boat  approach 1.0 m, 60°/s, 3.0 kn, minR 2.06 m    0.38 m
+  //     mid-size USV      approach 3.0 m, 25°/s, 4.5 kn, minR 7.43 m    0.96 m
+  //     8 m survey USV    approach 6.0 m, 20°/s, 7.0 kn, minR 14.44 m   1.96 m
+  //
+  // A fixture on this file's own hull would have to stand a pile inside a 0.38 m band.
+  // That is a knife edge, it tells a reader nothing, and any change to the arc step would
+  // flip it. So this pair borrows the 8 m profile — a hull this console models and builds
+  // these same shapes for — and hands V back afterwards.
+  //
+  // ⚠ BOTH EDGES OF THE WINDOW ARE MEASURED AND THE PILE SITS IN THE MIDDLE OF IT. Walking
+  // the pile north at e = 19.6 m, 60 m line spacing, 3 m buffer:
+  //     n ≤ 23.45         the flown track clears it too and rung 1 ships — that is 10e
+  //     n 23.50 … 24.90   drawn clear, flown foul: the window, 1.40 m of it
+  //     n ≥ 24.95         the drawn polyline is fouled and teardropTurn itself refuses
+  // The pile is at n = 24.2, 0.70 m from either edge. At that spacing the flown track
+  // leaves the drawn one by up to 1.46 m, which is the whole budget this fixture spends.
+  {
+    const sav = { s: V.SPEED_KN, r: V.MAX_TURN_RATE_DEG_S, v: V.VESSEL };
+    // The 8 m survey USV profile's own numbers (vessels/drix08.json). minR and the slow
+    // radius are DERIVED from them rather than typed, so a change to the tracking margin
+    // moves the fixture with the hull instead of leaving it describing a boat that is gone.
+    V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 };
+    V.MAX_TURN_RATE_DEG_S = 20;
+    V.VESSEL = { maneuvering: { approach_m: 6.0 } };
+    const R8 = minTurnRadiusM("survey"), R8_SLOW = minTurnRadiusM("low");
+    const SP8 = 60, HALF8 = Math.max(60, SP8 * 1.6), NXT = at(SP8);
+    const pile = (e, n) => ({ polys: [], lines: [],
+                              points: [{ e, n, r: 0, kind: "a pile" }],
+                              marks: [], sys: [], chans: [] });
+    // Rung 1's shape as the LADDER hands it on: built, then thinned to the approach radius.
+    // turnWithRetry verifies the THINNED chain, so that is the chain to ask legClear and
+    // turnJoinable about — the dense one it started from is a different route.
+    const rung1 = (ko) => {
+      const r = teardropTurn(E, NXT, 0, 180, F, ko, BUF, R8, HALF8);
+      return r.pts ? thinTrack([E, ...r.pts, NXT], trackGapM({ spdKey: "survey" }), F) : null;
+    };
+    const ladder = (ko, fly) =>
+      turnWithRetry(E, NXT, 0, 180, F, ko, BUF, R8, HALF8, R8_SLOW, 0, fly);
+    /** Meters from the pile to the polyline the punch would draw. */
+    const offLine = (p, chain) => {
+      if (!chain) return NaN;
+      const q = chain.map((x) => F.toEN(x));
+      let best = Infinity;
+      for (let i = 1; i < q.length; i++) {
+        const de = q[i].e - q[i-1].e, dn = q[i].n - q[i-1].n, L2 = de * de + dn * dn;
+        const t = Math.max(0, Math.min(1, L2 > 1e-9
+                  ? ((p.e - q[i-1].e) * de + (p.n - q[i-1].n) * dn) / L2 : 0));
+        best = Math.min(best, Math.hypot(p.e - (q[i-1].e + t * de),
+                                         p.n - (q[i-1].n + t * dn)));
+      }
+      return best;
+    };
+    const IN = { e: 19.6, n: 24.2 }, OUT = { e: 19.6, n: 23.0 };
+
+    const koIn = pile(IN.e, IN.n), chIn = rung1(koIn);
+    let chordsIn = !!chIn;
+    for (let i = 1; chordsIn && i < chIn.length; i++)
+      chordsIn = legClear(chIn[i-1], chIn[i], F, koIn, BUF);
+    const joinsIn = !!chIn && turnJoinable(E, NXT, chIn.slice(1, -1), 0, 180);
+    const flew = ladder(koIn), drew = ladder(koIn, false);
+    check("10d. ... and THIS is the flyability gate alone: the drawn loop clears the pile, the flown track does not",
+          () => chordsIn && joinsIn === true
+                && flew.pts && flew.kind === "racetrack" && flew.side === "outboard"
+                && flew.rung === 2
+                && drew.pts && drew.kind === "semicircle" && drew.rung === 1,
+          "a pile " + offLine(IN, chIn).toFixed(2) + " m off a " + (chIn || []).length
+            + "-point semicircle at a " + BUF + " m buffer: every chord clear ("
+            + chordsIn + "), tangent to both lines (" + joinsIn + ") — and the ladder "
+            + "still leaves rung 1 for "
+            + (flew.pts ? flew.kind + "/" + flew.side + " on rung " + flew.rung
+                        : "REFUSED (" + flew.why + ")")
+            + ", where with the flyability check off the same water ships "
+            + (drew.pts ? drew.kind + " on rung " + drew.rung
+                        : "REFUSED (" + drew.why + ")"));
+
+    // 10e. THE ACCEPTANCE. "Refuses everything" would pass 10d too. Move the same pile
+    // 1.2 m deeper inside the loop — further from BOTH the drawn line and the flown one —
+    // and rung 1 comes back unchanged. The gate refuses a shape, not every shape.
+    const koOut = pile(OUT.e, OUT.n), chOut = rung1(koOut);
+    const kept = ladder(koOut);
+    check("10e. ... and with the pile where the boat's own track clears it, rung 1 ships unchanged",
+          () => kept.pts && kept.kind === "semicircle" && kept.side === "outboard"
+                && kept.rung === 1,
+          "the same pile walked from n=" + IN.n + " to n=" + OUT.n + " — "
+            + offLine(IN, chIn).toFixed(2) + " m off the drawn line to "
+            + offLine(OUT, chOut).toFixed(2) + " m — and the ladder gives "
+            + (kept.pts ? kept.kind + "/" + kept.side + " on rung " + kept.rung + ", "
+               + kept.pts.length + " waypoints" : "REFUSED (" + kept.why + ")"));
+    V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
+  }
 
   // 11. And when there is genuinely nothing, it is refused as unsafe with rung ONE's
   // reason - the turn the operator expected, and the feature that took it away.

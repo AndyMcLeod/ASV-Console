@@ -66,6 +66,37 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 COMMITTED. ITEM 2 IS NEXT** — the helm rung: reach versus danger, no dwell, no margin, and a cause the banner
 asserts that the code has not established.
 
+* **NEWEST, 2026-09-19 (LATE): THE FLYABILITY FIXTURE ITEM 1 LEFT OWING IS BUILT — `direct_turn.js` 10d/10e.**
+  TESTS AND DOCS ONLY; **no behavior changed, nothing on his machine moves, no reload needed.** When `turnJoinable`
+  landed it took 10b's verdict off `turnFlyable`, so the flyability test could be deleted outright and every
+  ladder-level check stayed green. 10d is the fixture that isolates it: a semicircle TANGENT TO BOTH LINES
+  (turnJoinable passes it) whose every chord is lawful water (legClear passes it, on the thinned chain the ladder
+  really tests), with a pile inside its own loop **3.57 m off the drawn polyline and 2.32 m off the flown track,
+  at a 3 m buffer** - so the drawing clears it and the boat does not, and the ladder must leave rung 1 for the
+  racetrack. 10e is the same pile 1.2 m deeper in, where the flown track clears it too and rung 1 comes back.
+* **⚠ THE FIXTURE IS NOT THE SMALL-CLASS BOAT, AND THAT IS THE MEASUREMENT, NOT A CONVENIENCE.** With `thinTrack`
+  flooring the waypoint spacing there is no dense-sampling pathology left to exploit (that is `turn_geometry` 47's,
+  and it needs 0.2 m vertices the ladder can no longer emit). What is left is the corner a hull cuts because it
+  steers at the NEXT waypoint from the moment it is within the approach radius of this one, which scales as
+  **approach² / radius**. Measured over 14 line spacings (2.5x to 9x each hull's own minR) and 69 bearings round
+  each loop, the widest band of water anywhere that is outside a 3 m buffer from the DRAWN line and inside it from
+  the FLOWN one is **0.38 m on the small-class boat, 0.96 m on the mid-size USV, 1.96 m on the 8 m profile**. So a
+  fixture on this file's own hull would stand inside 0.38 m - a knife edge. 10d stands on the 8 m profile (a hull
+  this console models and punches these same shapes for), saves V and hands it back. **Its own window is measured
+  at both edges: n 23.50-24.90, 1.40 m of it, and the pile sits at 24.2, 0.70 m from either side.**
+* **MUTATIONS, RUN NOT PREDICTED (all four turn suites against each):** turnFlyable always true -> **10d** (tg 47,
+  47b); dropped from the ladder's gate -> **10d** (tg 50); always FALSE -> 8, 9, 9b, 10a, **10d, 10e**; the
+  projection reading a flat 1 m approach radius -> **10d ALONE**, tg green; thinTrack removed -> 9, 9b (tg 46);
+  flyability judged on the shape as BUILT while the thinned one ships -> 9, 9b **ALONE**, tg green; **turnJoinable
+  always true -> 10, 10c and 10d/10e stay GREEN**, which is what establishes that 10d isolates flyability rather
+  than claiming it. TWO ARE INERT HERE and the header says why: an omitted `fly` (turnWithRetry always synthesises
+  a truthy `{spdKey}`, so no ladder fixture can ever see it) and the 45 s horizon cap (10d's arc is 26 s).
+* **AND ONE CHECK WAS UNREADABLE EXACTLY WHEN IT MATTERED:** 9b built its DETAIL string by dereferencing
+  `reach(t)`, which is null for a turn that was not produced - so every mutation that made THAT ladder refuse
+  crashed the suite before check 9's red could print. Two of this sweep's mutations landed on it. Fixed; the TEETH
+  line that read *"BOTH racetrack rungs removed -> both suites CRASH"* now reads **9, 9b, 10d, 11**, re-run.
+  ⚠ `clearance_guard` 8/8b still crash the same way on that mutation - left alone, that suite's to fix.
+
 **THE FIRST FIVE MINUTES:**
 1. Read this block, then `ESCAPE_FINDINGS.md` end to end (its turn section now carries the ESTABLISHED answer
    and the operational consequence), then `DEPARTURE_PARADIGM.md`. Do not re-derive any of it - it cost two
@@ -111,10 +142,10 @@ asserts that the code has not established.
   evaluating nothing, and three mutations SURVIVED. Found only by running the mutations. The helper is
   thunk-aware now and a scan confirmed no other suite had the mismatch. **Read what a check prints, and run the
   mutations before writing the TEETH list, not after.**
-* **ONE PRE-EXISTING CHECK LOST COVERAGE AND SAYS SO:** `direct_turn.js` 10b no longer isolates `turnFlyable`
-  (the join gate refuses its fixture first - measured, neutering turnFlyable leaves it green). The property is
-  still held by `turn_geometry.js` 46/47/47b. A ladder-level fixture that isolates flyability - a shape that
-  joins both lines but whose flown track cuts into something - is worth building and is not built.
+* **THE COVERAGE 10b LOST IS BACK: `direct_turn.js` 10d/10e, BUILT AND MUTATION-VERIFIED (newest block below).**
+  10b still reaches its verdict through the JOIN gate and still says so; 10d is the ladder-level fixture that
+  isolates `turnFlyable`, and neutering it reds 10d. ⚠ It is the only ladder-level check in the estate that does,
+  and the only check anywhere that catches the projection reading a flat 1 m approach radius instead of the hull's.
 
 * **ANDY: "start with the escapes."** His console had been taking the helm on his own runs. Investigated with
   two agent workflows (7 agents on the recordings and the guard path, 9 on the design). **NO CODE CHANGED.** Two
