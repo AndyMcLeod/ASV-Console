@@ -212,6 +212,18 @@ eval([
   grabDecl("HELM_DWELL_MS"),
   "let helmHoldAt = 0;",
   grab("helmSettled"),
+  // ⚠ THE LAUNCH GRANT (2026-09-19): clearanceGuard calls grantNow() every frame, above
+  // every branch. No berth is latched in this world, so it returns null and every check here
+  // exercises the OPEN regime - which is exactly what this suite should be testing.
+  "let grant = null, grantMemo = null, grantEndSay = null;",
+  "const { berthClearM, berthNeedM, grantFilter, grantProved, grantedFeatures, inCorridor,"
+  + " recessionGiveM } = require('../static/js/berth.js');",
+  "const GRANT_STANDDOWN_MS = 20000, GUARD_HELM_S = 20;",   // OVERRIDE_GIVE_M is already grabbed above
+  "let grantProofAt = 0, grantStallAt = 0;",
+  grab("berthAt"), grab("grantMembers"), grab("grantNow"),
+  // grantTick is asked every frame, above every branch - the symbol must exist even where no
+  // berth is ever latched and it returns at its first line.
+  grab("grantTick"), grab("standDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),

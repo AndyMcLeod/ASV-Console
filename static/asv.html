@@ -860,12 +860,18 @@ import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
+// THE LAUNCH GRANT - the berth, what it covers, where it applies and when it ends. Pure
+// geometry and rules; every decision about AUTHORITY is taken here in the page, where the
+// chart and the operator are.
+import { berthClearM, berthNeedM, corridorGate, corridorHalfM, grantClockMs, grantFilter,
+         grantProved, grantedFeatures, inCorridor, isBerth, isDepthKind,
+         recessionGiveM } from "/static/js/berth.js";
 import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
          HORIZON_S as GUARD_HORIZON_S, edgeCapM, guardStandoffM,
          HELM_S as GUARD_HELM_S } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
-import { HOLD_RADIUS_MIN_M, holdClearM } from "/static/js/hold.js";
+import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM } from "/static/js/hold.js";
 // Reading the CHART ITSELF, where the ENC has nothing to say. NOAA's renderer draws
 // structures its own vector service does not carry - a finger pier at New Castle, measured
 // 4.3 m from the nearest ENC object of any class. Pure: it takes pixels, and commands and
@@ -1721,6 +1727,252 @@ function releaseSettled(ok, now){
  * dwell on this rung is a delay to an emergency, so it buys exactly one thing (a second
  * opinion) and is sized for that and nothing else.
  */
+/* ── THE LAUNCH GRANT ───────────────────────────────────────────────────────────
+ *
+ * Andy's axiom, 2026-09-19: "If a user places the ASV in the water for a mission start, it
+ * is by definition safe." The console may stand down ONLY against the thing that act
+ * certified, ONLY where the planner checked the way out of it, and ONLY until the console
+ * can certify the water itself. All three, or the suppression goes.
+ *
+ * The rules are DEPARTURE_PARADIGM.md's R1-R16; static/js/berth.js holds the geometry. What
+ * lives here is the LIFECYCLE - the latch, the per-frame decision and the ends - because
+ * only the page has the chart, the route and the operator.
+ *
+ * ⚠ `grant` IS DERIVED STATE AND `S.berth` IS THE FACT. The berth is the server's (R16) so
+ * a supervision handover inherits it; everything below is recomputed from it, the live
+ * keep-out model and the live route. Nothing about a FEATURE is remembered - see R3.
+ */
+let grant = null;      // {spineEN, gateIdx, gateM, depthIdx, halfM, need0, clock, cMax, at}
+let grantMemo = null;  // {ko, berthKey, buf, need0, granted} - membership, per ko rebuild
+let grantEndSay = null;// the stand-down countdown: {t, why}
+
+/**
+ * THE LATCH IS AT THE LAUNCH AND ONLY THERE (R1).
+ *
+ * Three events, and no others: the first telemetry frame in which there is a fix, the chart
+ * model is ready, and NO motion has ever been commanded this session (`run_seq === 0`); a
+ * sim spawn, which resets run_seq so the first clause covers it; and the operator saying SHE
+ * IS BERTHED HERE.
+ *
+ * ⚠⚠ THIS SINGLE RULE IS WHAT STOPS THE WHOLE THING BEING A LICENCE, and it is checkable:
+ * a boat SET ONTO a pier at 14:30 has `run_seq > 0` and is hundreds of metres from any latched
+ * berth, so she gets NO grant and today's full ladder, including the helm. The grant covers
+ * the water a person put her in; it does not cover the water she drifted into.
+ *
+ * ⚠ AND NO GRANT IS ISSUED WHERE THE CONSOLE CAN ALREADY CERTIFY THE WATER (R2). If the
+ * launch water certifies, nothing is latched and nothing is suppressed - and that case needs
+ * no handling at all, because the guard would not have fired.
+ */
+let berthLatchTried = false;
+function maybeLatchBerth(){
+  if(berthLatchTried || berthAt()) return;
+  if(!S || S.run_seq !== 0 || !asv || !nogo.ready || !nogo.ko || !nogo.frame) return;
+  berthLatchTried = true;                       // one attempt per session-at-rest, not per frame
+  const st = (S && S.status) || {};
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  const need = berthNeedM(d ? Math.hypot(d.e, d.n) : 0);
+  const en = nogo.frame.toEN({lat: asv.lat, lon: asv.lon});
+  if(!isBerth(en, nogo.ko, nogo.buffer || 0, need)) return;   // R2: nothing to stand down against
+  cmd("/api/cmd/berth", {lat: asv.lat, lon: asv.lon, by: "launch"})
+    .then(()=>flashNote("Launch point recorded — she is alongside. The console will work out the "
+      + "way out of it when you Upload; until then nothing is standing down."))
+    .catch(()=>{ berthLatchTried = false; });   // a failed POST must not consume the one attempt
+}
+
+/**
+ * CERTIFY THE DEPARTURE AT UPLOAD, WHERE IT CAN STILL BE FIXED (R5, R6, R7).
+ *
+ * ⚠ THE REFUSALS BELONG HERE AND NOWHERE LATER. A departure that cannot be certified is
+ * otherwise discovered at START, as an escape, with the boat already moving - instead of at
+ * Upload, where the operator can still move the first waypoint, relaunch, or accept the clock.
+ *
+ * The corridor is the PLANNER'S OWN ROUTE: the berth, then `plan.route` walked to the gate.
+ * Nothing is invented - because `legClear` samples i=0, a blocked start always fails legPath's
+ * fast path and routes from routeAround's snapped free cell, so the first uploaded waypoint is
+ * already out in the water and the spine is the way the planner itself chose out of the slip.
+ *
+ * @returns {{ok:true, grant:object}} | {{refuse:string, kinds?:Array}} | {{none:true}}
+ */
+function certifyDeparture(route){
+  const at = berthAt();
+  if(!at || !nogo.ready || !nogo.ko || !nogo.frame || !route || !route.length) return {none:true};
+  const buf = nogo.buffer || 0;
+  const st = (S && S.status) || {};
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  // FROZEN AT THE LATCH, deliberately: membership keeps `need0` so a building set can make the
+  // PROOF harder (R11 uses the live need) but can never enlarge the granted set.
+  const need0 = berthNeedM(d ? Math.hypot(d.e, d.n) : 0);
+  const berthEN = nogo.frame.toEN(at);
+  if(!isBerth(berthEN, nogo.ko, buf, need0)) return {none:true};     // R2
+  const mem = grantedFeatures(nogo.ko, berthEN, buf, need0);
+  // REFUSAL 1 (R4): the only thing making this water uncertifiable is a kind no launch act
+  // could have certified. A wreck at a berth is still a wreck.
+  if(!mem.all.length && mem.ungrantable.length)
+    return {refuse: "the launch water is blocked by " + kindsSummary(
+              mem.ungrantable.map(f=>({info:{kind:f.kind}}))) + ", which a launch cannot certify",
+            kinds: mem.ungrantable.map(f=>f.kind)};
+  if(!mem.all.length) return {none:true};
+  const spineEN = [berthEN].concat(route.map(w=>nogo.frame.toEN(w)));
+  const g = corridorGate(spineEN, nogo.ko, buf, need0);
+  // REFUSAL 2 (R6): no water the console would itself hold in, within the cap the hold-point
+  // search already refuses beyond. DEPART UNDER THE CLOCK is the lever (Andy's decision 2).
+  if(!g || g.idx < 0)
+    return {refuse: "no water the console would accept as a hold point within "
+              + Math.round(snapCapM(buf)) + " m of the launch point", noGate: true,
+            spineEN, mem, need0, spineLenM: (g && g.spineLenM) || 0};
+  return {ok:true, grant: {spineEN, gateIdx: g.idx, gateM: g.m, depthIdx: g.depthIdx,
+                           halfM: corridorHalfM(V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m,
+                                                minTurnRadiusM("low")),
+                           need0, spineLenM: g.spineLenM,
+                           clock: grantClockMs(g.spineLenM, V.SPEED_KN.low || 1.5),
+                           cMax: 0, at, byClock:false, mem}};
+}
+
+/**
+ * HOW LONG THE HELM IS HELD AFTER A GRANT ENDS BADLY (R15).
+ *
+ * ⚠ NO END IS INSTANT. Handing a boat still inside a slip's buffer to a guard that commands
+ * the vessel's HIGH speed on the very next frame is the original defect with a delay on it.
+ * Where the full ladder would immediately steer, the helm rung is held for the console's own
+ * decision budget with a live count on the bar, and the operator can take it now, hold the
+ * grant, or drop it.
+ *
+ * The PROOF end is the exception and is not held at all: it is a success, it restores
+ * everything at once, and it is worded so it can never be confused with a giving-up.
+ */
+const GRANT_STANDDOWN_MS = 20000;
+let grantProofAt = 0, grantStallAt = 0;
+
+/**
+ * THE GRANT'S LIFECYCLE, ONE CALL A FRAME, ABOVE EVERY BRANCH.
+ *
+ * Ends, in the order they are tested. PROOF first because it is the only successful one and
+ * must not be pre-empted by a bound; then the three bounds.
+ *
+ * ⚠ NOTHING HERE READS A COURSE OR A SPEED OVER GROUND (R13). `groundVel(null, sog)` returns
+ * null and the guard then reads BLIND, so a lifecycle keyed on course would be deaf exactly
+ * when the boat is alongside and stopped. Every test below is a distance between two
+ * positions or a clearance computed from one. Speed enters in ONE place - the depth grant's
+ * cap in grantNow() - and there it reads a reported KEY, never a derived vector.
+ */
+function grantTick(p, buf, now){
+  if(!grant || !p) return;
+  const st = (S && S.status) || {};
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  const setMs = d ? Math.hypot(d.e, d.n) : 0;
+  // R11 - THE PROOF, and the only successful end. Asked of the UNFILTERED model with the LIVE
+  // need: both conservative, so a building set makes proof harder and can never enlarge the
+  // granted set (membership keeps the frozen need0). Held for the console's own release dwell.
+  if(grantProved(p, nogo.ko, buf, berthNeedM(setMs))){
+    if(!grantProofAt) grantProofAt = now;
+    if(now - grantProofAt >= RELEASE_HOLD_MS){
+      grantProofAt = 0;
+      endGrant("she is in water the console would have chosen as a hold point.", true);
+      return;
+    }
+  } else grantProofAt = 0;
+  // R5/PLACE - out of the corridor is out of the grant, immediately and without a stand-down:
+  // she is not where the planner checked, so there is nothing to stand down against.
+  if(!inCorridor(p, grant.spineEN, grant.gateIdx, grant.halfM)){
+    endGrant("she is outside the corridor the planner checked out of the berth.", false);
+    return;
+  }
+  // R12 - RECESSION. Measured against the GRANTED features alone, so the far bank closing is
+  // not read as giving ground to the berth. The give self-scales: a flat 5 m could never arm
+  // at a berth with 0.97 m of water, which is the one place it was needed.
+  const bc = berthClearM(p, (grantMembers() || {all:[]}).all);
+  if(bc > grant.cMax){ grant.cMax = bc; grantStallAt = 0; }
+  else if(!grantStallAt) grantStallAt = now;
+  const give = recessionGiveM(grant.cMax, OVERRIDE_GIVE_M, 0.5);
+  if(grant.cMax > 0 && bc < grant.cMax - give){
+    standDown("she is giving ground: " + bc.toFixed(1) + " m against the "
+      + grant.cMax.toFixed(1) + " m she had made.");
+    return;
+  }
+  // R14 - THE CLOCK, and the STALL. Neither hands the helm back: a boat that is not getting
+  // out but is not getting worse is a boat the operator placed and can see, and steering her
+  // off the berth she was deliberately put on is the wrong verb (Andy's decision 5).
+  if(grantStallAt && now - grantStallAt > GUARD_HELM_S * 1000 && grant.cMax < grant.halfM){
+    standDown("she is not getting clear: no ground made in " + GUARD_HELM_S + " s.");
+    return;
+  }
+  if(now - (grant.armedAt || (grant.armedAt = now)) > grant.clock){
+    const clockS = grant.clock / 1000;   // named, not inlined:  is the
+    // fingerprint tests/units_toggle.js 9 greps for as a hand-rolled km conversion.
+    standDown("the departure clock ran out after " + clockS.toFixed(0) + " s.");
+  }
+}
+
+/** A FAILURE end: stop her, say it, and hold the helm for GRANT_STANDDOWN_MS (R14, R15). */
+function standDown(why){
+  const at = Date.now();
+  cmd("/api/cmd/stop");
+  endGrant(why, false);
+  grantEndSay = {t: at, why};
+  showBanner("⚠⚠ DEPARTURE STOPPED — " + why + " She is STOPPED at the berth. The console is "
+    + "NOT steering her off it. The helm rung is held for " + (GRANT_STANDDOWN_MS/1000)
+    + " s — TAKE THE HELM NOW, or leave her and assess.");
+}
+
+/** Drop the grant and say why. Every end is announced (R15); none of them is silent. */
+function endGrant(why, ok){
+  if(!grant) return;
+  grant = null; grantMemo = null; grantEndSay = null;
+  showBanner((ok ? "✓ DEPARTURE COMPLETE — " : "⚠ LAUNCH GRANT ENDED — ") + why
+    + (ok ? " The console is watching everything again, at full authority."
+          : " The console is watching everything again, at full authority."));
+}
+
+/** The berth as the server holds it, or null. ONE instant, never re-derived (R1). */
+function berthAt(){ const b = S && S.berth; return (b && b.at && b.at.lat != null) ? b.at : null; }
+
+/**
+ * WHICH FEATURES THIS GRANT COVERS, memoised on the keep-out model's OWN IDENTITY.
+ *
+ * ⚠ THE MEMO KEY IS THE `ko` OBJECT, NOT A SIGNATURE OF IT. `rebuildNogo` replaces
+ * `nogo.ko` wholesale on 0.1 m of tide, so object identity changes exactly when the model
+ * does - and a remembered feature from the PREVIOUS model would be a gate keyed on
+ * invalidated state, which is a trap this console has already paid for once.
+ */
+function grantMembers(){
+  const at = berthAt();
+  if(!at || !nogo.ready || !nogo.ko || !nogo.frame || !grant) return null;
+  const key = at.lat + "," + at.lon;
+  if(grantMemo && grantMemo.ko === nogo.ko && grantMemo.berthKey === key
+     && grantMemo.buf === nogo.buffer && grantMemo.need0 === grant.need0) return grantMemo.granted;
+  const g = grantedFeatures(nogo.ko, nogo.frame.toEN(at), nogo.buffer, grant.need0);
+  grantMemo = {ko: nogo.ko, berthKey: key, buf: nogo.buffer, need0: grant.need0, granted: g};
+  return g;
+}
+
+/**
+ * THE REGIME THIS FRAME IS IN, and what may therefore be suppressed.
+ *
+ * Returns null in OPEN - which is the overwhelming majority of every mission and the default
+ * at every ambiguity - and then NO second model is built and no extra call is made.
+ *
+ * ⚠ THE THREE CONJUNCTS ARE ALL CHECKED HERE, every frame: IDENTITY (membership, R3/R4),
+ * PLACE (inside the corridor, R5) and LIFE (the grant has not ended). A frame that fails any
+ * one of them is today's console, byte for byte.
+ */
+function grantNow(p){
+  if(!grant || !p) return null;
+  const mem = grantMembers();
+  if(!mem || !mem.all.length) return null;
+  if(!inCorridor(p, grant.spineEN, grant.gateIdx, grant.halfM)) return null;
+  // R7: the DEPTH grant holds only while the VESSEL REPORTS low, and only as far as the
+  // depth gate. A null key with no commanded speed fails CLOSED - the depth grant is
+  // permission to run with the hull's under-keel clearance unverified, and the only speed at
+  // which that is defensible is the slowest the hull has.
+  const st = (S && S.status) || {};
+  const key = st.speed_key != null ? st.speed_key : commandedSpeed;
+  const slow = key === "low";
+  const pastDepthGate = grant.depthIdx > 0
+    && !inCorridor(p, grant.spineEN, grant.depthIdx, grant.halfM);
+  const covered = mem.structure.concat(slow && !pastDepthGate ? mem.depth : []);
+  return covered.length ? {covered, mem} : null;
+}
+
 const HELM_DWELL_MS = 1500;
 let helmHoldAt = 0;                // when the helm rung first read, continuously
 function helmSettled(isHelm, now){
@@ -1864,7 +2116,25 @@ function clearanceGuard(){
   // different question and a different branch, and a deviation in flight is no answer to
   // the water carrying the boat in.
   const settling = Date.now() - guardEdgeAt < EDGE_REASSESS_MS;
-  const wantEdge = !settling && edgeSpentM < edgeCapM(buf);
+  // ⚠⚠ THE LAUNCH GRANT: ONE CALL, AND THE MODEL IS WHAT MOVES - NOT A BRANCH INSIDE A RUNG.
+  // `gNow` is null in OPEN, which is the overwhelming majority of every mission, and then
+  // `koG` IS `nogo.ko` and every line below is today's console byte for byte. Where a grant
+  // does stand, the ladder is handed a model with the launched-against features removed: the
+  // rungs are unreachable against them because they are not in the model the rungs were
+  // given, so there is no `if (departing)` inside a rung for a later edit to delete.
+  // See grantNow() and DEPARTURE_PARADIGM.md R3/R5/R9.
+  // ⚠ THE LIFECYCLE IS ASKED ONCE A FRAME, ABOVE EVERY BRANCH AND BEFORE grantNow(), for the
+  // same reason the release and helm dwells are: an end evaluated inside a branch is a line a
+  // path can skip. Tested first means an ENDED grant cannot suppress the frame that ended it.
+  grantTick(p, buf, Date.now());
+  const gNow = grantNow(p);
+  const koG = gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko;
+  // R9: the EDGE rung is off inside any grant. `edgeAround` searches AND verifies every
+  // candidate against the model it was handed, so a dog-leg computed in a model without the
+  // launch pier can be routed straight through the launch pier - a NEW hazard this design
+  // would otherwise have invented. Stated cost, taken deliberately: a second feature during a
+  // departure is answered by slow or stop rather than by three metres of deviation.
+  const wantEdge = !settling && !gNow && edgeSpentM < edgeCapM(buf);
   // ⚠⚠ NO COURSE IS BLIND, NOT CLEAR, AND IT USED TO READ CLEAR (2026-09-19, stage 0 of the
   // departure work). `groundVel(null, sog)` returns null (guard.js) whenever the vessel
   // reports `cog_deg: null` - which is exactly what a STOPPED boat reports - so the guard
@@ -1877,7 +2147,7 @@ function clearanceGuard(){
   // course over the ground had the throttle handed back after RELEASE_HOLD_MS of blindness,
   // on the strength of frames that had measured nothing. A blind frame is not evidence of
   // clear water and must not advance that dwell.
-  const a = vel ? guardAssess(p, vel, drift, nogo.ko, buf, {...(trk||{}), edge: wantEdge})
+  const a = vel ? guardAssess(p, vel, drift, koG, buf, {...(trk||{}), edge: wantEdge})
                 : {level:"blind", tEntry:null,
                    why:"no course over the ground - nothing ahead is being assessed"};
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
@@ -2138,6 +2408,17 @@ function clearanceGuard(){
       markGuardHeld(c);
       // Told how much water it has here, so a boat set off THIS hold point does not drive
       // a blind bearing back towards the very feature it was holding off.
+      // ⚠ R10: YOU MAY NOT STATION-KEEP INSIDE A GRANT. A hold at a berth ships
+      // `hold_clear_m` measured AT THE BOAT - 0.97 m, recorded at New Castle - which the
+      // vessel answers with `hold_wants_route` and the console with a routed re-approach
+      // every three seconds, alongside the pier. Inside the corridor a hold becomes a STOP,
+      // and the reason is said. `hold_clear_m` itself is never inflated: it is the one
+      // console-side number that becomes a vessel-side action with no further check.
+      if(gNow){
+        cmd("/api/cmd/stop");
+        flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead inside the launch corridor "
+          + "— STOPPED rather than held: a hold here would station-keep her against the berth.");
+      } else
       cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
                 + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
@@ -9512,6 +9793,47 @@ async function doUpload(){
     return;
   }
   clearViolation();
+  // ⚠⚠ CERTIFY THE DEPARTURE HERE, WHERE IT CAN STILL BE FIXED (R5-R7). A boat launched
+  // alongside is in extremis by construction - `blocked(p)` short-circuits both projections -
+  // so without this the operator discovers the problem at START, as an escape, with the boat
+  // already moving. See certifyDeparture and DEPARTURE_PARADIGM.md.
+  const cert = certifyDeparture(plan.route);
+  if(cert.refuse && !cert.noGate){
+    showBanner("⚠ UPLOAD BLOCKED — " + cert.refuse + ". Move the first waypoint, or relaunch "
+      + "somewhere the console can see water it would hold in.");
+    flashNote("Upload blocked: " + cert.refuse + ".");
+    return;
+  }
+  if(cert.noGate){
+    // DEPART UNDER THE CLOCK (Andy's decision 2, 2026-09-19). Without it there are real
+    // basins this console will not start a mission from, and the lever the operator would
+    // actually reach for is lowering the buffer - which reduces protection for the WHOLE run
+    // rather than for forty metres of slip. With it, the console has granted itself a
+    // departure bounded only by a clock, which is the weakest bound in the design - so it is
+    // asked for by name, every time, and the bar says so for its whole life.
+    const mins = (grantClockMs(cert.spineLenM || 0, V.SPEED_KN.low || 1.5) / 1000).toFixed(0);
+    if(!await guiConfirm("DEPART UNDER THE CLOCK",
+        cert.refuse + ". There is no proof end available here: the grant would stand for "
+        + mins + " s and then STOP her, with the corridor, the set-back test and the stall test "
+        + "all still running. Accept a departure bounded only by that clock?", {always: true})){
+      flashNote("Upload blocked: " + cert.refuse + ".");
+      return;
+    }
+    grant = {spineEN: cert.spineEN, gateIdx: -1, gateM: cert.spineLenM,
+             depthIdx: -1, halfM: corridorHalfM(V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m,
+                                                minTurnRadiusM("low")),
+             need0: cert.need0, spineLenM: cert.spineLenM,
+             clock: grantClockMs(cert.spineLenM || 0, V.SPEED_KN.low || 1.5),
+             cMax: 0, at: berthAt(), byClock: true};
+    grantMemo = null;
+    showBanner("⚠ DEPARTING UNDER THE CLOCK — no proof end. " + mins + " s, then she is STOPPED.");
+  } else if(cert.ok){
+    grant = cert.grant; grantMemo = null;
+    showBanner("Launch grant armed — the console stands down against "
+      + kindsSummary(cert.grant.mem.all.map(f=>({info:{kind:f.kind}})))
+      + " for " + cert.grant.gateM.toFixed(0) + " m out of the berth, and watches everything "
+      + "else at full authority. It ends the moment it can certify the water for itself.");
+  }
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.

@@ -760,9 +760,14 @@ def _redact(body):
 class SessionLogger:
     # top-level state fields whose change marks a "salient" transition worth a
     # full snapshot (vs. a routine motion sample between transitions).
+    # ⚠ `berth` IS SALIENT BECAUSE THE RECORDING MUST ANSWER "WHY DID THE CONSOLE NOT ACT"
+    # as well as "why did it act". A launch grant standing down against a pier is the console
+    # deliberately declining to escape; without it in the snapshot stream a replay shows an
+    # alarm, no action and no reason - which is exactly what made the recorded escape frames
+    # ambiguous in the first place.
     SALIENT = ("mode", "link", "armed", "estop", "plan_uploaded", "run",
                "autonomy", "behavior", "completion", "wp_index", "wp_total",
-               "note", "home")
+               "note", "home", "berth")
     STATE_MIN_INTERVAL = 1.0        # s: cap the between-transition motion trace
     # `speed_key` rides the motion trace, not just the salient snapshots, so a playback
     # can put COMMANDED speed alongside the speed actually made good. (A live speed change
@@ -3791,6 +3796,14 @@ class Engine:
         # loiter (correctly, for a Go-To) and used to clobber the setting with it.
         self.run_completion = "rth"   # complete | loiter | repeat | rth
         self.home = None           # {lat,lon} launch/home point (auto-set on 1st fix)
+        # ⚠ THE LAUNCH GRANT LIVES HERE, NOT IN THE PAGE (DEPARTURE_PARADIGM.md R16). A
+        # page-local grant is dropped silently by a supervision handover, and the inheriting
+        # tab - which never saw the launch - then commands an escape from the berth with
+        # nothing in its own UI able to explain it: the reconstruction failure happening live.
+        # Published beside `run_seq` and set through a supervisor-gated POST /api/cmd/berth,
+        # so a handover or a page reload inherits it with its budget where it was.
+        # {at:{lat,lon}, t, by} - ONE instant, never re-derived (R1).
+        self.berth = None
         # A selected ROC OWNS home: its arrival point overrides the first-fix launch
         # point, and for a ship (Mothership) it moves every tick, so a running RTH
         # re-targets the boat at it. Injected in main() - see set_home_provider.
@@ -4072,6 +4085,20 @@ class Engine:
                     pass
             self.note = "Speed: %s (%.1f kn) - applied live." % (key, SPEED_KN[key])
         self._push_state()
+
+    def set_berth(self, berth):
+        """Latch or drop the launch grant (DEPARTURE_PARADIGM.md R16).
+
+        ⚠ ONE INSTANT, NEVER RE-DERIVED. The caller passes the point and the moment; this
+        stores them and nothing else. A berth that the server recomputed from the boat's
+        CURRENT position would follow her out of the slip and certify whatever she reached,
+        which is precisely the licence R1 exists to withhold.
+        """
+        with self._lock:
+            self.berth = berth
+            # `note` is in SALIENT, so writing it here is what puts the latch and the
+            # drop into the session recording as their own snapshots.
+            self.note = "launch grant " + ("dropped" if berth is None else "latched")
 
     def set_energy_override(self, on):
         """Energy override (testing aid): report the pack/tank as full regardless of
@@ -4434,6 +4461,10 @@ class Engine:
         self.connect("sim", self._host, self._port, "tcp", spawn=spawn)
         with self._lock:
             self.home = None
+            # The grant is latched at ONE launch. A reset is a new power-cycle and a new
+            # launch, so the old one may not survive it - see R1: the latch is at the launch
+            # and only there, and that single rule is what stops this being a licence.
+            self.berth = None
             self.behavior = "survey"
             self.run_completion = "complete"
             self.wp_index = self.wp_total = 0
@@ -4742,6 +4773,7 @@ class Engine:
             "autonomy": self._autonomy_label(),
             "behavior": self.behavior,
             "run_seq": self.run_seq,                   # which commanded motion this is (review #23)
+            "berth": self.berth,                       # the launch grant, if one is latched (R16)
             "supervisor": SUPERVISION.snapshot(),      # which tab is in charge, and whether it is still there (#14)
             # Two DIFFERENT things, deliberately both published:
             #   completion      - the operator's END-OF-PLAN SETTING (the mission store).
@@ -5501,6 +5533,23 @@ class Handler(BaseHTTPRequestHandler):
                 if not (-90.0 <= slat <= 90.0 and -180.0 <= slon <= 180.0):
                     raise VcuProtocolError("spawn lat/lon out of range")
                 ENGINE.reset(spawn={"lat": slat, "lon": slon})
+            elif path == "/api/cmd/berth":             # the launch grant (R16): latch, or drop
+                # ⚠ THE SERVER STORES IT AND DOES NOT INTERPRET IT. Every rule about what a
+                # grant covers, where it applies and when it ends is the page's, against the
+                # chart the page holds; the server has no keep-out model and must not appear
+                # to have an opinion. What it owns is that the fact SURVIVES a handover.
+                if body.get("drop"):
+                    ENGINE.set_berth(None)
+                else:
+                    try:
+                        blat = float(body.get("lat")); blon = float(body.get("lon"))
+                    except (TypeError, ValueError):
+                        raise VcuProtocolError("berth needs a numeric lat/lon")
+                    if not (-90.0 <= blat <= 90.0 and -180.0 <= blon <= 180.0):
+                        raise VcuProtocolError("berth lat/lon out of range")
+                    by = str(body.get("by") or "operator")[:32]
+                    ENGINE.set_berth({"at": {"lat": blat, "lon": blon},
+                                      "t": time.time(), "by": by})
             elif path == "/api/cmd/energy":            # energy override (report full) on/off, all modes
                 ENGINE.set_energy_override(bool(body.get("unlimited")))
             else:

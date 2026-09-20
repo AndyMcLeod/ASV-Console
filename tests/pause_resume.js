@@ -447,6 +447,22 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                                                    .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
                                           unroutable: [], degraded: !nogo.ready });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
+    // ⚠ THE LAUNCH GRANT (2026-09-19). doUpload now certifies the departure before it sends
+    // - see certifyDeparture and DEPARTURE_PARADIGM.md R5-R7. In THIS world no berth is ever
+    // latched, so certifyDeparture returns {none:true} at its first line and the upload path is
+    // unchanged; but the SYMBOL has to exist, or every check here fails with the upload throwing
+    // into doUpload's own catch as "Upload failed", which reads as a routing bug and is not one.
+    let grant = null, grantMemo = null;   // S is already declared in this world
+    if(!S) S = { berth: null, status: {} };
+    const V = { VESSEL: { hull: { loa_m: 1.9 } }, SPEED_KN: { low: 1.5 } };
+    const groundVel = () => null, minTurnRadiusM = () => 1.03;
+    const { corridorGate, corridorHalfM, grantClockMs, grantedFeatures, isBerth,
+            berthNeedM } = require("../static/js/berth.js");
+    const { snapCapM } = require("../static/js/hold.js");
+    // eslint-disable-next-line no-eval
+    const berthAt = eval("(" + grab("berthAt") + ")");
+    // eslint-disable-next-line no-eval
+    const certifyDeparture = eval("(" + grab("certifyDeparture") + ")");
     // eslint-disable-next-line no-eval
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval
