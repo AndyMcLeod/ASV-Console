@@ -581,6 +581,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false, slowLieu = null;
   let helmHoldAt = 0;
   let grant = null, grantMemo = null, grantEndSay = null;
+  // The rest of the grant's state. `grantStop` latches the stall/clock STOP so it is
+  // commanded once; `grantLast` is what HOLD THE GRANT restores; `grantTrueLevel` is the
+  // TRUE model's verdict for the bar. All null in this world - no berth is ever latched
+  // here - but the SYMBOLS have to exist or clearanceGuard is a ReferenceError on frame one.
+  let grantStop = null, grantLast = null, grantTrueAt = 0, grantTrueLevel = null;
+  const logGrantEvent = () => {};
   const { berthClearM, berthNeedM, grantFilter, grantProved, grantedFeatures,
           inCorridor, recessionGiveM } = require("../static/js/berth.js");
   const GRANT_STANDDOWN_MS = 20000, OVERRIDE_GIVE_M = 5, GUARD_HELM_S = G4.HELM_S;
@@ -636,7 +642,13 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      // above every branch. No berth is latched in this world so it returns at its
                      // first line, but the SYMBOL has to exist or the first frame is a
                      // ReferenceError - which the crash guard reports as one failed check.
-                     + grab(H, "grantTick") + NL2 + grab(H, "standDown") + NL2
+                     // ⚠ THE TWO ENDS ARE DIFFERENT FUNCTIONS AND BOTH ARE NEEDED.
+                     // stopAtBerth() is the stall/clock end, which STOPS her and KEEPS the
+                     // grant; standDownEnd() is the end that restores the ladder and
+                     // therefore holds the helm. helmStoodDown() is what READS grantEndSay,
+                     // and clearanceGuard asks it in front of the escape.
+                     + grab(H, "grantTick") + NL2 + grab(H, "stopAtBerth") + NL2
+                     + grab(H, "standDownEnd") + NL2 + grab(H, "helmStoodDown") + NL2
                      + grab(H, "endGrant") + NL2
                      + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")

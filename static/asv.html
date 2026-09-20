@@ -1194,6 +1194,16 @@ function speedRole(){ return currentActivity().role || "transit"; }
 // The speed KEY for a role, with the legacy single value as the fallback so a mission that
 // predates this - or a vessel whose profile lacks the key - still answers.
 function roleSpeed(role){
+  // ⚠⚠ `depart` IS PINNED TO `low` AND IS NOT THE OPERATOR'S TO SET (R7, R8). The design
+  // says "SPEED_ROLES gains depart"; in THIS page SPEED_ROLES is the operator's own list -
+  // it builds the three #sp_spd_* selectors, seeds mission.speeds, and is what the "all
+  // three at ..." line counts. Putting depart in it would have created a control whose whole
+  // effect is to defeat the rule it serves: the DEPTH grant is permission to run with the
+  // hull's under-keel clearance UNVERIFIED, and the only speed at which that is defensible
+  // is the slowest the hull has. Worse, mission.speeds.depart would have been seeded from
+  // `mission.speed || "survey"` on the load path, so the default departure speed would have
+  // been the SURVEY speed - the opposite of the rule - with no operator action at all.
+  if(role === "depart") return "low";
   const s = (mission.speeds || {})[role];
   return (s && V.SPEED_KN[s] != null) ? s : (mission.speed || "survey");
 }
@@ -1560,6 +1570,17 @@ function renderGuardBar(a, c){
   // say the run was over. The offer outlives the rung that caused it.
   const held = guardHeldOffer();
   if(held) return renderHeldBar(bar, held);
+  // ⚠⚠ R15 - THE STAND-DOWN OUTRANKS EVERY RUNG ON THIS BAR, `clear` and `blind` included,
+  // and that ordering is the whole of it. standDownEnd() has just STOPPED her, so she reports
+  // no course over the ground and the ladder reads BLIND - and on that frame the one thing
+  // the operator needs is the count and the two answers to it, not "GUARD BLIND".
+  const sdMs = helmStoodDown(Date.now());
+  if(sdMs) return renderStandDownBar(bar, sdMs, c);
+  // A STANDING GRANT IS THE CONSOLE INTERVENING - by not acting - so the bar is up for its
+  // whole life exactly as it is for a rung. Inside a grant the filtered ladder usually reads
+  // `clear`, which is precisely the state that must not put this bar out: an operator looking
+  // at a blank bar cannot tell "nothing is wrong" from "the helm is standing down".
+  if(grant) return renderGrantBar(bar, a, c);
   if(!a || a.level === "clear"){ bar.style.display = "none"; return; }
   // ⚠ BLIND IS ITS OWN BAR, AND IT SAYS WHAT IS NOT HAPPENING (2026-09-19). It is not a
   // rung: nothing is being commanded and nothing is being offered, because nothing has been
@@ -1596,6 +1617,9 @@ function renderGuardBar(a, c){
   // operator to press it out of habit before the one that matters.
   const offerable = (a.level === "slow" || a.level === "hold") && !!(S && S.armed && !S.estop);
   $("#gb_low").textContent = "CONTINUE AT LOW SPEED";
+  // ⚠ SET BACK, for the same reason renderHeldBar restores gb_drop: renderStandDownBar
+  // relabels this button HOLD THE GRANT, and these four buttons are shared by five states.
+  $("#gb_proceed").textContent   = "PROCEED — I have assessed it";
   $("#gb_low").style.display     = (!over && offerable) ? "" : "none";
   $("#gb_proceed").style.display = (!over && offerable) ? "" : "none";
   $("#gb_cancel").style.display  = over ? "" : "none";
@@ -1624,6 +1648,77 @@ function renderHeldBar(bar, g){
   $("#gb_low").style.display     = "";
   $("#gb_proceed").style.display = "none";
   $("#gb_cancel").style.display  = "none";
+  // ⚠ SET BACK, NOT ASSUMED. renderGrantBar relabels this same button DROP THE GRANT, and a
+  // shared button that keeps another state's words is a control that lies about what it does.
+  $("#gb_drop").textContent      = "LEAVE IT HOLDING";
+  $("#gb_drop").style.display    = "";
+}
+
+/**
+ * THE BAR WHILE THE HELM IS HELD AFTER A GRANT ENDED (R15).
+ *
+ * It says three things and no more: what ENDED the grant, how many seconds are left before
+ * the console may steer, and the clearance it is measuring - the TRUE one, as everywhere.
+ * The count is live because the bar redraws on every telemetry frame.
+ *
+ * ⚠ TWO CONTROLS, AND THEY ARE OPPOSITE ANSWERS TO THE SAME QUESTION, which is why they are
+ * side by side. TAKE THE HELM NOW gives the console its authority back on this frame - the
+ * operator has looked and wants the ladder. HOLD THE GRANT overrules the end and keeps the
+ * console standing down - the operator has looked and does NOT want a 14 kn escape out of a
+ * slip. Doing nothing runs the count out and the ladder comes back on its own, announced.
+ */
+function renderStandDownBar(bar, msLeft, c){
+  bar.className = "guardbar helm";   // red: this is the frame the console would have steered on
+  bar.style.display = "block";
+  const secs = Math.ceil(msLeft / 1000);
+  $("#gb_rung").textContent = "HELM HELD — " + secs + " s";
+  $("#gb_why").textContent =
+    ((c && c.m != null) ? c.m.toFixed(1) + " m off " + (c.kind || "a keep-out") + " · " : "")
+    + (grantEndSay ? grantEndSay.why + " " : "")
+    + "the console may not steer for " + secs + " s";
+  $("#gb_low").textContent = "TAKE THE HELM NOW";
+  $("#gb_low").style.display     = "";
+  $("#gb_proceed").textContent   = "HOLD THE GRANT";
+  $("#gb_proceed").style.display = grantLast ? "" : "none";
+  $("#gb_cancel").style.display  = "none";
+  $("#gb_drop").style.display    = "none";
+}
+
+/**
+ * THE BAR WHILE A LAUNCH GRANT STANDS.
+ *
+ * ⚠ THE CLEARANCE AND THE KIND ARE THE TRUE MODEL'S, ALWAYS - `c` comes from
+ * updateClearance(), which this design never touches. The only thing the grant changes is
+ * what the LADDER was asked about, and the line below says so in the operator's own terms:
+ * how many features are standing down, and whether the full model would have steered.
+ *
+ * ⚠ AND THE "WOULD BE IN EXTREMIS" CLAUSE IS PRINTED ONLY WHEN A TRUE-MODEL ASSESS EARNED
+ * IT on this cadence - never as a standing caption. It is evidence that the suppression is
+ * doing something, and evidence that is always on screen stops being read as evidence.
+ */
+function renderGrantBar(bar, a, c){
+  const mem = grantMembers(), n = mem && mem.all ? mem.all.length : 0;
+  const stopped = !!grantStop;
+  const running = !!(S && S.run === "running") && !stopped;
+  bar.className = "guardbar" + (stopped ? " helm" : "");
+  bar.style.display = "block";
+  $("#gb_rung").textContent = stopped ? "STOPPED AT THE BERTH"
+                                      : (running ? "DEPARTING" : "BERTHED");
+  const bits = [];
+  if(c && c.m != null) bits.push(c.m.toFixed(1) + " m off " + (c.kind || "a keep-out"));
+  bits.push("the helm stands down against " + n + " named feature" + (n === 1 ? "" : "s")
+            + " at your launch berth");
+  if(stopped) bits.push(grantStop.why + " The console is NOT steering her off it");
+  else if(grant.byClock) bits.push("NO PROOF END — YOUR CLOCK");
+  // Only when the full model actually says so, and only ever as a statement about the TRUE
+  // model - never as a claim about what the ladder above did.
+  if(grantTrueLevel === "helm") bits.push("the guard WOULD be IN EXTREMIS against your berth");
+  else if(grantTrueLevel === "hold") bits.push("the guard WOULD be HOLDING against your berth");
+  $("#gb_why").textContent = bits.join(" · ");
+  $("#gb_low").style.display     = "none";
+  $("#gb_proceed").style.display = "none";
+  $("#gb_cancel").style.display  = "none";
+  $("#gb_drop").textContent      = "DROP THE GRANT";
   $("#gb_drop").style.display    = "";
 }
 
@@ -1754,7 +1849,7 @@ let grantEndSay = null;// the stand-down countdown: {t, why}
  * sim spawn, which resets run_seq so the first clause covers it; and the operator saying SHE
  * IS BERTHED HERE.
  *
- * ⚠⚠ THIS SINGLE RULE IS WHAT STOPS THE WHOLE THING BEING A LICENCE, and it is checkable:
+ * ⚠⚠ THIS SINGLE RULE IS WHAT STOPS THE WHOLE THING BEING A LICENSE, and it is checkable:
  * a boat SET ONTO a pier at 14:30 has `run_seq > 0` and is hundreds of metres from any latched
  * berth, so she gets NO grant and today's full ladder, including the helm. The grant covers
  * the water a person put her in; it does not cover the water she drifted into.
@@ -1867,7 +1962,15 @@ function grantTick(p, buf, now){
     if(!grantProofAt) grantProofAt = now;
     if(now - grantProofAt >= RELEASE_HOLD_MS){
       grantProofAt = 0;
-      endGrant("she is in water the console would have chosen as a hold point.", true);
+      // ⚠ SAY THE TWO NUMBERS THE PROOF ACTUALLY TURNED ON, not "she is clear". The operator
+      // has just watched a departure they were told the console could not certify; the thing
+      // that ends it has to be legible as a MEASUREMENT. Both are on the TRUE model.
+      const got = holdClearM(p, nogo.ko, buf), needNow = berthNeedM(setMs);
+      const b0 = nogo.frame.toEN(berthAt());
+      const fromLaunch = Math.hypot(p.e - b0.e, p.n - b0.n);
+      endGrant("she has " + got.toFixed(1) + " m of clear water, more than the "
+        + needNow.toFixed(1) + " m this set needs, " + fromLaunch.toFixed(0)
+        + " m from the launch.", true);
       return;
     }
   } else grantProofAt = 0;
@@ -1885,42 +1988,219 @@ function grantTick(p, buf, now){
   else if(!grantStallAt) grantStallAt = now;
   const give = recessionGiveM(grant.cMax, OVERRIDE_GIVE_M, 0.5);
   if(grant.cMax > 0 && bc < grant.cMax - give){
-    standDown("she is giving ground: " + bc.toFixed(1) + " m against the "
+    standDownEnd("she is giving ground: " + bc.toFixed(1) + " m against the "
       + grant.cMax.toFixed(1) + " m she had made.");
     return;
   }
-  // R14 - THE CLOCK, and the STALL. Neither hands the helm back: a boat that is not getting
-  // out but is not getting worse is a boat the operator placed and can see, and steering her
-  // off the berth she was deliberately put on is the wrong verb (Andy's decision 5).
-  if(grantStallAt && now - grantStallAt > GUARD_HELM_S * 1000 && grant.cMax < grant.halfM){
-    standDown("she is not getting clear: no ground made in " + GUARD_HELM_S + " s.");
+  // R14 - THE CLOCK, and the STALL. ⚠⚠ NEITHER OF THESE ENDS THE GRANT, and that is the whole
+  // of Andy's decision 5: *"the console never steers her off a berth a person put her on"*.
+  // They STOP HER and keep standing down, for ever if need be. The only ends are R11 proof,
+  // R12 recession, leaving the corridor, a new commanded motion, loss of the model, and the
+  // operator's DROP THE GRANT.
+  //
+  // ⚠ THE FIRST CUT OF THIS FUNCTION CALLED standDown() HERE, which ended the grant - so
+  // twenty seconds after a stalled departure the full ladder came back against the launch
+  // pier with the boat still lying alongside it, and commanded an escape. The comment above
+  // already said "neither hands the helm back"; the code handed it back. A stand-down with a
+  // timer on it is the original defect with a delay on it, which is exactly what R15 names.
+  //
+  // Latched on grantStop so the stop is commanded ONCE and not on every frame after.
+  if(!grantStop && grantStallAt && now - grantStallAt > GUARD_HELM_S * 1000
+     && grant.cMax < grant.halfM){
+    stopAtBerth("she is not getting clear: no ground made in " + GUARD_HELM_S + " s.");
     return;
   }
-  if(now - (grant.armedAt || (grant.armedAt = now)) > grant.clock){
-    const clockS = grant.clock / 1000;   // named, not inlined:  is the
-    // fingerprint tests/units_toggle.js 9 greps for as a hand-rolled km conversion.
-    standDown("the departure clock ran out after " + clockS.toFixed(0) + " s.");
+  if(!grantStop && now - (grant.armedAt || (grant.armedAt = now)) > grant.clock){
+    // ⚠ NAMED, NOT INLINED, and the reason may not be WRITTEN OUT here: tests/units_toggle.js
+    // 9 greps the page source for the divide-by-1000-then-toFixed fingerprint of a
+    // hand-rolled km conversion, and a COMMENT quoting that fingerprint matches it exactly.
+    // (It did: this comment spelled the pattern out and reddened the check on its own text.)
+    const clockS = grant.clock / 1000;
+    stopAtBerth("the departure clock ran out after " + clockS.toFixed(0) + " s.");
   }
 }
 
-/** A FAILURE end: stop her, say it, and hold the helm for GRANT_STANDDOWN_MS (R14, R15). */
-function standDown(why){
+/**
+ * STOPPED AT THE BERTH, AND STILL STANDING DOWN (R14, Andy's decision 5).
+ *
+ * The stall and the clock both mean "she is not getting out". Neither means "she is getting
+ * worse" - that is R12's question and R12 ends the grant outright. So this takes the way off
+ * her and CHANGES NOTHING ELSE: the grant stands, the granted features stay out of the
+ * ladder's model, and the console keeps alarming every 8 s against the TRUE model so the
+ * operator has the number in front of them.
+ *
+ * ⚠ IT IS A LATCH, NOT AN EVENT. Both tests stay true on every subsequent frame, so without
+ * `grantStop` this would command /api/cmd/stop at telemetry rate and re-banner each time.
+ */
+let grantStop = null;   // {t, why} - she has been stopped at the berth, grant still standing
+let grantLast = null;   // the ended grant, restorable by HOLD THE GRANT inside its 20 s only
+// The TRUE model's verdict while a grant stands, so the bar can say what is being stood down
+// against. Recomputed at EDGE_REASSESS_MS, never per frame; null outside a grant.
+let grantTrueAt = 0, grantTrueLevel = null;
+function stopAtBerth(why){
+  grantStop = {t: Date.now(), why};
+  cmd("/api/cmd/stop");
+  if(planIntent) planIntent.why.push({t:"warn", s:"DEPARTURE STOPPED AT THE BERTH: " + why
+    + " The launch grant still stands — the console is not steering her off the berth."});
+  showBanner("⚠⚠ DEPARTURE STOPPED — " + why + " She is STOPPED at the berth and the console "
+    + "is NOT steering her off it. The guard still stands down against your launch berth; "
+    + "everything else has the full ladder. DROP THE GRANT hands the helm back.");
+}
+
+/**
+ * A FAILURE end that DOES restore the ladder - and therefore holds the helm for
+ * GRANT_STANDDOWN_MS first (R15).
+ *
+ * ⚠ THE HOLD IS THE POINT. These ends put a boat that may still be inside a slip's buffer
+ * back under a guard whose helm rung commands V.SPEED_KN.high on the very next frame. Twenty
+ * seconds with the count on the bar and three controls is what makes that an announcement
+ * rather than a surprise; see helmStoodDown(), which is the thing that reads grantEndSay.
+ */
+function standDownEnd(why, opts){
+  const offerHold = !(opts && opts.offerHold === false);
   const at = Date.now();
   cmd("/api/cmd/stop");
   endGrant(why, false);
-  grantEndSay = {t: at, why};
-  showBanner("⚠⚠ DEPARTURE STOPPED — " + why + " She is STOPPED at the berth. The console is "
-    + "NOT steering her off it. The helm rung is held for " + (GRANT_STANDDOWN_MS/1000)
-    + " s — TAKE THE HELM NOW, or leave her and assess.");
+  if(!offerHold) grantLast = null;     // endGrant kept it; the operator asked for this end
+  grantEndSay = {t: at, why};          // set AFTER endGrant, which clears it
+  showBanner("⚠⚠ LAUNCH GRANT ENDED — " + why + " She is STOPPED. The helm rung is held for "
+    + (GRANT_STANDDOWN_MS/1000) + " s before the console may steer: TAKE THE HELM NOW gives "
+    + "it back at once" + (offerHold ? ", HOLD THE GRANT keeps standing down," : ",")
+    + " or leave her and assess.");
 }
 
-/** Drop the grant and say why. Every end is announced (R15); none of them is silent. */
+/**
+ * R15 - THE TWENTY SECONDS BETWEEN A GRANT ENDING AND THE CONSOLE BEING ALLOWED TO STEER.
+ *
+ * ⚠⚠ THIS IS THE FUNCTION THAT READS `grantEndSay`, AND FOR A WHILE NOTHING DID. The value
+ * was set, the banner said the words "the helm rung is held for 20 s", and the helm rung was
+ * not held at all: the very next frame after a grant ended could command /api/cmd/escape at
+ * V.SPEED_KN.high on a boat still lying inside a slip's buffer. A banner that announces a
+ * protection that does not exist is worse than no banner, because the operator stops looking.
+ *
+ * ⚠ IT HOLDS THE ACTION, NOT THE ALARM. The rung still computes, the bar still says IN
+ * EXTREMIS, the clearance is still the TRUE one, and slow and hold are untouched - she has
+ * just been stopped anyway. What is withheld is the console's authority to STEER for 20 s,
+ * which is the window the operator has to look up and answer. Returns the milliseconds left,
+ * so the bar can count it down; 0 means the helm is the console's again.
+ *
+ * ⚠ AND IT EXPIRES BY THE CLOCK, NOT BY A CLEAR. `grantEndSay` is left standing and goes
+ * stale on its own timestamp - there is no second writer that could leave it set for ever,
+ * and no path where a quiet frame silently shortens it. Its writers are exactly two:
+ * standDownEnd sets it, endGrant clears it.
+ */
+function helmStoodDown(now){
+  if(!grantEndSay) return 0;
+  const left = GRANT_STANDDOWN_MS - (now - grantEndSay.t);
+  return left > 0 ? left : 0;
+}
+
+/** TAKE THE HELM NOW - the operator ending the stand-down early, deliberately. */
+function takeHelmNow(){
+  if(!grantEndSay) return;
+  grantEndSay = null; grantLast = null;
+  logGrantEvent("helm_taken", {});
+  flashNote("Helm handed back — the console has full clearance authority from this frame.");
+  renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
+}
+
+/**
+ * HOLD THE GRANT - the operator overruling the end, inside the stand-down window only.
+ *
+ * ⚠ THE TWO RESETS ARE NOT TIDINESS, THEY ARE WHAT STOPS AN INSTANT RE-END. A recession end
+ * fires because `berthClearM` fell `give` below `cMax`; restore the grant with the old cMax
+ * and the very next frame re-measures the same recession and ends it again, so the button
+ * would look broken. cMax is re-based on the water she has NOW - she keeps no credit for
+ * ground she has since lost - and the clock restarts, because the operator has just taken
+ * responsibility for a fresh departure attempt. Both are said on the banner and logged.
+ *
+ * ⚠ IT IS NOT A LICENSE. Every end still applies to the restored grant, membership is
+ * re-derived from the live model on the next frame (R3), and the window it can be pressed in
+ * is `grantEndSay`'s own 20 s - which expires on its timestamp and has exactly two writers.
+ */
+function holdTheGrant(){
+  if(!grantEndSay || !grantLast) return;
+  const p = asv && nogo.frame ? nogo.frame.toEN({lat:asv.lat, lon:asv.lon}) : null;
+  grant = grantLast; grantLast = null;
+  grantEndSay = null; grantStop = null; grantMemo = null;
+  grantProofAt = 0; grantStallAt = 0;
+  grant.armedAt = Date.now();
+  grant.cMax = p ? berthClearM(p, (grantMembers() || {all:[]}).all) : 0;
+  logGrantEvent("grant_held", {c_max_m: grant.cMax, clock_ms: grant.clock});
+  if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR HELD THE LAUNCH GRANT after it "
+    + "ended — the console keeps standing down against the launch berth; the departure clock "
+    + "and the ground-made mark both restart from here"});
+  showBanner("LAUNCH GRANT HELD ON THE OPERATOR'S AUTHORITY — the console keeps standing down "
+    + "against your launch berth and will not steer her off it. The clock restarts, and the "
+    + "ground she had made is re-measured from where she is now. Recorded in the session log.");
+}
+
+/**
+ * ARM A GRANT. One writer, because there are two arming sites - the certified departure and
+ * DEPART UNDER THE CLOCK - and every field that is not reset here is a field that survives
+ * from a PREVIOUS grant into this one.
+ *
+ * `coveredSeq` is R14's "a new commanded motion" end, and it has to be latched rather than
+ * compared: a grant is armed at UPLOAD, when `run_seq` is still whatever it was, and the
+ * START that follows is the very motion the grant exists to cover. So the FIRST new run_seq
+ * after arming is adopted as the covered one, and any run_seq after THAT is a different
+ * command - a Go-To, an RTH, a re-approach - which the grant does not cover and must not
+ * outlive.
+ */
+function armGrant(g){
+  g.coveredSeq = null;
+  g.armedAt = 0;                 // grantTick stamps it on its first frame, not at Upload
+  grant = g;
+  grantMemo = null; grantEndSay = null; grantStop = null; grantLast = null;
+  grantProofAt = 0; grantStallAt = 0; grantTrueAt = 0; grantTrueLevel = null;
+  logGrantEvent("grant_armed", {gate_m: g.gateM, half_m: g.halfM, need0_m: g.need0,
+                                clock_ms: g.clock, by_clock: !!g.byClock});
+}
+
+/**
+ * R14 - A NEW COMMANDED MOTION ENDS THE GRANT. Called from onState when `run_seq` moves.
+ *
+ * ⚠ THE START OF THE DEPARTURE IS ITSELF A NEW COMMANDED MOTION, which is why this adopts
+ * the first one instead of ending on it. Without that, every grant would die on the Start
+ * that was supposed to use it, and the whole feature would be inert in a way that looked
+ * like it was working right up to the moment it mattered.
+ */
+function grantOnNewMotion(seq){
+  if(!grant) return;
+  if(grant.coveredSeq == null){ grant.coveredSeq = seq; return; }
+  if(seq === grant.coveredSeq) return;
+  standDownEnd("a new motion was commanded, which the launch grant does not cover.");
+}
+
+/** Every grant decision reaches the recording, so "why did the console NOT act" is answerable. */
+function logGrantEvent(kind, data){
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"berth_grant", data:{event: kind, ...data,
+      berth: berthAt() || null, buffer_m: nogo.buffer || null}})}).catch(()=>{});
+}
+
+/**
+ * Drop the grant and say why. Every end is announced (R15); none of them is silent.
+ *
+ * ⚠ THE PROOF END IS WORDED SO IT CANNOT BE READ AS A GIVING-UP, which is R15's one
+ * exception: it is the successful end, it restores everything at once, and an operator who
+ * has just watched three failure banners must be able to tell this one from them at a glance.
+ */
 function endGrant(why, ok){
   if(!grant) return;
-  grant = null; grantMemo = null; grantEndSay = null;
-  showBanner((ok ? "✓ DEPARTURE COMPLETE — " : "⚠ LAUNCH GRANT ENDED — ") + why
-    + (ok ? " The console is watching everything again, at full authority."
-          : " The console is watching everything again, at full authority."));
+  // Kept ONLY so HOLD THE GRANT can put it back inside the stand-down window (R15). It is
+  // not a cache and nothing reads it outside that window: holdTheGrant() checks grantEndSay
+  // first, which expires on its own clock, so a grant cannot be resurrected an hour later.
+  // ⚠ It carries no FEATURE - membership is re-derived from the live model on the next
+  // frame (R3), which is the whole reason grantMemo is cleared here rather than kept.
+  grantLast = ok ? null : grant;     // a PROVED departure is spent; there is nothing to hold
+  grant = null; grantMemo = null; grantEndSay = null; grantStop = null;
+  grantProofAt = 0; grantStallAt = 0;
+  showBanner(ok
+    ? "✓ DEPARTURE PROVED — " + why + " FULL CLEARANCE AUTHORITY RESTORED: every rung, every "
+      + "threshold and every escape is exactly as it is anywhere else on the water."
+    : "⚠ LAUNCH GRANT ENDED — " + why + " The console is watching everything again, at full "
+      + "authority.");
 }
 
 /** The berth as the server holds it, or null. ONE instant, never re-derived (R1). */
@@ -2089,6 +2369,14 @@ function clearanceGuard(){
   const c = updateClearance();
   const buf = nogo.buffer || 0;
   const st = (S && S.status) || {};
+  // ⚠⚠ R14 - LOSS OF THE MODEL ENDS THE GRANT, AND IT HAS TO BE ASKED ABOVE THE EARLY
+  // RETURN BELOW. Without the model this function returns here and grantTick() never runs,
+  // so a grant left standing would be a suppression that NOTHING could ever end - the ladder
+  // quietly weakened for the rest of the session, with no bar, no banner and no way back.
+  // offerHold:false because there is no model left to hold a grant against.
+  if(grant && (!nogo.ready || !nogo.ko || !nogo.frame))
+    standDownEnd("the keep-out model is no longer available, so nothing can be certified.",
+                 {offerHold: false});
   if(c.m == null || !nogo.ready || !nogo.ko || !nogo.frame || !asv){ return c; }
   const p = nogo.frame.toEN({lat:asv.lat, lon:asv.lon});
   // GROUND velocity, and the drift that would REMAIN with the engines stopped. The sim and
@@ -2152,6 +2440,22 @@ function clearanceGuard(){
                    why:"no course over the ground - nothing ahead is being assessed"};
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
   clearance.onPlan = !!a.onPlan;
+  // ⚠⚠ SPOKEN, OR IT IS A DISABLED SAFETY. While a grant stands, the ladder above is
+  // answering a true question about a SMALLER world. The operator must be able to see what
+  // the FULL world says on the same frame - "the guard WOULD be IN EXTREMIS against your
+  // launch berth" - or the suppression is invisible and indistinguishable from clear water.
+  //
+  // ONE straight projection, `edge:false` so it does not run the deviation search (~9 ms),
+  // at the search's own EDGE_REASSESS_MS cadence rather than at telemetry rate. Printed only
+  // when the TRUE-model assess actually earns it: a line that is always there is decoration,
+  // and decoration is the thing an operator learns to stop reading.
+  if(gNow && vel){
+    if(Date.now() - grantTrueAt > EDGE_REASSESS_MS){
+      grantTrueAt = Date.now();
+      grantTrueLevel = guardAssess(p, vel, drift, nogo.ko, buf,
+                                   {...(trk||{}), edge:false}).level;
+    }
+  } else if(!gNow){ grantTrueLevel = null; grantTrueAt = 0; }
   // ⚠ A VIEW-ONLY TAB ASSESSES AND ALARMS, BUT DOES NOT COMMAND (review #14): the bar above is already drawn, so a
   // second tab shows the same ladder and the same hazard - it just does not fight the supervising tab for the boat.
   const act = !!(S && S.armed && !S.estop) && supervising();
@@ -2414,17 +2718,26 @@ function clearanceGuard(){
       // every three seconds, alongside the pier. Inside the corridor a hold becomes a STOP,
       // and the reason is said. `hold_clear_m` itself is never inflated: it is the one
       // console-side number that becomes a vessel-side action with no further check.
+      //
+      // ⚠ THE BRACES ON THIS `else` ARE LOAD-BEARING. Written without them, the STOP branch
+      // ran and then fell into the hold's own flashNote, so a departure inside a corridor was
+      // told "STOPPED rather than held" and, in the same frame, "HOLDING" over the top of it -
+      // the operator reading the second one and the boat doing the first.
       if(gNow){
         cmd("/api/cmd/stop");
         flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead inside the launch corridor "
           + "— STOPPED rather than held: a hold here would station-keep her against the berth.");
-      } else
-      cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
-      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
-                + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
-                              : "Drift alone stays clear, so taking the way off answers it.")
-                + (guardHeld ? " The survey is kept: RESUME AT LOW SPEED on the guard bar."
-                             : ""));
+        if(planIntent) planIntent.why.push({t:"warn", s:"HOLD BECAME A STOP inside the launch "
+          + "corridor: a hold ships hold_clear_m measured at the boat, which alongside a berth "
+          + "is a re-approach cycle against the pier"});
+      } else {
+        cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
+        flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
+                  + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
+                                : "Drift alone stays clear, so taking the way off answers it.")
+                  + (guardHeld ? " The survey is kept: RESUME AT LOW SPEED on the guard bar."
+                               : ""));
+      }
       if(lieuFailed && planIntent) planIntent.why.push({t:"bad", s:"HELD after slowing: "
         + lieuFailed + ", and the projected track still entered " + (c.kind || "a keep-out")});
     }
@@ -2463,7 +2776,19 @@ function clearanceGuard(){
   // HAS been issued in this episode, guardEscapeAt moves past helmHoldAt and the 6 s re-solve
   // takes over exactly as before.
   const firstOfEpisode = helmHoldAt > 0 && guardEscapeAt < helmHoldAt;
-  if(a.level === "helm" && helmRun
+  // ⚠⚠ R15 - THE STAND-DOWN, AND IT GATES THE ACTION AND NOTHING ELSE. A grant that has just
+  // ended may have left the boat inside the launch berth's buffer; the ladder it is handed
+  // back to answers that with /api/cmd/escape at the vessel's HIGH speed, on the next frame.
+  // The alarm above has already fired, the bar is already red, the clearance is already the
+  // true one - what this withholds is twenty seconds of the console's authority to STEER, so
+  // the operator can look up and answer. See helmStoodDown() and standDownEnd().
+  //
+  // ⚠ AND IT IS IN FRONT OF AN OLDER GATE, so it can take that gate's coverage away: a check
+  // that only ever asserts "no escape was commanded" now passes for two different reasons.
+  // tests/berth_grant.js pairs every stand-down refusal with the SAME fixture 20 s later,
+  // where the escape must be commanded - the acceptance case is what tells them apart.
+  const heldMs = helmStoodDown(Date.now());
+  if(a.level === "helm" && helmRun && !heldMs
      && (firstOfEpisode || Date.now() - guardEscapeAt > GUARD_REASSESS_MS)){
     guardEscapeAt = Date.now();
     const escKn = V.SPEED_KN.high || 6;
@@ -4370,6 +4695,20 @@ function currentActivity(){
     return {activity:"holding", detail:"station-keeping" + off, surveying:false, role:"transit"};
   }
   if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
+  // ⚠⚠ R8 - THE DEPARTURE IS ITS OWN ACTIVITY, AND IT IS ASKED FIRST. While a launch grant
+  // stands, what the boat is doing is LEAVING A BERTH - not transiting, and not surveying the
+  // first line of a plan that happens to start at the dock. Because `speedRole()` is this
+  // classifier's own answer rather than a second reading, the activity the recorder logs and
+  // the speed the governor commands describe one moment, and speedGovernor needs no edit.
+  //
+  // ⚠ NOTHING IS SENT TO THE VESSEL, and that is deliberate (R8). No `depart_until_m`, no
+  // `depart_speed_key`: a range the boat measured from `_plan[0]` and a range this console
+  // measured from `berth.at` would be two numbers with one name, taken from different points.
+  // The recorded `start -> speed high` race is answered by the page never commanding `high`,
+  // not by a second enforcer on the vessel.
+  if(grant) return {activity:"departing", surveying:false, role:"depart",
+                    detail:"leaving the launch berth on the checked way out"
+                      + (grant.byClock ? " — no proof end, on your clock" : "")};
   const beh = (S && S.behavior) || "";
   if(beh === "survey"){
     if(runLineIdx >= 0){
@@ -9819,16 +10158,15 @@ async function doUpload(){
       flashNote("Upload blocked: " + cert.refuse + ".");
       return;
     }
-    grant = {spineEN: cert.spineEN, gateIdx: -1, gateM: cert.spineLenM,
-             depthIdx: -1, halfM: corridorHalfM(V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m,
-                                                minTurnRadiusM("low")),
-             need0: cert.need0, spineLenM: cert.spineLenM,
-             clock: grantClockMs(cert.spineLenM || 0, V.SPEED_KN.low || 1.5),
-             cMax: 0, at: berthAt(), byClock: true};
-    grantMemo = null;
+    armGrant({spineEN: cert.spineEN, gateIdx: -1, gateM: cert.spineLenM,
+              depthIdx: -1, halfM: corridorHalfM(V.VESSEL && V.VESSEL.hull && V.VESSEL.hull.loa_m,
+                                                 minTurnRadiusM("low")),
+              need0: cert.need0, spineLenM: cert.spineLenM,
+              clock: grantClockMs(cert.spineLenM || 0, V.SPEED_KN.low || 1.5),
+              cMax: 0, at: berthAt(), byClock: true});
     showBanner("⚠ DEPARTING UNDER THE CLOCK — no proof end. " + mins + " s, then she is STOPPED.");
   } else if(cert.ok){
-    grant = cert.grant; grantMemo = null;
+    armGrant(cert.grant);
     showBanner("Launch grant armed — the console stands down against "
       + kindsSummary(cert.grant.mem.all.map(f=>({info:{kind:f.kind}})))
       + " for " + cert.grant.gateM.toFixed(0) + " m out of the berth, and watches everything "
@@ -10014,6 +10352,8 @@ $("#b_rth").onclick = doRTH;
 // across runs, and NOT a way to silence the alarm; see guardOverrideOk for the three ways it
 // ends on its own.
 $("#gb_proceed").onclick = ()=>{
+  // Same ordering rule as gb_low above. Inside the stand-down this button is HOLD THE GRANT.
+  if(!guardHeldOffer() && helmStoodDown(Date.now()) && grantLast) return holdTheGrant();
   const c = clearance || {};
   guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null};
   // Hand back anything the guard had already taken, so "proceed" means what it says. The
@@ -10203,8 +10543,13 @@ function logGuardLow(how, clearM, kindName, extra){
 // ONE BUTTON, TWO MOMENTS. Before the hold it keeps the survey going; after it, it gives the
 // survey back. The operator is answering the same question either way, so it is the same
 // control in the same place, and only its label changes.
+// ⚠⚠ THESE HANDLERS MUST TEST IN THE SAME ORDER renderGuardBar() DRAWS IN - held, then the
+// R15 stand-down, then a standing grant, then the rungs. Four buttons serve five bar states;
+// if the dispatch order and the drawing order ever disagree, a button does something other
+// than what its own label says, which is the worst defect a control on this bar can have.
 $("#gb_low").onclick = ()=>{
   if(guardHeldOffer()) return resumeHeldSurvey();
+  if(helmStoodDown(Date.now())) return takeHelmNow();
   continueAtLow();
 };
 // ⚠ SAYS WHAT IT COSTS. Dropping the remainder is not "dismiss": the plan is gone from the
@@ -10221,7 +10566,34 @@ async function dropHeldSurvey(){
   flashNote("Held survey dropped — the boat is still station-keeping.");
   renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
 }
-$("#gb_drop").onclick = dropHeldSurvey;
+$("#gb_drop").onclick = ()=>{
+  // Same ordering rule as gb_low. With a grant standing this button is DROP THE GRANT.
+  if(!guardHeldOffer() && !helmStoodDown(Date.now()) && grant) return dropTheGrant();
+  return dropHeldSurvey();
+};
+
+/**
+ * DROP THE GRANT - the operator handing the helm back, deliberately, at any point in a
+ * grant's life. R14 names it as one of the six ends and it is the only one a person controls.
+ *
+ * ⚠ IT GETS THE SAME 20 s STAND-DOWN AS EVERY OTHER RESTORING END, and that is not
+ * second-guessing the operator: the press means "you may watch this berth again", and the
+ * twenty seconds is what stops that being read by the console as "steer her off it now", on
+ * a boat that may still be lying inside the slip's buffer. TAKE THE HELM NOW is on the bar
+ * throughout it for an operator who meant exactly that.
+ */
+async function dropTheGrant(){
+  if(!grant) return;
+  if(!await guiConfirm("Drop the launch grant",
+      "She is STOPPED, and the console gets its full clearance authority back against your "
+      + "launch berth. If she is still alongside it, the guard may then command an escape at "
+      + (V.SPEED_KN.high || 6) + " kn — the helm is held for " + (GRANT_STANDDOWN_MS/1000)
+      + " s first, and TAKE THE HELM NOW on the bar skips that wait.", {always: true})) return;
+  logGrantEvent("grant_dropped", {});
+  // offerHold:false - they asked for this end, so re-offering HOLD THE GRANT beside it would
+  // be the console arguing with a decision it just took an explicit confirmation for.
+  standDownEnd("the operator dropped the launch grant.", {offerHold: false});
+}
 // The operator holding the boat themselves REPLACES the guard's hold, and looks identical
 // from guardHeldOffer() - same run, same behavior, same holding flag - so this is the one
 // place that has to say so by name. It also drops the drawn route, which is the remainder.
@@ -10419,6 +10791,10 @@ function onState(s){
   if(s.run_seq!=null && s.run_seq!==runSeq){
     if(!freshRun && runSeq!=null) startNewMotion();
     runSeq = s.run_seq;
+    // R14 - a new commanded motion is one of the six ends. Asked HERE, where the console
+    // already notices a new motion, rather than inside grantTick: the grant must end on the
+    // COMMAND, not on the first frame after it that happens to reach the guard.
+    grantOnNewMotion(s.run_seq);
   }
   if(prevRun==="running" && s.run!=="running" && !loggedLines){ logLineTable(s.run); loggedLines=true; renderLineTable(); }  // run ended: log the table
   prevRun=s.run;
@@ -10577,6 +10953,17 @@ function onState(s){
             distTo({lat:asv.lat,lon:asv.lon}, nogo.center) > NOGO_RADIUS_M*0.6){
       refreshNogo({lat:asv.lat,lon:asv.lon});
     }
+    // ⚠⚠ R1 - THE LATCH, AND IT IS ABOVE THE GUARD DELIBERATELY. This is the one line that
+    // makes the launch grant exist at all: without it `S.berth` stays null, berthAt() returns
+    // null, certifyDeparture() answers {none:true} at its first line, and every frame below
+    // is today's console byte for byte.
+    //
+    // It is asked on EVERY frame and guards itself: one attempt per session-at-rest, only
+    // with a fix, only with the chart model ready, only with `run_seq === 0` - and only where
+    // the console cannot already certify the water (R2). A boat SET ONTO a pier mid-mission
+    // has run_seq > 0 and gets nothing. Above the guard so that the frame which latches is
+    // also the frame the bar can describe, rather than the one after it.
+    maybeLatchBerth();
     // THE GUARD RUNS BEFORE THE READOUTS, so the card and the banner describe the same
     // frame the guard acted on rather than the one before it.
     // ORDER MATTERS: accumLineTime maintains runLineIdx/curTurn, which is what the

@@ -136,6 +136,12 @@ eval([
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
+  // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8). currentActivity() returns role "depart"
+  // while a grant stands, so `grant` must exist here or speedRole() - which every governor
+  // check in this file goes through - is a bare ReferenceError. Null in this world: no berth
+  // is latched, so the classifier answers exactly as it always did and these checks are the
+  // evidence that the OPEN regime is unchanged.
+  "let grant = null;",
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",

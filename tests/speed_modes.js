@@ -143,7 +143,11 @@ function showBanner(m) { banners.push(m); }
 // whose recorded activity had drifted apart, which is the exact failure the single
 // classifier exists to prevent.
 // eslint-disable-next-line no-eval
-eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
+// R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+// must exist in this world too. Null here - no berth is latched - so the classifier answers
+// exactly as it always did, which is what makes these checks evidence that the OPEN regime
+// is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
      grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
      // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
