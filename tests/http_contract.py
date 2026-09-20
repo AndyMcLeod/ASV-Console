@@ -63,7 +63,16 @@ TEETH (verified by mutation, with the check numbers each one actually produced):
     the final else removed, so an unknown path answers nothing     -> 6, 7, 13
     a _serve_ helper loses its 404 path                            -> 6, 13
     the SSE stream never sends its headers                         -> 6, 15
-    a handler that BLOCKS instead of returning                     -> 14
+    a handler that BLOCKS instead of returning                     -> 6, 14
+      RE-RUN 2026-09-19 against BOTH kinds of route, because the networked ones are retried
+      now: /api/env (local, judged on one attempt) -> 6, 14; /api/tide (networked, so it has
+      to time out TWICE) -> 6, 14. The retry does not cost check 14 its teeth.
+  the networked-GET budget and its retry (2026-09-19)
+    NET_GETS emptied - every GET back to one 25 s attempt          -> 14b
+    the retry removed                                              -> 14b
+      Neither of those can be caught by a live run on a healthy network, because the branch
+      never executes - which is the whole reason 14b stubs getp and exercises the DECISION
+      rather than waiting for a real upstream to misbehave.
   ais_service.py (the second HTTP surface, its own process)
     THE FINDING - urllib.parse.unquote removed from the query parse -> 20
     the fall-through 404 made conditional                          -> 17, 18, 19
@@ -81,6 +90,13 @@ WHY THE PAIRS ARE ALL NEEDED, which is the point of the suite:
              client gets no response (13). One that BLOCKS holds the socket open and looks
              exactly like a slow request (14). Different symptom, different check - the
              GET mutations above all land on 13, and only a sleep produces 14.
+  14 vs 14b  And "looks exactly like a slow request" is not a figure of speech: two of these
+             GETs really do go to the open internet, and one of them had a budget BELOW its
+             own route's bound, so a slow CO-OPS was reported as a hung handler. 14 judges
+             whether a route answered; 14b judges the RULE that decides when a stall counts -
+             retried once for a networked route, never for any other. The retry has to be
+             narrow: give every route a second chance and 14 stops catching a blocked
+             handler, which is the one thing it is for.
   6 vs 13    Static and live. 6 reads every path including ones no request here reaches;
              13 catches what the analysis is too coarse to see.
 
@@ -378,7 +394,7 @@ proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser",
                          "--roc-config", ROC_CFG, *STATE.args()],
                         cwd=APP, stdout=srvlog, stderr=subprocess.STDOUT)
 no_response, not_json, roc_dead = [], [], []
-get_dead, get_hung, sse = [], [], (None, "", b"")
+get_dead, get_hung, get_retried, sse = [], [], [], (None, "", b"")
 try:
     up = False
     for _ in range(80):
@@ -417,12 +433,39 @@ try:
                  "/api/chartinfo", "/api/chartinfo?bbox=1,2",
                  "/tiles/bad/path.png", "/tiles/12/1/1.png",
                  "/nope", "/api/unknown"]                 # the final else
+    # TWO OF THESE GETS GO TO THE OPEN INTERNET, and one of them had a budget BELOW its own
+    # route's bound. /api/tide fetches CO-OPS inline - 15 s a series, plus up to 30 s for a
+    # cold station list - so the 25 s every GET gets here would expire on a slow upstream and
+    # be recorded as a route that HUNG: check 14 failing for the weather, on a console that
+    # was working. (tests/data_routes.py met the same exposure as a suite-level CRASH, and
+    # its header carries the measurements. This was found from there, 2026-09-19.)
+    #
+    # ⚠ A STALL IS RETRIED ONCE HERE RATHER THAN SKIPPED, and that is deliberate: check 14's
+    # teeth are a handler that BLOCKS instead of returning, and skipping these two routes
+    # would take those teeth off them. A blocked handler blocks again. A slow upstream does
+    # not, because the abandoned fetch completes server-side and the answer is cached after
+    # it - tide_series holds its series 300 s, fetch_tile writes the tile to disk (measured:
+    # an abandoned cold chart extract answered in 1.30 s on the next call). Only a SECOND
+    # timeout is a hang, and check 14 says in its own detail line when it needed the retry.
+    NET_GETS = {"/api/tide": 60, "/tiles/12/1/1.png": 30}
+
+    def probe_get(p):
+        """One GET, retried ONCE if it is a networked route that ran out of budget.
+        Returns (code, retried)."""
+        code, _n = getp(port, p, timeout=NET_GETS.get(p, 25))
+        if code != "TIMEOUT" or p not in NET_GETS:
+            return code, False
+        return getp(port, p, timeout=NET_GETS[p])[0], True
+
     for p in sorted(set(GET_PATHS)):
-        code, _n = getp(port, p)
+        code, was_retried = probe_get(p)
+        if was_retried:
+            get_retried.append(p)
         if code is None:
             get_dead.append(p)
         elif code == "TIMEOUT":
             get_hung.append(p)
+
 
     # The SSE stream is the one GET that never finishes: it must commit headers and a first
     # frame straight away, then hold the connection open. "Never finishes" and "never
@@ -491,7 +534,43 @@ check("13. EVERY GET route answered, including the ones that exist to refuse",
 check("14. ... and none of them HUNG — a GET that never sends looks exactly like a slow one",
       lambda: not get_hung,
       lambda: ("hung: %s" % ", ".join(get_hung)) if get_hung
-      else "no route committed nothing at all")
+      else ("no route committed nothing at all"
+            + ("; a networked route stalled once and answered on the retry: %s"
+               % ", ".join(get_retried) if get_retried else "")))
+
+# 14b. THE RETRY ITSELF, exercised rather than assumed - on a healthy network the branch
+# never runs, so nothing else here would notice it going wrong, or going away. getp is
+# stubbed because the point is the DECISION, not a real stalled upstream: a networked route
+# that stalls once and then answers is the upstream, one that stalls TWICE is a hang, and a
+# route with no upstream gets no second chance at all - which is where check 14's teeth live
+# (the blocking-handler mutation, above).
+_calls = []
+
+
+def _stub_getp(answers):
+    def _g(_port, _p, timeout=25):
+        _calls.append(_p)
+        return (answers.pop(0), 0) if answers else ("TIMEOUT", 0)
+    return _g
+
+
+_real_getp = getp
+try:
+    getp = _stub_getp(["TIMEOUT", 200])
+    _stall_once = probe_get("/api/tide")
+    getp = _stub_getp(["TIMEOUT", "TIMEOUT"])
+    _stall_twice = probe_get("/api/tide")
+    _calls[:] = []
+    getp = _stub_getp(["TIMEOUT", 200])
+    _local = probe_get("/api/state")
+finally:
+    getp = _real_getp
+check("14b. a networked route that stalls once and answers on the retry is NOT a hang; one "
+      "that stalls twice IS; and a route with no upstream is judged on ONE attempt",
+      lambda: _stall_once == (200, True) and _stall_twice == ("TIMEOUT", True)
+      and _local == ("TIMEOUT", False) and _calls == ["/api/state"],
+      lambda: "stalled once %s, twice %s, local %s (attempts on the local route: %d)"
+      % (_stall_once, _stall_twice, _local, len(_calls)))
 
 check("15. the SSE stream commits headers and a first frame immediately",
       lambda: sse[0] == 200 and "text/event-stream" in sse[1] and sse[2].startswith(b"data:"),
