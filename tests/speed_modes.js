@@ -128,6 +128,10 @@ function check(name, cond, detail) {
 // ---- the page's world, as the governor reads it ------------------------------------- //
 V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 };
 var mission, runLineIdx = -1, curTurn = -1, turnSeg = [], turnSlowAt = {}, lastRunLine = -1;
+// speedGovernor also reads the JUNCTION corner set since 2026-09-19 (tests/corner_slow.js).
+// Declared here for the same reason turnSlowAt is: this suite evals the function's source
+// into its own scope, so every global it names has to exist in that scope.
+var cornerSlow = new Set();
 // The post-pause low-speed hold (2026-09-09). The governor stands down while it is set, the
 // same way it does for the safety override — declared here so the checks below run against
 // the ordinary case, and driven on purpose in the resume checks further down.

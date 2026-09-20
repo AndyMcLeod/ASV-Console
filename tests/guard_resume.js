@@ -134,6 +134,8 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 },
 var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" },
                 approach_radius_m: 2 };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = [];
+// speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
+var cornerSlow = new Set();
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
 var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
 var clearance = { m: null, kind: null, closing: false, slowed: false, prev: null, info: null };

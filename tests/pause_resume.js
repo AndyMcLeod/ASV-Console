@@ -139,6 +139,9 @@ eval([
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
+  // speedGovernor also reads the JUNCTION corner set since 2026-09-19
+  // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
+  "let cornerSlow = new Set();",
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
@@ -185,7 +188,12 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
   // operator's own Upload to a station-keeping boat needs Start to stay live for it.
   check("1b. Start stays live for a STAGED plan while the run reads running, and Upload is off while under way",
         () => /const underWay = run==="running" && !\(s\.status\|\|\{\}\)\.holding;/.test(cmdState)
-              && /\$\("#b_upload"\)\.disabled = !armed \|\| estop \|\| underWay;/.test(cmdState)
+              // ⚠ GAINED A FOURTH TERM 2026-09-19, and this is EXTENDED rather than loosened:
+              // all four must be present or this reds. Upload is awaited before it POSTs now
+              // (it measures where the hull goes at every corner first), so the button has to
+              // be dead for that window - otherwise Start in the gap runs the PREVIOUS staged
+              // plan while the operator believes the new one went up. See tests/corner_slow.js 21.
+              && /\$\("#b_upload"\)\.disabled = !armed \|\| estop \|\| underWay \|\| uploadBusy;/.test(cmdState)
               && /\$\("#b_start"\)\.disabled = !armed \|\| estop \|\| !s\.plan_uploaded \|\| \(run==="running" && !s\.plan_staged\);/.test(cmdState),
         "without the staged clause Start is dead after a staged upload; without underWay Upload offers a click the server refuses");
 }
@@ -440,6 +448,22 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const cmd = (p, b) => { calls.push({ p, b }); return Promise.resolve({ ok: true, state: {} }); };
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
     const render = () => {}, setViolations = () => {}, clearViolation = () => {};
+    // doUpload measures where the HULL goes at every corner of the routed plan since
+    // 2026-09-19 (tests/corner_slow.js), so the function's new dependencies have to exist
+    // in this scope like the rest of its world. The REAL cornerSlowPlan is used rather
+    // than a stub: on these two-point fixtures it returns an empty set before it touches
+    // the frame or the keep-out model, so 1j's 'an ordinary upload is SILENT' still means
+    // what it says instead of meaning 'the stub said nothing'.
+    const { cornerSlowPlan } = require("../static/js/turns.js");
+    const SPEED_ROLES = ["transit", "turn", "survey"];
+    const V = { SPEED_KN: { low: 1.5, survey: 3.0, high: 6.0 } };
+    const roleSpeed = () => "survey";
+    let cornerSlow = new Set(), cornerUnanswered = [], cornerPlanKey = "survey";
+    // doUpload disables the Upload button for as long as it is measuring corners and
+    // restores it in a finally, so the world needs the command-state applier. Recorded
+    // rather than stubbed away: the sequence is the property worth being able to see.
+    let uploadBusy = false; const busySeq = [];
+    const applyCmdState = () => busySeq.push(uploadBusy);
     const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
     const setPlanIntent = (kind) => { planIntent = { kind, why: [] }; };
     let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan

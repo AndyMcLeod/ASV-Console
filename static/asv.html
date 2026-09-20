@@ -874,7 +874,7 @@ import { scanChart, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
   from "/static/js/chartink.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
-import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, minTurnRadiusM, shortenSeg,
+import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
@@ -2305,7 +2305,15 @@ function speedGovernor(){
   // clearance guard were written for. The flag is per-GAP, set by punchOut.
   const role = speedRole();
   const gap = role === "turn" ? (turnSeg[curTurn] || {}).from : -1;
-  const want = (role === "turn" && gap >= 0 && turnSlowAt[gap]) ? "low" : roleSpeed(role);
+  // ⚠ THE SAME RULE ONE LEVEL OUT: a corner the hull cannot round inside the buffer is
+  // flown at the low speed, whether or not a turn was generated for it. `wp_index` is the
+  // waypoint she is steering FOR, so the leg INTO a flagged vertex and the leg out of it
+  // are both slowed - the throttle has a ramp, and a corner entered at the plan speed is
+  // rounded at the plan speed whatever is commanded at the vertex itself.
+  const wi = (S && S.wp_index) || 0;
+  const atCorner = cornerSlow.size > 0 && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
+  const want = ((role === "turn" && gap >= 0 && turnSlowAt[gap]) || atCorner)
+               ? "low" : roleSpeed(role);
   if(want === commandedSpeed) return want;
   commandedSpeed = want;
   commandSpeed(want);
@@ -2517,6 +2525,24 @@ let patTransits = [];                          // per-gap detour waypoints, inte
 // slower speed for that turn and puts it back afterwards - a plan-wide drop would cost
 // the whole survey to buy one corner.
 let turnSlowAt = {};
+// ⚠ A JUNCTION IS A CORNER TOO, AND NOTHING USED TO MEASURE IT. `turnSlowAt` above is
+// per-GAP and covers only a GENERATED turn. The route also corners where the approach
+// meets the first line, at every hop between runs, at a reversal the gate declined, and
+// at a detour legPath spliced in at Upload - and the hull rounds all of those too.
+// Measured on Andy's Honolulu plan of 2026-09-16: 12 of 413 route vertices take her
+// inside the operator's 5 m buffer at the plan speed, 0 of 413 at `low`, and every one
+// of the 12 is at a joint over 90 degrees. Keyed by ROUTE VERTEX (what the vessel
+// reports as `wp_index`), not by gap, because that is the only index the uploaded route
+// and the running boat share. Rebuilt by every Upload and by nothing else.
+let cornerSlow = new Set();       // route vertices to fly at the low speed
+let cornerUnanswered = [];        // ...and the ones slowing does NOT answer
+let cornerPlanKey = "survey";     // the speed they were judged at, for the banner
+// ⚠ UPLOAD IS NOW AWAITED BEFORE IT POSTS, SO IT NEEDS A BUSY STATE. Measuring the
+// corners hands the main thread back between them, and in a hidden tab a yield costs
+// about a second - so there is real time between the press and the POST where the
+// previous plan is still the staged one. Without this the operator can press Start in
+// that window and run the OLD plan believing the new one went up.
+let uploadBusy = false;
 // ── STRIKING A PUNCHED RUN OFF BY HAND ─────────────────────────────────────────────
 //
 // Andy, 2026-09-01: *"The WorldView application has the ability to select and delete
@@ -9469,6 +9495,9 @@ function routeTooLong(n){
 // UPLOAD. A named function, and async, because it may have to ASK - see the chart-model branch.
 async function doUpload(){
  try{
+  // Set before the first await and cleared in the finally, so every exit - refused,
+  // blocked, thrown or sent - puts the button back exactly once.
+  uploadBusy = true; applyCmdState(S);
   const wps = mission.waypoints || [];
   if(!wps.length){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }   // the server refuses it in words
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
@@ -9489,6 +9518,10 @@ async function doUpload(){
         {always: true})) return;
     const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps);          // degraded: the waypoints as they are
     runRoute = raw.route; runUnsafe = []; setPlanIntent("survey", raw, raw.route);
+    // NO MODEL, NO CORNER CHECK - and no STALE one either. The previous plan's slow
+    // corners are indices into a route that is no longer being flown, and a slow command
+    // at the wrong waypoint is worse than none.
+    cornerSlow = new Set(); cornerUnanswered = [];
     showBanner("⚠ UNROUTED UPLOAD — " + why + ". The approach and transits were NOT checked against "
       + "the chart, and the clearance guard is not watching the track until the model loads.");
     cmd("/api/cmd/upload").then(stagedNote);
@@ -9512,13 +9545,62 @@ async function doUpload(){
     return;
   }
   clearViolation();
+  // ⚠ THE CORNERS THE HULL CANNOT ROUND INSIDE THE BUFFER, MEASURED HERE AND NOWHERE ELSE.
+  // This is the first and only point at which the FINAL route exists: punchOut never sees
+  // the approach or legPath's detours, and the vessel never sees anything else. `legClear`
+  // has just passed every chord of it - every chord is lawful water - and the hull still
+  // rounds every corner of it.
+  //
+  // ⚠ JUDGED AT THE FASTEST SPEED IN THE PLAN, WHICH OVER-FLAGS ON PURPOSE. A route vertex
+  // carries no role: the same list holds the approach (transit), the coverage line ends
+  // (survey) and the joins (turn). Taking the fastest of the three asks the question of the
+  // worst case the plan can put the boat in at that corner. The cost of being wrong that way
+  // is one unnecessary slow corner; the cost of the other way is the buffer - and every one
+  // of these corners is a joint over 90 degrees, so none of them is mid-line.
+  //
+  // ⚠⚠ AND IT MAY NOT TAKE THE UPLOAD DOWN WITH IT. Sending a routed plan is the
+  // safety-critical act here; slowing for a corner is an addition to it. doUpload's outer
+  // catch turns any throw into a flashNote, so an exception raised in this block would
+  // SILENTLY NOT UPLOAD THE PLAN - found by tests/pause_resume.js, which drives this
+  // function with the world stubbed and went red with nothing sent. On any failure the
+  // set is cleared, the upload proceeds exactly as it does today, and the banner says the
+  // check did not run. Failing CLOSED - refusing an upload that was fine yesterday
+  // because a new advisory threw - would be the worse error of the two.
+  let cs = {slow: [], unanswered: []};
+  try {
+    const planKey = SPEED_ROLES.map(roleSpeed)
+                      .reduce((a, b) => ((V.SPEED_KN[b] || 0) > (V.SPEED_KN[a] || 0) ? b : a));
+    cs = await cornerSlowPlan(plan.route, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
+                              {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)})
+         || cs;
+    cornerPlanKey = planKey;
+  } catch(e) {
+    cs = {slow: [], unanswered: []};
+    showBanner("⚠ The corner check did not run (" + ((e && e.message) || e) + "). The plan is uploaded and routed exactly as before, but no corner is being slowed for — the hull rounds every corner of a route and this is what measures that.");
+  }
+  cornerSlow = new Set(cs.slow);
+  cornerUnanswered = cs.unanswered || [];
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
+  // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the
+  // operator did not ask for it, and a corner slowing does NOT answer is a plan defect they
+  // can still do something about - move the waypoint, widen the spacing, lower the speed.
+  if(cornerUnanswered.length)
+    showBanner("⚠ " + cornerUnanswered.length + " corner(s) take the hull inside the "
+      + (nogo.buffer || 0) + " m buffer EVEN AT THE LOW SPEED (route waypoint"
+      + (cornerUnanswered.length > 1 ? "s " : " ") + cornerUnanswered.slice(0, 6).join(", ")
+      + (cornerUnanswered.length > 6 ? " …" : "")
+      + "). Slowing does not answer those — move the waypoint, or give the corner more water.");
+  else if(cornerSlow.size)
+    showBanner(cornerSlow.size + " corner(s) will be flown at the LOW speed: at "
+      + cornerPlanKey + " the hull would round them inside the " + (nogo.buffer || 0)
+      + " m buffer. Nothing else in the plan changes.");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
   cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])})
     .then(stagedNote);
   render();
  }catch(e){ flashNote("Upload failed: " + ((e && e.message) || e)); }
+ finally{ uploadBusy = false; applyCmdState(S); }
 }
 function stagedNote(j){
   if(j && j.state && j.state.plan_staged)
@@ -10056,7 +10138,8 @@ function applyCmdState(s){
   // keeps this handler from drawing a route the boat is not flying. Station-keeping or paused,
   // the plan is STAGED, and Start stays live for it although the run still reads "running".
   const underWay = run==="running" && !(s.status||{}).holding;
-  $("#b_upload").disabled = !armed || estop || underWay;
+  $("#b_upload").disabled = !armed || estop || underWay || uploadBusy;
+  if(uploadBusy) $("#b_upload").title = "Measuring the plan’s corners — the route has not been sent yet.";
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
   // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to grey out the
   // moment it worked, which left Start as the only resume — a control the operator has no

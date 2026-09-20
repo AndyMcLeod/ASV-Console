@@ -55,9 +55,58 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 NIGHT — ITEMS 1-3 SHIPPED, ITEM 4 STAGE 0 SHIPPED; **STAGE 1 IS HALF-BUILT ON THE BRANCH `wip/launch-grant-stage1`** and master is clean — read the first block)
+## ⇒ START HERE (handoff refreshed 2026-09-19 NIGHT — ITEMS 1-3 SHIPPED, ITEM 4 STAGE 0 SHIPPED, **THE JUNCTION CORNERS ARE MEASURED AND SLOWED FOR**; **STAGE 1 IS HALF-BUILT ON THE BRANCH `wip/launch-grant-stage1`** and master is clean — read the first block)
 
 ### ➤ PICK UP HERE
+
+**⇒ 2026-09-19 (NIGHT), FROM THE JUNCTION-CLASS WINDOW — THE CONSOLE NOW KNOWS WHERE THE HULL GOES
+AT A CORNER, AND SLOWS FOR THE ONES IT CANNOT ROUND INSIDE THE BUFFER.** Andy's call, with the
+measurements in front of him: *slow through the breaching corner rather than refuse it — the
+flyability is not in doubt, the speed is.* **⚠ PAGE-ONLY: it goes live when he reloads BOTH console
+windows. No server restart.**
+
+* **WHAT WAS WRONG.** A route is planned and checked as a POLYLINE — `legClear` walks every chord and
+  every chord is lawful water — and the hull then ROUNDS every corner of it. Nothing asked about that
+  anywhere except inside a generated turn (`turnFlyable` → `projectRoute`). No junction ever got the
+  call: not the approach meeting line 1, not a hop between runs, not a reversal the gate declined, not
+  a detour `legPath` spliced in at Upload.
+* **MEASURED, by flying his own recorded uploads through the vessel model itself** (`SimVcu.tick`, calm,
+  on a temp copy): on the Honolulu route of 2026-09-16 the hull leaves the commanded track by up to
+  **2.88 m at the plan speed and 1.41 m at `low`**, and **12 of 413 vertices take her inside his own 5 m
+  buffer at the plan speed against 0 of 413 at `low`** — every one of the 12 at a joint over 90 degrees.
+  The keep-out rebuild was checked against two independently published H3 figures (1044 zones vs the
+  logged 1043; **265 of 415** waypoints within 10 m, exactly H3's 265).
+* **BUILT:** `flownTrack` + `cornerSlowPlan` in `static/js/turns.js`, called from `doUpload` on the FINAL
+  route, read by `speedGovernor` beside the existing `turnSlowAt`. Corners that breach **even at `low`**
+  come back as `unanswered` and are bannered by name rather than silently throttled at.
+* **⚠ THREE DESIGNS WERE KILLED BY MEASUREMENT BEFORE THIS ONE, and the header records all three.**
+  `projectRoute` restarted per vertex understates the hull by **2.20 m** (it cannot see inherited
+  cross-track error); chaining it gets to 1.42 m; a margin derived from `minTurnRadiusM`'s
+  TRACKING_MARGIN slack fits Honolulu's joints almost exactly (0.58 vs 0.590 m) and **fails out of
+  sample on 4 of 6 route/speed cases**. What works is walking the route the way the follower flies it,
+  with the leg advance taken on the position BEFORE the step: **0.34 m worst over seven route/speed
+  cases on three recorded plans at two ports.** No fitted constant anywhere — every term is the
+  vessel's own, and the one that is not (the throttle ramp) is declared.
+* **⚠ THE LIVE CHECK FOUND WHAT THE BENCHMARKS DID NOT.** On a throwaway console with his real plan and
+  a 995-zone model the first build froze the page: main thread 2.8 s → **5.3 s**, and the page's own
+  stall detector fired at **7.9 s**. It YIELDS now — baseline 4341 ms vs **4588 ms** wired, measured
+  identically on two consoles, no stall banner on either. Because Upload is now awaited before it
+  POSTs, `#b_upload` has a BUSY state (set before the first await, cleared in a `finally`): without it
+  the operator could press Start in the gap and run the PREVIOUSLY staged plan.
+* **⚠ AND THE SUITE SWEEP FOUND A DEFECT THE SUITE ITSELF DID NOT.** `pause_resume.js` drives the page's
+  own `doUpload`, and the new code threw in its stubbed scope — doUpload's outer catch swallowed it and
+  **the plan silently did not upload**. The corner check now degrades: on any throw the set is cleared,
+  the upload proceeds exactly as before, and a banner says the check did not run. Failing CLOSED would
+  have been the worse error.
+* **TESTS:** `tests/corner_slow.js`, 22 checks. **1-7 are corners flown through `asv_console.py`'s own
+  SimVcu.tick** — a fixture outside the code being tested, agreeing to 0.000 m. **19 mutations run, 18
+  killed**; the survivor (removing the screen) is inert by design and says so. Check 22 exists only
+  because its mutation survived the other nineteen.
+* **⚠ WHAT THIS DOES NOT ANSWER:** a corner the hull cannot hold at ANY speed. `junctionKnot` already
+  names those and fires on two of them in the 2026-09-18 13:47 upload (a 157.2° reversal on a 7.09 m
+  leg at 6 kn) — that is the open `nKnotFold` item, not this one. And `ea5e361f`'s coverage standoff
+  does NOT cover junctions: it floors at the buffer in calm water, and by its own scope note it is the
+  coverage LINES only.
 
 **⇒ 2026-09-19 (NIGHT), FROM A SEPARATE WINDOW — NOT part of item 4, and it changes NO console
 code: `data_routes.py`'s NETWORKED CHECKS NO LONGER TAKE THE SUITE DOWN.** Andy: *"tests/data_routes.py

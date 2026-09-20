@@ -56,7 +56,7 @@
 // algorithm. What corresponds to WorldView's is the ASSEMBLY INSIDE the handler, and
 // separating those is its own job with its own decisions.
 import { azTo, distTo } from "./geodesy.js";
-import { legClear } from "./chart.js";
+import { blocked, legClear } from "./chart.js";
 import { V } from "./state.js";
 // THE RUNTIME GUARD'S OWN PROJECTION, borrowed at PLAN time - see turnFlyable.
 import { projectRoute } from "./guard.js";
@@ -528,4 +528,303 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
     if(!first && t.shape !== 'eased') first = r;
   }
   return {...first, rung: tries.length};
+}
+
+
+// ============================================================================
+// WHERE THE HULL ACTUALLY GOES AT A CORNER - the call the junctions never got.
+// ============================================================================
+//
+// `turnFlyable` above asks `projectRoute` whether a GENERATED TURN's track clears the
+// keep-outs. Nothing asks that of a junction: the approach meeting the first coverage
+// line, a hop between two runs, a reversal the gate declined, a detour `legPath` spliced
+// in at Upload. Those corners are planned as a polyline and checked as a polyline
+// (`legClear` passes every chord, because every chord is lawful water), and the hull then
+// rounds them.
+//
+// MEASURED ON ANDY'S OWN PLANS, 2026-09-19, by flying the recorded uploads through the
+// vessel model itself. On the Honolulu route of 2026-09-16 (415 waypoints, 5 m buffer,
+// zero waypoints inside it) the hull leaves the commanded polyline by up to 2.88 m at the
+// plan speed and 1.41 m at `low`; **12 of 413 vertices take her inside the operator's
+// buffer at the plan speed and 0 of 413 do at `low`**, and all 12 are at joints over 90
+// degrees. The coverage standoff (`guardStandoffM`) does not answer this: it floors at the
+// buffer in calm water, and it is the coverage LINES only - turns and transits still
+// answer to the plain buffer, which is every junction there is.
+//
+// ⚠ AND `projectRoute` RESTARTED AT EACH VERTEX CANNOT CARRY THIS, WHICH WAS THE FIRST
+// DESIGN AND IS WHY THIS FUNCTION EXISTS INSTEAD. Two defects, both measured against the
+// vessel model over seven route/speed cases on three recorded plans at two ports:
+//
+//   (1) IT STEERS AT THE WAYPOINT; THE BOAT STEERS AT A LOOK-AHEAD POINT ON THE LEG, and
+//       trims the residue out with an integral. Those are different control laws and they
+//       round a corner differently.
+//   (2) RESTARTED CLEAN AT EACH VERTEX IT CANNOT SEE INHERITED CROSS-TRACK ERROR. On a
+//       chain of short legs the boat arrives at a corner already off her line, and that
+//       error dominates the corner's own.
+//
+// Measured against the vessel model over seven route/speed cases on three recorded plans
+// at two ports, worst understatement of the hull's own departure: `projectRoute` restarted
+// per vertex **2.20 m**; chained **1.42 m**; chained and steering the way the boat steers
+// **3.32 m**; and with the LEG ADVANCE taken in the follower's own order - along-track and
+// range measured BEFORE the step, not after - **0.34 m, on all seven**. The half-step was
+// the whole outlier: the case that read 3.32 m reads 0.26 m once it is right. An earlier
+// draft of this comment blamed that case on a corner "no simple model tracks". It was this
+// bug, and the note is left here because the wrong reading survived two rounds of work.
+//
+// A MARGIN WAS TRIED INSTEAD AND IS NOT WHAT THIS USES. `minTurnRadiusM`'s TRACKING_MARGIN
+// slack (minTurnRadiusM - v/omega) fits the Honolulu joints almost exactly - 0.58 m of
+// understatement against 0.590 m of slack - and FAILS OUT OF SAMPLE on four of six
+// route/speed cases, by up to 2.20 m against 1.179 m. A constant that fits the plan it was
+// read off is not a bound. There is no fitted constant here: every term is the vessel's
+// own, read from the same profile `asv_console.py`'s follower reads.
+//
+// WHAT THIS DOES NOT ANSWER, NAMED SO IT IS NOT MISTAKEN FOR ANSWERED: a corner the hull
+// cannot hold at any speed. The 13:47 upload of 2026-09-18 carries a 157.2-degree reversal
+// on a 7.09 m leg and a 253-degree turn on 14.64 m (route vertices 51 and 61, single join
+// points from punchOut, flown at `high`). Slowing is not the answer to those; `junctionKnot`
+// already names both, and they are the open `nKnotFold` item.
+
+/** The vessel loop's own tick (asv_console.py TICK_HZ = 4.0). Not a tuned number: the
+ *  follower integrates at this rate, so a track walked at it is the track it flies. */
+export const TRACK_STEP_S = 0.25;
+
+/**
+ * THE THROTTLE'S RAMP, kn/s - and it is the ONE number here that is not in the vessel
+ * profile, which is a cost and is stated rather than hidden. The governor ramps speed
+ * changes at this rate (asv_console.py's tick: `clamp(target - sog, -1.5*dt, 1.5*dt)`),
+ * and it matters because slowing for a corner is worth nothing if the leg into it is too
+ * short for the way to come off: from survey to low is 1.0 s, about 1.2 m of run-in. A
+ * corner whose run-in cannot deliver the lower speed is reported as one slowing does not
+ * answer, rather than silently marked solved.
+ */
+export const SPEED_RAMP_KN_S = 1.5;
+
+/** The follower's terms, from the active vessel - the same fields asv_console.py reads.
+ *  The fallbacks are the shipped small-class values and apply only if /api/vessel failed
+ *  before first paint, exactly as minTurnRadiusM's `|| 3.0` does. */
+function followerTerms(fly){
+  const o = fly || {}, m = (V.VESSEL && V.VESSEL.maneuvering) || {}, a = (V.VESSEL && V.VESSEL.autopilot) || {};
+  return {
+    lookM:    +m.lookahead_m || 3.0,
+    approachM: o.approachM || +m.approach_m || 1,
+    kiDeg:    (a.xte_ki_deg    != null) ? +a.xte_ki_deg    : 0.4,
+    iMaxDeg:  (a.xte_i_max_deg != null) ? +a.xte_i_max_deg : 12.0,
+    rate:      V.MAX_TURN_RATE_DEG_S || 20,
+  };
+}
+
+const D2R = Math.PI / 180;
+const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function turnTo(cur, tgt, step){
+  const d = ((tgt - cur + 540) % 360) - 180;
+  return (cur + clampN(d, -step, step) + 360) % 360;
+}
+/** Distance from an {e,n} point to the polyline EN[lo..hi], in metres. */
+function polyOff(EN, P, lo, hi){
+  let m = Infinity;
+  for(let k = Math.max(0, lo); k < Math.min(EN.length - 1, hi); k++){
+    const a = EN[k], b = EN[k+1], dx = b.e - a.e, dy = b.n - a.n, l2 = dx*dx + dy*dy;
+    const t = l2 ? clampN(((P.e - a.e)*dx + (P.n - a.n)*dy) / l2, 0, 1) : 0;
+    m = Math.min(m, Math.hypot(P.e - (a.e + t*dx), P.n - (a.n + t*dy)));
+  }
+  return m;
+}
+/** How many legs either side to measure a departure against. A corner's excursion can
+ *  only reach the legs adjacent to it; four covers a whole generated arc, whose vertices
+ *  are one approach-radius apart. */
+const OFF_WINDOW = 4;
+
+/**
+ * HOW FAR FROM A VERTEX THE CORNER ITSELF EXTENDS - the distance the hull covers while
+ * swinging through a half turn at its own rate, plus the radius at which it changes leg.
+ * Derived, not chosen: past that the boat has finished turning and is running the leg, so
+ * what she is doing there belongs to the leg and not to this corner. 5.6 m at survey on
+ * the small-class boat, 10.3 m at high.
+ *
+ * ⚠ IT IS ALSO WHAT MAKES THE SCREEN WORK. Charging a whole leg to the vertex it ends at
+ * put `reach` at 600 m on a long coverage line, so `blocked(V, ko, buf + reach)` was true
+ * everywhere, nothing was ever screened out and the exact test walked every step of the
+ * plan: 16 s over 415 waypoints, against 0.4 s once the window is the corner.
+ */
+function cornerReachM(twMs, rateDegS, approachM){
+  return twMs * (180 / Math.max(1, rateDegS)) + approachM;
+}
+
+/**
+ * WALK THE ROUTE THE WAY THE BOAT FLIES IT, once, carrying position and heading across
+ * every vertex. Pure geometry - no keep-out model is consulted here at all, so this is
+ * cheap enough to run over a whole plan (measured 4-101 ms for 92-579 waypoints).
+ *
+ * `speedAt(i)` gives the TARGET through-water speed in m/s for the leg INTO vertex i.
+ * It is a target, not a speed: the walk ramps toward it at SPEED_RAMP_KN_S exactly as the
+ * governor does, so a corner whose run-in is too short to slow down in is walked at the
+ * speed she will really be doing there.
+ *
+ * Returns `{pts, corner}`: `pts` is the flown track as {e, n, i} (i = the vertex being
+ * steered for), and `corner[i]` is {dev, reach, from, to} - the greatest departure from
+ * the commanded polyline while rounding vertex i, the greatest distance from the vertex
+ * itself, and the slice of `pts` that rounds it.
+ */
+export function flownTrack(route, ref, speedAt, fly){
+  const t = followerTerms(fly);
+  const EN = route.map(p => ref.toEN(p));
+  const pts = [], corner = [];
+  if(EN.length < 2) return {pts, corner};
+  let e = EN[0].e, n = EN[0].n, h = azTo(route[0], route[1]);
+  let k = 1, prev = EN[0], xi = 0, guard = 0;
+  // She starts the plan already up to the first leg's speed; everything after is ramped.
+  let twMs = speedAt(1);
+  const rampMs = SPEED_RAMP_KN_S * 0.514444 * TRACK_STEP_S;
+  // ⚠ THE TICK ORDER IS THE FOLLOWER'S, AND IT IS LOAD-BEARING. `along` and the range to
+  // the waypoint are taken BEFORE the step and the leg advance is decided on those, which
+  // is what asv_console.py's tick does. Deciding it on the post-step position instead
+  // advances every leg half a step early - 0.39 m at survey, 0.77 m at high - and that
+  // alone was the whole disagreement with the vessel model in the first cut of this
+  // function: it under-reported the corner at route vertex 40 of Andy's Honolulu plan by
+  // enough to miss a real buffer breach (4.91 m measured against a 5 m buffer).
+  while(k < EN.length && guard < 2e6){
+    guard++;
+    const tgt = EN[k];
+    const want = speedAt(k);
+    twMs += clampN(want - twMs, -rampMs, rampMs);      // the governor's ramp, not a step
+    const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
+    const distB = Math.hypot(tgt.e - e, tgt.n - n);
+    let desired, along;
+    if(segLen < 1.0){
+      // the follower's own degenerate-leg branch: aim at the waypoint
+      desired = Math.atan2(tgt.e - e, tgt.n - n) / D2R; along = segLen;
+    } else {
+      // LINE FOLLOWING, not waypoint chasing: aim a look-ahead along the leg, and trim the
+      // residual cross-track out with the same integral the vessel uses.
+      const bx = de / segLen, by = dn / segLen;
+      along     = (e - prev.e)*bx + (n - prev.n)*by;
+      const xte = (e - prev.e)*by - (n - prev.n)*bx;
+      const g = Math.min(segLen, Math.max(along, 0) + t.lookM);
+      desired = Math.atan2((prev.e + bx*g) - e, (prev.n + by*g) - n) / D2R;
+      xi = clampN(xi + t.kiDeg * xte * TRACK_STEP_S, -t.iMaxDeg, t.iMaxDeg);
+      desired -= xi;
+    }
+    h = turnTo(h, desired, t.rate * TRACK_STEP_S);
+    const a = h * D2R;
+    e += twMs * Math.sin(a) * TRACK_STEP_S;
+    n += twMs * Math.cos(a) * TRACK_STEP_S;
+    const i = k - 1;
+    pts.push({e, n, i});
+    // CHARGED TO BOTH NEIGHBOURING VERTICES, so a corner is measured from both sides -
+    // the run-in on the leg before it and the run-out on the leg after. A step outside
+    // `cornerReachM` of a vertex is not part of that corner and is not charged to it.
+    const capM = cornerReachM(twMs, t.rate, t.approachM);
+    for(const v of [i, k]){
+      if(v < 1 || v > EN.length - 2) continue;
+      const reach = Math.hypot(e - EN[v].e, n - EN[v].n);
+      if(reach > capM) continue;
+      const c = corner[v] || (corner[v] = {dev: 0, reach: 0, from: pts.length - 1, to: pts.length - 1});
+      const off = polyOff(EN, {e, n}, v - OFF_WINDOW, v + OFF_WINDOW);
+      if(off > c.dev) c.dev = off;
+      if(reach > c.reach) c.reach = reach;
+      if(pts.length - 1 < c.from) c.from = pts.length - 1;
+      c.to = pts.length - 1;
+    }
+    if(along >= segLen - t.approachM || distB <= t.approachM){
+      // A NEW LEG DROPS THE OLD TRIM. The vessel does exactly this (`_xte_i = 0.0` on a
+      // new leg): the previous leg's standing bias is not this leg's bias.
+      prev = tgt; k++; xi = 0;
+    }
+  }
+  return {pts, corner};
+}
+
+/**
+ * WHICH CORNERS TAKE THE HULL INSIDE THE OPERATOR'S BUFFER, AND WHICH OF THOSE SLOWING
+ * ANSWERS. Two passes, because that is what the boat will do: the first walks the plan at
+ * its own speed and finds the corners that breach; the second walks it again with those
+ * corners slowed, and anything still breaching is a corner slowing does NOT answer - a
+ * plan defect the operator has to be told about rather than quietly throttled at.
+ *
+ * ⚠ THE SCREEN IS THE TRIANGLE INEQUALITY, AND IT CAN ONLY OVER-FLAG. For any point P
+ * within `reach` of vertex V, `clearance(P) >= clearance(V) - reach`. So a corner whose
+ * `clearance(V) - reach` still clears the buffer cannot breach and is skipped without
+ * touching the model again; everything else is tested exactly, point by point, with the
+ * same `blocked()` every other keep-out question in this console is asked. Over-flagging
+ * costs one unnecessary slow corner. Under-flagging would cost the buffer, so the screen
+ * is written in the direction that cannot do it.
+ *
+ * Returns `{slow, unanswered, dev}` - vertex indices to fly at the low speed, vertex
+ * indices that breach even there, and the per-vertex departure at the plan speed.
+ */
+/**
+ * ⚠ IT YIELDS, AND THAT IS WHY IT IS ASYNC. MEASURED on the live console against Andy's
+ * Honolulu plan and its real 995-zone model: this is about 2.5 s of work on top of an
+ * Upload that already blocked the main thread for 2.8 s, and the page's own stall detector
+ * fired at 7.9 s - a banner telling the operator the console had stopped responding, and a
+ * `page_stall` record written on every Upload, on a console that already has 217 of them
+ * open. None of the work is dropped; the thread is handed back between corners. doUpload
+ * is already an async function that awaits guiConfirm and cmd(), so awaiting this changes
+ * no verdict and no ordering - the plan still goes out after the answer is known, and the
+ * operator still sees the banner before it does.
+ */
+/** How many corners to test between yields. A macrotask turnaround is about 4 ms, so this
+ *  is large enough that the yields are not themselves the cost and small enough that no
+ *  slice approaches the stall detector's threshold. */
+/** ⚠ `fly.approachM` IS THE OPERATOR'S, NOT THE HULL'S DEFAULT. The radius at which the
+ *  follower changes leg is what decides how wide a corner is cut, and it is a MISSION
+ *  setting the server passes straight to the vessel - so the caller hands it in, the same
+ *  way guardTrack and punchOut's flyability check both already do. Omitting it models a
+ *  boat that is not the one being sent. */
+const CORNERS_PER_SLICE = 40;
+const breathe = () => new Promise(r => setTimeout(r, 0));
+export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
+  const out = {slow: [], unanswered: [], dev: {}};
+  if(!route || route.length < 3 || !ko) return out;
+  const kn = k => (V.SPEED_KN && V.SPEED_KN[k]) || 3.0;
+  const planMs = kn(planKey) * 0.514444, lowMs = kn(lowKey || "low") * 0.514444;
+  const EN = route.map(p => ref.toEN(p));
+
+  const breaches = (walk, i) => {
+    const c = walk.corner[i];
+    if(!c || !(c.dev > 0)) return false;
+    // THE SCREEN, AND IT IS `blocked` RATHER THAN `clearanceM` FOR A MEASURED REASON.
+    // Both answer the triangle inequality - nothing within `buf + reach` of the vertex
+    // means nothing within `buf` of any point the corner reaches - but `blocked` rejects
+    // on a bounding box and returns the moment it finds one thing, where `clearanceM`
+    // walks every ring to the end to report a distance nobody reads. Measured on Andy's
+    // Honolulu model (1044 zones): 18.9 s of screening became 0.4 s.
+    if(!blocked(EN[i], ko, buf + c.reach)) return false;
+    // ⚠ EVERY STEP OF THE CORNER, AND NOT `legClear`'s RATE - THAT WAS TRIED AND IT LOST
+    // A REAL DETECTION. Stepping the exact test at `max(2, buf/2)` like legClear does moved
+    // route vertex 332 of Andy's Honolulu plan from `unanswered` to `slow` - from "slowing
+    // does not answer this" to "slowing does" - when at the low speed it still lies 4.91 m
+    // off a keep-out inside a 5 m buffer. legClear's rate is for a straight LEG, where the
+    // clearance varies slowly; a corner excursion is a tight arc whose closest approach is
+    // a point, and two or three samples across it step over the apex. The main-thread cost
+    // that rate was buying is answered by yielding instead - see this function's header.
+    for(let j = c.from; j <= c.to; j++){
+      const p = walk.pts[j];
+      if(Math.hypot(p.e - EN[i].e, p.n - EN[i].n) > c.reach) continue;   // not this corner
+      if(blocked(p, ko, buf)) return true;
+    }
+    return false;
+  };
+
+  const pass1 = flownTrack(route, ref, () => planMs, fly);
+  const slow = new Set();
+  for(let i = 1; i < route.length - 1; i++){
+    const c = pass1.corner[i];
+    out.dev[i] = c ? c.dev : 0;
+    if(breaches(pass1, i)) slow.add(i);
+    if(i % CORNERS_PER_SLICE === 0) await breathe();
+  }
+  if(!slow.size) return out;
+
+  // THE SECOND PASS IS FLOWN THE WAY THE RUN WILL BE FLOWN: low on the leg INTO a flagged
+  // corner and on the leg out of it (the throttle has a ramp, and a corner entered at the
+  // plan speed is rounded at the plan speed whatever the governor says at the vertex).
+  const slowLeg = i => slow.has(i) || slow.has(i - 1);
+  const pass2 = flownTrack(route, ref, i => (slowLeg(i) ? lowMs : planMs), fly);
+  let yielded = 0;
+  for(const i of [...slow].sort((a, b) => a - b)){
+    if(breaches(pass2, i)) out.unanswered.push(i); else out.slow.push(i);
+    if(++yielded % CORNERS_PER_SLICE === 0) await breathe();
+  }
+  return out;
 }
