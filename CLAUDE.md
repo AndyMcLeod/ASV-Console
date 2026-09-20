@@ -55,9 +55,120 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 LATE — ITEMS 1, 2 AND 3 ARE FIXED; item 4 (the LAUNCH GRANT) IS NEXT: read this block, then `DEPARTURE_PARADIGM.md`, then `ESCAPE_FINDINGS.md`)
+## ⇒ START HERE (handoff refreshed 2026-09-19 NIGHT — ITEMS 1-3 SHIPPED, ITEM 4 STAGE 0 SHIPPED; **STAGE 1 IS HALF-BUILT ON THE BRANCH `wip/launch-grant-stage1`** and master is clean — read the first block)
 
 ### ➤ PICK UP HERE
+
+**HANDOFF, 2026-09-19 (NIGHT), TO THE NEXT "ASV Console Refinement" WINDOW.**
+
+**⚠⚠ READ THIS FIRST: ITEM 4 STAGE 1 IS HALF-BUILT, AND IT IS NOT ON MASTER.**
+
+`master` is CLEAN and every commit on it is tested. The unfinished launch grant lives on the branch
+**`wip/launch-grant-stage1`** (pushed). That split is deliberate: **his console runs the working tree**, and
+an unfinished safety feature sitting in it is one wiring line away from being live.
+
+```
+  git checkout wip/launch-grant-stage1 -- .     # bring Stage 1 back into master's working tree
+  git checkout -- . && rm -f static/js/berth.js # ...and put it away again
+```
+
+Seven files at `dddefa1b`, and the branch is GREEN - all 92 suites pass on it:
+
+```
+  M  asv_console.py           the berth field, POST /api/cmd/berth, SALIENT, cleared on reset
+  M  static/asv.html          the latch, membership, the regime, the lifecycle, Upload certification
+  M  static/js/keepouts.js    featureClearanceM (new)
+  M  tests/clearance_guard.js  bundle entries only
+  M  tests/guard_resume.js     bundle entries only
+  M  tests/pause_resume.js     bundle entries only
+  ?? static/js/berth.js       NEW - the whole grant model as pure geometry
+```
+
+**AND IT IS INERT, FOR ONE REASON.** `maybeLatchBerth()` is DEFINED AND NEVER CALLED, so nothing ever POSTs
+`/api/cmd/berth`, `S.berth` stays null, `berthAt()` returns null, `certifyDeparture()` returns `{none:true}`,
+`grant` stays null, `grantNow()` returns null, and `koG === nogo.ko`. Every frame is today's console.
+**Wiring `maybeLatchBerth()` into `onState` is the switch - do not throw it until the list below is done.**
+
+**ANDY'S ORDER OF WORK, GIVEN ON THE DAY:** *"1. The turn geometry... 2. The helm rung's selection
+test... 3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."*
+
+| item | state | commit |
+|---|---|---|
+| 1. turn geometry | SHIPPED | `d7d3f905` + `3b15a8d4` |
+| 2. helm rung | SHIPPED | `f2fb80cd` |
+| 3. planner/guard seam | SHIPPED | `ea5e361f` |
+| 4. launch grant, STAGE 0 (blind readout) | SHIPPED | `49d542ce` |
+| 4. launch grant, STAGE 1 | **HALF-BUILT, INERT** | `dddefa1b` on `wip/launch-grant-stage1` |
+
+#### WHAT STAGE 1 ALREADY HAS (built, and hand-checked on a slip fixture)
+
+* **`static/js/berth.js`** - the model as pure geometry, no DOM: `isBerth` (R2, lifted from `holdTarget`'s
+  own two-line test so the planner and the grant cannot disagree about what a berth IS), `grantedFeatures`
+  (R3 membership + R4 kinds), `grantFilter`, `corridorHalfM` (R5, buffer-INDEPENDENT on purpose - anchoring
+  it to the buffer meant raising the buffer WIDENED the exemption), `corridorGate` (R6 and the depth gate
+  R7), `recessionGiveM` (R12, the self-scaling give), `berthClearM`, `grantClockMs` (R14), `grantProved`
+  (R11). Checked on a slip fixture: the pier is granted, a wreck in the same water is REFUSED BY NAME, the
+  far bank survives the filter, the gate lands 66.2 m out past the slip mouth, and the give is 0.50 m at a
+  0.97 m berth - where a flat 5 m could never have armed.
+* **`featureClearanceM` in `keepouts.js`** - ⚠ **THE DESIGN NAMED A PRIMITIVE THAT DID NOT EXIST.** R3 is
+  specified in terms of it. It delegates to `clearanceM` on a one-feature model, so the two cannot disagree
+  about whether a wreck is measured from its own edge.
+* **The server half** - `self.berth`, published beside `run_seq`, `POST /api/cmd/berth` (latch or drop),
+  `set_berth()`, cleared on reset, and added to `SALIENT` so the recording answers "why did the console NOT
+  act" as well as "why did it act". Every server suite passes.
+* **The page** - `berthAt`, `grantMembers` (memoised on the `ko` OBJECT's identity, which changes exactly
+  when `rebuildNogo` replaces it - a remembered FEATURE would be a gate keyed on invalidated state),
+  `grantNow` (the three conjuncts, every frame), `grantTick` (the lifecycle: proof, corridor exit,
+  recession, stall, clock), `standDown`, `endGrant`, `maybeLatchBerth` (R1, NOT WIRED), `certifyDeparture`
+  (R5-R7 with its two refusals), Upload wired with DEPART UNDER THE CLOCK, `koG` into `guardAssess`,
+  `edge:false` inside a grant (R9), and hold-becomes-STOP inside the corridor (R10).
+
+#### WHAT STAGE 1 STILL NEEDS - the design says it MUST LAND WHOLE, in ONE commit
+
+1. **Wire `maybeLatchBerth()` into `onState`.** This is the switch. Nothing happens until it is in.
+2. **⚠ THE 20 s STAND-DOWN IS NOT ACTUALLY GATING THE HELM (R15) - THE BIGGEST MISSING PIECE.**
+   `standDown()` sets `grantEndSay` and says the words, but **nothing reads `grantEndSay`**, so the helm
+   rung is not held after a grant ends. Without it every end hands a boat still inside a slip's buffer to a
+   guard that commands the vessel's HIGH speed on the very next frame - which is the original defect with a
+   delay on it. It needs the three controls as well: TAKE THE HELM NOW / HOLD THE GRANT / DROP THE GRANT.
+3. **The `depart` speed role (R8)** - `SPEED_ROLES` gains `depart`, `currentActivity()` returns
+   `role:"depart"` while a grant stands, `speedGovernor` needs no edit. ⚠ NOTHING IS SENT TO THE VESSEL:
+   no `depart_until_m`, no `depart_speed_key` - a range the boat measured from `_plan[0]` and a range the
+   console measured from `berth.at` would be two numbers with one name.
+4. **The guard bar** - a grant state naming what is standing down and against what, the 8 s re-say gaining
+   that sentence, and the "the guard WOULD be IN EXTREMIS against your launch berth" line assessed on the
+   TRUE model once per `EDGE_REASSESS_MS`, printed only when the true-model assess earns it.
+5. **`tests/berth_grant.js`**, with its GUARDS entry, its `advice_for` line, a RECORDED TEETH list and the
+   docs rebuild - all in the same commit.
+6. **The replay evidence** (Andy's call): from the REAL extracts, **PER UPLOAD WINDOW** - see below.
+7. Then the README and this handoff, in the same commit.
+
+#### FOUR SUITES BROKE ON THE WAY IN, AND THE NEXT EDIT WILL BREAK THEM AGAIN
+
+All four are fixed in the tree; they are listed because they are NOT obvious from the failure text and
+because any further edit in the same places re-breaks them.
+
+* **`clearance_guard.js` and `guard_resume.js`** eval `clearanceGuard` in a world of their own, so EVERY
+  page function it calls has to be in their bundles. `grantNow` and `grantTick` are asked on every frame,
+  above every branch - missing, they are a bare `ReferenceError` on the first frame, which the crash guard
+  reports as ONE failed check rather than as a crash. They also need the `berth.js` imports and the
+  constants the lifecycle reads (`GRANT_STANDDOWN_MS`, `OVERRIDE_GIVE_M`, `GUARD_HELM_S`).
+* **`pause_resume.js`** evals `doUpload`, which now calls `certifyDeparture` - and without the symbol the
+  upload throws into doUpload's OWN catch and reports "Upload failed", which reads like a routing bug and
+  is not one. Its world now carries `berthAt`, `certifyDeparture` and the handful of globals they read.
+  ⚠ `S` is ALREADY declared in that world; re-declaring it is a SyntaxError that kills the file.
+* **`units_toggle.js` 9** greps the page for `/1000).toFixed` as the fingerprint of a hand-rolled km
+  conversion. `(grant.clock/1000).toFixed(0)` matched it exactly. Name the seconds in a variable first.
+
+#### THE FIVE OPEN DECISIONS ARE ANSWERED - DO NOT RE-ASK THEM
+
+Recorded at the head of `DEPARTURE_PARADIGM.md`'s OPEN DECISIONS section. **1** the depth grant is capped
+at the vessel's `low` key. **2 DEPART UNDER THE CLOCK: YES** - bounded, logged, no proof end (already
+built). **3** the clock is 3 x corridor / low, floored at 60 s. **4** a recovery somewhere new needs the
+press; one within `halfM` of a berth latched THIS session is pre-granted. **5 AFTER A STOP AT THE BERTH,
+KEEP STANDING DOWN** - the console never steers her off a berth a person put her on. That last one rests
+entirely on his axiom, which is why it was asked rather than assumed.
+
 
 **HANDOFF, 2026-09-19 (LATE), IN THE WINDOW ANDY NAMED "ASV Console Refinement".**
 
