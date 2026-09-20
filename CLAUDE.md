@@ -99,7 +99,7 @@ windows. No server restart.**
   the upload proceeds exactly as before, and a banner says the check did not run. Failing CLOSED would
   have been the worse error.
 * **TESTS:** `tests/corner_slow.js`, 22 checks. **1-7 are corners flown through `asv_console.py`'s own
-  SimVcu.tick** — a fixture outside the code being tested, agreeing to 0.000 m. **19 mutations run, 18
+  SimVcu.tick** — a fixture outside the code being tested, agreeing to 0.000 m. **28 mutations run, 27
   killed**; the survivor (removing the screen) is inert by design and says so. Check 22 exists only
   because its mutation survived the other nineteen.
 * **⚠⚠ AND AN ADVERSARIAL REVIEW THEN FOUND FIVE MORE, FOUR OF THEM UNDER-FLAGGING** — fixed in the
@@ -107,8 +107,13 @@ windows. No server restart.**
   MISREADING OF THE VESSEL:** the walk reset the cross-track trim on a leg advance, citing
   `asv_console.py`'s *"a new leg: the old cross-track trim is not its trim"* — **that line is in
   `amend_plan`, not in the tick.** The tick's advance sets `_seg_start` and `_wp_index` and never
-  touches `_xte_i`, so the vessel CARRIES the trim. No measurement could have found it (the behaviour
-  moves 0.000 m in calm water); only reading the vessel could. The other four: the FIRST CORNER OF
+  touches `_xte_i`, so the vessel CARRIES the trim. **⚠ AND I FIRST REPORTED THIS AS COSMETIC ON A
+  MEASUREMENT THAT WAS A ROUND TRIP** — a probe comparing the walk WITH the reset against the walk
+  WITHOUT it, never against the vessel, on route-wide maxima at survey speed only. Asked properly,
+  over 280 corners of a leg-length x deflection x speed sweep, **the reset under-reported the hull by
+  up to 3.935 m** (8 m legs, 160 deg, high). It was the largest single error in the function, not an
+  inert one, and only a CHAIN of sharp corners at speed shows it — checks 1-7 are isolated corners
+  and agreed to 0.000 m throughout. Check 27 is that fixture class. The other four: the FIRST CORNER OF
   EVERY PLAN went unmeasured (`routePlan` drops `seg[0]`, so `plan.route[0]` is the first routed point
   and not the boat — she is prepended for the walk now and the indices come back shifted, because the
   set is keyed by the `wp_index` the vessel reports); pass 2 sized each corner's window from the

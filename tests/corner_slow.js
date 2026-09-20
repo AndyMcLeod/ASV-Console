@@ -26,24 +26,29 @@
 // across those seven plus seven whole recorded routes, rounded up one decimal - not a
 // number picked to make the checks pass. If a change moves the walk, these go red.
 //
-// TEETH - twenty-four mutations RUN against a sidecar copy that is restored in a
+// TEETH - twenty-eight mutations RUN against a sidecar copy that is restored in a
 // `finally` and confirmed with `git diff` at the end of the run. These are what the runs
-// printed, not what was predicted of them - four predictions were wrong (10, 17, 22, 23):
+// printed, not what was predicted of them; five predictions were wrong (10, 17, 22, 23, 7):
 //
 //   the leg advance taken on the POST-step position (the real defect)  -> 1, 5, 8
+//   the pre-step range measured AFTER the step instead                 -> 1-8 and the
+//                                                                         crash guard
 //   steers straight at the waypoint, no look-ahead (projectRoute's law) -> 9
 //   the cross-track integral dropped                                   -> 9
 //   the trim RESET on a leg advance again (the vessel does not)        -> 17
 //   the throttle changes instantly, no ramp                            -> 10
 //   the corner window is the whole leg again (reach unbounded)         -> 11, 14, 15
+//   cornerReachM's half turn becomes a quarter (the window halves)     -> 15
 //   the window sized at the walk's own speed instead of the plan's     -> 23
 //   the slow command arrives instantly (no link latency)               -> 24
+//   the slowed walk re-tested only where pass 1 flagged                -> 26
+//   the slowed walk never re-taken (no iteration)                      -> 26
 //   the screen rejects everything (no corner tested exactly)           -> 11, 13, 14
 //   the exact test uses no buffer at all                               -> 11, 13, 14
 //   the second pass skipped: every flag reported as solved by slowing  -> 13
 //   the walk steps at the guard's 0.5 s, not the vessel's tick         -> 1, 2
-//   a corner charged to the vertex ahead only, not the one just passed -> 1, 2, 3, 4, 5, 6,
-//                                                                         10, 11, 13, 14
+//   a corner charged to the vertex ahead only, not the one just passed -> 1-6, 10, 11,
+//                                                                         13, 14
 //   it stops yielding (blocks the main thread again)                   -> 22
 //   asv.html: the call is DELETED at Upload                            -> 18, 20, 21
 //   asv.html: the measured result is discarded                         -> 18
@@ -55,40 +60,56 @@
 //   asv.html: the Upload button ignores the busy flag                  -> 21
 //   asv.html: the busy flag set AFTER the measurement, not before      -> 21
 //
-// ⚠ ONE SURVIVED AND IT IS INERT BY DESIGN, not a gap: making the screen PASS everything
-// (no screening at all). The screen only skips model calls that cannot change the answer,
-// so removing it gives identical verdicts more slowly. A mutation in the SAFE direction
-// that changed a verdict would be the defect; this one changing nothing is the property
-// holding. The opposite mutation - the screen REJECTING everything - is the dangerous one
-// and three checks kill it.
+// ⚠ ONE SURVIVED AND IT IS INERT BY DESIGN: making the screen PASS everything. The screen
+// only skips model calls that cannot change the answer, so removing it gives identical
+// verdicts more slowly. A mutation in the SAFE direction that changed a verdict would be
+// the defect; this one changing nothing is the property holding. The opposite - the screen
+// REJECTING everything - is the dangerous one, and three checks kill it.
 //
-// ⚠ AND THE LIMIT OF CHECK 18 IS STATED RATHER THAN PRETENDED AWAY. 18 pins the Upload
-// call by SOURCE TEXT, because this suite cannot run doUpload. A mutation that keeps the
-// text and discards the result at RUNTIME - `const raw = ({slow:[]}) || await ...` - walks
-// straight past it, and did. The realistic regressions are caught (the call deleted, the
-// result discarded, the boat not prepended, all above); a contrived one is not, and no
-// source check could catch it. That is what tests/pause_resume.js's driven doUpload is
-// for, and it is the reason this suite was not given the job.
+// ⚠⚠ NINE DEFECTS CAME FROM AN ADVERSARIAL REVIEW RATHER THAN FROM THESE CHECKS, in two
+// rounds, and THREE OF THEM WERE HOLES IN CHECKS THIS FILE CALLED RIGOROUS:
 //
-// ⚠⚠ AND FIVE DEFECTS CAME FROM AN ADVERSARIAL REVIEW, NOT FROM THESE CHECKS - four of
-// them under-flagging, which is the direction that costs the buffer. They are checks 17,
-// 18's boat clause, 23, 24 and 25, and each says in its own comment what was wrong. The
-// worst was 17: the walk reset the cross-track trim on a leg advance and cited a line of
-// asv_console.py that is in `amend_plan`, not in the tick. Measurement could not have
-// found it - the behaviour moves 0.000 m in calm water - only reading the vessel could.
-// Against the real Honolulu route none of the five under-flagged anything: a brute-force
-// oracle that tests EVERY flown step with no window and no screen finds exactly the same
-// twelve vertices this returns. They were all demonstrated on constructed geometry, which
-// is what an adversarial reading is for.
+//   * CHECK 7 PASSED ON THE ABSENCE OF A MEASUREMENT. `devAt` returned a silent 0 when the
+//     walk charged nothing to the vertex, and a 0.125 m fixture against a 0.35 m tolerance
+//     accepts 0. The tell was in this very table: check 7 appeared in NO kill list while
+//     every neighbour appeared in several. It returns NaN now, and it is in one.
+//   * CHECK 15 COULD NOT SEE THE WINDOW HALVED. It bounded reach ABOVE by the cap, and a
+//     halved window is still under it; `cornerReachM`'s 180 -> 90 left everything green.
+//     It now also requires the window to be USED by a 165-degree corner.
+//   * CHECK 8'S REGEXES WERE UNANCHORED - two strings existing somewhere in the file, not
+//     an ordering. A version measuring the range AFTER the step would have passed it.
+//
+// The other six were in the code, five of them under-flagging: the trim reset (17), the
+// boat's own first corner never measured (18), the window sized by the slower walk (23),
+// the zero-latency throttle (24), the set outliving its route (25), and the slowed walk
+// re-tested only where the first walk flagged (26). The worst by far is the trim, and the
+// first write-up of it - in this file - called it INERT on a measurement that was a ROUND
+// TRIP: a probe comparing this walk WITH the reset against this walk WITHOUT it, never
+// against the vessel, and only on route-wide maxima at survey speed. Asked properly, over
+// 280 corners of a leg-length x deflection x speed sweep, THE RESET UNDER-REPORTED THE
+// HULL BY UP TO 3.935 m. Check 27 is the fixture class that sees it and 1-7 could not.
+//
+// ⚠ AND NONE OF THE NINE UNDER-FLAGGED ANYTHING ON THE REAL PLAN. A brute-force oracle -
+// every flown step tested against the model, no window and no screen, 76,398 steps - finds
+// exactly the same twelve vertices the shipped code returns, before the fixes and after.
+// They were demonstrated on constructed geometry, which is what an adversarial reading is
+// for and why it was run.
+//
+// ⚠ CHECK 26 IS A SOURCE CHECK AND SAYS SO. The property is "slowing one corner can create
+// a breach at another", and the only place it has been OBSERVED is Andy's real Honolulu
+// route, where the sweep adds route vertex 379. No synthetic fixture reproduces it, so what
+// 26 pins is the mechanism, not the outcome. Check 18 has the same shape and the same
+// stated limit: a contrived mutation that keeps its text and discards the result at runtime
+// walks past it. Driving doUpload is tests/pause_resume.js's job, not this file's.
 //
 // ⚠ FOUR FIXTURES WERE WRONG BEFORE THE CODE WAS, AND SAY SO. Check 10 asserted a 2 m
 // run-in could not deliver the low speed from survey; that ramp is 1.0 s, about 1.5 m, so
-// it can. Checks 11-14's keep-out was hand-rolled as {w,e,s,n} where the real box is
-// bbOf's {x0,y0,x1,y1}, so `inBB` rejected every point and the fixture tested nothing
-// while printing FAIL. Check 23 first asserted a slowed corner's realized reach EQUALS the
-// fast one's; the cap is shared but a slower walk steps finer and samples nearer its edge.
-// And an attempt to buy back main-thread cost by stepping the exact test at legClear's
-// rate lost route vertex 332's detection outright.
+// it can. Checks 11-14's keep-out was hand-rolled as {w,e,s,n} where the real box is bbOf's
+// {x0,y0,x1,y1}, so `inBB` rejected every point and the fixture tested nothing while
+// printing FAIL. Check 23 first asserted a slowed corner's realized reach EQUALS the fast
+// one's - the cap is shared, the reach is not, because a slower walk steps finer. And an
+// attempt to buy back main-thread cost by stepping the exact test at legClear's rate lost
+// route vertex 332's detection outright.
 //
 const fs = require("fs");
 const path = require("path");
@@ -101,6 +122,9 @@ const { V, nogo, sea } = require("../static/js/state.js");
 const { bbOf } = require("../static/js/geometry.js");
 const { flownTrack, cornerSlowPlan, TRACK_STEP_S, SPEED_RAMP_KN_S,
         SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
+// ITER_CAP is module-private; read it out of the source so check 26 can assert on it.
+const ITER_CAP = +(/const ITER_CAP = (\d+);/.exec(
+  require("fs").readFileSync(require("path").join(__dirname, "..", "static", "js", "turns.js"), "utf8")) || [0, 0])[1];
 
 const SRC = fs.readFileSync(path.join(__dirname, "..", "static", "js", "turns.js"), "utf8");
 
@@ -159,10 +183,21 @@ const TRUTH = [
   { label: "a 30 deg bend (barely a corner)", inM: 30, outM: 40, defl: 30,  key: "survey", dev: 0.125 },
 ];
 const TOL_M = 0.35;
+// ⚠ A SEPARATE, LARGER TOLERANCE FOR CHAINS, AND IT IS RECORDED NOT CHOSEN. On chained
+// sharp corners the walk still trails the vessel further than on isolated ones - 0.768 m
+// worst over 280 corners of a leg-length x deflection x speed sweep - because the walk
+// carries no drift model and the errors compound along a chain. Quoting 0.35 here would
+// be quoting the easy fixtures' number at the hard ones.
+const TOL_CHAIN_M = 0.8;
 
+// ⚠ NO SILENT ZERO. This returned 0 when the walk charged NOTHING to the vertex, and
+// check 7's fixture (0.125 m against a 0.35 m tolerance) accepts 0 - so the check passed
+// on the ABSENCE of a measurement. The tell was in this file's own TEETH table: check 7
+// appeared in none of the kill lists while every neighbour appeared in several. NaN fails
+// every comparison, so a corner that was never measured now reds instead of agreeing.
 function devAt(route, key, i) {
-  const w = flownTrack(route, F, () => kn(key), null);
-  return w.corner[i] ? w.corner[i].dev : 0;
+  const w = flownTrack(route, F, () => kn(key), null, kn(key));
+  return w.corner[i] ? w.corner[i].dev : NaN;
 }
 
 console.log("\n-- 1-7: the walk against the VESSEL MODEL (SimVcu.tick), tolerance " + TOL_M + " m --");
@@ -180,8 +215,16 @@ console.log("\n-- 8-10: the three terms that had to be the follower's, not a pro
 // advances the leg on those. Advancing on the post-step position instead is half a step
 // early - and that alone under-reported Honolulu's vertex 40 enough to miss a real breach.
 check("8. the leg advance is decided on the PRE-step position (source)",
+      // ⚠ ORDER, NOT MERE PRESENCE. Both halves were bare .test(SRC) over the whole file,
+      // which asserts only that two strings exist somewhere - a version that measured distB
+      // AFTER the step would have passed. Checks 18, 20 and 21 in this suite already
+      // constrain order; this one now does too.
       () => /const distB = Math\.hypot\(tgt\.e - e, tgt\.n - n\);/.test(SRC)
-         && /if\(along >= segLen - t\.approachM \|\| distB <= t\.approachM\)/.test(SRC),
+         && /if\(along >= segLen - t\.approachM \|\| distB <= t\.approachM\)/.test(SRC)
+         && SRC.indexOf("const distB = Math.hypot(tgt.e - e, tgt.n - n);")
+            < SRC.indexOf("e += twMs * Math.sin(a) * TRACK_STEP_S;")
+         && SRC.indexOf("e += twMs * Math.sin(a) * TRACK_STEP_S;")
+            < SRC.indexOf("if(along >= segLen - t.approachM || distB <= t.approachM)"),
       "along and distB are both taken before the integration step");
 // 9. LOOK-AHEAD STEERING, not waypoint chasing, and the XTE trim with it.
 check("9. it steers at a look-ahead point on the leg, and trims cross-track",
@@ -282,10 +325,18 @@ console.log("\n-- 15-16: the corner window, and what it is for --");
   const route = cornerRoute(30, 400, 90);          // a 400 m run-out
   const w = flownTrack(route, F, () => kn("survey"), null);
   const cap = kn("survey") * (180 / 60) + 1;       // cornerReachM for this hull/speed
-  check("15. the corner's window is the CORNER: reach is bounded by the half-turn distance",
-        () => w.corner[CORNER_I].reach <= cap + 1e-6 && w.corner[CORNER_I].reach > 1,
-        "reach " + w.corner[CORNER_I].reach.toFixed(2) + " m against a "
-          + cap.toFixed(2) + " m cap, on a 400 m run-out");
+  const w165 = flownTrack(cornerRoute(30, 40, 165), F, () => kn("survey"), null, kn("survey"));
+  // ⚠ BOUNDED ABOVE **AND USED**. Bounding it above alone could not see `cornerReachM`'s
+  // 180 changed to 90: a halved window is still under the cap, and every check in this file
+  // stayed green through that mutation. A 165-degree corner swings most of a half turn, so
+  // its excursion has to reach most of the way to the cap - which a halved one cannot.
+  check("15. the corner's window is the CORNER: bounded by the half-turn distance, and USED",
+        () => w.corner[CORNER_I].reach <= cap + 1e-6 && w.corner[CORNER_I].reach > 1
+           && w165.corner[CORNER_I].reach <= cap + 1e-6
+           && w165.corner[CORNER_I].reach > 0.8 * cap,
+        "400 m run-out: reach " + w.corner[CORNER_I].reach.toFixed(2) + " m against a "
+          + cap.toFixed(2) + " m cap;  a 165-degree corner uses "
+          + w165.corner[CORNER_I].reach.toFixed(2) + " m of it");
 }
 // 16. Every term is the vessel's. The one exception is the throttle ramp, and it is named.
 check("16. no fitted constant: every term is read from the vessel, and the one that is not says so",
@@ -429,6 +480,69 @@ await (async () => {
            && /cornerSlowFor = plan\.route\.length;/.test(H),
         "keyed on the vessel's own wp_total, which is the cheapest thing the two agree on");
 })();
+
+// 26. THE SLOWED WALK IS SWEPT IN FULL, AND ITERATED. Pass 2 flies a different track and
+// carries that difference into every leg after it, so it can put the hull somewhere the
+// first walk never did. Re-testing only the vertices the first walk flagged - which is
+// what it used to do - meant a breach the SLOW-DOWN ITSELF created could never be found.
+// And such a vertex is not `unanswered`: slowing was never tried on it, so the set grows
+// and the walk repeats. Observed on the real Honolulu route, where the sweep adds route
+// vertex 379; no synthetic fixture reproduces it, so this pins the mechanism.
+check("26. the slowed walk is re-tested over EVERY vertex, and re-taken when the set grows",
+      () => /for\(let i = 1; i < route\.length - 1; i\+\+\)\{\s*\n\s*if\(!slow\.has\(i\) && breaches\(pass2, i\)\) added\.push\(i\);/.test(SRC)
+         && /added\.forEach\(i => slow\.add\(i\)\);\s*\n\s*pass2 = walkSlowed\(\);/.test(SRC)
+         && ITER_CAP > 1,
+      "a new breach becomes a new corner to slow FOR, not a corner declared unanswerable; ITER_CAP = " + ITER_CAP);
+
+console.log("\n-- 27: CHAINED corners, where a walk that loses its trim comes apart --");
+// ⚠⚠ THIS IS THE FIXTURE CLASS 1-7 DID NOT HAVE, AND ITS ABSENCE HID A 3.9 m DEFECT.
+// Checks 1-7 are ISOLATED corners: one turn, open legs, a clean 60 m run-in, nothing
+// sharper than 165 degrees. Every one of them agreed to 0.000 m while the walk was
+// throwing away the cross-track trim on each leg advance - because an isolated corner has
+// no inherited error to lose. The defect only bites where the boat arrives at a corner
+// ALREADY off her line, which needs a CHAIN of sharp corners on short legs, and it bites
+// hardest at speed: measured against the vessel over 280 corners, the trim reset
+// under-reported the hull by up to 3.935 m (8 m legs, 160 deg, high).
+//
+// ⚠ AND THE OLD JUSTIFICATION WAS A ROUND TRIP. The '0.000 m over four zig-zags' this
+// file used to cite came from a probe that compared flownTrack WITH the reset against
+// flownTrack WITHOUT it - the vessel was never in the comparison - and reduced each route
+// to its single worst corner, which an early agreeing corner masks. A transform checked
+// against itself passes for any mutually-inverse pair of wrongs.
+const CHAINS = [
+  { leg: 6,  defl: 160, key: "survey", vtx: 6, dev: 1.8084 },
+  { leg: 6,  defl: 165, key: "high",   vtx: 4, dev: 4.0940 },
+  { leg: 8,  defl: 160, key: "survey", vtx: 6, dev: 2.7580 },
+  { leg: 8,  defl: 160, key: "high",   vtx: 6, dev: 5.7422 },
+  { leg: 8,  defl: 165, key: "high",   vtx: 2, dev: 3.7363 },
+  { leg: 12, defl: 160, key: "high",   vtx: 6, dev: 5.3058 },
+  { leg: 12, defl: 165, key: "survey", vtx: 6, dev: 2.6496 },
+];
+function zigRoute(legM, defl, n, runIn) {
+  const pts = [[0, 0], [0, runIn]]; let h = 0;
+  for (let i = 0; i < n; i++) { h += (i % 2 ? -defl : defl);
+    const r = h * Math.PI / 180, p = pts[pts.length - 1];
+    pts.push([p[0] + Math.sin(r) * legM, p[1] + Math.cos(r) * legM]); }
+  const r = h * Math.PI / 180, p = pts[pts.length - 1];
+  pts.push([p[0] + Math.sin(r) * 80, p[1] + Math.cos(r) * 80]);
+  return pts.map(([e, n]) => ll(e, n));
+}
+{
+  let worst = 0, worstAt = null;
+  for (const c of CHAINS) {
+    const w = flownTrack(zigRoute(c.leg, c.defl, 6, 60), F, () => kn(c.key), null, kn(c.key));
+    const got = w.corner[c.vtx] ? w.corner[c.vtx].dev : NaN;
+    const gap = c.dev - got;                       // + = the walk UNDER-reports the hull
+    if (!(gap <= worst)) { worst = gap; worstAt = c; }
+  }
+  check("27. a CHAIN of sharp corners tracks the vessel too, not just isolated ones",
+        () => worst <= TOL_CHAIN_M,
+        "worst UNDER-report over seven chains " + worst.toFixed(3) + " m"
+          + (worstAt ? " (" + worstAt.leg + " m legs, " + worstAt.defl + " deg, "
+                        + worstAt.key + ")" : "")
+          + ";  with the trim reset the same seven read 3.166 m, and 3.935 m was the"
+          + " worst over the full 280-corner sweep");
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

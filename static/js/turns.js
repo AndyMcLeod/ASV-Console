@@ -746,10 +746,12 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
       // version of this reset it to zero here and cited asv_console.py's "a new leg: the
       // old cross-track trim is not its trim" - but that line is in `amend_plan`, not in
       // the tick. The tick's own advance sets `_seg_start` and `_wp_index` and does not
-      // touch `_xte_i` at all. Measured impact in calm water: 0.000 m over four zig-zag
-      // fixtures built to wind the integral up, because it has no standing drift to
-      // cancel - but a comment asserting something the vessel does not do is worse than
-      // the behaviour it was justifying.
+      // touch `_xte_i` at all. ⚠ AND THE FIRST WRITE-UP OF THIS CALLED IT INERT ON A
+      // MEASUREMENT THAT WAS A ROUND TRIP: it compared this walk WITH the reset against
+      // this walk WITHOUT it, never against the vessel, and only on route-wide maxima at
+      // survey speed. Against SimVcu over 280 corners the reset UNDER-REPORTS THE HULL
+      // BY UP TO 3.935 m (8 m legs, 160 deg, high) - it is not inert, it is the largest
+      // single error this function ever had. Check 27 is the fixture class that sees it.
       prev = tgt; k++;
     }
   }
@@ -794,6 +796,11 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
  *  way guardTrack and punchOut's flyability check both already do. Omitting it models a
  *  boat that is not the one being sent. */
 const CORNERS_PER_SLICE = 40;
+/** How many times the slowed walk may be re-taken after growing the set. Each pass can
+ *  only ADD corners, so it settles; three is enough for every recorded plan (the Honolulu
+ *  route settles on the second) and the leftovers of a fourth would be reported as
+ *  unanswered, which is the conservative end. */
+const ITER_CAP = 3;
 const breathe = () => new Promise(r => setTimeout(r, 0));
 export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
   const out = {slow: [], unanswered: [], dev: {}};
@@ -842,17 +849,41 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
   // corner and on the leg out of it (the throttle has a ramp, and a corner entered at the
   // plan speed is rounded at the plan speed whatever the governor says at the vertex).
   const slowLeg = i => slow.has(i) || slow.has(i - 1);
-  // ⚠ THE SLOW COMMAND ARRIVES LATE, AND PASS 2 HAS TO FLY IT LATE. The low target is
-  // withheld for SPEED_CMD_LATENCY_S of travel into the leg, on top of the ramp - the page
-  // does not know the leg changed until a state frame tells it.
+  // ⚠ THE SLOW COMMAND ARRIVES LATE, AND THE SECOND WALK HAS TO FLY IT LATE. The low
+  // target is withheld for SPEED_CMD_LATENCY_S of travel into the leg, on top of the ramp -
+  // the page does not know the leg changed until a state frame tells it.
   const lateM = lowMs * SPEED_CMD_LATENCY_S;
-  let legStart = null, lastK = -1;
-  const pass2 = flownTrack(route, ref, (i, travelled) => {
-    if(i !== lastK){ lastK = i; legStart = travelled; }
-    if(!slowLeg(i)) return planMs;
-    return (travelled - legStart) < lateM ? planMs : lowMs;
-  }, fly, planMs);
-  let yielded = 0;
+  const walkSlowed = () => {
+    let legStart = null, lastK = -1;
+    return flownTrack(route, ref, (i, travelled) => {
+      if(i !== lastK){ lastK = i; legStart = travelled; }
+      if(!slowLeg(i)) return planMs;
+      return (travelled - legStart) < lateM ? planMs : lowMs;
+    }, fly, planMs);
+  };
+  // ⚠⚠ AND IT IS ITERATED, OVER EVERY VERTEX, BECAUSE SLOWING MOVES THE BOAT. The slowed
+  // walk is a different track and it carries that difference into every leg after, so it
+  // can put the hull somewhere the first walk never did. Re-testing only the vertices the
+  // first walk flagged meant a breach the SLOW-DOWN ITSELF created could never be found -
+  // an under-flag, found in review.
+  //
+  // ⚠ AND SUCH A VERTEX IS NOT `unanswered`: slowing was never TRIED on it. A new breach
+  // is a new corner to slow FOR, so the set grows and the walk repeats. Only a corner that
+  // still breaches WHILE IT IS ITSELF BEING SLOWED has actually been answered and failed.
+  // Bounded at ITER_CAP passes - each one can only add corners, so it settles - and if it
+  // has not settled by then the leftovers are reported as unanswered, which is the
+  // conservative end.
+  let pass2 = walkSlowed(), yielded = 0;
+  for(let pass = 0; pass < ITER_CAP; pass++){
+    const added = [];
+    for(let i = 1; i < route.length - 1; i++){
+      if(!slow.has(i) && breaches(pass2, i)) added.push(i);
+      if(++yielded % CORNERS_PER_SLICE === 0) await breathe();
+    }
+    if(!added.length) break;
+    added.forEach(i => slow.add(i));
+    pass2 = walkSlowed();
+  }
   for(const i of [...slow].sort((a, b) => a - b)){
     if(breaches(pass2, i)) out.unanswered.push(i); else out.slow.push(i);
     if(++yielded % CORNERS_PER_SLICE === 0) await breathe();
