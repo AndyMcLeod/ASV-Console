@@ -599,6 +599,16 @@ export const TRACK_STEP_S = 0.25;
  */
 export const SPEED_RAMP_KN_S = 1.5;
 
+/**
+ * HOW LATE THE SLOW COMMAND CAN BE, in seconds - and it is the console's own number, not
+ * a guess. The page can only act on a leg change when it SEES one, and it sees `wp_index`
+ * on a state frame that the server throttles to one per second. So the throttle target
+ * cannot change on the tick the leg does; crediting the boat with a slow-down she has not
+ * been told about yet is an error in the under-flagging direction, which is the one that
+ * costs the buffer. Found in review.
+ */
+export const SPEED_CMD_LATENCY_S = 1.0;
+
 /** The follower's terms, from the active vessel - the same fields asv_console.py reads.
  *  The fallbacks are the shipped small-class values and apply only if /api/vessel failed
  *  before first paint, exactly as minTurnRadiusM's `|| 3.0` does. */
@@ -665,7 +675,7 @@ function cornerReachM(twMs, rateDegS, approachM){
  * the commanded polyline while rounding vertex i, the greatest distance from the vertex
  * itself, and the slice of `pts` that rounds it.
  */
-export function flownTrack(route, ref, speedAt, fly){
+export function flownTrack(route, ref, speedAt, fly, capMs){
   const t = followerTerms(fly);
   const EN = route.map(p => ref.toEN(p));
   const pts = [], corner = [];
@@ -673,7 +683,7 @@ export function flownTrack(route, ref, speedAt, fly){
   let e = EN[0].e, n = EN[0].n, h = azTo(route[0], route[1]);
   let k = 1, prev = EN[0], xi = 0, guard = 0;
   // She starts the plan already up to the first leg's speed; everything after is ramped.
-  let twMs = speedAt(1);
+  let twMs = speedAt(1, 0), travelled = 0;
   const rampMs = SPEED_RAMP_KN_S * 0.514444 * TRACK_STEP_S;
   // ⚠ THE TICK ORDER IS THE FOLLOWER'S, AND IT IS LOAD-BEARING. `along` and the range to
   // the waypoint are taken BEFORE the step and the leg advance is decided on those, which
@@ -685,7 +695,7 @@ export function flownTrack(route, ref, speedAt, fly){
   while(k < EN.length && guard < 2e6){
     guard++;
     const tgt = EN[k];
-    const want = speedAt(k);
+    const want = speedAt(k, travelled);
     twMs += clampN(want - twMs, -rampMs, rampMs);      // the governor's ramp, not a step
     const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
     const distB = Math.hypot(tgt.e - e, tgt.n - n);
@@ -706,6 +716,7 @@ export function flownTrack(route, ref, speedAt, fly){
     }
     h = turnTo(h, desired, t.rate * TRACK_STEP_S);
     const a = h * D2R;
+    travelled += twMs * TRACK_STEP_S;
     e += twMs * Math.sin(a) * TRACK_STEP_S;
     n += twMs * Math.cos(a) * TRACK_STEP_S;
     const i = k - 1;
@@ -713,7 +724,12 @@ export function flownTrack(route, ref, speedAt, fly){
     // CHARGED TO BOTH NEIGHBOURING VERTICES, so a corner is measured from both sides -
     // the run-in on the leg before it and the run-out on the leg after. A step outside
     // `cornerReachM` of a vertex is not part of that corner and is not charged to it.
-    const capM = cornerReachM(twMs, t.rate, t.approachM);
+    // ⚠ SIZED AT THE PLAN SPEED, NOT THE SPEED SHE HAPPENS TO BE DOING. Sizing it from the
+    // instantaneous speed gave a SLOWED corner a smaller window than the breach it was
+    // meant to catch - found in review, demonstrated at 4.06 m against a 3.843 m window,
+    // so the second pass declared a corner answered that was not. The window must be the
+    // largest either pass will need or the two passes are not asking the same question.
+    const capM = cornerReachM(capMs || twMs, t.rate, t.approachM);
     for(const v of [i, k]){
       if(v < 1 || v > EN.length - 2) continue;
       const reach = Math.hypot(e - EN[v].e, n - EN[v].n);
@@ -726,9 +742,15 @@ export function flownTrack(route, ref, speedAt, fly){
       c.to = pts.length - 1;
     }
     if(along >= segLen - t.approachM || distB <= t.approachM){
-      // A NEW LEG DROPS THE OLD TRIM. The vessel does exactly this (`_xte_i = 0.0` on a
-      // new leg): the previous leg's standing bias is not this leg's bias.
-      prev = tgt; k++; xi = 0;
+      // ⚠ THE TRIM IS CARRIED ACROSS A LEG, BECAUSE THE VESSEL CARRIES IT. An earlier
+      // version of this reset it to zero here and cited asv_console.py's "a new leg: the
+      // old cross-track trim is not its trim" - but that line is in `amend_plan`, not in
+      // the tick. The tick's own advance sets `_seg_start` and `_wp_index` and does not
+      // touch `_xte_i` at all. Measured impact in calm water: 0.000 m over four zig-zag
+      // fixtures built to wind the integral up, because it has no standing drift to
+      // cancel - but a comment asserting something the vessel does not do is worse than
+      // the behaviour it was justifying.
+      prev = tgt; k++;
     }
   }
   return {pts, corner};
@@ -806,7 +828,7 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
     return false;
   };
 
-  const pass1 = flownTrack(route, ref, () => planMs, fly);
+  const pass1 = flownTrack(route, ref, () => planMs, fly, planMs);
   const slow = new Set();
   for(let i = 1; i < route.length - 1; i++){
     const c = pass1.corner[i];
@@ -820,7 +842,16 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
   // corner and on the leg out of it (the throttle has a ramp, and a corner entered at the
   // plan speed is rounded at the plan speed whatever the governor says at the vertex).
   const slowLeg = i => slow.has(i) || slow.has(i - 1);
-  const pass2 = flownTrack(route, ref, i => (slowLeg(i) ? lowMs : planMs), fly);
+  // ⚠ THE SLOW COMMAND ARRIVES LATE, AND PASS 2 HAS TO FLY IT LATE. The low target is
+  // withheld for SPEED_CMD_LATENCY_S of travel into the leg, on top of the ramp - the page
+  // does not know the leg changed until a state frame tells it.
+  const lateM = lowMs * SPEED_CMD_LATENCY_S;
+  let legStart = null, lastK = -1;
+  const pass2 = flownTrack(route, ref, (i, travelled) => {
+    if(i !== lastK){ lastK = i; legStart = travelled; }
+    if(!slowLeg(i)) return planMs;
+    return (travelled - legStart) < lateM ? planMs : lowMs;
+  }, fly, planMs);
   let yielded = 0;
   for(const i of [...slow].sort((a, b) => a - b)){
     if(breaches(pass2, i)) out.unanswered.push(i); else out.slow.push(i);

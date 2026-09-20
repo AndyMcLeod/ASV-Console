@@ -141,7 +141,8 @@ eval([
   "const supervising = () => true;",
   // speedGovernor also reads the JUNCTION corner set since 2026-09-19
   // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
-  "let cornerSlow = new Set();",
+  "let cornerSlow = new Set();",
+  "let cornerSlowFor = -1;",
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",

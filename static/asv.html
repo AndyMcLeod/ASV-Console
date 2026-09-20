@@ -2311,7 +2311,9 @@ function speedGovernor(){
   // are both slowed - the throttle has a ramp, and a corner entered at the plan speed is
   // rounded at the plan speed whatever is commanded at the vertex itself.
   const wi = (S && S.wp_index) || 0;
-  const atCorner = cornerSlow.size > 0 && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
+  const sameRoute = cornerSlowFor >= 0 && (S && S.wp_total) === cornerSlowFor;
+  const atCorner = sameRoute && cornerSlow.size > 0
+                   && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
   const want = ((role === "turn" && gap >= 0 && turnSlowAt[gap]) || atCorner)
                ? "low" : roleSpeed(role);
   if(want === commandedSpeed) return want;
@@ -2536,6 +2538,13 @@ let turnSlowAt = {};
 // and the running boat share. Rebuilt by every Upload and by nothing else.
 let cornerSlow = new Set();       // route vertices to fly at the low speed
 let cornerUnanswered = [];        // ...and the ones slowing does NOT answer
+// ⚠ AND IT MAY NOT OUTLIVE THE ROUTE IT INDEXES. The set is vertex numbers into ONE
+// uploaded route; against any other route those numbers name different water. Only an
+// Upload rebuilds it, so without this a set could survive a CLR PLAN, a different plan
+// being started, or a plan uploaded from another tab, and slow the boat at waypoints that
+// were never the ones measured. The vessel publishes how many waypoints it is holding;
+// that is the cheapest thing the two can agree on. Found in review.
+let cornerSlowFor = -1;           // plan length the set was measured against
 let cornerPlanKey = "survey";     // the speed they were judged at, for the banner
 // ⚠ UPLOAD IS NOW AWAITED BEFORE IT POSTS, SO IT NEEDS A BUSY STATE. Measuring the
 // corners hands the main thread back between them, and in a hidden tab a yield costs
@@ -9521,7 +9530,7 @@ async function doUpload(){
     // NO MODEL, NO CORNER CHECK - and no STALE one either. The previous plan's slow
     // corners are indices into a route that is no longer being flown, and a slow command
     // at the wrong waypoint is worse than none.
-    cornerSlow = new Set(); cornerUnanswered = [];
+    cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
     showBanner("⚠ UNROUTED UPLOAD — " + why + ". The approach and transits were NOT checked against "
       + "the chart, and the clearance guard is not watching the track until the model loads.");
     cmd("/api/cmd/upload").then(stagedNote);
@@ -9570,8 +9579,17 @@ async function doUpload(){
   try {
     const planKey = SPEED_ROLES.map(roleSpeed)
                       .reduce((a, b) => ((V.SPEED_KN[b] || 0) > (V.SPEED_KN[a] || 0) ? b : a));
-    cs = await cornerSlowPlan(plan.route, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
-                              {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)})
+    // ⚠ THE BOAT IS PREPENDED, AND THE INDICES COME BACK SHIFTED. `routePlan` drops seg[0],
+    // so plan.route[0] is the first ROUTED point and not the vessel - which means the very
+    // first corner of every run, where her own heading meets the routed approach, was never
+    // measured at all (found in review). The walk needs her in it; the RESULT must not have
+    // her in it, because the set is keyed by the `wp_index` the vessel reports and that
+    // indexes the uploaded route. So: walk [boat, ...route], then subtract one.
+    const walkRoute = [{lat: asv.lat, lon: asv.lon}, ...plan.route];
+    const raw = await cornerSlowPlan(walkRoute, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
+                              {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)});
+    cs = {slow: raw.slow.map(i => i - 1).filter(i => i >= 0),
+          unanswered: raw.unanswered.map(i => i - 1).filter(i => i >= 0)}
          || cs;
     cornerPlanKey = planKey;
   } catch(e) {
@@ -9580,6 +9598,7 @@ async function doUpload(){
   }
   cornerSlow = new Set(cs.slow);
   cornerUnanswered = cs.unanswered || [];
+  cornerSlowFor = plan.route.length;
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the

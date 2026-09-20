@@ -26,16 +26,18 @@
 // across those seven plus seven whole recorded routes, rounded up one decimal - not a
 // number picked to make the checks pass. If a change moves the walk, these go red.
 //
-// TEETH - nineteen mutations RUN against a sidecar copy that is restored in a `finally`
-// and confirmed with `git diff` at the end of the run. These are what the runs printed,
-// not what was predicted of them - three of the predictions were wrong (see 10, 17, 22):
+// TEETH - twenty-four mutations RUN against a sidecar copy that is restored in a
+// `finally` and confirmed with `git diff` at the end of the run. These are what the runs
+// printed, not what was predicted of them - four predictions were wrong (10, 17, 22, 23):
 //
 //   the leg advance taken on the POST-step position (the real defect)  -> 1, 5, 8
 //   steers straight at the waypoint, no look-ahead (projectRoute's law) -> 9
 //   the cross-track integral dropped                                   -> 9
-//   the old trim CARRIED onto the new leg instead of dropped           -> 17 (source only)
+//   the trim RESET on a leg advance again (the vessel does not)        -> 17
 //   the throttle changes instantly, no ramp                            -> 10
 //   the corner window is the whole leg again (reach unbounded)         -> 11, 14, 15
+//   the window sized at the walk's own speed instead of the plan's     -> 23
+//   the slow command arrives instantly (no link latency)               -> 24
 //   the screen rejects everything (no corner tested exactly)           -> 11, 13, 14
 //   the exact test uses no buffer at all                               -> 11, 13, 14
 //   the second pass skipped: every flag reported as solved by slowing  -> 13
@@ -43,8 +45,11 @@
 //   a corner charged to the vertex ahead only, not the one just passed -> 1, 2, 3, 4, 5, 6,
 //                                                                         10, 11, 13, 14
 //   it stops yielding (blocks the main thread again)                   -> 22
-//   asv.html: the set is never computed at Upload                      -> 18, 20
+//   asv.html: the call is DELETED at Upload                            -> 18, 20, 21
+//   asv.html: the measured result is discarded                         -> 18
+//   asv.html: the boat is NOT prepended (first corner unmeasured)      -> 18
 //   asv.html: the governor ignores the set                             -> 19
+//   asv.html: the governor stops checking the set is THIS route's      -> 25
 //   asv.html: the unrouted upload leaves the last plan's corners armed -> 20
 //   asv.html: the busy flag set but never cleared                      -> 21
 //   asv.html: the Upload button ignores the busy flag                  -> 21
@@ -57,22 +62,33 @@
 // holding. The opposite mutation - the screen REJECTING everything - is the dangerous one
 // and three checks kill it.
 //
-// ⚠ AND CHECK 22 EXISTS BECAUSE ITS MUTATION SURVIVED THE FIRST NINETEEN. Nothing noticed
-// the yield being removed, and the yield is the whole reason an Upload no longer freezes
-// the page. It is counted rather than asserted: a self-rescheduling timer cannot run while
-// the main thread is held, so its tick count during the call IS the measurement - 5 with
-// the yield, 1 without (an async function with no awaits still suspends once, at the
-// caller's await, which is why the threshold is above one and not above zero).
+// ⚠ AND THE LIMIT OF CHECK 18 IS STATED RATHER THAN PRETENDED AWAY. 18 pins the Upload
+// call by SOURCE TEXT, because this suite cannot run doUpload. A mutation that keeps the
+// text and discards the result at RUNTIME - `const raw = ({slow:[]}) || await ...` - walks
+// straight past it, and did. The realistic regressions are caught (the call deleted, the
+// result discarded, the boat not prepended, all above); a contrived one is not, and no
+// source check could catch it. That is what tests/pause_resume.js's driven doUpload is
+// for, and it is the reason this suite was not given the job.
 //
-// ⚠ THREE FIXTURES WERE WRONG BEFORE THE CODE WAS, WHICH IS WHY THEY SAY SO. Check 10
-// first asserted that a 2 m run-in could not deliver the low speed from survey; that ramp
-// is 1.0 s, about 1.5 m, so it can - the check was failing a correct implementation.
-// Checks 11-14's keep-out was hand-rolled with a {w,e,s,n} bounding box where the real one
-// is bbOf's {x0,y0,x1,y1}, so `inBB` rejected every point and the fixture silently tested
-// nothing while printing FAIL. And the first attempt at the main-thread cost stepped the
-// exact test at legClear's rate, which lost route vertex 332's detection outright. All
-// three are built from measurements now - the probed flown track, the shipped bbOf, and a
-// live console - rather than from arithmetic done in my head.
+// ⚠⚠ AND FIVE DEFECTS CAME FROM AN ADVERSARIAL REVIEW, NOT FROM THESE CHECKS - four of
+// them under-flagging, which is the direction that costs the buffer. They are checks 17,
+// 18's boat clause, 23, 24 and 25, and each says in its own comment what was wrong. The
+// worst was 17: the walk reset the cross-track trim on a leg advance and cited a line of
+// asv_console.py that is in `amend_plan`, not in the tick. Measurement could not have
+// found it - the behaviour moves 0.000 m in calm water - only reading the vessel could.
+// Against the real Honolulu route none of the five under-flagged anything: a brute-force
+// oracle that tests EVERY flown step with no window and no screen finds exactly the same
+// twelve vertices this returns. They were all demonstrated on constructed geometry, which
+// is what an adversarial reading is for.
+//
+// ⚠ FOUR FIXTURES WERE WRONG BEFORE THE CODE WAS, AND SAY SO. Check 10 asserted a 2 m
+// run-in could not deliver the low speed from survey; that ramp is 1.0 s, about 1.5 m, so
+// it can. Checks 11-14's keep-out was hand-rolled as {w,e,s,n} where the real box is
+// bbOf's {x0,y0,x1,y1}, so `inBB` rejected every point and the fixture tested nothing
+// while printing FAIL. Check 23 first asserted a slowed corner's realized reach EQUALS the
+// fast one's; the cap is shared but a slower walk steps finer and samples nearer its edge.
+// And an attempt to buy back main-thread cost by stepping the exact test at legClear's
+// rate lost route vertex 332's detection outright.
 //
 const fs = require("fs");
 const path = require("path");
@@ -83,7 +99,8 @@ const { V, nogo, sea } = require("../static/js/state.js");
 // hand-rolled {w,e,s,n} box is rejected for every point - which is a fixture that
 // silently tests nothing. Building it with the shipped bbOf cannot drift from it.
 const { bbOf } = require("../static/js/geometry.js");
-const { flownTrack, cornerSlowPlan, TRACK_STEP_S, SPEED_RAMP_KN_S } = require("../static/js/turns.js");
+const { flownTrack, cornerSlowPlan, TRACK_STEP_S, SPEED_RAMP_KN_S,
+        SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
 
 const SRC = fs.readFileSync(path.join(__dirname, "..", "static", "js", "turns.js"), "utf8");
 
@@ -277,17 +294,17 @@ check("16. no fitted constant: every term is read from the vessel, and the one t
          && /ONE number here that is not in the vessel/.test(SRC),
       "lookahead, xte trim, approach radius and turn rate all from V.VESSEL; the ramp is declared");
 
-// 17. THE TRIM IS DROPPED ON A NEW LEG, and this one is held by SOURCE because nothing
-// behavioural can reach it. The vessel does it (`_xte_i = 0.0`, "a new leg: the old
-// cross-track trim is not its trim") and the walk must match - but the integral exists
-// to cancel a STANDING DRIFT, and this walk has none, so carrying it across a boundary
-// changes the corner by 0.000 m. MEASURED, not assumed: four zig-zag fixtures built to
-// wind it up (6 m legs at 120 deg, 4 m at 150 deg, 10 m at 90 deg, 40 m at 120 deg) all
-// read identically with the reset removed. Recorded as a known-inert mutation rather
-// than covered by a fixture contrived to make it move.
-check("17. the cross-track trim is dropped on a new leg, as the vessel drops it (source)",
-      () => /prev = tgt; k\+\+; xi = 0;/.test(SRC),
-      "behaviourally inert without a drift to cancel - measured 0.000 m over four zig-zags");
+// 17. ⚠ THIS CHECK ASSERTED THE OPPOSITE UNTIL A REVIEW READ THE VESSEL PROPERLY, and
+// that is worth more than the property it now holds. It said the walk dropped the trim on
+// a leg advance "as the vessel drops it", citing asv_console.py's "a new leg: the old
+// cross-track trim is not its trim". THAT LINE IS IN `amend_plan`. The tick's own advance
+// sets `_seg_start` and `_wp_index` and never touches `_xte_i`, so the vessel CARRIES the
+// trim and the walk now carries it too. The behaviour barely moves - measured 0.000 m over
+// four zig-zag fixtures, because the integral has no standing drift to cancel - which is
+// exactly why no measurement caught it and only reading the vessel did.
+check("17. the cross-track trim is CARRIED across a leg, because the vessel carries it",
+      () => /prev = tgt; k\+\+;$/m.test(SRC) && !/k\+\+; xi = 0;/.test(SRC),
+      "the tick's advance does not touch _xte_i; the `amend_plan` line that says it does is a DIFFERENT leg change, and reading it as this one is what put the reset here");
 
 console.log("\n-- 18-20: the wiring, because a model nothing calls protects nothing --");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
@@ -295,8 +312,15 @@ const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf
 // legPath's detours, and the vessel never sees anything else - so this is the only
 // point at which the thing being flown exists to be measured.
 check("18. doUpload measures the final route, after legPath has routed it",
-      () => /cornerSlowPlan\(plan\.route, nogo\.frame, nogo\.ko, nogo\.buffer \|\| 0, planKey, "low",/.test(H)
-         && H.indexOf("cornerSlowPlan(plan.route") > H.indexOf("const plan = routePlan(")
+      () => /cornerSlowPlan\(walkRoute, nogo\.frame, nogo\.ko, nogo\.buffer \|\| 0, planKey, "low",/.test(H)
+         && H.indexOf("cornerSlowPlan(walkRoute") > H.indexOf("const plan = routePlan(")
+         // ⚠ AND THE BOAT IS IN THE WALK. routePlan drops seg[0], so plan.route[0] is the
+         // first ROUTED point, not the vessel - the corner where her own heading meets the
+         // approach went unmeasured until a review found it. She is prepended for the walk
+         // and the indices come back shifted, because the SET is keyed by the `wp_index` the
+         // vessel reports and that indexes the uploaded route, which does not contain her.
+         && /const walkRoute = \[\{lat: asv\.lat, lon: asv\.lon\}, \.\.\.plan\.route\];/.test(H)
+         && /slow: raw\.slow\.map\(i => i - 1\)\.filter\(i => i >= 0\)/.test(H)
          // ⚠ AND THE OPERATOR'S APPROACH RADIUS REACHES IT. That is the radius at which the
          // follower changes leg, so it is what decides how wide a corner is cut, and it is a
          // MISSION setting the server passes straight to the vessel. The same expression
@@ -313,9 +337,9 @@ check("19. speedGovernor flies a flagged corner at the low speed, both legs of i
 // being flown, so the boat would be slowed at the wrong waypoint. The degraded
 // (no-chart) upload path must clear it rather than leave the last plan's corners armed.
 check("20. the unrouted upload path clears the set rather than leaving a stale one armed",
-      () => /cornerSlow = new Set\(\); cornerUnanswered = \[\];/.test(H)
-         && H.indexOf("cornerSlow = new Set(); cornerUnanswered = [];")
-            < H.indexOf("cornerSlowPlan(plan.route"),
+      () => /cornerSlow = new Set\(\); cornerUnanswered = \[\]; cornerSlowFor = -1;/.test(H)
+         && H.indexOf("cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;")
+            < H.indexOf("cornerSlowPlan(walkRoute"),
       "the degraded branch drops it before the routed branch could set it");
 
 // 21. THE BUSY STATE, AND WHY IT ONLY NOW MATTERS. Measuring the corners is awaited
@@ -330,7 +354,7 @@ check("21. Upload is BUSY from the press until the plan is sent, and freed on ev
       () => /uploadBusy = true; applyCmdState\(S\);/.test(H)
          && /finally\{ uploadBusy = false; applyCmdState\(S\); \}/.test(H)
          && /\$\("#b_upload"\)\.disabled = !armed \|\| estop \|\| underWay \|\| uploadBusy;/.test(H)
-         && H.indexOf("uploadBusy = true") < H.indexOf("cs = await cornerSlowPlan("),
+         && H.indexOf("uploadBusy = true") < H.indexOf("await cornerSlowPlan("),
       "set before the first await, cleared in a finally, and the button reads it");
 
 console.log("\n-- 22: and it hands the main thread back while it does all that --");
@@ -356,6 +380,54 @@ await (async () => {
         "a self-rescheduling timer fired " + ticks + " time(s) while " + (zig.length - 2)
           + " corners were measured; an async function that never yields scores exactly 1,"
           + " because the caller's own await is the only suspension point");
+})();
+
+console.log("\n-- 23-25: what the adversarial review found, each with its own check --");
+await (async () => {
+  // 23. THE WINDOW IS SIZED AT THE PLAN SPEED, IN BOTH PASSES. Sizing it from the speed
+  // she happens to be doing gave a SLOWED corner a smaller window than the breach it was
+  // meant to catch, so pass 2 called a corner answered that was not - demonstrated in
+  // review at 4.06 m against a 3.843 m window. Measured here rather than grepped: the same
+  // corner walked slow must still be CHARGED the fast corner's reach.
+  const route = cornerRoute(30, 40, 165);
+  const fast = flownTrack(route, F, () => kn("survey"), null, kn("survey"));
+  const slowSized = flownTrack(route, F, () => kn("low"), null, kn("survey"));
+  const slowUnsized = flownTrack(route, F, () => kn("low"), null);
+  const CAP_M = kn("survey") * (180 / V.MAX_TURN_RATE_DEG_S) + 1;   // cornerReachM at the plan speed
+  check("23. a slowed corner keeps the PLAN speed's window, not its own smaller one",
+        // ⚠ THE CAP IS SHARED, THE REALIZED REACH IS NOT - a slower boat simply does not go
+        // as far, so asserting the two reaches are EQUAL was wrong and this check said so on
+        // its first run. What must hold is that the plan-speed cap charges strictly MORE of
+        // the corner than the corner's own speed would, and that the cap reads capMs at all.
+        () => slowSized.corner[CORNER_I].reach > slowUnsized.corner[CORNER_I].reach
+           // both are bounded by the SHARED cap; they are not equal to each other, because a
+           // slower walk steps finer (0.19 m against 0.39 m) and so samples nearer its edge.
+           && slowSized.corner[CORNER_I].reach <= CAP_M && fast.corner[CORNER_I].reach <= CAP_M
+           && /cornerReachM\(capMs \|\| twMs, t\.rate, t\.approachM\)/.test(SRC),
+        "sized at the plan speed " + slowSized.corner[CORNER_I].reach.toFixed(2)
+          + " m; sized at its own speed it would be only "
+          + slowUnsized.corner[CORNER_I].reach.toFixed(2) + " m");
+
+  // 24. THE SLOW COMMAND ARRIVES LATE. The page only learns the leg changed from a state
+  // frame, and the server throttles those to one a second, so pass 2 may not fly the low
+  // speed from the first tick of the leg. Crediting a slow-down she has not been told
+  // about is an under-flag, which is the direction that costs the buffer.
+  check("24. the command latency is the console's own state throttle, and pass 2 flies it",
+        () => SPEED_CMD_LATENCY_S === 1.0
+           && /const lateM = lowMs \* SPEED_CMD_LATENCY_S;/.test(SRC)
+           && /\(travelled - legStart\) < lateM \? planMs : lowMs/.test(SRC),
+        "SPEED_CMD_LATENCY_S = " + SPEED_CMD_LATENCY_S + " s, withheld by distance travelled"
+          + " into the leg rather than by tick count, so it holds at any speed");
+
+  // 25. THE SET MAY NOT OUTLIVE THE ROUTE IT INDEXES. It is vertex numbers into ONE
+  // uploaded route; against any other route those numbers name different water, and only
+  // an Upload ever rebuilds it. Without the guard a set could survive a CLR PLAN or a plan
+  // uploaded from another tab and slow the boat at waypoints nobody measured.
+  check("25. the governor ignores the corner set unless it is THIS route's",
+        () => /const sameRoute = cornerSlowFor >= 0 && \(S && S\.wp_total\) === cornerSlowFor;/.test(H)
+           && /const atCorner = sameRoute && cornerSlow\.size > 0/.test(H)
+           && /cornerSlowFor = plan\.route\.length;/.test(H),
+        "keyed on the vessel's own wp_total, which is the cheapest thing the two agree on");
 })();
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

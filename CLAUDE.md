@@ -102,6 +102,27 @@ windows. No server restart.**
   SimVcu.tick** — a fixture outside the code being tested, agreeing to 0.000 m. **19 mutations run, 18
   killed**; the survivor (removing the screen) is inert by design and says so. Check 22 exists only
   because its mutation survived the other nineteen.
+* **⚠⚠ AND AN ADVERSARIAL REVIEW THEN FOUND FIVE MORE, FOUR OF THEM UNDER-FLAGGING** — fixed in the
+  follow-up commit, each with its own check (17, 18's boat clause, 23, 24, 25). **The worst was a
+  MISREADING OF THE VESSEL:** the walk reset the cross-track trim on a leg advance, citing
+  `asv_console.py`'s *"a new leg: the old cross-track trim is not its trim"* — **that line is in
+  `amend_plan`, not in the tick.** The tick's advance sets `_seg_start` and `_wp_index` and never
+  touches `_xte_i`, so the vessel CARRIES the trim. No measurement could have found it (the behaviour
+  moves 0.000 m in calm water); only reading the vessel could. The other four: the FIRST CORNER OF
+  EVERY PLAN went unmeasured (`routePlan` drops `seg[0]`, so `plan.route[0]` is the first routed point
+  and not the boat — she is prepended for the walk now and the indices come back shifted, because the
+  set is keyed by the `wp_index` the vessel reports); pass 2 sized each corner's window from the
+  SLOWER walk, so a slowed corner got a smaller window than the breach it was meant to catch; pass 2
+  credited a ZERO-LATENCY throttle when the page cannot learn a leg changed until a state frame tells
+  it (1 s); and the set could OUTLIVE THE ROUTE IT INDEXES, since only an Upload rebuilds it.
+* **⚠ NONE OF THE FIVE UNDER-FLAGGED ANYTHING ON HIS ACTUAL PLAN, AND THAT IS WORTH KNOWING BOTH WAYS.**
+  A brute-force oracle — every flown step tested against the model, no window, no screen — finds exactly
+  the same twelve vertices the shipped code returns, before and after the fixes. All five were
+  demonstrated on constructed geometry. **But the latency fix changes what he will SEE:** `unanswered`
+  on the Honolulu route goes from 1 corner to 7, because on a chain of 2.59 m arc legs the slow command
+  cannot arrive before the corner does. Six of those seven are the mirrored inboard arcs `turnJoinable`
+  already refuses, so a re-punched plan will not carry them — but it is a real statement that **on tight
+  arc chains, slowing is not deliverable at all.**
 * **⚠ WHAT THIS DOES NOT ANSWER:** a corner the hull cannot hold at ANY speed. `junctionKnot` already
   names those and fires on two of them in the 2026-09-18 13:47 upload (a 157.2° reversal on a 7.09 m
   leg at 6 kn) — that is the open `nKnotFold` item, not this one. And `ea5e361f`'s coverage standoff
