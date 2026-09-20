@@ -59,6 +59,64 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+**⇒ 2026-09-19 (NIGHT), FROM A SEPARATE WINDOW — NOT part of item 4, and it changes NO console
+code: `data_routes.py`'s NETWORKED CHECKS NO LONGER TAKE THE SUITE DOWN.** Andy: *"tests/data_routes.py
+can crash the whole suite on a transient network stall, which blocks an unrelated commit through the
+pre-commit hook."* **TESTS + HOOK ADVICE + DOCS ONLY — nothing on his machine moves, no reload, no restart.**
+
+* **WHAT IT WAS.** `api()` raises the timeout OUTSIDE any `check()`, so the crash guard turned a stalled
+  train into *"the suite CRASHED"*. **FIVE call sites were exposed, not two:** `/api/tide` and `?force=1`
+  at the DEFAULT 8 s — which is BELOW that route's own bound (15 s a CO-OPS series, +30 s for a cold
+  station list), so it is the one that can fire in ordinary weather — plus Nome and Denver at 420 s and an
+  unfindable name at 120 s.
+* **⚠ AND TWO HOLES THE BRIEF DID NOT HAVE, both measured.** (1) **The hook killed the suite before any
+  skip could happen:** those budgets summed to **976 s** against `.githooks/pre-commit`'s own
+  `SUITE_LIMIT_S=600`, so a genuine outage was reported TIMED OUT and blocked the commit just as hard — a
+  skip mechanism alone does not fix that. (2) **The old skip condition could not tell "no geocoder" from
+  "no such place":** the route has ONE wording, `could not find a place called 'X' (no geocoder, or no such
+  place)`, so `"geocoder" in error` was true for EVERY failed lookup — a regression that made every name
+  unfindable printed *"skip 12f-12h"* and the suite PASSED — and 12j's own `"find" in error` passed **with
+  no geocoder at all**. Verified live against a console pointed at an unroutable geocoder: 400 in 2.04 s,
+  both conditions true.
+* **THE FIX.** `net_api` catches the timeout on ONE call and then asks `/api/state` — which has no upstream
+  on its path — before it agrees a stall was the weather: alive → an announced skip that the SUMMARY LINE
+  repeats, not alive → `ConsoleHung`, reported under its own name. ⚠ A broad try/except would have
+  swallowed the hang this suite exists to report. One budget (`NET_BUDGET_S = 150`) and **ONE STALL PER
+  UPSTREAM**, so the worst case is 300 s and check 1f holds that against the limit **read out of the hook,
+  never restated**. The skip is keyed on the console's own `[ports] geocoder unreachable` note. 12i no
+  longer vanishes in silence on a non-200, and 12j is gated too.
+* **MEASURED on a COLD clone — no `charts/` at all, which is what a fresh clone has — healthy network:**
+  `/api/tide` **1.57 s**, forced 0.20 s; the Nome geocode + a FULL cold ENC extract + snap **25.85 s**, the
+  same call warm **1.30 s**; Denver 4.97 s; an unfindable name 0.35 s. So 420 s was never derived from
+  anything, and the observed failure needed a real upstream stall, not just a cold cache. Two measurements
+  the design turns on: the liveness probe answered in **0.077 s and 0.093 s** while a networked call was
+  stalled (ThreadingHTTPServer, and `/api/state` comes from memory), and abandoning an in-flight extract
+  left **ZERO `exception_lines`** over 120 s — so a clean skip does not red check 13.
+* **`http_contract.py` CARRIED THE SAME EXPOSURE with a different symptom and moved in the same commit** —
+  its `/api/tide` GET at 25 s was recorded as a route that HUNG, i.e. check 14 failing for the weather. The
+  two networked GETs get a budget above the console's own timeouts and **ONE RETRY**, because a blocked
+  handler blocks again while a stalled upstream answers from the cache the abandoned fetch filled. ⚠ A SKIP
+  there would have taken check 14's teeth off the blocking-handler mutation; 14b holds both halves.
+* **⚠ AND THE DIVISION OF LABOUR IS LOAD-BEARING:** with `/api/tide`'s handler blocking for ever,
+  `data_routes` SKIPS check 3 and PASSES — it cannot tell a blocked handler from a stalled CO-OPS and does
+  not pretend to. `http_contract` check 14 is what catches that (mutation-verified, reds 6 and 14). Fixing
+  only `data_routes` would have left that hole open.
+* **MUTATIONS: 16 RUN, 14 CAUGHT, both survivors recorded AS survivors** with the reason — the tables are in
+  each suite's TEETH block. Running them found **two checks that CRASHED where they should print red** (the
+  `direct_turn.js` 9b trap): 12h dereferenced `gf["spawn"]`, which a refusal does not carry, so the very
+  mutation 12f/12g exist to catch took the process down after their red; and 1d/1e let a raise through.
+  Both are thunked/wrapped now. ⚠ **And one fixture of mine was NON-DETERMINISTIC:** 1c's hung socket had
+  nobody calling `accept()`, so the timeout landed in whichever phase the kernel chose — CONNECT (which
+  urllib wraps in URLError) or READ (bare `TimeoutError`) — measured both ways minutes apart, so the check
+  was crediting a mutation it cannot reliably see. It accepts and says nothing now; the wrapped shape is
+  1d's, with an explicit stub.
+* **THE REST OF THE ESTATE IS CLEAN AND THAT WAS CHECKED, not assumed:** `enc_extract.py` and
+  `energy_chartinfo.py` are hermetic by construction (seeded sentinel caches at mid-ocean bboxes upstream
+  would answer "no coverage" for); `cache_writes.py` and `reading_age.py` stub `urlopen` before first use.
+  `http_contract.py` was the only other exposure.
+* **OPEN, recorded not done:** 12i's `ci == 200` clause SURVIVES mutation in isolation — a reachable
+  geocoder always answers 200 for Denver, so no fixture here produces a non-200 from a WORKING lookup.
+
 **HANDOFF, 2026-09-19 (NIGHT), TO THE NEXT "ASV Console Refinement" WINDOW.**
 
 **⚠⚠ READ THIS FIRST: ITEM 4 STAGE 1 IS HALF-BUILT, AND IT IS NOT ON MASTER.**
