@@ -122,7 +122,12 @@
   .vcard .vrow .vv{color:var(--ink);font-weight:600;}
   .vcard .vv.warn{color:var(--warn);} .vcard .vv.critical{color:var(--bad);} .vcard .vv.ok{color:var(--ok);}
   .vcard .vsec{border-top:1px solid var(--line);margin-top:2px;padding-top:5px;display:flex;flex-direction:column;gap:4px;}
-  .vcard .vsechead{color:var(--ink-faint);font-size:9px;text-transform:uppercase;letter-spacing:.08em;}
+  /* A section head reads as a TITLE, not a row label (Andy, 2026-09-20): the card title's own
+     bronze, size and tracking, with a rule beneath it that runs the full card width - the
+     negative margins carry it out through the body's 9 px padding, so it divides the card the
+     way the title's own rule does rather than underlining the words. */
+  .vcard .vsechead{color:var(--bronze);font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+    margin:0 -9px 2px;padding:0 9px 4px;border-bottom:1px solid var(--line);}
   /* the time runs INLINE, not as a column: a wrapped line then uses the card's whole width - in a 196 px card a time
      column left ~23 characters a line and a 160-character banner took seven */
   .vcard .hrow{font-size:10px;line-height:1.3;}

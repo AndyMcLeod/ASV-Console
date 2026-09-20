@@ -59,6 +59,19 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-20 — MISSION STATUS CARD: the section heads read as titles.** Andy: *"The section label
+  'INTENT - WHAT AND WHY' needs to be same color and size as Mission Status title, but with an underline
+  that extends and divides the card for better user recognition. The same for 'History - Last 20'."*
+  One CSS rule (`.vcard .vsechead`): the title's own bronze, 10 px and tracking, plus a rule beneath it
+  carried out through the body's 9 px padding by negative margins so it spans the card, not the words.
+  Applied to all three `.vsechead`s — the third is RUN, shown only while a run is up, and two title-styled
+  heads beside one faint one would read as a fault. **Measured, not eyeballed:** title and heads all
+  `rgb(200,134,43)` / 10 px / 0.8 px; each rule spans 765→959 inside a 764→960 card. **PAGE-ONLY; live when
+  he reloads BOTH console windows; no server restart.** No suite reads these selectors and the ops manual
+  describes the History section's CONTENT only, so no doc rebuild. ⚠ The card's `.vsec` still carries its
+  own `border-top`, so a section now reads [thin rule] · BRONZE HEAD · [rule] — if that double line looks
+  busy to him, dropping the `.vsec` border-top is the one-line answer.
+
 **⇒ 2026-09-19 (NIGHT), FROM THE JUNCTION-CLASS WINDOW — THE CONSOLE NOW KNOWS WHERE THE HULL GOES
 AT A CORNER, AND SLOWS FOR THE ONES IT CANNOT ROUND INSIDE THE BUFFER.** Andy's call, with the
 measurements in front of him: *slow through the breaching corner rather than refuse it — the
