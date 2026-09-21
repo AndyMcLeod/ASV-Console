@@ -3089,6 +3089,32 @@ CURRENTS = CurrentsMonitor()
 apply_port()
 
 
+def _json_body_yielding(obj):
+    """Serialize a LARGE response without holding the GIL for the whole of it.
+
+    ⚠⚠ `json.dumps` IS ONE C CALL THAT NEVER YIELDS, AND THE CONTROL LOOP IS IN THIS PROCESS.
+    Measured on this machine against real cached extracts, with a 4 Hz thread running beside
+    it: a 10.6 MB extract stalled that thread for 0.52 s, and a 165 MB one for 8.56 s. For
+    those 8.5 seconds the telemetry loop does not run, which means the clearance ladder does
+    not run - the guard is not slow, it is absent. `JSONEncoder().iterencode` is the
+    PURE-PYTHON encoder: it yields between fragments, so the interpreter switches threads.
+    Same measurement: worst gap 0.26 s and 0.28 s, i.e. the tick keeps its cadence.
+
+    ⚠ IT COSTS ABOUT 4x WALL TIME ON THIS REQUEST, and that is the trade, stated rather than
+    buried: 0.54 -> 2.03 s on the ordinary extract, 8.55 -> 34.6 s on the 165 MB outlier. A
+    chart fetch happens on an area change, not per frame, so it is paid rarely; a guard
+    blackout is paid at the one moment nobody can afford it.
+
+    ⚠ AND THE 165 MB EXTRACT IS ITSELF SUSPECT - its bbox spans two operating areas
+    (-80.09 W to -70.65 W, Erie to New Castle), which no single fetch should ever produce.
+    Worth its own look; it is not the reason this function exists.
+    """
+    out = bytearray()
+    for piece in json.JSONEncoder().iterencode(obj):
+        out += piece.encode("utf-8")
+    return bytes(out)
+
+
 def _opt_float(v):
     """None/"" -> None; else float(v). For optional numeric fields in JSON bodies."""
     return None if v in (None, "") else float(v)
@@ -5384,7 +5410,7 @@ class Handler(BaseHTTPRequestHandler):
             data = fetch_enc_features(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch
             return self._send(502, json.dumps({"error": str(e)}))
-        self._send(200, json.dumps(data))
+        self._send(200, _json_body_yielding(data))
 
     def _serve_chartinfo(self):
         # /api/chartinfo?bbox=W,S,E,N -> ENC cells + zone-of-confidence polygons
@@ -5520,6 +5546,18 @@ class Handler(BaseHTTPRequestHandler):
                         body = dict(body, lat=glat, lon=glon)
                         found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
                                  "snapped": False, "note": snap.get("note")}
+                # ⚠⚠ THE GATE ABOVE IS NOW UP TO ~110 s OLD - a geocode (20 s) plus
+                # snap_to_water (90 s) - and the operator had the console for all of it.
+                # RE-TAKE it against the state this mutation will actually meet. Arming and
+                # Starting during the lookup was answered ok:True while ENGINE.connect()
+                # below tore the running SimVcu down and respawned the boat at the new base,
+                # thousands of kilometres away, mid-run.
+                # ⚠ IT HAS TO BE HERE AND NOT LOWER: by the time PORTS is rewritten the
+                # in-memory registry has already changed, so a refusal there would leave the
+                # console half-moved. Nothing has been mutated at this point.
+                st = ENGINE.state()
+                if st.get("armed") or st.get("estop") or st.get("run") != "idle":
+                    return 409, {"error": "disarm and stop the run before changing port"}
                 try:
                     p = validate_port(body, "port")
                 except ValueError as e:

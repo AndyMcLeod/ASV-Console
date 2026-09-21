@@ -640,6 +640,66 @@ finally:
     import shutil as _sh2
     _sh2.rmtree(_d, ignore_errors=True)
 
+# ⚠⚠ 13. A BIG RESPONSE MUST NOT HOLD THE GIL, BECAUSE THE CONTROL LOOP IS IN THIS PROCESS.
+# `json.dumps` is ONE C call that never yields. Measured on real cached extracts with a 4 Hz
+# thread running beside it: a 10.6 MB extract stalled that thread for 0.52 s and a 165 MB one
+# for 8.56 s. For those 8.5 seconds the telemetry loop does not run, which means the
+# clearance ladder does not run - the guard is not slow, it is ABSENT.
+# `JSONEncoder().iterencode` is the pure-Python encoder and yields between fragments; the
+# same measurement gives 0.26 s and 0.28 s, so the tick keeps its cadence.
+#
+# ⚠ BOTH HALVES, because either alone passes for the wrong reason. The bytes must be
+# IDENTICAL to json.dumps - this is a wire format, not a rendering - and the yielding must
+# actually HAPPEN, which is asserted by driving a 4 Hz thread across a real encode. A source
+# grep for `iterencode` would be satisfied by a call whose result was thrown away.
+#
+# ⚠ AND IT COSTS ~4x WALL TIME ON THE REQUEST (0.54 -> 2.03 s on the ordinary extract). That
+# is the trade, and it is the right way round: a chart fetch happens on an area change, a
+# guard blackout happens at the one moment nobody can afford it.
+import threading as _th13
+
+_big = {"features": [{"role": "depth_area", "cls": "DEPARE",
+                      "props": {"DRVAL1": i * 0.1, "OBJNAM": "cell %d" % i},
+                      "geometry": {"type": "Polygon",
+                                   "coordinates": [[[i * 1e-5, i * 1e-5]] * 40]}}
+                     for i in range(12000)]}
+
+def _worst_gap(fn):
+    gaps, stop = [], _th13.Event()
+
+    def _tick():
+        last = time.perf_counter()
+        while not stop.is_set():
+            time.sleep(0.25)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    t = _th13.Thread(target=_tick, daemon=True)
+    t.start()
+    time.sleep(0.4)
+    out = fn()
+    time.sleep(0.2)
+    stop.set()
+    t.join(timeout=2)
+    return out, (max(gaps) if gaps else 0.0)
+
+_b_yield, _gap_yield = _worst_gap(lambda: A._json_body_yielding(_big))
+_b_dumps, _gap_dumps = _worst_gap(lambda: json.dumps(_big).encode("utf-8"))
+check("13. a large response goes through the YIELDING encoder, so the 4 Hz control loop "
+      "keeps ticking - and its bytes are identical to json.dumps",
+      lambda: _b_yield == _b_dumps and _gap_yield <= max(0.6, _gap_dumps),
+      "%d bytes both ways; worst 4 Hz gap %.2f s yielding vs %.2f s with json.dumps "
+      "(on a real 165 MB extract: 0.28 s vs 8.56 s)"
+      % (len(_b_yield), _gap_yield, _gap_dumps))
+
+_enc_src = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
+_fn = _enc_src[_enc_src.index("def _serve_enc"):]
+_fn = _fn[:_fn.index("def _serve_chartinfo")]
+check("13b. ... and /api/enc actually uses it - a helper nothing calls is a comment",
+      lambda: "_json_body_yielding(data)" in _fn and "json.dumps(data)" not in _fn,
+      "the ENC route is the one that serves those extracts")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

@@ -724,6 +724,26 @@ try:
           "boat %.4f,%.4f vs port %.4f,%.4f (drix08.json's own spawn is Lewes 38.79/-75.16)"
           % ((st11.get("lat_deg") or 0), (st11.get("lon_deg") or 0), ncp["lat"], ncp["lon"]))
 
+    # ⚠⚠ 11d. THE PORT SWITCH IS GATED SAFE, AND THE 409 PATH HAD NO CHECK AT ALL. Moving the
+    # base under a running boat is as incoherent as swapping its physics - which /api/vessel
+    # already refuses - and the gate was written here but never exercised from either side.
+    #
+    # ⚠ AND IT IS TAKEN TWICE ON THE SLOW PATH, WHICH IS THE ACTUAL DEFECT. A port added BY
+    # NAME geocodes (20 s) and snaps to water (90 s), so the first gate reading can be ~110 s
+    # old by the time anything is mutated, and the operator had the console for all of it:
+    # arming and Starting during the lookup was answered ok:True while ENGINE.connect() tore
+    # the running SimVcu down and respawned the boat at the new base. The re-take sits after
+    # the lookup and BEFORE the first mutation, so a refusal leaves the console untouched.
+    api(port, "/api/cmd/arm", {"on": True})
+    c_gate, r_gate = api(port, "/api/ports", {"id": "lewes_de"})
+    _cg, after_gate = api(port, "/api/ports")
+    api(port, "/api/cmd/arm", {"on": False})
+    check("11d. the port switch is REFUSED while the boat is armed, and nothing moves",
+          c_gate == 409 and "disarm" in (r_gate.get("error") or "")
+          and after_gate.get("active") == "new_castle_nh",
+          "armed -> %s %r; active still %s"
+          % (c_gate, (r_gate.get("error") or "")[:44], after_gate.get("active")))
+
     # 12. Switching moves the boat - proving apply_port ran AND the sim respawned.
     c12, sw = api(port, "/api/ports", {"id": "lewes_de"})
     st12 = wait_for(port, lambda s: ((s.get("status") or {}).get("lat_deg") or 99) < 40.0, limit=25)
