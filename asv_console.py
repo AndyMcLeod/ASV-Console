@@ -3726,22 +3726,35 @@ class SimVcu(VcuLink):
         # This is also what makes "stop the boat" an unsafe answer near a structure, which
         # is the whole reason the run-time guard is allowed the helm: with way off, the
         # vessel does not hold - it is set, bodily, at the stream's own rate.
-        cur = CURRENTS.snapshot() if self._running and not self._estop else None
+        cur = CURRENTS.snapshot()
         cur_e = cur_n = 0.0
         if cur and cur.get("ok") and cur.get("speed_kn"):
             # `set_deg` is the mariner's SET: the direction the stream flows TOWARD.
             cv = float(cur["speed_kn"]) * 0.514444
             ct = math.radians(float(cur.get("set_deg") or 0.0))
             cur_e, cur_n = cv * math.sin(ct), cv * math.cos(ct)
-            drift_e += cur_e
-            drift_n += cur_n
+        # ⚠⚠ REPORTED ALWAYS, INTEGRATED ONLY WHILE DEPLOYED. The SNAPSHOT itself used to be
+        # gated on `_running`, so a boat that had not been started published env_set_kn as
+        # 0.00 - not "unknown", but a POSITIVE CLAIM OF SLACK WATER. That number is what
+        # holdOpts() sizes every hold point against and what solveCoastFor() solves every
+        # release range against, and BOTH are asked at COMMAND time - which is precisely when
+        # the boat is stopped. So the one moment the margin is chosen was the one moment the
+        # set read zero: holdMarginM(0) gives the 6 m floor where 1 m/s of stream needs 20 m.
+        #
+        # The paragraph above is the argument FOR this: a hull lying stopped in a 3 kn stream
+        # goes 3 kn over the ground with no force on it at all. She is in the stream whether
+        # or not the operator has pressed Start. The POSITION integration below stays gated
+        # exactly as it was, so a stopped sim boat still does not wander.
+        set_e, set_n = drift_e + cur_e, drift_n + cur_n
+        if self._running and not self._estop:
+            drift_e, drift_n = set_e, set_n
         # THE CARD SAYS "SET", SO IT MUST REPORT THE WHOLE SET. Reported from the summed
         # ground drift - leeway plus stream - rather than from the wind/wave force alone,
         # which is what it used to show under a label that promises more than that.
-        dmag = math.hypot(drift_e, drift_n)
+        dmag = math.hypot(set_e, set_n)
         if dmag > 1e-4:
             set_kn = dmag * 1.9438
-            set_dir = math.degrees(math.atan2(drift_e, drift_n)) % 360.0
+            set_dir = math.degrees(math.atan2(set_e, set_n)) % 360.0
 
         # integrate position: forward thrust along heading + environmental leeway set
         p_lat, p_lon = self.lat, self.lon
@@ -4322,6 +4335,19 @@ class Engine:
             self.run = "running"
             if not continuing:
                 self.run_seq += 1          # a re-approach is this motion still running, not another one
+            # ⚠⚠ AND THE LAST FRAME'S `holding` IS NOW A FACT ABOUT WHERE SHE WAS. Dropping
+            # the frame read ACROSS this command is only half of it: the frame already
+            # APPLIED describes the station-keep this command has just ENDED, and
+            # reapproach()'s gate - `self._require(bool(st.get("holding")), ...)` - reads
+            # exactly that copy. So for up to two ticks a re-approach arriving behind the
+            # guard's escape passed "the vessel is station-keeping" and drove the boat back
+            # to the hold point the escape had just steered it clear of.
+            #
+            # State an event has invalidated is not state - the same rule connect() applies
+            # when it clears status for a new link. Rebound rather than mutated in place,
+            # because the telemetry loop publishes this dict by reference.
+            if self.status.get("holding"):
+                self.status = dict(self.status, holding=False)
             self.behavior = behavior
             self.note = note
         self._push_state()

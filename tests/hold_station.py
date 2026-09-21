@@ -492,6 +492,33 @@ try:
               code_e, (r_e.get("error") or "")[:40], held9, code_d, (r_d.get("error") or "")[:40],
               s_d["run"], s_d["status"].get("sog_kn")))
 
+    # ⚠⚠ 11h. A RE-APPROACH LANDING BEHIND A COMMAND THAT ENDED THE HOLD IS REFUSED. The gate
+    # is `self._require(bool(st.get("holding")), ...)` and `self.status` is the LAST TELEMETRY
+    # FRAME - so for up to two ticks after a Go-To, or after the guard's own escape, that
+    # frame still says `holding: True`, because it describes the station-keep the new command
+    # has just ENDED. A re-approach arriving in that window passed the gate and drove the boat
+    # back to the hold point the escape had steered it clear of.
+    #
+    # ⚠ THE SECOND CLAUSE IS THE ACCEPTANCE HALF, and it lives in 11/11b/11c rather than here:
+    # the re-approach must still work for a boat that really IS station-keeping, or this
+    # passes for a gate stuck shut. Those must stay green beside it.
+    tgtH = {"lat": lat + 0.00009, "lon": lon}
+    heldH, _ = hold_at(tgtH, "/api/cmd/escape")
+    awayH = {"lat": lat + 0.0006, "lon": lon}
+    api(port, "/api/cmd/goto", {"lat": awayH["lat"], "lon": awayH["lon"],
+                                "route": [awayH], "hold_clear_m": 6.0})
+    code_ra, r_ra = api(port, "/api/cmd/reapproach", {"route": [tgtH]})
+    s_ra = state(port)
+    check("11h. a re-approach landing behind the command that ENDED the hold is refused - the "
+          "frame saying `holding` describes the station-keep that command just ended",
+          heldH and code_ra == 409
+          and "station-keeping" in (r_ra.get("error") or "")
+          and s_ra["status"].get("holding") is not True,
+          "held first=%s; re-approach immediately after a Go-To -> %s %r; holding now=%s"
+          % (heldH, code_ra, (r_ra.get("error") or "")[:44], s_ra["status"].get("holding")))
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+
     # 11c-11d. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING (review #3), over the real engine.
     tgt3 = {"lat": lat + 0.0003, "lon": lon}                   # ~33 m north
     far3 = [{"lat": lat + 0.003, "lon": lon}, {"lat": lat + 0.006, "lon": lon}]
