@@ -844,7 +844,23 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
   }
   // A RESCUE IS AN UN-LANED PATCH: legPath's detour is lawful but carries no
   // starboard bias, so a lane that needed rescuing was not delivered end to end.
-  return { path: out, used: true, partial: partialSystems || rescues > 0 };
+  //
+  // ⚠⚠ AND AN OFFSET OF ZERO IS THE CENTRELINE - THE HEAD-ON POSITION - SO `used` MAY NOT
+  // CLAIM A LANE THE GEOMETRY NEVER DELIVERED. `want[i]` reaches 0 two ways: the shrink loop
+  // above can exit on `k < 12` with `off` still blocked, and pass 2's slew limit can drag a
+  // neighbour down to it. Either way the lane point collapses ONTO the centreline while
+  // `used: true` had the page banner "routed to starboard of the channel centreline
+  // (Rule 9)" - a claim of keeping right, made about a route sitting exactly where a head-on
+  // meeting happens. The two-system guard above counts SYSTEMS; this is the same failure one
+  // level down, counted per POINT.
+  //
+  // STANDOFF / 2 is the "is this a lane at all" floor rather than a bare `> 0`, because the
+  // shrink loop can also leave a near-zero survivor - off = 0.519 m when the final `blocked`
+  // happens to clear - which is a centreline route by any operational reading.
+  const flat = want.reduce((a, w) => a + (w > STANDOFF / 2 ? 0 : 1), 0);
+  if (flat === want.length) return nil;    // nothing delivered: hand back the routed path
+  return { path: out, used: true,
+           partial: partialSystems || rescues > 0 || flat > want.length / 4 };
 }
 
 // ── The unmarked lane ───────────────────────────────────────────────────────

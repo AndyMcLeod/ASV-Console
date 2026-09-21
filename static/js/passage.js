@@ -323,11 +323,30 @@ export function holdTarget(to, opts){
   let heldOff = null;
   const en = llEN(to.lat,to.lon,ref);
   const bi = blockedInfo(en, ko, buf);
-  const tight = holdClearM(en, ko, buf) < need;
-  if(bi || tight){
+  // ⚠⚠ ONE DEFINITION OF "THIS POINT CAN HOLD A BOAT", AND IT IS THE SNAP'S OWN. The gate
+  // that stood here asked only for the working MARGIN (`holdClearM(en) < need`), while
+  // snapClearRadial's acceptance also asks for the whole hold DISC - `buf + holdR`. Wherever
+  // the hold radius exceeds the margin the two part company, and a point with room for the
+  // BOAT but none for its WANDER was never offered to the search: the target was accepted
+  // where it stood, `heldOff` came back null, and the vessel was handed a `hold_clear_m`
+  // describing a disc it does not fit in. Measured 13 m off a pier face with a 20 m approach
+  // radius: 8.0 m of clear water - which satisfies the margin - and 13 of the 36 points of
+  // the commanded disc blocked.
+  //
+  // Asking ALWAYS costs one clearance test, and `moved: 0` is the snap's own way of saying
+  // "the point as given was fine" - so a berth in open water is still left exactly where the
+  // operator put it (tests/hold_point.js 6e and 8 hold that half).
+  {
     const sn = snapClearRadial(en, ko, buf, holdR, {need, setE, setN});
-    if(!sn) return {error:(bi ? "the target sits in "+bi.kind : "the target has under "
-                            +need.toFixed(0)+" m of clear water")
+    // ⚠ NAME THE CAUSE THE CODE ACTUALLY MEASURED. With the gate gone, a refusal can now
+    // arrive at a target whose MARGIN is satisfied and whose hold DISC is not - and telling
+    // that operator "under N m of clear water" would be asserting something the number in
+    // front of them contradicts.
+    if(!sn) return {error:(bi ? "the target sits in "+bi.kind
+                            : holdClearM(en, ko, buf) < need
+                              ? "the target has under "+need.toFixed(0)+" m of clear water"
+                              : "the target has room for the boat but not for the "
+                                +holdR.toFixed(0)+" m it may wander while holding")
                           +" and nowhere within "+snapCapM(buf).toFixed(0)
                           +" m of it holds a boat clear",
                     reason:{mode:"target", info:bi, at:to}};
@@ -336,7 +355,9 @@ export function holdTarget(to, opts){
       // WHY it moved, in the words the operator needs: "it is IN the pier" and "it is not IN
       // the pier but there is no room to sit there" are different sentences.
       heldOff = {from:{lat:to.lat,lon:to.lon}, m:sn.moved, need,
-                 kind: bi ? bi.kind : "water too tight to hold in",
+                 kind: bi ? bi.kind
+                     : holdClearM(en, ko, buf) < need ? "water too tight to hold in"
+                     : "no room for the hold radius",
                  tight: !bi};
       to = {lat:nt.lat, lon:nt.lon};
     }

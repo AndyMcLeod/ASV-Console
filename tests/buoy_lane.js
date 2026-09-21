@@ -778,6 +778,33 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
         offs.length === 4 && offs.every((o) => o > 1),
         "starboard offset at n=200/400/600/800: " + offs.map((o) => o.toFixed(0)).join(", ")
           + " m — a capture rule that stopped this firing would be worse than the bug");
+
+  // ⚠⚠ 32. AN HONEST BANNER: A LANE THAT COLLAPSED ONTO THE CENTRELINE MAY NOT CLAIM RULE 9.
+  // `want[i]` reaches zero two ways - the shrink loop exits with the offset still blocked, or
+  // pass 2's slew limit drags a neighbour down to it - and the lane point is then placed ON
+  // the channel centreline, which is the HEAD-ON position. `used: true` came back regardless,
+  // so the page bannered "routed to starboard of the channel centreline (Rule 9)" about a
+  // route doing the one thing Rule 9 exists to prevent. That is worse than no lane at all,
+  // because the operator has been told the rule was applied.
+  //
+  // Fixture: a shoal wall immediately to starboard of the centreline for the channel's whole
+  // length, so every offset the lane asks for is blocked and every one shrinks away.
+  {
+    const ring = [{ e: 1, n: 0 }, { e: 400, n: 0 }, { e: 400, n: 1000 }, { e: 1, n: 1000 }];
+    const shoaled = { polys: [{ ring, bb: bbOf(ring), kind: "a charted hazard" }],
+                      lines: [], points: [], marks: W.marks, sys: W.sys };
+    const r = laneRun(shoaled, [{ e: -20, n: 60 }, { e: -20, n: 960 }]);
+    const track = [enLL(-20, 60), ...r.route].map((p) => ({ e: toE(p), n: toN(p) }));
+    const es = [200, 400, 600, 800].map((n) => eAtN(track, n));
+    const onCentre = es.every((e) => e != null && e < 1);
+    check("32. HONEST BANNER: a lane whose starboard offset collapsed onto the centreline does "
+          + "not come back claiming Rule 9",
+          !(onCentre && r.lane === true && r.partial !== true),
+          "offset at n=200/400/600/800 = "
+            + es.map((e) => e == null ? "n/a" : e.toFixed(1)).join(",") + " m; lane=" + r.lane
+            + " partial=" + r.partial + " — a point ON the centreline is the head-on "
+            + "position, so the console may not tell the operator it kept right");
+  }
 }
 
 console.log(fails ? "\nFAILED (" + fails + ")" : "\nPASS");

@@ -488,6 +488,19 @@ export function edgeAround(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) {
   // before the guard can fire again, so ONE answer holds. Same shape as the release
   // counterfactual: ask the question of the state you are proposing to enter.
   const want = buf + margin;
+  // ⚠⚠ AND THE VERIFICATION BUFFER IS CAPPED AT THE WATER THE BOAT ALREADY HAS. `want` is a
+  // demand on the proposed TRACK - but projectRoute tests its FIRST sample, which is the
+  // boat's own position, and the search cannot change where the boat already is. A hull
+  // legitimately outside `buf` and inside `buf + margin` - 6 m off a pier face on a 5 m
+  // buffer, which is exactly where a clipped survey line puts it - failed that test
+  // identically for EVERY candidate, so the deviation search died whole and the ladder held
+  // a boat alongside a structure instead of going a few metres round.
+  //
+  // ⚠ IT CAN ONLY EVER RELAX, AND NEVER BELOW `buf`: a boat already inside the buffer never
+  // reaches here (the `hit.t > 0` test above returns null first), and the SCREENING pass
+  // below still runs at the bare `buf`, so no accepted track may foul the operator's buffer.
+  // In open water clearanceM returns the cap, so this is a strict no-op.
+  const wantTrack = Math.min(want, clearanceM(p, ko, want));
   // Screening is coarse and short; the WINNER is re-projected at the caller's own step and
   // full horizon before it is offered. See EDGE_DEG_STEP for what this costs otherwise.
   const screen = { ...opts, stepS: (opts.stepS ?? STEP_S) * EDGE_SCREEN_STEP_MULT,
@@ -529,7 +542,7 @@ export function edgeAround(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) {
         const cand = [...route.slice(0, base.idx), via,
                       ...route.slice(base.idx + base.drop)];
         if (projectRoute(p, hdgDeg, twMs, drift, cand, ko, buf, screen)) continue;
-        if (projectRoute(p, hdgDeg, twMs, drift, cand, ko, want, opts)) continue;
+        if (projectRoute(p, hdgDeg, twMs, drift, cand, ko, wantTrack, opts)) continue;
         won.push(via);
       }
       let best = null;

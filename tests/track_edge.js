@@ -119,6 +119,9 @@ const fs = require("fs");
 const path = require("path");
 const { bbOf } = require("../static/js/geometry.js");
 const G = require("../static/js/guard.js");
+// The real keep-out test, for check 11d: a deviation is only an answer if its via is in
+// water, and asserting that needs the same `blocked` the guard itself calls.
+const { blocked } = require("../static/js/keepouts.js");
 const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
 const SRC = fs.readFileSync(path.join(__dirname, "..", "static", "js", "guard.js"), "utf8");
 
@@ -304,6 +307,40 @@ check("11. the deviation taken is VERIFIED by re-projecting the amended track, a
                              Object.assign({}, DRIX, { capM: e.offsetM - G.edgeStepM(BUF) }));
       },
       "score the actual track, never the intention");
+// ⚠⚠ 11d. AND THE VERIFICATION BUFFER IS NOT ASKED OF THE BOAT'S OWN POSITION. `want` is
+// buf + margin = 7.5 m here, and projectRoute tests its FIRST sample - the boat itself. So a
+// hull legitimately outside the buffer and inside buf+margin failed that test identically for
+// EVERY candidate, the search died whole, and the ladder held a boat alongside a structure
+// with open water one step to port. It is not an exotic position: `clipLine` ends a correctly
+// punched survey run about buf + 2 m off the face, which is 7.0 m - inside the dead band.
+//
+// MEASURED across the band, pier face at e = 0: at 6.0, 7.0 and 7.4 m off it, edgeAround
+// returned null; at 8.0 m and beyond it returned a deviation. The discontinuity is the bug.
+// The three clauses below are the whole property - it fires in the band, every via is in
+// genuinely clear water, and open water is untouched (a strict no-op: clearanceM returns the
+// cap there). The boat INSIDE the buffer must still get null, which is `hit.t > 0`'s job and
+// check 11c's subject.
+{
+  const pileAt = (e) => ({ polys: PIER.polys, lines: [],
+                           points: [{ e, n: 60, r: 3, kind: "an obstruction" }],
+                           marks: [], sys: [], chans: [] });
+  const devAt = (e) => G.edgeAround({ e, n: 0 }, 0, KN(4), SLACK,
+                                    [{ e, n: 40 }, { e, n: 200 }], pileAt(e), BUF, DRIX);
+  const want = BUF + G.edgeMarginM(BUF);
+  const band = [-6, -7, -7.4].map(devAt);          // outside buf, inside buf + margin
+  const open = [-8, -10, -20].map(devAt);          // beyond the band: must not change
+  const inBuf = devAt(-4);                         // inside the buffer: still no deviation
+  check("11d. the deviation search is not killed by the boat's OWN clearance — a hull outside "
+        + "the buffer but inside buf+margin still gets one",
+        () => band.every((d, i) => d && !blocked(d.via, pileAt([-6, -7, -7.4][i]), BUF))
+              && open.every((d) => !!d) && inBuf === null,
+        "want " + want + " m; in the band 6.0/7.0/7.4 m off the face -> "
+          + band.map((d) => d ? "via e=" + d.via.e.toFixed(1) : "NULL").join(", ")
+          + "; open water 8/10/20 m -> " + open.map((d) => d ? "via" : "NULL").join(",")
+          + "; inside the buffer at 4.0 m -> " + (inBuf ? "via" : "NULL")
+          + " (a clipped survey run ends at " + (BUF + 2) + " m, inside the band)");
+}
+
 check("12. THE DEVIATION IS VERIFIED WITH ROOM TO SPARE — the amended track is clear at the " +
       "buffer PLUS the margin, not merely at the buffer that triggered it",
       () => {
