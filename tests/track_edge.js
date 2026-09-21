@@ -234,6 +234,42 @@ check("8. THE TURN RATE IS THE HULL'S: the same corner is clear for a boat that 
         return tight === "clear" && drix !== "clear";
       },
       "a 10 m turn circle at a corner 7 m off the face reaches 3 m INSIDE the structure");
+// ⚠⚠ 8b. THE PROJECTION MUST NOT CARE HOW FINELY THE ROUTE WAS DRAWN, and it used to care
+// enormously. The waypoint advance sat outside any inner loop, so the index rose by at most
+// ONE per integration step while the position rose by twMs*step - and whenever a step is
+// longer than the waypoint gap the projected boat passes its target every step, turnToward
+// swings it toward a point ASTERN, and the projection flies loops around the boat instead of
+// down the route.
+//
+// ⚠ THIS IS THE SHIPPED SPACING, NOT AN EXOTIC INPUT. The route gap floor in this console IS
+// the approach radius (thinTrack's 1 m floor), and guardTrack passes mission.json's
+// `approach_radius_m`, which ships as 1 m. At 6 kn a 0.5 s step covers 1.5 m, so every step
+// passed a waypoint.
+//
+// MEASURED against a point hazard dead ahead, truth 17.5 s to the buffer: at a 1 m gap the
+// old projection returned NULL and `assess` answered CLEAR - the guard blind into a shoal it
+// was looking straight at. At 60 deg/s it answered "entry in 41 s", 2.3x late, and the rung
+// that should have fired was hold. The identical route at 2 m read 17.5 s and held.
+{
+  const SHOAL = { polys: [], lines: [],
+                  points: [{ e: 0, n: 60, r: 1, kind: "a charted hazard" }], marks: [] };
+  const north = (gap) => { const r = [];
+    for (let d = gap; d <= 200; d += gap) r.push({ e: 0, n: d }); return r; };
+  const GAPS = [1, 2, 5, 10];
+  const TW = KN(6);
+  const TRUTH = 54 / TW;                     // n = 60 - r 1 - BUF 5, straight, no set
+  const hitAt = (gap) => G.projectRoute({ e: 0, n: 0 }, 0, TW, SLACK, north(gap), SHOAL, BUF,
+                                        { turnRateDegS: 20, approachM: 1 });
+  check("8b. the projection answers the SAME for one straight route however finely it is "
+        + "drawn - a 1 m waypoint gap is this console's own floor",
+        () => GAPS.every((g) => { const h = hitAt(g);
+                                  return !!h && Math.abs(h.t - TRUTH) < 1.0; }),
+        "truth " + TRUTH.toFixed(1) + " s; by gap -> "
+        + GAPS.map((g) => { const h = hitAt(g);
+            return g + "m:" + (h ? h.t.toFixed(1) + "s" : "CLEAR"); }).join("  ")
+        + "  (1 m read CLEAR before the waypoint advance was fixed)");
+}
+
 check("9. a boat ALREADY inside the buffer projects t = 0, never clear",
       () => {
         const r = G.projectRoute({ e: -2, n: 0 }, 270, KN(4), SLACK,

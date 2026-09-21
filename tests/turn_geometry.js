@@ -816,10 +816,29 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         + " m against a 1.0 m approach radius. The spirals are emitted at Ls/8 = 0.50 m and "
         + "the shape is thinned BEFORE legClear and the projection are asked about it");
 
-  // 47. AND THE FLYABILITY TEST IS WHAT TELLS DENSE FROM COARSE. One semicircle, sampled
-  // two ways, with a pile inside the loop. legClear passes both polylines - they are the
-  // same curve. The projection does not: fed 94 waypoints 0.2 m apart it consumes a dozen
-  // per step, steers at a point half way round, and cuts across the middle onto the pile.
+  // 47. AND THE FLYABILITY VERDICT DOES NOT DEPEND ON HOW FINELY THE SAME CURVE WAS DRAWN.
+  // One semicircle, sampled two ways, with a pile inside the loop. legClear passes both
+  // polylines - they are the same curve - and so must the flown-track test.
+  //
+  // ⚠⚠ THIS CHECK USED TO ASSERT THE OPPOSITE, AND IT WAS PINNING A BUG AS A FEATURE.
+  // It required the 0.2 m sampling to come back UNFLYABLE, and its own comment explained
+  // why: the projection 'consumes a dozen [waypoints] per step ... and cuts across the
+  // middle onto the pile'. It did the exact opposite. projectRoute advanced AT MOST ONE
+  // waypoint per integration step while the position advanced twMs*step, so at 0.2 m
+  // spacing the target fell further astern every step, turnToward swung the projection
+  // round toward a point behind it, and the loop it flew was the bug's signature, not the
+  // hull's. Corrected (guard.js consumes every waypoint a step passed), one curve gives
+  // one answer whatever its spacing - which is the property worth pinning.
+  //
+  // ⚠ AND THE FIXTURE'S PREMISE WENT WITH IT: a hull that cannot hold an arc washes out
+  // WIDE, not across the middle, so a pile INSIDE the loop is not what an unflyable turn
+  // hits. Measured on this fixture at 3 kn (R=6 m needs 14.7 deg/s): at 10 deg/s the hull
+  // cannot hold it and the pile inside is still missed, by both samplings.
+  //
+  // ⚠ RESIDUAL, NOT FIXED HERE AND NOT THIS CHECK'S CLAIM: with a pile OUTSIDE the arc at
+  // low turn rates the two samplings can still disagree (measured 3 m off at 10 deg/s:
+  // 0.2 m flyable, 1 m not). That is turnFlyable's own wash-out behaviour, not the
+  // waypoint advance, and it is written up rather than quietly folded in here.
   const R = 6;
   const arcAt = (stepM) => { const out = [], n = Math.max(2, Math.ceil(Math.PI * R / stepM));
     for (let i = 1; i < n; i++) { const a = -Math.PI/2 + Math.PI * (i / n);
@@ -835,13 +854,15 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
   const chordsClear = (pts) => { const P = [E2, ...pts, F2];
     for (let i = 1; i < P.length; i++) if (!legClear(P[i-1], P[i], ref, pile, 3)) return false;
     return true; };
-  check("47. ... and the flyability test is what tells the two apart",
-        okDense === false && okThin === true && chordsClear(dense) && chordsClear(thinned),
+  check("47. ... and the flyability verdict is the SAME however finely that one curve was "
+        + "drawn - sampling is not a fact about the water",
+        okDense === okThin && chordsClear(dense) && chordsClear(thinned),
         "the SAME semicircle: " + dense.length + " waypoints 0.2 m apart -> flyable="
         + okDense + "; thinned to " + thinned.length + " at 1 m -> flyable=" + okThin
         + ". legClear passes both (" + chordsClear(dense) + "/" + chordsClear(thinned)
-        + ") because they are one curve - only the FLOWN track separates them, and the "
-        + "finer sampling is the one that cuts across its own loop");
+        + ") because they are one curve. Before the waypoint advance was fixed these read "
+        + "false/true: the projection steered at a target that fell astern and flew a loop "
+        + "the hull never would");
   V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
 }
 

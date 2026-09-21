@@ -348,10 +348,25 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
     e += (twMs * Math.sin(a) + dr.e) * step;
     n += (twMs * Math.cos(a) + dr.n) * step;
     if (blocked({ e, n }, ko, buf)) return { t, at: { e, n }, i };
-    const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
-    const along = segLen > 1e-6 ? ((e - prev.e) * de + (n - prev.n) * dn) / segLen : Infinity;
-    if (Math.hypot(tgt.e - e, tgt.n - n) <= approach || along >= segLen - approach) {
-      prev = tgt;
+    // ⚠⚠ CONSUME EVERY WAYPOINT THIS STEP PASSED, NOT ONE OF THEM. The advance used to sit
+    // outside any loop, so `i` rose by at most 1 per step while the position rose by
+    // `twMs * step` - and whenever a step is longer than the waypoint gap the projected boat
+    // passes its target every step, `turnToward` then swings it toward a point ASTERN, and
+    // the projection flies loops around the boat instead of down the route.
+    //
+    // ⚠ THIS IS NOT A CORNER CASE - IT IS THE SHIPPED SPACING. The route gap floor in this
+    // console IS the approach radius (thinTrack's 1 m floor), and guardTrack passes
+    // `approachM` from mission.json, which ships as 1 m. At 6 kn a 0.5 s step covers 1.5 m,
+    // so every step passed a waypoint. Measured against a point hazard dead ahead, truth
+    // 17.5 s to the buffer: at a 1 m gap projectRoute returned NULL and `assess` answered
+    // CLEAR; at 60 deg/s it answered "entry in 41 s", 2.3x late, and the rung that should
+    // have fired was hold. The identical route thinned to 2 m read 17.5 s and held.
+    for (;;) {
+      const tg = route[i];
+      const de = tg.e - prev.e, dn = tg.n - prev.n, segLen = Math.hypot(de, dn);
+      const along = segLen > 1e-6 ? ((e - prev.e) * de + (n - prev.n) * dn) / segLen : Infinity;
+      if (!(Math.hypot(tg.e - e, tg.n - n) <= approach || along >= segLen - approach)) break;
+      prev = tg;
       if (++i >= route.length) return null;         // the commanded motion is over
     }
   }

@@ -100,6 +100,11 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 },
 var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" } };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, lineActual = [];
 var S = null, asv = null, runRoute = null, pauseMark = null, resumeSlow = false;
+// The helm rung's claim on the throttle (escapeThrottle): speedGovernor stands down on it
+// exactly as it does on `resumeSlow`, so the symbol must exist in this world or the
+// governor is a bare ReferenceError. False here - no escape is commanded - so these checks
+// are the evidence that an ordinary run still governs its own speed as it always did.
+var escapeThrottle = false;
 var clearance = { slowed: false };
 var commandedSpeed = null;
 globalThis.window = globalThis;
@@ -141,7 +146,7 @@ eval([
   "const supervising = () => true;",
   // speedGovernor also reads the JUNCTION corner set since 2026-09-19
   // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
-  "let cornerSlow = new Set();",
+  "let cornerSlow = new Set();",
   "let cornerSlowFor = -1;",
   grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
@@ -579,10 +584,15 @@ function finish(){
         () => /if\(resumeSlow\)\{ resumeSlow = false;/.test(setRole),
         "touching any of the three role selectors is the operator taking the speed back — "
         + "including selecting 'low' itself, which is them owning the choice");
-  check("15. ... and a stop or a fresh start does not carry it into the next run",
-        () => /pauseMark = null; resumeSlow = false; commandedSpeed = null;\r?\n?\s*cmd\("\/api\/cmd\/stop"\)/.test(H)
-              && /pauseMark = null; resumeSlow = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
-        "the hold belongs to the run it was given about");
+  // ⚠ BOTH HOLDS, NOT JUST THE LOW ONE. The guard's escape claims the throttle UPWARD
+  // (`escapeThrottle`) the same way a resume holds it DOWN, and a claim that outlives its own
+  // run is the same defect in either direction - so a Stop and a fresh Start must release
+  // both. Pinned on `resumeSlow` alone, this regex could not have noticed the second one
+  // arriving beside it, which is the whole reason it is spelled out rather than loosened.
+  check("15. ... and a stop or a fresh start carries NEITHER throttle hold into the next run",
+        () => /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null;\r?\n?\s*cmd\("\/api\/cmd\/stop"\)/.test(H)
+              && /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
+        "the low-speed hold AND the escape's high-speed hold both belong to the run they were given about");
   resumeSlow = false;
 }
 

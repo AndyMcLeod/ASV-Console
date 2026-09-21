@@ -216,6 +216,98 @@ check("6. a fresh plan is never mid-coast, and one with no coast_from_m powers i
       "None is today's behaviour, byte for byte")
 
 
+# --- 6b-6e: THE RELEASE IS ONE-SHOT, AND A START IS NEVER MID-COAST ------------------ #
+#
+# ⚠⚠ THE COAST USED TO RE-ARM ITSELF ON EVERY TICK, and the boat never got its power back.
+# `_coasting` was the only thing guarding the latch, and the exit cleared `_coasting` while
+# `_coast_from_m` stayed set and the boat was still inside it on the last leg - so the exit
+# un-latched and the next tick re-latched, for ever. Every one of those frames published
+# `drifting: False` and `speed_target_kn` at the plan speed, so the card read "under power"
+# with the DRIFT branch dark while the model had the prop off.
+#
+# ⚠ AND IT WAS REACHABLE FROM THE FRONT PANEL. pause(), stop() and estop() all set
+# `sog_kn = 0.0` and none cleared `_coasting`, so a coast interrupted and resumed came back
+# with the way already off - and a boat already AT zero satisfies the coast's own
+# below-COAST_END_KN exit, re-latches, and NEVER MOVES AGAIN. Measured before the fix:
+# 0.0 m made good in 120 s with `running: True`, the console showing a run under way.
+#
+# 6e is the acceptance case and it is why the other three are not satisfied by deleting the
+# feature: the coast must still HAPPEN.
+def _drift_in_leg(coast_from_m=140.0, dist_m=400.0):
+    """A single long leg with a drift-in armed, run up to speed and into the coast."""
+    _C.CURRENTS = _FakeCurrents()
+    v = _C.SimVcu(43.07, -70.71)
+    end = _C.dest_point(v.lat, v.lon, 0.0, dist_m)
+    v.upload_plan([{"lat": end[0], "lon": end[1]}], 5.0, "survey", 2.0,
+                  completion="loiter", coast_from_m=coast_from_m)
+    v.start()
+    for _ in range(240):                      # 60 s: up to speed and closing
+        v.tick(0.25)
+    for _ in range(4000):
+        v.tick(0.25)
+        if v._coasting:
+            break
+    return v, end
+
+
+def _made_good(v, end, secs=120.0):
+    d0 = _C.range_bearing(v.lat, v.lon, end[0], end[1])[0]
+    for _ in range(int(secs / 0.25)):
+        v.tick(0.25)
+    return d0 - _C.range_bearing(v.lat, v.lon, end[0], end[1])[0]
+
+
+v, end = _drift_in_leg()
+entered = v._coasting
+rel_at = None
+for _ in range(4000):                       # run to the release
+    v.tick(0.25)
+    if not v._coasting:
+        rel_at = (_C.range_bearing(v.lat, v.lon, end[0], end[1])[0], v.sog_kn)
+        break
+held = []
+r_before = _C.range_bearing(v.lat, v.lon, end[0], end[1])[0]
+for _ in range(120):                        # 30 s after the release
+    v.tick(0.25)
+    held.append(v.sog_kn)
+r_after = _C.range_bearing(v.lat, v.lon, end[0], end[1])[0]
+# ⚠ THE DISCRIMINATION IS THAT THE WAY STOPS COMING OFF. Under the re-arm bug the boat went
+# on DECAYING below the release speed while `drifting` published False - powered control had
+# the helm on paper and the hull had it in fact. Under powered control at the spent-coast cap
+# she HOLDS the release speed and closes the range; she neither decays nor gets the plan
+# speed back. A check that only asked "is _coasting False" cannot tell those apart.
+check("6b. the coast RELEASES to POWERED control - the way stops coming off, and she closes "
+      "the remaining range instead of decaying through it",
+      rel_at is not None and held and min(held) >= _C.COAST_END_KN * 0.9
+      and (r_before - r_after) > 5.0,
+      ("released %.1f m out at %.2f kn; over the next 30 s the speed held %.2f-%.2f kn and "
+       "the range closed %.1f m" % (rel_at[0], rel_at[1], min(held), max(held), r_before - r_after))
+      if rel_at else "never released: %.3f kn, coasting=%s" % (v.sog_kn, v._coasting))
+check("6c. ... and the release DISARMS the range, so the latch cannot re-take it next tick",
+      v._coast_from_m is None,
+      "armed range after release: %s (a live one re-latches on the very next tick)"
+      % (v._coast_from_m,))
+
+v, end = _drift_in_leg()
+v.pause()
+v.start()
+moved = _made_good(v, end)
+check("6d. a coast PAUSED and resumed is not still a coast - the boat moves again",
+      not v._coasting and moved > 5.0,
+      "made good %.1f m in 120 s (0.0 m was the defect), coasting=%s" % (moved, v._coasting))
+
+v, end = _drift_in_leg()
+v.stop()
+v.start()
+moved_s = _made_good(v, end)
+check("6d2. ... and the same after a STOP, which is the other way to reach it",
+      moved_s > 5.0, "made good %.1f m in 120 s" % moved_s)
+
+check("6e. ACCEPTANCE: the drift-in still HAPPENS - none of the above is satisfied by "
+      "switching the coast off",
+      entered is True, "the leg entered its coast: %s" % entered)
+
+
 # --- 7-8: the wire ------------------------------------------------------------------ #
 def free_port():
     s = socket.socket()

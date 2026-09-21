@@ -1491,6 +1491,28 @@ function resumeBackM(){
 // be a second thing setRoleSpeed had to remember to release.
 let resumeSlow = false;
 
+// ⚠⚠ THE GUARD OWNS THE THROTTLE DURING AN ESCAPE, AND IT OWNS IT FOR THE EPISODE, NOT THE
+// FRAME. The helm rung commands HIGH for steerage authority to beat the set - and without
+// this the SAME telemetry frame took it straight back off again: onState runs
+// `clearanceGuard(); accumLineTime(); speedGovernor();` in that order, the rung had just set
+// `clearance.slowed = false` and nulled `commandedSpeed`, so every one of the governor's
+// stand-downs passed and it commanded the ROLE speed microseconds after the escape. With the
+// shipped defaults that is 6.0 kn followed by 3.0 kn - and because `speedWant` was
+// overwritten, speedReconcile then RE-SENT the wrong speed every second for the whole
+// escape. On the next frame `behavior` is "escape", whose activity role is "transit", so it
+// never recovered: the escape was flown at half the speed the rung exists to provide,
+// against exactly the set the rung exists to beat.
+//
+// ⚠ SETTING `commandedSpeed = "high"` DOES NOT FIX IT, which is why this is a flag. The
+// governor's test is `want !== commandedSpeed`, and `want` is the role speed - still
+// different, so it still fires. The throttle has to be taken away from the governor, not
+// handed to it with a different value in it.
+//
+// Its life is `resumeSlow`'s, deliberately: the same "safety or the operator owns the
+// throttle until something ends the episode" shape, released by a manual speed change or by
+// a fresh run, and by nothing else.
+let escapeThrottle = false;
+
 function updateClearance(){
   if(!asv || !nogo.ready || !nogo.ko || !nogo.frame){
     clearance = {...clearance, m:null, kind:null, closing:false, prev:null, info:null};
@@ -2211,6 +2233,7 @@ function clearanceGuard(){
     }
     const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
     clearance.slowed = false; commandedSpeed = null;
+    escapeThrottle = true;                      // the governor may not bid until this episode ends
     commandSpeed("high");                       // steerage authority to beat the set
     // Captured with the route, like every other commanded motion - so the Intent card can
     // say why the boat is where it is, not just that it moved.
@@ -2299,6 +2322,11 @@ function speedGovernor(){
   // rejoins its line — that would undo the instruction within a frame of carrying it out.
   // Ended only by a manual speed change, or by the run ending; see setRoleSpeed.
   if(resumeSlow) return null;
+  // ⚠⚠ AND THE GUARD OWNS IT DURING AN ESCAPE. `clearance.slowed` above is the guard holding
+  // the boat DOWN; this is the guard holding it UP, which is the same claim on the throttle
+  // and needs the same stand-down. Without it the helm rung's HIGH was countermanded on the
+  // frame that issued it - see escapeThrottle's own note.
+  if(escapeThrottle) return null;
   // ⚠ A COASTING BOAT HAS NO GOVERNOR. The whole manoeuvre is the ABSENCE of a commanded
   // speed, and this function's job is to command one every time the role changes - it would
   // re-power the prop within a frame of it stopping and drive the boat at the berth it was
@@ -8428,6 +8456,12 @@ function setRoleSpeed(role, v){
   // — including when they select "low" itself, which is them owning the choice rather than
   // inheriting it.
   if(resumeSlow){ resumeSlow = false; flashNote("Speed released — the low-speed hold is over."); }
+  // The same act ends the guard's claim on the throttle: an operator who picks a speed
+  // during an escape is taking it back, and the governor must be free to act on the next
+  // frame. Said out loud, because the escape's HIGH is a safety speed and dropping it is
+  // not a thing to discover from the readout.
+  if(escapeThrottle){ escapeThrottle = false;
+    flashNote("Speed released — the escape's high-speed hold is over."); }
   updateSpeedNote();
   // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
   // speed moving moves it. The note is what tells the operator their 20 s just became a
@@ -9638,7 +9672,7 @@ $("#b_start").onclick = async ()=>{
   if(S && S.run === "paused") return resumeRun();
   if(!await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
-  pauseMark = null; resumeSlow = false; commandedSpeed = null; speedWant = null;   // a FRESH run, not a resume
+  pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;   // a FRESH run, not a resume
   cmd("/api/cmd/start");
 };
 
@@ -9789,7 +9823,7 @@ $("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[];
   // A stopped run takes its holds with it: the post-pause low-speed hold belongs to THAT
   // run, and carrying it into the next one would be this console remembering an
   // instruction the operator gave about a survey that is over.
-  pauseMark = null; resumeSlow = false; commandedSpeed = null;
+  pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null;
   cmd("/api/cmd/stop"); };
 $("#b_rth").onclick = doRTH;
 // THE OPERATOR'S "PROCEED". One decision, recorded with the situation it was taken about,

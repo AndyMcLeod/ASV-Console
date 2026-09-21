@@ -498,6 +498,91 @@ else:
         import shutil as _sh
         _sh.rmtree(_d, ignore_errors=True)
 
+
+# ── 12: A PARTLY-FAILED EXTRACT IS NEVER CACHED ────────────────────────────────────────
+#
+# ⚠⚠ THE DEFECT THIS PINS WAS ALREADY ON DISK. Every per-layer job answered [] on any
+# network or service error, which is indistinguishable from "this layer has no features
+# here", and the assembled dict was written to the cache with no success accounting, no TTL
+# and no revalidation - so one bad minute became the chart for that bbox for ever. Measured
+# in the operator's own cache: an extract holding 1591 features, 806 of them depth, and ZERO
+# land / shoreline / dock, against its neighbour 80 m west over the same south/east/north
+# edges holding 252 structures. Land does not vanish over 80 m.
+#
+# ⚠ AND IT COULD NOT BE SEEN FROM THE CLIENT. `band` is still set on a partial extract, so
+# "we have chart data" is TRUE, the Nogo row reads healthy, and Go-To / RTH / punch-out
+# route across a shoreline that is simply not in the model. A refusal was indistinguishable
+# from success - the one failure shape this console's whole design argues against.
+#
+# Hermetic: the network is replaced outright, so this asserts the CACHING RULE and touches
+# no service and no real cache file.
+_d = tempfile.mkdtemp(prefix="asv_enc_partial_")
+_sav = (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids,
+        A._enc_query, A._enc_pick_band)
+try:
+    A.ENC_DIR = _d
+    # ⚠ THE BAND PICK IS A NETWORK CALL TOO, and leaving it real made the first draft of
+    # this block PASS FOR THE WRONG REASON: `_enc_pick_band` answered None (offline), the
+    # function returned "no ENC coverage here" before reaching the assembly at all, and
+    # "no cache was written" was true because nothing had been fetched. Stub everything the
+    # path touches, then assert - and reset the circuit breaker between phases, because a
+    # failed fetch arms a 30 s cooldown that would silently skip the next one.
+    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
+    A._enc_query_by_ids = lambda b, lid, ids, **k: [
+        {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]
+    A._enc_query = lambda b, lid, bx, **k: {"features": []}
+
+    BBOX = (-30.0, 20.0, -29.99, 20.01)          # mid-ocean: no real cache can exist
+    CACHE = os.path.join(_d, "features_v5_%s.json" % A._bbox_key(BBOX))
+
+    # (a) ONE layer fails: nothing may be written, and the caller is told which.
+    def _ids_one_fails(band, lid, bbox, **k):
+        if lid == 1:
+            raise OSError("simulated upstream failure")
+        return [1]
+    A._enc_query_ids = _ids_one_fails
+    A._enc_down_until = 0.0
+    part = A.fetch_enc_features(BBOX)
+    check("12. a partly-failed extract is NOT cached - a transient failure cannot become "
+          "the permanent truth about that water",
+          lambda: not os.path.exists(CACHE),
+          "cache file written: %s" % os.path.exists(CACHE))
+    check("12b. ... and the response says which layers were lost, so a caller can refuse "
+          "to trust it as a keep-out source",
+          lambda: bool(part.get("partial")) and "LNDARE" in (part.get("partial") or [])
+                  and not part.get("complete"),
+          "partial=%s complete=%s" % (part.get("partial"), part.get("complete")))
+
+    # (b) ACCEPTANCE: every layer succeeds -> it caches exactly as it always did.
+    A._enc_query_ids = lambda band, lid, bbox, **k: [1]
+    A._enc_down_until = 0.0
+    good = A.fetch_enc_features(BBOX)
+    check("12c. ACCEPTANCE: a COMPLETE extract still caches - the refusal is about "
+          "failure, not about caching",
+          lambda: os.path.exists(CACHE) and good.get("complete") is True
+                  and not good.get("partial"),
+          "cached=%s complete=%s partial=%s"
+          % (os.path.exists(CACHE), good.get("complete"), good.get("partial")))
+
+    # (c) AND AN EMPTY LAYER IS NOT A FAILED ONE - the distinction the bug could not make.
+    if os.path.exists(CACHE):
+        os.remove(CACHE)
+    A._enc_query_ids = lambda band, lid, bbox, **k: ([] if lid == 1 else [1])
+    A._enc_down_until = 0.0
+    empty = A.fetch_enc_features(BBOX)
+    check("12d. an EMPTY layer is not a failed one: genuinely nothing there still caches",
+          lambda: os.path.exists(CACHE) and empty.get("complete") is True
+                  and not empty.get("partial"),
+          "cached=%s partial=%s - [] from the service and [] from a dead socket were the "
+          "SAME VALUE before this" % (os.path.exists(CACHE), empty.get("partial")))
+finally:
+    (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
+     A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
+    A._enc_down_until = 0.0
+    import shutil as _sh2
+    _sh2.rmtree(_d, ignore_errors=True)
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

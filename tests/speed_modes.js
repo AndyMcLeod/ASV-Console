@@ -137,6 +137,11 @@ var cornerSlowFor = -1;
 // same way it does for the safety override — declared here so the checks below run against
 // the ordinary case, and driven on purpose in the resume checks further down.
 var resumeSlow = false;
+// The helm rung's claim on the throttle: speedGovernor stands down on `escapeThrottle`
+// exactly as it does on `resumeSlow`, so the symbol must exist in this world or the governor
+// is a bare ReferenceError. False here - no escape is commanded - so these checks are the
+// evidence that an ordinary run still governs its own speed as it always did.
+var escapeThrottle = false;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
 var sent = [];
 function cmd(path, body) { sent.push({ path, body }); }

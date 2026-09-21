@@ -1889,6 +1889,23 @@ def fetch_enc_features(bbox, min_depth=0.0):
         jobs += [("extra", cls, lid) for cls, lid in lm.items() if cls not in _named]
 
         def _one(job):
+            # ⚠⚠ A FAILED LAYER IS NOT AN EMPTY ONE, AND ANSWERING [] FOR BOTH POISONED THE
+            # CACHE PERMANENTLY. Every one of the ~200 per-layer jobs used to return [] on any
+            # network or service error, which is indistinguishable from "this layer has no
+            # features here" - and the assembled dict was then written to disk with no success
+            # accounting, no TTL and no revalidation, so one bad minute became the chart for
+            # that bbox for ever. IT HAD ALREADY HAPPENED: an extract in this operator's own
+            # cache holds 1591 features - 806 of them depth - and ZERO land, shoreline or dock,
+            # while its neighbour 80 m west, over the same south/east/north edges, holds 252
+            # structures. Land does not vanish over 80 m. Served, `band` is still set, so the
+            # client's "we have chart data" fact is TRUE, the Nogo row reads healthy, and
+            # Go-To / RTH / punch-out route across a shoreline that is not in the model.
+            # A refusal was indistinguishable from success.
+            #
+            # Hence (ok, cls, features). The caller refuses to CACHE an extract with a failed
+            # layer in it, which is what makes a bad minute last one request instead of for
+            # ever. ⚠ `_enc_query_ids` widens the same hole and is why `ok` is not merely
+            # "did we throw": it answers [] for an ArcGIS error payload too.
             role, cls, lid = job
             # ID-first: resolve object ids (the reliable spatial query), then fetch
             # geometry by id. This is what makes the finger piers actually appear -
@@ -1896,16 +1913,16 @@ def fetch_enc_features(bbox, min_depth=0.0):
             try:
                 ids = _enc_query_ids(band, lid, bbox)
             except (OSError, ValueError):
-                return []
+                return (False, cls, [])
             if not ids:
-                return []
+                return (True, cls, [])                 # genuinely nothing of this class here
             try:
                 features = _enc_query_by_ids(band, lid, ids)
             except (OSError, ValueError):
                 try:                                   # last resort: the direct query
                     features = _enc_query(band, lid, bbox).get("features", [])
                 except (OSError, ValueError):
-                    return []
+                    return (False, cls, [])
             out = []
             for ft in features:
                 g = ft.get("geometry")
@@ -1916,17 +1933,34 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 # any second one. See its docstring.
                 kept = _enc_keep_props(ft.get("properties"))
                 out.append({"role": role, "cls": cls, "props": kept, "geometry": g})
-            return out
+            return (True, cls, out)
 
         feats = []
+        failed = []
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for res in ex.map(_one, jobs):
+            for ok, cls, res in ex.map(_one, jobs):
+                if not ok:
+                    failed.append(cls)
                 feats.extend(res)
         counts = {}
         for ft in feats:
             counts[ft["cls"]] = counts.get(ft["cls"], 0) + 1
-        data = {"band": band, "features": feats, "counts": counts}
-        _cache_json(cache, data)
+        data = {"band": band, "features": feats, "counts": counts,
+                "partial": sorted(set(failed))}
+        # ⚠⚠ A PARTIAL EXTRACT IS NEVER WRITTEN TO THE CACHE. This is the whole repair: the
+        # data is still RETURNED (a chart with a hole in it, this once, beats no chart at all
+        # on a flaky link) but nothing durable is made of it, so the next request re-fetches
+        # and a transient failure cannot become the permanent truth about that water.
+        # `partial` rides on the response so a caller can refuse to trust it as a keep-out
+        # source - which is the follow-up this fix deliberately does not reach into.
+        if failed:
+            print("[enc] REFUSING TO CACHE a partial extract for %s: %d of %d layer(s) failed "
+                  "(%s) - it is served once and re-fetched next time"
+                  % (_bbox_key(bbox), len(failed), len(jobs), ", ".join(sorted(set(failed))[:6])),
+                  flush=True)
+        else:
+            data["complete"] = True
+            _cache_json(cache, data)
     md = float(min_depth or 0.0)
     for ft in data["features"]:
         if ft["role"] == "depth_area":
@@ -3149,6 +3183,7 @@ class SimVcu(VcuLink):
         self._coast_from_m = None
         self._coasting = False
         self._coast_s0 = None          # (lat,lon) at release, for the run made good
+        self._coast_spent = False      # this plan has had its drift-in: no plan speed back
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
         self._paused = False
@@ -3214,6 +3249,7 @@ class SimVcu(VcuLink):
         self._coast_from_m = p["coast_from_m"]
         self._coasting = False
         self._coast_s0 = None
+        self._coast_spent = False      # a FRESH plan runs at its own speed
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
 
@@ -3264,6 +3300,7 @@ class SimVcu(VcuLink):
         self._coast_from_m = None
         self._coasting = False
         self._coast_s0 = None
+        self._coast_spent = False
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
@@ -3311,6 +3348,17 @@ class SimVcu(VcuLink):
         self._estop = False
         self._laps = 0
         self._xte_i = 0.0
+        # ⚠ START DELIBERATELY DOES NOT CLEAR THE COAST STATE, and that was MEASURED rather
+        # than assumed. A coast interrupted from the front panel (pause/stop/estop all set
+        # `sog_kn = 0.0`) used to come back with the way already off and NEVER MOVE AGAIN -
+        # 3009 s of simulated time at 0.0000 kn with `running: True`, the console showing a
+        # run under way. Clearing `_coasting` HERE looks like the fix and is inert:
+        # `_coast_from_m` survives Start, so the latch re-takes it on the very next tick and
+        # the release immediately re-spends it. What actually frees her is the release
+        # DISARMING the range (see the speed block) - a mutation says so, because dropping
+        # this block reddens nothing while dropping that one reddens four checks. The spent-
+        # coast cap then holds her at walking pace for the rest of the plan, which is the
+        # safe answer beside a berth; uploading a new plan lifts it.
         self._seg_start = {"lat": self.lat, "lon": self.lon}    # first leg: here -> wp0
 
     def pause(self):
@@ -3461,6 +3509,24 @@ class SimVcu(VcuLink):
             # speed above is set before any branch has decided there is something to steer for.
             target_kn = 0.0
 
+        # ⚠⚠ A SPENT COAST DOES NOT GET THE PLAN SPEED BACK. The handover below exists so the
+        # coast ENDS - not so the engine can put the shed energy straight back in over the
+        # last few metres. Measured on the drix08 approach this suite drives: the coast
+        # releases 11.6 m off the berth at 1.00 kn, and ordinary powered control then ramped
+        # her to 4.00 kn to cover that 11.6 m, arriving with SIXTEEN TIMES the kinetic energy
+        # the manoeuvre exists to remove.
+        #
+        # ⚠ AND THE OLD RE-ARM BUG WAS HIDING IT. While the latch re-took the coast on every
+        # tick the boat kept decaying and crept in at 0.73 kn, so the suite's "she arrives
+        # gently" check passed - on a frame that also reported `drifting: False`. Fixing the
+        # latch honestly is what exposed this, and one without the other is a worse console
+        # than the bug: it powers a hull into a dock at the plan speed.
+        #
+        # The cap lives until a new plan or a new Start, which is the same life as the coast
+        # it belongs to: an approach that has spent its coast ends at walking pace.
+        if self._coast_spent and COAST_END_KN:
+            target_kn = min(target_kn, COAST_END_KN)
+
         # ── SPEED: ENGINE-GOVERNED RAMP, OR HULL-GOVERNED DECAY WHILE COASTING ──────────
         #
         # The flat 1.5 kn/s ramp is what an ENGINE does to a speed change, and it stays the
@@ -3485,7 +3551,18 @@ class SimVcu(VcuLink):
             # to an ESTIMATED coast length: the error moves where this happens, never how
             # fast she is going when it does.
             if self.sog_kn <= COAST_END_KN:
+                # ⚠⚠ THE RELEASE IS ONE-SHOT, AND DISARMING `_coast_from_m` IS WHAT MAKES IT
+                # ONE. Clearing `_coasting` alone left the arming range set while the boat was
+                # still inside it on the last leg, so the latch above re-took it on the very
+                # next tick - taken and dropped inside the same tick, for ever. The boat never
+                # got its power back: measured at 0.993 kn with 72.3 m still to run, she kept
+                # decaying and took 457 s more to arrive, while every frame reported
+                # `drifting: False` and `speed_target_kn: 7.0` - the card said "under power at
+                # 7 kn" with the DRIFT branch dark and the prop off in the model.
                 self._coasting = False
+                self._coast_from_m = None
+                self._coast_s0 = None
+                self._coast_spent = True        # ...and she does not get the plan speed back
         else:
             # smooth speed toward target
             self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
@@ -4646,9 +4723,20 @@ class Engine:
                                                tgt["lat"], tgt["lon"])[0] > thresh)
                         if moved:
                             try:
+                                # ⚠⚠ THE LIVE SPEED, NEVER THE CAPTURED ONE. `_rth_params["speed"]`
+                                # is taken ONCE, when RTH is commanded, and this chase re-uploads on
+                                # every re-target - so a frozen key drove the boat back up to its
+                                # pre-guard speed about once a second while chasing a moving
+                                # recovery point. Measured against SimVcu: RTH at high, the guard
+                                # commands low, one chase re-target -> high again. SimVcu.set_speed's
+                                # own protection (it patches `_staged["speed_key"]`) cannot help,
+                                # because this uploads and starts inside the same lock and leaves no
+                                # window for a speed command to land between them. Read the LINK,
+                                # exactly as _run_route does.
                                 link.upload_plan([{"lat": tgt["lat"], "lon": tgt["lon"]}],
                                                  p.get("arrival", ARRIVAL_DEFAULT_M),
-                                                 p.get("speed", "survey"),
+                                                 getattr(link, "speed_key", None)
+                                                 or p.get("speed", "survey"),
                                                  p.get("approach", WP_APPROACH_M),
                                                  completion="loiter")
                                 link.start()

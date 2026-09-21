@@ -135,10 +135,16 @@ var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low"
                 approach_radius_m: 2 };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = [];
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
-var cornerSlow = new Set();
+var cornerSlow = new Set();
 var cornerSlowFor = -1;
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
 var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
+// The helm rung's claim on the throttle. speedGovernor stands down on it exactly as it does
+// on `resumeSlow`, so the symbol has to exist here or the governor is a bare ReferenceError -
+// which the crash guard reports as ONE failed check rather than as a crash. False in this
+// world: no escape is commanded in it, so these checks are the evidence that an ordinary run
+// still governs its own speed exactly as it always did.
+var escapeThrottle = false;
 var clearance = { m: null, kind: null, closing: false, slowed: false, prev: null, info: null };
 var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
@@ -645,6 +651,33 @@ function finish() {
             + "pause resume takes, released the same one way - a manual role-speed change "
             + "(tests/pause_resume.js 14)");
   resumeSlow = false;
+
+  // ⚠⚠ 18b. AND IT STANDS DOWN FOR THE ESCAPE TOO, WHICH IS THE SAME CLAIM POINTING UP.
+  // The helm rung commands HIGH for steerage authority to beat the set, then sets
+  // `clearance.slowed = false` and nulls `commandedSpeed` - and onState runs
+  // `clearanceGuard(); accumLineTime(); speedGovernor();` in that order, so on the SAME frame
+  // every one of the governor's stand-downs passed and it commanded the ROLE speed
+  // microseconds later. With the shipped defaults that is 6.0 kn followed by 3.0 kn; and
+  // because `speedWant` was overwritten, speedReconcile then RE-SENT the wrong speed every
+  // second for the whole escape. On the next frame `behavior` is "escape", whose activity
+  // role is "transit", so it never recovered - the escape was flown at half the speed the
+  // rung exists to provide, against exactly the set the rung exists to beat.
+  //
+  // ⚠ SETTING `commandedSpeed = "high"` INSTEAD WOULD NOT FIX IT, and that is why the fix is
+  // a stand-down rather than a value: the governor's test is `want !== commandedSpeed`, and
+  // `want` is the role speed - still different, so it would still fire.
+  clearance.slowed = false; commandedSpeed = null; resumeSlow = false;
+  escapeThrottle = true; sent = [];
+  const duringEscape = speedGovernor();
+  const escSent = sent.filter(x => x.p === "/api/cmd/speed");
+  escapeThrottle = false;
+  check("18b. ... and it stands down during an ESCAPE, so the helm rung's HIGH is not taken "
+        + "back by the role speed on the very frame that commanded it",
+        () => duringEscape === null && escSent.length === 0,
+        () => "with the escape's claim set -> " + duringEscape + " (" + escSent.length
+            + " speed command(s) sent: " + JSON.stringify(escSent.map(x => x.speed))
+            + "). Ungated it commands the role speed here, which on the shipped defaults is "
+            + "3.0 kn over the top of a 6.0 kn escape");
 }
 
 // ── 19-20. SAID OUT LOUD, BOTH WAYS ROUND ──────────────────────────────────────────
