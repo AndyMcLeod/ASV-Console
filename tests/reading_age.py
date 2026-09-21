@@ -328,6 +328,51 @@ try:
     C._stop.set()
     C._force.set()
 
+    # ⚠⚠ 11b. AND THE COMMS MONITOR DIED GREEN, WHICH IS THE WORST WAY FOR A MONITOR TO DIE.
+    # `_poll_once` reaches into a JSON body the radio supplies - `wl.get(...)`, an index, an
+    # arithmetic on a field - so a firmware answering 200 with a different SHAPE raises
+    # AttributeError or TypeError, which the probe's own except tuple did not name. The
+    # thread then ended, and with it every future poll, while `_last` FROZE at the last good
+    # reading: the vessel card went on showing a live uplink - "COMMS 87%" - for a link that
+    # was gone. Measured on the unfixed console: polls 5 -> 5 (the thread is dead) with the
+    # snapshot still reading ok=True, signal_pct=62.2.
+    #
+    # ⚠ THE LAST VALUE IS DELIBERATELY NOT KEPT HERE, unlike the water/weather/current loops
+    # above. There a stale reading with its age beside it is still useful; here the reading
+    # IS the link's health, so the honest answer is ok:False with the fault named. Both
+    # halves are asserted: it must go BAD, and it must RECOVER when the radio answers again.
+    saved_probe, saved_poll = A.probe_ubiquiti_airos, A.CommsMonitor.POLL_S
+    try:
+        ccalls = {"n": 0, "raise": False}
+
+        def _cprobe(host, user, pw, timeout=4.0):
+            ccalls["n"] += 1
+            if ccalls["raise"]:
+                raise AttributeError("'NoneType' object has no attribute 'get'")
+            return {"ok": True, "signal_pct": 62.2, "rssi_dbm": -67, "detail": "AirOS bullet"}
+
+        A.probe_ubiquiti_airos = _cprobe
+        A.CommsMonitor.POLL_S = 0.05
+        M = A.CommsMonitor()
+        M.mode, M.host, M.username, M._password = "wifi", "10.0.0.1", "u", "p"
+        cgood = until(lambda: M.snapshot().get("ok") is True)
+        ccalls["raise"] = True
+        cbad = until(lambda: M.snapshot().get("ok") is False)
+        cnote = M.snapshot().get("note") or ""
+        cn0 = ccalls["n"]
+        cpolling = until(lambda: ccalls["n"] > cn0 + 1)        # it is STILL POLLING
+        ccalls["raise"] = False
+        cback2 = until(lambda: M.snapshot().get("ok") is True)
+        check("11b. a pass that raises does not end the COMMS monitor, and never leaves the "
+              "uplink reading GOOD - it goes bad, keeps polling, and recovers",
+              lambda: cgood and cbad and cpolling and cback2 and "AttributeError" in cnote,
+              "healthy=%s -> raised: ok=False (%s), still polling=%s -> recovered=%s "
+              "(unfixed: thread dead, polls frozen, card still green)"
+              % (cgood, cnote[:48], cpolling, cback2))
+        M._stop.set()
+    finally:
+        A.probe_ubiquiti_airos, A.CommsMonitor.POLL_S = saved_probe, saved_poll
+
     # 10-10c. A FORCED REFRESH IS NEVER SWALLOWED. Each loop ended `wait(poll); clear()`, so a set() landing after a
     # wait had timed out and before the clear was wiped - a refresh, or a move, then waited for the next poll: 15 min
     # for the current, 6 for the water, 20 for the weather. It failed a commit, under load (2026-09-15). The window is

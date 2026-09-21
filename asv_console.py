@@ -1347,6 +1347,13 @@ def probe_ubiquiti_airos(host, username, password, timeout=4.0):
             last_err = "HTTP %d (check credentials)" % e.code
         except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
             last_err = str(e) or type(e).__name__
+        except (AttributeError, TypeError, KeyError) as e:
+            # ⚠ THE RADIO SUPPLIES THE SHAPE, NOT ONLY THE BYTES. Everything above reaches
+            # into a JSON body the bullet returned - `wl.get(...)`, an index, an arithmetic
+            # on a field - so a firmware that answers 200 with a different structure raises
+            # here, not in the transport errors named above. This function's whole contract
+            # is "a reading or a refusal in words", and a raise is neither.
+            last_err = "unexpected status shape: %s: %s" % (type(e).__name__, e)
     return {"ok": False, "note": last_err}
 
 
@@ -1400,7 +1407,30 @@ class CommsMonitor:
         while not self._stop.is_set():
             with self._lock:
                 mode, host, user, pw = self.mode, self.host, self.username, self._password
-            result = self._poll_once(mode, host, user, pw)
+            try:
+                result = self._poll_once(mode, host, user, pw)
+            except Exception as e:      # noqa: BLE001 - recorded and survived, never swallowed
+                # ⚠⚠ A PASS THAT RAISES MUST NOT END THIS MONITOR. `_poll_once` reaches into
+                # a JSON body the radio supplies - `wl.get(...)` on whatever arrived - so a
+                # firmware that answers 200 with a different shape raises AttributeError or
+                # TypeError, which the probe's own except tuple does not name. The thread
+                # then ended, and with it every future poll: `_last` FROZE at the last good
+                # reading and the vessel card went on showing a live uplink - "COMMS 87%" -
+                # for a link that was gone. A monitor that dies quietly is worse than one
+                # that reports badly, and this one died GREEN.
+                #
+                # ⚠ THE LAST VALUE IS DELIBERATELY NOT KEPT, which is where this differs from
+                # the water/weather/current loops and their `_monitor_pass`. There, a stale
+                # reading with its age beside it is still useful. Here the reading IS the
+                # link's health, so the honest answer is ok:False with the fault named - the
+                # card already paints that red and prints the note.
+                #
+                # ⚠ AND IT IS NOT `_monitor_pass`, for a reason that was measured rather than
+                # assumed: that helper is defined ~900 lines below, while `COMMS =
+                # CommsMonitor()` starts this thread at module level before it exists, so a
+                # first pass that raised would hit NameError instead.
+                result = {"mode": mode, "ok": False,
+                          "note": "%s: %s" % (type(e).__name__, e)}
             with self._lock:
                 self._last = result
             self._stop.wait(self.POLL_S)
@@ -1734,6 +1764,16 @@ def _enc_layer_map(band, timeout=20.0):
         for L in info.get("layers", []):
             if L.get("geometryType"):            # skip group layers
                 m[(L.get("name") or "").split(".")[-1]] = L["id"]
+        # ⚠⚠ A FAILED SERVICE IS NOT A LAYERLESS ONE. ArcGIS REST answers its own faults with
+        # HTTP 200 and {"error": ...} and no "layers" - which parses fine and leaves this map
+        # EMPTY. This file carries no version and no TTL, so caching that makes one bad minute
+        # at NOAA the permanent truth about the whole band: every later extract reads back an
+        # empty map, builds no jobs, and the console has no ENC there for ever. Refused the
+        # same way the transport failure above is - return {} and write nothing.
+        if not m:
+            print("[enc] REFUSING TO CACHE an empty layer map for %s - the service answered "
+                  "with no usable layers; re-fetched next time" % band, flush=True)
+            return {}
         _cache_json(path, m)
     with _enc_layermap_lock:
         _enc_layermaps[band] = m
@@ -1779,6 +1819,15 @@ def _enc_query_ids(band, layer_id, bbox, timeout=25.0):
     req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
+    # ⚠⚠ AN ARCGIS ERROR PAYLOAD IS NOT AN EMPTY LAYER. The REST service reports its own
+    # faults as HTTP 200 with {"error": {...}} and no objectIds, which parses perfectly and
+    # falls straight through the `or []` below - so a refusal arrived at the caller wearing
+    # the exact shape of "there is nothing of this class here". That is the hole the extract's
+    # `ok` flag exists to see, and it cannot see it unless this raises. Both callers already
+    # catch (OSError, ValueError), so nothing above needs changing.
+    if isinstance(d.get("error"), dict):
+        raise ValueError("ENC %s/%d: %s"
+                         % (band, layer_id, d["error"].get("message") or "service error"))
     return d.get("objectIds") or (d.get("properties") or {}).get("objectIds") or []
 
 
@@ -1916,13 +1965,22 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 return (False, cls, [])
             if not ids:
                 return (True, cls, [])                 # genuinely nothing of this class here
+            short = False
             try:
                 features = _enc_query_by_ids(band, lid, ids)
             except (OSError, ValueError):
                 try:                                   # last resort: the direct query
-                    features = _enc_query(band, lid, bbox).get("features", [])
+                    d = _enc_query(band, lid, bbox)
+                    features = d.get("features", [])
                 except (OSError, ValueError):
                     return (False, cls, [])
+                # ⚠⚠ A SHORT ANSWER IS A FAILED LAYER, NOT A THIN ONE. `resultRecordCount` is
+                # a REQUEST; the service caps at its own maxRecordCount - 1000 on ENCDirect -
+                # and says so in `exceededTransferLimit`. `ids` came from the ID query, which
+                # is NOT capped, so it is the count to beat. Cached as complete, a truncated
+                # layer is a chart missing everything past the cap with nothing to show for
+                # it: TWO extracts in this operator's cache hold exactly 1000 soundings.
+                short = bool(d.get("exceededTransferLimit")) or len(features) < len(ids)
             out = []
             for ft in features:
                 g = ft.get("geometry")
@@ -1933,7 +1991,9 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 # any second one. See its docstring.
                 kept = _enc_keep_props(ft.get("properties"))
                 out.append({"role": role, "cls": cls, "props": kept, "geometry": g})
-            return (True, cls, out)
+            # A truncated layer reports as a FAILURE, so the extract is served once and
+            # never cached - the same rule a dead socket gets, for the same reason.
+            return (not short, cls, out)
 
         feats = []
         failed = []

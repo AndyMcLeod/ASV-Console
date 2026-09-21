@@ -576,6 +576,63 @@ try:
                   and not empty.get("partial"),
           "cached=%s partial=%s - [] from the service and [] from a dead socket were the "
           "SAME VALUE before this" % (os.path.exists(CACHE), empty.get("partial")))
+
+    # ⚠⚠ 12e. AN ARCGIS ERROR PAYLOAD IS NOT AN EMPTY LAYER. The REST service reports its own
+    # faults as HTTP 200 with {"error": {...}} and no objectIds - which parses perfectly and
+    # fell straight through `_enc_query_ids`'s `or []`, so a refusal reached the caller
+    # wearing the exact shape of "there is nothing of this class here". That is the hole the
+    # `ok` flag exists to see, and it could not see it until this raised.
+    if os.path.exists(CACHE):
+        os.remove(CACHE)
+    (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
+     A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
+    A.ENC_DIR = _d
+    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
+    A._enc_query_by_ids = lambda b, lid, ids, **k: [
+        {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]
+    A._enc_query = lambda b, lid, bx, **k: {"features": []}
+
+    class _R200:                       # HTTP 200 carrying an ArcGIS error body
+        def __init__(s, payload): s._p = json.dumps(payload).encode()
+        def read(s): return s._p
+        def __enter__(s): return s
+        def __exit__(s, *a): return False
+    _savurl = A.urllib.request.urlopen
+    try:
+        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+            {"error": {"code": 500, "message": "Unable to complete operation."}})
+        raised = False
+        try:
+            A._enc_query_ids("enc_harbour", 1, (-30.0, 20.0, -29.99, 20.01))
+        except ValueError as e:
+            raised = "Unable to complete" in str(e)
+        check("12e. an ArcGIS error body served as HTTP 200 RAISES rather than reading as an "
+              "empty layer - which is the only way the extract's ok flag can see it",
+              lambda: raised,
+              "the 200-with-an-error-payload path: raised=%s (it returned [] before, "
+              "indistinguishable from 'nothing of this class here')" % raised)
+    finally:
+        A.urllib.request.urlopen = _savurl
+
+    # ⚠⚠ 12f. AND A LAYER MAP THE SERVICE REFUSED IS NEVER CACHED. `_enc_layer_map`'s file
+    # carries no version and no TTL, so caching an empty map makes one bad minute at NOAA the
+    # permanent truth about the whole band: every later extract reads it back, builds no jobs,
+    # and the console has no ENC there for ever.
+    A._enc_layer_map = _sav[1]                              # the REAL one, for this check
+    try:
+        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+            {"error": {"code": 500, "message": "Unable to complete operation."}})
+        A._enc_layermaps.clear()
+        lm = A._enc_layer_map("enc_harbour")
+        lmpath = os.path.join(_d, "enc_harbour", "_layers.json")
+        check("12f. a layer map the service refused is NOT cached, so the band comes back the "
+              "moment the service does",
+              lambda: lm == {} and not os.path.exists(lmpath),
+              "map=%s, _layers.json written=%s" % (lm, os.path.exists(lmpath)))
+    finally:
+        A.urllib.request.urlopen = _savurl
+        A._enc_layermaps.clear()
 finally:
     (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
      A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
