@@ -1335,7 +1335,12 @@ function solveCoastFor(plan){
     H: nogo.frame.toEN({lat:H.lat, lon:H.lon}), ko: nogo.ko, buf: nogo.buffer || 0,
     frame: nogo.frame, v0Ms, lc: lc.lc,
     setMs: (st.env_set_kn || 0) * 0.514444, setDeg: st.env_set_deg,
-    hdg: azTo(prev, H), holdClear: plan.holdClear,
+    // ⚠ `legM` IS THE LEG THE VESSEL LATCHES THE COAST ON, and without it the solver could
+    // return a release range longer than the leg itself - the prop then stops at the leg's
+    // start rather than `groundM` out, and she arrives with way still on while the banner
+    // quotes the speed she would have had. Same two points the heading is taken from, so it
+    // is one more measurement of a leg already in hand, not new geometry.
+    hdg: azTo(prev, H), legM: distTo(prev, H), holdClear: plan.holdClear,
   });
   if(!sol.ok || !coastWorthIt(sol.groundM, plan.holdClear)) return null;
   sol.lc = lc;
@@ -8172,7 +8177,9 @@ $("#sp_dir").onchange = ()=>{
 // Buffer + enforce toggles are the SHARED nogo controls (they define the keep-out
 // model every behaviour routes clear of); fold them into nogo + rebuild live.
 function applyNogoControls(){
-  nogo.buffer = Math.max(0, parseFloat($("#sp_buffer").value)||0);
+  // The same floor as setBuffer's, for the same reason: this is the OTHER writer of
+  // nogo.buffer, and a floor enforced by one of two writers is not a floor.
+  nogo.buffer = bufferFloor(Math.max(0, parseFloat($("#sp_buffer").value)||0));
   nogo.enf = {land:$("#enf_land").checked, depth:$("#enf_depth").checked,
               haz:$("#enf_haz").checked, area:$("#enf_area").checked};
   if(nogo.features && nogo.features.length) rebuildNogo();   // behaviours update immediately
@@ -8181,7 +8188,14 @@ function applyNogoControls(){
 // accessible - lower it to thread a tight marina) or the SURV panel (#sp_buffer).
 // Both stay in sync; it persists and re-routes every behaviour live.
 function setBuffer(v){
-  v = Math.max(0, Math.min(200, parseFloat(v)||0));
+  // ⚠⚠ THE VESSEL'S OWN planning.nogo_buffer_m IS A FLOOR HERE TOO, not only on mission load
+  // and vessel switch (2878, 2920). A ZERO buffer does not merely narrow the model - IT
+  // DELETES TWO THIRDS OF IT. `blocked`'s line and point tests are strict `< buf`, and a
+  // shoreline, an obstruction line, an r=0 pile and a channel buoy have no extent of their
+  // own, so at buf = 0 not one of them can refuse anything, and `timeToEntry` goes silent on
+  // all of them as well. Polygons still block, so the Nogo row goes on counting zones while a
+  // whole CLASS of keep-out has stopped existing - a console that looks armed and is not.
+  v = bufferFloor(Math.max(0, Math.min(200, parseFloat(v)||0)));
   nogo.buffer = v;
   $("#sp_buffer").value = v; $("#c_buffer").value = v;
   mission.buffer_m = v; saveMission();

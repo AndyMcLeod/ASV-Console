@@ -143,6 +143,48 @@ check("8. ... and it is walked PAST the berth by the certified clear water, not 
       },
       "the same geometry passes with no overshoot allowance and fails with one");
 
+// ⚠⚠ 8b. THE WALK STARTS WHERE THE PROP ACTUALLY STOPS, AND WITH A CROSS SET THAT IS NOT
+// ALONG THE GROUND TRACK. The only number that crosses to the vessel is the scalar
+// `groundM`, and the vessel latches the drift-in on RANGE TO THE LAST WAYPOINT while the
+// line-follower is still holding her ON the route - so the prop stops `groundM` back along
+// the APPROACH. Stepping back along the ground track agrees only when the set is dead ahead
+// or dead astern; on the beam the two points are far apart, and the water being walked was
+// then not the water she passes through.
+check("8b. with a CROSS set the release point is the range the VESSEL latches on, straight "
+      + "back down the approach - not stepped back along the ground track, off to one side",
+      () => {
+        const s = at({ hdg: 0, setMs: 1.0 * KN, setDeg: 270, ko: OPEN });
+        // heading 000: straight back down the approach is due south, so e = 0 exactly.
+        return s.ok && Math.abs(s.release.e) < 1e-9
+               && Math.abs(s.release.n + s.groundM) < 1e-9;
+      },
+      (() => { const s = at({ hdg: 0, setMs: 1.0 * KN, setDeg: 270, ko: OPEN });
+               if (!s.ok) return s.why;
+               return "release e=" + s.release.e.toFixed(2) + " n=" + s.release.n.toFixed(2)
+                      + " against groundM " + s.groundM.toFixed(1) + " m"; })());
+
+// ⚠⚠ 8c. AND THE RELEASE RANGE HAS TO FIT ON THE LEG THE VESSEL LATCHES ON. The arming test
+// is `_wp_index == len(_plan) - 1 and dist_b <= _coast_from_m`, so a release range longer
+// than the final leg is satisfied the instant she enters it: the prop stops at the leg's
+// START rather than `groundM` out, and she arrives at v0*exp(-leg/Lc) - not the speed this
+// solve quoted. On this hull a 10 m last leg against a ~50 m release turns a 1 kn arrival
+// into 3 kn - 175 J against 1622 J - with the banner still saying one knot.
+check("8c. a release range longer than the FINAL LEG is refused, because the vessel arms the "
+      + "coast on that leg and would stop the prop at its start",
+      () => { const s = at({ legM: 10 });
+              return !s.ok && /final leg/.test(s.why); },
+      at({ legM: 10 }).why);
+
+check("8d. ACCEPTANCE: a leg with room for the whole release range still coasts, and a solve "
+      + "given no leg at all is unchanged - the gate may only refuse, never move the answer",
+      () => { const room = at({ legM: 400 }), none = at({});
+              return room.ok && none.ok
+                     && Math.abs(room.groundM - none.groundM) < 1e-9; },
+      (() => { const room = at({ legM: 400 }), none = at({});
+               return "legM 400 m -> " + (room.ok ? room.groundM.toFixed(1) + " m" : room.why)
+                      + "; no legM -> " + (none.ok ? none.groundM.toFixed(1) + " m"
+                                                   : none.why); })());
+
 // ── 9. A COAST IS AN APPROACH, NOT AN ABDICATION ───────────────────────────────────────
 check("9. a coast that would outlast the set reading it was solved from is refused",
       () => { const s = at({ v0Ms: 14 * KN, lc: 400 });

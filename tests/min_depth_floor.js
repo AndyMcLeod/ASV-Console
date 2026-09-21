@@ -134,6 +134,23 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
               && /\$\("#sp_mindepth"\)\.onchange\s*=\s*\(\)=>setMinDepth/.test(code),
         "two controls, one value - the trap this console keeps re-learning");
 
+  // ⚠⚠ 6c. AND THE BUFFER HAS A FLOOR AT ITS WRITERS TOO, NOT ONLY ON THE LOAD PATH. The
+  // hull's planning.nogo_buffer_m was applied on mission load and on vessel switch - and by
+  // NEITHER of the two functions that write nogo.buffer when the operator types a number.
+  //
+  // A zero buffer does not merely narrow the model, it DELETES TWO THIRDS OF IT. `blocked`
+  // tests lines and points with a strict `< buf`, and a shoreline, an obstruction line, an
+  // r=0 pile and a channel buoy carry no extent of their own: at buf = 0 not one of them can
+  // refuse anything, and timeToEntry goes silent on all of them too. Polygons still block,
+  // so the Nogo row goes on counting zones while a whole CLASS of keep-out has stopped
+  // existing - a console that looks armed and is not.
+  check("6c. the BUFFER floor is enforced by BOTH of its writers, so the model can never be "
+        + "built with a zero buffer however the operator types it",
+        () => /v\s*=\s*bufferFloor\(/.test(noComments(grab(H, "setBuffer")))
+              && /nogo\.buffer\s*=\s*bufferFloor\(/.test(noComments(grab(H, "applyNogoControls"))),
+        "setBuffer and applyNogoControls both go through bufferFloor - a floor enforced by "
+        + "one of two writers is not a floor");
+
   check("7. the survey MAX depth is still a coverage-only control",
         () => /\$\("#sp_maxdepth"\)\.onchange\s*=\s*\(\)=>\{\s*patClip=null/.test(code)
               && !/setMinDepth\(\$\("#sp_maxdepth"\)/.test(code),

@@ -218,7 +218,28 @@ export function solveCoast(o) {
   // where the handover is expected to fall, and how far that could slide either way.
   const slackM = run.m * COAST_LC_TOL + setMs * run.s * COAST_SET_TOL;
   const releaseM = nominalM;
-  const release = { e: H.e - uE * releaseM, n: H.n - uN * releaseM };
+  // ⚠⚠ THE RELEASE RANGE HAS TO FIT ON THE LEG THE VESSEL LATCHES ON. The only number that
+  // crosses to the boat is the scalar `groundM`, and the vessel arms the drift-in on the LAST
+  // LEG ONLY - `_wp_index == len(_plan) - 1 and dist_b <= _coast_from_m`. So a release range
+  // longer than that leg is already satisfied the instant she enters it: the prop stops at
+  // the leg's START, not `groundM` out, and she arrives at v0*exp(-leg/Lc) rather than at the
+  // speed this function quoted. Measured on the DriX: a 10 m last leg against a 49.7 m
+  // release turns a 0.98 kn / 175 J arrival into 2.98 kn / 1622 J - and the banner still said
+  // one knot. Refused in the idiom COAST_MAX_S already uses, because a coast that cannot be
+  // flown as solved is not a coast.
+  if (o.legM != null && releaseM > o.legM) {
+    return { ok: false, release: null, hdg,
+             why: "the release range (" + releaseM.toFixed(0) + " m) is longer than the final "
+                  + "leg (" + o.legM.toFixed(0) + " m) - the prop would stop at the leg's "
+                  + "start and she would arrive with way still on" };
+  }
+  // ⚠⚠ AND THE WALK STARTS WHERE THE PROP ACTUALLY STOPS, WHICH IS NOT ALONG `u`. The latch
+  // is RANGE TO THE LAST WAYPOINT on a boat the line-follower is holding ON the route, so the
+  // release point is `releaseM` back along the APPROACH. Stepping back along the ground track
+  // agrees only when the set is dead ahead or dead astern: a 1 kn beam set puts the two 28 m
+  // apart and a 2 kn one 60 m, so the water being checked was not the water she passes
+  // through - and the one number the vessel acts on was solved against it.
+  const release = { e: H.e - hE * releaseM, n: H.n - hN * releaseM };
   const band = { shortM: Math.max(0, nominalM - slackM), longM: nominalM + slackM, slackM };
 
   // The ground velocity she carries at the nominal stop: her remaining way plus the set.
@@ -233,7 +254,13 @@ export function solveCoast(o) {
   const steps = Math.max(2, Math.ceil(walkM / COAST_STEP_M));
   for (let i = 0; i <= steps; i++) {
     const d = (walkM * i) / steps;
-    if (blocked({ e: release.e + uE * d, n: release.n + uN * d }, ko, buf)) {
+    // IN to the berth she is still STEERED - crabbing down the cleared approach the router
+    // gave her - and only PAST it, with the way off, is she set bodily. So the run in follows
+    // the heading and only the overshoot follows the ground track.
+    const q = d <= releaseM
+      ? { e: release.e + hE * d, n: release.n + hN * d }
+      : { e: H.e + uE * (d - releaseM), n: H.n + uN * (d - releaseM) };
+    if (blocked(q, ko, buf)) {
       return { ok: false, release, hdg,
                why: (i === 0 ? "the release point itself is in a keep-out"
                              : "the drift track runs into a keep-out " + d.toFixed(0)
