@@ -3094,6 +3094,29 @@ def _opt_float(v):
     return None if v in (None, "") else float(v)
 
 
+def _coord(v, what):
+    """A lat/lon off a JSON body, validated as INPUT.
+
+    ⚠⚠ ONE RANGE GUARD, AND IT COVERS THE NON-FINITE VALUES TOO. inf, -inf and nan all make
+    this comparison False - every nan comparison is - which is the same trick `set_home` and
+    `_sanitize_route` already rely on. It is not cosmetic on the ROC route either: a ROC can
+    BE home, Return-to-Home drives to its arrival point, and a nan reaching there makes every
+    /api/state body and every SSE frame INVALID JSON. The page cannot parse those, so it
+    drops every frame and raises TELEMETRY STALE - and because the registry is persisted, the
+    state survives a page reload AND a console restart.
+    """
+    f = float(v)
+    lim = 90.0 if what == "lat" else 180.0
+    if not (-lim <= f <= lim):
+        raise ValueError("roc %s out of range: %r" % (what, f))
+    return f
+
+
+def _opt_coord(v, what):
+    """None/"" -> None; else _coord(v, what). For the optional lat/lon in JSON bodies."""
+    return None if v in (None, "") else _coord(v, what)
+
+
 # Remote Operations Centers. Global like COMMS / WATER / ENV; the Engine pulls
 # ROC.home_intent() every telemetry tick, so a selected ROC owns HOME and - when it
 # is a ship - HOME moves and Return-to-Home chases it. Nothing auto-seeds: the
@@ -4331,7 +4354,14 @@ class Engine:
     def go_to(self, lat, lon, route=None, hold_clear_m=None, coast_from_m=None):
         # route (if given) is the client's ENC-aware detour path ending at the point;
         # else drive straight to the point (honest degrade when no nogo model).
-        r = self._sanitize_route(route) if route else [{"lat": float(lat), "lon": float(lon)}]
+        # ⚠⚠ THE DIRECT POINT GOES THROUGH THE SAME VALIDATOR AS A ROUTE. The SAME coordinate
+        # was refused inside a `route` and accepted as a bare lat/lon - `float()` alone takes
+        # inf, nan and 1e12 happily. A nan reaching the plan makes every /api/state body and
+        # every SSE frame invalid JSON, which the page cannot parse, so the console goes
+        # TELEMETRY STALE with no way back short of a restart. `route or [...]` keeps the
+        # existing truthiness exactly - an empty route still falls through to the point - and
+        # the `note` below reads `route`, not `r`, so both Go-To sentences are unchanged.
+        r = self._sanitize_route(route or [{"lat": lat, "lon": lon}])
         note = ("Go-To: following the ENC-aware route to the point (%d wpts), will station-keep on arrival." % len(r)
                 if route else "Go-To: driving to point, will station-keep on arrival.")
         self._run_route(r, "goto", note, hold_clear_m, coast_from_m)
@@ -4353,7 +4383,9 @@ class Engine:
         Taking the helm is meant to buy the operator's attention, not hand the console
         straight back to whatever was already running - so this holds at the escape point
         and waits. Nothing here re-arms automatically; the operator re-commands."""
-        r = [{"lat": float(lat), "lon": float(lon)}]
+        # The same validator, for the same reason as goto above - and it matters more here:
+        # this is the safety rung's own command, issued without an operator in the loop.
+        r = self._sanitize_route([{"lat": lat, "lon": lon}])
         self._run_route(r, "escape",
                         "In extremis: steered clear. Holding here - the end-of-plan return "
                         "does not chain from an escape; re-command when ready.", hold_clear_m)
@@ -5534,13 +5566,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if op == "add":
                     rid = ROC.add(body.get("kind", "shore"), body.get("name"),
-                                  lat=_opt_float(body.get("lat")),
-                                  lon=_opt_float(body.get("lon")), offset=body.get("offset"))
+                                  lat=_opt_coord(body.get("lat"), "lat"),
+                                  lon=_opt_coord(body.get("lon"), "lon"), offset=body.get("offset"))
                     return 200, {"ok": True, "id": rid, "roc": ROC.snapshot()}
                 if op == "update":
                     ok = ROC.update(body.get("id"), name=body.get("name"),
-                                    lat=_opt_float(body.get("lat")),
-                                    lon=_opt_float(body.get("lon")))
+                                    lat=_opt_coord(body.get("lat"), "lat"),
+                                    lon=_opt_coord(body.get("lon"), "lon"))
                     return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
                 if op == "offset":
                     ok = ROC.set_offset(body.get("id"), range_m=_opt_float(body.get("range_m")),
@@ -5575,7 +5607,11 @@ class Handler(BaseHTTPRequestHandler):
                     ROC.clear_home()
                     return 200, {"ok": True, "roc": ROC.snapshot()}
                 if op == "feed":
-                    ok = ROC.feed(body.get("id"), float(body["lat"]), float(body["lon"]),
+                    # ⚠ THE EXTERNAL PUSH IS THE LEAST TRUSTED INPUT ON THIS CONSOLE - any
+                    # GPS bridge or ship nav PC posts here - and it was the only coordinate
+                    # path with no range guard at all.
+                    ok = ROC.feed(body.get("id"), _coord(body["lat"], "lat"),
+                                  _coord(body["lon"], "lon"),
                                   cog=_opt_float(body.get("cog")), sog=_opt_float(body.get("sog")))
                     return (200 if ok else 404), {"ok": ok}
                 return 400, {"error": "unknown roc op: %r" % op}

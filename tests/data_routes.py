@@ -619,6 +619,33 @@ try:
           "a deleted ROC must hear about it",
           lambda: c12 == 404 and r_feed.get("ok") is False,
           lambda: "%s ok=%s" % (c12, r_feed.get("ok")))
+
+    # ⚠⚠ 12c. A COORDINATE THAT IS NOT A COORDINATE IS REFUSED AT THE FACE. `op:"feed"` is the
+    # external HTTP push - any GPS bridge or ship nav PC posts to it - and it was the only
+    # coordinate path on this console with no range guard at all. A ROC can BE home, RTH
+    # drives to its arrival point, and a nan reaching there makes every /api/state body and
+    # every SSE frame INVALID JSON: the page cannot parse them, drops every frame, and raises
+    # TELEMETRY STALE. The registry is persisted, so that survives a page reload AND a
+    # console restart.
+    #
+    # ⚠ THE LAST ASSERTION IS THE ONE WITH TEETH. After the bad pushes /api/state must still
+    # be parseable JSON - a check that read only the status code would pass happily on a
+    # console that had already been poisoned.
+    _bad = [float("nan"), float("inf"), 1e12, 95.0]
+    _codes, _errs = [], []
+    for _v in _bad:
+        _c, _r = cmd(port, "/api/roc", {"op": "feed", "id": r_add.get("id"),
+                                        "lat": _v, "lon": -75.1})
+        _codes.append(_c)
+        _errs.append((_r.get("error") or "")[:48])
+    _cs, _state = api(port, "/api/state")
+    check("12c. a coordinate that is not a coordinate is REFUSED at the /api/roc face, and the "
+          "console is still emitting parseable JSON afterwards",
+          lambda: all(c == 400 for c in _codes)
+                  and all("out of range" in e for e in _errs)
+                  and _cs == 200 and isinstance(_state, dict),
+          lambda: "nan/inf/1e12/95 -> codes %s, errors %s; /api/state %s parseable=%s"
+                  % (_codes, _errs[:1], _cs, isinstance(_state, dict)))
     cmd(port, "/api/roc", {"op": "remove", "id": r_add.get("id")})
 
     # ---- THE VESSEL SWITCH, LAST (it moves the boat to Lake Erie and back) --------- #
