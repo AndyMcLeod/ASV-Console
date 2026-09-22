@@ -7279,19 +7279,44 @@ async function punchOut(){
     // fixed navigability floor. So a survey is trimmed to exactly the water the
     // vessel is allowed in, plus the operator's depth-of-interest band.
     const ref=nogo.frame, buffer=nogo.buffer, enf=nogo.enf;
-    const ko=buildKeepouts(ref, enf, dr, nogo.features);
+    // ⚠⚠ TWO MODELS, AND THE OPERATOR'S CEILING REACHES ONLY ONE OF THEM. Max depth is a
+    // COVERAGE window - "don't survey deeper than this" - and three headers already said so:
+    // nogoDR's ("deep water is not a hazard ... punchOut still layers the operator's full
+    // min/max window on top of this floor FOR THE SURVEY LINES THEMSELVES"), the control's
+    // own tooltip ("deep water is never a nogo - the boat may transit it"), and extendLead's
+    // caller below ("a lead is not coverage, it is the water that CONNECTS coverage to a
+    // turn"). ONE model carried the ceiling into all three of them.
+    //
+    // Measured on a 5-15 m bank with 20-30 m water each side and Max depth 15: the clip
+    // correctly parks every run end at the bank edge, and then all four reversals come back
+    // "no flyable turn", every lead is cut from the 30 m asked for to 0.0 m, and ADD TO PLAN
+    // is disabled - all of it said about charted 20-30 m water, under the label "water
+    // shallower than 2.3 m", because nogoKind answers that for ANY depth exclusion.
+    //
+    // So: koCov carries the operator's window and reaches the CLIP only. `ko` is the same
+    // features at the same floor with NO ceiling, and it is what the turns, the leads and
+    // the region hops answer to - which is what `ko` means everywhere else in this console.
+    // `dr.min` is REUSED rather than restated, so the navigation model cannot drift from the
+    // floor the coverage model uses; with Max depth blank `depthRange()` returns max 0 and
+    // the two builds are identical. Second build measured over 1,318 features: 4.2 ms,
+    // against the 15,978 ms punch the memo note below is measured on.
+    const koCov=buildKeepouts(ref, enf, dr, nogo.features);
+    const ko=buildKeepouts(ref, enf, {min: dr.min, max: 0}, nogo.features);
     // ⚠ AND THE STRUCTURES READ OFF THE CHART, which this model used to be blind to. It
     // is built fresh from `nogo.features` so it can carry the SURVEY's own depth window,
     // and that rebuild silently dropped everything the chart scan had added - so a Go-To
     // went round the piers at New Castle and a survey LINE was clipped through them.
-    // koClip and koTurn below are spreads of this one, so folding here covers all three.
+    // BOTH models are folded: koClip is a spread of koCov and koTurn is a spread of `ko`,
+    // so folding one only would leave the other blind to the piers all over again.
+    foldChartInk(koCov, ref);
     foldChartInk(ko, ref);
     const src=patSourceLines();                // boundary-clipped legs (if any) feed the ENC clip
     // If the survey SPANS ACROSS a channel, exclude that channel from the coverage
     // lines only (koClip). Transits keep using `ko`, so they may still cross it; an
     // internal-channel survey (no line crosses the channel edge) excludes nothing.
     const chanExcl = channelSpanKeepouts(src, ref, nogo.features, ko.marks);
-    const koClip = chanExcl.length ? {...ko, polys:[...ko.polys, ...chanExcl]} : ko;
+    // ⚠ THE CLIP IS THE ONE READER OF koCov, and the only place the ceiling applies.
+    const koClip = chanExcl.length ? {...koCov, polys:[...koCov.polys, ...chanExcl]} : koCov;
     // ⚠ THE ENC CLIP IS MEMOISED, AND STRIKING A RUN IS THE WHOLE REASON.
     //
     // MEASURED on a 10-line, 949 m-wide plan over New Castle harbour (1,318 keep-out

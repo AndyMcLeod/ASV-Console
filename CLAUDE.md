@@ -59,6 +59,37 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-22 — THE OPERATOR'S MAX DEPTH REFUSED EVERY TURN, AND BLAMED SHALLOW WATER.**
+  `punchOut` built ONE keep-out model at the survey's depth window and handed it to the
+  coverage clip, the reversals, the leads, the region hops and the detour router alike.
+  Three headers already said this was wrong — `nogoDR`'s ("punchOut still layers the
+  operator's full min/max window on top of this floor **for the survey lines themselves**"),
+  the control's tooltip, and `extendLead`'s caller. Measured on a 5–15 m bank with 20–30 m
+  water each side and Max depth 15:
+
+  ```
+  clip   : 5 runs, every end parked at the bank edge        <- correct
+  turns  : 4 reversals REFUSED, "water shallower than 2.3 m"
+  leads  : 0.0 m of the 30 m asked for, all five
+  -> ADD TO PLAN DISABLED
+  ```
+
+  every word of it about charted **20–30 m** water, because `nogoKind` answers "shallower"
+  for any depth exclusion. Two models now: `koCov` carries the window and the CLIP alone
+  reads it; `ko` is the same features at the same floor with **no ceiling**, and it is what
+  everything that NAVIGATES answers to. `dr.min` is reused rather than restated, and with
+  Max depth blank the two builds are identical.
+
+  **⚠⚠ AND THE TEETH ARE THE POINT OF THIS ONE.** The proposed patch shipped with only
+  source checks, and an adversarial pass showed **both halves of the split could then be
+  silently reverted with every suite green** — including the revert that stops Max depth
+  applying to *coverage* at all, which plans the survey straight through the trench. That
+  property is held **today**, incidentally, by `chart_ink` 12b; the patch as proposed would
+  have removed it. So `min_depth_floor.js` 17 drives `punchOut`'s **own model-construction
+  statements**, sliced out of the page and executed — a re-base changes what it sees, which
+  a source check cannot. 17b pins both bindings, and 12b now requires BOTH folds.
+  **5 mutations, 5 killed**, including the two the refuter showed were killed by nothing.
+
 * **2026-09-22 — THE PUNCH KEY ANSWERED TWO QUESTIONS AND GOT BOTH WRONG.** One key served
   the strike list and the clip memo; H10 and H25 are the two halves, and they compose.
 

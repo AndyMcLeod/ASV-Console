@@ -437,17 +437,27 @@ check("13. ... and it follows the STRUCTURE enforcement toggle, because that is 
 check("12b. ⚠ AND THE SURVEY CLIP SEES THEM TOO. punchOut builds its OWN keep-out model, " +
       "so it can carry the survey's coverage depth window — and that rebuild used to drop " +
       "every structure the chart scan had found",
+      // ⚠ TWO MODELS SINCE 2026-09-22, AND BOTH MUST BE FOLDED. punchOut builds koCov at
+      // the operator's coverage window (the CLIP reads it) and `ko` at the floor alone (the
+      // turns, leads and region hops read it) - see min_depth_floor 17/17b. Folding one only
+      // would leave the other blind to the piers all over again, which is this finding back
+      // on whichever half was missed. The ORDER still matters for the same reason: both
+      // folds have to precede the spreads that make koClip and koTurn.
       () => {
         const po = H.slice(H.indexOf("async function punchOut"),
-                           H.indexOf("async function punchOut") + 4000);
-        return /const ko=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
-            && /foldChartInk\(ko, ref\);/.test(po)
-            && po.indexOf("foldChartInk(ko, ref)") > po.indexOf("const ko=buildKeepouts")
-            && po.indexOf("foldChartInk(ko, ref)") < po.indexOf("channelSpanKeepouts");
+                           H.indexOf("async function punchOut") + 6000);
+        const both = /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
+            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features\);/.test(po);
+        const folded = /foldChartInk\(koCov, ref\);/.test(po) && /foldChartInk\(ko, ref\);/.test(po);
+        const beforeSpreads = po.indexOf("foldChartInk(ko, ref)") > po.indexOf("const ko=buildKeepouts")
+            && po.indexOf("foldChartInk(koCov, ref)") > po.indexOf("const koCov=buildKeepouts")
+            && Math.max(po.indexOf("foldChartInk(ko, ref)"), po.indexOf("foldChartInk(koCov, ref)"))
+               < po.indexOf("channelSpanKeepouts");
+        return both && folded && beforeSpreads;
       },
       "Go-To, RTH and transit read nogo.ko and went round the piers; a punched survey LINE " +
-      "was clipped straight through them. koClip and koTurn are spreads of this ko, so the " +
-      "fold has to happen before they are made");
+      "was clipped straight through them. koClip spreads koCov and koTurn spreads ko, so " +
+      "BOTH folds have to happen before either spread is made");
 check("12c. ... and BOTH callers fold through the one helper, so they cannot disagree about " +
       "what a chart-read keep-out is",
       () => /function foldChartInk\(ko, frame\)\{/.test(H)
