@@ -141,27 +141,97 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   running boat whose prop has not yet taken hold — a readiness wait, not an assertion, so it
   can only make a later check impatient.)
 
+* **⚠⚠ 2026-09-22 — THE ESCAPE'S CLAIM ON THE THROTTLE NOW ENDS WHERE THE OPERATOR
+  ENDS IT (shipped). Two of the three filed escape-rung defects were the same question, and
+  the answer is not the one-line fix either of them suggested.**
+
+  * **THE LIFETIME WAS COPIED FROM A FLAG WITH THE OPPOSITE SAFETY POLARITY.** `escapeThrottle`
+    says so at its own declaration — *"Its life is `resumeSlow`'s, deliberately"* — so this was
+    a decision, not a slip. But `resumeSlow` holds the boat at **LOW**, where overstaying costs
+    a slow survey; this holds her at **HIGH** and, because `if(escapeThrottle) return null;`
+    sits above **every** decision `speedGovernor` makes, it also stands down the
+    flagged-corner slow-down and the slow-radius turn rule — the two rules that exist because
+    the hull cannot track those geometries at speed. **MEASURED** against the page's own
+    governor: claim standing, flagged corner ahead — the control commands `low`, the claim
+    commands **nothing**. The filed symptom (*"the recovery transit is flown at HIGH"*)
+    understated it: the console's speed control was gone for the rest of the run.
+  * **AND THE DEFECT WAS LOAD-BEARING, which is why the obvious fix is worse.** The guard's
+    release branch at `:2039` also does `commandedSpeed = null` — *"let the governor
+    re-assert"*. The only reason it does not re-assert mid-escape is that the flag is still
+    set. Clearing it there hands the role speed back in the middle of the steer. That branch
+    fires within a few frames of every accepted escape, because the rung overwrites `runRoute`
+    with the single escape point and `guardTrack` projects along exactly that —
+    `clearance_guard` 15z3 prints it: **`levels helm,helm,clear,clear`**, boat unmoved.
+  * ⚠⚠ **AND "THE VESSEL OWNS THE EPISODE" IS A TRAP.** Keying the stand-down on
+    `S.behavior === "escape"` looks like the honest answer — it is vessel state, it survives a
+    reload, a second tab sees it. It is fatal: `Engine.start` keeps the name of a **resumed**
+    run (`resuming = self.run == "paused" and not link.plan_staged`; `if not resuming:
+    self.behavior = "survey"`), so a paused escape resumed still reports `"escape"` and a
+    telemetry-derived gag would pin whatever the resume commanded — **LOW**, via `resumeRun`
+    — with `setRoleSpeed` unable to release a flag it does not own. Found by refutation, after
+    I had verified the mechanism and was ready to build on it.
+  * **THE RULE.** Released by a speed set by hand, or by a commanded motion the vessel **TOOK**
+    — Go-To, RTH, Transit, Hold (Start and Stop already did it) — and by nothing else. Never
+    by the water, never by arrival, never by a clock. Every release goes through one door,
+    `releaseEscapeClaim()`, and every one is fenced on **`planGen`**, because the guard commands
+    at 4 Hz throughout each round trip and an escape claimed inside one must keep the throttle
+    it just took. A boolean snapshot cannot express that: `escapeThrottle === was` is true both
+    when the claim stands and when the rung claimed again.
+  * **TWO THINGS THE OPERATOR READS WERE FALSE AND ARE FIXED WITH IT.** The release branch
+    flashed *"speed back to survey"* during the escape, and the **Mission card cried
+    DISAGREEMENT on every accepted escape** — the vessel at `high`, the row computing the role
+    speed — which is exactly what that row's own comment warns against (*"would train the
+    operator to ignore the one readout that catches a real one"*). `escapeThrottle` had been
+    read in one place and rendered nowhere.
+  * **THE COST, UNSOFTENED.** An escape nobody deals with holds the throttle **indefinitely**,
+    and `reapproachIfSetOff` re-approaches at the vessel's live `speed_key` — HIGH — for as
+    long as the set lasts. There is no expiry. The trade is deliberate: a claim that outlives
+    its episode costs speed, a claim released mid-escape costs the boat. The Mission card row
+    is the only thing on screen that names it.
+  * **7 mutations, 7 killed, control run and READ first** across `guard_resume`,
+    `command_result` and `clearance_guard`. ⚠ One of the seven first reported **SKIP (anchor
+    x0)** because my own mutation string used `\n` against a CRLF file — *a skipped mutation is
+    not a passed one*, and the summary line said "6 killed, 0 survived" while it sat there.
+
+* **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
+  retraction arm.**
+
+  1. **A LOST REPLY RELEASES THE CLAIM, AND THE BANNER CONTRADICTS ITSELF.** Driven (the
+     fixture already supported `"lost"`; **no check had ever called it**). What the operator
+     reads: *"IN EXTREMIS ESCAPE NOT ACKNOWLEDGED: network error — the console cannot tell
+     whether she received it — **THE HELM WAS NOT TAKEN**: ... and **nothing is steering her
+     off it**. TAKE MANUAL CONTROL."* `notTookSay` — whose own comment says a lost reply *"must
+     not be reported as a refusal"* — does its job, and the next string concatenation undoes it.
+     The state half is genuinely two-horned (keeping the claim gags the governor on a boat that
+     may be running the survey at the HIGH the rung just commanded), so it belongs with a
+     decision, not a snap fix. The mitigation does keep re-firing either way: `levels` reads
+     `helm,helm,helm,helm` and the rung re-posts at the 6 s re-solve.
+  2. **A REFUSED SECOND ESCAPE DESTROYS AN ACCEPTED FIRST ONE'S CLAIM**, because `:2405`
+     clears unconditionally. Narrower than it sounds — while she holds, `act` is false, and
+     while she steers the phantom route reads clear — so the reachable path is after a
+     re-approach puts `holding` false again. It **cannot** be fixed with the picture fence
+     (`runRoute === escRoute`): that is precisely the placement the previous commit removed,
+     which let a refused escape go silent. It needs the rung to identify its own claim.
+
 * **⚠ 2026-09-22 — WHAT IS LEFT, IN ORDER.** The commanded-answer seam is now CLOSED: every
   command on the page reads its reply, there is one spelling of the test, and the three
   shapes (claim-then-post, clear-then-post, and the guard ladder's retraction) are each
   covered by driven checks. What remains:
 
-  1. **THREE DEFECTS ON THE ESCAPE RUNG, filed with evidence, not fixed.** The sharpest is
-     that **`escapeThrottle` outlives its EPISODE and lasts the rest of the RUN** — verified:
-     the guard's clear branch at `:1987` resets FIVE per-episode variables and not this one,
-     while the flag's own comment at `:2328` says *"until this episode ends"*. Its only
-     clearers are `setRoleSpeed`, `#b_start`, `#b_stop`. ⚠ **The consequence is not "the
-     governor is quiet"**: the escape commands HIGH, the governor is gagged, and `doGoTo` /
-     `doRTH` do not clear it either — so **the operator's recovery transit is flown at HIGH
-     speed** until they change a speed by hand. ⚠ The obvious one-line fix (clear it in the
-     guard's clear branch) is NOT obviously right: the escape ends with the boat holding at
-     the escape point, where the water reads clear by construction, so that branch fires
-     almost at once and would hand the governor back while she is still station-keeping at a
-     point nobody has dealt with. It may want to end on the operator's acknowledgement.
-  2. the escape rung's **`runRoute` clobber on the ACCEPTED path** (same false CLEAR one
-     frame later — visible in `clearance_guard` 15z3's own detail line)
-  3. `renderIntent`'s **two false sentences** when `runRoute` is null but this page uploaded
-     the plan
+  1. ~~The escape rung's throttle claim~~ **— FIXED, and defects 1 and 2 turned out to be
+     ONE question.** See the block below.
+  2. `renderIntent`'s **two false sentences** when `runRoute` is null but this page uploaded
+     the plan — **designed and NOT yet implemented**; the decision is in the session's
+     `intent-card-route-account` workflow result. It grew: `indexedRoute()` applies its own
+     stated rule (*"the drawn plan may be used only when it IS the array the index counts
+     into, and `wp_total` is what decides"*) to `mission.waypoints` and **not to `runRoute`**,
+     so a tab holding a stale route measures `wptRole`, `offTrack` and `routeRemainingM`
+     against a route the boat is not flying — the same failure the comment already measured
+     for the reload case (*33 of 40* vs *22 of 22*, off track 0.0 m vs 107.6 m), reachable by
+     a second door. The panel's answer: leave `indexedRoute` alone (widening it costs the
+     governor its role and both resumes their backtrack) and give the CARD its own agreement,
+     plus a `giveUpRoute()` that records what THIS page did to the picture. A third false
+     sentence was found while reading.
   4. **53 medium + 21 low** findings, UNREPRODUCED. ⚠ Do not plan from that list — reproduce
      first. Several highs this session were wrong, understated, or already fixed, and **three
      of the twelve safety-category mediums turned out to be this same seam** (one of them,

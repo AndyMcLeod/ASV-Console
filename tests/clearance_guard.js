@@ -1199,6 +1199,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
       await Promise.resolve(); await Promise.resolve();   // let the .then retract
     }
     return { sent: sent.slice(), seen, said: banners.join(" | "),
+             // The NOTES as well as the banners: the release branch speaks through flashNote,
+             // and what it promises about the throttle is a different claim from the alarm.
+             noted: notes.join(" | "),
              route: runRoute, throttle: escapeThrottle,
              episode: { override: guardOverride, spentM: edgeSpentM, count: edgeCount,
                         commanded: commandedSpeed } };
@@ -1219,6 +1222,29 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
         okEsc.route && okEsc.route.length === 1 && okEsc.throttle === true,
         "runRoute " + (okEsc.route ? okEsc.route.length + " wpt" : "null") + ", escapeThrottle "
           + okEsc.throttle + " - she has the helm, so every one of those claims is true");
+
+  // ⚠⚠ 15z4b. AND THE LADDER LETTING GO IS NOT THE THROTTLE LETTING GO. `levels` above
+  // reads helm,helm,clear,clear on an ACCEPTED escape - the rung overwrote `runRoute` with the
+  // single escape point and guardTrack projects along exactly that, so the release branch fires
+  // a few frames into the steer, with the boat unmoved 13 m off the pier. It used to flash
+  // "speed back to survey" there. It cannot be: the escape holds the throttle until the
+  // operator commands her somewhere, and a console that says the episode is over while it is
+  // running is the same defect as a banner naming a cause it has not established.
+  //
+  // ⚠ THE CONTROL IS 15y, and it is what stops this passing for the wrong reason: a blind
+  // boat never reaches this branch and 15y asserts the note is ABSENT there, so "the sentence
+  // changed" and "the branch stopped firing" are distinguishable observations.
+  rcheck("15z4b. ... and the release branch stops promising a hand-back the claim makes "
+        + "impossible: the ladder let go, the throttle did not",
+        /Clear ahead again/.test(okEsc.noted)
+        && /escape still has the throttle/.test(okEsc.noted)
+        && !/speed back to/.test(okEsc.noted),
+        "what the operator read: "
+          + (/Clear ahead again/.test(okEsc.noted)
+             ? (/speed back to/.test(okEsc.noted)
+                ? "\"speed back to <role>\" - promised DURING the escape"
+                : "the throttle is still the escape's")
+             : "the release branch did not fire at all, so this check measured nothing"));
 
   const noEsc = await escRun(F, "refused");
   // ⚠ THE POST IS ASSERTED FIRST, and that is not a formality: `runRoute === null` and
@@ -1453,7 +1479,7 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 7;                 // the retraction block's own five
+const RAN_FLOOR = 8;                 // the retraction block's own, 15z4b included
 Promise.resolve(globalThis.__guardRetract).then((n) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n

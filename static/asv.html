@@ -1532,10 +1532,46 @@ let resumeSlow = false;
 // different, so it still fires. The throttle has to be taken away from the governor, not
 // handed to it with a different value in it.
 //
-// Its life is `resumeSlow`'s, deliberately: the same "safety or the operator owns the
-// throttle until something ends the episode" shape, released by a manual speed change or by
-// a fresh run, and by nothing else.
+// Its life is `resumeSlow`'s in SHAPE - "safety or the operator owns the throttle until
+// something ends the episode" - but NOT in lifetime, and copying the lifetime was the defect.
+// `resumeSlow` holds the boat at LOW, so overstaying it costs a slow survey. This holds her
+// at HIGH and, because the test below sits above every one of the governor's decisions, it
+// also stands down the flagged-corner slow-down and the slow-radius turn rule - the two rules
+// that exist because the hull cannot track those geometries at speed. Two flags with opposite
+// safety polarity cannot have the same lifetime.
+//
+// MEASURED against the page's own speedGovernor: with the claim standing and a flagged corner
+// ahead, the control commands `low` and this commands nothing at all.
+//
+// It is released by a manual speed change, by a fresh run or a Stop, and by a commanded motion
+// the vessel TOOK - Go-To, RTH, Transit or Hold - and by nothing else. See releaseEscapeClaim.
 let escapeThrottle = false;
+// ⚠ AND IT ENDS WHERE THE OPERATOR ENDS IT, WHICH IS THE ONLY EVENT THIS CONSOLE CAN
+// HONESTLY MEASURE.
+//
+// NOT on the water reading clear. The rung OVERWRITES `runRoute` with the single escape point
+// and guardTrack projects along exactly that, so the ladder reads CLEAR on the next frame BY
+// CONSTRUCTION - clearance_guard 15z3 prints it: `levels helm,helm,clear,clear`, with the boat
+// unmoved. A release on the guard's clear branch would therefore fire a few frames into a
+// manoeuvre a whole horizon long, and the governor WOULD bid, because that branch nulls
+// `commandedSpeed` on the same line.
+//
+// NOT on arrival either: a boat station-keeping at the escape point is sitting at a point
+// nobody has assessed, which is what the rung asks for in its own intent line - "holds here;
+// does not chain a return, re-command when ready". The episode it opens is closed by the
+// re-command it asks for, and by nothing else.
+//
+// NOT on the vessel's `behavior` string, which looks like the honest answer and is not:
+// asv_console.py's Engine.start keeps the name of a RESUMED run ("a paused ESCAPE or HOLD came
+// back"), so a gag derived from telemetry would pin whatever the resume commanded - which
+// resumeRun makes LOW - with no way for a manual speed change to release it.
+function releaseEscapeClaim(why){
+  if(!escapeThrottle) return false;
+  escapeThrottle = false;
+  commandedSpeed = null;              // the ASK, not a value - the governor decides next frame
+  flashNote("Speed released — the escape's high-speed hold is over (" + why + ").");
+  return true;
+}
 
 function updateClearance(){
   if(!asv || !nogo.ready || !nogo.ko || !nogo.frame){
@@ -1995,8 +2031,14 @@ function clearanceGuard(){
       release = release && clearRun;
       if(release){
         clearHoldAt = 0;
-        flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — speed back to "
-                  + roleSpeed(speedRole()) + " (" + speedRole() + ").");
+        // ⚠⚠ AND IT MUST NOT PROMISE A HAND-BACK THE ESCAPE'S CLAIM MAKES IMPOSSIBLE.
+        // This branch fires a few frames into every ACCEPTED escape - measured, with the boat
+        // unmoved 13 m off a pier - because the rung's phantom route reads clear by
+        // construction. The LADDER really has let go. The THROTTLE has not, and saying it has
+        // is the console telling the operator the episode is over while it is running.
+        flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — " + (escapeThrottle
+          ? "the escape still has the throttle at high until you command her somewhere."
+          : "speed back to " + roleSpeed(speedRole()) + " (" + speedRole() + ")."));
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
         // The episode is over: the operator's decision was about THIS situation, and the
@@ -6144,6 +6186,12 @@ function updateNogoUI(){
 // flag again, able to outlive the plan that set it. See channelLaneRoute.
 async function doGoTo(target){
   if(!asv){ flashNote("No position fix yet — can't Go-To."); return; }
+  // ⚠ SNAPSHOT BEFORE THE ROUTING, NOT BEFORE THE POST. The operator pressed this seconds
+  // ago: the chart extract can run to several seconds and the clearance guard commands the boat
+  // at 4 Hz through all of it. `planGen` moves for a new PICTURE and not for an amendment, so a
+  // fresh escape in this window moves it and the deviation rung does not - which is the only
+  // question the release below has to ask.
+  const wasGen = planGen;
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
@@ -6171,6 +6219,13 @@ async function doGoTo(target){
     else showBanner(say + " - the boat is still on her previous plan.");
     render(); return;
   }
+  // ⚠⚠ THE ESCAPE'S CLAIM ENDS ON A MOTION THE VESSEL TOOK - AND ONLY IF IT IS STILL THE
+  // CLAIM THAT WAS THERE WHEN THEY PRESSED. The same discipline #b_hold and #b_stop apply to the
+  // picture, for the reason #b_start states outright: if the guard's helm rung escaped inside
+  // this round trip, releasing here would UN-GAG THE GOVERNOR IN THE MIDDLE OF AN ESCAPE and it
+  // would command the role speed over the top of the rung's HIGH - the measured defect this flag
+  // exists to prevent.
+  if(planGen === wasGen) releaseEscapeClaim("Go-To replaced it");
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
@@ -6225,6 +6280,7 @@ async function doSetHome(ll){
 // its endpoint, and the cards must say that rather than keep advertising a return home.
 async function doRTH(opts){
   const chained = !!(opts && opts.chained === true);
+  const wasGen = planGen;             // see doGoTo: taken at the press, not at the post
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
   if(!asv){                                       // no fix: let the server drive direct
     const r0 = await cmd("/api/cmd/rth");         // ...but still find out whether it landed
@@ -6234,6 +6290,7 @@ async function doRTH(opts){
       if(say0) showBanner(say0 + " - no position fix, so there was no route to draw either.");
       updateMissionCard();
     }
+    else if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");
     return;
   }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
@@ -6287,6 +6344,7 @@ async function doRTH(opts){
                  : "the boat is still on her previous plan."));
     updateMissionCard(); render(); return;
   }
+  if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");     // see doGoTo
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
@@ -6435,6 +6493,7 @@ function updateTransitPanel(){
 async function doTransit(){
   if(transit.length<1){ flashNote("Draw a transit line first (click the chart)."); return; }
   if(!asv){ flashNote("No position fix yet."); return; }
+  const wasGen = planGen;             // see doGoTo
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
   // vertex dropped in a keep-out is held OFF at the nearest clear water rather than refused.
@@ -6468,6 +6527,9 @@ async function doTransit(){
     if(say) showBanner(say + " - the boat is still on her previous plan.");
     render(); return;
   }
+  // NOT in the unroutable branch above: that one DRAWS the blocked legs and returns without
+  // posting - "NOT started. Edit the line." A motion that never happened replaced nothing.
+  if(planGen === wasGen) releaseEscapeClaim("the transit replaced it");   // see doGoTo
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
@@ -8947,8 +9009,7 @@ function setRoleSpeed(role, v){
   // during an escape is taking it back, and the governor must be free to act on the next
   // frame. Said out loud, because the escape's HIGH is a safety speed and dropping it is
   // not a thing to discover from the readout.
-  if(escapeThrottle){ escapeThrottle = false;
-    flashNote("Speed released — the escape's high-speed hold is over."); }
+  releaseEscapeClaim("you set a speed by hand");
   updateSpeedNote();
   // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
   // speed moving moves it. The note is what tells the operator their 20 s just became a
@@ -10725,6 +10786,11 @@ $("#b_hold").onclick = async ()=>{
     return;
   }
   if(planGen === was.gen){ runRoute = null; planIntent = null; runUnsafe = []; }
+  // ⚠ AND THE SAME GATE ENDS THE ESCAPE'S CLAIM. A boat the operator has deliberately
+  // stopped and station-kept is not escaping, and the rung's own banner promises that Hold
+  // overrides it. Fenced on the same generation as the picture: an escape the guard commanded
+  // inside this round trip owns the throttle, and this press did not find it.
+  if(planGen === was.gen) releaseEscapeClaim("you held her");
   if(guardHeld === was.held) guardHeld = null;
   render(); };                                  // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
@@ -11502,13 +11568,24 @@ function updateMissionCard(){
       // Against the ROLE the boat is in, not against one setting - during a turn the
       // right answer IS the turn speed, and flagging that as a disagreement would train
       // the operator to ignore the one readout that catches a real one.
-      const agrees = (k === ((clearance.slowed || resumeSlow) ? "low" : roleSpeed(speedRole())));
+      // ⚠⚠ AND THE ESCAPE'S CLAIM IS ONE OF THE THINGS THE BAR HAS SELECTED. Without it
+      // this row cried DISAGREEMENT on every accepted escape - the vessel at `high`, the term
+      // below computing the role speed - which is exactly what the note above warns against,
+      // against the one intervention it matters most for. It is also the claim's ONLY surface:
+      // `escapeThrottle` is read in one place and was rendered nowhere at all.
+      const agrees = (k === (escapeThrottle ? "high"
+                             : (clearance.slowed || resumeSlow) ? "low"
+                             : roleSpeed(speedRole())));
       msp.className = "vv" + (agrees ? "" : " warn");
       msp.title = agrees
         ? "The vessel is running to " + k + " (" + (kn != null ? kn.toFixed(1) + " kn" : "?")
-          + "), which is what the command bar has selected."
+          + "), which is " + (escapeThrottle
+            ? "the in-extremis escape's claim on the throttle — it holds until you command "
+              + "her somewhere, hold her, or set a speed by hand."
+            : "what the command bar has selected.")
         : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
-          + (clearance.slowed ? "low (safety override)"
+          + (escapeThrottle ? "high (the in-extremis escape's claim)"
+             : clearance.slowed ? "low (safety override)"
              : resumeSlow ? "low (held there since the run was resumed; change any speed to release it)"
              : roleSpeed(speedRole()) + " for the "
                + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";

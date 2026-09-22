@@ -334,7 +334,10 @@ function world(opts) {
       return new Promise((res) => setTimeout(() => {
         // the guard's rung, firing DURING the round trip: it writes inside the page
         // bundle, so it goes through the bundle rather than this module's scope.
-        if (W.api) W.api.setThrottle(true);
+        // `during` picks WHICH rung: a claim on the throttle, or a whole new commanded
+        // motion - which is what an escape issued inside this window actually is.
+        if (W.api) { if (o.during === "newMotion") W.api.newMotion();
+                     else W.api.setThrottle(true); }
         res({ ok: true, status: 200, json: async () => ({ ok: true, state: {} }) });
       }, 5));
     }
@@ -396,6 +399,10 @@ function world(opts) {
                            + grab("speedReconcile") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"
                            + grab("showBanner") + "\n" + grab("takeDownBanner") + "\n"
+                           // The REAL release, not a stub: doGoTo, doRTH and doTransit end
+                           // the escape's claim on the throttle through it, so a change to
+                           // that rule is a change HERE rather than a copy that can drift.
+                           + grab("releaseEscapeClaim") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -1309,6 +1316,105 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
           + "because the stop class is live in every tab; and the mark is consumed only on "
           + "`run === \"paused\"`, which a refused pause does not produce. "
           + (resume ? "resumeRun exists to read it" : ""));
+}
+
+// ⚠⚠ 39-41. THE ESCAPE'S CLAIM ON THE THROTTLE ENDS ON A MOTION THE VESSEL TOOK.
+// Its life used to be `resumeSlow`'s, deliberately and by analogy - and the analogy is
+// backwards, which is the whole defect. `resumeSlow` holds the boat at LOW, so overstaying it
+// costs a slow survey; this holds her at HIGH and stands the governor down entirely, so
+// overstaying it costs the flagged-corner slow-down and the slow-radius turn rule. Two flags
+// with opposite safety polarity cannot have the same lifetime.
+//
+// ⚠ NOT released on the water reading clear, which is the obvious repair and is worse:
+// the rung overwrites `runRoute` with the single escape point, guardTrack projects along
+// exactly that, and the ladder reads CLEAR on the next frame BY CONSTRUCTION - clearance_guard
+// 15z3 prints `levels helm,helm,clear,clear` with the boat unmoved. The guard's release branch
+// nulls `commandedSpeed` on the same line, so releasing there hands the role speed back in the
+// middle of the steer.
+{
+  const ROUTE2 = [{ lat: 43.0, lon: -70.5 }];
+  // 39. THE PAIR. An accepted Go-To ends it; a refused one leaves it exactly where it was.
+  // ⚠ The refused half CANNOT FAIL ON ITS OWN - `true` is also the value nothing touched
+  // (the prelude seeds it true). It is evidence only as the twin of the accepted half, which
+  // is identical but for the answer.
+  const yes = world({});
+  yes.seed(ROUTE2, { kind: "escape" });
+  await yes.doGoTo({ lat: 43.05, lon: -70.4 });
+  const y = yes.bar();
+  const no = world({ reply: "refuse", why: "not connected" });
+  no.seed(ROUTE2, { kind: "escape" });
+  await no.doGoTo({ lat: 43.05, lon: -70.4 });
+  const n = no.bar();
+  check("39. an accepted Go-To ends the escape's claim on the throttle and says so; a "
+        + "REFUSED one leaves the claim standing, because nothing replaced the escape",
+        y.escapeThrottle === false && y.commandedSpeed === null
+        && /high-speed hold is over/.test(yes.out.notes.join(" | "))
+        && n.escapeThrottle === true
+        && !/high-speed hold is over/.test(no.out.notes.join(" | ")),
+        "accepted -> claim " + (y.escapeThrottle ? "STILL SET" : "released")
+          + ", commanded " + JSON.stringify(y.commandedSpeed)
+          + "; refused -> claim " + (n.escapeThrottle ? "kept" : "WRONGLY RELEASED")
+          + ". The note is what tells the operator a safety speed has been dropped");
+
+  // 40. ⚠⚠ AND THE RACE THE GENERATION FENCE EXISTS FOR, which nothing else drives. The
+  // guard commands at 4 Hz throughout the round trip, so the helm rung can claim the throttle
+  // AFTER the operator pressed Go-To and BEFORE the console answered. Releasing then would
+  // un-gag the governor in the middle of an escape the operator has not even seen yet.
+  const race = world({ slowReply: true, during: "newMotion" });
+  race.seed(ROUTE2, { kind: "survey" });
+  await race.doGoTo({ lat: 43.05, lon: -70.4 });
+  const rc = race.bar();
+  check("40. ... and a motion commanded DURING the round trip keeps the throttle: the press "
+        + "did not find this claim, so it does not get to end it",
+        rc.escapeThrottle === true && race.out.posts.length === 1,
+        "an escape claimed mid-flight left the claim " + (rc.escapeThrottle ? "SET" : "released")
+          + " after an ACCEPTED Go-To - the generation moved, so the release stood down. "
+          + "Compare 39, which is the same world without the mid-flight motion");
+
+  // 41. AND HOLD ENDS IT TOO, with the same fence - a boat the operator has deliberately
+  // stopped and station-kept is not escaping, and the rung's own banner promises Hold
+  // overrides it. The refused twin is what gives `took()` its teeth here.
+  const hy = world({});
+  hy.seed(ROUTE2, { kind: "escape" });
+  await hy.bHold();
+  const hn = world({ reply: "refuse", why: "not connected" });
+  hn.seed(ROUTE2, { kind: "escape" });
+  await hn.bHold();
+  check("41. an accepted Hold ends the claim; a refused Hold leaves her escaping and leaves "
+        + "the claim with her",
+        hy.bar().escapeThrottle === false && hn.bar().escapeThrottle === true,
+        "accepted Hold -> " + (hy.bar().escapeThrottle ? "STILL SET" : "released")
+          + "; refused Hold -> " + (hn.bar().escapeThrottle ? "kept" : "WRONGLY RELEASED"));
+}
+
+// 42. ⚠ AND THE CLAIM HAS AN OPERATOR-VISIBLE SURFACE AT ALL. `escapeThrottle` is read in
+// exactly one place in the page and was rendered NOWHERE - so the Mission card's speed row,
+// which flags a disagreement between what the vessel is running to and what the command bar
+// selects, cried DISAGREEMENT on every accepted escape: the vessel at `high`, the row
+// computing the role speed. That row's own comment says why that is the worst place for a
+// false alarm - "flagging that as a disagreement would train the operator to ignore the one
+// readout that catches a real one".
+//
+// ⚠⚠ THIS IS A SOURCE CHECK AND IT IS WEAK, SAID OUT LOUD. No suite builds the Mission
+// card, so this can see that the term is THERE and never that it is right; a call site in the
+// source is not a call at runtime. It exists to stop the term being silently dropped. The
+// behaviour that matters - that the claim ends when the operator commands her somewhere - is
+// held by 39, 40 and 41, which are driven.
+{
+  // ⚠ STRIP FIRST, THEN MATCH. This repo has twice had a source check match the
+  // COMMENT that records the very thing it was looking for - once reporting a defect as
+  // still present when only its obituary was.
+  const src = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const card = src.split("const agrees = ")[1] || "";
+  const row = card.slice(0, 400);
+  check("42. the Mission card's speed row counts the escape's claim as something the command "
+        + "bar selected - SOURCE-anchored, so it proves presence and not correctness",
+        /escapeThrottle\s*\?\s*"high"/.test(row)
+        && /in-extremis escape's claim/.test(H),
+        (/escapeThrottle\s*\?\s*"high"/.test(row)
+          ? "the row carries the claim, and the tooltip names it"
+          : "the row computes the role speed with no escape term - it warns on every escape")
+          + ". Weak by construction: 39-41 are what hold the behaviour");
 }
 
 finished = true;

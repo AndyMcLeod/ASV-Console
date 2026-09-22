@@ -274,6 +274,9 @@ eval([
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grab("speedRole"), grab("speedGovernor"),
+  // The one door the escape gives its claim back through (2026-09-22), carried across
+  // verbatim so a change to that rule is a change HERE and not in a copy that drifts.
+  grab("releaseEscapeClaim"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
 ].join("\n"));
 var __clr = {};
@@ -844,6 +847,48 @@ function finish() {
             + " speed command(s) sent: " + JSON.stringify(escSent.map(x => x.speed))
             + "). Ungated it commands the role speed here, which on the shipped defaults is "
             + "3.0 kn over the top of a 6.0 kn escape");
+
+  // ⚠⚠ 18c. AND THE STAND-DOWN HAS TO END, WHICH IS THE HALF 18b CANNOT SEE. 18b passes
+  // just as happily if the claim is never handed back at all - and until 2026-09-22 it never
+  // was. `escapeThrottle` outlived its EPISODE and lasted the rest of the RUN: its only
+  // clearers were a Stop, a fresh Start and a speed set by hand, so an operator recovering
+  // from an escape by Go-To or RTH got no governor at all.
+  //
+  // ⚠ AND IT IS NOT ONLY THE ROLE SPEED THAT STOPS. `if(escapeThrottle) return null;` sits
+  // above EVERY decision this function makes, so the flagged-corner slow-down and the
+  // slow-radius turn rule stop firing with it - the two rules that exist precisely because
+  // the hull cannot track those geometries at speed. Measured against this governor: with a
+  // flagged corner ahead, the control commands `low` and the claim commands nothing.
+  //
+  // ⚠ THE PAIR IS THE CHECK. `escSent.length === 0` in 18b is also what an empty fixture
+  // looks like; the send below is what makes it evidence that the GATE was the reason.
+  clearance.slowed = false; commandedSpeed = null; resumeSlow = false;
+  escapeThrottle = true; sent = [];
+  const stillGagged = speedGovernor();
+  const relSaid = releaseEscapeClaim("Go-To replaced it");
+  const afterRelease = speedGovernor();
+  const relSent = sent.filter(x => x.p === "/api/cmd/speed");
+  check("18c. ... and the claim ENDS when the operator commands her somewhere: the governor "
+        + "bids again on the next frame, and the speed actually goes out",
+        () => stillGagged === null && relSaid === true && escapeThrottle === false
+              && afterRelease !== null && relSent.length === 1,
+        () => "gagged -> " + stillGagged + "; released -> " + afterRelease + " with "
+            + relSent.length + " speed command(s) " + JSON.stringify(relSent.map(x => x.speed))
+            + ". Both halves are needed: the gag alone is indistinguishable from a fixture "
+            + "that never sends anything");
+
+  // ⚠ 18d. AND THE HELPER IS SILENT WHEN THERE IS NOTHING TO RELEASE - asserted on the
+  // NOTE, because the flag half of this CANNOT FAIL: `escapeThrottle` is already false, so
+  // "correctly refused" and "nothing happened" are the same observation on it. The note is
+  // the only thing that changes. Without the guard line the console flashes "the escape's
+  // high-speed hold is over" at an operator who never had one, on every speed change.
+  const n0 = notes.length;
+  const noClaim = releaseEscapeClaim("there was no claim");
+  check("18d. ... and releasing a claim that was never made says NOTHING - the flag half of "
+        + "this check cannot fail, so it is the note that is asserted",
+        () => noClaim === false && notes.length === n0,
+        () => "returned " + noClaim + " and flashed " + (notes.length - n0) + " note(s); a "
+            + "helper without its guard would announce a hand-back that never happened");
 }
 
 // ── 19-20. SAID OUT LOUD, BOTH WAYS ROUND ──────────────────────────────────────────
