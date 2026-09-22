@@ -59,6 +59,27 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-21 — 24 SUITES COULD NOT BE POINTED AT A SIDECAR, so every mutation run
+  against them was fiction.** A sweep writes its mutants to a copy of `static/asv.html` and
+  points the suite at it with `ASV_HTML`; a suite reading a fixed path never sees them and
+  scores every mutant SURVIVED. Caught three times in two days (`port_slew.js`,
+  `off_track.js`, `turn_geometry.js`), each by a sweep that came back unanimously clean.
+
+  **⚠ AND MY FIRST COUNT WAS WRONG IN BOTH DIRECTIONS.** Grepping each suite for the word
+  gave "21 of 53" — it counted `turn_geometry.js` as covered (the word is there twice, in
+  COMMENTS, about a different file) and missed `buoy_lane.js` (it builds the path from a
+  variable). **The honest measurement was to run them:** point every suite at a 53-byte HTML
+  file and see which stay green. Before: **29 of 53** read the sidecar. After: **52 of 53**.
+  The 53rd is `water_trust.js`, which reads the page and uses it for nothing — its subject
+  is a module, and that is now written in the file so the next audit does not re-derive it.
+
+  **The durable half is `tests/precommit_hook.py` check 8**, which parses every
+  `readFileSync(` CALL rather than grepping the file — a grep is what got this wrong the
+  first time. 2 mutations, 2 killed, including the comment-only shape.
+
+  **⚠ TREAT ANY TEETH TABLE IN THOSE 24 SUITES AS UNVERIFIED UNTIL RE-RUN.** This commit
+  makes re-running them possible; it does not re-run them.
+
 * **2026-09-21 — A PAGE RELOADED MID-RUN MEASURED THE WRONG ARRAY, CONFIDENTLY.**
   `_wpIndex` counts into the UPLOADED route, whose length the vessel reports back as
   `wp_total`. `runRoute` is that array only on the page that uploaded it — nothing restores

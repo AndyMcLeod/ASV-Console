@@ -358,7 +358,11 @@ check("17. the cross-track trim is CARRIED across a leg, because the vessel carr
       "the tick's advance does not touch _xte_i; the `amend_plan` line that says it does is a DIFFERENT leg change, and reading it as this one is what put the reset here");
 
 console.log("\n-- 18-20: the wiring, because a model nothing calls protects nothing --");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 // 18. COMPUTED AT UPLOAD, ON THE FINAL ROUTE. punchOut never sees the approach or
 // legPath's detours, and the vessel never sees anything else - so this is the only
 // point at which the thing being flown exists to be measured.

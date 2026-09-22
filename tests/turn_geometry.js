@@ -91,7 +91,11 @@ const { bbOf } = require("../static/js/geometry.js");
 const { KNOT_STEP_M, KNOT_TURN_DEG, junctionKnot, pruneJunctionKnots } = require("../static/js/passage.js");
 
 const STATIC = path.join(__dirname, "..", "static");
-const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
+// ⚠ ASV_HTML POINTS THIS AT A SIDECAR, and this suite was counted as HAVING that override
+// by a grep that matched the WORD in the two comments below. It did not have one: every
+// mutant written to a sidecar was scored SURVIVED. Measured the honest way instead - point
+// every suite at a 53-byte page and see which ones stay green (2026-09-21).
+const H = fs.readFileSync(process.env.ASV_HTML || path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
 function grab(src, name) {
@@ -414,7 +418,8 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // Same instrument as asv_core's identity checks, in the only form available across an HTML
 // boundary: the page must IMPORT the module, and must not DEFINE any of the four.
 {
-  const page = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const page = fs.readFileSync(process.env.ASV_HTML
+                               || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const imports = /from\s+"\/static\/js\/turns\.js"/.test(page);
   const redefined = ["arcPts", "minTurnRadiusM", "shortenSeg", "teardropTurn"]
     .filter(n => new RegExp("(^|\\n)\\s*function\\s+" + n + "\\s*\\(").test(page));

@@ -318,7 +318,11 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
 
 // ── 9-14. THE PAGE WIRING ──────────────────────────────────────────────────────────
 {
-  const PAGE = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+  const PAGE = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const goTo = noComments(grab(PAGE, "doGoTo"));
   const rth = noComments(grab(PAGE, "doRTH"));
   const tran = noComments(grab(PAGE, "doTransit"));

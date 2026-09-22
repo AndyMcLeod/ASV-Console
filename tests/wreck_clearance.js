@@ -87,7 +87,11 @@ const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFl
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { dilateGrid, rasterKeepouts, routeAround, stampSeg } = require("../static/js/passage.js");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   const start = H.indexOf("function " + name + "(");

@@ -105,7 +105,11 @@ const ROUTINGSRC = require("fs")
 
 const STATIC = path.join(__dirname, "..", "static");
 const { sea } = require("../static/js/state.js");
-const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Missed by the first audit of
+// this - a grep for the path could not see it, because the directory is a variable here.
+// tests/precommit_hook.py check 8 parses the readFileSync CALL instead, which can.
+const H = fs.readFileSync(process.env.ASV_HTML
+                          || path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
 function grab(src, name) {

@@ -57,7 +57,14 @@ const fs = require("fs");
 const path = require("path");
 
 const { WATER_FAR_KM, WATER_REMOTE_KM, WATER_STALE_S, effectiveWaterOffset, waterTrust } = require("../static/js/chart.js");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ⚠ THE PAGE IS READ AND NOTHING HERE USES IT. `grab`/`grabDecl` below are defined and
+// never called: this suite's subject is static/js/chart.js, required above, and a mutation
+// of it is made in the module itself. The override is here for the day a check does reach
+// for the page, and so a sweep that points every suite at a sidecar does not report this
+// one as reading a file it is not. Pointing it at a 53-byte page changes nothing, and that
+// is correct rather than a hole (2026-09-21).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   const start = H.indexOf("function " + name + "(");

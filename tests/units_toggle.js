@@ -68,7 +68,11 @@ const { minTurnRadiusM } = require("../static/js/turns.js");
 // value - a default is a property of the text, not of a live object that an earlier check
 // in this same file may already have moved.
 const U_SRC = fs.readFileSync(path.join(__dirname, "..", "static", "js", "units.js"), "utf8");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
 // Every condition is a thunk and a THROW is a failed check, never a dead process - a

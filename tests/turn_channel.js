@@ -87,7 +87,11 @@ const { arcPts, teardropTurn } = require("../static/js/turns.js");
 // copy - and the checks below exercise the function that actually ships.
 const { nogo } = require("../static/js/state.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
