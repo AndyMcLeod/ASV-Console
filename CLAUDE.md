@@ -59,6 +59,93 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠⚠ 2026-09-22 — NEXT UP, AND IT IS THE REST OF THE SAME DEFECT: SIX MORE UNCHECKED
+  COMMANDS, two of them on the guard's own rungs.** Found by the adversarial pass over the
+  H18 plan, not by a check. H18 fixed the three functions that command a MOTION and draw a
+  route (`doRTH`, `doGoTo`, `doTransit`). The rest were left deliberately, because they are a
+  DIFFERENT SHAPE and each needs its own reproduction — they are not a mechanical repeat:
+
+  * **`static/asv.html:2312` — the IN-EXTREMIS ESCAPE rung.** `runRoute` and
+    `setPlanIntent("escape", …)` are committed at 2293-4, `planIntent.why` gets "IN EXTREMIS"
+    at 2309, and *then* `cmd("/api/cmd/escape", …)` goes out unchecked, with the ⚠⚠ banner
+    after it. Identical shape, **highest consequence on the page.** Gated on `supervising()`,
+    so the view-only case cannot reach it — but a 409 can.
+  * **`static/asv.html:2220` — the guard's HOLD rung.** `markGuardHeld(c)`, `guardActedAt`,
+    `holdWant` and the "HOLDING" note are all committed around an unchecked
+    `cmd("/api/cmd/hold", …)`. A refused hold leaves the console recording a hold that never
+    happened, **on the rung Eastport put there.**
+  * **`static/asv.html:2065` — the guard's auto-amend.** Unchecked, while the OPERATOR's
+    amend at 10056 *is* checked. (That same block is also the precedent worth copying: it
+    undoes `guardEdgeAt` on refusal.)
+  * **`static/asv.html:10341` `#b_hold`, `:10117` `#b_stop`, `:9842` empty upload — THE
+    INVERSE SHAPE.** These CLEAR `runRoute`, `planIntent`, `runUnsafe`, `guardHeld`,
+    `pauseMark` and the speed state and *then* post unchecked. A refused Hold or Stop
+    **erases the plan the boat is still flying.** Do not fold these in with the others: the
+    repair is the opposite one (restore, not withhold).
+  * **`static/asv.html:9968` `cmd("/api/cmd/start")`** — unchecked, while the other two start
+    sites at 10092 and 10275 both read the reply. One of three is inconsistent.
+
+  `cmd()` now answers `{ok, sent, refused}`, so the discrimination each of these needs
+  already exists; `tests/command_result.js` is the home for them.
+
+* **⚠ 2026-09-22 — A COMMAND THE BOAT NEVER TOOK WAS BEING DRAWN AS A PLAN (H18 — the last
+  of the 38 highs).** `doRTH` posted `/api/cmd/rth` and never looked at the answer, then drew
+  the route home, wrote the Intent card, updated the Mission card and bannered "RTH: routed
+  around nogo zone(s) via N waypoints" — over a boat that was going nowhere.
+
+  Measured against a **real console** (own port, own `--state-dir`): `/api/cmd/rth` answers
+  **409** for `ARM before commanding the boat`, `not connected` and `no home set (no GPS fix
+  yet)`, and the vessel's `behavior` stays `survey` through every one.
+
+  * **The button's gate is not the protection it looks like.** `#b_rth` is disabled unless
+    `canCommand(s) && s.home`, but that is read off a state FRAME and `doRTH` then spends
+    `ensureNogoCovers` — up to the whole **8 s** `NOGO_QUEUE_MAX_MS` bound. The arm, the
+    E-STOP and the vessel link can all go inside that window.
+  * **The end-of-plan chain was worse**: no operator at a button, and `rthChainFailed` — the
+    flag that exists for exactly this — was set for a missing home and an unroutable one but
+    never for a refused command.
+  * **And `setPlanIntent` wipes the guard's per-episode record** (`guardOverride`,
+    `edgeSpentM`, `edgeCount`, `guardActedAt`, `holdWant`). A refused press was spending the
+    operator's own "proceed" and the console's budget for moving their track.
+
+  **⚠⚠ THE ANSWER HAS THREE STATES, NOT TWO, and collapsing them is how the obvious repair
+  introduces a NEW false claim.** `cmd()` now returns `sent` and `refused`:
+
+  | answer | what it is | what may be said |
+  |---|---|---|
+  | `sent:false` | a VIEW-ONLY tab, refused inside `cmd()` before any fetch | **nothing about the boat.** The chain fires in EVERY tab (no `supervising()` test on the fire site), so `!ok → rthChainFailed` would have a view-only tab paint "REFUSED, will hold instead" over a boat the supervising tab was bringing home. It takes its own banner down and stops. |
+  | `refused:true` | the console answered in words (409) | a fact about the vessel — **the only answer that retracts the promise** |
+  | neither | the reply was lost, or the new bound fired | the command may have been carried out; say exactly that, change nothing |
+
+  **⚠ `cmd()` IS NOW BOUNDED** (`CMD_TIMEOUT_MS = 15000`). It was a bare `fetch`, survivable
+  only while every caller fired and forgot — the moment `doRTH` awaits it, a POST that never
+  settles takes that command and everything behind it, for ever, with no banner. **This page
+  had already made that exact mistake once, in `refreshNogo`, and says so in its own words
+  there.** 15 s is ~60× the slowest command measured against a running console (a full sim
+  reboot, `/api/cmd/reset`, at **0.252 s**; everything else under 0.05 s).
+
+  **`doGoTo` and `doTransit` carried the identical statement** and are fixed in the same
+  commit. ⚠ **doTransit's repair is NOT the obvious one**: it drew the route ABOVE the post,
+  and the unroutable branch RETURNS above the post — so "gate the draw on the answer" would
+  have deleted the drawing its own banner calls "highlighted" (`runUnsafe` is the only source
+  of that red). The draw was **duplicated into that branch**, not moved. Nothing tested that
+  branch at all before; `command_result` 11 does now.
+
+  **NEW SUITE `tests/command_result.js`, 17 checks. ⚠ NOTHING IN IT STUBS `cmd()` — it stubs
+  FETCH and runs the page's own `cmd()` on top**, so the three answers are whatever `cmd()`
+  actually produces. The earlier reproduction stubbed `cmd()` and kept "passing" against
+  hand-written `{ok:false}` objects after `cmd()` grew the fields it was testing.
+  **14 mutations, 14 killed — every one by this suite ALONE**, with seven other suites run
+  against each mutant and green throughout. ⚠ **Check 6 had to be rewritten before it meant
+  anything**: it first drove a 409 with an empty reason to kill the `if(r.error)` spelling,
+  but `cmd()` fills a blank reason in, so the two spellings agreed and the mutation survived
+  the check written to kill it. The answer with no `ok` AND no `error` is a **200 whose body
+  will not parse**.
+
+  ⚠ Two eval bundles needed `CMD_TIMEOUT_MS` (`action_history`, `supervisor_page`) — both
+  went red on the unmutated page and **the first sweep's control was red because of it**, so
+  its kills were fiction until they were fixed.
+
 * **⚠ 2026-09-22 — THE SLOW-RADIUS REVERSAL WAS FLOWN AT THE PLAN SPEED in every case but
   one.** `turnSlowAt` is written by **punch-gap** index and read by **mission-line** index —
   `turnSeg.from` IS a `mission.lines` index — so the two agreed only for ONE pattern

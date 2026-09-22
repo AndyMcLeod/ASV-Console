@@ -6037,8 +6037,18 @@ async function doGoTo(target){
   // when it sits in a keep-out - and the vessel is told how much water is clear round it.
   const hp = plan.route[plan.route.length-1] || target;
   const gCoast = solveCoastFor(plan);
-  cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
+  // The same rule doRTH carries, for the same reason: the button's gate was read off an
+  // earlier state frame, and this function has spent the extract since. See doRTH.
+  const r = await cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
                         coast_from_m: gCoast ? gCoast.groundM : null});
+  if(!(r && r.ok)){
+    if(r && r.sent === false) takeDownBanner(/^Routing to the point/);
+    else showBanner((r && r.refused ? "GO-TO REFUSED: " + r.error : "GO-TO NOT ACKNOWLEDGED: "
+        + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
+        + "whether she received it; watch the behavior readout")
+      + " — the boat is still on her previous plan.");
+    render(); return;
+  }
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
@@ -6094,7 +6104,18 @@ async function doSetHome(ll){
 async function doRTH(opts){
   const chained = !!(opts && opts.chained === true);
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
-  if(!asv){ cmd("/api/cmd/rth"); return; }        // no fix: let the server drive direct
+  if(!asv){                                       // no fix: let the server drive direct
+    const r0 = await cmd("/api/cmd/rth");         // ...but still find out whether it landed
+    if(!(r0 && r0.ok)){
+      if(chained && r0 && r0.refused) rthChainFailed = true;
+      if(!(r0 && r0.sent === false))
+        showBanner((r0 && r0.refused ? "RTH REFUSED: " + r0.error : "RTH NOT ACKNOWLEDGED: "
+          + ((r0 && r0.error) || "the console did not answer"))
+          + " — no position fix, so there was no route to draw either.");
+      updateMissionCard();
+    }
+    return;
+  }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
@@ -6109,8 +6130,44 @@ async function doRTH(opts){
   // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
   const rCoast = solveCoastFor(plan);
-  cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
+  const r = await cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
                        coast_from_m: rCoast ? rCoast.groundM : null});
+  // ⚠⚠ A COMMAND THE BOAT NEVER TOOK IS NOT A PLAN. This posted and never looked. The
+  // button is gated on armed / no E-STOP / supervising, but those are read off a state
+  // frame BEFORE the seconds this function then spends: ensureNogoCovers can wait out the
+  // whole 8 s extract bound, and the arm, the E-STOP and the vessel link can all go inside
+  // it. `/api/cmd/rth` then answers 409 - measured against a running console as "ARM before
+  // commanding the boat", "not connected" and "no home set (no GPS fix yet)", with the
+  // vessel's behavior left at survey - and the console drew a route home, updated the
+  // Mission card and said "RTH: routed around nogo zone(s) via N waypoints" over a boat
+  // that was going nowhere. Worse for the END-OF-PLAN chain, which has no operator at the
+  // button: the card kept promising a return for a boat holding at her last waypoint.
+  //
+  // TEST FOR SUCCESS, NOT FOR FAILURE - doSetHome states that rule in its own comment forty
+  // lines up. Unlike doSetHome this does NOT return silently: doRTH has already raised a
+  // STICKY "Routing home…" banner that would otherwise stand over the refusal for ever.
+  //
+  // ⚠ AND THE THREE ANSWERS ARE KEPT APART, because this console runs in more than one tab.
+  //   not SENT   - a view-only tab, refused by cmd() before any fetch. It knows nothing
+  //                about the boat: it must take its own banner down and claim NOTHING,
+  //                least of all that she is holding, which would be a lie about a boat the
+  //                supervising tab is bringing home. The chain fires in every tab.
+  //   REFUSED    - the console answered in words. That is a fact about the vessel, and the
+  //                only answer that may retract the end-of-plan promise.
+  //   neither    - the reply was lost or timed out. The command may have been carried out.
+  //                Say exactly that and change nothing: `rthChainFailed` renders as
+  //                "REFUSED, will hold instead", and a console that got no answer has not
+  //                earned that word.
+  if(!(r && r.ok)){
+    if(chained && r && r.refused) rthChainFailed = true;
+    if(r && r.sent === false) takeDownBanner(/^Routing home/);
+    else showBanner((r && r.refused ? "RTH REFUSED: " + r.error : "RTH NOT ACKNOWLEDGED: "
+        + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
+        + "whether she received it; watch the behavior readout")
+      + " — " + (chained ? "she is HOLDING at her last waypoint and nothing is coming for her."
+                         : "the boat is still on her previous plan."));
+    updateMissionCard(); render(); return;
+  }
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
@@ -6271,16 +6328,31 @@ async function doTransit(){
   const line = [...transit.slice(0,-1), ht.to];
   const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true);   // pure transit: keep right (Rule 9)
   plan.heldOff = ht.heldOff; plan.holdClear = ht.holdClear;
-  runRoute = plan.route; runUnsafe = plan.unroutable || []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path either way
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
+    // ⚠ THIS BRANCH DRAWS, AND IT IS THE ONE PLACE A REFUSED TRANSIT SHOULD. Its banner says
+    // the blocked legs are "highlighted", and the highlight is drawn from `runUnsafe` and
+    // from nothing else - so the draw belongs here, in the branch that promises it, rather
+    // than above the post where it also ran for a transit the vessel then refused.
+    runRoute = plan.route; runUnsafe = plan.unroutable; setPlanIntent("transit", plan, plan.route); updateMissionCard();
     const reasons=legReasons(plan.unroutable); setViolations(reasons); render();
     showBanner(plan.unroutable.length+" transit leg(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — NOT started. Edit the line.");
     flashNote("Transit blocked: "+plan.unroutable.length+" leg(s) — "+kindsSummary(reasons)+".");
     return;
   }
   clearViolation();
-  cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
+  // The same rule doRTH carries. See doRTH: the answer has three states and only a REFUSAL
+  // is a fact about the vessel.
+  const r = await cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
+  if(!(r && r.ok)){
+    if(!(r && r.sent === false))
+      showBanner((r && r.refused ? "TRANSIT REFUSED: " + r.error : "TRANSIT NOT ACKNOWLEDGED: "
+          + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
+          + "whether she received it; watch the behavior readout")
+        + " — the boat is still on her previous plan.");
+    render(); return;
+  }
+  runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
   const note = buoyageNote(plan.lane, plan.partial);   // accumulated over every leg of THIS plan
@@ -7905,6 +7977,13 @@ async function punchOut(){
 function showBanner(t){ const b=$("#encbanner");
   if(!(b.style.display === "block" && b.textContent === t)) recordAction("banner", t);
   b.textContent=t; b.style.display="block"; }
+// LIFT A BANNER THIS PAGE RAISED, without putting anything in its place. The banner is
+// sticky, so a step that says "this is going to take a moment" leaves a lie behind it when
+// the moment ends in nothing - and there are cases (a view-only tab's refused command)
+// where the honest replacement is NO sentence at all, because this tab knows nothing about
+// the boat. Matched on the text so it can only ever lift the banner it means.
+function takeDownBanner(re){ const b=$("#encbanner");
+  if(b && re.test(b.textContent||"")) b.style.display="none"; }
 
 // --- survey plan editing (drag / delete waypoints & lines) --------------- //
 // mission.waypoints is the run plan; mission.lines is the drawn survey structure.
@@ -9722,6 +9801,26 @@ addEventListener("pagehide", ()=>{
 });
 
 // --- command surface ----------------------------------------------------- //
+// ⚠⚠ A COMMAND'S ANSWER HAS THREE STATES, NOT TWO, and a caller that acts on the command
+// needs all three. `ok` says the vessel took it. `sent` says this console put it on the
+// wire at all - a VIEW-ONLY tab is refused HERE, before any fetch, so its {ok:false} is a
+// statement about this tab and not about the boat. `refused` says the console answered in
+// words (a 409 with a reason): the command reached it and it said no. A reply that never
+// arrives is sent-but-not-refused, and nothing may be asserted about the vessel from it.
+//
+// Collapsing those three into "not ok" is what let doRTH announce a return home for a
+// command the server had refused - and a naive repair of that would have had a view-only
+// tab announce a REFUSAL about a boat the supervising tab was successfully bringing home.
+//
+// ⚠ AND THE FETCH IS BOUNDED. It had no timeout and no AbortController, which was
+// survivable only while every caller fired and forgot; the moment one AWAITS it, a POST
+// that never settles takes that command - and any operator action behind it - with it, for
+// ever and with no banner. This page has already made that mistake once, in refreshNogo,
+// and says so in its own words there. 15 s is about sixty times the slowest command
+// measured against a local console (a full sim reboot, /api/cmd/reset, at 0.252 s; every
+// other command was under 0.05 s), so the bound can only ever fire on a console that is
+// not answering.
+const CMD_TIMEOUT_MS = 15000;
 async function cmd(path, body){
   // ⚠ ONE TAB COMMANDS (review #14). The console refuses a non-supervising tab's commands too; this is the half that
   // says so in the operator's own words instead of surfacing a 409, and that keeps the stop-class always live.
@@ -9730,11 +9829,13 @@ async function cmd(path, body){
       : "the controls window commands nothing itself — its controls are carried out by the chart window.";
     recordAction("refused", cmdLabel(path, body), "refused: " + why);
     showNote(why);
-    return {ok:false, error:why};
+    return {ok:false, error:why, sent:false, refused:false};   // never reached the wire
   }
   const noteBefore = S.note;          // the server's note before this command, so the reply's own can be told apart
+  const ac = (typeof AbortController !== "undefined") ? new AbortController() : null;
+  const killer = setTimeout(()=>{ try{ if(ac) ac.abort(); }catch(e){} }, CMD_TIMEOUT_MS);
   try{
-    const r = await fetch(path, {method:"POST",
+    const r = await fetch(path, {method:"POST", signal: ac ? ac.signal : undefined,
                                  // the tab's own name, so the console can tell the supervising tab from another one
                                  headers:{"Content-Type":"application/json", "X-ASV-Client": CLIENT_ID},
                                  body: JSON.stringify(body||{})});
@@ -9742,14 +9843,23 @@ async function cmd(path, body){
     // ⚠ A REFUSAL IS ANSWERED AS ONE (review #6). This returned the bare body, and a network
     // error as {} - which every `r.error` check in the page read as success.
     if(!r.ok){ const err = j.error || ("command failed ("+r.status+")");
-      recordAction("refused", cmdLabel(path, body), "refused: " + err); showNote(err); return {...j, ok:false, error:err}; }
+      recordAction("refused", cmdLabel(path, body), "refused: " + err);
+      showNote(err); return {...j, ok:false, error:err, sent:true, refused:true}; }
     // The server answers with its state, and its note says what it did ("Run plan uploaded (722 waypoints ...)").
     // Only a note this command CHANGED is its answer; an unchanged one belongs to an earlier command.
     const said = (j && j.state && typeof j.state.note === "string") ? j.state.note : "";
     recordAction("cmd", cmdLabel(path, body), said !== noteBefore ? said : "");
     return j;
-  }catch(e){ recordAction("refused", cmdLabel(path, body), "network error"); showNote("network error");
-    return {ok:false, error:"network error"}; }
+  }catch(e){
+    // ⚠ NOT A REFUSAL. The server applies the command and only then serializes its reply, so
+    // a reply lost on the way back - or a bound that fires - says nothing about whether the
+    // vessel took it. `refused:false` is what stops a caller stating a cause it does not have.
+    const timedOut = !!(e && e.name === "AbortError");
+    const err = timedOut ? ("no answer from the console after " + Math.round(CMD_TIMEOUT_MS/1000)
+                            + " s - it may or may not have been carried out") : "network error";
+    recordAction("refused", cmdLabel(path, body), err); showNote(err);
+    return {ok:false, error:err, sent:true, refused:false};
+  }finally{ clearTimeout(killer); }
 }
 // What a command is called in the history: the operator's word for it, not the route.
 function cmdLabel(path, body){

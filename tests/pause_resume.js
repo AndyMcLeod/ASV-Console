@@ -441,6 +441,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const supervising = () => true;
     const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];
     const CLIENT_ID = "test-tab";      // cmd() sends the tab's own name; without it every call reads as a throw
+    // cmd() bounds its own fetch (2026-09-22). The VALUE is read off the page rather than
+    // restated, so a change there is a change here - but it is DECLARED here, because a
+    // `const` inside a direct eval stays in that eval's own scope and the cmd() below is
+    // built by a different eval, which would not see it.
+    const CMD_TIMEOUT_MS = +(/const CMD_TIMEOUT_MS = (\d+);/.exec(grabDecl("CMD_TIMEOUT_MS")) || [])[1];
     // eslint-disable-next-line no-eval
     const cmdLabel = eval("(" + grab("cmdLabel") + ")");
     let fetch = () => Promise.reject(new Error("socket hang up"));

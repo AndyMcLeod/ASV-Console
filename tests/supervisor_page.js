@@ -104,6 +104,9 @@ function makeWorld(role) {
     decl(/^const CLIENT_ID = [\s\S]*?;$/m),
     decl(/^const SUPERVISOR_BEAT_MS = [^;]*;/m),
     decl(/^const SUPERVISOR_ANY = [^;]*;/m),
+    // cmd() bounds its own fetch (2026-09-22) - the bundle carries the bound across
+    // rather than restating it, so a change to the page is a change here.
+    decl(/^const CMD_TIMEOUT_MS = [^;]*;/m),
     decl(/^const SUPERVISES = [^;]*;/m),
     decl(/^let supHolder = [^;]*;/m),
     decl(/^let supBeatMs = [^;]*;/m),

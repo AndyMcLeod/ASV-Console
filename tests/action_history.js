@@ -141,6 +141,8 @@ function makeWorld(store) {
     // view-only refusal is tests/supervisor_page.js's subject, not this suite's.
     "const supervising = () => true; const CLIENT_ID = \"test-tab\";",
     "const SUPERVISOR_ANY = [\"/api/cmd/stop\", \"/api/cmd/pause\", \"/api/cmd/estop\"];",
+    // cmd() bounds its own fetch (2026-09-22); the bound comes across from the page.
+    decl(/^const CMD_TIMEOUT_MS = [^;]*;/m),
     grab("lsGet"), grab("lsSet"), grab("lsDel"), grab("setCellText"),
     HIST_DECLS,
     ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory"].map(grab).join("\n"),
