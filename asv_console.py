@@ -3998,6 +3998,7 @@ class Engine:
         self._rth_follow = False       # True while RTH is chasing a moving home
         self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
         self._rth_params = None        # captured run params (arrival/speed/approach) for the chase
+        self._rth_lost_link = False    # the ROC's GPS link died MID-chase; said once per outage
         self.link = self.LINK_IDLE
         self.note = "Not connected."
         self.status = {}           # latest telemetry
@@ -4686,6 +4687,17 @@ class Engine:
                 chase = " (MOVING)" if intent.get("closable", True) else (
                     " (MOVING - WARNING: closing at only %.1f kn, the ASV may never overhaul it)"
                     % max(0.0, intent.get("closing_kn", 0.0)))
+                # ⚠⚠ AND WHETHER THE POINT IS STILL EVIDENCE. Nothing in roc_tracks clears a
+                # ROC when its NMEA feed stops - the reader retries every 3 s for ever - so
+                # `point`, `moving` and `closing_kn` all FREEZE at their last value and this
+                # sentence read identically on a live link and a dead one. The card beside it
+                # was already red. It says so now, because the difference between "chasing a
+                # ship" and "driving to where a ship was forty seconds ago" is the whole
+                # decision: measured, 40 m of error at 20 s and growing 123 m/min.
+                if intent.get("link") == "lost":
+                    chase += (" - WARNING: the ROC's GPS LINK IS LOST (%s s old), so this is "
+                              "where she WAS, not where she is"
+                              % intent.get("age_s"))
             note = "Return-to-Home: %s %s%s," % (
                 "chasing" if intent["moving"] else "returning to",
                 intent["name"] or "the ROC", chase)
@@ -4857,7 +4869,30 @@ class Engine:
                     if not (self.behavior == "rth" and self.run == "running"):
                         self._rth_follow = False
                         self._rth_last_target = None
+                        self._rth_lost_link = False
                     elif self._rth_follow and intent and intent["point"]:
+                        # ⚠⚠ THE LINK CAN DIE MID-CHASE, AFTER THE NOTE WAS WRITTEN, and the
+                        # command-time warning above cannot cover that. Worse, this loop
+                        # re-targets only when the point MOVES - and a frozen point never
+                        # does, so the chase falls silent at exactly the moment it stops
+                        # meaning anything. Said ONCE per outage, not once a tick: a link
+                        # that reconnects every 3 s would otherwise fill the operator's log.
+                        #
+                        # ⚠ IT QUALIFIES, IT DOES NOT REFUSE. The rung above is the repo's
+                        # idiom for an unreachable moving home - "say so rather than let it
+                        # chase forever" - and a refusal here would take away the operator's
+                        # only recovery action over a 16-second dropout.
+                        if intent.get("link") == "lost":
+                            if not self._rth_lost_link:
+                                self._rth_lost_link = True
+                                self.note = ("RTH chase: the ROC's GPS LINK IS LOST (%s s) - "
+                                             "holding the last known recovery point. It is "
+                                             "where %s WAS, not where she is. Take the RC or "
+                                             "re-home."
+                                             % (intent.get("age_s"),
+                                                intent.get("name") or "the ROC"))
+                        else:
+                            self._rth_lost_link = False
                         tgt = intent["point"]
                         p = self._rth_params or {}
                         thresh = max(2.0, float(p.get("arrival", ARRIVAL_DEFAULT_M)) * 0.5)

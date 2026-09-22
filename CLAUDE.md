@@ -59,6 +59,54 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-21 — FOUR HIGHS PULLED IN FROM `asv_core`, AND THREE MORE FILES ARE NOW ASV-OWNED.**
+  The review found them in `ais_service.py`, `roc_tracks.py` and `static/js/raster.js` — all three
+  VENDORED, so they were fixed in `asv_core` first (tip **`2a0b53d`**, pushed) and PULLED across
+  here under the same **"⚠⚠ ASV OWNS THIS FILE NOW"** header `keepouts.js`, `routing.js` and
+  `core_turns.js` already carry. **⚠ `python tools/vendor.py` IN asv_core WOULD NOW OVERWRITE SIX
+  ASV FILES.** Z-Boat and WorldView were left alone, per Andy 2026-08-31 — the flow is one way.
+
+  * **The boat's own AIS set ranked 0 and lost the ship to the shore relay.** `PRIORITY` is keyed
+    by FEED; `src` carries the ENDPOINT name, so a labeled receiver reports as `nmea-udp-10110`
+    and `PRIORITY.get` answered 0. An aisstream position 9 km away held the vessel while the
+    receiver on deck was reporting. `Registry._rank` falls back to the feed before the first `-`;
+    `src`, `srcs` and `health_name` are untouched. `tests/ais_sources.py` 4e–4g.
+  * **The AISHub poll deferred for ever to a stream delivering nothing.** `_ok` stamps `updated` on
+    every successful CONNECT, and a far end that accepts then hangs up never reaches `_err` —
+    `recv()` returning `b""` leaves the try block NORMALLY. Measured on a real loopback server:
+    **51 accepts, one report ever, connect clock never older than 1.8 s, zero polls in 150 s.**
+    Two clocks now, `updated` and `last_report`. `tests/ais_sources.py` 4h/4h2.
+  * **A dead ROC GPS link reached the card and not the Engine.** Nothing clears a ROC when its feed
+    stops, so the point, `moving` and `closing_kn` all freeze. Card red at `link=lost age 20.0`;
+    `home_intent` — the one thing the Engine pulls every tick — byte-identical to a live link, RTH
+    note still "chasing Mothership (MOVING)" about a ship **40 m from where it said, growing
+    123 m/min**. The chase loop re-targets only when the point MOVES, so a frozen point never
+    trips it. Both the note and the chase say it now, once per outage, and they QUALIFY rather
+    than refuse — a refusal would take the operator's only recovery action away over a 16 s
+    dropout. `moving`/`closable` deliberately unchanged. `tests/roc_tracks.py` 23b–27.
+  * **The routing grid under-approximated at the window boundary**, which is the one direction it
+    must never be wrong in. Grid points span `[x0, x0+(W-1)*cell]` while the cull ran to
+    `x0+W*cell`: a feature just outside was culled AND rounded to −1, one inside past the last
+    row's centre rounded to H, and the dilation had nothing to grow. `legPath` never re-checks a
+    raster-clear leg, so it shipped **three commanded legs whose closest approach was 1.80 m at a
+    3 m buffer.** Both culls padded, the stamp CLAMPS — per SAMPLE. `tests/wreck_clearance.js`
+    22–23b.
+
+  **⚠ TAKING OWNERSHIP OF A FILE TAKES OWNERSHIP OF ITS TESTS, and that cost one real check.**
+  asv_core's suite held that the raster's dilation follows the buffer; with the radius pinned at 1,
+  `wreck_clearance`, `buoy_lane`, `track_edge`, `hold_point`, `turn_channel` and `gate_endpoint`
+  were **all still green** here. That is `wreck_clearance.js` 23b now. Worth assuming the same is
+  true of `keepouts.js`, `routing.js` and `core_turns.js`, which went ASV-owned in August without
+  anyone auditing what asv_core had been guarding for them.
+
+  **⚠ AND `vendor.py --check` HAD BEEN LYING BY OMISSION.** It prints the first differing line of a
+  drifted copy; a Windows console is cp1252, these files are written in em dashes, and that print
+  raised `UnicodeEncodeError` — killing the whole check at the first drifted copy whose sample line
+  contained one. It was hiding **four** drifts, including that **ASV's `ais_service.py` is 219 diff
+  lines ahead of the core** (`STATIC_KEYS`, `_static_from_aisstream`, the ITU-R M.1371 message-5
+  offsets — Andy's 2026-09-02 ask). A `vendor.py` run would have deleted all of it silently. Fixed
+  in asv_core at `2a0b53d`.
+
 * **2026-09-20 — MISSION STATUS CARD: the section heads read as titles.** Andy: *"The section label
   'INTENT - WHAT AND WHY' needs to be same color and size as Mission Status title, but with an underline
   that extends and divides the card for better user recognition. The same for 'History - Last 20'."*

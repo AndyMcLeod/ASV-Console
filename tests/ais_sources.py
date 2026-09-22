@@ -167,6 +167,95 @@ v2b = [v for v in reg.snapshot() if v["mmsi"] == 222000222][0]
 check("4d. a FRESHER polled position IS accepted, and provenance follows it",
       lambda: abs(v2b["lat"] - 41.0) < 1e-6 and v2b["src"] == "aishub")
 
+# ---- 4e-4h. the rank is the FEED's, and the stream's clock is the DATA's ------------ #
+#
+# ⚠ 4e IS THE DEFECT REVIEW #7 FOUND, AND 4b HAD BEEN PASSING BESIDE IT ALL ALONG.
+# `PRIORITY` is keyed by FEED; `src` carries the ENDPOINT's name, because several
+# receivers have to stay distinct in `srcs` and in the health panel (checks 8 and 9c
+# depend on exactly that). So the boat's own set reported as "nmea-udp-10110",
+# `PRIORITY.get` answered 0, and an aisstream position 9 km away held the ship. 4b only
+# ever saw it WIN, because a stale-gated poll loses on freshness whatever its rank.
+def _merge(first, second):
+    r = m.Registry(ttl=600)
+    r.update(366000021, first, lat=38.70, lon=-75.00, sog=5.0)
+    r.update(366000021, second, lat=38.78, lon=-75.12, sog=6.0)
+    return [v for v in r.snapshot() if v["mmsi"] == 366000021][0]
+
+
+_v = _merge("aisstream", "nmea-udp-10110")
+check("4e. a LABELED receiver endpoint still outranks the shore relay",
+      lambda: _v["src"] == "nmea-udp-10110" and abs(_v["lat"] - 38.78) < 1e-6
+      and _v["sog"] == 6.0 and sorted(_v["srcs"]) == ["aisstream", "nmea-udp-10110"],
+      lambda: "src=%s lat=%.2f sog=%s srcs=%s - the label exists so two boxes on deck "
+              "stay distinct, not so one of them stops counting"
+              % (_v["src"], _v["lat"], _v["sog"], _v["srcs"]))
+_a1 = _merge("nmea-udp-10110", "aishub")
+_a2 = _merge("aishub", "nmea-udp-10110")
+check("4f. ... and AISHub is still primary BOTH ways - it takes the position, and holds it",
+      lambda: _a1["src"] == "aishub" and abs(_a1["lat"] - 38.78) < 1e-6
+      and _a2["src"] == "aishub" and abs(_a2["lat"] - 38.70) < 1e-6,
+      lambda: "receiver then aishub -> %s @ %.2f; aishub then receiver -> %s @ %.2f. "
+              "Andy, 2026-08-25: \"along with other sources but as the primary\""
+              % (_a1["src"], _a1["lat"], _a2["src"], _a2["lat"]))
+check("4g. ... and an endpoint naming no known feed still ranks 0, so the fallback has "
+      "not turned UNKNOWN into a receiver",
+      lambda: m.Registry._rank("garmin-9000") == 0 and m.Registry._rank(None) == 0
+      and m.Registry._rank("nmea") == 20 and m.Registry._rank("nmea-udp-10110") == 20,
+      lambda: "garmin-9000 -> %d, nmea -> %d, nmea-udp-10110 -> %d"
+              % (m.Registry._rank("garmin-9000"), m.Registry._rank("nmea"),
+                 m.Registry._rank("nmea-udp-10110")))
+
+
+# ⚠ 4h: TWO CLOCKS, AND THE POLL READS THE DATA ONE. `_ok` stamps `updated` on every
+# successful CONNECT, and a far end that ACCEPTS and immediately hangs up never reaches
+# `_err` - recv() returning b"" leaves the try block NORMALLY. Measured against a real
+# loopback server: 51 accepts, one report ever, the connect clock never older than 1.8 s,
+# and the poll that exists to carry the feed when the stream drops issued ZERO requests in
+# 150 s. AISHub allows one a minute, so a deferral that never lifts is a quiet sea that
+# looks exactly like an empty one.
+class _FakeStream(object):
+    def __init__(self, **st):
+        base = dict(state="ok", note="", updated=0, reports=0, last_report=0)
+        base.update(st)
+        self.status = base
+
+
+_now = time.time()
+_fresh = m.AishubSource.STREAM_FRESH_S
+
+
+def _live(connected, reported, reports=1):
+    return m.AishubSource(m.Registry(), user="nobody",
+                          stream=_FakeStream(reports=reports, updated=connected,
+                                             last_report=reported))._stream_live()
+
+
+check("4h. the AISHub poll stands by on DATA, not on a reconnecting socket",
+      lambda: _live(_now, _now) is True
+      and _live(_now, _now - _fresh - 5) is False
+      and _live(_now - _fresh - 5, _now - _fresh - 5) is False
+      and _live(_now, _now, reports=0) is False,
+      lambda: "delivering -> %s; reconnecting but silent -> %s; gone -> %s; never reported "
+              "-> %s (STREAM_FRESH_S %.0f s)"
+              % (_live(_now, _now), _live(_now, _now - _fresh - 5),
+                 _live(_now - _fresh - 5, _now - _fresh - 5), _live(_now, _now, reports=0),
+                 _fresh))
+# ...and the two clocks really are two clocks, driven through the module's own writers.
+# Without this the case above passes against a body where `last_report` is a second name
+# for `updated`, which is the bug.
+_src = m.Source.__new__(m.Source)
+_src.reg, _src.name = m.Registry(), "nmea"
+_src.status = {"state": "starting", "note": "", "updated": 0, "reports": 0, "last_report": 0}
+_src._ok("connected")
+_after_connect = dict(_src.status)
+_src._report(366000022, lat=38.7, lon=-75.1, sog=5.0)
+check("4h2. ... and a CONNECT moves only the transport clock, a REPORT only the data one",
+      lambda: _after_connect["updated"] > 0 and _after_connect["last_report"] == 0
+      and _src.status["last_report"] > 0 and _src.status["reports"] == 1,
+      lambda: "after connect updated=%.0f last_report=%.0f; after a report last_report=%.0f"
+              % (_after_connect["updated"], _after_connect["last_report"],
+                 _src.status["last_report"]))
+
 # ---- 5-7. AISHub: fault-as-data + format detection, hermetic ------------------------ #
 # A response is uniformly ONE format (that premise is what makes detection sound),
 # so the fixtures are two separate accounts: one served human units, one served raw.
