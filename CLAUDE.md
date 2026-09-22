@@ -59,6 +59,31 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-22 — THE ROC CARD SHOWED VALUES THE SERVER NEVER TOOK.** Two halves, both
+  client-side:
+
+  * **The handlers posted whatever was in the box.** Clear "Off m" and `parseFloat` gives
+    NaN, `JSON.stringify` writes it as `null`, and `set_offset` reads a null field as
+    "absent, keep what you have" — a **deliberate** rule (a config record written before a
+    field existed must not null out a default) — and answers **200**. Nothing changed and
+    nothing was refused. Both handlers now require two finite numbers and say why.
+    `isFinite`, not truthiness: a real **0** offset is a legitimate instruction.
+  * **And `renderRoc` never wrote them back.** A row is rebuilt only when its SIGNATURE
+    (id/kind/status/gps) changes; an ordinary frame takes the live branch, which repainted
+    the dot, the MOVING tag, lat, lon and the HOME radio — **and nothing else**. So the
+    blank box stayed blank, frame after frame, while every RTH recovery point was still 30 m
+    off the Mothership. A clamped `-50` is stored as `0.0` and read as `-50` for ever.
+
+  **New suite `tests/roc_card.js`, 10 checks** — nothing in the repo covered `renderRoc`.
+  It was **red on today's page for exactly the six reported reasons with its four acceptance
+  checks already green**, which is the right way round to start. **6 mutations, 6 killed**;
+  the two that catch an over-eager fix are the acceptance ones (a real 0 refused → 3; a
+  frame overwriting the box being typed into → 7). Advice entry and GUARDS entry added in
+  the same commit.
+
+  ⚠ `set_offset`'s null rule and the `max(0.0, …)` clamp are both correct and deliberate —
+  **do not "fix" them server-side.** The card was the thing lying.
+
 * **2026-09-21 — 24 SUITES COULD NOT BE POINTED AT A SIDECAR, so every mutation run
   against them was fiction.** A sweep writes its mutants to a copy of `static/asv.html` and
   points the suite at it with `ASV_HTML`; a suite reading a fixed path never sees them and

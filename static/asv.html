@@ -11079,6 +11079,22 @@ function renderRoc(){
         const la=row.querySelector('[data-fld=lat]'); if(la && document.activeElement!==la && r.lat!=null) la.value=r.lat.toFixed(6);
         const lo=row.querySelector('[data-fld=lon]'); if(lo && document.activeElement!==lo && r.lon!=null) lo.value=r.lon.toFixed(6);
         const rb=row.querySelector('.roc-home'); if(rb && document.activeElement!==rb) rb.checked=(R.home_id===r.id);
+        // ⚠⚠ AND THE OFFSET AND MOTION BOXES, for the same reason lat/lon are written back:
+        // the server is entitled to REFUSE or CLAMP what this card posted, and the row
+        // signature (id/kind/status/gps) does not change when it does - so nothing else in
+        // renderRoc will ever repaint them. Blank the "Off m" box and the handler posted
+        // range_m:null; set_offset reads null as "field absent, keep what you have" (a
+        // deliberate rule, so a config record written before a field existed cannot null out
+        // a default) and answers 200. The card then read BLANK, frame after frame, while
+        // every Return-to-Home recovery point was still 30 m off the Mothership, with no
+        // refusal anywhere on screen. Same shape for a clamped -50: stored as 0.0 by
+        // max(0.0, ...), read as -50 for ever. The activeElement guards stop a frame
+        // fighting the typist; the `r.offset` / `!= null` guards stop a partial snapshot
+        // throwing inside renderRoc and taking the whole card out.
+        const ro=row.querySelector('[data-k=range_m]'); if(ro && document.activeElement!==ro && r.offset) ro.value=r.offset.range_m;
+        const bo=row.querySelector('[data-k=bearing_deg]'); if(bo && document.activeElement!==bo && r.offset) bo.value=r.offset.bearing_deg;
+        const hd=row.querySelector('[data-k=heading]'); if(hd && document.activeElement!==hd && r.heading!=null) hd.value=Math.round(r.heading);
+        const sp=row.querySelector('[data-k=speed_kn]'); if(sp && document.activeElement!==sp && r.speed_kn!=null) sp.value=(+r.speed_kn).toFixed(1);
       });
     }
   }
@@ -11107,15 +11123,21 @@ $("#roc_list").addEventListener("change", e=>{
     const lat=parseFloat(val('[data-fld=lat]').value), lon=parseFloat(val('[data-fld=lon]').value);
     if(isFinite(lat) && isFinite(lon)) rocPost({op:"update", id, lat, lon});
     return; }
+  // ⚠ BOTH FIELDS OF A PAIR MUST BE NUMBERS, mirroring the roc-pos guard immediately above.
+  // A blank or junk box makes parseFloat NaN, JSON.stringify writes NaN as `null`, and the
+  // server reads a null field as "absent, keep what you have" - so a cleared box returned
+  // 200 and changed NOTHING. Refuse it here and say so, rather than post it and let a 200
+  // stand in for agreement. (isFinite, NOT truthiness: a real 0 is a legitimate offset.)
   if(t.classList.contains("roc-motion")){
-    rocPost({op:"motion", id, heading: parseFloat(val('[data-k=heading]').value),
-      speed_kn: parseFloat(val('[data-k=speed_kn]').value)});
+    const hdg=parseFloat(val('[data-k=heading]').value), spd=parseFloat(val('[data-k=speed_kn]').value);
+    if(isFinite(hdg) && isFinite(spd)) rocPost({op:"motion", id, heading: hdg, speed_kn: spd});
+    else flashNote("Heading and speed both need a number — the ship kept its last commanded motion.");
     return; }
   if(t.classList.contains("roc-off")){
-    rocPost({op:"offset", id,
-      range_m: parseFloat(val('[data-k=range_m]').value),
-      bearing_deg: parseFloat(val('[data-k=bearing_deg]').value),
+    const rng=parseFloat(val('[data-k=range_m]').value), brg=parseFloat(val('[data-k=bearing_deg]').value);
+    if(isFinite(rng) && isFinite(brg)) rocPost({op:"offset", id, range_m: rng, bearing_deg: brg,
       ref: val('[data-k=ref]').value});
+    else flashNote("Offset range and bearing both need a number — the recovery offset is unchanged.");
   }
 });
 $("#roc_list").addEventListener("click", e=>{
