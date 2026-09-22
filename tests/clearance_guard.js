@@ -580,6 +580,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let guardEdgeAt = 0, edgeSpentM = 1e9, edgeCount = 0, guardOverride = null, guardHeld = null;
   let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false, slowLieu = null;
   let helmHoldAt = 0;
+  // THE HOLD'S OWN RECORD (2026-09-21). It is READ before anything writes it, so a bundle
+  // without it is a bare ReferenceError on the very first frame - the same way this suite
+  // broke when HELM_DWELL_MS landed.
+  let holdWant = null;
   const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
   const SLOW_ANSWER_MS = +(H.match(/const SLOW_ANSWER_MS = (\d+)/) || [])[1];
   // READ FROM THE PAGE, NOT RETYPED — a dwell this suite believes is 1.5 s while the page
@@ -632,7 +636,11 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                     holding: false, drifting: false } };
     globalThis.window = globalThis; window._wpIndex = 0;
     clearance = { m: 25, kind: "a dock / pier", slowed, prev: null, info: null };
-    guardLevel = "clear"; clearHoldAt = 0; sent = []; notes = []; planIntent = { why: [] };
+    // A FRESH EPISODE, so the hold rung's own record goes back too - the page clears both
+    // where it clears guardOverride, and a fixture that did not would find the latch already
+    // set by an earlier scenario and be told nothing was commanded.
+    guardLevel = "clear"; clearHoldAt = 0; guardActedAt = 0; holdWant = null;
+    sent = []; notes = []; planIntent = { why: [] };
     guard();
     return { sent: sent.slice(), notes: notes.slice(), why: planIntent.why.slice(), level: clearance.level };
   };
@@ -662,7 +670,11 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                     env_set_kn: setKn, holding: false, drifting: false } };
     globalThis.window = globalThis; window._wpIndex = 0;
     clearance = { m: n0 - 5, kind: "a dock / pier", slowed: false, prev: null, info: null };
-    guardLevel = "clear"; clearHoldAt = 0; sent = []; notes = []; planIntent = { why: [] };
+    // A FRESH EPISODE, so the hold rung's own record goes back too - the page clears both
+    // where it clears guardOverride, and a fixture that did not would find the latch already
+    // set by an earlier scenario and be told nothing was commanded.
+    guardLevel = "clear"; clearHoldAt = 0; guardActedAt = 0; holdWant = null;
+    sent = []; notes = []; planIntent = { why: [] };
     guard();
     return { sent: sent.slice(), level: clearance.level };
   };
@@ -709,11 +721,25 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   //   no deadline: hold on the first untaken frame        -> 15k
   //   the deadline fires whether or not it was taken      -> 15l, 15n
   //   the speed-over-ground fallback loses its 0.2 kn     -> 15n
+  //
+  // AND THE SAME TWO FAULTS IN THE HOLD RUNG ITSELF, 2026-09-21 - see 15n2 and 15n3:
+  //   the hold is never re-sent when it is not taken      -> 15n2
+  //   ...re-sent on EVERY frame, with no throttle         -> 15n2
+  //   ...the record is never written, so nothing re-sends -> 15n2
+  //   the latch is never set: the hold fires every frame  -> 15n2
+  //   the rising edge is the act test again               -> 15n3
+  //   the retry ignores the vessel's ANSWER               -> SURVIVES HERE, and is killed by
+  //                                                         guard_resume.js 8d. The cmd stub
+  //                                                         in this world only records, so
+  //                                                         S.behavior never becomes "hold"
+  //                                                         and there is no taken hold here
+  //                                                         to get wrong. Recorded rather
+  //                                                         than claimed as covered.
   const realNow = Date.now;
   const T0 = 5e9;             // far from zero, or `settling` (now - guardEdgeAt < 2 s) gates the rung
   let clock = T0;
   Date.now = () => clock;
-  const step = (ms, n0, sogKn, key, cogArg) => {
+  const step = (ms, n0, sogKn, key, cogArg, setKn) => {
     clock = T0 + ms;
     nogo = { ready: true, frame: ref, ko: wall(n0), buffer: 5 };
     const NM = 111320;
@@ -721,8 +747,11 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     runRoute = [{ lat: ref.lat + 60 / NM, lon: ref.lon }, { lat: ref.lat + 120 / NM, lon: ref.lon }];
     // ⚠ `cog` NULL IS THE BLIND CASE, and it is what a STOPPED vessel reports. Passing
     // null here is how 15w-15y drive it; every existing caller omits the argument and gets 0.
+    // ⚠ `setKn` IS THE IN-EXTREMIS KNOB, and it defaults to the still water every caller
+    // before 15u assumed. A set ONTO the feature is what rates a frame `helm` rather than
+    // `hold` - see 15j - and 15u needs one frame of it and then none.
     const status = { cog_deg: (cogArg === undefined ? 0 : cogArg), sog_kn: sogKn,
-                     heading_deg: 0, env_set_deg: 0, env_set_kn: 0,
+                     heading_deg: 0, env_set_deg: 0, env_set_kn: (setKn === undefined ? 0 : setKn),
                      holding: false, drifting: false };
     if (key !== undefined) status.speed_key = key;
     S = { armed: true, estop: false, run: "running", behavior: "survey", status };
@@ -742,7 +771,11 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     // silently suppressed the SECOND scenario's escape entirely. Invisible while every
     // fixture escaped on its first frame, which is exactly how it survived until the dwell
     // made a second frame necessary.
-    helmHoldAt = 0; guardEscapeAt = 0; };
+    // ⚠ AND SO DOES THE HOLD RUNG'S OWN RECORD (2026-09-21). `guardActedAt` is now the
+    // rung's first-action test and `holdWant` is its "was it taken" record; carried between
+    // scenarios, the next fixture starts with the hold already spent and is told the guard
+    // commanded nothing. The page clears both where it clears guardOverride.
+    helmHoldAt = 0; guardEscapeAt = 0; guardActedAt = 0; holdWant = null; };
   const held = (r) => r.sent.includes("/api/cmd/hold");
   try {
     // A. the speed command never lands: the vessel keeps reporting survey, and keeps making 6 kn
@@ -866,6 +899,55 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
           f1.sent.includes("/api/cmd/speed:low") && !held(f2),
           "speed_key low, still 5.9 kn after 2.5 s: " + JSON.stringify(f2.sent)
           + " - judged on speed over ground alone this would be held while it slows");
+
+    // ── 15n2. ...AND THE HOLD ITSELF HAS TO BE TAKEN, for the same reason the slow-down does ──
+    //
+    // Review #7, 2026-09-21. The rung above was fixed for a slow-down that never landed; the
+    // HOLD was still a sender that assumed its own POST had worked. cmd() answers a refusal or
+    // a dropped link as {ok:false}, and the rung had spent its escalation, so one refused hold
+    // left the boat running the survey with the console's banner saying HOLDING - driven at a
+    // pier, /api/cmd/hold once at 25 m and then nothing at all down to 6 m.
+    //
+    // ⚠ THE cmd STUB IN THIS WORLD ONLY RECORDS - it never moves S.behavior - so every frame
+    // here IS the refused case, which is what makes this fixture honest rather than contrived.
+    // The boat that TAKES her hold is guard_resume's 8d, where the hold is modelled.
+    //
+    // 18 m, not 30: low is not an answer there (15i), so the rung holds on the first frame
+    // instead of offering a slow-down, and this is the hold's own retry rather than the
+    // slow-in-lieu monitor's.
+    fresh();
+    const g1 = step(0, 18, 6.0, "survey");
+    const g2 = step(250, 17.6, 6.0, "survey");      // 250 ms: inside SLOW_ANSWER_MS
+    const g3 = step(2500, 15.0, 6.0, "survey");     // 2.5 s: past it, and still not taken
+    check("15n2. ... and the HOLD itself has to be TAKEN: one the vessel never took is re-issued, "
+          + "not left with the console saying HOLDING",
+          held(g1) && !held(g2) && held(g3) && /NOT TAKEN/.test(g3.notes.join(" ")),
+          "18 m " + JSON.stringify(g1.sent) + " -> 17.6 m at 250 ms " + JSON.stringify(g2.sent)
+          + " -> 15.0 m at 2.5 s, behavior still 'survey': " + JSON.stringify(g3.sent)
+          + ". Before the fix the hold went out once and the console commanded nothing again "
+          + "for the whole episode. g2 is the other half: a retry every frame would hammer the "
+          + "link and is not what SLOW_ANSWER_MS is for");
+
+    // ── 15u. THE RUNG ACTS ON THE LEVEL, NOT ON A RISING EDGE ────────────────────────────
+    //
+    // Review #7, 2026-09-21. `escalated` is RUNG[a.level] > RUNG[guardLevel], and the in-extremis
+    // dwell moved the action off the escalating frame down here too: ONE frame of set jitter
+    // rates `helm`, the dwell commands nothing, and guardLevel is left reading "helm" - after
+    // which every frame at `hold` asks 3 > 4 and falls through. The helm rung had already
+    // replaced `escalated` with an episode test for exactly this reason; the hold rung had not.
+    // Driven on a wall: the control held her at 30 m off, and with one jitter frame first the
+    // ladder commanded NOTHING for seventeen seconds and she was 3.8 m off, level still "hold".
+    fresh();
+    const j1 = step(0, 18, 6.0, "survey", 0, 2.0);   // one frame set ONTO the wall -> helm
+    const j2 = step(1000, 17.0, 6.0, "survey", 0, 0); // the set falls away -> back to hold
+    check("15n3. a single IN-EXTREMIS frame that drops back to hold still stops the boat - the "
+          + "rung acts on the LEVEL, not on a rising edge",
+          j1.level === "helm" && j1.sent.length === 0 && j2.level === "hold" && held(j2),
+          "frame 1 (2 kn set onto the pier) read " + j1.level + " and sent "
+          + JSON.stringify(j1.sent) + " - the dwell, correctly; frame 2 (set gone) read "
+          + j2.level + " and sent " + JSON.stringify(j2.sent)
+          + ". On the rising-edge test that second frame sent nothing at all, and nor did any "
+          + "frame after it, because hold(3) never out-ranks helm(4)");
 
     // 15p. THE SLOW RUNG READS THE BOAT'S SPEED, NOT THE SETTING (review #6). TEETH: the gate reading the setting again -> 15p (killed). Its gate asked
     // whether the role was CONFIGURED low - so a boat whose role is set low but is actually

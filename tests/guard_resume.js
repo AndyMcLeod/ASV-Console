@@ -51,6 +51,22 @@
 //   the bar goes out the moment the boat stops                    -> 4
 //   the offer is never rendered at all                            -> 3
 //
+// AND 8 MORE, 2026-09-21, all 8 killed - the hold's retry and the deviation's reply:
+//   a hold the vessel HAS taken is re-sent anyway, on the clock    -> 8d
+//   the refusal branch is dropped (the shipped defect)             -> 21
+//   ...the branch stays, but guardEdgeAt is left ARMED             -> 21
+//   ...the splice happens BEFORE the reply is read                 -> 21
+//   ...the refusal is silent: no banner for the operator           -> 21
+//   ...the budget is spent on a refusal too                        -> 21
+//   TIMID: every reply is treated as a refusal                     -> 22
+//   TIMID: the commit is dropped altogether                        -> 22
+//
+// ⚠ 8d IS HERE AND NOT IN clearance_guard.js FOR A REASON WORTH KEEPING. That suite's cmd
+// stub only RECORDS - S.behavior never becomes "hold" in it - so the "ignores the vessel's
+// answer" mutation SURVIVED there, and only reddened once the case was written in the world
+// where the hold is modelled. A mutation that survives in one suite and dies in another is
+// the suites telling you which one owns the behavior.
+//
 // ⚠ THREE OF THOSE SURVIVED THE FIRST SWEEP, AND ALL THREE ARE THE SAME MISTAKE IN THREE
 // COSTUMES - a check that looked at the code rather than at what the code DID.
 //
@@ -147,6 +163,12 @@ var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld =
 var escapeThrottle = false;
 var clearance = { m: null, kind: null, closing: false, slowed: false, prev: null, info: null };
 var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
+// ⚠ OUT HERE, NOT IN THE BUNDLE, AND THAT IS THE WHOLE POINT. The bundle's `let`s live in
+// the eval's own scope and nothing outside can touch them - a `holdWant = null` in a fixture
+// would have created a SECOND, unread global and the reset would have been a silent no-op.
+// Declared beside guardActedAt, the guard's reference resolves here and the fixtures can
+// actually clear it between episodes.
+var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
 var planIntent = { why: [] }, notes = [], banners = [], logged = [], violations = null;
 var nogo = { ready: true, frame: null, ko: null, buffer: 5 };
@@ -221,6 +243,14 @@ eval([
   grabDecl("HELM_DWELL_MS"),
   "let helmHoldAt = 0;",
   grab("helmSettled"),
+  // ⚠ THE HOLD'S OWN RECORD (2026-09-21), and BOTH lines are needed. `holdWant` is READ
+  // (`!!holdWant`) before anything assigns it, so without it the hold rung is a bare
+  // ReferenceError - the same failure HELM_DWELL_MS caused above. SLOW_ANSWER_MS is the
+  // subtler one: `!!holdWant` short-circuits on the FIRST frame of every scenario, so
+  // omitting it leaves checks 5-7 green and reddens only the later ones, for a reason that
+  // has nothing to do with what they test. (`slowLieu` above it is still an implicit global
+  // here: the rung only ever ASSIGNS it in this world, never reads it.)
+  grabDecl("SLOW_ANSWER_MS"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
@@ -270,7 +300,46 @@ function standingIn(sogKn) {
   clearance = { m: 25, kind: "a dock / pier", closing: true, slowed: false, prev: null,
                 info: { kind: "a dock / pier" } };
   guardLevel = "clear"; guardOverride = null; guardHeld = null;
+  // ⚠ THE HOLD RUNG'S PER-EPISODE RECORD GOES BACK TOO. The page clears both where it clears
+  // guardOverride; a fixture that did not would start its episode with the hold already
+  // "acted" and the rung would command nothing - the harness leaking, not the subject.
+  guardActedAt = 0; holdWant = null;
   resumeSlow = false; commandedSpeed = null; edgeSpentM = 999;
+  guardEdgeAt = 0; edgeCount = 0; refuse = null;
+  sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
+}
+
+// ── THE OTHER WATER: a pier east of e = 0, and a route with a corner that fouls it ────
+// ⚠ A SECOND FIXTURE, BECAUSE standingIn CANNOT REACH THE EDGE RUNG AT ALL. It publishes no
+// heading (guardTrack answers null) and it spends the whole deviation budget on purpose
+// (edgeSpentM = 999), which is how the rung stayed undriven by every suite that had the
+// bundle to drive it: tests/track_edge.js owns the deviation but only greps the page's text.
+// The geometry is track_edge check 27's - four waypoints, and the corner that must move is
+// the THIRD, not the leg the boat is on.
+const PIER_E = (() => {
+  const r = [{ e: 0, n: -20 }, { e: 60, n: -20 }, { e: 60, n: 20 }, { e: 0, n: 20 }];
+  return { polys: [{ ring: r, bb: bbOf(r), kind: "a dock / pier" }],
+           lines: [], points: [], marks: [], sys: [], chans: [] };
+})();
+const FOUR = [{ e: -105, n: 0 }, { e: -105, n: 15 }, { e: -7, n: 15 }, { e: -7, n: 80 }];
+function deviating() {
+  mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" },
+              approach_radius_m: 2 };
+  S = { armed: true, estop: false, run: "running", behavior: "survey",
+        status: { cog_deg: 90, sog_kn: 7.0, heading_deg: 90,
+                  env_set_deg: 0, env_set_kn: 0, holding: false, drifting: false } };
+  asv = ll(-120, 0);
+  runLineIdx = -1;
+  runRoute = FOUR.map(w => ll(w.e, w.n));
+  window._wpIndex = 0;
+  nogo = { ready: true, frame: ref, ko: PIER_E, buffer: 5 };
+  __clr = { m: 30, kind: "a dock / pier", info: { kind: "a dock / pier" } };
+  clearance = { m: 30, kind: "a dock / pier", closing: true, slowed: false, prev: null,
+                info: { kind: "a dock / pier" } };
+  guardLevel = "clear"; guardOverride = null; guardHeld = null;
+  guardActedAt = 0; holdWant = null;
+  resumeSlow = false; commandedSpeed = null;
+  edgeSpentM = 0; edgeCount = 0; guardEdgeAt = 0; refuse = null;   // the budget is UNSPENT here
   sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
 }
 
@@ -443,6 +512,35 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         "markGuardHeld called again with behavior already 'hold' -> "
         + (guardHeld ? guardHeld.route.length + " waypoints still held" : "NOTHING HELD")
         + ". A function that gives up has to leave what it found alone");
+
+  // ⚠ 8d IS THE ACCEPTANCE HALF OF THE HOLD RETRY (2026-09-21), and it belongs HERE rather
+  // than beside its sibling in clearance_guard.js because that world's cmd stub only RECORDS
+  // - S.behavior never becomes "hold" there, so every frame in it is the refused case and a
+  // retry that ignored the vessel's answer would survive its mutation run untouched. It did.
+  // Here the hold is MODELLED, so this is the only place the console can be caught re-uploading
+  // a hold over the boat's own hold plan, once a second, for as long as she lies there.
+  {
+    standingIn(6);
+    const first = tryIt(() => clearanceGuard());
+    const sentFirst = sent.map(x => x.p).filter(p => p === "/api/cmd/hold").length;
+    // the vessel takes it, and says so - the same predicate the offer above trusts
+    S = { ...S, behavior: "hold" };
+    sent = [];
+    // far past SLOW_ANSWER_MS: if the retry were judged on the clock alone it would fire here
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60000;
+    tryIt(() => clearanceGuard());
+    tryIt(() => clearanceGuard());
+    Date.now = realNow;
+    const after = sent.map(x => x.p).filter(p => p === "/api/cmd/hold").length;
+    check("8d. ... and a hold the vessel HAS taken is not re-sent - the retry reads her answer, "
+          + "not the clock",
+          () => !first.raised && sentFirst === 1 && after === 0,
+          () => "first frame sent " + sentFirst + " hold(s); two further frames a minute later, "
+              + "with behavior already 'hold', sent " + after
+              + ". A retry gated on the deadline alone would upload a fresh one-waypoint plan "
+              + "over the boat's own hold plan for as long as she lay there");
+  }
 }
 
 // ── 9-15. THE RESUME, DRIVEN ───────────────────────────────────────────────────────
@@ -721,6 +819,73 @@ function finish() {
               + " time(s), remainder " + (yes.kept ? "STILL THERE" : "gone") + ". The plan "
               + "is already gone from the vessel, so this is not a dismiss - it is the "
               + "survey having to be re-planned and run from waypoint one");
+
+    // ── 21-22. A DEVIATION THE VESSEL REFUSED CLAIMS NOTHING ───────────────────────────
+    //
+    // Review #7, 2026-09-21. The edge rung commanded /api/cmd/amend and then spliced runRoute,
+    // spent the budget, wrote "DEVIATED" to the Intent card and flashed the operator - without
+    // reading the reply. `amend` is refused by six gates (not armed, e-stopped, not running a
+    // plan, station-keeping, an empty amendment, a plan with no unflown remainder) and answers
+    // {ok:false, error} on a dropped link, so an operator Pause or flaky Wi-Fi all land there.
+    // Accepted, refused and LOST produced byte-identical console state. Two consequences, and
+    // the second is the dangerous one: guardTrack projects along runRoute, so from then on the
+    // whole ladder assessed a track the boat was not flying (driven at the pier face: console
+    // CLEAR at 11 m off while the plan she was actually holding read hold); and `guardEdgeAt`
+    // stood the slow and hold rungs down under an amendment that never arrived.
+    //
+    // ⚠ THE COMMIT NOW LANDS ON A MICROTASK, so both cases await before reading runRoute. Any
+    // future driven check of this rung must do the same.
+    const deviate = async (refusal) => {
+      deviating();
+      const before = runRoute.slice();
+      refuse = refusal || null;
+      tryIt(() => clearanceGuard());
+      await Promise.resolve(); await Promise.resolve();
+      refuse = null;
+      return { before, paths: sent.map(x => x.p), route: runRoute.slice(),
+               spent: edgeSpentM, count: edgeCount, edgeAt: guardEdgeAt,
+               why: planIntent.why.map(w => w.s), notes: notes.slice() };
+    };
+    const no2 = await deviate("/api/cmd/amend");
+    // ...and the gate really is gone: spend the budget so the rung below is the one that acts,
+    // and the very next frame must stop her rather than returning on a stale `settling`.
+    edgeSpentM = 999; guardLevel = "clear"; sent = []; notes = [];
+    asv = ll(-18, 15); window._wpIndex = 2;
+    tryIt(() => clearanceGuard());
+    const after = sent.map(x => x.p);
+    check("21. a REFUSED deviation claims NOTHING - the drawn route is not spliced, the budget "
+          + "is not spent, and the rung it stood down runs on the very next frame",
+          () => no2.paths.includes("/api/cmd/amend")
+                && no2.route.length === no2.before.length
+                && no2.route.every((w, i) => w === no2.before[i])
+                && no2.spent === 0 && no2.count === 0 && no2.edgeAt === 0
+                && !no2.why.some(s => /DEVIATED/.test(s))
+                && /REFUSED/.test(no2.notes.join(" "))
+                && after.includes("/api/cmd/hold"),
+          () => "tried " + JSON.stringify(no2.paths) + "; runRoute " + no2.route.length
+              + " wpts (was " + no2.before.length + "), edgeSpentM " + no2.spent
+              + ", guardEdgeAt " + no2.edgeAt + ", Intent " + JSON.stringify(no2.why)
+              + ", said \"" + (no2.notes[0] || "") + "\"; next frame sent "
+              + JSON.stringify(after) + ". A deviation the vessel refused must not move the "
+              + "chart, must not spend the budget, and must not stand the slow and hold rungs "
+              + "down - the console read CLEAR at 11 m off a pier face doing exactly that");
+    const yes2 = await deviate(null);
+    check("22. ... and an ACCEPTED one still does its whole job - the corner moves, the budget "
+          + "is spent, and both the operator and the Intent card are told",
+          () => yes2.paths.includes("/api/cmd/amend")
+                && yes2.route.length === yes2.before.length
+                && yes2.route.some((w, i) => w !== yes2.before[i])
+                && yes2.spent > 0 && yes2.count === 1 && yes2.edgeAt > 0
+                && yes2.why.some(s => /^DEVIATED/.test(s))
+                && /DEVIATED/.test(yes2.notes.join(" "))
+                && !/REFUSED/.test(yes2.notes.join(" ")),
+          () => "sent " + JSON.stringify(yes2.paths) + ", edgeSpentM " + yes2.spent
+              + " over " + yes2.count + " deviation(s), guardEdgeAt "
+              + (yes2.edgeAt ? "armed" : "NOT ARMED") + ", said \"" + (yes2.notes[0] || "")
+              + "\". Andy asked for this rung on 2026-09-04 - \"forcing slight deviations to "
+              + "prevent holds when there is still plenty of available water\" - and a console "
+              + "made timid about a deviation the vessel ACCEPTED is the wrong fix");
+
     console.log(fails ? "\n" + fails + " CHECK(S) FAILED"
                       : "\nall checks passed (" + ran + ")");
     process.exit(fails ? 1 : 0);

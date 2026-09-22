@@ -1362,8 +1362,9 @@ function setPlanIntent(kind, plan, route){
   // situation on one track; carrying it into the next run would make a per-episode judgement
   // into a standing permission, which is the one thing that override must never become. The
   // console's own budget for moving the operator's track resets with it, for the same
-  // reason - a fresh plan has not been deviated at all yet.
-  guardOverride = null; edgeSpentM = 0; edgeCount = 0;
+  // reason - a fresh plan has not been deviated at all yet. `guardActedAt` and `holdWant` are
+  // the hold rung's own per-episode record, and they go with it.
+  guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
                 why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
                 heldOff: (plan && plan.heldOff) || null,
@@ -1692,6 +1693,15 @@ let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
 // answering the situation from wherever the boat is now, or the hold fires after all.
 const SLOW_ANSWER_MS = 2000;
 let slowLieu = null;
+// THE HOLD COMMANDED, AND WHETHER THE VESSEL HAS TAKEN IT — {at, sends}. The same shape as
+// speedWant/speedReconcile one rung down, and for the same reason that rung already gives: "one
+// lost or refused command left a whole segment at the wrong speed with nothing looking back".
+// The hold was still such a sender. cmd() answers a refusal or a dropped POST as {ok:false}, and
+// by then the rung has spent its escalation - so a hold that never landed left the boat running
+// the survey into the keep-out with the console's own banner saying HOLDING, and the kept survey
+// discarded on the next redraw. Driven over consecutive frames (review #7, 2026-09-21): one
+// /api/cmd/hold at 25 m off a pier, then NOTHING for twenty frames down to 6 m.
+let holdWant = null;
 /**
  * HOW LONG THE WATER HAS TO STAY CLEAR BEFORE THE THROTTLE GOES BACK.
  *
@@ -1972,8 +1982,9 @@ function clearanceGuard(){
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
         // The episode is over: the operator's decision was about THIS situation, and the
-        // console's own budget for moving their track resets with it.
-        guardOverride = null; edgeSpentM = 0; edgeCount = 0;
+        // console's own budget for moving their track resets with it - and so does the hold
+        // rung's record of having acted, or the next episode would find the latch already set.
+        guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
         renderGuardBar(null, c);
       }
       setViolations(release ? [] : (c.info ? [{mode:"leg", info:c.info,
@@ -2040,20 +2051,40 @@ function clearanceGuard(){
       // every waypoint between the boat and the amendment.
       const at = Math.max(0, Math.min(a.edge.at, trkNow.ahead.length - 1));
       const tail = [...trkNow.ahead.slice(0, at), w, ...trkNow.ahead.slice(at + a.edge.drop)];
+      // ⚠⚠ NOTHING IS CLAIMED UNTIL THE VESSEL HAS TAKEN IT. `amend` is refused by six separate
+      // gates (not armed, e-stopped, not running a plan, station-keeping, an empty amendment, a
+      // plan with no unflown remainder) and answers {ok:false, error} on a dropped link - an
+      // operator Pause, an end of plan or flaky Wi-Fi all land there. Claimed anyway, runRoute
+      // described a track the boat was not flying, and since guardTrack projects along runRoute
+      // the whole ladder then assessed the amended line: driven at a pier face (review #7), the
+      // console read CLEAR at 11 m off while the plan the vessel was actually holding read hold.
+      // Worse, `guardEdgeAt` above stood the slow and hold rungs down under an amendment that
+      // never arrived. resumeRun does this with the same command and reads the reply; so does
+      // this now. `guardEdgeAt` stays set above, because while the POST is genuinely outstanding
+      // the gate is right - the fix is only that it must not outlive a refusal.
       cmd("/api/cmd/amend", {route: tail,
           note: "Deviation: " + edgeText(a.edge) + " to keep clear of "
-                + (c.kind || "a keep-out") + "."});
-      // The drawn route follows the vessel's, or the chart shows a track the boat is not
-      // flying and every derived figure on the cards is measured off the wrong line.
-      runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];
-      edgeSpentM += a.edge.offsetM; edgeCount++;
-      if(planIntent) planIntent.why.push({t:"warn", s:"DEVIATED " + edgeText(a.edge)
-        + " — the projected track was entering " + (c.kind||"a keep-out") + " in "
-        + (a.tEntry||0).toFixed(0) + " s; there is " + a.edge.water.toFixed(1)
-        + " m of water there, so the console went round rather than stopping"});
-      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — DEVIATED "
-                + edgeText(a.edge) + ", " + a.edge.water.toFixed(1) + " m of water.");
-      updateMissionCard(); render();
+                + (c.kind || "a keep-out") + "."}).then(r => {
+        if(r && r.error){
+          guardEdgeAt = 0;   // nothing is in flight: the slow and hold rungs run next frame
+          flashNote("Deviation REFUSED (" + r.error + ") — the plan is unchanged; the guard "
+                    + "will slow or stop her instead.");
+          return;
+        }
+        // The drawn route follows the vessel's, or the chart shows a track the boat is not
+        // flying and every derived figure on the cards is measured off the wrong line.
+        runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];
+        edgeSpentM += a.edge.offsetM; edgeCount++;
+        if(planIntent) planIntent.why.push({t:"warn", s:"DEVIATED " + edgeText(a.edge)
+          + " — the projected track was entering " + (c.kind||"a keep-out") + " in "
+          + (a.tEntry||0).toFixed(0) + " s; there is " + a.edge.water.toFixed(1)
+          + " m of water there, so the console went round rather than stopping"});
+        flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — DEVIATED "
+                  + edgeText(a.edge) + ", " + a.edge.water.toFixed(1) + " m of water.");
+        updateMissionCard(); render();
+      }).catch(() => { guardEdgeAt = 0; });   // cmd() resolves its own failures; this is the
+                                             // belt-and-braces half - an un-caught rejection
+                                             // here would leave the ladder stood down for good
     }
     return c;
   }
@@ -2160,9 +2191,25 @@ function clearanceGuard(){
         lieuFailed = "the slow-down was not taken within " + (SLOW_ANSWER_MS / 1000) + " s";
       if(!lieuFailed) return c;
     }
-    if(escalated || lieuFailed){
+    // ⚠⚠ AND THE HOLD ITSELF HAS TO BE TAKEN, for the same reason the slow-down does. Same
+    // predicate guardHeldOffer already trusts as "the hold is on", and the same SLOW_ANSWER_MS
+    // throttle, so one refused POST costs one re-send rather than a stream of them.
+    const holdUntaken = !!holdWant && !(S && S.behavior === "hold")
+                        && Date.now() - holdWant.at > SLOW_ANSWER_MS;
+    // ⚠⚠ AND THE FIRST-ACTION TEST IS THE LATCH, NOT THE RISING EDGE. `escalated` is
+    // RUNG[a.level] > RUNG[guardLevel], and the helm dwell moved the action off the escalating
+    // frame down here too: ONE frame of set jitter rated `helm` sets guardLevel to "helm" while
+    // HELM_DWELL_MS commands nothing, and every later frame at `hold` then reads 3 > 4 = false
+    // and falls through. Driven on a pier wall (review #7, 2026-09-21): the control held her at
+    // 30 m; with one jitter frame first, the ladder commanded NOTHING for seventeen seconds and
+    // she was 3.8 m off with the level still reading `hold`. The rung above already says this
+    // ("the rung above spends the escalation"), and the helm rung already replaced `escalated`
+    // with an episode test for exactly this reason - this is the same swap one rung down.
+    // `guardActedAt` was already written here and read nowhere; now it is the test.
+    if(!guardActedAt || lieuFailed || holdUntaken){
       slowLieu = null;
       guardActedAt = Date.now();
+      holdWant = {at: Date.now(), sends: (holdWant ? holdWant.sends + 1 : 1)};
       // ⚠ KEEP THE SURVEY BEFORE THE HOLD REPLACES IT. One line, and it is the difference
       // between an operator resuming the remainder and re-running the whole survey: the
       // hold uploads a one-waypoint plan over theirs, and after that `window._wpIndex`
@@ -2172,6 +2219,7 @@ function clearanceGuard(){
       // a blind bearing back towards the very feature it was holding off.
       cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
+                + (holdUntaken ? "THE HOLD WAS NOT TAKEN — re-sending (" + holdWant.sends + "). " : "")
                 + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
                               : "Drift alone stays clear, so taking the way off answers it.")
                 + (guardHeld ? " The survey is kept: RESUME AT LOW SPEED on the guard bar."
