@@ -59,6 +59,50 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-21 — TWO MORE HIGHS ON THE CARDS: a count that could not be reconciled, and a
+  port change that stopped the chart following the boat.**
+
+  * **The AIS card said "94 vessels" over sixty rows**, with the range note underneath
+    reading "whole lake — all contacts". The cap was applied at the row loop alone. And in
+    the same three lines: a contact cut by the CAP fell into the one-update grace sweep —
+    dimmed, stamped `data-miss=1` and titled "no report in this update" while it had
+    reported 3 s ago at 12 kn, showing the range it had when it was nearer, and vanishing
+    on the next poll while still reporting. The cap is taken once now, the headline reads
+    "60 of 94 vessels", and a contact past the cap has its row removed outright: the grace
+    is for a contact the FEED lost. `tests/ais_table.js` 21–22b, **6 mutations, 6 killed**.
+  * **A REFUSED `/api/ports` request latched `portMoving` for the life of the page.** It is
+    set BEFORE the request (deliberately — check 15b), and only `portMoveDone` clears it. A
+    dropped link makes `fetch` REJECT rather than answer `r.ok === false`, so the refusal
+    arm is never reached; the call site is `onchange = (e)=>switchPort(e.target.value)`,
+    fire and forget, and the page installs no `unhandledrejection` handler. The chart stops
+    following the boat, the card sits on "asking the console…", and the picker still shows
+    a port that was never reached. All three entry points catch now.
+    `tests/port_slew.js` 17–17d, **6 mutations, 6 killed**.
+
+  **⚠ AND THE FIRST SWEEP OF THOSE SIX SCORED ALL SIX AS SURVIVED.** `tests/port_slew.js`
+  had **no `ASV_HTML` override**, so every mutant page went to a sidecar the suite never
+  read — while its own header claims thirteen mutations "run against a sidecar copy of the
+  page". Those thirteen cannot have been produced the way it says. The override is in, the
+  header records it, and it is worth checking which other suites claim sidecar teeth
+  without the means to have them.
+
+  **⚠ AND `tests/mission_store.py` CHECK 5 WAS A COIN-TOSS, which is what found all this.**
+  It ran for a wall-clock 3 s and then required more than 50 saves and 50 reads to have
+  happened in it — a property of the MACHINE, not of the console. Three consecutive runs on
+  this box scored `save_ok` 34, 48 and **50** against a floor of `> 50`: it blocked a
+  commit, passed a minute later, and blocked again. It is counted now, not timed — each
+  writer does a fixed 40 saves and the readers run until both are done, so the contention
+  is guaranteed and the save count is exact. Still killed by "the read does not hold the
+  writer lock", the fault it was written for. **This is almost certainly what blocked the
+  earlier commit too** — that run's full output was lost to a truncated capture and I could
+  not name the suite at the time.
+
+  **⚠ AND ONE HARNESS BUG WORTH THE SAME WARNING.** The three port cases first ran through
+  `Promise.all` over ONE vm context, so the last one's state overwrote the other two: every
+  case read the same message and a picker count of 3. Check 17 passed **for the wrong
+  reason** while 17b failed for a reason unrelated to its subject. The detail line is what
+  showed it; the tick would not have.
+
 * **2026-09-21 — FOUR HIGHS PULLED IN FROM `asv_core`, AND THREE MORE FILES ARE NOW ASV-OWNED.**
   The review found them in `ais_service.py`, `roc_tracks.py` and `static/js/raster.js` — all three
   VENDORED, so they were fixed in `asv_core` first (tip **`2a0b53d`**, pushed) and PULLED across

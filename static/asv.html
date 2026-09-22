@@ -3235,15 +3235,31 @@ async function switchPort(id){
   portMoving = true;                                  // holds follow off from here, not from the slew
   portMoveShow(portName(id), null);                   // up the instant the operator picks - the ask
   portMoveStage("asking the console for the new base…");
-  const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
-                                       body: JSON.stringify({id})});
-  const d = await r.json().catch(()=>({}));
-  if(!r.ok){ portMoveDone("Port: " + (d.error || r.status)); fillPortPicker(); return; }
-  portList = d.ports || portList; portActive = d.active; fillPortPicker();
-  const nm = portName(d.active);
-  if(d.spawn) startPortSlew(d.spawn, nm, wasName, fromLL);
-  await resetForNewArea(d.spawn,
-    "Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
+  // ⚠⚠ THE AWAITED BODY IS CAUGHT, because `portMoving` is already true and only
+  // portMoveDone clears it. A DROPPED LINK MAKES `fetch` REJECT rather than answer
+  // `r.ok === false`, so the refusal arm below is never reached - the rejection left this
+  // handler (the call site is `onchange = (e)=>switchPort(e.target.value)`, fire and
+  // forget, and the page installs no unhandledrejection handler) and `portMoving` stayed
+  // true FOR THE LIFE OF THE PAGE. Driven with a rejecting fetch: the chart stops
+  // following the boat, the port card sits on "asking the console…" for ever, and the
+  // picker still shows the port the operator chose - which never happened.
+  //
+  // `catch`, not `finally`: the success path already calls portMoveDone through
+  // resetForNewArea, and a finally would flash a second note over the first.
+  try{
+    const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
+                                         body: JSON.stringify({id})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ portMoveDone("Port: " + (d.error || r.status)); fillPortPicker(); return; }
+    portList = d.ports || portList; portActive = d.active; fillPortPicker();
+    const nm = portName(d.active);
+    if(d.spawn) startPortSlew(d.spawn, nm, wasName, fromLL);
+    await resetForNewArea(d.spawn,
+      "Operating port: " + nm + (d.saved ? "" : " (not saved - registry read-only)"));
+  }catch(e){
+    portMoveDone("Port change failed: " + e + " — still on " + wasName + ".");
+    fillPortPicker();
+  }
 }
 // FIND A SURVEY BASE BY NAME. The server geocodes the name and then SNAPS the result to
 // charted water this hull can float in - a geocoder returns the centre of a town, and a
@@ -3260,27 +3276,39 @@ async function findPortByName(){
   // this whole flow and it used to be a flashNote, which is gone by the time it finishes.
   portMoveShow(q, null);
   portMoveStage("looking up \"" + q + "\" and finding navigable water…");
-  const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
-                                       body: JSON.stringify({name:q})});
-  const d = await r.json().catch(()=>({}));
-  if(!r.ok){ portMoveDone("Find port: " + (d.error || r.status)); fillPortPicker(); return; }
-  portList = d.ports || portList; portActive = d.active; fillPortPicker();
-  if(d.spawn) startPortSlew(d.spawn, (d.found && d.found.geocoded) || q, wasName, fromLL);
-  const f = d.found || {};
-  if(f.snapped){
-    showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". " + (f.note || "")
-               + " Chart moved there; verify the berth before running.");
-  } else {
-    showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "no chart")
-               + " — this is the PLACE CENTRE, which is on land. Pan to a berth and use "
-               + "\"Save this view as a port\" before spawning here.");
+  // ⚠⚠ CAUGHT FOR THE SAME REASON AS switchPort, and this one waits LONGER - a geocode
+  // plus a water snap is the longest request in the console, so it is the likeliest of the
+  // three to meet a link that has gone.
+  try{
+    const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
+                                         body: JSON.stringify({name:q})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ portMoveDone("Find port: " + (d.error || r.status)); fillPortPicker(); return; }
+    portList = d.ports || portList; portActive = d.active; fillPortPicker();
+    if(d.spawn) startPortSlew(d.spawn, (d.found && d.found.geocoded) || q, wasName, fromLL);
+    const f = d.found || {};
+    if(f.snapped){
+      showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". " + (f.note || "")
+                 + " Chart moved there; verify the berth before running.");
+    } else {
+      showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "no chart")
+                 + " — this is the PLACE CENTRE, which is on land. Pan to a berth and use "
+                 + "\"Save this view as a port\" before spawning here.");
+    }
+    await resetForNewArea(d.spawn, null);
+  }catch(e){
+    portMoveDone("Find port failed: " + e + " — still on " + wasName + ".");
+    fillPortPicker();
   }
-  await resetForNewArea(d.spawn, null);
 }
 async function addPortHere(){
   const name = (window.prompt("Name this port (it is added to the list and kept):", "") || "").trim();
   if(!name){ fillPortPicker(); return; }                 // cancelled - restore the selection
   const body = {name, lat: center.lat, lon: center.lon};
+  // ⚠ CAUGHT TOO, though this one latches nothing: it sets `portMoving` only AFTER the
+  // request. What a rejection costs here is the PICKER - fillPortPicker is skipped, so
+  // "+ Save this view as a port…" stays selected as though it were the operating port.
+  try{
   const r = await fetch("/api/ports", {method:"POST", headers:{"Content-Type":"application/json"},
                                        body: JSON.stringify(body)});
   const d = await r.json().catch(()=>({}));
@@ -3295,6 +3323,10 @@ async function addPortHere(){
   await resetForNewArea(d.spawn || body,
     "Port \"" + name + "\" added at " + fmtLL(body.lat, body.lon)
     + (d.saved ? " and retained" : " (NOT saved - registry read-only)"));
+  }catch(e){
+    portMoveDone("Add port failed: " + e + " — nothing was added.");
+    fillPortPicker();
+  }
 }
 // A base change moves the boat to a different sea. Everything derived from the OLD area -
 // the chart extract, the plan drawn on it, the track behind the boat - describes water the
@@ -6441,6 +6473,13 @@ function renderAisTable(){
                                   brg:c?Math.round(azTo(c,{lat:v.lat,lon:v.lon})):null,
                                   cpa:aisCpa(v)}));
   rows.sort(aisRowCmp);                                   // area scoped by /api/ais
+  // ⚠ THE CAP IS APPLIED ONCE, HERE, AND THE HEADLINE COUNTS WHAT IS DRAWN. It used to be
+  // applied at the forEach alone, so the status line said "94 vessels" over sixty rows with
+  // the range note underneath reading "whole lake — all contacts". A count the operator
+  // cannot reconcile with what they can see reads as a fault in the feed, and there was
+  // nothing on the card saying otherwise.
+  const AIS_MAX_ROWS = 60;
+  const shown = rows.slice(0, AIS_MAX_ROWS);
   // STATUS LINE - always present, so an empty table says WHY (offline vs warming up vs
   // connected-but-nothing-in-range) instead of an ambiguous blank, and NAMES the live
   // source so a feed that cannot cover this area is obvious at a glance.
@@ -6472,7 +6511,9 @@ function renderAisTable(){
     stDot="#e8a13f"; stMain="connected"; stNote=[srcLbl, inner].filter(Boolean).join(" · ");
   }
   else { stDot="#3fbf6b";
-         stMain=`${rows.length} vessel${rows.length!=1?"s":""} · ${aisAreaLabel()}`;
+         stMain=(shown.length < rows.length
+                   ? `${shown.length} of ${rows.length} vessels`
+                   : `${rows.length} vessel${rows.length!=1?"s":""}`) + ` · ${aisAreaLabel()}`;
          stNote=[srcLbl, nearest?("nearest "+nearest):""].filter(Boolean).join(" · "); }
   // PATCHED IN PLACE, NOT REBUILT. This used to assign el.innerHTML every poll, so every
   // 8 s the entire body was destroyed and re-created. The list SCROLLS (max-height:46vh),
@@ -6496,7 +6537,7 @@ function renderAisTable(){
   const existing = new Map();
   for(const tr of body.children) existing.set(tr.dataset.mmsi, tr);
 
-  rows.slice(0, 60).forEach((r, i) => {
+  shown.forEach((r, i) => {
     const v = r.v, key = String(v.mmsi);
     let tr = existing.get(key);
     if(tr) existing.delete(key); else { tr = aisMakeRow(); tr.dataset.mmsi = key; }
@@ -6528,6 +6569,19 @@ function renderAisTable(){
     if(tr.title !== title) tr.title = title;
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
   });
+  // ⚠⚠ AND A CONTACT CUT BY THE ROW CAP IS NOT A CONTACT THAT STOPPED REPORTING. `existing`
+  // is built from the DOM and emptied only by the loop above, so a ship that had a row last
+  // poll and merely steamed out to rank 61st fell into the grace sweep below - dimmed to
+  // 0.45 and titled "no report in this update", with its LAST numbers frozen under a label
+  // asserting the opposite of the truth. Driven on a 94-contact feed: the contact reported
+  // healthily (3 s old, 12 kn), its row showed 7.2 nm while it was at 17 nm and "12s ago"
+  // while it had just reported, and on the next poll - still reporting - it vanished. Its
+  // row goes NOW, without the grace: the grace below is for a contact the FEED lost.
+  // For any feed of AIS_MAX_ROWS or fewer this loop body never runs.
+  for(const r of rows.slice(AIS_MAX_ROWS)){
+    const k = String(r.v.mmsi), tr = existing.get(k);
+    if(tr){ existing.delete(k); tr.remove(); }
+  }
   // ⚠ A CONTACT MISSING FROM ONE UPDATE IS NOT A CONTACT THAT HAS GONE. AIS is intermittent
   // by nature and the show-radius filter runs on the server, so a ship sitting near the range
   // edge drops out of one snapshot and returns in the next. Removing its row the instant it

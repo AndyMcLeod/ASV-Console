@@ -48,6 +48,19 @@
 //   resetForNewArea: fire into a busy extract                  -> 12c
 //   onState:  let BOAT-follow take the centre back mid-slew    -> 15
 //
+// AND SIX MORE, 2026-09-21, for the REFUSED-REQUEST family - all six killed:
+//   switchPort loses its catch (the shipped defect)           -> 17, 17b, 17c
+//   the catch clears nothing, it only logs                    -> 17, 17b, 17c
+//   the catch does not say WHICH port is still current        -> 17b
+//   findPortByName loses its catch                            -> 17, 17b, 17c
+//   addPortHere loses its catch                               -> 17c, 17d
+//   the picker is not restored on a refusal                   -> 17c
+//
+// ⚠ AND THE FIRST SWEEP OF THOSE SIX SCORED ALL SIX AS SURVIVED, for a reason that had
+// nothing to do with the checks: this suite had no ASV_HTML override, so every mutant
+// page was written to a sidecar the suite never read. The thirteen above cannot have
+// been produced the way this header says either. The override is in now.
+//
 // TWO OF THEM SURVIVED THE FIRST PASS, and both were gaps in the checks rather than dead
 // mutations - which is the whole reason to run them:
 //   * "clamp at total-1" was invisible because check 1 flies a LONG move, whose last phase
@@ -79,7 +92,13 @@ const path = require("path");
 // against maths the console does not use.
 const { TILE, worldPx, worldToLatLon, distTo } = require("../static/js/geodesy.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. The header above says the
+// teeth were verified against one -- and there was no way to point it at one: every
+// mutation had to be made in static/asv.html itself. A sweep run without this reads the
+// REAL page and scores every mutant as SURVIVED, which is how six of them looked when
+// check 17 was written (2026-09-21).
+const H = fs.readFileSync(process.env.ASV_HTML
+                          || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grabDecl(name) {
   for (const kw of ["const ", "let "]) {
@@ -438,6 +457,93 @@ const NEWBASE = { lat: 38.7800, lon: -75.1400 };
         heldOff ? "held off while busy, then extracted at " + fmtP(__asked)
                 : "fired into a busy extract - refreshNogo() would have no-opped and the "
                   + "new base would hold the old sea's keep-outs");
+
+  await (async () => {
+  // ── 17. A REJECTED REQUEST DOES NOT LATCH THE FOLLOW-HOLD ─────────────────────────
+  //
+  // 15b above is what made this reachable: `portMoving = true` is set BEFORE the request,
+  // deliberately, so the hold starts at the operator's click rather than at the slew. Only
+  // portMoveDone clears it - and a DROPPED LINK makes `fetch` REJECT rather than answer
+  // `r.ok === false`, so the refusal arm is never reached. The call site is
+  // `onchange = (e)=>switchPort(e.target.value)`, fire and forget, and the page installs no
+  // unhandledrejection handler, so the exception went to the browser console and nowhere
+  // the operator could see. `portMoving` then stayed true FOR THE LIFE OF THE PAGE:
+  // `if(follow && !slew && !portMoving) center = ...` is the BOAT-follow gate, so the chart
+  // stopped following the boat, the moving-base card sat on "asking the console…", and the
+  // picker still showed the port the operator chose - which never happened.
+  //
+  // ⚠ DRIVEN, NOT GREPPED. A source check for `catch` passes just as happily with the catch
+  // swallowing the error and leaving the flag set. All three entry points are run in a vm
+  // against a fetch that rejects exactly as a browser's does.
+  const vm = require("vm");
+  const ctx = {};
+  const mk = () => ({
+    console, JSON, Math, Date, String, Number, Object, Array, Promise, setTimeout,
+    PORT_FIND: "__find__", PORT_ADD: "__add__",
+    portMoving: false, portActive: "home", portList: [{ id: "home", name: "Home" }],
+    center: { lat: 43.07, lon: -70.76 }, follow: true, slew: null,
+    cards: [], picker: 0, banners: [], notes: [],
+    portName: (id) => "port:" + id,
+    portMoveShow: () => {}, portMoveStage: () => {},
+    portMoveDone: (note) => { ctx.cards.push(note); ctx.portMoving = false; },
+    fillPortPicker: () => { ctx.picker++; },
+    startPortSlew: () => {}, showBanner: (b) => ctx.banners.push(b),
+    flashNote: (n) => ctx.notes.push(n), fmtLL: () => "x",
+    resetForNewArea: async () => {},
+    window: { prompt: () => "Nome, Alaska" },
+    fetch: () => Promise.reject(new TypeError("Failed to fetch")),
+  });
+  Object.assign(ctx, mk());
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext([grabAsync("switchPort"), grabAsync("findPortByName"),
+                   grabAsync("addPortHere")].join("\n"), ctx);
+
+  const drive = async (call) => {
+    Object.assign(ctx, mk());
+    let threw = null;
+    try { await vm.runInContext(call, ctx); } catch (e) { threw = String(e); }
+    return { threw, moving: ctx.portMoving, said: ctx.cards[ctx.cards.length - 1] || null,
+             picker: ctx.picker,
+             follows: ctx.follow && !ctx.slew && !ctx.portMoving };   // the page's own gate
+  };
+
+  // ⚠ ONE AT A TIME. The three drives share ONE vm context, so running them through
+  // Promise.all let the last one's state overwrite the other two: every case read the same
+  // `said` and a picker count of 3, so 17 passed for the WRONG REASON while 17b failed for
+  // a reason that had nothing to do with its subject. Caught by reading the detail line
+  // rather than the tick.
+  return (async () => {
+    const sw = await drive('switchPort("lewes")');
+    const fp = await drive("findPortByName()");
+    const ap = await drive("addPortHere()");
+    check("17. a port change whose request is REFUSED BY THE LINK does not latch the "
+          + "follow-hold - the chart goes on following the boat",
+          () => sw.threw === null && sw.moving === false && sw.follows === true
+                && fp.threw === null && fp.moving === false && fp.follows === true,
+          "switchPort: threw " + sw.threw + ", portMoving " + sw.moving
+              + "; findPortByName: threw " + fp.threw + ", portMoving " + fp.moving
+              + ". `fetch` REJECTS on a dropped link - it does not answer r.ok === false - "
+              + "so the refusal arm is never reached and only portMoveDone clears the flag");
+    check("17b. ... and the operator is TOLD, and told which port they are still on",
+          () => /Port change failed/.test(sw.said || "") && /still on port:home/.test(sw.said || "")
+                && /Find port failed/.test(fp.said || "") && /still on port:home/.test(fp.said || ""),
+          "switchPort said \"" + sw.said + "\"; findPortByName said \"" + fp.said
+              + "\". Silence here is a console that has stopped following the boat for a "
+              + "reason nothing on screen explains");
+    check("17c. ... and the picker is put back, so it does not show a port that was never "
+          + "reached",
+          () => sw.picker >= 1 && fp.picker >= 1 && ap.picker >= 1,
+          "fillPortPicker called: switchPort " + sw.picker + ", findPortByName "
+              + fp.picker + ", addPortHere " + ap.picker
+              + " - the selection is the operator's evidence of where they are");
+    check("17d. ... and ADD-PORT is caught too: it latches nothing, but a rejection left "
+          + "\"+ Save this view as a port…\" selected as though it were the base",
+          () => ap.threw === null && ap.moving === false
+                && /Add port failed/.test(ap.said || "") && /nothing was added/.test(ap.said || ""),
+          "addPortHere: threw " + ap.threw + ", said \"" + ap.said + "\"");
+  })();
+})();
 
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
   process.exit(fails ? 1 : 0);
