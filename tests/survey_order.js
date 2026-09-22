@@ -192,7 +192,7 @@ check("6. the drawn pattern is already a serpentine that starts at the start cor
 const commitWorld = new Function("\"use strict\";\n"
   + "const mission = {lines: [], waypoints: []}; let planKind = null; const NO_LEAD = {in: 0, out: 0};\n"
   + "let patClip = null, patTransits = [], patLead = [], patRepunchT = null, punchInFlight = null, drawn = [];\n"
-  + "let patRed = [], patJoined = true, patDropped = null;\n"
+  + "let patRed = [], patJoined = true, patDropped = null; let turnSlowAt = {};\n"
   + "const $ = () => ({disabled: false}); const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"

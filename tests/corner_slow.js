@@ -26,7 +26,7 @@
 // across those seven plus seven whole recorded routes, rounded up one decimal - not a
 // number picked to make the checks pass. If a change moves the walk, these go red.
 //
-// TEETH - twenty-eight mutations RUN against a sidecar copy that is restored in a
+// TEETH - thirty-six mutations RUN against a sidecar copy that is restored in a
 // `finally` and confirmed with `git diff` at the end of the run. These are what the runs
 // printed, not what was predicted of them; five predictions were wrong (10, 17, 22, 23, 7):
 //
@@ -59,6 +59,25 @@
 //   asv.html: the busy flag set but never cleared                      -> 21
 //   asv.html: the Upload button ignores the busy flag                  -> 21
 //   asv.html: the busy flag set AFTER the measurement, not before      -> 21
+//
+//   ...and eight more for the generated-turn half after it moved onto the LINE
+//   (2026-09-22), every one of which was alive against the punch-gap version:
+//   asv.html: the WHOLE move reverted - flag on the punch, read by gap  -> 19, 19b-19f,
+//                                                                         speed_modes 5
+//   asv.html: commitPattern writes the flag without the punched gate    -> 19f
+//   asv.html: the committed line is pushed without slow_turn_out        -> 19, 19b-19d, 19f
+//   asv.html: the governor reads turnSlowAt[gap] again                  -> 19, 19b-19e,
+//                                                                         speed_modes 5
+//   asv.html: deleteLineByIndex leaves the stale flag standing          -> 19e
+//   asv.html: deleteLineByIndex clears the line BELOW the strike        -> 19e
+//   asv.html: written one line off (slowOut[k-1])                       -> 19, 19b-19d, 19f
+//   asv.html: read one line off (mission.lines[gap+1])                  -> 19, 19b-19d,
+//                                                                         speed_modes 5
+//
+// ⚠ AND 19f IS THE ONLY THING THAT KILLS THE PUNCHED GATE - the mutation that lets a
+// DRAWN pattern inherit the last punch's flags. The four end-to-end drives all commit a
+// punched pattern, so every one of them stayed green; it took the un-punched case, which
+// is the same rule `leads` follows one line above it in commitPattern.
 //
 // ⚠ ONE SURVIVED AND IT IS INERT BY DESIGN: making the screen PASS everything. The screen
 // only skips model calls that cannot change the answer, so removing it gives identical
@@ -384,10 +403,20 @@ check("18. doUpload measures the final route, after legPath has routed it",
          && /\{approachM: Math\.max\(0\.5, \+\(mission\.approach_radius_m\) \|\| 1\)\}/.test(H),
       "after routePlan, on plan.route, and carrying the mission's own approach radius");
 // 19. READ BY THE GOVERNOR, on the leg INTO a flagged vertex and the leg out of it.
-check("19. speedGovernor flies a flagged corner at the low speed, both legs of it",
+// ⚠ THE GENERATED-TURN HALF MOVED ONTO THE LINE (2026-09-22). It was keyed by PUNCH GAP
+// and read by MISSION-LINE index - `turnSeg.from` IS a mission.lines index - so the two
+// agreed only for one pattern on an empty plan, never re-punched, never reloaded, with no
+// line struck off. Exactly the lesson THIS file's own `cornerSlowFor` was written for, one
+// declaration below it: a set of indices may not outlive the thing it indexes. The junction
+// half is unchanged, and the point of this check is still that the two sit BESIDE each other.
+check("19. speedGovernor flies a flagged corner at the low speed, both legs of it - beside "
+      + "the generated-turn rule, which now reads the committed LINE",
       () => /cornerSlow\.has\(wi\) \|\| cornerSlow\.has\(wi - 1\)/.test(H)
-         && /\(\(role === "turn" && gap >= 0 && turnSlowAt\[gap\]\) \|\| atCorner\)/.test(H),
-      "the junction rule sits beside the generated-turn one, not instead of it");
+         && /\(\(role === "turn" && gap >= 0 && \(mission\.lines\[gap\] \|\| \{\}\)\.slow_turn_out\) \|\| atCorner\)/.test(H)
+         && /slow_turn_out: !!\(slowOut && slowOut\[k\]\)/.test(H),
+      "the junction rule sits beside the generated-turn one, not instead of it - and the "
+        + "generated-turn flag is written onto the line it leaves, so it survives a reload "
+        + "and a strike");
 // 20. A STALE SET IS WORSE THAN NONE: its indices point into a route that is no longer
 // being flown, so the boat would be slowed at the wrong waypoint. The degraded
 // (no-chart) upload path must clear it rather than leave the last plan's corners armed.
@@ -396,6 +425,221 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
          && H.indexOf("cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;")
             < H.indexOf("cornerSlowPlan(walkRoute"),
       "the degraded branch drops it before the routed branch could set it");
+
+// 19b-19e. AND THE SAME RULE DRIVEN END TO END, because 19 above is a SOURCE check and a
+// re-base is one identifier. punchOut's own per-gap write and commitPattern's own model
+// statements and push loop are sliced out of the page and EXECUTED, so moving `slowOut`
+// back onto the punch, or off the line, changes what these checks see. Then the real
+// speedGovernor is asked, on the real turnSeg, for the speed it would command.
+//
+// All four were measured red before the fix and green after, against a control (one
+// pattern, empty plan, no reload, no strike) that was green BOTH times - so these are the
+// defect, not a dead feature:
+//     a second pattern   -> the flagged reversal flown at 3.0 kn, and pattern 1's FIRST
+//                           reversal, which nobody measured, flown at 1.5
+//     a page reload      -> every reversal at 3.0 kn, for ever, with no mark in the plan
+//     a line struck off  -> the same physical reversal at 3.0 kn
+{
+  const GEO = require("../static/js/geodesy.js");
+  const grabFn = (name) => {
+    const s = H.indexOf("function " + name + "(");
+    if (s < 0) throw new Error("anchor gone: function " + name);
+    let k = H.indexOf("{", s), d = 0;
+    for (;;) { const c = H[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
+    return H.slice(s, k + 1);
+  };
+  const grabLet = (name) => {
+    for (const kw of ["const ", "let "]) {
+      for (const sp of [" =", "="]) {
+        const i = H.indexOf(kw + name + sp);
+        if (i >= 0) return H.slice(i, H.indexOf(";", i) + 1);
+      }
+    }
+    throw new Error("anchor gone: declaration " + name);
+  };
+  // commitPattern's OWN statements: the two model lines and the push loop, verbatim. The
+  // `slowOut` each pushed line receives is whatever the page hands it.
+  const cs = H.indexOf("  const leads = patClip ? patLead : null;");
+  const ce = H.indexOf("\n  });", cs);
+  if (cs < 0 || ce < 0) throw new Error("anchor gone: commitPattern's commit loop");
+  const COMMIT = H.slice(cs, ce + 6);
+  // punchOut's OWN per-gap write, verbatim, in a wrapper supplying exactly what punchOut does
+  const PUNCH = "if(t.slow){ nTurnSlow++; turnSlowAt[k]=true; }";
+  if (H.indexOf(PUNCH) < 0) throw new Error("anchor gone: punchOut's per-gap slow write");
+
+  const PAGE = [
+    grabLet("LINE_MATCH_M"), grabLet("_legLine"), grabLet("SPEED_ROLES"), grabLet("NO_LEAD"),
+    grabLet("LINE_PART_OFFSET_M"), grabLet("_drawnLines"), grabLet("SPEED_RESEND_MS"),
+    grabLet("speedWant"), grabLet("commandedSpeed"),
+    grabLet("_eqLL"),
+    grabFn("indexedRoute"), grabFn("lineSetKey"), grabFn("syncLineStats"), grabFn("turnZoneM"),
+    grabFn("nearestEndpointM"), grabFn("linePartContinues"), grabFn("drawnLines"),
+    grabFn("lineNo"), grabFn("lineCount"), grabFn("linePartTxt"), grabFn("reversalScaleM"),
+    grabFn("isReversalGap"), grabFn("currentLegLine"), grabFn("accumLineTime"),
+    grabFn("alongLineM"), grabFn("linePhase"), grabFn("currentActivity"), grabFn("speedRole"),
+    grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("commandSpeed"), grabFn("speedGovernor"),
+    grabFn("deleteLineByIndex"),
+    "function __commit(lines, patClip, patLead, transits){\n" + COMMIT + "\n}",
+    "function __flagGap(k){ const t = {slow:true}; let nTurnSlow = 0; " + PUNCH
+      + " return nTurnSlow; }",
+  ].join("\n");
+
+  // eslint-disable-next-line no-new-func
+  const W = new Function("V", "window", "performance", "M_PER_DEG_LAT", "azTo", "distTo",
+                         "toEN", "llEN", "alignDeg", "fmtDist",
+    "let mission = null, asv = null, S = null, runRoute = null;\n"
+    + "let runLineIdx = -1, turnSeg = [], curTurn = -1, lastRunLine = -1;\n"
+    + "let lineActual = [], lineClock = null, lineStatsKey = null;\n"
+    + "let turnSlowAt = {}, cornerSlow = new Set(), cornerSlowFor = -1;\n"
+    + "let resumeSlow = false, escapeThrottle = false;\n"
+    + "const clearance = {slowed: false}; const sent = [];\n"
+    + "const cmd = (p, b) => { sent.push(b && b.speed); };\n"
+    + "const showBanner = () => {}; const saveMission = () => {};\n"
+    + "const supervising = () => true;\n"
+    + PAGE + "\n"
+    + "return {mission: () => mission, sent, deleteLineByIndex, speedGovernor, speedRole,\n"
+    + "  setMission: (m) => { mission = m; },\n"
+    + "  flag: (k) => __flagGap(k), clearFlags: () => { turnSlowAt = {}; },\n"
+    + "  commit: (lines, leads, transits, punched) => __commit(lines, punched ? lines : null, leads, transits),\n"
+    + "  reset: () => { runRoute = null; window._wpIndex = 0; runLineIdx = -1; turnSeg = [];\n"
+    + "    curTurn = -1; lastRunLine = -1; lineActual = []; lineClock = null;\n"
+    + "    lineStatsKey = null; _legLine = {key:'', line:-1}; commandedSpeed = null;\n"
+    + "    speedWant = null; sent.length = 0;\n"
+    + "    S = {run:'running', armed:true, estop:false, behavior:'survey',\n"
+    + "         status:{holding:false, sog_kn:6, cog_deg:0, drifting:false}}; },\n"
+    + "  tick: (pt, cog, wp) => { asv = {lat: pt.lat, lon: pt.lon, hdg: cog};\n"
+    + "    S.status.cog_deg = cog; S.status.sog_kn = 6; window._wpIndex = wp;\n"
+    + "    lineClock = performance.now()/1000 - 0.25; accumLineTime(); },\n"
+    + "  ran: () => lastRunLine, turnFrom: () => (curTurn >= 0 && turnSeg[curTurn]\n"
+    + "    ? turnSeg[curTurn].from : null), eq: (a, b) => _eqLL(a, b)};")(
+      V, { _wpIndex: 0 }, { now: () => Date.now() }, GEO.M_PER_DEG_LAT, GEO.azTo, GEO.distTo,
+      GEO.toEN, GEO.llEN, GEO.alignDeg, (m) => Math.round(m) + " m");
+
+  const LAT0 = 21.3100, LON0 = -157.8700;                 // his own Honolulu water
+  const MLON = GEO.M_PER_DEG_LAT * Math.cos(LAT0 * Math.PI / 180);
+  const P = (dn, de) => ({ lat: LAT0 + dn / GEO.M_PER_DEG_LAT, lon: LON0 + de / MLON });
+  // a boustrophedon block: n runs, 150 m long, 60 m apart, starting `north` m north
+  const block = (n, north) => {
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const y = north + k * 60;
+      out.push(k % 2 ? [P(y, 150), P(y, 0)] : [P(y, 0), P(y, 150)]);
+    }
+    return out;
+  };
+  // ⚠ THE OPERATOR'S TURN SPEED IS `survey` HERE, so "low" can ONLY have come from the
+  // slow-radius flag - not from the role, and not from a default.
+  const blank = () => {
+    W.setMission({ lines: [], waypoints: [], arrival_radius_m: 8, speed: "survey",
+                   speeds: { transit: "high", turn: "survey", survey: "survey" } });
+    W.clearFlags(); W.reset();
+  };
+  // PUNCH then COMMIT, as the page does: punchOut resets the map and flags the gaps whose
+  // turn only fitted at the slow radius; `k` there indexes THIS pattern's runs.
+  const punch = (runs, slowGaps) => { W.clearFlags(); for (const k of slowGaps) W.flag(k); };
+  const commit = (runs, punched = true) => W.commit(runs, runs.map(() => ({ in: 0, out: 0 })),
+    runs.map((l, k) => {
+      if (k >= runs.length - 1) return null;
+      const a = runs[k][1], b = runs[k + 1][0];
+      return [{ lat: (a.lat + b.lat) / 2 + 0.00018, lon: (a.lon + b.lon) / 2 }];   // turn apex
+    }), punched);
+  const wpOf = (li) => {
+    const L = W.mission().lines[li], Wp = W.mission().waypoints;
+    for (let i = 1; i < Wp.length; i++) if (W.eq(Wp[i - 1], L.a) && W.eq(Wp[i], L.b)) return i;
+    return -1;
+  };
+  // fly the full length of committed line `li`, then swing off its end into the reversal
+  const flyInto = (li) => {
+    const L = W.mission().lines[li], cog = GEO.azTo(L.a, L.b), wp = wpOf(li);
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
+      W.tick({ lat: L.a.lat + t * (L.b.lat - L.a.lat),
+               lon: L.a.lon + t * (L.b.lon - L.a.lon) }, cog, wp);
+    }
+    for (let i = 0; i < 4; i++)              // off the line, on the turn leg, in the zone
+      W.tick({ lat: L.b.lat + 0.00012 * (i + 1), lon: L.b.lon }, (cog + 90) % 360, wp + 1);
+    return { from: W.turnFrom(), role: W.speedRole(), got: W.speedGovernor() };
+  };
+
+  // 19b. TWO PATTERNS ON ONE PLAN - the case every real survey is, and the one the punch-gap
+  // index could not survive. Pattern 2's gap 0 is flagged; committed, that is the reversal
+  // out of LINE 3. Read by punch gap, `turnSlowAt[0]` named line 0 instead: the flagged
+  // reversal was flown fast and pattern 1's first one, which nobody measured, was slowed.
+  blank(); commit(block(3, 0));                              // pattern 1, unflagged
+  const p2 = block(3, 600); punch(p2, [0]); commit(p2);      // pattern 2, gap 0 flagged
+  const nLines = W.mission().lines.length;
+  W.reset(); const flagged = flyInto(3);                     // pattern 2's flagged reversal
+  W.reset(); const unflagged = flyInto(0);                   // pattern 1's, never measured
+  check("19b. the flag survives a SECOND pattern committed onto the plan: the reversal that "
+        + "only fitted at the slow radius is the one flown slow",
+        () => nLines === 6 && flagged.role === "turn" && flagged.got === "low"
+              && unflagged.role === "turn" && unflagged.got === "survey",
+        nLines + " committed lines; pattern 2's flagged reversal (out of line " + flagged.from
+          + ") -> " + flagged.got + " (" + V.SPEED_KN[flagged.got] + " kn), pattern 1's "
+          + "unmeasured one (out of line " + unflagged.from + ") -> " + unflagged.got
+          + ". Keyed by punch gap these were survey and low - the wrong way round");
+
+  // 19c. AND IT IS IN THE SAVED PLAN. `turnSlowAt` is a page-local `let`; a supervising page
+  // opened mid-survey, or the same page reloaded, starts it empty and every reversal then
+  // runs at the plan speed with nothing on screen to say so. On the line it goes to the
+  // server with the mission.
+  blank(); const six = block(6, 0); punch(six, [3]); commit(six);
+  const saved = JSON.stringify(W.mission());
+  W.setMission(JSON.parse(saved)); W.clearFlags(); W.reset();   // the reload
+  const afterLoad = flyInto(3);
+  check("19c. ... and it is PERSISTED with the plan, so a reload still flies it slow",
+        () => /"slow_turn_out":true/.test(saved) && afterLoad.got === "low",
+        "saved plan carries the mark: " + /"slow_turn_out":true/.test(saved)
+          + "; after a reload with turnSlowAt empty the reversal out of line "
+          + afterLoad.from + " commands " + afterLoad.got + " ("
+          + V.SPEED_KN[afterLoad.got] + " kn)");
+
+  // 19d. AND A STRIKE RE-INDEXES IT, which is the whole reason for putting it on the line:
+  // the splice that moves the lines moves the flag with them. Struck line 0, the SAME
+  // physical reversal is now out of line 2.
+  blank(); const st = block(6, 0); punch(st, [3]); commit(st);
+  W.deleteLineByIndex(0); W.reset();
+  const afterStrike = flyInto(2);
+  check("19d. ... and striking a line off re-indexes it: the same physical reversal is still "
+        + "the one flown slow",
+        () => W.mission().lines.length === 5 && afterStrike.got === "low",
+        "5 lines left; the flagged reversal is now out of line " + afterStrike.from
+          + " and commands " + afterStrike.got + ". Keyed by punch gap it stayed on gap 3, "
+          + "which is a different reversal after the strike");
+
+  // 19e. ...BUT IT IS CLEARED WHEN THE LINE IT TURNED INTO IS STRUCK. Re-indexing a
+  // measurement is not re-taking it: with line 4 gone, line 3's flag describes a reversal
+  // that no longer exists, and the new, wider one across the gap was never measured. It is
+  // unflagged exactly as it would be today; what must not survive is a claim about a turn
+  // that is not there. (Clearing DROPS a slow-down - the answer to wanting the new geometry
+  // measured is to re-punch, the same answer striking a run has always had.)
+  blank(); const gone = block(6, 0); punch(gone, [3]); commit(gone);
+  W.deleteLineByIndex(4); W.reset();
+  const afterGap = flyInto(3);
+  check("19e. ... and it is CLEARED when the line that reversal turned INTO is struck - a "
+        + "measurement re-indexed is not a measurement re-taken",
+        () => W.mission().lines[3] && W.mission().lines[3].slow_turn_out === false
+              && afterGap.got === "survey",
+        "line 3's flag after striking line 4: "
+          + JSON.stringify(W.mission().lines[3] && W.mission().lines[3].slow_turn_out)
+          + "; the new wider reversal out of line 3 commands " + afterGap.got
+          + " - unflagged, as an unmeasured turn is");
+  // 19f. AND AN UN-PUNCHED PATTERN CARRIES NONE OF IT, for the same reason the leads
+  // directly above it in commitPattern do not: `turnSlowAt` is parallel to `patClip` and to
+  // nothing else. Drawn lines were never clipped and their reversals were never fitted, so
+  // a flag left over from the last punch would be a measurement of somebody else's geometry
+  // wearing this pattern's index - and it would SLOW the boat at a reversal nobody looked
+  // at while leaving the measured one fast.
+  blank();
+  const pun = block(3, 0); punch(pun, [0, 1]); commit(pun);
+  commit(block(3, 600), false);                            // drawn only: patClip is null
+  const marks = W.mission().lines.map(L => !!L.slow_turn_out);
+  check("19f. ... and an UN-PUNCHED pattern committed after a punched one carries no "
+        + "slow-turn mark at all",
+        () => marks.join(",") === "true,true,false,false,false,false",
+        "slow_turn_out down the six committed lines: " + marks.join(",")
+          + " - the punched pattern's two, then three drawn lines with none");
+}
 
 // 21. THE BUSY STATE, AND WHY IT ONLY NOW MATTERS. Measuring the corners is awaited
 // BEFORE the plan is POSTed, and a yield in a hidden tab costs about a second - so there

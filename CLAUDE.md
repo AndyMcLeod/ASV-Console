@@ -59,6 +59,41 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠ 2026-09-22 — THE SLOW-RADIUS REVERSAL WAS FLOWN AT THE PLAN SPEED in every case but
+  one.** `turnSlowAt` is written by **punch-gap** index and read by **mission-line** index —
+  `turnSeg.from` IS a `mission.lines` index — so the two agreed only for ONE pattern
+  committed onto an EMPTY plan, never re-punched, never reloaded, with no line struck off.
+  Measured end to end against the real governor, all four ways they part:
+
+  * **a second pattern** → gap 0 names line 0, so the boat was slowed at a reversal nobody
+    measured and flown at the plan speed through the one that only fitted at the slow radius
+  * **a reload, or a second console on the same survey** → `turnSlowAt` is a page-local
+    `let`, the saved plan carried no mark at all, so EVERY reversal ran at the plan speed
+    with nothing on screen to say so
+  * **a line struck off** → the flag stayed on the gap number and moved onto a different turn
+
+  It rides on the committed **line** now (`slow_turn_out` — "the reversal OUT of this line",
+  the same direction `lead_out_m` already means and the same index `turnSeg.from` already
+  is), so it is saved with the plan and re-indexed by the same append and splice that move
+  the lines. **Same lesson as `cornerSlowFor` one declaration below it: a set of indices may
+  not outlive the thing it indexes.**
+
+  **And `deleteLineByIndex` CLEARS the flag on the line above a strike** — re-indexing a
+  measurement is not re-taking it, and the new wider reversal across the gap was never
+  measured. That DROPS a slow-down, so it is not conservative in every sense; the answer to
+  wanting the new geometry measured is to re-punch, which is what striking a run has always
+  meant. Raised in review, not by a check.
+
+  `corner_slow.js` 19b–19f drive punch → commit → fly → governor through the page's OWN
+  commit statements and punchOut's OWN write, so a re-base changes what they see; 19 stays
+  as the source pin. **8 mutations, 8 killed, including the whole fix reverted.** ⚠ **19f is
+  the only thing that kills the punched gate** (a DRAWN pattern inheriting the last punch's
+  flags) — all four end-to-end drives commit a punched pattern and stayed green on it.
+
+  ⚠ `tests/survey_order.js`'s strict-mode `commitWorld` needed `turnSlowAt` declared, and
+  `tests/speed_modes.js` 5 needed three REAL line entries (a sparse-array hole is a TypeError
+  in `drawnLines`, reported as a crash).
+
 * **⚠⚠ 2026-09-22 — TWO MORE REGRESSIONS IN MY OWN SHIPPED WORK, both found by the
   adversarial pass and both worse than what they replaced.**
 

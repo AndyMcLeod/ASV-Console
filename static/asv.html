@@ -2403,7 +2403,10 @@ function speedGovernor(){
   // A TURN THE PLANNER COULD ONLY FIT AT THE SLOW RADIUS IS FLOWN AT THE SLOW SPEED. The
   // radius that made it fit is the radius the hull holds at that speed, so running it any
   // faster flies a turn the boat cannot track - which is the whole failure this and the
-  // clearance guard were written for. The flag is per-GAP, set by punchOut.
+  // clearance guard were written for. punchOut MEASURES it per-GAP; commitPattern writes it
+  // onto the committed LINE (`slow_turn_out`, the reversal OUT of this line - the same
+  // direction lead_out_m already means), because the line index is the only one the saved
+  // plan and the running boat share: `turnSeg.from` IS a mission.lines index.
   const role = speedRole();
   const gap = role === "turn" ? (turnSeg[curTurn] || {}).from : -1;
   // ⚠ THE SAME RULE ONE LEVEL OUT: a corner the hull cannot round inside the buffer is
@@ -2415,7 +2418,7 @@ function speedGovernor(){
   const sameRoute = cornerSlowFor >= 0 && (S && S.wp_total) === cornerSlowFor;
   const atCorner = sameRoute && cornerSlow.size > 0
                    && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
-  const want = ((role === "turn" && gap >= 0 && turnSlowAt[gap]) || atCorner)
+  const want = ((role === "turn" && gap >= 0 && (mission.lines[gap] || {}).slow_turn_out) || atCorner)
                ? "low" : roleSpeed(role);
   if(want === commandedSpeed) return want;
   commandedSpeed = want;
@@ -5465,10 +5468,27 @@ async function commitPattern(){
   // clipped would be an extension into water nobody looked at, wearing the same field
   // name as one that was. `patLead` is parallel to `patClip` and to nothing else.
   const leads = patClip ? patLead : null;
+  // ⚠⚠ AND THE SLOW-RADIUS FLAG RIDES WITH THE LINE, NOT WITH THE PUNCH. `turnSlowAt` is
+  // keyed by PUNCH GAP; the governor reads it by MISSION-LINE index, because `turnSeg.from`
+  // is currentLegLine's answer. Two index spaces that agree only for ONE pattern committed
+  // onto an EMPTY plan, never re-punched, never reloaded, with no line struck off. Measured,
+  // all four against the real governor: commit a second pattern and gap 0 names line 0, so
+  // the boat is slowed at a reversal nobody measured and flown at the PLAN speed through
+  // the one that only fitted at the slow radius; the saved plan carries no mark at all, so
+  // any RELOAD flies every reversal at the plan speed; and striking one line off re-indexes
+  // every later reversal, moving the flag onto a different turn.
+  //
+  // On the LINE it is persisted with the plan and re-indexed by the same append and splice
+  // that move the lines. `slow_turn_out` = "the reversal OUT of this line only fitted at the
+  // slow radius" - the same direction `lead_out_m` already means, and the same index
+  // `turnSeg.from` already is. Same lesson as cornerSlowFor, one declaration below
+  // turnSlowAt: a set of indices may not outlive the thing it indexes.
+  const slowOut = patClip ? turnSlowAt : null;
   lines.forEach((l,k)=>{
     const ld = (leads && leads[k]) || NO_LEAD;
     mission.lines.push({a:{lat:l[0].lat,lon:l[0].lon}, b:{lat:l[1].lat,lon:l[1].lon},
-                        lead_in_m: ld.in || 0, lead_out_m: ld.out || 0});
+                        lead_in_m: ld.in || 0, lead_out_m: ld.out || 0,
+                        slow_turn_out: !!(slowOut && slowOut[k])});
     mission.waypoints.push({lat:l[0].lat,lon:l[0].lon}, {lat:l[1].lat,lon:l[1].lon});
     if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
       transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
@@ -7902,6 +7922,17 @@ function deleteWaypoint(i){ const p={...mission.waypoints[i]}; mission.waypoints
   saveMission(); }
 function deleteLineByIndex(li){ const L=mission.lines[li]; if(!L) return; mission.lines.splice(li,1);
   mission.waypoints=mission.waypoints.filter(p=>!(_eqLL(p,L.a)||_eqLL(p,L.b)));  // + its endpoint waypoints
+  // ⚠ AND THE LINE ABOVE IT LOSES ITS SLOW-TURN FLAG, because the reversal that flag
+  // described no longer exists. `slow_turn_out` means "the reversal OUT of this line only
+  // fitted at the slow radius", measured at punch time against the line that FOLLOWED it -
+  // and that line has just gone. The splice re-indexes the flag correctly, which is the
+  // whole point of putting it on the line; but re-indexing a measurement is not the same
+  // as re-taking it. The new, wider reversal across the gap was never measured and is
+  // unflagged exactly as it would be today - what must not survive is a claim about a turn
+  // that is not there. Clearing DROPS a slow-down, so it is not the conservative direction
+  // in every sense: the answer to wanting the new geometry measured is to re-punch, which
+  // is the same answer striking a run has always had.
+  if(li > 0 && mission.lines[li-1]) mission.lines[li-1].slow_turn_out = false;
   saveMission(); }
 // --- interaction --------------------------------------------------------- //
 let dragging=false, last=null, downAt=null, wpDrag=null;

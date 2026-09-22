@@ -44,7 +44,7 @@
 //   governor: send every frame instead of only on change      -> 6
 //   governor: ignore the clearance override                   -> 7
 //   governor: drop the autonomous-command gate                -> 8, 8b
-//   governor: ignore the per-gap slow-turn flag               -> 5
+//   governor: ignore the committed line's slow-turn flag      -> 5
 //   governor: command a heading as well as a speed            -> 5, 6, 9
 //   governor: write the operator's setting back               -> 14
 //   roleSpeed: fall back to "survey" not the legacy key       -> 4
@@ -260,13 +260,24 @@ console.log("Speed by mode - three settings, and the console governs which one i
   // entirely produced "low" anyway and the check could not tell the two apart. It passed
   // against a governor that had never heard of the flag. The flag has to be the ONLY thing
   // that can produce "low", or this proves nothing.
+  //
+  // ⚠ AND THE FLAG LIVES ON THE COMMITTED LINE SINCE 2026-09-22, not in `turnSlowAt`. It was
+  // written by PUNCH-GAP index and read by MISSION-LINE index; the two agree only for one
+  // pattern committed onto an empty plan, never re-punched, never reloaded, with no line
+  // struck off. `turnSeg.from` IS a mission.lines index, so the flag rides on the line the
+  // reversal leaves - the same direction `lead_out_m` already means.
   const HIGHTURN = { transit: "high", turn: "survey", survey: "survey" };
-  world({ speeds: { ...HIGHTURN } }); inTurn(2); turnSlowAt[2] = true;
+  // three real committed lines, so `mission.lines[2]` is a line and not a hole in a sparse
+  // array - drawnLines maps over them and a hole is a TypeError, reported as a crash
+  const LN = (k) => ({ a: { lat: 43.0 + k * 0.001, lon: -70.5 },
+                       b: { lat: 43.0 + k * 0.001, lon: -70.4 } });
+  world({ speeds: { ...HIGHTURN }, lines: [LN(0), LN(1), LN(2)] }); inTurn(2);
+  mission.lines[2].slow_turn_out = true;
   const got = speedGovernor();
   check("5. a turn that only fitted at the slow radius is FLOWN slow",
         () => got === "low" && sent.length === 1 && sent[0].body.speed === "low",
         "operator's turn speed is '" + HIGHTURN.turn + "'; gap 2 flagged -> commanded " + got);
-  world({ speeds: { ...HIGHTURN } }); inTurn(2);            // same turn, NOT flagged
+  world({ speeds: { ...HIGHTURN }, lines: [LN(0), LN(1), LN(2)] }); inTurn(2);   // NOT flagged
   check("5b. ... and one that did not is flown at the operator's turn speed",
         () => speedGovernor() === "survey",
         "unflagged gap -> " + roleSpeed("turn") + ", the operator's own choice");
