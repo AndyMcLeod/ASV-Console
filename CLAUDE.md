@@ -59,6 +59,43 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-22 — A GO-TO CLICKED DURING THE AUTOMATIC RE-EXTRACT DROVE STRAIGHT AT AN
+  ISLAND.** `refreshNogo` returned at once while one was in flight, so `ensureNogoCovers`
+  and `ensureNogoArea` handed their callers the PREVIOUS box's `nogo.ready` as coverage of
+  water nobody had fetched — and outside the extract the keep-out model is EMPTY, which
+  reads as **clear** rather than as unknown. The console re-extracts by itself once the boat
+  has run 3 km from the last centre, so the window opens several times an hour with nothing
+  on screen. Driven end to end:
+
+  ```
+  during the window : ensureNogoCovers -> true, 0 fetches, plan DIRECT, 0.0 m off the line
+  a second later    : ensureNogoCovers -> true, 1 fetch,  plan ROUTED, 616.7 m detour
+  ```
+
+  Callers **queue** now — wait for the extract in flight, then do your own, so the box the
+  caller asked for is the box that lands. `while`, not `if`: several waiters wake in the
+  same turn. **This also cures H36**, which is the same fault seen from the survey side
+  (`ensureNogoArea` returned ok with the OLD area's features and punchOut clipped against
+  them) — measured against master to confirm, and H36's proposed bounded polling loop is
+  therefore **not** wanted; it would be a second, weaker mechanism for the same thing.
+  `tests/nogo_readout.js` 19–19f.
+
+  **7 mutations, 6 killed, and the 7th is recorded rather than claimed.** Two are worth
+  keeping in mind: *"the deadlock stop dropped"* is caught by the suite **hanging** (the
+  hook scores that TIMED OUT), and *"the finally never settles the waiters"* is caught by a
+  **new guard**, not by a check — see below. The survivor is `&& bboxContains(...)` on the
+  two returns: with the queue in place nothing can reach a state where they disagree, and
+  reverting it alone leaves everything green. Kept as defence in depth, in the same spirit
+  as `edgeAround`'s astern test, and the suite says so in as many words.
+
+  **⚠⚠ AND A SUITE THAT STOPS RUNNING ITS CHECKS WAS EXITING 0.** The checks live in an
+  async IIFE; an await that never settles does not crash node — it runs out of work and the
+  process exits **cleanly, mid-suite, printing no summary**, which a runner reading the exit
+  code scores as PASSED. Found by mutation: dropping `settle()` left three waiters suspended,
+  checks 19–19c never ran, and the mutant came back SURVIVED. `tests/nogo_readout.js` now
+  fails on `process.on("exit")` if the summary was never reached. **Every suite with a
+  trailing async IIFE has this hole** — worth the same guard.
+
 * **2026-09-22 — THE ROC CARD SHOWED VALUES THE SERVER NEVER TOOK.** Two halves, both
   client-side:
 

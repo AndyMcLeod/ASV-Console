@@ -5791,12 +5791,33 @@ function applyWaterOffset(wl){
   if(nogo.features && nogo.features.length && nogo.builtOffset != null
      && Math.abs(sea.waterOffset - nogo.builtOffset) >= TIDE_REBUILD_M - 1e-9) rebuildNogo();
 }
+// The extract in flight, so a caller that arrives mid-fetch can WAIT for it rather than be
+// told "done". Settled in refreshNogo's own `finally`, on every path including the throw.
+let nogoPending = null;
 async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
-  if(nogo.busy) return;
+  // ⚠⚠ AN EXTRACT IN FLIGHT IS SOMETHING TO WAIT FOR, NOT A REASON TO REPORT "DONE". This
+  // used to `return` at once, which left ensureNogoCovers / ensureNogoArea handing their
+  // callers the PREVIOUS box's `nogo.ready` as coverage of water nobody had fetched. And
+  // OUTSIDE the extract the keep-out model is EMPTY, which reads as CLEAR rather than as
+  // unknown - so a Go-To clicked during the automatic re-extract planned a straight line
+  // through charted land, with no banner at all, and the identical click a second later
+  // detoured 616 m round the same island. resetForNewArea already knew this and waited it
+  // out by hand (its own comment calls the window a hazard); the plan paths never did.
+  //
+  // Queue instead: wait for the extract that is running, THEN do our own, so the box this
+  // caller asked for is the box that lands. `while`, not `if`, because several waiters wake
+  // in the same turn and the first one through sets `busy` again before it yields. The
+  // `&& nogoPending` is the deadlock stop: if `busy` were ever left standing with nothing in
+  // flight - a throw above the try - this proceeds rather than spinning for ever.
+  while(nogo.busy && nogoPending) await nogoPending;
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
   const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
   nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter
   updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
+  // CLAIMED ON THE LAST LINE BEFORE THE `try`, so it is claimed if and only if the `finally`
+  // below will release it. A throw in updateNogoUI / nogoStatus already stranded `busy` at
+  // true; it must not also strand a waiter on a promise nobody settles.
+  let settle; nogoPending = new Promise(r => settle = r);
   try{
     const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M);
     if(!d || !d.band){
@@ -5824,6 +5845,10 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
   }catch(e){ nogo.busy=false; nogo.ready=false;
     nogo.note = "chart read failed: "+e;          // say WHY, don't leave the previous note standing
     updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); }
+  // EVERY path releases the waiters - the early no-coverage return, the throw and the
+  // success - because a FAILED extract must end a waiting Go-To in the ordinary refusal,
+  // never in an await that never returns.
+  finally { settle(); nogoPending = null; }
 }
 function nogoStatus(t){ showBanner(t); }
 function nogoReadout(){
@@ -7149,7 +7174,10 @@ async function ensureNogoArea(){
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:(b.S+b.N)/2,lon:(b.W+b.E)/2}, fb);
   if(nogo.ready) await ensureChartInk(b);   // the survey's own water, before it is punched
-  return nogo.ready;
+  // ⚠ THE ANSWER IS ABOUT THIS SURVEY'S WATER, not about whether a model exists at all.
+  // `nogo.ready` on its own was TRUE for a box this area sits OUTSIDE of, and punchOut acts
+  // on this return.
+  return nogo.ready && bboxContains(nogo.bbox, b);
 }
 // COVERAGE FIX: make sure the nogo model covers a set of lat/lon points (the boat +
 // a Go-To / RTH / Transit target that may lie OUTSIDE the ~5 km operating box)
@@ -7174,7 +7202,10 @@ async function ensureNogoCovers(pts, padM){
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb);
   if(nogo.ready) await ensureChartInk(b);
-  return nogo.ready;
+  // ⚠ THE ANSWER IS ABOUT THIS PLAN'S WATER, not about whether a model exists at all.
+  // `nogo.ready` on its own was TRUE while nogo.bbox was a box the TARGET sat outside of,
+  // which is how a Go-To 9.8 km away was planned straight through a charted island.
+  return nogo.ready && bboxContains(nogo.bbox, b);
 }
 /**
  * Push `from` OUTWARD along the line, away from `toward`, by up to `want` metres of
