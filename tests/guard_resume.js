@@ -190,7 +190,7 @@ function guiConfirm() { confirmAsked++; return Promise.resolve(confirmAnswer); }
 globalThis.window = globalThis;
 globalThis.fetch = (p, o) => {
   try { logged.push(JSON.parse(o.body)); } catch (e) { /* not a logevent */ }
-  return Promise.resolve({ json: () => Promise.resolve({}) });
+  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
 };
 // Commands are RECORDED, not stubbed to nothing, so a check can say WHAT was sent and in
 // what order rather than only that something was. `refuse` drives the refusal branch.
@@ -203,7 +203,16 @@ function cmd(p, b) {
   // command changes nothing the suite can see - the mutation survives and the check is
   // decoration. Here the index really moves, so a late capture really reads the wrong one.
   if (p === "/api/cmd/hold") window._wpIndex = 0;
-  return Promise.resolve(refuse && refuse === p ? { error: "ARM before uploading a plan" } : {});
+  // ⚠ THE SUCCESS FIXTURE USED TO BE A BARE {} - the one answer that has neither
+  // `ok` nor `error`, and therefore the one this suite could not tell from a failure.
+  // That is not a detail: it is WHY the page carried two failure-shaped tests for so
+  // long. The fixtures agreed with the bug, so every mutation of it survived here.
+  // cmd() answers {ok:true, state:{...}} on success and {ok:false, error, sent, refused}
+  // on every failure; a stub that answers anything else is testing a console that does
+  // not exist.
+  return Promise.resolve(refuse && refuse === p
+    ? { ok: false, error: "ARM before uploading a plan", sent: true, refused: true }
+    : { ok: true, state: {} });
 }
 
 // A minimal DOM, only as wide as the guard bar. renderGuardBar writes text and display, and
@@ -254,7 +263,8 @@ eval([
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
-  grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
+  // took() is the page's ONE test for "did the command land?", carried across verbatim.
+  grab("took"), grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),

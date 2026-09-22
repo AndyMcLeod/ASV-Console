@@ -71,8 +71,35 @@
 // the check's own detail line was stating something false. The answer that genuinely has no
 // `ok` AND no `error` is a 200 whose body will not parse, which cmd() maps to {}.
 //
-// ⚠ CHECK 2 WAITS THE REAL BOUND, once, which is why this suite takes about fifteen
-// seconds. A bound tested by mocking the clock is a bound nobody runs.
+// TEETH, SECOND ROUND (2026-09-22, checks 15-19) - fourteen more mutations against a
+// sidecar, CONTROL RUN AND READ FIRST across ten suites:
+//   cmd(): the unreadable arm deleted (a bare {} again)             -> 15, 15b
+//   cmd(): an unreadable answer reported as a REFUSAL               -> 6, 15, 15b
+//   cmd(): the unreadable flag never set                            -> 15, 15b
+//   cmd(): the unreadable arm placed BEFORE the status arm          -> 19   (SEE BELOW)
+//   took(): the r.error spelling, page-wide                         -> 17, guard_resume 15b
+//   took(): the ok===false spelling, page-wide                      -> 17
+//   took(): always true (every gate on the page open)               -> 3, 3b, 4, 4b, 5, 6, 8,
+//                                                                      9, pause_resume 12c,
+//                                                                      guard_resume 14/15b/21
+//   notTookSay(): a view-only tab speaks about the boat             -> 5, 18
+//   notTookSay(): a lost reply called a refusal                     -> 4, 6, 18
+//   resumeRun: the LOW gate open again                              -> pause_resume 12c
+//   the guard's deviation amend gated on r.error again              -> 17
+//   the held-survey upload gate open                                -> guard_resume 14
+//   doSetHome's gate open                                           -> measure_tool 15b3
+//   doSpawn's gate open (a refused spawn loses the trail)           -> spawn_trail 10
+//
+// ⚠⚠ ONE OF THOSE FOURTEEN SURVIVED THE FIRST SWEEP AND CHECK 19 EXISTS BECAUSE OF IT.
+// Putting cmd()'s `unreadable` arm BEFORE its status arm turns a refusal whose body also
+// failed to parse into a "not acknowledged" - and `refused` is the only answer permitted to
+// retract the end-of-plan return, so the promise would stand for a boat the console had
+// just been told to leave where she is. Nothing in ten suites went red. A survivor that is
+// not INERT is a missing check, not an acceptable result: read the table's other axis.
+//
+// ⚠ CHECKS 2 AND 15b EACH WAIT THE REAL BOUND, which is why this suite takes about thirty
+// seconds. A bound tested by mocking the clock is a bound nobody runs - and 15b exists
+// because the bound shipped on 2026-09-22 covered only HALF of what it was for.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -123,7 +150,7 @@ function check(name, cond, detail) {
 // await that never settles does not crash node - it just ends the process quietly with the
 // remaining checks never run, which a mutation sweep scores as SURVIVED. Seen once already
 // in this repo, so the floor is asserted rather than assumed.
-const EXPECTED = 17;
+const EXPECTED = 23;
 let finished = false;
 process.on("exit", (code) => {
   if (!finished && !code) {
@@ -171,7 +198,7 @@ const PRELUDE = [
   "const setMode = () => {};",
 ].join("\n");
 
-const EPILOGUE = "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner,"
+const EPILOGUE = "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay,"
   + " after: () => ({runRoute, planIntent, rthChainFailed,"
   + " guard: {guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant}})};";
 
@@ -196,10 +223,28 @@ function world(opts) {
       });
     }
     if (o.reply === "throw") return Promise.reject(new Error("failed to fetch"));
+    // Headers arrive, the BODY never finishes: the abort is then raised by r.json(), which
+    // is inside cmd()'s try and behind its own catch. That is the half the 15 s bound did
+    // not cover until check 15b was written.
+    if (o.reply === "hangBody") {
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => new Promise((_res, rej) => {
+          if (init && init.signal) init.signal.addEventListener("abort", () => {
+            out.aborts++;
+            const e = new Error("aborted"); e.name = "AbortError"; rej(e);
+          });
+        }) });
+    }
     // A 200 whose body is not the console's JSON - a captive portal, a proxy error page.
     // cmd() maps it to {} (its json() catch), so there is no `ok` AND no `error`.
     if (o.reply === "junk") {
       return Promise.resolve({ ok: true, status: 200,
+        json: async () => { throw new Error("Unexpected token < in JSON"); } });
+    }
+    // A REFUSAL whose body is also unreadable - a proxy answering 409 with an HTML page, or
+    // the console cut off mid-reason. The status still says she refused.
+    if (o.reply === "refuseJunk") {
+      return Promise.resolve({ ok: false, status: 409,
         json: async () => { throw new Error("Unexpected token < in JSON"); } });
     }
     if (o.reply === "refuse") {
@@ -223,6 +268,10 @@ function world(opts) {
                            PRELUDE + "\n"
                            + grabDecl("SUPERVISOR_ANY") + "\n"
                            + grabDecl("CMD_TIMEOUT_MS") + "\n"
+                           // took() and notTookSay() are the page's ONE success test and
+                           // its operator wording. They come across verbatim, so a change
+                           // to either is a change here rather than a copy that can drift.
+                           + grab("took") + "\n" + grab("notTookSay") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"
                            + grab("showBanner") + "\n" + grab("takeDownBanner") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
@@ -486,6 +535,139 @@ console.log("\n-- 12-14: the three fields are load-bearing, so each is pinned --
         && /clearTimeout\(killer\)/.test(c),
         "an unbounded POST behind an await is the failure this page already fixed once in "
           + "refreshNogo - and it takes the operator's RTH with it");
+}
+
+console.log("\n-- 15-18: an unreadable answer is an answer, and there is ONE test for it --");
+
+// 15. A 2xx THE CONSOLE COULD NOT READ. cmd() maps an unparseable body to {} so it does not
+// throw - and a bare {} has neither `ok` nor `error`, which made it the one answer that
+// satisfied BOTH of the failure-shaped tests this page used to carry. It was filed in the
+// action history as a command TAKEN and the operator was told nothing at all.
+{
+  const w = world({ reply: "junk" });
+  const r = await w.cmd("/api/cmd/rth", {});
+  const taken = w.out.recorded.filter((x) => x[0] === "cmd").length;
+  check("15. a 2xx whose body will not parse comes back as NOT ACKNOWLEDGED, not as a bare {}",
+        r && r.ok === false && r.sent === true && r.refused === false && !!r.error
+        && taken === 0 && w.out.notes.length === 1,
+        "cmd() returned " + JSON.stringify(r).slice(0, 96) + "; history rows filed as taken: "
+          + taken + "; operator told " + w.out.notes.length + " time(s). As a bare {} this was "
+          + "a silent success at every call site on the page");
+}
+
+// 15b. ⚠ AND THE SAME ARM CATCHES THE BOUND FIRING LATE, which is the half the 15 s timeout
+// added on 2026-09-22 did NOT cover and is the reason this check exists. When the console
+// answers with headers and then stalls mid-body, the AbortError is raised by `r.json()` -
+// inside cmd()'s try and behind its catch - so the abort never reached the catch arm that
+// reports it. Measured on the shipped page at 15005 ms: {} returned, "cmd | Return home"
+// written to the history as taken, and not one word to the operator.
+//
+// ⚠ THIS WAITS THE REAL BOUND, a second time, which is what takes this suite to ~30 s. A
+// bound whose own failure mode is tested with a mocked clock is not tested.
+{
+  const w = world({ reply: "hangBody" });
+  const bound = +(/const CMD_TIMEOUT_MS = (\d+);/.exec(H) || [])[1];
+  const t0 = Date.now();
+  const r = await w.cmd("/api/cmd/rth", {});
+  const waited = Date.now() - t0;
+  const taken = w.out.recorded.filter((x) => x[0] === "cmd").length;
+  check("15b. ... and so does a console that answers, then stalls mid-body - the bound's own "
+        + "timeout is reportable",
+        r && r.ok === false && r.sent === true && r.refused === false
+        && taken === 0 && w.out.notes.length === 1
+        && waited >= bound - 500 && waited < bound + 5000,
+        "returned after " + waited + " ms against a bound of " + bound + " ms as "
+          + JSON.stringify(r && r.error) + "; filed as taken: " + taken
+          + ". Before this arm the same stall returned {} and wrote a 'cmd' row");
+}
+
+// 16. AND A SUCCESS IS STILL A SUCCESS. 15/15b would both pass against a cmd() that called
+// every answer unreadable, which would refuse every command on the page.
+{
+  const w = world({});
+  const r = await w.cmd("/api/cmd/rth", {});
+  check("16. ... while a readable 200 is untouched: it is still the server's own body",
+        r && r.ok === true && r.state && r.state.behavior === "rth"
+        && w.out.recorded.filter((x) => x[0] === "cmd").length === 1,
+        "cmd() returned the console's body with ok " + (r && r.ok)
+          + " and filed one 'cmd' row, as it always did");
+}
+
+// 17. ONE SPELLING, counted in the page's own source. The page carried FOUR textual forms of
+// this single question and two of them were wrong on the answer 15 produces. The count is
+// the check: a new call site that invents a fifth is what this is here to catch, and it is
+// exactly how the two wrong ones arrived - a new site copies whichever neighbour it can see.
+{
+  // ⚠ COMMENTS ARE NOT CODE, and this check first went red on its own explanation of
+  // itself - and on a note at :3268 describing the very bug it guards. Line comments are
+  // stripped before matching. A spelling buried in a TRAILING comment on a line of real
+  // code would still be missed; that is the accepted limit and it cannot hide a live call
+  // site, because a live call site is code.
+  const CODE = H.split("\n").map((l) => (/^\s*\/\//.test(l) ? "" : l)).join("\n");
+  const wrong = [
+    [/\.ok === false/g, "r.ok === false"],
+    [/\.ok !== false/g, "r.ok !== false"],
+    [/if\(\s*\w+ && \w+\.error\s*\)/g, "if(r && r.error)"],
+    [/if\(!\w+ \|\| !\w+\.ok\)/g, "if(!r || !r.ok)"],
+    [/if\(!\(\w+ && \w+\.ok\)\)/g, "if(!(r && r.ok))"],
+  ];
+  const found = [];
+  for (const [re, name] of wrong) {
+    const n = (CODE.match(re) || []).length;
+    if (n) found.push(name + " x" + n);
+  }
+  const tookCalls = (CODE.match(/took\(/g) || []).length;
+  check("17. the page asks \"did the command land?\" exactly one way, and it is the named one",
+        found.length === 0 && tookCalls >= 14
+        && /function took\(r\)\{ return !!\(r && r\.ok\); \}/.test(CODE),
+        found.length ? "a hand-written spelling is back in CODE: " + found.join(", ")
+                     : tookCalls + " call sites, all through took(). The two forms this "
+                       + "replaced both read an unreadable 2xx as a command taken");
+}
+
+// 18. THE WORDING IS BOUND TO THE ANSWER, not to the failure. notTookSay is the one place
+// that turns cmd()'s three answers into a sentence, and the distinction it carries is the
+// one a plain "refused" destroys: a console that got no reply has established nothing, and
+// a tab that never posted has established less than nothing.
+{
+  const lost = { ok: false, error: "network error", sent: true, refused: false };
+  const refused = { ok: false, error: "ARM before commanding the boat", sent: true, refused: true };
+  const viewOnly = { ok: false, error: "this tab is VIEW ONLY", sent: false, refused: false };
+  const W = world({});
+  check("18. a REFUSAL, a LOST reply and a tab that never asked produce three different "
+        + "sentences - and the third is no sentence at all",
+        /^RTH REFUSED: ARM before/.test(W.notTookSay(refused, "RTH"))
+        && /^RTH NOT ACKNOWLEDGED/.test(W.notTookSay(lost, "RTH"))
+        && /cannot tell whether she received it/.test(W.notTookSay(lost, "RTH"))
+        && W.notTookSay(viewOnly, "RTH") === null,
+        "refused -> " + JSON.stringify((W.notTookSay(refused, "RTH") || "").slice(0, 34))
+          + "; lost -> " + JSON.stringify((W.notTookSay(lost, "RTH") || "").slice(0, 34))
+          + "; view-only -> " + JSON.stringify(W.notTookSay(viewOnly, "RTH")));
+}
+
+// 19. ⚠ THE ORDER OF cmd()'s TWO FAILURE ARMS IS LOAD-BEARING, and nothing held it: a
+// mutation that tests `unreadable` BEFORE the status survived the whole sweep. A refusal
+// whose BODY is also unreadable - a proxy answering 409 with an HTML page, the console cut
+// off mid-reason - is still a refusal, and the status is what says so. Read the other way
+// round it becomes "not acknowledged", which is not a cosmetic difference: `refused` is the
+// only answer allowed to retract the end-of-plan return, so the promise would stand for a
+// boat the console had just been told to leave where she is.
+//
+// cmd() synthesizes the reason from the status when the body cannot supply one, which is
+// why this stays a refusal WITH something to say rather than a refusal with an empty mouth.
+{
+  const w = world({ reply: "refuseJunk" });
+  const r = await w.cmd("/api/cmd/rth", {});
+  const wc = world({ reply: "refuseJunk" });
+  await wc.doRTH({ chained: true });
+  check("19. a REFUSAL whose body will not parse is still a REFUSAL, and still retracts the "
+        + "end-of-plan promise",
+        r && r.ok === false && r.refused === true && r.sent === true
+        && /409/.test(r.error || "") && wc.after().rthChainFailed === true,
+        "409 + unreadable body -> refused " + (r && r.refused) + ", reason "
+          + JSON.stringify(r && r.error) + "; chained RTH retracted "
+          + wc.after().rthChainFailed + ". Testing `unreadable` first turns this into a "
+          + "not-acknowledged and the promise stands");
 }
 
 finished = true;

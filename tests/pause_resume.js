@@ -112,7 +112,15 @@ function fmtDist(m) { return Math.round(m) + " m"; }
 // The governor issues real commands. Recorded rather than stubbed to nothing, so the checks
 // below can say WHAT was commanded instead of only that something was.
 var sent = [];
-function cmd(p, b) { sent.push({ p, speed: b && b.speed }); return Promise.resolve({}); }
+// ⚠ THE SUCCESS FIXTURE USED TO BE A BARE {} - the one answer that has neither
+// `ok` nor `error`, and therefore the one this suite could not tell from a failure.
+// That is not a detail: it is WHY the page carried two failure-shaped tests for so
+// long. The fixtures agreed with the bug, so every mutation of it survived here.
+// cmd() answers {ok:true, state:{...}} on success and {ok:false, error, sent, refused}
+// on every failure; a stub that answers anything else is testing a console that does
+// not exist.
+function cmd(p, b) { sent.push({ p, speed: b && b.speed });
+                     return Promise.resolve({ ok: true, state: {} }); }
 
 // The rest of the world resumeRun touches. Recorded where a check needs to read it back,
 // inert where it does not — but never absent, because a missing global turns a mutation's
@@ -121,7 +129,8 @@ var planIntent = { why: [] }, notes = [];
 function flashNote(m) { notes.push(m); }
 function updateMissionCard() {}
 function render() {}
-globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({}) });
+globalThis.fetch = () => Promise.resolve({ ok: true, status: 200,
+                                           json: () => Promise.resolve({ ok: true }) });
 // THE REAL keep-out check, not a stub: check 12 is about the console asking the chart, and
 // a stub would make it a test of the stub. `nogo` is swapped between an empty model and a
 // blocking one to drive both branches.
@@ -148,7 +157,9 @@ eval([
   // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
   "let cornerSlow = new Set();",
   "let cornerSlowFor = -1;",
-  grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
+  // took() is the page's ONE test for "did the command land?" - carried across rather
+  // than restated, so a change to it is a change here.
+  grab("took"), grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
   "function __resumeSlow(){ return resumeSlow; }",
@@ -355,8 +366,10 @@ async function drive(ko) {
 function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                      if (p === "/api/cmd/amend") globalThis.__lastRoute = b && b.route;
                      // 12c: a command the console must NOT assume worked (review #6)
-                     if (p === globalThis.__failPath) return Promise.resolve({ ok: false, error: "simulated refusal" });
-                     return Promise.resolve({}); }
+                     if (p === globalThis.__failPath)
+                       return Promise.resolve({ ok: false, error: "simulated refusal",
+                                                sent: true, refused: true });
+                     return Promise.resolve({ ok: true, state: {} }); }
 
 (async () => {
   const back = 12 * 7.71;

@@ -483,9 +483,14 @@ check("15b2 ... and the chosen point is CHECKED against the keep-out model, then
 // announces "Home set" for a command the server never saw. Test for the POSITIVE signal -
 // the server answers {ok:true} and nothing else does. Same family as the extract widening
 // two checks up: in both, the absence of bad news was being read as good news.
+// ⚠ ANCHORED ON THE NAMED TEST, NOT ON A SPELLING OF IT. This pinned the literal
+// `if(!(r && r.ok)) return;` - one of the FOUR textual forms the page carried for the
+// same question, two of which were wrong on an answer with neither field. Naming the
+// test (took(), 2026-09-22) is what stops a new call site copying the wrong neighbor,
+// and a check pinned to one spelling would have made that repair look like a regression.
 check("15b3 ... and it confirms Home only on the server's OWN ok, never on silence",
-  () => /if\(!\(r && r\.ok\)\)\s*return;/.test(SETHOME_SRC)
-    && SETHOME_SRC.indexOf("r.ok") < SETHOME_SRC.indexOf("Home set at the chosen point"),
+  () => /if\(!took\(r\)\)\s*return;/.test(SETHOME_SRC)
+    && SETHOME_SRC.indexOf("took(r)") < SETHOME_SRC.indexOf("Home set at the chosen point"),
   () => (SETHOME_SRC.match(/if\(![^\n]*\)\s*return;/) || ["<no success guard>"])[0]);
 
 // Andy moved all three off the command bar. A button left behind is a SECOND path to a

@@ -242,11 +242,16 @@ check("9b. a frame carrying no boot id at all clears nothing",
 
 // --- 10-11. the call sites ------------------------------------------------ //
 const DOSPAWN = code(grab("doSpawn"));
+// ⚠ ANCHORED ON THE NAMED TEST, NOT ON A SPELLING OF IT. This pinned the literal
+// `if(!r || !r.ok) return;`, which was a FOURTH textual form of a question the page
+// asked four different ways - two of them wrong on an answer carrying neither field.
+// Since 2026-09-22 there is one: took(r). A check anchored to a spelling makes the
+// repair that removes the spelling look like the regression.
 check("10. a REFUSED spawn throws nothing away - doSpawn clears only past the ok gate",
-      () => { const gate = DOSPAWN.indexOf("if(!r || !r.ok) return;");
+      () => { const gate = DOSPAWN.indexOf("if(!took(r)) return;");
               const clr  = DOSPAWN.indexOf("clearTrack()");
               return gate >= 0 && clr > gate; },
-      () => "gate@" + DOSPAWN.indexOf("if(!r || !r.ok) return;") +
+      () => "gate@" + DOSPAWN.indexOf("if(!took(r)) return;") +
             " clearTrack@" + DOSPAWN.indexOf("clearTrack()"));
 
 const RFNA = code(grab("resetForNewArea"));

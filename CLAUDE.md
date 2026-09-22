@@ -59,6 +59,89 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠⚠ 2026-09-22 — NEXT, AND IT IS ALREADY REPRODUCED AGAINST A LIVE CONSOLE: the SIX
+  commands whose answer is never read at all.** Four agents measured them; the evidence is
+  below and it is stronger than the reading that produced it. **Two shapes, and they need
+  OPPOSITE repairs — do not unify them:**
+
+  * **SHAPE A — claim first, then post.** Fix by RETRACTING in a `.then`, **not** by
+    awaiting: `clearanceGuard()` is synchronous and returns a value to a 4 Hz caller
+    (`asv.html:10809`), so a rung cannot await. The amend rung at `:2065` already
+    established the idiom and states it — *"`guardEdgeAt` stays set above, because while the
+    POST is genuinely outstanding the gate is right; the fix is only that it must not
+    outlive a refusal."*
+    * **`:2312` the IN-EXTREMIS ESCAPE rung — HIGH, and the worst thing found this session.**
+      It overwrites `runRoute` with the single escape point **before** the post. `guardTrack`
+      slices `runRoute` at `window._wpIndex`, so with **wp_index 0** — measured as a real
+      state: a 1-waypoint Go-To reports 0 for its *entire* run, a 5-waypoint transit for its
+      first 14.1 s — the phantom route points AWAY from the hazard. **The ladder drops
+      helm→CLEAR on the next frame and announces "Clear ahead again (13.0 m)" 4 s later,
+      with the boat unmoved, 13 m off the pier and 2 kn of set onto it.** The refusal
+      *silences the alarm*. And the 6 s retry that would have saved it (`GUARD_REASSESS_MS`)
+      fires **once instead of five times** — measured against a control that put `runRoute`
+      back each frame. **The rung destroys its own mitigation.**
+      ⚠ **No refusal is even needed**: a lost reply does the same, because the rung reads
+      nothing and all of it happens synchronously before any answer exists.
+    * **`:2220` the guard's HOLD rung — MEDIUM.** `holdUntaken` re-issues after 2 s and
+      `markGuardHeld` never destroys what it cannot replace, so the survey record is
+      self-repairing. What it does cost: `slowLieu = null` at `:2210` kills the
+      slow-in-lieu re-offer while `clearance.slowed` stays true, so **after a refused hold
+      the guard owns the throttle without having taken the way off.**
+
+  * **SHAPE B — clear the drawn plan, then post.** Fix by POSTING FIRST and clearing only
+    past the gate. `doSpawn` at `:10490` already does exactly this and says why.
+    Sites: `:10451` `#b_hold`, `:10227` `#b_stop`, `:9952` the empty upload (weakest — its
+    window is "station-keeping at the end of a commanded motion", not "flying the plan").
+    ⚠ **`renderIntent` makes it worse than a blank chart**: with `runRoute` null it falls
+    back to `mission.waypoints` and prints two FALSE sentences — *"route not held by this
+    page"* and *"this plan was committed before this page was loaded"* — seconds after this
+    page uploaded it.
+    ⚠⚠ **`:10469` `#b_estop` MUST NOT GET THE UNIFORM REPAIR.** `Engine.set_estop`
+    (`asv_console.py:4646`) latches estop, disarms and sets `run="idle"` on the console
+    **and then** raises — so the 409 is precisely the case where the console HAS latched.
+    Measured: state after the 409 was `estop=true, armed=false, run=idle`.
+
+  * **`:10078` `#b_start`** posts unchecked while the other two start sites (`:10202`,
+    `:10385`) both read the reply.
+
+  **FOUND IN PASSING, EACH ITS OWN DEFECT — do not fold them into the above:**
+  * **`escapeThrottle` outlives its EPISODE and lasts the rest of the RUN**, and the code's
+    own comment at `:2289` ("until this episode ends") is **wrong**. The guard's clear branch
+    at `:1979` resets five other per-episode variables and not this one; its only clearers
+    are `setRoleSpeed`, `#b_start` and `#b_stop`. Measured: 55 s of clear water, still true,
+    governor issuing nothing. A successful escape recovered with a Go-To leaves it set too.
+  * The escape rung's unchecked `commandSpeed("high")` leaves `speedWant` set, so
+    `speedReconcile` re-sends and raises **"⚠ THE VESSEL IS NOT TAKING THE SPEED COMMAND"**,
+    which — banners being sticky and last-write-wins — **replaces the false IN EXTREMIS
+    banner without ever saying the escape failed.**
+
+* **⚠ 2026-09-22 — THE PAGE ASKED "DID THE COMMAND LAND?" FOUR WAYS, AND TWO WERE WRONG.**
+  `if(r && r.error)` (3 sites) and `if(!r || r.ok === false || r.error)` (5 sites) both read
+  an answer carrying **neither** field as a command TAKEN. One spelling now: **`took(r)`**,
+  16 call sites, zero hand-written forms left in code.
+
+  **⚠⚠ AND `cmd()` PRODUCED THAT ANSWER TWO WAYS — one of them a defect shipped in
+  `08c353edd` the day before.** The 15 s bound covered only an abort landing BEFORE the
+  response headers. When the console answers and then stalls mid-body, the `AbortError` is
+  raised by `r.json()` — inside `cmd()`'s own try, behind its own catch. **Measured at
+  15005 ms: `{}` returned, "cmd | Return home" filed in the action history as a command
+  TAKEN, operator told nothing.** A bound is only a bound if its own timeout is reportable.
+  An unreadable 2xx is now `sent:true, refused:false`, and the bare `{}` is unproducible.
+
+  **⚠⚠ THREE TEST FIXTURES ANSWERED A BARE `{}` AS SUCCESS** — `guard_resume:206`,
+  `pause_resume:115` and `:359`. That is the answer that cannot be told from a failure, so
+  those suites were calibrated to the WRONG idiom and **every mutation of the two bad
+  spellings survived them.** Fixing the page turned all three red for the first time.
+  **When a wrong idiom survives in a repo with 95 suites, look at what the fixtures answer.**
+
+  ⚠ `measure_tool` 15b3 and `spawn_trail` 10 pinned the gate by one of its *spellings*; both
+  re-anchored on the named test. A check anchored to a spelling makes the repair that
+  removes the spelling look like the regression.
+
+  `notTookSay()` also killed a live falsehood: `resumeRun` printed **"Start was refused
+  (network error)"** for a reply that was never refused, and "She is still paused" about a
+  boat that may be running. `command_result.js` 15-18.
+
 * **⚠⚠ 2026-09-22 — NEXT UP, AND IT IS THE REST OF THE SAME DEFECT: SIX MORE UNCHECKED
   COMMANDS, two of them on the guard's own rungs.** Found by the adversarial pass over the
   H18 plan, not by a check. H18 fixed the three functions that command a MOTION and draw a

@@ -2065,9 +2065,10 @@ function clearanceGuard(){
       cmd("/api/cmd/amend", {route: tail,
           note: "Deviation: " + edgeText(a.edge) + " to keep clear of "
                 + (c.kind || "a keep-out") + "."}).then(r => {
-        if(r && r.error){
+        if(!took(r)){
           guardEdgeAt = 0;   // nothing is in flight: the slow and hold rungs run next frame
-          flashNote("Deviation REFUSED (" + r.error + ") — the plan is unchanged; the guard "
+          flashNote("Deviation " + (r && r.refused ? "REFUSED" : "NOT ACKNOWLEDGED") + " ("
+                    + ((r && r.error) || "no answer") + ") — the plan is unchanged; the guard "
                     + "will slow or stop her instead.");
           return;
         }
@@ -2577,7 +2578,7 @@ function renderIntent(){
   }
   // WAYPOINT DENSITY. The single most useful number for "the path looks odd": a plan whose
   // points sit metres apart is a resampled smooth track, and its bearings will swing wildly
-  // between neighbours without the boat doing anything strange. Reported so the operator
+  // between neighbors without the boat doing anything strange. Reported so the operator
   // can tell that apart from a genuinely erratic route.
   if(rr.length > 2 && here){
     let gaps = 0, n = 0;
@@ -4858,7 +4859,7 @@ function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() 
  * A metre of tolerance. The runs are rebuilt deterministically from the same corners and
  * the same chart, so an untouched plan reproduces its midpoints exactly; the tolerance
  * only stops floating point resurrecting a struck run. It is far below any usable line
- * spacing, so it can never reach a neighbour.
+ * spacing, so it can never reach a neighbor.
  */
 function keptRuns(runs){
   const struck = activeStruck();
@@ -6041,12 +6042,10 @@ async function doGoTo(target){
   // earlier state frame, and this function has spent the extract since. See doRTH.
   const r = await cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
                         coast_from_m: gCoast ? gCoast.groundM : null});
-  if(!(r && r.ok)){
-    if(r && r.sent === false) takeDownBanner(/^Routing to the point/);
-    else showBanner((r && r.refused ? "GO-TO REFUSED: " + r.error : "GO-TO NOT ACKNOWLEDGED: "
-        + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
-        + "whether she received it; watch the behavior readout")
-      + " — the boat is still on her previous plan.");
+  if(!took(r)){
+    const say = notTookSay(r, "GO-TO");
+    if(!say) takeDownBanner(/^Routing to the point/);
+    else showBanner(say + " - the boat is still on her previous plan.");
     render(); return;
   }
   plan.coast = gCoast;
@@ -6085,7 +6084,7 @@ async function doSetHome(ll){
   // flashed it), so `if(r.error)` would fall straight through and announce "Home set" for a
   // command that never landed — the same "silence reads as approval" shape the extract
   // widening above exists for. The server answers {ok:true} and nothing else does.
-  if(!(r && r.ok)) return;                         // cmd() already surfaced the reason; saying
+  if(!took(r)) return;                             // cmd() already surfaced the reason; saying
                                                     // it twice is the tide-note defect again
   let warn = "";
   if(!nogo.ready) warn = "the keep-out model is not loaded, so it was not checked";
@@ -6106,12 +6105,10 @@ async function doRTH(opts){
   if(!S.home){ flashNote("No home set (no GPS fix yet)."); if(chained) rthChainFailed=true; return; }
   if(!asv){                                       // no fix: let the server drive direct
     const r0 = await cmd("/api/cmd/rth");         // ...but still find out whether it landed
-    if(!(r0 && r0.ok)){
+    if(!took(r0)){
       if(chained && r0 && r0.refused) rthChainFailed = true;
-      if(!(r0 && r0.sent === false))
-        showBanner((r0 && r0.refused ? "RTH REFUSED: " + r0.error : "RTH NOT ACKNOWLEDGED: "
-          + ((r0 && r0.error) || "the console did not answer"))
-          + " — no position fix, so there was no route to draw either.");
+      const say0 = notTookSay(r0, "RTH");
+      if(say0) showBanner(say0 + " - no position fix, so there was no route to draw either.");
       updateMissionCard();
     }
     return;
@@ -6158,14 +6155,13 @@ async function doRTH(opts){
   //                Say exactly that and change nothing: `rthChainFailed` renders as
   //                "REFUSED, will hold instead", and a console that got no answer has not
   //                earned that word.
-  if(!(r && r.ok)){
+  if(!took(r)){
     if(chained && r && r.refused) rthChainFailed = true;
-    if(r && r.sent === false) takeDownBanner(/^Routing home/);
-    else showBanner((r && r.refused ? "RTH REFUSED: " + r.error : "RTH NOT ACKNOWLEDGED: "
-        + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
-        + "whether she received it; watch the behavior readout")
-      + " — " + (chained ? "she is HOLDING at her last waypoint and nothing is coming for her."
-                         : "the boat is still on her previous plan."));
+    const say = notTookSay(r, "RTH");
+    if(!say) takeDownBanner(/^Routing home/);
+    else showBanner(say + " - "
+      + (chained ? "she is HOLDING at her last waypoint and nothing is coming for her."
+                 : "the boat is still on her previous plan."));
     updateMissionCard(); render(); return;
   }
   plan.coast = rCoast;
@@ -6344,12 +6340,9 @@ async function doTransit(){
   // The same rule doRTH carries. See doRTH: the answer has three states and only a REFUSAL
   // is a fact about the vessel.
   const r = await cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
-  if(!(r && r.ok)){
-    if(!(r && r.sent === false))
-      showBanner((r && r.refused ? "TRANSIT REFUSED: " + r.error : "TRANSIT NOT ACKNOWLEDGED: "
-          + ((r && r.error) || "the console did not answer") + " — the console cannot tell "
-          + "whether she received it; watch the behavior readout")
-        + " — the boat is still on her previous plan.");
+  if(!took(r)){
+    const say = notTookSay(r, "TRANSIT");
+    if(say) showBanner(say + " - the boat is still on her previous plan.");
     render(); return;
   }
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
@@ -7520,7 +7513,7 @@ async function punchOut(){
     // ⚠ HOW WIDE A GAP STILL COUNTS AS A REVERSAL, IN LINE SPACINGS — AND THE STRIKE-OFF
     // WORK IS WHAT FORCED THIS OPEN.
     //
-    // A serpentine normally reverses onto its immediate neighbour, ONE spacing across,
+    // A serpentine normally reverses onto its immediate neighbor, ONE spacing across,
     // and the gate below was `spacing*1.6 + 3`. Take a line out of the middle and the two
     // survivors are TWO spacings apart, so the pair fell straight through it: no turn was
     // attempted, `nNoTurn` was never incremented (it only counts inside the branch the
@@ -7721,7 +7714,7 @@ async function punchOut(){
                    maxOutboard=Math.max(maxOutboard, t.outboard);
                    // A reversal built across a MISSING line - struck off, clipped away, or
                    // dropped as too short. It is a real turn and a valid one, it simply
-                   // reaches further outboard than a neighbour-to-neighbour reversal, and
+                   // reaches further outboard than a neighbor-to-neighbor reversal, and
                    // the operator is the one who decides whether that water is acceptable.
                    // Counted so the readout can say so instead of leaving them to notice.
                    if(gapWide) nGapTurn++;
@@ -8956,7 +8949,7 @@ async function reapproachIfSetOff(s, st){
       return;
     }
     const r = await cmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
-    if(!(r && r.ok)) return;                       // cmd() already said why
+    if(!took(r)) return;                           // cmd() already said why
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
     // under the run's own kind, and it says why it exists.
     const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
@@ -9606,7 +9599,7 @@ function updateChartCard(){
     for(const c of chartList) h += cellLine(c);
     // The bullet is the only thing naming the vessel's own cell, so say what it means
     // rather than leaving a green dot to be guessed at - and say so plainly when the
-    // vessel is inside none of them (the rows above are then neighbours, not the
+    // vessel is inside none of them (the rows above are then neighbors, not the
     // sheet in use, and the derived rows below describe the first cell only).
     h += '<div style="margin:2px 0 1px;color:var(--ink-faint);font-size:10px;">'
        + (primary ? '● the vessel is on <b style="color:var(--ink);">' + primary.name + '</b>'
@@ -9839,12 +9832,33 @@ async function cmd(path, body){
                                  // the tab's own name, so the console can tell the supervising tab from another one
                                  headers:{"Content-Type":"application/json", "X-ASV-Client": CLIENT_ID},
                                  body: JSON.stringify(body||{})});
-    const j = await r.json().catch(()=>({}));
+    // ⚠⚠ AN ANSWER THAT WILL NOT PARSE IS NOT AN ANSWER, and mapping it to {} made it
+    // INDISTINGUISHABLE FROM SUCCESS. A bare {} has no `ok` and no `error`, so it satisfied
+    // both of the failure tests this page used to carry, was filed in the action history as
+    // a command TAKEN, and said nothing at all to the operator.
+    //
+    // ⚠ AND IT IS NOT ONLY A MALFORMED BODY. When the bound below fires AFTER the response
+    // headers have arrived - a console that answers and then stalls mid-body - the
+    // AbortError is raised by `r.json()`, which is inside this try and behind this catch.
+    // So the 15 s bound added on 2026-09-22 covered only half of what it was for: measured
+    // at 15005 ms, a stalled body returned {} and wrote "cmd | Return home" to the history
+    // with the operator told nothing. The bound is only a bound if its own timeout is
+    // reportable.
+    let unreadable = false;
+    const j = await r.json().catch(()=>{ unreadable = true; return {}; });
     // ⚠ A REFUSAL IS ANSWERED AS ONE (review #6). This returned the bare body, and a network
     // error as {} - which every `r.error` check in the page read as success.
     if(!r.ok){ const err = j.error || ("command failed ("+r.status+")");
       recordAction("refused", cmdLabel(path, body), "refused: " + err);
       showNote(err); return {...j, ok:false, error:err, sent:true, refused:true}; }
+    // A 2xx we could not read is SENT but NOT REFUSED: the console may well have carried the
+    // command out and lost the telling of it. Same three-state answer as a dropped reply,
+    // because it is one.
+    if(unreadable){
+      const err = "the console's answer did not arrive - it may or may not have been carried out";
+      recordAction("refused", cmdLabel(path, body), err); showNote(err);
+      return {ok:false, error:err, sent:true, refused:false};
+    }
     // The server answers with its state, and its note says what it did ("Run plan uploaded (722 waypoints ...)").
     // Only a note this command CHANGED is its answer; an unchanged one belongs to an earlier command.
     const said = (j && j.state && typeof j.state.note === "string") ? j.state.note : "";
@@ -9860,6 +9874,28 @@ async function cmd(path, body){
     recordAction("refused", cmdLabel(path, body), err); showNote(err);
     return {ok:false, error:err, sent:true, refused:false};
   }finally{ clearTimeout(killer); }
+}
+// ⚠⚠ ONE SPELLING OF "DID THE COMMAND LAND?", AND THIS IS IT. The page carried FOUR
+// textual forms of this test and two of them were wrong on the same input - `if(r.error)`
+// and `if(r.ok === false || r.error)` both read an answer with neither field as SUCCESS.
+// Testing for FAILURE means enumerating every shape a failure can take, and a new one only
+// has to be missed once; testing for SUCCESS means naming the single shape that means the
+// vessel took it. doSetHome has said so in its own comment since the first of these bugs.
+//
+// It is a named function rather than four hand-written spellings because the spread is how
+// this happened: a new call site copies whichever neighbor it can see, and two of those
+// neighbors were wrong. There is now nothing to copy but this.
+function took(r){ return !!(r && r.ok); }
+// WHY a command did not land, in the operator's words - or null when this console has
+// nothing to say about the boat. Three answers, three sentences, and the distinction is the
+// point: a view-only tab never reached the wire and may claim NOTHING about the vessel; a
+// refusal the console stated in words IS a fact about her; a reply that was lost or could
+// not be read is neither, and must not be reported as a refusal.
+function notTookSay(r, what){
+  if(r && r.sent === false) return null;         // this tab never asked: cmd() already said why
+  return r && r.refused ? what + " REFUSED: " + r.error
+       : what + " NOT ACKNOWLEDGED: " + ((r && r.error) || "the console did not answer")
+         + " - the console cannot tell whether she received it";
 }
 // What a command is called in the history: the operator's word for it, not the route.
 function cmdLabel(path, body){
@@ -10166,7 +10202,8 @@ async function resumeRun(){
       const r = await cmd("/api/cmd/amend", {route: tail,
         note: "Resuming the survey " + fmtDist(backedM) + " back down line "
               + lineNo(pauseMark.line) + " of the pause point."});
-      if(r && r.error){ note = "could not amend the plan (" + r.error + ") — resumed where it lay"; }
+      if(!took(r)){ note = "could not amend the plan (" + ((r && r.error) || "no answer")
+                            + ") — resumed where it lay"; }
       else {
         runRoute = [...rr.slice(0, idx), ...tail];
         note = "backed up " + fmtDist(backedM) + " down line " + lineNo(pauseMark.line)
@@ -10193,17 +10230,22 @@ async function resumeRun(){
   // checked: refused or lost, the boat resumed at its old speed while this said LOW, and
   // resumeSlow kept the governor from ever correcting it.
   const slowed = await commandSpeed("low");
-  if(!slowed || slowed.ok === false || slowed.error){
+  if(!took(slowed)){
     resumeSlow = false;
     flashNote("Resume stopped — the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer")
               + "). She is still paused; press Resume again.");
     return;
   }
   const started = await cmd("/api/cmd/start");
-  if(!started || started.ok === false || started.error){
+  if(!took(started)){
     resumeSlow = false;
-    flashNote("Resume stopped — Start was refused (" + ((started && started.error) || "no answer")
-              + "). She is still paused.");
+    // ⚠ SAY WHICH IT WAS. "Start was refused" was printed for a LOST reply too, which is the
+    // false-cause defect one class over: a console that got no answer has not established a
+    // refusal, and "she is still paused" is then a guess about a boat that may be running.
+    flashNote(started && started.refused
+      ? "Resume stopped — Start was REFUSED (" + started.error + "). She is still paused."
+      : "Resume may not have started — no answer to Start ("
+        + ((started && started.error) || "no answer") + "). Check the run state before pressing again.");
     return;
   }
   pauseMark = null;
@@ -10359,15 +10401,17 @@ async function resumeHeldSurvey(){
   // her, so the pause is no longer what stops a take-off; it stays because every step after it
   // was written against a paused boat.
   const paused = await cmd("/api/cmd/pause");
-  if(!paused || paused.ok === false || paused.error){
+  if(!took(paused)){
     guardOverride = null; resumeSlow = false;
-    showBanner("⚠ COULD NOT RESUME THE SURVEY — the pause was refused (" + ((paused && paused.error) || "no answer")
-      + "). The boat is still holding and the remainder is still held; try again, or Stop and re-plan.");
+    showBanner("⚠ COULD NOT RESUME THE SURVEY — the pause was "
+      + (paused && paused.refused ? "refused (" + paused.error + ")"
+                                  : "not acknowledged (" + ((paused && paused.error) || "no answer") + ")")
+      + ". The boat is still holding and the remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
   const up = await cmd("/api/cmd/upload",
                        {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1])});
-  if(up && up.error){
+  if(!took(up)){
     // ⚠ PUT HER BACK ON STATION. She is paused beside the very feature the console stopped
     // her off, and a paused boat does not station-keep - it drifts. The offer stays up.
     guardOverride = null; resumeSlow = false;
@@ -10381,15 +10425,16 @@ async function resumeHeldSurvey(){
   runRoute = tail; runUnsafe = [];
   if(planIntent) planIntent.route = tail.length;
   const slowed = await commandSpeed("low");
-  const lowOk = !!slowed && slowed.ok !== false && !slowed.error;
+  const lowOk = took(slowed);
   const started = lowOk ? await cmd("/api/cmd/start") : null;
-  if(!started || started.ok === false || started.error){
+  if(!took(started)){
     // Paused beside the very feature the console stopped her off, remainder uploaded: put her back
     // on station rather than leave her drifting, and keep the offer up.
     guardOverride = null; resumeSlow = false;
     await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
-    const why = lowOk ? "Start was refused (" + ((started && started.error) || "no answer") + ")"
-                      : "the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer") + ")";
+    const why = !lowOk ? "the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer") + ")"
+              : started && started.refused ? "Start was REFUSED (" + started.error + ")"
+              : "there was no answer to Start (" + ((started && started.error) || "no answer") + ")";
     showBanner("⚠ COULD NOT RESUME THE SURVEY — " + why + ". The boat is station-keeping again and the "
       + "remainder is still held; try again, or Stop and re-plan.");
     render(); return;
@@ -10484,7 +10529,7 @@ $("#b_estop").onclick = async ()=>{
 // fly them from the new position.
 async function doSpawn(ll){
   const r = await cmd("/api/cmd/spawn", {lat: ll.lat, lon: ll.lon});
-  if(!r || !r.ok) return;                         // refused (409) or network error - cmd() already said so
+  if(!took(r)) return;                            // refused (409) or network error - cmd() already said so
   // ⚠ NOTHING IS THROWN AWAY BEFORE THE REPLY. This block used to run FIRST, so a spawn
   // the server REFUSED still cost the operator their trail and their drawn route - the
   // client half of the rule home_spawn.py check 6b holds the server to ("a REFUSED spawn
