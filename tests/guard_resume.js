@@ -504,7 +504,13 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
               // - so that an accepted Hold cannot erase an offer a command made during its
               // own round trip. The property is unchanged: this button clears the offer BY
               // NAME, past the gate.
+              // ⚠⚠ THE GATE MUST EXIST BEFORE ITS POSITION MEANS ANYTHING. Written as
+              // `... > BHOLD.indexOf("took(r)")` this passed for the very revert it exists to
+              // catch: delete the gate and the token goes with it, indexOf answers -1, and
+              // every real offset beats -1. A check whose failure mode is "the thing I am
+              // looking for is absent" must say so, not treat absence as a free pass.
               && /guardHeld\s*=\s*null/.test(BHOLD) && /cmd\("\/api\/cmd\/hold"/.test(BHOLD)
+              && BHOLD.indexOf("took(r)") >= 0
               && BHOLD.search(/guardHeld\s*=\s*null/) > BHOLD.indexOf("took(r)"),
         "Stop, Start, Upload, RTH, Go-To and a spawn all change run/behavior/holding, so "
         + "each clears this by not matching rather than by remembering to. The operator's "

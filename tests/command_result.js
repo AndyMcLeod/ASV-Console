@@ -176,7 +176,14 @@ function grabHandler(id) {
   if (at < 0) throw new Error("test setup: handler " + id + " not found (renamed?)");
   const eq = H.indexOf("=", at);
   let k = H.indexOf("{", eq), depth = 0;
-  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  // ⚠ BOUNDED. The depth counter is brace-only - blind to strings, comments and regexes -
+  // so an unmatched brace inside a string literal would walk off the end and spin. A named
+  // setup error beats a ten-minute timeout that reads like a hung suite.
+  for (;;) {
+    if (k >= H.length) throw new Error("test setup: unbalanced braces in handler " + id
+                                       + " (a brace inside a string or comment?)");
+    const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++;
+  }
   return H.slice(eq + 1, k + 1).trim();
 }
 function grabDecl(name) {
@@ -212,7 +219,7 @@ function check(name, cond, detail) {
 // await that never settles does not crash node - it just ends the process quietly with the
 // remaining checks never run, which a mutation sweep scores as SURVIVED. Seen once already
 // in this repo, so the floor is asserted rather than assumed.
-const EXPECTED = 33;
+const EXPECTED = 41;
 let finished = false;
 process.on("exit", (code) => {
   if (!finished && !code) {
@@ -231,6 +238,9 @@ const PRELUDE = [
   "let runRoute = null, runUnsafe = [], planIntent = null, rthChainFailed = false;",
   // what the command-bar handlers touch beyond the three motions
   "let pauseMark = {line:0}, resumeSlow = true;",
+  // markPause() is what #b_pause claims BEFORE the console answers: where she stopped.
+  "const lineMark = () => ({line: 7, along: 120});",
+  "const markPause = () => { pauseMark = lineMark(); };",
   "let escapeThrottle = true, commandedSpeed = 'low', speedWant = {key:'low'};",
   "const holdClearAt = () => 12;",
   "const mission = {waypoints: []};",
@@ -254,7 +264,11 @@ const PRELUDE = [
   "const routePlan = () => W.plan;",
   "const holdTarget = (p) => ({to: p, heldOff: null, holdClear: 12});",
   "const holdOpts = () => ({}); const solveCoastFor = () => null;",
-  "const setPlanIntent = (k, p, r) => { planIntent = {kind:k, route:(r||[]).length};",
+  // ⚠ THE GENERATION LIVES WHERE THE PAGE PUTS IT - inside setPlanIntent, which is called
+  // at every site that installs a NEW commanded route and at neither of the two that AMEND
+  // one. A stub that bumped it somewhere else would be testing a different rule.
+  "let planGen = 0;",
+  "const setPlanIntent = (k, p, r) => { planGen++; planIntent = {kind:k, route:(r||[]).length};",
   // setPlanIntent's OWN first statement, which is a consequence of calling it at all
   "  guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;",
   "  return planIntent; };",
@@ -271,15 +285,26 @@ const PRELUDE = [
 const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
   + "\nconst bStart = " + grabHandler("b_start") + ";"
   + "\nconst bEstop = " + grabHandler("b_estop") + ";"
+  + "\nconst bPause = " + grabHandler("b_pause") + ";"
   + "\nconst bStop = " + grabHandler("b_stop") + ";"
   + "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay,"
   + " bHold, bStop, bStart, commandSpeed, bEstop,"
   + " seed: (r, i) => { runRoute = r; planIntent = i; runUnsafe = [[1,2]]; },"
   + " sendSpeed, setThrottle: (v) => { escapeThrottle = v; },"
+  // A NEW commanded motion during the round trip (bumps the generation), and an AMENDMENT
+  // during it (replaces the route array, mutates the intent in place, bumps nothing) - the
+  // two cases the per-field guards could not tell apart.
+  + " newMotion: () => { runRoute = [{lat:9, lon:9}]; setPlanIntent('goto', null, [1,2]); },"
+  + " amend: () => { runRoute = runRoute.slice(); if(planIntent) planIntent.why = ['dev']; },"
+  + " gen: () => planGen, setHeld: (v) => { guardHeld = v; },"
+  + " ageWant: (ms) => { if(speedWant) speedWant.at -= ms; },"
+  + " setWant: (v) => { speedWant = v; }, setMark: (v) => { pauseMark = v; },"
+  + " bPause: () => bPause(),"
+  + " reconcile: (s, st) => speedReconcile(s, st),"
   + " setViewOnly: (v) => { W.supervising = !v; },"
   + " want: () => speedWant,"
   + " bar: () => ({runRoute, planIntent, runUnsafe, guardHeld, pauseMark, resumeSlow,"
-  + "              escapeThrottle, commandedSpeed}),"
+  + "              escapeThrottle, commandedSpeed, speedWant}),"
   + " after: () => ({runRoute, planIntent, rthChainFailed,"
   + " guard: {guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant}})};";
 
@@ -367,6 +392,8 @@ function world(opts) {
                            // to either is a change here rather than a copy that can drift.
                            + grab("took") + "\n" + grab("notTookSay") + "\n"
                            + grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
+                           + grabDecl("SPEED_RESEND_MS") + "\n"
+                           + grab("speedReconcile") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"
                            + grab("showBanner") + "\n" + grab("takeDownBanner") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
@@ -1071,6 +1098,203 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
           + "; after the post was taken away: " + (w.want() ? "STILL SET" : "null")
           + ". Left set, speedReconcile re-sends on every window and then raises \"THE VESSEL "
           + "IS NOT TAKING THE SPEED COMMAND\" in a tab that sent nothing");
+}
+
+
+// 30-31. ⚠⚠ THE DRAWN PICTURE IS ONE THING, AND THE FIRST CUT GUARDED ITS FIELDS SEPARATELY.
+// The clearance guard's DEVIATION rung REPLACES `runRoute` with a new array while MUTATING
+// the same `planIntent` object in place - so per-field identity comparisons disagreed with
+// each other during the round trip, and an accepted Hold left the track drawn with its
+// reasoning nulled. That is the same false picture this whole seam is about, in the other
+// direction, and it was BLOCKING.
+//
+// ⚠ BOTH HORNS ARE DRIVEN, because the obvious repair has the other one: key the picture on
+// the route's identity and an AMENDED plan is never cleared at all - when an amendment is
+// the SAME plan and an accepted Hold must still clear it. The generation is bumped inside
+// setPlanIntent, which is called at every site that installs a new commanded route and at
+// neither that amends one.
+{
+  const w = world({ slowReply: true });
+  w.seed(ROUTE, { kind: "survey" });
+  const inFlight = w.bHold();
+  await Promise.resolve();
+  w.amend();                                   // the guard deviates mid-round-trip
+  await inFlight;
+  const a = w.bar();
+  // ⚠ AND THE SAME FOR STOP, which carries the identical mechanism: driving only one of
+  // the pair left "b_stop's picture cleared unconditionally" alive through ten suites.
+  const s = world({ slowReply: true });
+  s.seed(ROUTE, { kind: "survey" });
+  const sFlight = s.bStop();
+  await Promise.resolve();
+  s.amend();
+  await sFlight;
+  const sa = s.bar();
+  check("30. an AMENDMENT during the round trip is the SAME plan, so an accepted Hold or Stop "
+        + "still clears the whole picture",
+        a.runRoute === null && a.planIntent === null && a.runUnsafe.length === 0
+        && sa.runRoute === null && sa.planIntent === null,
+        "route " + (a.runRoute ? "STILL DRAWN" : "cleared") + ", intent "
+          + (a.planIntent ? "STILL THERE" : "cleared")
+          + ". Guarded field-by-field, the route looked changed and the reasoning looked "
+          + "untouched - so the track stayed drawn with its explanation nulled");
+}
+{
+  const w = world({ slowReply: true });
+  w.seed(ROUTE, { kind: "survey" });
+  const inFlight = w.bHold();
+  await Promise.resolve();
+  w.newMotion();                               // a NEW commanded motion mid-round-trip
+  await inFlight;
+  const a = w.bar();
+  const s = world({ slowReply: true });
+  s.seed(ROUTE, { kind: "survey" });
+  const sFlight = s.bStop();
+  await Promise.resolve();
+  s.newMotion();
+  await sFlight;
+  const sa = s.bar();
+  check("31. ... but a NEW commanded motion during it is a new picture, and the Hold or Stop "
+        + "that did not find it may not throw it away",
+        a.runRoute !== null && a.runRoute[0].lat === 9 && a.planIntent !== null
+        && sa.runRoute !== null && sa.runRoute[0].lat === 9,
+        "the later motion's route " + (a.runRoute ? "survived" : "WAS WIPED")
+          + " and its reasoning " + (a.planIntent ? "survived" : "WAS WIPED")
+          + ". Cleared unconditionally, an accepted Hold erases the plan a command gave "
+          + "while it was in flight");
+}
+
+// 32. THE SAME RULE ON THE RESTORE, which is where it was missing. #b_start's failure path
+// put five fields back with no test at all - and the guard writes two of them during that
+// round trip. Restoring `escapeThrottle` unconditionally UN-GAGS THE GOVERNOR IN THE MIDDLE
+// OF AN ESCAPE, which is the fault check 27 calls blocking on the sibling handler, mirrored.
+{
+  const w = world({ reply: "refuse", why: "upload a run plan first" });
+  w.W.S.run = "idle";
+  // ⚠ NOT ESCAPING WHEN THE BUTTON IS PRESSED, or the mutation is invisible: the world seeds
+  // escapeThrottle TRUE, so an unconditional restore would write TRUE back and the check
+  // would pass on the defect. A seed that happens to equal what the mutation writes is the
+  // same vacuity as asserting a fixture's own default - it cost this suite two survivors.
+  w.setThrottle(false);
+  const inFlight = w.bStart();
+  await Promise.resolve();
+  w.setThrottle(true);                         // the helm rung takes her, mid-round-trip
+  w.setWant({ key: "high" });                  // ...and commands the escape's speed
+  await inFlight;
+  const a = w.bar();
+  check("32. a refused Start restores only what it still owns - an escape commanded during "
+        + "its round trip keeps the governor stood down, and keeps its speed want",
+        a.escapeThrottle === true && a.speedWant !== null && a.speedWant.key === "high",
+        "escapeThrottle after the refused Start: " + a.escapeThrottle
+          + ", speedWant " + JSON.stringify(a.speedWant && a.speedWant.key)
+          + ". Restored unconditionally they go back to the pre-press values and the governor "
+          + "bids the role speed over the rung's HIGH, beside whatever she was steered off");
+}
+
+
+// 33. ⚠ THE RE-SEND PATH, DRIVEN. Check 29 called sendSpeed directly, which tests the door
+// rather than that speedReconcile goes through it - and routing the re-send back around it
+// restored the exact half-fix the page's own comment calls the reachable case ("a tab can
+// lose the post BETWEEN them ... because TAKE OVER exists"). All 56 suites stayed green on
+// that revert.
+{
+  const w = world({});
+  await w.commandSpeed("low");
+  w.setViewOnly(true);                         // another window pressed TAKE OVER
+  w.ageWant(999999);                           // the re-send window has come round
+  w.reconcile({ armed: true, estop: false, run: "running" }, { speed_key: "survey" });
+  await Promise.resolve(); await Promise.resolve();
+  check("33. speedReconcile's RE-SEND goes through the same door, so a tab that lost the post "
+        + "stops re-sending instead of blaming the vessel",
+        w.want() === null,
+        "want after a reconcile from a tab that no longer holds the post: "
+          + (w.want() ? "STILL SET - it re-sends on every window and then raises THE VESSEL "
+              + "IS NOT TAKING THE SPEED COMMAND" : "null"));
+}
+
+// 34. #b_hold's compare-and-clear had the identical mechanism to #b_stop's and none of its
+// coverage: replacing all four guards with unconditional clears survived 56 suites.
+{
+  const w = world({ slowReply: true });
+  w.seed(ROUTE, { kind: "survey" });
+  w.setHeld(null);
+  const inFlight = w.bHold();
+  await Promise.resolve();
+  w.setHeld({ route: [1, 2], idx: 3 });        // the guard keeps a survey mid-round-trip
+  await inFlight;
+  check("34. an accepted Hold leaves a survey record the guard kept during its own round trip",
+        w.bar().guardHeld !== null,
+        "guardHeld after the accepted Hold: "
+          + (w.bar().guardHeld ? "kept" : "WIPED - and the operator's one-click resume with "
+              + "it, for a record this press never saw"));
+}
+
+
+// 36. ⚠ THE GENERATION LIVES IN setPlanIntent, AND THIS SUITE MODELS THAT FUNCTION RATHER
+// THAN GRABBING IT - it resets five guard-episode variables and would drag the whole guard in
+// with it. So the behavioural checks above cannot see the page's own `planGen++` move, and a
+// mutation deleting it survived ten suites. Pinned at the source, with the reason recorded:
+// it must sit in the ONE function called at every site that installs a new commanded route
+// and at neither of the two that amend one.
+{
+  const spi = grab("setPlanIntent");
+  const amenders = ["runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];",
+                    "runRoute = [...rr.slice(0, idx), ...tail];"];
+  check("36. the picture's generation is bumped inside setPlanIntent, and the two AMEND sites "
+        + "do not call it",
+        /^function setPlanIntent\([^)]*\)\{\s*planGen\+\+;/m.test(spi)
+        && amenders.every((a) => H.indexOf(a) >= 0)
+        && amenders.every((a) => !/setPlanIntent/.test(H.slice(H.indexOf(a), H.indexOf(a) + 400))),
+        "planGen++ is setPlanIntent's first statement, and neither amend site calls it within "
+          + "400 characters - so an amended plan keeps its generation and is still cleared by "
+          + "an accepted Hold, while a newly commanded one is not");
+}
+
+// 37. A 409 WHOSE BODY WILL NOT PARSE STILL LATCHED. cmd() builds a non-2xx reply from `j`,
+// which is {} when the body could not be read - so `state.estop` is absent exactly when the
+// console has latched anyway, and gating on it alone left the plan drawn for a console that
+// is idle and disarmed. `refused` survives an unreadable body because it is set from the
+// STATUS.
+{
+  const w = world({ reply: "refuseJunk" });
+  w.seed(ROUTE, { kind: "survey" });
+  w.W.S.estop = false;
+  await w.bEstop();
+  check("37. ... and a 409 the console answered still clears, even when its body will not "
+        + "parse and carries no state",
+        w.bar().runRoute === null,
+        "unreadable 409 -> " + (w.bar().runRoute ? "PLAN STILL DRAWN for a console that has "
+          + "latched, disarmed and gone idle" : "cleared"));
+}
+
+// 38. ⚠ #b_PAUSE IS THE SIXTH SITE OF THE RULE. `markPause()` records WHERE she stopped - the
+// mark a Resume backtracks from - and it ran before the console answered. A pause this tab
+// was never allowed to send left a mark for a pause that never happened, and the next Resume
+// would back up down a line she had not stopped on.
+//
+// ⚠ KEPT ON A WITNESSED REFUSAL AND ON A LOST REPLY: a 409 means she is still running and the
+// operator will press again, and a lost reply may well have paused her. Only `sent === false`
+// says nothing happened at all.
+{
+  // ⚠ THIS CHECK WAS WRITTEN TO PROVE #b_pause WAS A SIXTH SITE AND PROVED THE OPPOSITE,
+  // which is why it survives as the record. Driving it showed the view-only mark is
+  // ALWAYS left - because `/api/cmd/pause` is in SUPERVISOR_ANY and that press really is
+  // sent. The fix was reverted rather than shipped inert; this pins the two facts that
+  // make it unnecessary, so the next reader does not re-derive them.
+  const view = world({ viewOnly: true });
+  view.setMark(null);
+  await view.bPause();
+  await Promise.resolve(); await Promise.resolve();
+  const resume = grab("resumeRun");
+  check("38. #b_pause is NOT a site of this rule: its press is in the stop class so it is "
+        + "always SENT, and the mark it leaves is read only by a paused run",
+        view.out.posts.length === 1 && view.bar().pauseMark !== null
+        && /SUPERVISOR_ANY = \[[^\]]*\/api\/cmd\/pause/.test(H)
+        && /S && S\.run === "paused"/.test(H),
+        "a view-only Pause posted " + view.out.posts.length + " time(s) and left its mark, "
+          + "because the stop class is live in every tab; and the mark is consumed only on "
+          + "`run === \"paused\"`, which a refused pause does not produce. "
+          + (resume ? "resumeRun exists to read it" : ""));
 }
 
 finished = true;

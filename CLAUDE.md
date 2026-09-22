@@ -59,6 +59,45 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠⚠ 2026-09-22 — A FOUR-LENS ADVERSARIAL PASS FOUND TWO BLOCKING DEFECTS IN `471ac0de0`,
+  A REGRESSION OF `90e97a024`, AND FOUR OF MY OWN CHECKS PASSING FOR THE WRONG REASON.**
+  Fixed here. **Read this before adding anything to this seam.**
+
+  * **THE DRAWN PICTURE IS ONE THING.** The guard's deviation rung **replaces** `runRoute`
+    with a new array while **mutating** the same `planIntent` in place — so per-field
+    identity guards disagreed, and an accepted Hold left the track drawn with its reasoning
+    nulled. ⚠ The obvious repair has the other horn: keying on the route's identity means an
+    **amended plan never clears**, when an amendment is the *same* plan. The answer is a
+    `planGen` bumped **inside `setPlanIntent`** — called at all eight sites that install a
+    new commanded route and at **neither** of the two that amend one. Verified, not assumed.
+  * **`#b_start` RESTORED UNCONDITIONALLY**, which is the mirror of the fault `command_result`
+    27 calls blocking on the sibling: if the helm rung took the boat during the Start's round
+    trip and the Start was refused, the restore **un-gagged the governor mid-escape**.
+  * **⚠⚠ AND I REGRESSED `90e97a024` WHILE FIXING AN EARLIER LENS.** The stand-down
+    `if(runRoute !== escRoute) return;` was placed above the **whole** retraction, so it
+    fenced the throttle release, the episode record **and the alarm** — a refused in-extremis
+    escape could go **silent again**, the exact defect that commit exists to remove. **It is
+    the drawing that may be overtaken; the alarm never is.** `clearance_guard` 15z9.
+
+  **⚠⚠⚠ FOUR OF MY CHECKS PASSED FOR THE WRONG REASON THIS SESSION. Two shapes, both worth
+  knowing:**
+  1. **Asserting the fixture's own default.** `command_result` 20 asserted
+     `runRoute === null` **for the refused case** — the literal opposite of its headline —
+     and passed, because the world starts it null and nothing set it. *"Left alone"* and
+     *"never there"* are the same observation until you **seed** it.
+  2. **`indexOf` returns −1.** My re-anchored `guard_resume` 8 and `pause_resume` 15 compared
+     `offset > BHOLD.indexOf("took(r)")`. Delete the gate and the token goes with it, so the
+     comparison becomes `offset > -1` — **true for every real offset.** Both passed for the
+     exact revert they existed to catch. **A check whose failure mode is "the thing I am
+     looking for is absent" must say so, not treat absence as a free pass.**
+
+  **Also folded in:** `speedReconcile`'s re-send now goes through the one door (`sendSpeed`)
+  and is **driven**, not called directly; `#b_hold`'s compare-and-clear got the coverage
+  `#b_stop` already had; an unreadable 409 gates on `refused` (it carries no `state`); and
+  **`#b_pause` was a sixth site** — `markPause()` recorded where she stopped before the
+  console answered, so a pause this tab was never allowed to send left a mark the next Resume
+  would back up from.
+
 * **⚠ 2026-09-22 — WHAT IS LEFT, IN ORDER.** The commanded-answer seam is now CLOSED: every
   command on the page reads its reply, there is one spelling of the test, and the three
   shapes (claim-then-post, clear-then-post, and the guard ladder's retraction) are each

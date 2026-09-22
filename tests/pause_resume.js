@@ -649,9 +649,13 @@ function finish(){
         // escapeThrottle = false;` - so that an ACCEPTED Stop cannot erase a hold the guard
         // set during its own round trip, which would un-gag the governor mid-escape. The
         // property is unchanged: all four are dropped on the stop path, past the gate.
-        () => ["pauseMark", "resumeSlow", "escapeThrottle", "commandedSpeed"].every((k) => {
+        // ⚠⚠ THE GATE MUST EXIST BEFORE ITS POSITION MEANS ANYTHING. `at > indexOf(...)`
+        // passed for the revert it exists to catch, because a deleted gate makes indexOf
+        // answer -1 and every real offset beats -1.
+        () => BSTOP.indexOf("took(r)") >= 0
+              && ["pauseMark", "resumeSlow", "escapeThrottle", "commandedSpeed"].every((k) => {
                 const at = BSTOP.search(new RegExp(k + "\\s*=\\s*(null|false)"));
-                return at > BSTOP.indexOf("took(r)");
+                return at >= 0 && at > BSTOP.indexOf("took(r)");
               })
               && /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
         "the low-speed hold AND the escape's high-speed hold both belong to the run they were given about");

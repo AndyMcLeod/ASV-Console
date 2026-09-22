@@ -289,7 +289,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
 // re-derived. A re-derivation would describe whatever the console holds NOW rather than the
 // route being flown - the fault the lane flag had before it travelled with its own route.
 {
-  eval(grab("setPlanIntent") + "\n" + grab("wptRole"));
+  // setPlanIntent counts the drawn picture's GENERATION (2026-09-22), so a command-bar
+  // handler can tell "the plan I found" from "a plan commanded while I was in flight".
+  eval(grabDecl("planGen") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole"));
   var planIntent = null;
   const R = (n) => Array.from({length: n}, (_, i) => ({lat: 38.7 + i * 1e-3, lon: -75.1}));
 

@@ -591,7 +591,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // per-episode record ("a new commanded motion is a new decision"). Both halves matter:
   // the retraction of a refused escape has to put that record back, and a stub that only
   // recorded the intent would make that half of the check unfalsifiable.
+  // The picture's generation lives where the page puts it: inside setPlanIntent, which
+  // is called at every site that installs a NEW commanded route and at neither of the
+  // two that AMEND one.
+  let planGen = 0;
   const setPlanIntent = (k, p, r) => {
+    planGen++;
     planIntent = {kind: k, why: [], route: (r || []).length};
     guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
     return planIntent;
@@ -1262,6 +1267,48 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
           + ", budget " + okEsc.episode.spentM
           + " m (an escape the vessel TOOK is a new decision, and does clear them)");
 
+  // 15z9. ⚠⚠ AND THE STAND-DOWN FENCES THE PICTURE ONLY - NOT THE ALARM. The retraction
+  // must not put the survey route back over a command the operator gave while the escape was
+  // in flight, so it stands down when `runRoute` has moved. Written above the WHOLE
+  // retraction, that stand-down also skipped the throttle release, the guard's per-episode
+  // record and the banner - so a refused in-extremis escape went SILENT again the moment
+  // anything else had been pressed, which is the exact defect the commit before it removed.
+  //
+  // A one-line guard placed one level too high, introduced while fixing a DIFFERENT review
+  // objection. Driven here with the route moved out from under the retraction.
+  {
+    escCourse = { to: { e: 0, n: -60 }, hdg: 180 };
+    setRefuse("/api/cmd/escape", "refused");
+    runRoute = null; escapeThrottle = false; guardLevel = "clear"; clearHoldAt = 0;
+    guardActedAt = 0; holdWant = null; helmHoldAt = 0; guardEscapeAt = 0;
+    nogo = { ready: true, frame: ref, ko: wall(18), buffer: 5 };
+    asv = { lat: ref.lat, lon: ref.lon };
+    clearance = { m: 13, kind: "a dock / pier", slowed: false, prev: null, info: null };
+    sent = []; notes = []; banners = []; planIntent = { why: [] };
+    for (const f of [0, HELM_DWELL_MS + 250]) {
+      Date.now = () => clock;
+      clock = T0 + 60000 + f;
+      S = { armed: true, estop: false, run: "running", behavior: "survey",
+            status: { cog_deg: 0, sog_kn: 6.0, heading_deg: 0, env_set_deg: 0,
+                      env_set_kn: 2.0, holding: false, drifting: false } };
+      guard();
+      // ⚠ THE OPERATOR'S ROUTE MUST BE DISTINGUISHABLE FROM WHAT THE ESCAPE FOUND, or a
+      // retraction that never stands down restores something that LOOKS the same and the
+      // check passes on it. A distinct longitude is the whole difference.
+      runRoute = [{ lat: ref.lat + 0.01, lon: ref.lon + 0.05 }];
+      await Promise.resolve(); await Promise.resolve();
+    }
+    const said = banners.join(" | ");
+    rcheck("15z9. ... and a refused escape still ALARMS when the route has moved under it - "
+          + "only the drawing may be overtaken",
+          /THE HELM WAS NOT TAKEN/.test(said) && escapeThrottle === false
+          && runRoute !== null && runRoute[0].lon > ref.lon + 0.04,
+          "banner " + (/THE HELM WAS NOT TAKEN/.test(said) ? "raised" : "SILENT")
+            + "; escapeThrottle " + escapeThrottle + " (released, because nobody is escaping)"
+            + "; the operator's later route " + (runRoute && runRoute[0].lon > ref.lon + 0.04
+              ? "left alone" : "OVERWRITTEN by the retraction"));
+  }
+
   // 15z7. THE HOLD RUNG, same rule, less state. What a refusal costs here is not mainly the
   // wrong sentence: `slowLieu = null` kills the slow-in-lieu escalation (its branch is gated
   // on `slowLieu && clearance.slowed`) while `clearance.slowed` stays TRUE, and the re-offer
@@ -1402,7 +1449,7 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 6;                 // the retraction block's own five
+const RAN_FLOOR = 7;                 // the retraction block's own five
 Promise.resolve(globalThis.__guardRetract).then((n) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n

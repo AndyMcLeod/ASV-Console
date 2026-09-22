@@ -1357,7 +1357,25 @@ function holdClearAt(ll){
   if(!nogo.ready || !nogo.ko || !nogo.frame || !ll || ll.lat == null) return null;
   return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), nogo.ko, nogo.buffer || 0);
 }
+// ⚠⚠ THE DRAWN PICTURE IS ONE THING, AND THIS COUNTS IT. The route, its reasoning and its
+// unsafe legs are drawn together and must clear together - but the command-bar handlers now
+// clear PAST their own reply, and during that round trip the clearance guard can amend the
+// plan. Its deviation rung REPLACES `runRoute` with a new array while MUTATING the same
+// `planIntent` in place, so per-field identity comparisons disagree with each other: the
+// route looked changed and the reasoning looked untouched, and an accepted Hold left the
+// track drawn with its explanation nulled. The same false picture the whole seam is about,
+// in the other direction.
+//
+// ⚠ AND IT IS BUMPED HERE RATHER THAN AT THE NINE SITES THAT INSTALL A ROUTE, because this
+// function is called at every one of them and at NEITHER of the two that AMEND one (the
+// deviation rung at ~2077 and resumeRun's backtrack at ~10337 both mutate the intent in
+// place). That is exactly the distinction wanted: an amendment is the SAME plan, so a Hold
+// accepted after one must still clear it; a new commanded motion is a new picture, and a
+// Hold that did not find it may not throw it away. "A new commanded motion is a new
+// decision" is this function's own first sentence.
+let planGen = 0;
 function setPlanIntent(kind, plan, route){
+  planGen++;
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
   // situation on one track; carrying it into the next run would make a per-episode judgement
   // into a standing permission, which is the one thing that override must never become. The
@@ -2320,7 +2338,7 @@ function clearanceGuard(){
     // the statements: moving `escapeThrottle = true` behind the post while `clearance.slowed
     // = false` stayed in front of it would, on a refusal, release the guard's slow-hold with
     // nothing standing in for it, and the governor would speed her back up beside the pier.
-    const heldEsc = {route: runRoute, unsafe: runUnsafe, intent: planIntent,
+    const heldEsc = {route: runRoute, unsafe: runUnsafe, intent: planIntent, gen: planGen,
                      slowed: clearance.slowed, commanded: commandedSpeed,
                      override: guardOverride, spentM: edgeSpentM, count: edgeCount,
                      actedAt: guardActedAt, want: holdWant};
@@ -2374,8 +2392,15 @@ function clearanceGuard(){
       // lands in the same window - and putting the survey route back after an ACCEPTED Stop
       // would draw a plan for a boat that has stopped. If anything has moved `runRoute`
       // since, the later command owns the picture and this retraction stands down.
-      if(runRoute !== escRoute) return;
-      runRoute = heldEsc.route; runUnsafe = heldEsc.unsafe; planIntent = heldEsc.intent;
+      // ⚠⚠ AND THIS FENCES THE PICTURE ONLY. Written above the whole retraction it also
+      // skipped the release, the episode record and THE ALARM - so a refused escape could be
+      // silent again the moment the operator had pressed anything since, which is the exact
+      // defect the commit before this one was written to remove. A refused escape must alarm
+      // whatever else has happened; only the drawing may be overtaken.
+      if(runRoute === escRoute){
+        runRoute = heldEsc.route; runUnsafe = heldEsc.unsafe; planIntent = heldEsc.intent;
+        planGen = heldEsc.gen;                  // the picture is back: so is its generation
+      }
       clearance.slowed = heldEsc.slowed; commandedSpeed = heldEsc.commanded;
       escapeThrottle = false;                     // the governor may bid again: nobody is escaping
       // ⚠ setPlanIntent cleared the guard's per-episode record on the way in - "a new
@@ -10234,8 +10259,16 @@ $("#b_start").onclick = async ()=>{
   // this one did not, so a refused Start was a button press that looked like a departure.
   const r = await cmd("/api/cmd/start");
   if(!took(r)){
-    pauseMark = was.mark; resumeSlow = was.slow; escapeThrottle = was.throttle;
-    commandedSpeed = was.commanded; speedWant = was.want;
+    // ⚠⚠ PUT BACK ONLY WHAT THIS PRESS STILL OWNS. Restoring unconditionally is the same
+    // fault as clearing unconditionally, in the mirror: the guard runs at 4 Hz through this
+    // round trip, and if its helm rung took the boat in that window, writing `was.throttle`
+    // back would UN-GAG THE GOVERNOR IN THE MIDDLE OF AN ESCAPE. A field this press did not
+    // leave as it set it belongs to whatever wrote it since.
+    if(pauseMark === null) pauseMark = was.mark;
+    if(resumeSlow === false) resumeSlow = was.slow;
+    if(escapeThrottle === false) escapeThrottle = was.throttle;
+    if(commandedSpeed === null) commandedSpeed = was.commanded;
+    if(speedWant === null) speedWant = was.want;
     const say = notTookSay(r, "START");
     if(say) showBanner(say + (r && r.refused
       ? " - the survey has NOT begun."
@@ -10392,13 +10425,26 @@ async function resumeRun(){
 // operator does not have to know that Start was the way back.
 $("#b_pause").onclick = ()=>{
   if(S && S.run === "paused") return resumeRun();
+  // ⚠⚠ NOT A SITE OF THE UNREAD-ANSWER RULE, AND THE CHECK WRITTEN TO PROVE IT WAS ONE
+  // PROVED THE OPPOSITE. `markPause()` does run before the console answers, but neither
+  // failure it could leave behind is reachable or harmful:
+  //
+  //   * `sent === false` CANNOT HAPPEN HERE. `/api/cmd/pause` is in SUPERVISOR_ANY - the
+  //     stop class, live in every tab in either direction - so a view-only tab's Pause
+  //     really is sent. A want-dropping guard on that answer would be dead code.
+  //   * A REFUSED OR LOST PAUSE LEAVES A MARK NOTHING READS. The mark is consumed only by
+  //     resumeRun, which is entered on `S.run === "paused"` - a state a refused pause did
+  //     not produce - and the next pause that DOES land overwrites it.
+  //
+  // Recorded here rather than left silent, because this is the sixth control on this bar
+  // and the next reader will ask the same question. See command_result 38.
   markPause();
   cmd("/api/cmd/pause");
 };
 $("#b_stop").onclick = async ()=>{
   // See #b_hold: cleared only if still the value that was there when the button was pressed.
-  const was = {route: runRoute, intent: planIntent, unsafe: runUnsafe, mark: pauseMark,
-               slow: resumeSlow, throttle: escapeThrottle, commanded: commandedSpeed};
+  const was = {gen: planGen, mark: pauseMark, slow: resumeSlow,
+               throttle: escapeThrottle, commanded: commandedSpeed};
   const r = await cmd("/api/cmd/stop");
   // ⚠ A RUN THE CONSOLE DID NOT STOP IS STILL A RUN. See #b_hold above: past this gate only.
   // ⚠⚠ AND `escapeThrottle` IS THE ONE THAT MATTERS HERE. A refused Stop during an
@@ -10416,9 +10462,7 @@ $("#b_stop").onclick = async ()=>{
       : " - check the run state before pressing Stop again."));
     return;
   }
-  if(runRoute === was.route) runRoute = null;
-  if(planIntent === was.intent) planIntent = null;
-  if(runUnsafe === was.unsafe) runUnsafe = [];
+  if(planGen === was.gen){ runRoute = null; planIntent = null; runUnsafe = []; }
   // A stopped run takes its holds with it: the post-pause low-speed hold belongs to THAT
   // run, and carrying it into the next one would be this console remembering an
   // instruction the operator gave about a survey that is over.
@@ -10671,7 +10715,7 @@ $("#b_hold").onclick = async ()=>{
   // round trip, `escapeThrottle` included, which is the same release this commit refuses to
   // make on a REFUSED Stop. Each field is cleared only if it is still the one that was there
   // when the operator pressed; anything a later command wrote, that command owns.
-  const was = {route: runRoute, intent: planIntent, unsafe: runUnsafe, held: guardHeld};
+  const was = {gen: planGen, held: guardHeld};
   const r = await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
   if(!took(r)){
     const say = notTookSay(r, "HOLD");
@@ -10680,9 +10724,7 @@ $("#b_hold").onclick = async ()=>{
       : " - check the behavior readout before pressing Hold again."));
     return;
   }
-  if(runRoute === was.route) runRoute = null;
-  if(planIntent === was.intent) planIntent = null;
-  if(runUnsafe === was.unsafe) runUnsafe = [];
+  if(planGen === was.gen){ runRoute = null; planIntent = null; runUnsafe = []; }
   if(guardHeld === was.held) guardHeld = null;
   render(); };                                  // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
@@ -10717,7 +10759,11 @@ $("#b_estop").onclick = async ()=>{
   // nothing. The console's own answer settles it: a 409 raised AFTER the latch carries
   // `state.estop` true in its body, so the latch is read rather than assumed.
   const r = await cmd("/api/cmd/estop", {on});
-  if(on && (took(r) || (r && r.state && r.state.estop))){
+  // ⚠ A 409 THE CONSOLE ANSWERED IS THE CASE THIS EXEMPTION WAS WRITTEN FOR, readable body
+  // or not: cmd() builds a non-2xx reply from `j`, which is {} when the body could not be
+  // read, so `state.estop` is absent exactly when the console has still latched. `refused`
+  // survives that, because it is set from the STATUS.
+  if(on && (took(r) || (r && r.refused))){
     runRoute=null; planIntent=null; runUnsafe=[];
     render();
   }
