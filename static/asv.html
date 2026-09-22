@@ -2208,6 +2208,11 @@ function clearanceGuard(){
     // with an episode test for exactly this reason - this is the same swap one rung down.
     // `guardActedAt` was already written here and read nowhere; now it is the test.
     if(!guardActedAt || lieuFailed || holdUntaken){
+      // ⚠ CAPTURED BEFORE THE RUNG WRITES, not after - the snapshot exists so a refusal can
+      // put these back, and one taken afterwards restores the rung's own new values, which
+      // is no restore at all. (Caught by check 15z7 going red on exactly that.)
+      const heldBefore = {lieu: slowLieu, actedAt: guardActedAt, want: holdWant,
+                          kept: guardHeld};
       slowLieu = null;
       guardActedAt = Date.now();
       holdWant = {at: Date.now(), sends: (holdWant ? holdWant.sends + 1 : 1)};
@@ -2216,9 +2221,33 @@ function clearanceGuard(){
       // hold uploads a one-waypoint plan over theirs, and after that `window._wpIndex`
       // counts the hold, not the survey.
       markGuardHeld(c);
+      // ⚠⚠ AND A HOLD THE VESSEL NEVER TOOK MAY NOT OUTLIVE THE REFUSAL. This posted and
+      // never looked, then said "HOLDING" and "the survey is kept" about a boat that was
+      // still surveying. What a refusal costs, on the lieuFailed path, is worse than the
+      // wrong sentence: `slowLieu = null` above kills the slow-in-lieu escalation (:2183 is
+      // gated on it) while `clearance.slowed` stays TRUE, and the re-offer at :2152 is gated
+      // on `!clearance.slowed` - so both are dead, the governor is gagged by
+      // `if(clearance.slowed) return null`, and nothing can fire again until the water reads
+      // clear. THE GUARD OWNS THE THROTTLE WITHOUT HAVING TAKEN THE WAY OFF.
+      //
+      // Retracted rather than awaited, and the distinction is not stylistic: clearanceGuard()
+      // is synchronous and hands `c` back to a 4 Hz caller, so a rung that awaited would
+      // change what the ladder is. The amend rung two hundred lines up already made this
+      // choice and states the rule - while the POST is genuinely outstanding the claim is
+      // right; it must simply not outlive a refusal.
       // Told how much water it has here, so a boat set off THIS hold point does not drive
       // a blind bearing back towards the very feature it was holding off.
-      cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
+      cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}).then(r => {
+        if(took(r)) return;                       // she has the hold: nothing to undo
+        // The rung has NOT acted, so the ladder must be free to act again next frame rather
+        // than sitting behind a latch it set on a command that did not land.
+        slowLieu = heldBefore.lieu; guardActedAt = heldBefore.actedAt;
+        holdWant = heldBefore.want; guardHeld = heldBefore.kept;
+        const say = notTookSay(r, "HOLD");
+        if(say) showBanner(say + " — SHE IS NOT HOLDING and is still standing into "
+          + (c.kind || "a keep-out") + ". Stop her by hand, or take the RC transmitter.");
+        render();
+      });
       flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead and closing — HOLDING. "
                 + (holdUntaken ? "THE HOLD WAS NOT TAKEN — re-sending (" + holdWant.sends + "). " : "")
                 + (lieuFailed ? "Slowing did not answer it: " + lieuFailed + "."
@@ -2286,6 +2315,15 @@ function clearanceGuard(){
       return c;
     }
     const to = nogo.frame.fromEN(esc.to.e, esc.to.n);
+    // ⚠⚠⚠ EVERYTHING BELOW IS A CLAIM, AND THE POST AT THE END OF IT WAS NEVER READ. Held
+    // first so a refusal can put it all back. Snapshot-and-restore rather than re-ordering
+    // the statements: moving `escapeThrottle = true` behind the post while `clearance.slowed
+    // = false` stayed in front of it would, on a refusal, release the guard's slow-hold with
+    // nothing standing in for it, and the governor would speed her back up beside the pier.
+    const heldEsc = {route: runRoute, unsafe: runUnsafe, intent: planIntent,
+                     slowed: clearance.slowed, commanded: commandedSpeed,
+                     override: guardOverride, spentM: edgeSpentM, count: edgeCount,
+                     actedAt: guardActedAt, want: holdWant};
     clearance.slowed = false; commandedSpeed = null;
     escapeThrottle = true;                      // the governor may not bid until this episode ends
     commandSpeed("high");                       // steerage authority to beat the set
@@ -2310,7 +2348,40 @@ function clearanceGuard(){
     planIntent.why.push({t:"bad", s:"IN EXTREMIS: " + driftSay
       +", so stopping would not answer it — steered "+esc.hdg+"° at high speed, then holds "
       +"here; does not chain a return, re-command when ready"});
-    cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)});
+    // ⚠⚠⚠ AND THE REFUSAL OF THIS ONE SILENCES ITS OWN ALARM. `runRoute` above is
+    // OVERWRITTEN with the single escape point - not nulled - and guardTrack slices
+    // `runRoute` at `window._wpIndex`. With wp_index 0, which is a real state and not a
+    // corner case (a one-waypoint Go-To reports 0 for its whole run; a five-waypoint transit
+    // for its first 14.1 s), that phantom route points AWAY from the feature. MEASURED: the
+    // ladder drops helm -> CLEAR on the very next frame and the console flashes "Clear ahead
+    // again (13.0 m) — speed back to survey" four seconds later, with the boat unmoved, 13 m
+    // off the pier and 2 kn of set onto it. The 6 s retry that would have saved her fires
+    // ONCE instead of five times, because the level no longer reads helm - so the rung
+    // destroys its own mitigation. A control that put `runRoute` back each frame never left
+    // helm and posted five escapes in thirty seconds.
+    //
+    // ⚠ NULLING WOULD HAVE BEEN SAFER THAN OVERWRITING: guardTrack returns null for an empty
+    // route and the honest straight-line projection takes over. That is what the restore
+    // below is for - `runRoute` goes back to the plan she is STILL FLYING.
+    //
+    // ⚠ AND NO REFUSAL IS REQUIRED. A lost reply does all of this too, because until now the
+    // rung read nothing at all and every statement above ran before any answer existed.
+    cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)}).then(r => {
+      if(took(r)) return;                         // she has the helm: the claims are true
+      runRoute = heldEsc.route; runUnsafe = heldEsc.unsafe; planIntent = heldEsc.intent;
+      clearance.slowed = heldEsc.slowed; commandedSpeed = heldEsc.commanded;
+      escapeThrottle = false;                     // the governor may bid again: nobody is escaping
+      // ⚠ setPlanIntent cleared the guard's per-episode record on the way in - "a new
+      // commanded motion is a new decision". A motion the vessel refused is not a new
+      // commanded motion, and the episode it was clearing is still running.
+      guardOverride = heldEsc.override; edgeSpentM = heldEsc.spentM; edgeCount = heldEsc.count;
+      guardActedAt = heldEsc.actedAt; holdWant = heldEsc.want;
+      const say = notTookSay(r, "IN EXTREMIS ESCAPE");
+      showBanner((say || "IN EXTREMIS ESCAPE was not sent from this tab")
+        + " — THE HELM WAS NOT TAKEN: " + driftSay + ", and nothing is steering her off "
+        + "it. TAKE MANUAL CONTROL.");
+      render();
+    });
     showBanner("⚠⚠ IN EXTREMIS — " + driftSay
       + ", so stopping would not answer it. TAKING THE HELM: steering "
       + esc.hdg + "° at high speed, then HOLDING clear — not chaining any return. "

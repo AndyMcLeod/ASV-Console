@@ -610,6 +610,12 @@ console.log("\n-- 15-18: an unreadable answer is an answer, and there is ONE tes
     [/if\(\s*\w+ && \w+\.error\s*\)/g, "if(r && r.error)"],
     [/if\(!\w+ \|\| !\w+\.ok\)/g, "if(!r || !r.ok)"],
     [/if\(!\(\w+ && \w+\.ok\)\)/g, "if(!(r && r.ok))"],
+    // ⚠ THE NEGATED FORMS TOO. A mutation replacing took(r) with `!(r && r.error)` slipped
+    // through the list above - every pattern there anchored on `if(` followed directly by the
+    // identifier, so `if(!(` was invisible. It is the same wrong question in one more
+    // costume. Only the NEGATED form is listed: `(r && r.error)` without a `!` is a read
+    // of the reason for a message, which is legitimate and appears ten times.
+    [/!\(\w+ && \w+\.error\)/g, "!(r && r.error)"],
   ];
   const found = [];
   for (const [re, name] of wrong) {

@@ -584,6 +584,18 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // without it is a bare ReferenceError on the very first frame - the same way this suite
   // broke when HELM_DWELL_MS landed.
   let holdWant = null;
+  // The escape rung's own flag: it gags the speed governor for the episode. Declared here so
+  // the rung writes a BINDING rather than creating a global, and so a check can read it.
+  let escapeThrottle = false;
+  // setPlanIntent as the PAGE has it - it records the intent AND clears the guard's
+  // per-episode record ("a new commanded motion is a new decision"). Both halves matter:
+  // the retraction of a refused escape has to put that record back, and a stub that only
+  // recorded the intent would make that half of the check unfalsifiable.
+  const setPlanIntent = (k, p, r) => {
+    planIntent = {kind: k, why: [], route: (r || []).length};
+    guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
+    return planIntent;
+  };
   const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
   const SLOW_ANSWER_MS = +(H.match(/const SLOW_ANSWER_MS = (\d+)/) || [])[1];
   // READ FROM THE PAGE, NOT RETYPED — a dwell this suite believes is 1.5 s while the page
@@ -592,9 +604,27 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let planIntent = { why: [] }, sent = [], notes = [];
   const guardAssess = G4.assess, groundVel = G4.groundVel, restoreVel = G4.restoreVel;
   const edgeCapM = G4.edgeCapM, edgeText = G4.edgeText, GUARD_HORIZON_S = G4.HORIZON_S;
-  const escapeCourse = () => null;
-  const cmd = (p2, b2) => { sent.push(p2 + (b2 && b2.speed ? ":" + b2.speed : "")); };
+  // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
+  // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could
+  // ever be posted, so nothing in this repo had ever executed the rung that steers the boat.
+  // null still means boxed in, which is what 15q-15t are about.
+  let escCourse = null;
+  const escapeCourse = () => escCourse;
+  // ⚠ A STUB THAT RETURNS undefined IS NOT AN ANSWER. The guard's rungs read what their
+  // command answered (2026-09-22) - a claim on this ladder may not outlive a refusal - so a
+  // stub that hands back nothing makes the whole ladder throw. It answers what the real
+  // cmd() answers: {ok:true, state:{}} normally, and the three-state failure when a test
+  // asks for one by setting `refuseCmd` to a path.
+  let refuseCmd = null, refuseAs = "refused";
+  const cmd = (p2, b2) => { sent.push(p2 + (b2 && b2.speed ? ":" + b2.speed : ""));
+    if (refuseCmd && refuseCmd === p2) {
+      return Promise.resolve(refuseAs === "lost"
+        ? { ok: false, error: "network error", sent: true, refused: false }
+        : { ok: false, error: "ARM before commanding the boat", sent: true, refused: true });
+    }
+    return Promise.resolve({ ok: true, state: {} }); };
   const flashNote = (m) => notes.push(m);
+  const setRefuse = (p2, how) => { refuseCmd = p2 || null; refuseAs = how || "refused"; };
   let banners = [];
   const showBanner = (m) => banners.push(m), setViolations = () => {}, renderGuardBar = () => {};
   const updateMissionCard = () => {}, render = () => {}, holdClearAt = () => 12;
@@ -607,7 +637,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     return { polys: [{ ring: r, bb: bbOf(r), kind: "a dock / pier" }],
              lines: [], points: [], marks: [], sys: [], chans: [] }; };
   let nogo = { ready: true, frame: ref, ko: wall(30), buffer: 5 };
-  let asv = null, S = null, runRoute = null;
+  let asv = null, S = null, runRoute = null, runUnsafe = [];
   const mission = { approach_radius_m: 2 };
   const EDGE_REASSESS_MS = 2000, GUARD_REASSESS_MS = 6000;
   const edgeCapM2 = edgeCapM;
@@ -621,7 +651,12 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // easy to forget: `helmSettled` (the in-extremis dwell, 2026-09-19) crashed this whole
   // suite with a bare ReferenceError until it was added, which the crash guard above reports
   // as one failed check rather than as silence.
-  const guard = eval("(function(){ " + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+  // took() and notTookSay() are the page's ONE success test and its operator wording.
+  // Without them the rungs' retraction throws ReferenceError INSIDE a .then - an
+  // unhandled rejection that the summary can beat to process.exit, so the retraction
+  // silently does nothing and the checks go red for a reason that looks like the page.
+  const guard = eval("(function(){ " + grab(H, "took") + NL2 + grab(H, "notTookSay") + NL2
+                     + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
                      + grab(H, "helmSettled") + NL2
                      + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
@@ -1058,6 +1093,204 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     // previous escape: the boat would sit in extremis, alarm up, commanding nothing, for the
     // remainder of GUARD_REASSESS_MS. Driven here as two episodes 3 s apart - well inside the
     // 6 s throttle - with clear water between them.
+  // The retraction checks run ASYNC (see the block header). The promise is parked on
+  // globalThis so the summary at the bottom of this file can WAIT for it - a suite that
+  // prints "all checks passed" before its checks have run is a silent pass, and this
+  // repo has already shipped one of those.
+  globalThis.__guardRetract = (async () => {
+    // ⚠ YIELD FIRST. This block is written here for readability but its world edits
+    // (escCourse above all) must not be visible to the SYNCHRONOUS checks that follow it
+    // in source order - 15u and 15v count BOXED IN banners, which only appear while
+    // escapeCourse answers null. Yielding once lets every sync check finish first.
+    await Promise.resolve();
+    // ⚠⚠ THIS BLOCK OWNS THE CLOCK FOR ITS OWN LIFETIME. The enclosing try restores the
+    // real Date.now in a `finally`, and an async block resumes AFTER that - so without this
+    // every frame past the first await ran on the wall clock, the helm dwell was satisfied by
+    // a 1.7e12 ms gap instead of by the fixture, and these checks measured nothing. Caught by
+    // the accepted and refused runs disagreeing about how many escapes were posted.
+    Date.now = () => clock;
+    // Counted here rather than by a shared `ran` (this file has none), and RETURNED, so the
+    // tail can tell "five checks ran" from "the block died after two".
+    let retractRan = 0;
+    const rcheck = (...a) => { retractRan++; check(...a); };
+  // ── 15z3-15z7. A CLAIM ON THIS LADDER MAY NOT OUTLIVE A REFUSAL ───────────────────────
+  //
+  // Both commanding rungs posted and never read the answer. The amend rung two hundred lines
+  // above them had already been fixed and states the rule in its own words - "while the POST
+  // is genuinely outstanding the gate is right; the fix is only that it must not outlive a
+  // refusal" - and these two had not.
+  //
+  // ⚠⚠ THE ESCAPE RUNG'S REFUSAL SILENCES ITS OWN ALARM, which is why it is the worst of the
+  // set and why this block exists. It OVERWRITES `runRoute` with the single escape point
+  // before posting, and guardTrack slices `runRoute` at `window._wpIndex`. At wp_index 0 -
+  // a real state, not a corner case: a one-waypoint Go-To reports 0 for its whole run - that
+  // one-point phantom route points AWAY from the feature, so `assess` reads CLEAR on the very
+  // next frame. Measured on the shipped page: helm -> clear at +250 ms and "Clear ahead
+  // again (13.0 m)" four seconds later, with the boat unmoved and 2 kn of set onto the pier.
+  // The 6 s retry that would have saved her fires ONCE instead of five times.
+  //
+  // ⚠ NOTHING IN THIS REPO HAD EVER EXECUTED THIS RUNG. `escapeCourse` was a constant null
+  // for the whole file, so every helm frame took the BOXED IN branch - 15q-15t are about
+  // that branch. The checks below are the first to drive the one that steers.
+  //
+  // ⚠ AND THESE ARE ASYNC because the retraction lands in a `.then`. The rung may NOT await
+  // (clearanceGuard is synchronous and hands its verdict back to a 4 Hz caller), so the
+  // check yields between frames instead - which is also what the page does.
+  //
+  // TEETH - twelve mutations against a sidecar, control run and READ first across eight
+  // suites. Measured, not predicted:
+  //   escape: the whole retraction deleted (the finding restored)   -> 15z5, 15z6
+  //   escape: the ROUTE is not put back (the false CLEAR returns)   -> 15z5
+  //   escape: the route is NULLED rather than restored              -> end_action 23
+  //   escape: escapeThrottle left set (the governor stays gagged)   -> 15z5
+  //   escape: the per-episode record is NOT put back                -> 15z8
+  //   escape: the snapshot taken AFTER the claims, not before       -> 15z8
+  //   escape: the retraction says nothing at all                    -> 15z6
+  //   escape: took(r) replaced by a hand-written !(r && r.error)    -> command_result 17
+  //   hold:   the whole retraction deleted                          -> 15z7
+  //   hold:   the latches are not put back (the rung stays spent)   -> 15z7
+  //   hold:   the snapshot taken AFTER the writes                   -> 15z7
+  //
+  // ⚠ ONE SURVIVED AND IT IS INERT, with a reason rather than a shrug: making the retraction
+  // ALSO return early on a view-only answer (`sent === false`) changes nothing, because that
+  // answer cannot reach these rungs. Every rung sits behind `if(!act) return c;` at :2022,
+  // `act` includes `supervising()`, and `supHolder` cannot change inside one synchronous
+  // frame - so cmd() re-reading it microseconds later must agree. A check for it would be a
+  // check of an unreachable branch.
+  //
+  // ⚠⚠ AND 15z8 EXISTS BECAUSE TWO OF THOSE TWELVE SURVIVED THE FIRST SWEEP. Both were about
+  // the guard's per-episode record, and both were invisible while the fixture left it at its
+  // defaults: "restored" and "never touched" look identical until you seed it.
+  const escRun = async (frames, refuse) => {
+    escCourse = { to: { e: 0, n: -60 }, hdg: 180 };
+    setRefuse(refuse ? "/api/cmd/escape" : null, refuse);
+    runRoute = null; escapeThrottle = false;
+    // ⚠ SEEDED WITH DISTINCTIVE VALUES so the RESTORE is observable at all. These are what
+    // setPlanIntent clears on the way in ("a new commanded motion is a new decision"), and a
+    // refused motion is not a new commanded motion - but left at their defaults, "restored"
+    // and "never touched" look identical and the check cannot tell them apart.
+    guardOverride = { said: "proceed" }; edgeSpentM = 42; edgeCount = 3;
+    commandedSpeed = "low";
+    guardLevel = "clear"; clearHoldAt = 0; guardActedAt = 0; holdWant = null;
+    helmHoldAt = 0; guardEscapeAt = 0; clearance.slowed = false;
+    nogo = { ready: true, frame: ref, ko: wall(18), buffer: 5 };
+    asv = { lat: ref.lat, lon: ref.lon };
+    clearance = { m: 13, kind: "a dock / pier", slowed: false, prev: null, info: null };
+    sent = []; notes = []; banners = []; planIntent = { why: [] };
+    const seen = [];
+    for (const f of frames) {
+      clock = T0 + 60000 + f;
+      S = { armed: true, estop: false, run: "running", behavior: "survey",
+            status: { cog_deg: 0, sog_kn: 6.0, heading_deg: 0, env_set_deg: 0,
+                      env_set_kn: 2.0, holding: false, drifting: false } };
+      // ⚠ RE-INSTALLED EVERY FRAME, not once. The enclosing try restores the real
+      // Date.now in a `finally`, and that runs while this block is parked on an await - so
+      // a single install at the top leaves every later frame on the wall clock, where the
+      // helm dwell is satisfied by a 1.7e12 ms gap or never at all. The tell was a latch
+      // dump reporting helmHoldAt = 1785086974375 on the second run's first frame.
+      Date.now = () => clock;
+      guard();
+      seen.push(clearance.level);                 // the level THIS frame read
+      await Promise.resolve(); await Promise.resolve();   // let the .then retract
+    }
+    return { sent: sent.slice(), seen, said: banners.join(" | "),
+             route: runRoute, throttle: escapeThrottle,
+             episode: { override: guardOverride, spentM: edgeSpentM, count: edgeCount,
+                        commanded: commandedSpeed } };
+  };
+
+  const F = [0, HELM_DWELL_MS + 250, HELM_DWELL_MS + 500, HELM_DWELL_MS + 6500];
+  const okEsc = await escRun(F, null);
+  rcheck("15z3. the helm rung POSTS an escape when it has a course - the first check in this "
+        + "repo to execute the rung that steers",
+        okEsc.sent.filter((s) => s === "/api/cmd/escape").length >= 1
+        && /IN EXTREMIS/.test(okEsc.said) && !/BOXED IN/.test(okEsc.said),
+        okEsc.sent.filter((s) => s === "/api/cmd/escape").length + " escape(s) posted; "
+          + "levels " + okEsc.seen.join(",") + ". `escapeCourse` was a constant null for this "
+          + "whole file until now, so every earlier helm test took the BOXED IN branch");
+
+  rcheck("15z4. ... and an ACCEPTED escape keeps its claim: the route IS the escape point and "
+        + "the governor stays stood down",
+        okEsc.route && okEsc.route.length === 1 && okEsc.throttle === true,
+        "runRoute " + (okEsc.route ? okEsc.route.length + " wpt" : "null") + ", escapeThrottle "
+          + okEsc.throttle + " - she has the helm, so every one of those claims is true");
+
+  const noEsc = await escRun(F, "refused");
+  // ⚠ THE POST IS ASSERTED FIRST, and that is not a formality: `runRoute === null` and
+  // `escapeThrottle === false` are ALSO the untouched values, so without this clause the
+  // check would go green on a run where the rung never fired at all - which is the shape of
+  // "passing for the wrong reason" this repo keeps re-learning.
+  const noEscPosts = noEsc.sent.filter((s) => s === "/api/cmd/escape").length;
+  rcheck("15z5. ⚠ a REFUSED escape puts the route back, so the ladder does not go CLEAR on a "
+        + "boat nobody is steering",
+        noEscPosts >= 1
+        && noEsc.seen[noEsc.seen.length - 1] === "helm" && noEsc.route === null
+        && noEsc.throttle === false,
+        noEscPosts + " escape(s) posted and refused; levels across the frames: "
+          + noEsc.seen.join(",") + "; runRoute "
+          + (noEsc.route ? "STILL THE PHANTOM ESCAPE POINT" : "restored") + ", escapeThrottle "
+          + noEsc.throttle + ". Left overwritten, the projection follows a route pointing away "
+          + "from the pier and the level reads clear with the boat unmoved");
+
+  rcheck("15z6. ... and it says the helm was NOT taken, quoting the drift rather than asserting "
+        + "a set",
+        /THE HELM WAS NOT TAKEN/.test(noEsc.said)
+        && /the drift alone reaches within/.test(noEsc.said)
+        && !/being set onto/.test(noEsc.said),
+        "banners raised: " + JSON.stringify(noEsc.said.slice(0, 260)));
+
+  // 15z8. AND THE GUARD'S PER-EPISODE RECORD COMES BACK WITH IT. setPlanIntent clears
+  // guardOverride, the deviation budget and the hold rung's own latch on the way in, because
+  // "a new commanded motion is a new decision" - the operator's permission was about THIS
+  // situation. A motion the vessel REFUSED is not a new commanded motion, and the episode it
+  // was clearing is still running: the boat is still standing into the same feature, and the
+  // operator's own "proceed" should not have been spent by a command that did not happen.
+  //
+  // ⚠ THIS ALSO PINS THE SNAPSHOT'S POSITION. Taken after the claims instead of before it,
+  // `commanded` would capture the null the rung had just written and the restore would put
+  // that back instead of the operator's speed - a restore that restores nothing. Both
+  // mutations survived the first sweep with every other check green.
+  rcheck("15z8. ... and the guard's per-episode record survives it: the override, the "
+        + "deviation budget and the commanded speed all come back",
+        noEsc.episode.override !== null && noEsc.episode.spentM === 42
+        && noEsc.episode.count === 3 && noEsc.episode.commanded === "low"
+        && okEsc.episode.override === null && okEsc.episode.spentM === 0,
+        "refused -> override " + (noEsc.episode.override ? "kept" : "WIPED")
+          + ", budget " + noEsc.episode.spentM + " m / " + noEsc.episode.count
+          + ", commanded " + JSON.stringify(noEsc.episode.commanded)
+          + "; accepted -> override " + (okEsc.episode.override ? "KEPT" : "cleared")
+          + ", budget " + okEsc.episode.spentM
+          + " m (an escape the vessel TOOK is a new decision, and does clear them)");
+
+  // 15z7. THE HOLD RUNG, same rule, less state. What a refusal costs here is not mainly the
+  // wrong sentence: `slowLieu = null` kills the slow-in-lieu escalation (its branch is gated
+  // on `slowLieu && clearance.slowed`) while `clearance.slowed` stays TRUE, and the re-offer
+  // is gated on `!clearance.slowed` - so both are dead and the governor is gagged. The guard
+  // would own the throttle without having taken the way off. Putting the latches back is what
+  // lets the ladder act again on the next frame instead of sitting behind one it set on a
+  // command that never landed.
+  const holdRun = async (refuse) => {
+    escCourse = null;
+    setRefuse(refuse ? "/api/cmd/hold" : null, refuse);
+    Date.now = () => clock;
+    const r = runFrame(6.0, true);
+    await Promise.resolve(); await Promise.resolve();
+    return { ...r, actedAt: guardActedAt, want: holdWant };
+  };
+  const okHold = await holdRun(null);
+  const noHold = await holdRun("refused");
+  rcheck("15z7. a REFUSED hold frees the rung to act again next frame, and an accepted one does "
+        + "not",
+        okHold.sent.includes("/api/cmd/hold") && okHold.actedAt !== 0
+        && noHold.sent.includes("/api/cmd/hold") && noHold.actedAt === 0
+        && noHold.want === null,
+        "accepted -> guardActedAt " + (okHold.actedAt ? "set" : "0")
+          + "; refused -> guardActedAt " + (noHold.actedAt ? "STILL SET" : "0")
+          + ", holdWant " + (noHold.want ? "STILL SET" : "null")
+          + ". Left latched, the rung waits out holdUntaken before it can try again");
+    Date.now = realNow;
+    return retractRan;
+  })();
     const twoEpisodes = helmRun([0, HELM_DWELL_MS + 250,          // episode 1: takes the helm
                                  -(HELM_DWELL_MS + 900),          // clear for a frame
                                  HELM_DWELL_MS + 1400, HELM_DWELL_MS + 2950]);
@@ -1166,5 +1399,16 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
         "\"4.2 m to a dock / pier · CLOSING · SLOWED\" - the state, not just the number");
 }
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
-process.exit(fails ? 1 : 0);
+// ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
+// guard's rungs retract a refused command in a `.then`), and a summary printed before they
+// have run would report a pass for checks that never executed.
+const RAN_FLOOR = 6;                 // the retraction block's own five
+Promise.resolve(globalThis.__guardRetract).then((n) => {
+  if (n !== RAN_FLOOR) {
+    console.log("  FAIL 0. the async retraction block did not finish - " + n
+                + " of " + RAN_FLOOR + " checks ran");
+    fails++;
+  }
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
+  process.exit(fails ? 1 : 0);
+});

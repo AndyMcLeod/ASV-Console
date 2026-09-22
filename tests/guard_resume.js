@@ -170,6 +170,9 @@ var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
 // actually clear it between episodes.
 var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
+// The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
+// can put them back. `slowLieu` is one of them and is READ before anything writes it.
+var slowLieu = null;
 var planIntent = { why: [] }, notes = [], banners = [], logged = [], violations = null;
 var nogo = { ready: true, frame: null, ko: null, buffer: 5 };
 var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = null;

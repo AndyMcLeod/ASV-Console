@@ -59,6 +59,58 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠ 2026-09-22 — SHAPE B IS WHAT IS LEFT, and it needs the OPPOSITE repair to Shape A.**
+  `#b_hold` (`:10451`), `#b_stop` (`:10227`), `#b_estop` (`:10469`) and the empty upload
+  (`:9952`) **clear the drawn plan and then post unchecked**. Fix by POSTING FIRST and
+  clearing only past the gate — `doSpawn` at `:10490` already does exactly this and says
+  why in its own comment.
+
+  * ⚠⚠ **`#b_estop` MUST BE EXEMPTED.** `Engine.set_estop` (`asv_console.py:4646`) latches
+    estop, disarms and sets `run="idle"` on the console **and then** raises — so a 409 there
+    is precisely the case where it DID take effect. Measured: state after the 409 was
+    `estop=true, armed=false, run=idle`. A uniform `if(!took(r)) return;` would be wrong.
+  * ⚠ **`renderIntent` makes a null `runRoute` worse than a blank chart**: it falls back to
+    `mission.waypoints` and prints two FALSE sentences — *"route not held by this page"* and
+    *"this plan was committed before this page was loaded"* — seconds after this page
+    uploaded it.
+  * `#b_stop` also clears `escapeThrottle`, `pauseMark`, `resumeSlow` and `commandedSpeed`
+    before posting. `:10078` `#b_start` posts unchecked while `:10202` and `:10385` check.
+
+* **⚠⚠ 2026-09-22 — A REFUSED IN-EXTREMIS ESCAPE SILENCED ITS OWN ALARM (shipped).** The
+  rung OVERWRITES `runRoute` with the single escape point before posting, and `guardTrack`
+  slices `runRoute` at `window._wpIndex`. At **wp_index 0** — a one-waypoint Go-To reports 0
+  for its whole run — that phantom route points AWAY from the feature, so the ladder reads
+  **CLEAR on the next frame** and flashes *"Clear ahead again (13.0 m)"* four seconds later
+  with the boat unmoved, 13 m off the pier. **The 6 s retry fired once instead of five
+  times: the rung destroyed its own mitigation.** No refusal was even required — a lost
+  reply did the same, because the rung read nothing.
+
+  Both commanding rungs now **retract in a `.then`** rather than awaiting: `clearanceGuard()`
+  is synchronous and hands its verdict to a 4 Hz caller, so a rung that awaited would change
+  what the ladder is. **Snapshot-and-restore, not re-ordering** — moving `escapeThrottle`
+  behind the post while `clearance.slowed = false` stayed in front would release the guard's
+  slow-hold with nothing standing in for it.
+
+  `clearance_guard.js` 15z3–15z7. Measured on identical water: **accepted → 1 escape, levels
+  `helm,clear,clear,clear`; refused → 2 escapes, levels `helm,helm,helm,helm`.**
+
+  ⚠⚠ **`escapeCourse` was a constant `null` for the whole of that suite, so NOTHING IN THIS
+  REPO HAD EVER EXECUTED THE RUNG THAT STEERS.** Every earlier helm test exercised the
+  BOXED IN branch.
+
+  ⚠ **Three defects in my own work, all caught by checks disagreeing rather than by reading:**
+  the hold rung's snapshot was taken AFTER the writes it captures (no restore at all); 15z5
+  was green for the wrong reason (`runRoute === null` is also the untouched value, so it
+  passed on a run where the rung never fired); and the async block escaped the fake clock,
+  because the enclosing `finally` restores `Date.now` while an async block is parked on an
+  await — the tell was `helmHoldAt = 1785086974375`.
+
+  ⚠ **STILL OPEN on this rung, filed not fixed:** `escapeThrottle` outlives its EPISODE and
+  lasts the rest of the RUN (the comment at `:2289` says otherwise); the unchecked
+  `commandSpeed("high")` re-send raises a banner that **replaces** the false IN EXTREMIS one
+  without saying the escape failed; and the ACCEPTED path has the same `runRoute` clobber,
+  so it too reads clear one frame later (visible in 15z3's own detail).
+
 * **⚠⚠ 2026-09-22 — NEXT, AND IT IS ALREADY REPRODUCED AGAINST A LIVE CONSOLE: the SIX
   commands whose answer is never read at all.** Four agents measured them; the evidence is
   below and it is stronger than the reading that produced it. **Two shapes, and they need
