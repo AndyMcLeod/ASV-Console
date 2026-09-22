@@ -26,7 +26,7 @@ send the boat back to waypoint one.
 
     python tests/amend_plan.py     # exit 0 = pass, 1 = fail   (stdlib only)
 
-Checks 1-8 drive `SimVcu` in-process. Checks 9-14 drive a REAL console over the API,
+Checks 1-8 drive `SimVcu` in-process. Checks 9-16 drive a REAL console over the API,
 because the gates on the amendment are an interaction between the endpoint, the engine's
 run state and the link - and a 409 in words rather than a 500 is a property of that seam.
 
@@ -43,6 +43,22 @@ and the checks each one turned red:
     Engine.amend loses its running gate                             -> 13
     Engine.amend loses its holding gate                             -> 12
     the route is not sanitised (a bad waypoint becomes a 500)       -> 11
+
+AND SIX MORE, 2026-09-21, for the PAUSED case - all six killed:
+    Engine.amend refuses a PAUSED run (the resume's backtrack)      -> 15
+    Engine.amend accepts every run state                            -> 13, 16
+    Engine.amend opens "stopped" as well as "paused"                -> 16 ALONE
+    the amendment also STARTS the boat (link.start after amend)     -> 15, 15b
+    the holding gate dropped                                        -> 12
+    15/15b/16 moved in FRONT of 11, leaving her stopped for it      -> 11
+
+⚠ AND A FOURTH SHADOWING WAS CREATED AND CAUGHT IN THE SAME HOUR (2026-09-21). Checks
+15/15b/16 first sat in FRONT of 11 and left the boat STOPPED for it, so all four of its
+malformed-route cases were answered by the RUN gate - "the vessel is not running a plan" -
+and 11 stayed green on the wrong refusal entirely, because it asked only for "a 409 with
+words". It names the ROUTE's own sentence now, and the block that follows it puts the run
+back for 12. This suite is ORDERED; a check that does not say which refusal it wants cannot
+tell one gate from another.
 
 ⚠ THREE OF THESE CHECKS WERE SHADOWED WHEN THEY WERE WRITTEN, AND MUTATION FOUND ALL THREE:
   * the ARM gate was tested with the boat ALSO not running, and the run gate answered - so
@@ -66,6 +82,7 @@ hold_station.py and currents.py. A lambda passed as `cond` is an object and alwa
 
 import importlib.util as _ilu
 import json
+import math
 import os
 import socket
 import subprocess
@@ -364,9 +381,85 @@ try:
            _err("/api/cmd/amend", {"route": "not a route"}),
            _err("/api/cmd/amend", {"route": [{"lat": 91.0, "lon": 0.0}]}),
            _err("/api/cmd/amend", {"route": [{"lon": 0.0}]})]
-    check("11. a malformed route is refused with a 409 and a sentence, never a 500",
-          all(c == 409 and w for c, w in bad),
+    # ⚠ AND IT HAS TO BE THE ROUTE'S OWN REFUSAL. "any 409 with words" is satisfied by
+    # every gate above it, so this check silently stopped testing route validation at all
+    # the first time a new case left the boat not running before it: all four answered "the
+    # vessel is not running a plan" and it stayed green. A gate in front of another takes
+    # its coverage away, and a check that does not name the sentence it wants cannot see it.
+    check("11. a malformed route is refused with a 409 and the ROUTE's own sentence, never "
+          "a 500 and never some earlier gate's words",
+          all(c == 409 and w and "route" in w.lower() for c, w in bad),
           "; ".join("%s %s" % (c, w) for c, w in bad))
+
+    # 15. A PAUSED RUN IS AMENDABLE, AND THAT IS THE RESUME'S BACKTRACK. `resumeRun` in the
+    # page posts this exact amendment while the boat is still PAUSED, on purpose: the
+    # remainder is rewritten to back her down the line BEFORE Start, so nothing ever makes
+    # way on the un-backtracked route. The page states that ordering as its own deliberate
+    # decision, and its premise is about the LINK's flag - "pause leaves `_running` true
+    # while stopping the prop". This endpoint's gate is the ENGINE's, added later, and the
+    # two disagreed about what running means: in-process on a paused boat, `amend_plan`
+    # ACCEPTED while `Engine.amend` answered 409. The backtrack was dead and the operator
+    # read "could not amend the plan … resumed where it lay" instead of the overlap.
+    _post("/api/cmd/pause", {})
+    time.sleep(0.6)
+    d, s = _state()
+    p_idx, p_total = s["wp_index"], s["wp_total"]
+    p_lat, p_lon = s["lat_deg"], s["lon_deg"]
+    # ⚠ THE BACKTRACK POINT GOES IN FRONT OF THE WHOLE UNFLOWN REMAINDER, which is what
+    # resumeRun posts - and after check 10 that remainder already carries `api_via`. Dropping
+    # it would replace N waypoints with N and leave wp_total unmoved, so the check would pass
+    # with nothing spliced in at all.
+    p_via = {"lat": api_route[p_idx]["lat"], "lon": api_route[p_idx]["lon"] - 30 * M / 0.73}
+    p_tail = [p_via, api_via] + api_route[p_idx:]
+    code_p, words_p = _err("/api/cmd/amend", {"route": p_tail, "note": "resume backtrack"})
+    time.sleep(0.6)
+    d2, s2 = _state()
+    check("15. a PAUSED run can be amended - that is the resume's backtrack, rewritten "
+          "before anything moves: it is taken, the plan grows by the via, the index does "
+          "not move, and she is STILL paused",
+          code_p is None and d2["run"] == "paused" and s2["wp_index"] == p_idx
+          and s2["wp_total"] == p_total + 1,
+          "refusal=%s %s; run=%s->%s wp %s/%s -> %s/%s"
+          % (code_p, words_p, d.get("run"), d2.get("run"), p_idx, p_total,
+             s2["wp_index"], s2["wp_total"]))
+
+    # 15b. AND THE AMENDMENT DID NOT START HER. The whole ordering rests on the prop being
+    # off: if amending a paused hull made way, resumeRun would be driving the boat before it
+    # had commanded LOW, on a plan the operator has not resumed. This is the only check that
+    # would notice - 15 passes just as happily with the boat under way.
+    time.sleep(2.0)
+    d3, s3 = _state()
+    moved = math.hypot((s3["lat_deg"] - p_lat) / M, (s3["lon_deg"] - p_lon) * 0.73 / M)
+    check("15b. ... and amending a paused boat does not START her - the prop stays off "
+          "until the operator's Start",
+          d3["run"] == "paused" and moved < 2.0 and (s3.get("sog_kn") or 0.0) < 0.5,
+          "run=%s moved %.2f m, sog %.2f kn over 2 s after the amendment"
+          % (d3.get("run"), moved, s3.get("sog_kn") or 0.0))
+
+    # 16. AND STOPPED IS STILL REFUSED. `paused` and `stopped` are the two states the old
+    # one-word comparison collapsed together, and only ONE of them is being opened: a
+    # stopped boat has no run to amend and the operator gets the sentence that says so.
+    # Without this check, a fix that opened both would leave every check green.
+    _post("/api/cmd/stop", {})
+    time.sleep(0.6)
+    d4, _s4 = _state()
+    code_s, words_s = _err("/api/cmd/amend", {"route": api_route})
+    check("16. a STOPPED run is still refused, in the same words - only PAUSED was opened",
+          code_s == 409 and "not running a plan" in (words_s or ""),
+          "run=%s -> %s %s" % (d4.get("run"), code_s, words_s))
+
+    # ⚠ AND THE RUN IS PUT BACK, because check 12 needs a boat to hold and 15/16 leave her
+    # stopped. Stated rather than left implicit: this suite is ORDERED, and the first cut of
+    # these three checks sat in front of 11 and left every malformed-route case answering
+    # "the vessel is not running a plan" instead of the route sentence - 11 passed on the
+    # wrong refusal entirely.
+    _post("/api/cmd/goto", {"lat": api_route[-1]["lat"], "lon": api_route[-1]["lon"],
+                            "route": api_route})
+    for _ in range(80):
+        time.sleep(0.25)
+        d5, _s5 = _state()
+        if d5.get("run") == "running":
+            break
 
     # 12. AND IT REFUSES A STATION-KEEPING BOAT AT THE ENDPOINT TOO - the same case the
     # vessel refuses in check 8. Two gates, deliberately: if the engine's is ever loosened,

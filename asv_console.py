@@ -4494,17 +4494,36 @@ class Engine:
         deviation that re-labelled the run would also re-arm the end-of-plan chain, which is
         the trap the in-extremis escape was rebuilt to avoid.
 
-        ⚠ GATED ON A RUNNING, NON-HOLDING PLAN. A route arriving while the boat is
-        station-keeping, paused or stopped is a command nobody gave, and the vessel says so
-        rather than quietly accepting it: `amend_plan` refuses the same case a second time,
-        so the seam cannot leak if this gate is ever loosened."""
+        ⚠ GATED ON AN UNDER-WAY, NON-HOLDING PLAN. A route arriving while the boat is
+        station-keeping or stopped is a command nobody gave, and the vessel says so rather
+        than quietly accepting it: `amend_plan` refuses the same case a second time, so the
+        seam cannot leak if this gate is ever loosened.
+
+        ⚠⚠ AND PAUSED COUNTS AS UNDER WAY, BECAUSE THE CONSOLE ITSELF IS THE CALLER. This
+        gate read `run == "running"` and refused the operator's own Resume: `resumeRun`
+        rewrites the remainder to back the hull down the line BEFORE it presses Start, and
+        the page states that ordering as its own deliberate decision - "amend_plan needs a
+        RUNNING plan and pause leaves `_running` true while stopping the prop, so the
+        remainder can be rewritten before anything moves. Resuming first would give the boat
+        a frame or more of the OLD plan."
+
+        The page's premise is about the LINK's flag, and it is correct: pause leaves
+        `_running` true. This gate is the ENGINE's, added later, and the two disagreed about
+        what running means. Measured in-process on a paused boat: `amend_plan` ACCEPTED and
+        `Engine.amend` answered 409 "the vessel is not running a plan", so the backtrack was
+        dead and the operator read "could not amend the plan … resumed where it lay" instead
+        of the overlap the feature promises.
+
+        The link's gate is untouched and still refuses a stopped, idle, holding or
+        fully-flown plan - and nothing moves until Start, so widening this one cannot put
+        way on a hull: an amendment to a paused boat leaves her at 0.00 m and ~0.06 kn."""
         # ARM FIRST, THEN E-STOP, THEN THE RUN - the same order _run_route uses. Ordering
         # matters to the OPERATOR, not to the logic: whichever gate answers is the sentence
         # they read, and "ARM before commanding the boat" is more use to someone who has not
         # armed than "the vessel is not running a plan" would be.
         self._require(self.armed, "ARM before commanding the boat")
         self._require(not self.estop, "clear E-STOP first")
-        self._require(self.run == "running", "the vessel is not running a plan")
+        self._require(self.run in ("running", "paused"), "the vessel is not running a plan")
         st = self.status
         self._require(not st.get("holding"), "the vessel is station-keeping, not running a plan")
         r = self._sanitize_route(route)

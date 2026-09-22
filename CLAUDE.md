@@ -59,6 +59,38 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-21 — THE RESUME'S BACKTRACK WAS DEAD: a PAUSED run could not be amended.**
+  `resumeRun` rewrites the remainder to back the hull down the line BEFORE it presses
+  Start, and the page states that ordering as its own deliberate decision — *"amend_plan
+  needs a RUNNING plan and pause leaves `_running` true while stopping the prop, so the
+  remainder can be rewritten before anything moves."* That premise is about the **link's**
+  flag and it is correct. The gate at the endpoint is the **Engine's**, added later, and
+  the two disagreed about what running means. Measured in-process on a paused boat:
+
+  ```
+  link.amend_plan  -> ACCEPTED
+  Engine.amend     -> REFUSED: the vessel is not running a plan
+  ```
+
+  so the operator's own Resume read *"could not amend the plan … resumed where it lay"* and
+  carried on from wherever the tide had left her, with no overlap. One state was opened and
+  only one — `self.run in ("running", "paused")`. Stopped, idle and station-keeping are
+  still refused in the same words, the link's gate is untouched, and nothing moves until
+  Start. `tests/amend_plan.py` 15/15b/16, **6 mutations, 6 killed**; the over-wide fix
+  (opening "stopped" too) is killed by **16 alone**, which is why 16 exists.
+
+  **⚠ ONE RESIDUAL RISK, RECORDED RATHER THAN BURIED.** `SimVcu` accepts a paused
+  amendment; a REAL VCU link may not, and no hardware was on the bench. If it refuses, the
+  operator is back to today's behavior — a note saying the amendment failed — which is a
+  return to the status quo, not a new hazard. Worth confirming on the water.
+
+  **⚠ AND THE NEW CHECKS SHADOWED AN OLD ONE ON THE FIRST CUT.** Placed in front of check
+  11, they left the boat STOPPED for it, so all four of its malformed-route cases were
+  answered by the RUN gate and 11 stayed green on the wrong refusal entirely — it asked
+  only for "a 409 with words". It names the ROUTE's own sentence now, the new block sits
+  after it and puts the run back for 12, and the mutation that reproduces the ordering is
+  in the suite's teeth table. That is the FOURTH shadowing this one suite has recorded.
+
 * **2026-09-21 — TWO MORE HIGHS ON THE CARDS: a count that could not be reconciled, and a
   port change that stopped the chart following the boat.**
 
