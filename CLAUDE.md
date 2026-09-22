@@ -323,6 +323,57 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     and this line survived it. It does not make check 5 pass falsely (the arm gate answers
     first either way), but it is a silent no-op.
 
+* **⚠⚠ 2026-09-22 — A HALT NO LONGER RENAMES THE RUN (shipped). Four vessel-side
+  findings; findings 1 and 3 turned out to be ONE defect, two fields three lines apart.**
+
+  * **THE ROOT IS NOT WHAT I FIRST WROTE.** I filed it as *"the halt ends the run without
+    clearing what the run was"* — wrong verb, and it would have aimed the fix at clearing,
+    which is **forbidden** (it would relabel the card SURVEY while the operator is reading
+    IN EXTREMIS). The real root: **`_apply_plan`'s FIRST statement is `self._staged = None`,
+    and it runs inside `stop()`, `estop()` and `set_neutral()` — so a halt that consumes a
+    staged plan destroys the console's only evidence in the very call that installs the plan.**
+    `Engine.start` then asked a question that could no longer be answered, and answered
+    "survey".
+  * **THE RULE:** a plan is handed to the link WITH a name and a completion, both installed at
+    `SimVcu._apply_plan` (the one choke point all five install paths go through), and
+    `Engine.behavior` / `Engine.run_completion` are assigned from `link.loaded_*` **and
+    nowhere else** — so grepping those two assignments is the whole audit. A resume keeps its
+    name by construction: it applies no plan, so the read-back returns what was loaded.
+  * ⚠ **THE DEFAULT IS `"unknown"`, NOT `"survey"`, DELIBERATELY.** "survey" is on the page's
+    chainable whitelist, so a call site that forgot to name its plan would hand the
+    end-of-plan RTH chain a run it may fire from — rebuilding the defect **inside the fix**.
+    An unnamed plan fails safe and fails visibly.
+  * **MEASURED, before and after.** Before: `escape -> STOP -> START` gave `behavior=survey`
+    on the escape's own `wp 1/1`, holding at the escape point, and every conjunct of the chain
+    predicate was satisfied. After: `behavior=escape`, `CHAIN WOULD FIRE: no`. The PAUSE
+    control is unchanged, and `hold -> STOP -> START` keeps `hold` too.
+  * **TWO DEAD ENDS, paid for so nobody rebuilds them:** widening the `resuming` exemption has
+    **no discriminating power** (an upload from rest applies DIRECTLY rather than staging, so
+    `plan_staged` is False for a genuine new survey and a leftover escape alike, and it is a
+    constant False on `VcuLink`); and naming the run in `Engine.upload` fires the chain **on
+    the Upload press**, because upload is permitted while station-keeping.
+  * **ALSO FIXED:** `SimVcu.estop()` now clears `_paused` as its two siblings do — measured,
+    an E-STOPPED paused boat used to come back reading `run=paused` and the page routes Start
+    into `resumeRun()` on exactly that word. ⚠ Deliberately NOT also zeroing `_wp_index`: the
+    asymmetry against `stop()` is the point (a Stop aborts, an E-STOP released continues).
+  * **AND `/api/cmd/approach`, the one command input with no validator.** A non-numeric radius
+    was a **500** (which kills the handler's session-log entry); `NaN` was **accepted**,
+    because `clamp` is `lo if v < lo else hi if v > hi else v` and every comparison against
+    NaN is false, so it returns NaN unchanged. **MEASURED: with the approach radius NaN, a
+    boat driving an 80 m two-leg plan is still at waypoint 0 after 120 s** — both arrival
+    tests compare against it, so she never arrives, never holds, and the plan never completes.
+    Refused in words now. The neighboring door is already safe: `upload_plan`'s `approach_m`
+    comes from the mission, and `save_mission` checks `math.isfinite`.
+  * **FINDING 3 IS MEDIUM, NOT HIGH** — settled at the line and independently by measurement.
+    `run_completion` does not appear in the chain predicate at all (that reads `completion`,
+    the STANDING setting), and the VESSEL is unaffected because its own `_completion` rides in
+    the plan dict. It corrupted a READOUT. It is fixed by the same read-back.
+  * **5 mutations, 5 killed, 0 skipped, control read first.** New checks `escape_chain` 8/9/10
+    and `estop_chain` 11z and `data_routes` 14. ⚠ Check 8 failed first on MY error, not the
+    code's: I asserted `wp_total == 1` when check 6's re-approach leaves 2 aboard, then read
+    the count with no settle and compared a STALE telemetry frame against a fresh one. It
+    asserts the count is UNCHANGED across the halt now.
+
 * **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
   retraction arm.**
 

@@ -193,6 +193,82 @@ try:
           code == 200 and s["behavior"] == "escape",
           "code %s behavior=%s" % (code, s["behavior"]))
 
+    # ⚠⚠ 8-10. A HALT DOES NOT RENAME THE RUN. `Engine.start` used to write
+    # `behavior = "survey"` for anything that was not a resume, and it decided that from
+    # `link.plan_staged` - which `_apply_plan` clears as its FIRST statement, inside stop(),
+    # estop() and set_neutral(). So a halt that consumed a staged plan destroyed the console's
+    # only evidence in the very call that installs the plan, and Start renamed whatever was
+    # loaded a survey.
+    #
+    # MEASURED before the fix: escape, Stop, Start -> behavior "survey" on the escape's own
+    # ONE-waypoint plan (wp 1/1), holding at the escape point. "survey" is in the page's
+    # chainable whitelist and "escape" is not, so the end-of-plan Return-to-Home chain then
+    # fired a return from a point chosen only to be clear of a hazard - the Eastport shape
+    # that whitelist exists to prevent. The plan is the escape's either way: SimVcu holds
+    # exactly one, and the escape overwrote the survey.
+    #
+    # ⚠ THE PAIR IS THE CHECK. "escape" is what the name ALREADY WAS, so halting and
+    # re-reading it cannot fail on its own - 9 is the control: the same halt, the same Start,
+    # on a run whose plan really IS a survey, which must come back "survey". Without it a fix
+    # that simply never renamed anything would pass 8 and 10.
+    # A SETTLE, because status.wp_total is the LINK's published copy and it lags the
+    # command by up to a tick - read with no pause it returns the frame BEFORE check 6's
+    # re-approach landed, and this check would be comparing a stale count with a fresh one.
+    time.sleep(0.6)
+    wp_before = (state(port)["status"].get("wp_total") or 0)
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.5)
+    s_stop = state(port)
+    api(port, "/api/cmd/start", {})
+    time.sleep(1.0)
+    s_re = state(port)
+    wp_after = (s_re["status"].get("wp_total") or 0)
+    check("8. a Stop then a Start does not rename the guard's escape a survey - she is flying "
+          "the same plan she was, and it is not a survey",
+          s_stop["behavior"] == "escape" and s_re["behavior"] == "escape"
+          and wp_after == wp_before and wp_before > 0,
+          "after STOP behavior=%s; after START behavior=%s; plan aboard %s -> %s waypoint(s)"
+          % (s_stop["behavior"], s_re["behavior"], wp_before, wp_after))
+
+    # 9. THE CONTROL, and it is what gives 8 its teeth: an actual survey must still come back
+    # a survey through the same two commands.
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+    sv = [{"lat": tgt["lat"] + 0.0004, "lon": tgt["lon"]},
+          {"lat": tgt["lat"] + 0.0008, "lon": tgt["lon"]}]
+    api(port, "/api/cmd/upload", {"route": sv, "hold_clear_m": 9.0})
+    api(port, "/api/cmd/start", {})
+    time.sleep(0.8)
+    s_sv = state(port)
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+    api(port, "/api/cmd/start", {})
+    time.sleep(0.8)
+    s_sv2 = state(port)
+    check("9. ... and the control: an uploaded SURVEY is still called a survey through the "
+          "same Stop and Start, so 8 is not passing because nothing is named at all",
+          s_sv["behavior"] == "survey" and s_sv2["behavior"] == "survey"
+          and (s_sv2["status"].get("wp_total") or 0) == 2,
+          "survey started=%s, after Stop+Start=%s wp_total=%s"
+          % (s_sv["behavior"], s_sv2["behavior"], s_sv2["status"].get("wp_total")))
+
+    # 10. AND THE RESUME STILL KEEPS ITS NAME. This is the rule review #8 added and it must
+    # survive the change: a PAUSE applies no plan, so the read-back returns what was loaded.
+    api(port, "/api/cmd/escape", {"lat": tgt["lat"], "lon": tgt["lon"], "hold_clear_m": 9.0})
+    for _ in range(80):
+        if state(port)["status"].get("holding"):
+            break
+        time.sleep(0.25)
+    api(port, "/api/cmd/pause", {})
+    time.sleep(0.5)
+    api(port, "/api/cmd/start", {})
+    time.sleep(0.8)
+    s_rz = state(port)
+    check("10. ... and a PAUSE then Start still keeps the name, which is the rule the resume "
+          "exemption was written for",
+          s_rz["behavior"] == "escape",
+          "resumed escape reads behavior=%s" % s_rz["behavior"])
+
     srvlog.seek(0)
     log = srvlog.read()
     check("7. the server's own log shows no traceback from any of it",

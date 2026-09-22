@@ -882,6 +882,45 @@ try:
           real_ids == seeded_ids,
           "real=%s seeded=%s" % (real_ids, seeded_ids))
 
+    # ⚠⚠ 14. THE APPROACH RADIUS IS VALIDATED, AND IT WAS THE ONE COMMAND INPUT THAT WAS NOT.
+    # The endpoint read `float(body.get("m", ...))`, so a non-numeric radius raised and surfaced as
+    # a 500 - which kills the handler's session-log entry - and a non-finite one was ACCEPTED.
+    #
+    # ⚠ AND NaN GOT PAST THE CLAMP, which is why accepting it mattered. `clamp` is two
+    # comparisons, `lo if v < lo else hi if v > hi else v`, and every comparison against NaN is
+    # False, so it returns NaN unchanged. Infinity and negatives clamp correctly; NaN alone escapes.
+    # MEASURED in-process: with the approach radius NaN, a boat driving an 80 m two-leg plan is
+    # still at waypoint 0 after 120 s - both arrival tests compare against this number, so she
+    # never reaches a waypoint, never holds, and the plan never completes.
+    #
+    # ⚠ THE BODY GOES OUT AS A LITERAL, because a bare NaN is not legal JSON but json.dumps
+    # emits it and Python's json.loads accepts it - which is precisely the door it came in by. A
+    # test that sent None instead would be testing a different thing and would pass either way.
+    #
+    # THE PAIR: a plain number must still be ACCEPTED, or a fix that refused everything would pass
+    # the three refusals and break the control the operator actually uses.
+    def _raw_approach(port, raw):
+        req = urllib.request.Request("http://127.0.0.1:%d/api/cmd/approach" % port,
+                                     raw.encode(), {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+
+    _appr = {tag: _raw_approach(port, raw) for tag, raw in
+             (("good", '{"m": 3.0}'), ("text", '{"m": "abc"}'),
+              ("nan", '{"m": NaN}'), ("inf", '{"m": Infinity}'))}
+    check("14. /api/cmd/approach refuses a non-numeric or non-finite radius in WORDS (409), and "
+          "still takes an ordinary one - NaN passes clamp() untouched, and a boat whose approach "
+          "radius is NaN never reaches a waypoint at all",
+          _appr["good"] == 200 and _appr["text"] == 409
+          and _appr["nan"] == 409 and _appr["inf"] == 409,
+          "3.0 -> %s, \"abc\" -> %s, NaN -> %s, Infinity -> %s (a 500 here would also kill the "
+          "handler's session-log entry)"
+          % (_appr["good"], _appr["text"], _appr["nan"], _appr["inf"]))
+
 finally:
     try:
         proc.terminate()

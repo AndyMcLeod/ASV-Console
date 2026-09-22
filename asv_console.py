@@ -3205,7 +3205,8 @@ class VcuLink:
 
     # command surface (Engine gates these before calling)
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None, coast_from_m=None): ...
+                    completion="complete", hold_clear_m=None, coast_from_m=None,
+                    name="unknown"): ...
     def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run
     def start(self): ...
     def pause(self): ...
@@ -3218,6 +3219,25 @@ class VcuLink:
     # True while an uploaded plan waits for start() because the link was running when it
     # arrived (SimVcu). A link that cannot stage never reports one.
     plan_staged = False
+    # WHAT THE LOADED PLAN IS FOR, and what it does at its end. Read back by the Engine at
+    # Start, because after a Stop, an E-STOP or a disarm the console has no other way to know
+    # WHICH plan the link is holding: `_apply_plan`'s first line is `self._staged = None`, and
+    # it runs INSIDE stop(), estop() and set_neutral() - so a halt that consumes a staged plan
+    # destroys the evidence in the same call that installs the plan.
+    #
+    # ⚠ `loaded_name` IS SHORE-SIDE BOOKKEEPING WEARING A VESSEL'S CLOTHES. No VCU will ever
+    # report "this plan is an escape" - that is a console concept, invented by the console's own
+    # guard and meaningful only to the page's chainable-behavior whitelist. The link RECORDS
+    # what it was handed; it does not learn it from the boat. `loaded_completion` IS a real plan
+    # parameter the vessel is told. A link that implements upload_plan must record both, or
+    # every run on it starts nameless.
+    #
+    # ⚠⚠ AND THE DEFAULT IS DELIBERATELY NOT "survey". "survey" is chainable, so a call site
+    # that forgot to name its plan would hand the end-of-plan Return-to-Home chain a run it may
+    # fire from - rebuilding the very defect this mechanism exists to fix, inside the fix. An
+    # unnamed plan fails SAFE and fails VISIBLY: the card reads it as unknown and nothing chains.
+    loaded_name = "unknown"
+    loaded_completion = "rth"
 
 
 # SCALE: these defaults are sized for the actual boat - a survey ASV
@@ -3278,6 +3298,10 @@ class SimVcu(VcuLink):
         self._completion = "rth"       # complete (stop) | loiter (station-keep) | repeat (loop) | rth
         self._holding = False          # currently station-keeping (loiter reached the end)
         self._staged = None            # a plan uploaded while running, applied by start()
+        # WHAT THE LOADED PLAN IS FOR (VcuLink.loaded_name). Declared here as well as written
+        # in _apply_plan because `_plan` is also assigned in __init__, so the first telemetry
+        # frame before any upload would otherwise read a missing attribute.
+        self._plan_name = "unknown"
         # THE HOLD DISC. `_hold_clear_m` is the radius around the hold point the CONSOLE
         # certified clear of the keep-out model at the operator's buffer (hold.js), or None
         # when no model was consulted. Inside it a straight re-approach is clear by
@@ -3309,7 +3333,8 @@ class SimVcu(VcuLink):
 
     # -- commands ---------------------------------------------------------- #
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None, coast_from_m=None):
+                    completion="complete", hold_clear_m=None, coast_from_m=None,
+                    name="unknown"):
         """Load a plan. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING - only start() does.
 
         ⚠ IT USED TO, and that is review #3 (2026-09-14). This replaced the active plan and
@@ -3328,6 +3353,11 @@ class SimVcu(VcuLink):
             "speed_key": speed if speed in SPEED_KN else "survey",
             # completion semantics at the last waypoint (goto/rth/hold -> loiter)
             "completion": completion if completion in ("complete", "loiter", "repeat", "rth") else "rth",
+            # WHAT THIS PLAN IS FOR, normalized here like every other plan value so an
+            # unrecognized name becomes "unknown" - which is NOT chainable - rather than
+            # silently becoming a survey. See VcuLink.loaded_name for why that matters.
+            "name": name if name in ("survey", "search", "goto", "rth", "hold",
+                                     "transit", "escape") else "unknown",
             # None means "no model consulted" and keeps the direct re-approach - the same honest
             # degrade as a Go-To with no route. A number is the console's certified clear disc.
             "hold_clear_m": None if hold_clear_m is None else max(0.0, float(hold_clear_m)),
@@ -3344,9 +3374,20 @@ class SimVcu(VcuLink):
     def plan_staged(self):
         return self._staged is not None
 
+    @property
+    def loaded_name(self):
+        return self._plan_name
+
+    @property
+    def loaded_completion(self):
+        # A PROPERTY, NOT A COPY. `_completion` is what tick() steers on at the last waypoint;
+        # a second attribute holding the same thing would be a second truth.
+        return self._completion
+
     def _apply_plan(self, p):
         self._staged = None
         self._plan = p["plan"]
+        self._plan_name = p["name"]    # the identity arrives WITH the plan, at every install
         self._arrival_m = p["arrival_m"]
         self._approach_m = p["approach_m"]
         self._speed_key = p["speed_key"]
@@ -3498,6 +3539,19 @@ class SimVcu(VcuLink):
         self._estop = bool(on)
         if on:
             self._running = False
+            # ⚠⚠ AND IT CLEARS THE PAUSE, as stop() and set_neutral() both do and this one
+            # did not. A pause the E-STOP ended is not a pause: with the flag left set, the
+            # console reported `run = "paused"` the moment the latch was released - MEASURED:
+            # E-STOP a paused boat and she comes back reading paused, armed False - and the
+            # page routes Start into its RESUME path on exactly that word, so the operator was
+            # offered a resume that posts a backtrack amendment for a pause that no longer
+            # exists.
+            # ⚠ AND DELIBERATELY NOT `_wp_index = 0` AS WELL. The asymmetry against stop() is
+            # the point: a Stop ABORTS the run, so a later Start re-flies it from waypoint one,
+            # whereas an E-STOP released and started continues from where she was. start()'s
+            # own guard only zeroes the index for a plan already fully flown, so it does not
+            # rescue the mid-plan case either way.
+            self._paused = False
             self._end_hold()
             if self._staged is not None:
                 self._apply_plan(self._staged)
@@ -3968,7 +4022,6 @@ class Engine:
         self.armed = False
         self.estop = False
         self.plan_uploaded = False
-        self._staged_completion = None   # the completion a STAGED upload runs with (see upload)
         self.run = "idle"          # idle | running | paused | stopped | complete
         # ⚠ THE LIST WAS STALE: `escape` has been a behavior since the guard was given the
         # helm, and `/api/cmd/escape` sets it (see the escape route). A comment that omits the
@@ -4222,17 +4275,24 @@ class Engine:
             _sp = _norm_speeds(m.get("speeds"), m.get("speed", "survey"))
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
                              m.get("approach_radius_m", WP_APPROACH_M), completion=completion,
-                             hold_clear_m=hold_clear_m)
+                             hold_clear_m=hold_clear_m, name="survey")
             self.plan_uploaded = True
             if link.plan_staged:
-                # The run in progress (the hold) keeps its own completion and waypoint count
-                # until Start; the staged plan's completion is applied then.
-                self._staged_completion = completion
-                self.note = ("Run plan uploaded (%d waypoints%s, %s) and STAGED: the boat carries "
-                             "on station-keeping until Start." % (
-                                 len(wpts), " · ENC-routed" if route else "", completion))
+                # The run in progress keeps its own completion and waypoint count until Start;
+                # the staged plan carries its own completion in its own dict, so there is
+                # nothing to shadow here - `link.loaded_completion` still reports the RUN's.
+                # ⚠ AND THE SENTENCE NAMES WHAT SHE IS ACTUALLY DOING. The gate above admits TWO
+                # states - station-keeping OR paused - because `pause()` leaves the link running,
+                # so the old wording told a PAUSED operator the boat was carrying on
+                # station-keeping, which is not what a paused boat is doing.
+                self.note = ("Run plan uploaded (%d waypoints%s, %s) and STAGED: the boat %s "
+                             "until Start." % (
+                                 len(wpts), " · ENC-routed" if route else "", completion,
+                                 "stays paused" if self.run == "paused"
+                                 else "carries on station-keeping"))
             else:
-                self.run_completion = completion
+                # What the LINK normalized and holds, not what the console asked for.
+                self.run_completion = link.loaded_completion
                 self.wp_total = len(wpts)
                 self.wp_index = 0
                 self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
@@ -4240,7 +4300,31 @@ class Engine:
         self._push_state()
 
     def set_approach(self, m):
-        """Live-tune the waypoint approach radius on the connected link (sim)."""
+        """Live-tune the waypoint approach radius on the connected link (sim).
+
+        ⚠⚠ VALIDATED HERE, BECAUSE IT WAS THE ONE COMMAND INPUT THAT WAS NOT. Every other
+        numeric the console takes is checked for finiteness and refused in WORDS; this one went
+        straight into `float()` at the endpoint, so a non-numeric radius surfaced as a 500 -
+        which kills the handler's session-log entry - and a non-finite one was accepted.
+
+        ⚠ AND NaN GOT PAST THE CLAMP, WHICH IS WHY ACCEPTING IT MATTERED. `clamp` is written
+        as two comparisons, `lo if v < lo else hi if v > hi else v`, and EVERY comparison
+        against NaN is False - so the clamp returns NaN unchanged. Infinity and negatives clamp
+        correctly; NaN alone escapes.
+
+        MEASURED: with the approach radius NaN, a boat driving an 80 m two-leg plan is still at
+        waypoint 0 after 120 s. Both arrival tests compare against this number - the along-track
+        one and the range one - so she never reaches a waypoint, never holds, and the plan never
+        completes. She drives through every waypoint for ever.
+
+        The same trap `set_home` records for coordinates: "a non-finite value reaching HOME does
+        not merely set a bad home, it stops the console"."""
+        try:
+            m = float(m)
+        except (TypeError, ValueError):
+            raise VcuProtocolError("the approach radius must be a number of meters")
+        if not math.isfinite(m):
+            raise VcuProtocolError("the approach radius must be a finite number of meters")
         with self._lock:
             if self._link is not None:
                 try:
@@ -4304,23 +4388,44 @@ class Engine:
             # the run "survey" - so a paused ESCAPE or HOLD came back as a chainable run, and the
             # page chains the end-of-plan Return-to-Home from a survey that is holding: straight
             # back toward whatever the escape had just steered clear of. A staged plan is a new run.
-            resuming = self.run == "paused" and not link.plan_staged
-            if link.plan_staged:
-                self.run_completion = self._staged_completion or plan_completion()
+            resuming = self.run == "paused" and not link.plan_staged   # read BEFORE start() clears it
             link.start()
             self.run = "running"
             self._commanded()
+            # ⚠⚠ THE RUN'S IDENTITY IS THE LOADED PLAN'S, read back AFTER link.start() has
+            # applied any staged plan. Not remembered from the upload, and not derived from
+            # `plan_staged`: `_apply_plan`'s first line is `self._staged = None`, and it runs
+            # INSIDE stop(), estop() and set_neutral() - so a halt that consumed a staged plan
+            # destroys the console's only evidence in the very call that installs the plan.
+            #
+            # MEASURED before this: an escape, then Stop, then Start left `behavior` "survey" on
+            # the escape's own one-waypoint plan (wp 1/1), holding at the escape point. That
+            # handed the page a CHAINABLE name for the guard's own manoeuvre, so the end-of-plan
+            # Return-to-Home chain fired a return from a point chosen only to be clear of a
+            # hazard - the Eastport shape the whitelist exists to prevent - and it re-derived
+            # `run_completion` from nothing, leaving it describing the run the Stop had cancelled.
+            #
+            # A RESUME KEEPS ITS NAME BY CONSTRUCTION: it applies no plan, so these two reads
+            # return what was already loaded. `resuming` no longer guards the name at all - it
+            # does its one real job, which is not bumping `run_seq`.
+            self.behavior = link.loaded_name
+            self.run_completion = link.loaded_completion
             if not resuming:
                 self.run_seq += 1          # a staged plan is a new motion; a resume is the old one carrying on
             if resuming:
                 self.note = "Resumed."
             else:
-                self.behavior = "survey"
-                self.note = {"complete": "Survey started.",
-                             "loiter": "Survey started (will loiter / station-keep at the end).",
-                             "repeat": "Survey started (will repeat the route).",
-                             "rth": "Survey started (will Return-to-Home at the end)."}.get(
-                                 self.run_completion, "Survey started.")
+                # The run says what it IS. An unnamed plan says so rather than claiming to be a
+                # survey; the survey wording is byte-identical to what it was.
+                noun = {"survey": "Survey", "search": "Search", "goto": "Go-To",
+                        "rth": "Return-to-Home", "hold": "Station-keep",
+                        "transit": "Transit", "escape": "Escape"}.get(self.behavior,
+                                                                      "Run (plan not named)")
+                self.note = noun + {"complete": " started.",
+                                    "loiter": " started (will loiter / station-keep at the end).",
+                                    "repeat": " started (will repeat the route).",
+                                    "rth": " started (will Return-to-Home at the end)."}.get(
+                                        self.run_completion, " started.")
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
@@ -4350,13 +4455,20 @@ class Engine:
             link.upload_plan(route, m.get("arrival_radius_m", 2.0),
                              getattr(link, "speed_key", None) or m.get("speed", "survey"),
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
-                             hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
+                             hold_clear_m=hold_clear_m, coast_from_m=coast_from_m,
+                             name=behavior)
             link.start()
             self._commanded()
             self.plan_uploaded = True
             # goto/rth/hold/transit always station-keep at their own endpoint. This is
             # the RUN's completion only - the operator's end-of-plan setting is untouched.
-            self.run_completion = "loiter"
+            # ⚠ ONE SOURCE: `self.behavior` and `self.run_completion` are assigned from
+            # `link.loaded_*` and nowhere else, so grepping those two assignments is the whole
+            # audit. Here the link was handed this plan and started on it one line above, under
+            # the same lock, so the read-back IS the value just stamped - passed through the
+            # link's own normalizer, which is what stops an unrecognized behavior string
+            # reaching the page's chainable whitelist as a live name.
+            self.run_completion = link.loaded_completion
             self.wp_total = len(route)
             self.wp_index = 0
             self.run = "running"
@@ -4375,7 +4487,7 @@ class Engine:
             # because the telemetry loop publishes this dict by reference.
             if self.status.get("holding"):
                 self.status = dict(self.status, holding=False)
-            self.behavior = behavior
+            self.behavior = link.loaded_name        # see the completion read-back above
             self.note = note
         self._push_state()
 
@@ -4705,6 +4817,9 @@ class Engine:
         self.connect("sim", self._host, self._port, "tcp", spawn=spawn)
         with self._lock:
             self.home = None
+            # ⚠ THE ONE DOCUMENTED EXCEPTION to "identity is read back off the link". This is a
+            # power-cycle onto a FRESH link that holds no plan at all, so there is nothing to
+            # read: connect() cleared `plan_uploaded`, and Start is gated on it.
             self.behavior = "survey"
             self.run_completion = "complete"
             self.wp_index = self.wp_total = 0
@@ -4961,12 +5076,17 @@ class Engine:
                                 # because this uploads and starts inside the same lock and leaves no
                                 # window for a speed command to land between them. Read the LINK,
                                 # exactly as _run_route does.
+                                # ⚠ AND IT NAMES THE PLAN. This is the third upload_plan call
+                                # site and it re-uploads about once a second while chasing a
+                                # moving recovery point, so without the stamp the loaded plan
+                                # goes nameless on every re-target and a Stop-then-Start during
+                                # a chase would read "unknown" instead of "rth".
                                 link.upload_plan([{"lat": tgt["lat"], "lon": tgt["lon"]}],
                                                  p.get("arrival", ARRIVAL_DEFAULT_M),
                                                  getattr(link, "speed_key", None)
                                                  or p.get("speed", "survey"),
                                                  p.get("approach", WP_APPROACH_M),
-                                                 completion="loiter")
+                                                 completion="loiter", name="rth")
                                 link.start()
                                 self._rth_last_target = dict(tgt)
                             except Exception:
@@ -5805,7 +5925,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
-                ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
+                # ⚠ NOT `float(...)` HERE. That raised ValueError on a non-numeric body and the
+                # handler answered 500; the Engine validates it and refuses in words, like
+                # every other command input.
+                ENGINE.set_approach(body.get("m", WP_APPROACH_M))
             elif path == "/api/cmd/speed":             # live speed change (low|survey|high)
                 ENGINE.set_speed(str(body.get("speed", "survey")))
             elif path == "/api/ais/radius":            # live AIS DISPLAY radius (km)
