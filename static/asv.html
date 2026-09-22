@@ -2366,8 +2366,15 @@ function clearanceGuard(){
     //
     // ⚠ AND NO REFUSAL IS REQUIRED. A lost reply does all of this too, because until now the
     // rung read nothing at all and every statement above ran before any answer existed.
+    const escRoute = runRoute;                  // the phantom this rung installed
     cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)}).then(r => {
       if(took(r)) return;                         // she has the helm: the claims are true
+      // ⚠ AND THE RESTORE MAY NOT OVERTAKE THE OPERATOR. The command-bar handlers now clear
+      // PAST their own reply, so a Stop or a Hold pressed while this escape was in flight
+      // lands in the same window - and putting the survey route back after an ACCEPTED Stop
+      // would draw a plan for a boat that has stopped. If anything has moved `runRoute`
+      // since, the later command owns the picture and this retraction stands down.
+      if(runRoute !== escRoute) return;
       runRoute = heldEsc.route; runUnsafe = heldEsc.unsafe; planIntent = heldEsc.intent;
       clearance.slowed = heldEsc.slowed; commandedSpeed = heldEsc.commanded;
       escapeThrottle = false;                     // the governor may bid again: nobody is escaping
@@ -2415,9 +2422,29 @@ function clearanceGuard(){
 // keeps trying at a slower cadence.
 const SPEED_RESEND_MS = 1000, SPEED_RESEND_MAX = 3;
 let speedWant = null;                  // {key, at, sends, told} - the last speed commanded
+// ⚠⚠ THE ONE PLACE A SPEED COMMAND REACHES THE WIRE, so the rule below cannot be
+// half-applied. A want for a command this tab never sent is not a want: `speedWant` is set
+// before the post, and in a VIEW-ONLY tab cmd() refuses before any fetch - so the want stood,
+// speedReconcile watched the vessel disagree with it for ever, re-sent on every window (each
+// refused here too), and then raised "THE VESSEL IS NOT TAKING THE SPEED COMMAND", blaming
+// the boat for an instruction that never left the browser.
+//
+// ⚠ BOTH SENDERS GO THROUGH HERE, and that is the point rather than tidiness: commandSpeed
+// STARTS a want and speedReconcile RE-SENDS one, and a tab can lose the post BETWEEN them -
+// which is the reachable case, not a hypothetical, because TAKE OVER exists. Fixed on the
+// first sender alone, the re-send path kept the defect and kept raising the banner.
+//
+// ⚠ ONLY `sent === false` CLEARS IT. A refusal, or a reply that was lost, must KEEP the want:
+// re-sending until the vessel's own speed_key agrees is exactly what this mechanism is for.
+function sendSpeed(key){
+  return cmd("/api/cmd/speed", {speed: key}).then(r => {
+    if(r && r.sent === false) speedWant = null;
+    return r;
+  });
+}
 function commandSpeed(key){
   speedWant = {key: key, at: Date.now(), sends: 1, told: false};
-  return cmd("/api/cmd/speed", {speed: key});
+  return sendSpeed(key);
 }
 function speedReconcile(s, st){
   if(!speedWant) return null;
@@ -2427,7 +2454,7 @@ function speedReconcile(s, st){
   const wait = speedWant.sends > SPEED_RESEND_MAX ? SPEED_RESEND_MS * 5 : SPEED_RESEND_MS;
   if(now - speedWant.at < wait) return null;
   speedWant.at = now; speedWant.sends++;
-  cmd("/api/cmd/speed", {speed: speedWant.key});
+  sendSpeed(speedWant.key);                     // the same rule as the first send: see above
   if(speedWant.sends > SPEED_RESEND_MAX && !speedWant.told){
     speedWant.told = true;
     showBanner("⚠ THE VESSEL IS NOT TAKING THE SPEED COMMAND — the console wants "
@@ -10056,7 +10083,15 @@ async function doUpload(){
   // blocked, thrown or sent - puts the button back exactly once.
   uploadBusy = true; applyCmdState(S);
   const wps = mission.waypoints || [];
-  if(!wps.length){ runRoute=null; planIntent=null; cmd("/api/cmd/upload"); return; }   // the server refuses it in words
+  // The server refuses an empty plan in words, so the clear past this gate will essentially
+  // never run - and that is the point rather than dead code: `runRoute` may hold the Go-To or
+  // RTH she is still flying (this branch is reachable only while mission.waypoints is empty,
+  // which a commanded motion does not fill), and a refusal must not wipe it.
+  if(!wps.length){
+    const r = await cmd("/api/cmd/upload");
+    if(took(r)){ runRoute=null; planIntent=null; }
+    return;
+  }
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
   if(routeTooLong(wps.length)) return;                // the saved plan itself - and before the question below
   if(!nogo.ready){
@@ -10181,8 +10216,31 @@ $("#b_start").onclick = async ()=>{
   if(S && S.run === "paused") return resumeRun();
   if(!await guiConfirm("Start the autonomous survey",
     "The transit is planned clear of ENC obstacles (green path). Confirm the routed path looks safe and no uncharted obstacle is in the way.")) return;
+  // ⚠⚠ THESE CLEAR IN FRONT OF THE POST, UNLIKE EVERY OTHER CONTROL ON THIS BAR, AND THAT
+  // IS DELIBERATE. Engine.start sets `run = "running"` and calls _push_state() INSIDE its
+  // lock, before the reply is serialized - so the telemetry frame for the new run can reach
+  // this page BEFORE the POST returns, and onState runs clearanceGuard() and speedGovernor()
+  // on it. Cleared past the gate, that frame would be judged against the PREVIOUS run's
+  // holds: the post-pause low speed still armed and the escape's high-speed gag still set on
+  // a survey that has just begun.
+  //
+  // ⚠ SO THE SAFETY COMES FROM PUTTING THEM BACK, not from delaying them. A Start the
+  // console refused did not begin a fresh run, and releasing two safety holds on a button
+  // press that did nothing is the fault this commit exists to remove.
+  const was = {mark: pauseMark, slow: resumeSlow, throttle: escapeThrottle,
+               commanded: commandedSpeed, want: speedWant};
   pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;   // a FRESH run, not a resume
-  cmd("/api/cmd/start");
+  // The other two start sites (resumeRun, resumeHeldSurvey) have always read this reply;
+  // this one did not, so a refused Start was a button press that looked like a departure.
+  const r = await cmd("/api/cmd/start");
+  if(!took(r)){
+    pauseMark = was.mark; resumeSlow = was.slow; escapeThrottle = was.throttle;
+    commandedSpeed = was.commanded; speedWant = was.want;
+    const say = notTookSay(r, "START");
+    if(say) showBanner(say + (r && r.refused
+      ? " - the survey has NOT begun."
+      : " - check the run state before pressing Start again."));
+  }
 };
 
 /**
@@ -10337,12 +10395,37 @@ $("#b_pause").onclick = ()=>{
   markPause();
   cmd("/api/cmd/pause");
 };
-$("#b_stop").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[];
+$("#b_stop").onclick = async ()=>{
+  // See #b_hold: cleared only if still the value that was there when the button was pressed.
+  const was = {route: runRoute, intent: planIntent, unsafe: runUnsafe, mark: pauseMark,
+               slow: resumeSlow, throttle: escapeThrottle, commanded: commandedSpeed};
+  const r = await cmd("/api/cmd/stop");
+  // ⚠ A RUN THE CONSOLE DID NOT STOP IS STILL A RUN. See #b_hold above: past this gate only.
+  // ⚠⚠ AND `escapeThrottle` IS THE ONE THAT MATTERS HERE. A refused Stop during an
+  // in-extremis escape must NOT release the governor's gag: the escape is still running, and
+  // handing the throttle back to the role speed mid-escape is the opposite of what the rung
+  // commanded. Every other release of it says so out loud (see setRoleSpeed).
+  if(!took(r)){
+    // ⚠ THE SUFFIX FOLLOWS THE ANSWER, NOT THE FAILURE. Glued on unconditionally it
+    // contradicted the sentence it was attached to - "it may or may not have been carried
+    // out ... SHE IS STILL RUNNING" - and asserted the one thing the console had just said
+    // it could not know.
+    const say = notTookSay(r, "STOP");
+    if(say) showBanner(say + (r && r.refused
+      ? " - SHE IS STILL RUNNING. Press Stop again, or take the RC transmitter."
+      : " - check the run state before pressing Stop again."));
+    return;
+  }
+  if(runRoute === was.route) runRoute = null;
+  if(planIntent === was.intent) planIntent = null;
+  if(runUnsafe === was.unsafe) runUnsafe = [];
   // A stopped run takes its holds with it: the post-pause low-speed hold belongs to THAT
   // run, and carrying it into the next one would be this console remembering an
   // instruction the operator gave about a survey that is over.
-  pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null;
-  cmd("/api/cmd/stop"); };
+  if(pauseMark === was.mark) pauseMark = null;
+  if(resumeSlow === was.slow) resumeSlow = false;
+  if(escapeThrottle === was.throttle) escapeThrottle = false;
+  if(commandedSpeed === was.commanded) commandedSpeed = null; };
 $("#b_rth").onclick = doRTH;
 // THE OPERATOR'S "PROCEED". One decision, recorded with the situation it was taken about,
 // and logged - because this is the operator overriding a safety intervention and a recording
@@ -10564,7 +10647,44 @@ $("#gb_drop").onclick = dropHeldSurvey;
 // The operator holding the boat themselves REPLACES the guard's hold, and looks identical
 // from guardHeldOffer() - same run, same behavior, same holding flag - so this is the one
 // place that has to say so by name. It also drops the drawn route, which is the remainder.
-$("#b_hold").onclick = ()=>{ runRoute=null; planIntent=null; runUnsafe=[]; guardHeld=null; cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}); render(); }; // station-keep: no transit to draw
+// ⚠⚠ NOTHING IS THROWN AWAY BEFORE THE REPLY - the rule doSpawn states in its own comment
+// below, for the same reason. These handlers used to null the drawn route and the Intent
+// card and THEN post, so a console that answered "not connected" or "ARM before commanding
+// the boat" left the operator with a blank chart while the boat flew on at 7 kn. Nothing
+// puts it back either: `runRoute` is written only by the commanded motions and cleared only
+// here, and /api/state carries no route. It is worse than a blank chart, because renderIntent
+// falls back to mission.waypoints and prints "route not held by this page" seconds after
+// this page uploaded it.
+//
+// The POST goes out at the same instant either way - cmd() is async in both orderings - so
+// the only thing the old order bought was screen latency, measured at under 0.05 s against a
+// local console and bounded at CMD_TIMEOUT_MS.
+//
+// ⚠ AND THE GUARD KEEPS PROJECTING ALONG THE ROUTE UNTIL THE REPLY LANDS. That is correct
+// and it is new: a rung may now fire in the round trip after a Hold or Stop the vessel did
+// not take, because she IS still flying that line.
+$("#b_hold").onclick = async ()=>{
+  // ⚠⚠ AND THE CLEAR MAY NOT OVERTAKE A COMMAND GIVEN SINCE. Past the reply is the right
+  // side of the post, but it is also a WINDOW: the clearance guard runs at 4 Hz throughout
+  // it and its rungs write these very fields. Clearing unconditionally there would be
+  // last-writer-wins - an accepted Hold erasing an escape the guard commanded during the
+  // round trip, `escapeThrottle` included, which is the same release this commit refuses to
+  // make on a REFUSED Stop. Each field is cleared only if it is still the one that was there
+  // when the operator pressed; anything a later command wrote, that command owns.
+  const was = {route: runRoute, intent: planIntent, unsafe: runUnsafe, held: guardHeld};
+  const r = await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)});
+  if(!took(r)){
+    const say = notTookSay(r, "HOLD");
+    if(say) showBanner(say + (r && r.refused
+      ? " - she is still on her plan, and the chart still shows it."
+      : " - check the behavior readout before pressing Hold again."));
+    return;
+  }
+  if(runRoute === was.route) runRoute = null;
+  if(planIntent === was.intent) planIntent = null;
+  if(runUnsafe === was.unsafe) runUnsafe = [];
+  if(guardHeld === was.held) guardHeld = null;
+  render(); };                                  // station-keep: no transit to draw
 // (Go-To and Set Home are rows on the chart's right-click menu — see cmRow above.)
 // TAKE OVER: supervision moves to this tab, now, and the console writes who took it (review #14). It asks first,
 // because the tab losing it is somebody's open window - possibly on another screen with the operator in front of it.
@@ -10582,8 +10702,27 @@ $("#b_estop").onclick = async ()=>{
   const on = !S.estop;
   if(on && !await guiConfirm("Latch the command E-STOP",
     "This halts commanding. For a real emergency use the RC transmitter E-stop / Sw A - that is the true failsafe.")) return;
-  if(on){ runRoute=null; planIntent=null; runUnsafe=[]; }
-  cmd("/api/cmd/estop", {on});
+  // ⚠⚠ THE ONE EXEMPTION FROM THE RULE ABOVE, AND IT ASKS THE ANSWER RATHER THAN ASSUMING.
+  // Every other handler on this bar clears only once the command was TAKEN. A command
+  // E-STOP is different: the console latches it whatever the vessel does - Engine.set_estop
+  // sets estop, disarms, sets run "idle" and pushes the state, and only THEN re-raises the
+  // link's refusal (review #27, 2026-09-15: "a latch holds on the console whatever the link
+  // did ... and says the vessel did not take it"). So a 409 here can be the case where the
+  // console HAS latched, and keeping the plan drawn would be the false picture.
+  //
+  // ⚠ BUT "A 409" IS NOT "EVERY FAILURE", AND CLEARING UNCONDITIONALLY WAS WRONG. The
+  // argument above holds for a refusal the console ANSWERED; it does not hold for a
+  // view-only tab, whose press never reached the console at all, nor for a reply that was
+  // lost. Both of those used to wipe this tab's chart for a console that had latched
+  // nothing. The console's own answer settles it: a 409 raised AFTER the latch carries
+  // `state.estop` true in its body, so the latch is read rather than assumed.
+  const r = await cmd("/api/cmd/estop", {on});
+  if(on && (took(r) || (r && r.state && r.state.estop))){
+    runRoute=null; planIntent=null; runUnsafe=[];
+    render();
+  }
+  // ⚠ THE RELEASE PATH IS UNAFFECTED EITHER WAY: this clear is gated on `on`, and a
+  // refused RELEASE leaves `estop` TRUE on the console, so there is nothing to put back.
 };
 // Mission Reset (sim power-cycle): clear the persisted plan + trail, power-cycle the
 // sim boat (full energy, spawn point, SAFE), then HARD-RELOAD the page from the

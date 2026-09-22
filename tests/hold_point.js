@@ -339,12 +339,18 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
               && /planNogoRoute\([^)]*holdOpts\(\)\)/.test(goTo),
         "a Go-To that names the pier as its target would hold ON the pier");
+  // The #b_hold handler in full, so the check reads the property rather than a distance.
+  const BH = PAGE.indexOf('$("#b_hold").onclick');
+  const BHOLD_SRC = noComments(PAGE.slice(BH, PAGE.indexOf('$("#', BH + 10)));
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
         () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
               && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
               && /cmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
-              && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(noComments(PAGE.slice(PAGE.indexOf('$("#b_hold").onclick'), PAGE.indexOf('$("#b_hold").onclick') + 300))),
+              // ⚠ THE WHOLE HANDLER, NOT A 300-CHARACTER WINDOW. #b_hold grew a comment
+              // when it started reading its command's answer, and the post fell outside
+              // the window - a check measuring distance rather than the property.
+              && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(BHOLD_SRC),
         "every holding command tells the vessel how much water it has");
   // 9c. EVERY hold point is chosen against the SAME water. Four call sites reach the
   // planner; if one of them forgets the set, a berth commanded from that button is sized by

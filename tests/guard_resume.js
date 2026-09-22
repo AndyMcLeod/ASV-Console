@@ -267,7 +267,9 @@ eval([
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
-  grab("took"), grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
+  // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
+  grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
+  grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
@@ -486,9 +488,24 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         + (stopped2 ? "OFFERED" : "withheld") + "; the capture itself survives ("
         + (survivesUnarmed ? "yes" : "NO") + ") because disarming is not the situation changing");
 
+  // The #b_hold handler, sliced from its own line to the end of its arrow body, so the
+  // check below can ask WHERE its statements sit relative to the gate.
+  const BHOLD = H.slice(H.indexOf('$("#b_hold").onclick'),
+                        H.indexOf("// (Go-To and Set Home are rows"));
   check("8. the offer stands only while she is still holding under the guard's hold",
         () => !!kept && live === kept && stopped === null && cleared === null
-              && /guardHeld=null; cmd\("\/api\/cmd\/hold"/.test(H),
+              // ⚠ ANCHORED ON THE PROPERTY, NOT THE ORDER. This matched
+              // `guardHeld=null; cmd("/api/cmd/hold"` - the clear immediately BEFORE the
+              // post - which stopped being true on 2026-09-22 when the handler moved its
+              // clears PAST the reply (a refused Hold must not wipe the plan she is still
+              // flying). What this check is about is that the operator's OWN Hold clears
+              // the offer BY NAME, because the state cannot tell it from the guard's.
+              // ⚠ The clear is CONDITIONAL now - `if(guardHeld === was.held) guardHeld = null;`
+              // - so that an accepted Hold cannot erase an offer a command made during its
+              // own round trip. The property is unchanged: this button clears the offer BY
+              // NAME, past the gate.
+              && /guardHeld\s*=\s*null/.test(BHOLD) && /cmd\("\/api\/cmd\/hold"/.test(BHOLD)
+              && BHOLD.search(/guardHeld\s*=\s*null/) > BHOLD.indexOf("took(r)"),
         "Stop, Start, Upload, RTH, Go-To and a spawn all change run/behavior/holding, so "
         + "each clears this by not matching rather than by remembering to. The operator's "
         + "OWN Hold looks identical from here, so that button clears it by name");

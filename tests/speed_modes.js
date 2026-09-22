@@ -149,7 +149,9 @@ var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
 // case rather than the reloaded-page one. tests/guard_resume.js 18a owns that one.
 var runRoute = null;
 var sent = [];
-function cmd(path, body) { sent.push({ path, body }); }
+// commandSpeed reads what its command answered (2026-09-22): a want for a command this tab never sent is not a want. A stub returning undefined makes it throw.
+function cmd(path, body) { sent.push({ path, body });
+                           return Promise.resolve({ ok: true, state: {} }); }
 var banners = [];
 function showBanner(m) { banners.push(m); }
 
@@ -165,7 +167,8 @@ eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhas
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
-     grab("commandSpeed") + "\n" + grab("speedReconcile") + "\n" +
+     grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
+     + grab("speedReconcile") + "\n" +
      "function __want(){ return speedWant; }\n" +
      // review #14: the governor acts only in the SUPERVISING tab, and this world is that tab. A view-only one is
      // tests/supervisor_page.js's subject - it holds that the governor assesses and commands nothing.
@@ -328,13 +331,22 @@ console.log("Speed by mode - three settings, and the console governs which one i
 // 9. THE CONSOLE NEVER STEERS. The whole intervention is a speed; anything commanding a
 // heading, a waypoint or a behaviour from here is out of scope by design.
 {
-  const G = grab("speedGovernor"), CS = grab("commandSpeed") + grab("speedReconcile");
+  // ⚠ AND SINCE 2026-09-22 THERE IS EXACTLY ONE DOOR: sendSpeed. commandSpeed STARTS a
+  // want and speedReconcile RE-SENDS one, and both go through it, so the "a want for a
+  // command this tab never sent is not a want" rule cannot be half-applied. Following
+  // the call one hop further is what keeps this check from passing vacuously on a
+  // governor with no cmd( left in it - the same reason the hop into commandSpeed exists.
+  const G = grab("speedGovernor");
+  const CS = grab("sendSpeed") + grab("commandSpeed") + grab("speedReconcile");
   // Since review #6 the governor commands through commandSpeed(), which the page's speed
   // reconciliation needs to see - so the check follows the call into it rather than passing
   // vacuously on a governor with no cmd( left in it.
   check("9. the governor's only command is a SPEED - it never steers",
         () => !/\bcmd\(/.test(G) && /commandSpeed\(want\)/.test(G)
-              && (CS.match(/cmd\("[^"]+"/g) || []).length >= 2
+              && (CS.match(/cmd\("[^"]+"/g) || []).length >= 1
+              // ...and exactly ONE of the three actually reaches the wire: sendSpeed.
+              && !/cmd\(/.test(grab("commandSpeed"))
+              && !/cmd\(/.test(grab("speedReconcile"))
               && (CS.match(/cmd\("[^"]+"/g) || []).every(c => c === 'cmd("/api/cmd/speed"'),
         "commands issued: " + JSON.stringify([...new Set(CS.match(/cmd\("[^"]+"/g) || [])]));
 }

@@ -347,8 +347,17 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // plan that is no longer being flown is worse than none at all.
   // the DECLARATION is not a clear site - excluded, or this counts the page's own
   // `let runRoute = null;` and the check could never be satisfied
-  const clears = (H.match(/(?<!let |var |const )runRoute\s*=\s*null;/g) || []).length;
-  const paired = (H.match(/(?<!let |var |const )runRoute\s*=\s*null;\s*planIntent\s*=\s*null;/g) || []).length;
+  // ⚠ WITHIN A WINDOW, NOT ADJACENT. This required `planIntent = null;` to follow
+  // IMMEDIATELY, which stopped being true on 2026-09-22 when the command-bar handlers
+  // made each clear conditional - `if(runRoute === was.route) runRoute = null;` - so
+  // that an accepted Stop cannot erase a route a command gave during its own round
+  // trip. The PROPERTY is that the reasoning goes with the route, not that the two
+  // statements touch.
+  const CLEAR = /(?<!let |var |const )runRoute\s*=\s*null;/g;
+  const sites = [...H.matchAll(CLEAR)];
+  const clears = sites.length;
+  const paired = sites.filter((m) =>
+    /planIntent\s*=\s*null;/.test(H.slice(m.index, m.index + 260))).length;
   check("23. every place the route is cleared drops its reasoning too",
         clears > 0 && clears === paired,
         paired + " of " + clears + " clear sites also clear planIntent");

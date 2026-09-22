@@ -150,7 +150,9 @@ eval([
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
-  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
+  // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
+  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"),
+  grab("sendSpeed"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor also reads the JUNCTION corner set since 2026-09-19
@@ -632,8 +634,25 @@ function finish(){
   // run is the same defect in either direction - so a Stop and a fresh Start must release
   // both. Pinned on `resumeSlow` alone, this regex could not have noticed the second one
   // arriving beside it, which is the whole reason it is spelled out rather than loosened.
+  // The #b_stop handler, sliced to the next handler, so the check can ask where its
+  // clears sit relative to the gate rather than which line follows which.
+  const BSTOP = H.slice(H.indexOf('$("#b_stop").onclick'),
+                        H.indexOf('$("#b_rth").onclick'));
   check("15. ... and a stop or a fresh start carries NEITHER throttle hold into the next run",
-        () => /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null;\r?\n?\s*cmd\("\/api\/cmd\/stop"\)/.test(H)
+        // ⚠ ANCHORED ON THE PROPERTY, NOT THE ORDER. This matched the four clears
+        // IMMEDIATELY FOLLOWED BY the stop post; on 2026-09-22 they moved PAST the reply,
+        // because a Stop the vessel refused must not wipe the plan she is still flying -
+        // and `escapeThrottle` above all, since releasing the governor's gag mid-escape
+        // is the opposite of what that rung commanded. What this check is about is that
+        // BOTH throttle holds are dropped together on the stop path.
+        // ⚠ EACH CLEAR IS CONDITIONAL NOW - `if(escapeThrottle === was.throttle)
+        // escapeThrottle = false;` - so that an ACCEPTED Stop cannot erase a hold the guard
+        // set during its own round trip, which would un-gag the governor mid-escape. The
+        // property is unchanged: all four are dropped on the stop path, past the gate.
+        () => ["pauseMark", "resumeSlow", "escapeThrottle", "commandedSpeed"].every((k) => {
+                const at = BSTOP.search(new RegExp(k + "\\s*=\\s*(null|false)"));
+                return at > BSTOP.indexOf("took(r)");
+              })
               && /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
         "the low-speed hold AND the escape's high-speed hold both belong to the run they were given about");
   resumeSlow = false;

@@ -477,7 +477,8 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("lineNo"), grabFn("lineCount"), grabFn("linePartTxt"), grabFn("reversalScaleM"),
     grabFn("isReversalGap"), grabFn("currentLegLine"), grabFn("accumLineTime"),
     grabFn("alongLineM"), grabFn("linePhase"), grabFn("currentActivity"), grabFn("speedRole"),
-    grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("commandSpeed"), grabFn("speedGovernor"),
+    grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("sendSpeed"), grabFn("commandSpeed"),
+    grabFn("speedGovernor"),
     grabFn("deleteLineByIndex"),
     "function __commit(lines, patClip, patLead, transits){\n" + COMMIT + "\n}",
     "function __flagGap(k){ const t = {slow:true}; let nTurnSlow = 0; " + PUNCH
@@ -493,7 +494,8 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     + "let turnSlowAt = {}, cornerSlow = new Set(), cornerSlowFor = -1;\n"
     + "let resumeSlow = false, escapeThrottle = false;\n"
     + "const clearance = {slowed: false}; const sent = [];\n"
-    + "const cmd = (p, b) => { sent.push(b && b.speed); };\n"
+    // commandSpeed reads what its command answered (2026-09-22): a want for a command this tab never sent is not a want. A stub returning undefined makes it throw.
+    + "const cmd = (p, b) => { sent.push(b && b.speed); return Promise.resolve({ok:true, state:{}}); };\n"
     + "const showBanner = () => {}; const saveMission = () => {};\n"
     + "const supervising = () => true;\n"
     + PAGE + "\n"

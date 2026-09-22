@@ -59,6 +59,59 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠ 2026-09-22 — WHAT IS LEFT, IN ORDER.** The commanded-answer seam is now CLOSED: every
+  command on the page reads its reply, there is one spelling of the test, and the three
+  shapes (claim-then-post, clear-then-post, and the guard ladder's retraction) are each
+  covered by driven checks. What remains:
+
+  1. **THREE DEFECTS ON THE ESCAPE RUNG, filed with evidence, not fixed.** The sharpest is
+     that **`escapeThrottle` outlives its EPISODE and lasts the rest of the RUN** — verified:
+     the guard's clear branch at `:1987` resets FIVE per-episode variables and not this one,
+     while the flag's own comment at `:2328` says *"until this episode ends"*. Its only
+     clearers are `setRoleSpeed`, `#b_start`, `#b_stop`. ⚠ **The consequence is not "the
+     governor is quiet"**: the escape commands HIGH, the governor is gagged, and `doGoTo` /
+     `doRTH` do not clear it either — so **the operator's recovery transit is flown at HIGH
+     speed** until they change a speed by hand. ⚠ The obvious one-line fix (clear it in the
+     guard's clear branch) is NOT obviously right: the escape ends with the boat holding at
+     the escape point, where the water reads clear by construction, so that branch fires
+     almost at once and would hand the governor back while she is still station-keeping at a
+     point nobody has dealt with. It may want to end on the operator's acknowledgement.
+  2. the escape rung's **`runRoute` clobber on the ACCEPTED path** (same false CLEAR one
+     frame later — visible in `clearance_guard` 15z3's own detail line)
+  3. `renderIntent`'s **two false sentences** when `runRoute` is null but this page uploaded
+     the plan
+  4. **53 medium + 21 low** findings, UNREPRODUCED. ⚠ Do not plan from that list — reproduce
+     first. Several highs this session were wrong, understated, or already fixed, and **three
+     of the twelve safety-category mediums turned out to be this same seam** (one of them,
+     `commandSpeed`, is fixed here as a five-line change).
+  5. **The requirements seam, which is larger than the bug list**: `req_gaps.md` has 320 of
+     422 requests verified, FIRST PASS, UNREFUTED — 9 drifted, 4 missing, 48 partial, and
+     ~102 never checked at all.
+
+* **⚠ 2026-09-22 — NOTHING IS THROWN AWAY BEFORE THE REPLY (shipped).** `#b_hold`, `#b_stop`,
+  `#b_start` and the empty-plan upload cleared the drawn route, the Intent card and the run's
+  speed holds and THEN posted. Nothing puts that back — `runRoute` is written only by a
+  commanded motion and `/api/state` carries no route.
+
+  ⚠ **The only refusals a Stop can produce are `"not connected"` and the link refusing
+  outright** (and `set_estop`'s own comment records that *"the real VCU link refuses every
+  command today"*). So the console went blank in exactly the moments the boat was least
+  under control.
+
+  ⚠⚠ **`#b_estop` IS EXEMPT AND MUST STAY SO.** `Engine.set_estop` latches, disarms, sets
+  `run="idle"` and `_push_state()`s **before** re-raising — so a 409 on a LATCH is the case
+  where the console HAS latched. The reason is written at the exemption; `command_result` 22
+  guards it.
+
+  ⚠ **`commandSpeed` recorded a want for a command a view-only tab never sent**, so
+  `speedReconcile` re-sent for ever and then blamed the vessel — and that banner is what
+  silently REPLACED the in-extremis one. **Only `sent === false` clears the want**; a refusal
+  or a lost reply must KEEP it, because re-sending is what that mechanism is for.
+
+  `command_result` 20–25. **10 mutations, 10 killed** — but ⚠ **two survived the first sweep,
+  and both were changes shipped with NO executable check at all.** A change whose only
+  witness is its own source text has not been tested.
+
 * **⚠ 2026-09-22 — SHAPE B IS WHAT IS LEFT, and it needs the OPPOSITE repair to Shape A.**
   `#b_hold` (`:10451`), `#b_stop` (`:10227`), `#b_estop` (`:10469`) and the empty upload
   (`:9952`) **clear the drawn plan and then post unchecked**. Fix by POSTING FIRST and

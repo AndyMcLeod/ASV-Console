@@ -100,6 +100,56 @@
 // ⚠ CHECKS 2 AND 15b EACH WAIT THE REAL BOUND, which is why this suite takes about thirty
 // seconds. A bound tested by mocking the clock is a bound nobody runs - and 15b exists
 // because the bound shipped on 2026-09-22 covered only HALF of what it was for.
+//
+// TEETH, THIRD ROUND (checks 20-25, SHAPE B) - ten mutations against a sidecar, control run
+// and READ first across ten suites:
+//   b_hold: the gate deleted (clears again on a refusal)           -> 20
+//   b_hold: guardHeld cleared before the gate again                -> 20, guard_resume 8
+//   b_stop: the gate deleted                                       -> 21
+//   b_stop: escapeThrottle released before the gate                -> 21
+//   b_stop: the refusal says nothing                               -> 21
+//   b_estop: folded into the uniform rule                          -> 22
+//   empty upload: clears regardless of the answer again            -> 23
+//   commandSpeed: the want kept for a command never sent           -> 24
+//   commandSpeed: the want cleared on a REFUSAL too                -> corner_slow
+//   b_start: the reply dropped again                               -> 25
+//
+// ⚠⚠ TWO OF THOSE TEN SURVIVED THE FIRST SWEEP, and both were changes shipped with NO
+// EXECUTABLE CHECK AT ALL - commandSpeed and #b_start. Checks 24 and 25 exist because of
+// that, not because they were planned. A change whose only witness is its own source text
+// has not been tested; the sweep is what says so.
+//
+// ⚠ AND 24's PAIRING IS THE POINT. The obvious version - "a failed command clears the want" -
+// is WRONG: a REFUSAL and a LOST reply must both KEEP it, because re-sending until the
+// vessel's own speed_key agrees is exactly what speedReconcile is for. Only `sent === false`
+// may clear it, and the mutation that clears on any failure is killed by corner_slow rather
+// than by the check written for it.
+//
+// ⚠⚠ CHECKS 26-29 CAME FROM AN ADVERSARIAL PASS, NOT FROM A SWEEP, and one of them was
+// BLOCKING. Mutations say whether the checks have teeth; they cannot say whether the design
+// is right, because a self-consistently wrong design passes its own mutations:
+//   26  THE THIRD ANSWER. 20 and 21 drove only a refusal and a success, so narrowing either
+//       gate from took() to `r.refused` survived TEN suites - a lost Stop would then wipe the
+//       route, the pause mark and the escape's high-speed hold on a reply that says nothing.
+//       This suite's own header had already said the three states are the point.
+//   27  LAST-WRITER-WINS (the blocking one). Clearing past the reply is the right side of
+//       the post, but it is also a WINDOW, and the guard writes these very fields at 4 Hz
+//       throughout it. An accepted Stop would erase an escape the guard commanded during its
+//       own round trip - the same release the commit refuses to make on a REFUSED Stop.
+//       Each field is now cleared only if it is still the one the press found.
+//   28  #b_start CLEARS IN FRONT OF ITS POST, alone on this bar, and that is deliberate:
+//       Engine.start _push_state()s inside its lock, so the frame for the new run can reach
+//       the page BEFORE the reply and be judged by clearanceGuard/speedGovernor. The safety
+//       comes from RESTORING on a refusal, not from delaying. (Two refuters disagreed about
+//       this; the mechanism settled it.)
+//   29  THE RE-SEND PATH. The want-dropping rule was first written on commandSpeed alone,
+//       and speedReconcile re-sent with its own call - so a tab that lost the post to a TAKE
+//       OVER kept re-sending and kept blaming the vessel. One door now: sendSpeed.
+//
+// ⚠ AND CHECKS 20/21 WERE VACUOUS AS FIRST WRITTEN. The world starts `runRoute` at null and
+// nothing set it, so check 20 asserted `runRoute === null` FOR THE REFUSED CASE - the literal
+// opposite of its own headline - and passed. "Left alone" and "never there" are the same
+// observation until you put something there. The fixture is seeded now.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -116,6 +166,18 @@ function grab(name) {
   let k = H.indexOf("{", start), depth = 0;
   for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
   return H.slice(start, k + 1);
+}
+// The command-bar handlers are ASSIGNMENTS, not named functions, so grab() cannot see
+// them. Sliced from the arrow's own brace, which is what makes them drivable at all - the
+// alternative is a source regex, and a regex cannot tell a gate that runs from one that is
+// written above the thing it is supposed to gate.
+function grabHandler(id) {
+  const at = H.indexOf('$("#' + id + '").onclick');
+  if (at < 0) throw new Error("test setup: handler " + id + " not found (renamed?)");
+  const eq = H.indexOf("=", at);
+  let k = H.indexOf("{", eq), depth = 0;
+  for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+  return H.slice(eq + 1, k + 1).trim();
 }
 function grabDecl(name) {
   for (const kw of ["const ", "let "]) {
@@ -150,7 +212,7 @@ function check(name, cond, detail) {
 // await that never settles does not crash node - it just ends the process quietly with the
 // remaining checks never run, which a mutation sweep scores as SURVIVED. Seen once already
 // in this repo, so the floor is asserted rather than assumed.
-const EXPECTED = 23;
+const EXPECTED = 33;
 let finished = false;
 process.on("exit", (code) => {
   if (!finished && !code) {
@@ -167,9 +229,17 @@ const PRELUDE = [
   "const out = W.out;",
   "let S = W.S, asv = W.asv;",
   "let runRoute = null, runUnsafe = [], planIntent = null, rthChainFailed = false;",
+  // what the command-bar handlers touch beyond the three motions
+  "let pauseMark = {line:0}, resumeSlow = true;",
+  "let escapeThrottle = true, commandedSpeed = 'low', speedWant = {key:'low'};",
+  "const holdClearAt = () => 12;",
+  "const mission = {waypoints: []};",
+  // #b_start asks before it commands, and hands a paused boat to resumeRun
+  "const guiConfirm = async () => true;",
+  "const resumeRun = async () => { out.resumed++; };",
   // the clearance guard's per-episode record, as it stands mid-episode when RTH is pressed
   "let guardOverride = {said:'proceed'}, edgeSpentM = 40, edgeCount = 2;",
-  "let guardActedAt = 12345, holdWant = null, guardHeld = null;",
+  "let guardActedAt = 12345, holdWant = null, guardHeld = {route:[1,2]};",
   "let transit = W.transit;",
   "const CLIENT_ID = 'test-tab';",
   "const SUPERVISES = true;",
@@ -198,7 +268,18 @@ const PRELUDE = [
   "const setMode = () => {};",
 ].join("\n");
 
-const EPILOGUE = "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay,"
+const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
+  + "\nconst bStart = " + grabHandler("b_start") + ";"
+  + "\nconst bEstop = " + grabHandler("b_estop") + ";"
+  + "\nconst bStop = " + grabHandler("b_stop") + ";"
+  + "\nreturn {cmd, doRTH, doGoTo, doTransit, takeDownBanner, took, notTookSay,"
+  + " bHold, bStop, bStart, commandSpeed, bEstop,"
+  + " seed: (r, i) => { runRoute = r; planIntent = i; runUnsafe = [[1,2]]; },"
+  + " sendSpeed, setThrottle: (v) => { escapeThrottle = v; },"
+  + " setViewOnly: (v) => { W.supervising = !v; },"
+  + " want: () => speedWant,"
+  + " bar: () => ({runRoute, planIntent, runUnsafe, guardHeld, pauseMark, resumeSlow,"
+  + "              escapeThrottle, commandedSpeed}),"
   + " after: () => ({runRoute, planIntent, rthChainFailed,"
   + " guard: {guardOverride, edgeSpentM, edgeCount, guardActedAt, holdWant}})};";
 
@@ -210,7 +291,7 @@ function bannerEl() {
 function world(opts) {
   const o = opts || {};
   const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0,
-                posts: [], banner: bannerEl(), aborts: 0 };
+                posts: [], banner: bannerEl(), aborts: 0, resumed: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
     out.posts.push(url);
@@ -223,6 +304,15 @@ function world(opts) {
       });
     }
     if (o.reply === "throw") return Promise.reject(new Error("failed to fetch"));
+    // Resolves a tick later, so a check can do what the guard does DURING the round trip.
+    if (o.slowReply) {
+      return new Promise((res) => setTimeout(() => {
+        // the guard's rung, firing DURING the round trip: it writes inside the page
+        // bundle, so it goes through the bundle rather than this module's scope.
+        if (W.api) W.api.setThrottle(true);
+        res({ ok: true, status: 200, json: async () => ({ ok: true, state: {} }) });
+      }, 5));
+    }
     // Headers arrive, the BODY never finishes: the abort is then raised by r.json(), which
     // is inside cmd()'s try and behind its own catch. That is the half the 15 s bound did
     // not cover until check 15b was written.
@@ -243,6 +333,10 @@ function world(opts) {
     }
     // A REFUSAL whose body is also unreadable - a proxy answering 409 with an HTML page, or
     // the console cut off mid-reason. The status still says she refused.
+    if (o.reply === "custom") {
+      return Promise.resolve({ ok: false, status: o.body.status || 409,
+        json: async () => o.body });
+    }
     if (o.reply === "refuseJunk") {
       return Promise.resolve({ ok: false, status: 409,
         json: async () => { throw new Error("Unexpected token < in JSON"); } });
@@ -272,10 +366,12 @@ function world(opts) {
                            // its operator wording. They come across verbatim, so a change
                            // to either is a change here rather than a copy that can drift.
                            + grab("took") + "\n" + grab("notTookSay") + "\n"
+                           + grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"
                            + grab("showBanner") + "\n" + grab("takeDownBanner") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
+  W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
   return Object.assign(api, { out, W,
     banner: () => (out.banner.style.display === "none" ? "" : out.banner.textContent) });
 }
@@ -674,6 +770,307 @@ console.log("\n-- 15-18: an unreadable answer is an answer, and there is ONE tes
           + JSON.stringify(r && r.error) + "; chained RTH retracted "
           + wc.after().rthChainFailed + ". Testing `unreadable` first turns this into a "
           + "not-acknowledged and the promise stands");
+}
+
+console.log("\n-- 20-23: SHAPE B - nothing is thrown away before the reply --");
+
+// 20-21. THE OPPOSITE REPAIR TO THE GUARD RUNGS', for the opposite shape. These handlers
+// nulled the drawn route and the Intent card and THEN posted, so a console answering "not
+// connected" or "ARM before commanding the boat" left the operator with a blank chart while
+// the boat flew on. Nothing puts it back: `runRoute` is written only by the commanded
+// motions and cleared only here, and /api/state carries no route at all.
+//
+// ⚠ AND IT IS WORSE THAN A BLANK CHART. renderIntent falls back to mission.waypoints when
+// runRoute is null and prints "route not held by this page — the vessel is flying one this
+// page did not upload" seconds after this page uploaded it. (That readout is its own filed
+// defect; this check is about not reaching it.)
+//
+// The file already held the rule, in doSpawn's own words: "NOTHING IS THROWN AWAY BEFORE THE
+// REPLY. This block used to run FIRST, so a spawn the server REFUSED still cost the operator
+// their trail and their drawn route."
+// ⚠ THE FIXTURE IS SEEDED, AND THAT IS NOT A DETAIL. This check first asserted
+// `a.runRoute === null` for the REFUSED case - the literal opposite of its own headline -
+// and passed, because the world starts runRoute at null and nothing ever set it. "Left
+// alone" and "never there" are the same observation until you put something there. Caught
+// by an adversarial pass, which also showed the partial revert it let through: move the
+// three route clears back above the post and leave only guardHeld past the gate, and all
+// 59 suites stayed green.
+const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
+{
+  const no = world({ reply: "refuse", why: "not connected" });
+  no.seed(ROUTE, {kind: "survey"});
+  await no.bHold();
+  const a = no.bar();
+  const ok = world({});
+  ok.seed(ROUTE, {kind: "survey"});
+  await ok.bHold();
+  const b = ok.bar();
+  check("20. a REFUSED Hold leaves the plan ON THE CHART - she is still flying it - and an "
+        + "accepted one still clears it",
+        a.runRoute === ROUTE && a.planIntent !== null && a.runUnsafe.length === 1
+        && a.guardHeld !== null && /^HOLD REFUSED: not connected/.test(no.banner())
+        && b.runRoute === null && b.planIntent === null && b.runUnsafe.length === 0
+        && b.guardHeld === null,
+        "refused -> route " + (a.runRoute ? "kept" : "WIPED") + ", intent "
+          + (a.planIntent ? "kept" : "WIPED") + ", guardHeld "
+          + (a.guardHeld ? "kept" : "WIPED") + ", banner "
+          + JSON.stringify(no.banner().slice(0, 52)) + "; accepted -> guardHeld "
+          + (b.guardHeld ? "STILL SET" : "cleared") + ". The offer belongs to the hold that "
+          + "was taken, and a Hold the vessel refused did not take one");
+}
+
+// 21. STOP, and `escapeThrottle` is the one that matters. A refused Stop during an
+// in-extremis escape must NOT release the governor's gag: the escape is still running, and
+// handing the throttle back to the role speed mid-escape is the opposite of what that rung
+// commanded. Every other release of it says so out loud (setRoleSpeed flashes "Speed
+// released — the escape's high-speed hold is over"); this one would have been silent.
+{
+  const no = world({ reply: "refuse", why: "not connected" });
+  no.seed(ROUTE, {kind: "survey"});
+  await no.bStop();
+  const a = no.bar();
+  const ok = world({});
+  ok.seed(ROUTE, {kind: "survey"});
+  await ok.bStop();
+  const b = ok.bar();
+  check("21. a REFUSED Stop keeps the plan, the escape's high-speed hold and the pause mark; "
+        + "an accepted one drops all of them",
+        a.runRoute === ROUTE && a.planIntent !== null
+        && a.escapeThrottle === true && a.pauseMark !== null && a.resumeSlow === true
+        && a.commandedSpeed === "low"
+        && b.runRoute === null && b.planIntent === null
+        && /SHE IS STILL RUNNING/.test(no.banner())
+        && b.escapeThrottle === false && b.pauseMark === null && b.resumeSlow === false
+        && b.commandedSpeed === null,
+        "refused -> route " + (a.runRoute ? "kept" : "WIPED")
+          + ", escapeThrottle " + a.escapeThrottle + ", pauseMark "
+          + (a.pauseMark ? "kept" : "WIPED") + ", commanded "
+          + JSON.stringify(a.commandedSpeed) + "; accepted -> escapeThrottle "
+          + b.escapeThrottle + ", pauseMark " + (b.pauseMark ? "STILL SET" : "cleared"));
+}
+
+// 22. ⚠⚠ AND #b_estop IS EXEMPT, WHICH IS THE ONE TO GET RIGHT. Engine.set_estop latches on
+// the CONSOLE whatever the link did - it sets estop, disarms, sets run "idle", pushes the
+// state, and only THEN re-raises the link's refusal (review #27, in its own words: "a latch
+// holds on the console whatever the link did ... and says the vessel did not take it"). So a
+// 409 on a LATCH is precisely the case where the console HAS latched: the drawn plan is not
+// this console's any more, and keeping it on screen would be the false picture.
+//
+// This is a SOURCE check on purpose: the handler asks guiConfirm and reads S, so driving it
+// would test the stubs. What it pins is that the clear is NOT behind a took() gate - i.e.
+// that a later tidy-up folding it into the uniform rule is caught.
+// ⚠⚠ THE EXEMPTION ASKS THE ANSWER NOW, AND THAT CORRECTION CAME FROM BEING REFUTED. The
+// argument for it - the console latches a command E-STOP whatever the vessel does - holds
+// for a refusal the console ANSWERED, and a 409 raised after the latch carries
+// `state.estop` true in its body. It does NOT hold for a VIEW-ONLY tab, whose press never
+// reached the console, nor for a reply that was lost: both of those used to wipe this tab's
+// chart for a console that had latched nothing. Driven all four ways rather than pinned by
+// source text, because a source check could not tell those cases apart.
+//
+// ⚠⚠ AND ONE OF THOSE FOUR CASES TURNED OUT NOT TO EXIST, WHICH IS WHY IT IS STILL DRIVEN.
+// The refutation that produced this check assumed a VIEW-ONLY tab's E-STOP is refused inside
+// cmd() and so latches nothing. It is not: `/api/cmd/estop` is in SUPERVISOR_ANY
+// (asv.html:9800, "never gated, in either direction") along with stop and pause, because a
+// control that REDUCES risk is live in every tab. So that press really is sent, really does
+// latch, and really should clear - and this check says so, rather than excluding the case.
+// The genuinely unreachable-for-estop answer is `sent:false`; the reachable failure is a
+// LOST reply, and that one must not clear.
+{
+  const latched = { ok: false, status: 409, error: "the vessel did not take the command",
+                    sent: true, refused: true, state: { estop: true } };
+  const runs = {};
+  for (const [name, opts] of [["accepted", {}],
+                              ["latched-409", { reply: "custom", body: latched }],
+                              ["view-only", { viewOnly: true }],   // still SENT: stop-class
+                              ["lost", { reply: "throw" }]]) {
+    const w = world(opts);
+    w.seed(ROUTE, { kind: "survey" });
+    w.W.S.estop = false;
+    await w.bEstop();
+    runs[name] = w.bar();
+  }
+  check("22. #b_estop clears on a latch the console CONFIRMS - including a 409 that latched, "
+        + "and from a view-only tab, because the stop class is live in every one - but NOT on "
+        + "a reply that never arrived",
+        runs.accepted.runRoute === null && runs["latched-409"].runRoute === null
+        && runs["view-only"].runRoute === null && runs.lost.runRoute === ROUTE,
+        "accepted -> " + (runs.accepted.runRoute ? "KEPT" : "cleared")
+          + "; 409 carrying state.estop -> " + (runs["latched-409"].runRoute ? "KEPT" : "cleared")
+          + "; view-only -> " + (runs["view-only"].runRoute ? "KEPT" : "cleared")
+          + " (SUPERVISOR_ANY: that press IS sent)"
+          + "; lost reply -> " + (runs.lost.runRoute ? "kept" : "WIPED")
+          + ". Only the last is a console that may have latched nothing");
+}
+
+// 23. THE EMPTY-PLAN UPLOAD. Its clear is now nearly unreachable, because the console refuses
+// an empty plan in words - and that is the point rather than dead code: this branch is
+// reachable only while mission.waypoints is empty, which a Go-To or RTH does not fill, so
+// `runRoute` may hold the motion she is still flying. The acceptance half is what stops a
+// later reader deleting the gate.
+{
+  const src = grab("doUpload");
+  check("23. the empty-plan upload clears only past the gate, and says why the clear is not "
+        + "dead code",
+        /if\(took\(r\)\)\{ runRoute=null; planIntent=null; \}/.test(src)
+        && /may hold the Go-To or/.test(src),
+        "a refusal here must not wipe a commanded motion that is still under way, and the "
+          + "reason is recorded beside it");
+}
+
+
+// 24. ⚠ A WANT FOR A COMMAND THIS TAB NEVER SENT IS NOT A WANT. `commandSpeed` set
+// `speedWant` BEFORE posting, and in a view-only tab cmd() refuses before any fetch - so the
+// want stood, `speedReconcile` watched the vessel disagree with it for ever, re-sent on every
+// window (each refused here too) and then raised "THE VESSEL IS NOT TAKING THE SPEED
+// COMMAND", blaming the boat for an instruction that never left the browser. That is one of
+// the open MEDIUM findings, and it is also the mechanism that was silently REPLACING the
+// in-extremis banner, because banners are sticky and last-write-wins.
+//
+// ⚠⚠ THE PAIR IS THE WHOLE CHECK. Clearing on every failure would undo the re-send this
+// mechanism exists for - a REFUSAL and a LOST reply must both KEEP the want, because the
+// vessel may yet take it and the reconcile loop is what makes that happen.
+{
+  const view = world({ viewOnly: true });
+  await view.commandSpeed("low");
+  const no = world({ reply: "refuse", why: "not connected" });
+  await no.commandSpeed("low");
+  const lost = world({ reply: "throw" });
+  await lost.commandSpeed("low");
+  const ok = world({});
+  await ok.commandSpeed("low");
+  check("24. a view-only tab leaves NO speed want behind - and a refusal or a lost reply "
+        + "still leaves one, because that is what the re-send is for",
+        view.want() === null && view.out.posts.length === 0
+        && no.want() !== null && lost.want() !== null && ok.want() !== null,
+        "view-only -> want " + (view.want() ? "STILL SET" : "null") + " after "
+          + view.out.posts.length + " post(s); refused -> "
+          + (no.want() ? "kept" : "WIPED") + "; lost -> " + (lost.want() ? "kept" : "WIPED")
+          + "; accepted -> " + (ok.want() ? "kept" : "WIPED"));
+}
+
+// 25. #b_start was the one of THREE start sites that dropped its reply (resumeRun and
+// resumeHeldSurvey have always read theirs), so a refused Start was a button press that
+// looked like a departure - the confirm dialog answered, the run state unchanged, and
+// nothing said so.
+{
+  const no = world({ reply: "refuse", why: "upload a run plan first" });
+  no.W.S.run = "idle";
+  await no.bStart();
+  const ok = world({});
+  ok.W.S.run = "idle";
+  await ok.bStart();
+  // ⚠ AND THE LOST REPLY MUST NOT SAY "has NOT begun". Glued on unconditionally that
+  // suffix contradicted the sentence it was attached to - "it may or may not have been
+  // carried out ... the survey has NOT begun" - and asserted the one thing the console had
+  // just said it could not know, in the unsafe direction.
+  const lost = world({ reply: "throw" });
+  lost.W.S.run = "idle";
+  await lost.bStart();
+  check("25. a REFUSED Start says the survey has not begun - and a LOST reply says to check "
+        + "the run state instead of asserting it",
+        /^START REFUSED: upload a run plan first/.test(no.banner())
+        && /has NOT begun/.test(no.banner()) && ok.banner() === ""
+        && /^START NOT ACKNOWLEDGED/.test(lost.banner())
+        && !/has NOT begun/.test(lost.banner())
+        && /check the run state/.test(lost.banner()),
+        "refused -> " + JSON.stringify(no.banner().slice(0, 56))
+          + "; lost -> " + JSON.stringify(lost.banner().slice(-46))
+          + "; accepted -> " + JSON.stringify(ok.banner()));
+}
+
+
+// 26. ⚠ THE THIRD ANSWER, ON BOTH GATES. Checks 20 and 21 drove only a refusal and a
+// success, and this suite's own header says why that is not enough - "THE ANSWER HAS THREE
+// STATES AND THIS SUITE EXISTS TO KEEP THEM APART". Narrowing either gate from took() to
+// `r.refused` survived ten suites: a LOST or timed-out Stop would then wipe the route, the
+// Intent card, the pause mark AND the escape's high-speed hold, on a reply that says nothing
+// about whether she stopped.
+{
+  const h = world({ reply: "throw" });
+  h.seed(ROUTE, { kind: "survey" });
+  await h.bHold();
+  const s = world({ reply: "throw" });
+  s.seed(ROUTE, { kind: "survey" });
+  await s.bStop();
+  check("26. a LOST reply is not a refusal, and neither gate opens for it",
+        h.bar().runRoute === ROUTE && h.bar().guardHeld !== null
+        && s.bar().runRoute === ROUTE && s.bar().escapeThrottle === true
+        && s.bar().pauseMark !== null
+        && /^HOLD NOT ACKNOWLEDGED/.test(h.banner()) && /^STOP NOT ACKNOWLEDGED/.test(s.banner())
+        && !/SHE IS STILL RUNNING/.test(s.banner()),
+        "Hold lost -> route " + (h.bar().runRoute ? "kept" : "WIPED")
+          + "; Stop lost -> route " + (s.bar().runRoute ? "kept" : "WIPED")
+          + ", escapeThrottle " + s.bar().escapeThrottle
+          + "; and neither says SHE IS STILL RUNNING, which the console cannot know");
+}
+
+// 27. ⚠⚠ AND THE CLEAR MAY NOT OVERTAKE A COMMAND GIVEN DURING ITS OWN ROUND TRIP. Past the
+// reply is the right side of the post, but it is also a WINDOW: the clearance guard runs at
+// 4 Hz throughout it and its rungs write these very fields. An accepted Stop clearing them
+// unconditionally would erase an escape the guard commanded while the Stop was in flight -
+// `escapeThrottle` included, which is the same release this commit refuses to make on a
+// REFUSED Stop. Found by an adversarial pass, not by a check, and it was BLOCKING.
+{
+  const w = world({ slowReply: true });
+  w.seed(ROUTE, { kind: "survey" });
+  // ⚠ NOT ESCAPING WHEN THE BUTTON IS PRESSED. If it were already set, "left alone"
+  // and "cleared then re-set" would look identical and the check could not tell them
+  // apart - the same vacuity that made checks 20/21 pass before they were seeded.
+  w.setThrottle(false);
+  const inFlight = w.bStop();                   // the guard fires inside this window
+  await inFlight;                               // (the fetch stub does it at +5 ms)
+  const a = w.bar();
+  check("27. an ACCEPTED Stop clears only what it found - state written during its own round "
+        + "trip belongs to the command that wrote it",
+        a.escapeThrottle === true && a.runRoute === null,
+        "the guard set escapeThrottle during the window and it SURVIVED the accepted Stop ("
+          + a.escapeThrottle + "), while the route this press did find was cleared ("
+          + (a.runRoute === null ? "yes" : "NO") + "). Cleared unconditionally, an accepted "
+          + "Stop un-gags the governor in the middle of an escape");
+}
+
+// 28. A REFUSED START PUTS THE FRESH-RUN CLEARS BACK. These are the one set on this bar that
+// runs IN FRONT of its post, and that is deliberate: Engine.start pushes the new run's state
+// inside its own lock, so the telemetry frame can reach this page before the reply and
+// onState judges it with clearanceGuard() and speedGovernor(). Cleared past the gate, that
+// frame would be read against the PREVIOUS run's holds. The safety therefore comes from
+// putting them back, not from delaying them.
+{
+  const no = world({ reply: "refuse", why: "upload a run plan first" });
+  no.W.S.run = "idle";
+  await no.bStart();
+  const a = no.bar();
+  const ok = world({});
+  ok.W.S.run = "idle";
+  await ok.bStart();
+  const b = ok.bar();
+  check("28. a REFUSED Start restores the holds it cleared in front of the post; an accepted "
+        + "one leaves them cleared",
+        a.escapeThrottle === true && a.pauseMark !== null && a.resumeSlow === true
+        && b.escapeThrottle === false && b.pauseMark === null,
+        "refused -> escapeThrottle " + a.escapeThrottle + ", pauseMark "
+          + (a.pauseMark ? "restored" : "STILL WIPED") + "; accepted -> escapeThrottle "
+          + b.escapeThrottle + ". Releasing two safety holds on a press that did nothing is "
+          + "the fault this commit exists to remove");
+}
+
+// 29. ⚠ AND THE RE-SEND GOES THROUGH THE SAME DOOR. The want-dropping rule was first written
+// on commandSpeed alone, and speedReconcile re-sends with its own call - so a tab that WAS
+// supervising, commanded a speed, and then lost the post to a TAKE OVER kept re-sending and
+// kept blaming the vessel. Both senders go through sendSpeed now; this drives the re-send.
+{
+  const w = world({});
+  await w.commandSpeed("low");
+  const before = w.want();
+  w.setViewOnly(true);                       // another window pressed TAKE OVER
+  await w.sendSpeed("low");                  // what speedReconcile does on its next window
+  check("29. a tab that loses the post mid-reconcile drops the want rather than re-sending "
+        + "for ever and blaming the vessel",
+        before !== null && w.want() === null,
+        "want after the first send: " + (before ? "set" : "null")
+          + "; after the post was taken away: " + (w.want() ? "STILL SET" : "null")
+          + ". Left set, speedReconcile re-sends on every window and then raises \"THE VESSEL "
+          + "IS NOT TAKING THE SPEED COMMAND\" in a tab that sent nothing");
 }
 
 finished = true;

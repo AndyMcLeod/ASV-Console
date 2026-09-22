@@ -658,7 +658,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const guard = eval("(function(){ " + grab(H, "took") + NL2 + grab(H, "notTookSay") + NL2
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
                      + grab(H, "helmSettled") + NL2
-                     + grab(H, "commandSpeed") + NL2
+                     + grab(H, "sendSpeed") + NL2 + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");
