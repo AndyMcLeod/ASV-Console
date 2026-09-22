@@ -750,6 +750,38 @@ function finish() {
             + "(tests/pause_resume.js 14)");
   resumeSlow = false;
 
+  // ⚠⚠ 18a. AND IT STANDS DOWN WHEN THE PAGE CANNOT SAY WHICH LINE SHE IS ON. `indexedRoute()`
+  // answers null on a page loaded mid-run - it never held `runRoute` and cannot get it back.
+  // Every READOUT prints that as "--" or as a row saying so; the SPEED path must not print
+  // it as a number, and left alone it would, by the quietest route on the page:
+  // currentLegLine answers -1, so `runLineIdx` and `curTurn` stay -1, and currentActivity
+  // falls through to "between coverage regions", whose role is TRANSIT. The governor would
+  // command 6.0 kn on coverage lines being surveyed at 3.0, and through reversals the
+  // planner fitted at the 1.5 kn turn radius - with `turnSlowAt` unreachable because the
+  // role never equals "turn". "Cannot say" must never resolve as the fastest speed.
+  {
+    S.status.holding = false; S.behavior = "survey"; runLineIdx = 0; curTurn = -1;
+    clearance.slowed = false; resumeSlow = false; escapeThrottle = false;
+    const drawn = runRoute.slice();
+    commandedSpeed = null; sent = [];
+    const held = speedGovernor();                       // the page that DID upload
+    const heldSent = sent.filter(x => x.p === "/api/cmd/speed").length;
+    runRoute = null;                                    // ...and the same frame after a reload
+    mission.waypoints = drawn.slice(0, 2);              // a shorter drawn plan
+    S = { ...S, wp_total: drawn.length + 12 };          // ...against a route she is flying
+    commandedSpeed = null; sent = [];
+    const lost = speedGovernor();
+    const lostSent = sent.filter(x => x.p === "/api/cmd/speed").length;
+    runRoute = drawn;
+    check("18a. the governor stands down on a page that does not hold the route the vessel's "
+          + "index counts into - it does not fall through to the TRANSIT speed",
+          () => held !== null && heldSent === 1 && lost === null && lostSent === 0,
+          () => "the uploading page commands '" + held + "' (" + heldSent + " sent); the "
+              + "same frame on a reloaded page -> " + lost + " (" + lostSent + " sent). "
+              + "Without the stand-down it commands the TRANSIT role, because currentLegLine "
+              + "answers -1 and currentActivity reads that as 'between coverage regions'");
+  }
+
   // ⚠⚠ 18b. AND IT STANDS DOWN FOR THE ESCAPE TOO, WHICH IS THE SAME CLAIM POINTING UP.
   // The helm rung commands HIGH for steerage authority to beat the set, then sets
   // `clearance.slowed = false` and nulls `commandedSpeed` - and onState runs

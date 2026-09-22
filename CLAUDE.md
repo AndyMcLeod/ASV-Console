@@ -59,6 +59,34 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **⚠⚠ 2026-09-22 — TWO MORE REGRESSIONS IN MY OWN SHIPPED WORK, both found by the
+  adversarial pass and both worse than what they replaced.**
+
+  * **H12's `indexedRoute()` null became a COMMANDED SPEED.** The patch asserted every
+    caller prints null as "--". One does not: `currentLegLine` → `runLineIdx` stays −1 →
+    `currentActivity` falls through to "between coverage regions" → role **TRANSIT**. So a
+    reloaded supervising page commanded **6.0 kn on coverage lines being surveyed at 3.0,
+    and through reversals the planner fitted at the 1.5 kn turn radius**, with `turnSlowAt`
+    unreachable because the role never equals "turn". `speedGovernor` stands down on it now,
+    beside the four stand-downs it already has. **"Cannot say" must never resolve as the
+    fastest speed.** `guard_resume.js` 18a.
+  * **H07's queue was UNBOUNDED.** `fetchENCBbox` is a bare `fetch` — no timeout, no
+    AbortController — so an extract that never returns took every Go-To, RTH and punch with
+    it, for ever, with no banner. `resetForNewArea` bounds its own wait at 8 s for exactly
+    this reason, and `nogo_readout` 2 exists so a hung fetch stays visible as one. Bounded
+    at the same `NOGO_QUEUE_MAX_MS = 8000`, and past it a waiter **proceeds** rather than
+    refusing — the coverage test is what keeps that answer honest. `nogo_readout.js` 19g,
+    which waits the real 8 s once.
+
+  **4 mutations, 4 killed**, two of them verbatim reproductions of what I shipped. Three
+  eval bundles needed `indexedRoute` or `NOGO_QUEUE_MAX_MS` added.
+
+  **The lesson worth keeping: both regressions were the fix's own null/wait reaching a
+  consumer the patch had not enumerated.** Neither was visible in the suite that owned the
+  fix. When a change introduces a new "unknown" value or a new wait, the question to ask is
+  not "do the readouts handle it" but "what does every consumer DO with it" — and for a
+  console that commands a boat, the ones that command are the ones to check first.
+
 * **2026-09-22 — THE OPERATOR'S MAX DEPTH REFUSED EVERY TURN, AND BLAMED SHALLOW WATER.**
   `punchOut` built ONE keep-out model at the survey's depth window and handed it to the
   coverage clip, the reversals, the leads, the region hops and the detour router alike.

@@ -283,7 +283,13 @@ const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in th
 // midpoint branch, and ensureChartInk is stubbed - the chart read is chart_ink.js's subject.
 var asv = null;
 async function ensureChartInk() { return true; }
-eval(grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
+// ⚠ NOGO_QUEUE_MAX_MS bounds the queue wait. READ from the page, not retyped, so a suite
+// that believes a different bound than the page uses cannot happen - and declared OUT HERE
+// as well as inside the bundle, because a `const` in a direct eval stays in the eval's own
+// scope and check 19g could not see it.
+const NOGO_QUEUE_MAX_MS = +(H.match(/const NOGO_QUEUE_MAX_MS = (\d+)/) || [])[1];
+eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
+     grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
      "const M_PER_DEG_LAT = " + M_PER_DEG_LAT + ";" + "\n" + grab("ensureNogoCovers"));
 
@@ -444,6 +450,44 @@ async function drive(fetchResult) {
           + "never created is a console that stops planning");
   }
 
+
+
+  // 19g. AND THE QUEUE IS BOUNDED. `fetchENCBbox` is a bare `fetch` with no timeout and no
+  // AbortController, so an extract that never returns would take every Go-To, RTH and punch
+  // on the page with it - for ever, and with no banner. That is a worse failure than the one
+  // the queue fixes, and the repo already knows it: resetForNewArea bounds ITS wait at the
+  // same 8 s, and check 2 above exists so a hung fetch stays VISIBLE as a hung fetch. Past
+  // the bound a waiter PROCEEDS rather than refusing - the caller then gets a real answer,
+  // and the coverage test at the end of ensureNogoCovers is what keeps that answer honest.
+  //
+  // ⚠ DRIVEN AGAINST A FETCH THAT NEVER SETTLES, with the bound read off the page. The clock
+  // is not mocked: the check waits the real 8 s once, which is the price of proving that the
+  // thing which used to hang does not.
+  {
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    let n = 0;
+    const forever = new Promise(() => {});
+    FETCH = async () => { n++; if (n === 1) await forever; return { band: "enc_5" }; };
+    const hung = refreshNogo(null, { W: -70.8, S: 43.0, E: -70.7, N: 43.1 });
+    await Promise.resolve();
+    const t0 = Date.now();
+    const landed = await Promise.race([
+      refreshNogo(null, { W: -70.6, S: 43.0, E: -70.5, N: 43.1 }).then(() => "returned"),
+      new Promise(r => setTimeout(() => r("HUNG"), NOGO_QUEUE_MAX_MS + 6000)),
+    ]);
+    const waited = Date.now() - t0;
+    check("19g. ... and the wait is BOUNDED: an extract that never returns does not take the "
+          + "console's planning with it",
+          landed === "returned" && waited >= NOGO_QUEUE_MAX_MS - 500
+          && waited < NOGO_QUEUE_MAX_MS + 4000 && n === 2,
+          landed + " after " + waited + " ms against a bound of " + NOGO_QUEUE_MAX_MS
+          + " ms, with " + n + " fetch(es) issued. Unbounded, this call never returns and "
+          + "every Go-To, RTH and punch on the page waits behind it in silence");
+    void hung;
+  }
 
   // ── 19d. THE CALLER'S QUESTION, THROUGH THE BUSY WINDOW ─────────────────────────────
   //

@@ -2385,6 +2385,21 @@ function speedGovernor(){
   // re-power the prop within a frame of it stopping and drive the boat at the berth it was
   // gliding onto. The vessel says when it is coasting; that is the one authority here.
   if(st.drifting){ commandedSpeed = null; return null; }
+  // ⚠⚠ AND A PAGE THAT CANNOT SAY WHICH LINE SHE IS ON GOVERNS NOTHING. `indexedRoute()`
+  // answers null when this page does not hold the route the vessel's waypoint index counts
+  // into - a page loaded mid-run, which never had `runRoute` and cannot get it back. Every
+  // READOUT prints that as "--" or as a row saying so; the SPEED path must not print it as
+  // a number, and left alone it would: currentLegLine answers -1, so runLineIdx and curTurn
+  // stay -1, and currentActivity falls through to its "between coverage regions" branch,
+  // whose role is TRANSIT. The governor would then command 6.0 kn on coverage lines being
+  // surveyed at 3.0 and through reversals the planner fitted at the 1.5 kn turn radius,
+  // with `turnSlowAt` unreachable because the role never equals "turn".
+  //
+  // Standing down leaves the boat at whatever the supervising page last commanded, which is
+  // the same answer the four stand-downs above give and the only honest one here: "cannot
+  // say" must never resolve as the fastest speed. Found by an adversarial re-read of the
+  // indexedRoute fix, after it was committed.
+  if(!indexedRoute()) return null;
   // A TURN THE PLANNER COULD ONLY FIT AT THE SLOW RADIUS IS FLOWN AT THE SLOW SPEED. The
   // radius that made it fit is the radius the hull holds at that speed, so running it any
   // faster flies a turn the boat cannot track - which is the whole failure this and the
@@ -5817,6 +5832,10 @@ function applyWaterOffset(wl){
 // The extract in flight, so a caller that arrives mid-fetch can WAIT for it rather than be
 // told "done". Settled in refreshNogo's own `finally`, on every path including the throw.
 let nogoPending = null;
+// How long a caller will queue behind an extract already running. The same 8 s
+// resetForNewArea bounds ITS wait at, and for the same reason: /api/enc is fetched with no
+// timeout, so an extract that never returns must not take the console's planning with it.
+const NOGO_QUEUE_MAX_MS = 8000;
 async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
   // ⚠⚠ AN EXTRACT IN FLIGHT IS SOMETHING TO WAIT FOR, NOT A REASON TO REPORT "DONE". This
   // used to `return` at once, which left ensureNogoCovers / ensureNogoArea handing their
@@ -5832,7 +5851,18 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
   // in the same turn and the first one through sets `busy` again before it yields. The
   // `&& nogoPending` is the deadlock stop: if `busy` were ever left standing with nothing in
   // flight - a throw above the try - this proceeds rather than spinning for ever.
-  while(nogo.busy && nogoPending) await nogoPending;
+  //
+  // ⚠⚠ AND THE WAIT IS BOUNDED, because `fetchENCBbox` is a bare `fetch` with no timeout and
+  // no AbortController: an extract that never returns would otherwise take every Go-To, RTH
+  // and punch on the page with it, for ever, with no banner - which is a worse failure than
+  // the one this queue fixes. `resetForNewArea` bounds its own wait at the same 8 s for
+  // exactly this reason, and nogo_readout check 2 exists so a hung fetch stays VISIBLE as a
+  // hung fetch. Past the bound we proceed rather than refuse: the caller then gets a real
+  // answer, and the coverage test at the end of ensureNogoCovers/ensureNogoArea is what
+  // keeps that answer honest. Found by an adversarial re-read, after this shipped unbounded.
+  const queueUntil = Date.now() + NOGO_QUEUE_MAX_MS;
+  while(nogo.busy && nogoPending && Date.now() < queueUntil)
+    await Promise.race([nogoPending, new Promise(r => setTimeout(r, 250))]);
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
   const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
   nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter

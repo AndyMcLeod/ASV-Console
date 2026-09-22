@@ -143,6 +143,11 @@ var resumeSlow = false;
 // evidence that an ordinary run still governs its own speed as it always did.
 var escapeThrottle = false;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
+// ⚠ indexedRoute READS `runRoute` AND `S.wp_total`. This world drives the governor from
+// `mission` alone and its S carries no wp_total, so there is nothing for the drawn plan to
+// disagree with and indexedRoute answers it - which makes every check below the ORDINARY
+// case rather than the reloaded-page one. tests/guard_resume.js 18a owns that one.
+var runRoute = null;
 var sent = [];
 function cmd(path, body) { sent.push({ path, body }); }
 var banners = [];
@@ -165,6 +170,11 @@ eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhas
      // review #14: the governor acts only in the SUPERVISING tab, and this world is that tab. A view-only one is
      // tests/supervisor_page.js's subject - it holds that the governor assesses and commands nothing.
      "const supervising = () => true;\n" +
+     // ⚠ indexedRoute IS A GOVERNOR STAND-DOWN NOW (2026-09-22): a page that does not hold
+     // the route the vessel's index counts into governs nothing, rather than falling through
+     // to the TRANSIT role. Missing from this bundle it is a bare ReferenceError inside
+     // speedGovernor, which the crash guard reports as ONE failed check rather than as a crash.
+     grab("indexedRoute") + "\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
