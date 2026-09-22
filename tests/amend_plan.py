@@ -52,6 +52,16 @@ AND SIX MORE, 2026-09-21, for the PAUSED case - all six killed:
     the holding gate dropped                                        -> 12
     15/15b/16 moved in FRONT of 11, leaving her stopped for it      -> 11
 
+⚠⚠ AND 15b WAS ASSERTING A PROPERTY OF THE WEATHER (2026-09-22). It read `sog_kn < 0.5`
+to mean "the prop is off" - but `sog_kn` is speed over the GROUND and includes the drift, and
+asv_console integrates the summed set on a PAUSED hull on purpose: `pause` leaves `_running`
+true, and a boat lying stopped in a stream is carried by it with no force on her at all. So
+the check passed on slack days and then blocked a commit that had not touched a line of
+Python. Measured that day, paused and amended: sog 0.61 kn against env_set 0.61 kn - the SAME
+number, which is what being set rather than driven looks like. It asks that question directly
+now. Pressed Start at that moment she made 2.57 kn against a set of 0.62 two seconds later,
+so the margin is nowhere near slack enough to let the mutation through.
+
 ⚠ AND A FOURTH SHADOWING WAS CREATED AND CAUGHT IN THE SAME HOUR (2026-09-21). Checks
 15/15b/16 first sat in FRONT of 11 and left the boat STOPPED for it, so all four of its
 malformed-route cases were answered by the RUN gate - "the vessel is not running a plan" -
@@ -405,6 +415,10 @@ try:
     d, s = _state()
     p_idx, p_total = s["wp_index"], s["wp_total"]
     p_lat, p_lon = s["lat_deg"], s["lon_deg"]
+    # The clock goes with the position, because 15b measures a DRIFT against them both and a
+    # drift is meters per second. Assuming the sleeps below add up to the elapsed time makes
+    # the bound wrong on a loaded machine, in the direction that hides a moving boat.
+    p_t = time.time()
     # ⚠ THE BACKTRACK POINT GOES IN FRONT OF THE WHOLE UNFLOWN REMAINDER, which is what
     # resumeRun posts - and after check 10 that remainder already carries `api_via`. Dropping
     # it would replace N waypoints with N and leave wp_total unmoved, so the check would pass
@@ -427,14 +441,29 @@ try:
     # off: if amending a paused hull made way, resumeRun would be driving the boat before it
     # had commanded LOW, on a plan the operator has not resumed. This is the only check that
     # would notice - 15 passes just as happily with the boat under way.
+    #
+    # ⚠⚠ AND IT IS ASKED AGAINST `env_set_kn`, NOT AGAINST A FIXED 0.5 kn. A paused hull is
+    # still IN the stream - asv_console integrates the summed set (leeway plus tide) while
+    # `_running` stays true through a pause - so `sog_kn`, which is speed over the GROUND,
+    # is non-zero with the motors stopped and its value belongs to the weather. A fixed
+    # ceiling therefore tests the day rather than the console: 0.61 kn of set, and a suite
+    # that had passed for weeks blocked a commit containing no Python at all. The question
+    # is whether she is being SET or DRIVEN, so that is the comparison - her speed over the
+    # ground against the set the console itself publishes for the same frame.
     time.sleep(2.0)
     d3, s3 = _state()
     moved = math.hypot((s3["lat_deg"] - p_lat) / M, (s3["lon_deg"] - p_lon) * 0.73 / M)
-    check("15b. ... and amending a paused boat does not START her - the prop stays off "
-          "until the operator's Start",
-          d3["run"] == "paused" and moved < 2.0 and (s3.get("sog_kn") or 0.0) < 0.5,
-          "run=%s moved %.2f m, sog %.2f kn over 2 s after the amendment"
-          % (d3.get("run"), moved, s3.get("sog_kn") or 0.0))
+    elapsed = time.time() - p_t
+    set_kn = s3.get("env_set_kn") or 0.0
+    drift_m = set_kn * 0.514444 * elapsed          # what the set alone accounts for
+    check("15b. ... and amending a paused boat does not START her - she is SET by the "
+          "stream, never DRIVEN, until the operator's Start",
+          d3["run"] == "paused"
+          and (s3.get("sog_kn") or 0.0) <= set_kn + 0.5
+          and moved <= drift_m + 1.0,
+          "run=%s, sog %.2f kn against a set of %.2f kn; moved %.2f m in %.1f s, of which "
+          "the set alone accounts for %.2f m"
+          % (d3.get("run"), s3.get("sog_kn") or 0.0, set_kn, moved, elapsed, drift_m))
 
     # 16. AND STOPPED IS STILL REFUSED. `paused` and `stopped` are the two states the old
     # one-word comparison collapsed together, and only ONE of them is being opened: a

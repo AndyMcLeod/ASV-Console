@@ -1285,6 +1285,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     asv = { lat: ref.lat, lon: ref.lon };
     clearance = { m: 13, kind: "a dock / pier", slowed: false, prev: null, info: null };
     sent = []; notes = []; banners = []; planIntent = { why: [] };
+    let lastPut = null;
     for (const f of [0, HELM_DWELL_MS + 250]) {
       Date.now = () => clock;
       clock = T0 + 60000 + f;
@@ -1292,20 +1293,23 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
             status: { cog_deg: 0, sog_kn: 6.0, heading_deg: 0, env_set_deg: 0,
                       env_set_kn: 2.0, holding: false, drifting: false } };
       guard();
-      // ⚠ THE OPERATOR'S ROUTE MUST BE DISTINGUISHABLE FROM WHAT THE ESCAPE FOUND, or a
-      // retraction that never stands down restores something that LOOKS the same and the
-      // check passes on it. A distinct longitude is the whole difference.
-      runRoute = [{ lat: ref.lat + 0.01, lon: ref.lon + 0.05 }];
+      // ⚠⚠ AND IT MUST DIFFER FROM WHAT THE ESCAPE CAPTURED, not merely from the origin.
+      // Setting the same coordinates on every frame meant the rung captured a route with
+      // the SAME values it was later compared against, so a retraction that never stood
+      // down restored something indistinguishable and the check passed on the defect.
+      // The frame number is in the longitude for exactly that reason.
+      runRoute = [{ lat: ref.lat + 0.01, lon: ref.lon + 0.05 + (f / 1e6) }];
+      lastPut = runRoute;
       await Promise.resolve(); await Promise.resolve();
     }
     const said = banners.join(" | ");
     rcheck("15z9. ... and a refused escape still ALARMS when the route has moved under it - "
           + "only the drawing may be overtaken",
           /THE HELM WAS NOT TAKEN/.test(said) && escapeThrottle === false
-          && runRoute !== null && runRoute[0].lon > ref.lon + 0.04,
+          && runRoute === lastPut,
           "banner " + (/THE HELM WAS NOT TAKEN/.test(said) ? "raised" : "SILENT")
             + "; escapeThrottle " + escapeThrottle + " (released, because nobody is escaping)"
-            + "; the operator's later route " + (runRoute && runRoute[0].lon > ref.lon + 0.04
+            + "; the operator's later route " + (runRoute === lastPut
               ? "left alone" : "OVERWRITTEN by the retraction"));
   }
 

@@ -1182,11 +1182,25 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
   w.setWant({ key: "high" });                  // ...and commands the escape's speed
   await inFlight;
   const a = w.bar();
+  // ⚠⚠ AND THE OTHER HALF, because the first one ALONE is vacuous: this check writes
+  // speedWant DURING the window and then asserts it, so deleting the restore leaves the
+  // value the check itself put there. A second world where nothing touches speedWant in
+  // flight is what makes the restore observable at all. Third time this shape has bitten
+  // in one session: ask what the value WAS before the code ran.
+  const q = world({ reply: "refuse", why: "upload a run plan first" });
+  q.W.S.run = "idle";
+  q.setThrottle(false);
+  q.setWant({ key: "survey" });                // the operator's own want, before the press
+  await q.bStart();                            // nothing writes it during this one
+  const qa = q.bar();
   check("32. a refused Start restores only what it still owns - an escape commanded during "
-        + "its round trip keeps the governor stood down, and keeps its speed want",
-        a.escapeThrottle === true && a.speedWant !== null && a.speedWant.key === "high",
+        + "its round trip keeps the governor stood down, and an untouched want comes back",
+        a.escapeThrottle === true && a.speedWant !== null && a.speedWant.key === "high"
+        && qa.speedWant !== null && qa.speedWant.key === "survey",
         "escapeThrottle after the refused Start: " + a.escapeThrottle
-          + ", speedWant " + JSON.stringify(a.speedWant && a.speedWant.key)
+          + ", the escape's want " + JSON.stringify(a.speedWant && a.speedWant.key)
+          + "; an UNTOUCHED want came back as "
+          + JSON.stringify(qa.speedWant && qa.speedWant.key)
           + ". Restored unconditionally they go back to the pre-press values and the governor "
           + "bids the role speed over the rung's HIGH, beside whatever she was steered off");
 }

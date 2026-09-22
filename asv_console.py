@@ -4516,7 +4516,16 @@ class Engine:
 
         The link's gate is untouched and still refuses a stopped, idle, holding or
         fully-flown plan - and nothing moves until Start, so widening this one cannot put
-        way on a hull: an amendment to a paused boat leaves her at 0.00 m and ~0.06 kn."""
+        way on a hull: an amendment to a paused boat adds NO THRUST to her.
+
+        ⚠ "NO THRUST" IS NOT "NO MOTION", and the difference cost a blocked commit. The
+        measurement that first stood here - "leaves her at 0.00 m and ~0.06 kn" - was taken
+        on slack water and then read as a property of this gate. A paused hull is still IN
+        the stream: pause leaves `_running` true, the summed set is integrated, and her
+        speed over the GROUND is the weather's number rather than this gate's. Measured
+        2026-09-22 on the same sequence: 0.80 m and 0.64 kn against a published set of
+        0.64 kn - the SAME number, which is what being set rather than driven looks like.
+        tests/amend_plan.py 15b asks it that way now."""
         # ARM FIRST, THEN E-STOP, THEN THE RUN - the same order _run_route uses. Ordering
         # matters to the OPERATOR, not to the logic: whichever gate answers is the sentence
         # they read, and "ARM before commanding the boat" is more use to someone who has not

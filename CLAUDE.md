@@ -79,8 +79,9 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     escape could go **silent again**, the exact defect that commit exists to remove. **It is
     the drawing that may be overtaken; the alarm never is.** `clearance_guard` 15z9.
 
-  **⚠⚠⚠ FOUR OF MY CHECKS PASSED FOR THE WRONG REASON THIS SESSION. Two shapes, both worth
-  knowing:**
+  **⚠⚠⚠ SIX OF MY CHECKS PASSED FOR THE WRONG REASON THIS SESSION, IN THREE SHAPES.
+  Not one was caught by reading; every one came from a mutation sweep or a refuter
+  evaluating the predicate against a deliberate revert:**
   1. **Asserting the fixture's own default.** `command_result` 20 asserted
      `runRoute === null` **for the refused case** — the literal opposite of its headline —
      and passed, because the world starts it null and nothing set it. *"Left alone"* and
@@ -90,6 +91,21 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
      comparison becomes `offset > -1` — **true for every real offset.** Both passed for the
      exact revert they existed to catch. **A check whose failure mode is "the thing I am
      looking for is absent" must say so, not treat absence as a free pass.**
+  3. **Asserting a value the check itself wrote.** `command_result` 32 set
+     `speedWant = {key:"high"}` **during** the round trip and then asserted it, so deleting
+     `#b_start`'s restore left the value the check had put there; `clearance_guard` 15z9 gave
+     the overtaking route the **same coordinates on every frame**, so the escape rung
+     captured a route indistinguishable from the one it was later compared against. Both
+     passed on the very defect they exist for.
+
+  **⚠ AND SOMETIMES NEITHER HALF ALONE IS THE PROPERTY.** The repair for `command_result` 32
+  needed TWO worlds: one where the guard writes `speedWant` in flight (it must NOT be
+  overwritten by the restore) and one where nothing touches it (it MUST come back). The first
+  cannot see a missing restore; the second cannot see an overwrite. **The pair is the check.**
+
+  **THE ONE QUESTION THAT CATCHES ALL THREE SHAPES: when a check asserts a value, ask what
+  that value WAS before the code ran.** If *"the code did its job"* and *"nothing happened at
+  all"* produce the same observation, the check cannot fail.
 
   **Also folded in:** `speedReconcile`'s re-send now goes through the one door (`sendSpeed`)
   and is **driven**, not called directly; `#b_hold`'s compare-and-clear got the coverage
@@ -97,6 +113,33 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   **`#b_pause` was a sixth site** — `markPause()` recorded where she stopped before the
   console answered, so a pause this tab was never allowed to send left a mark the next Resume
   would back up from.
+
+* **⚠⚠ 2026-09-22 — A SUITE THAT HAD PASSED FOR WEEKS BLOCKED A COMMIT CONTAINING NO
+  PYTHON, AND IT WAS RIGHT TO FAIL — IT WAS ASSERTING A PROPERTY OF THE WEATHER.**
+  `amend_plan` 15b means *"amending a paused boat does not start her"* and asked it as
+  `sog_kn < 0.5`. But **`sog_kn` is speed over the GROUND and includes the drift**, and the
+  sim integrates the summed set on a PAUSED hull **on purpose** — `pause` leaves `_running`
+  true, and `SimVcu.tick`'s own comment says a boat lying stopped in a stream is carried by
+  it with no force on her at all. So the ceiling tested the day, not the console: measured,
+  paused and amended, **sog 0.61 kn against `env_set_kn` 0.61 kn — the same number**, which
+  is exactly what being *set* rather than *driven* looks like. Two runs in three failed.
+
+  It compares against the published set now, so it asks the question it always meant to ask.
+  **Teeth re-verified against the mutation it exists for** (`link.start()` after
+  `link.amend_plan`): control green, mutant **3.31 kn against a set of 0.63** — killed, and
+  each of the three clauses fails on its own. `Engine.amend`'s docstring carried the same
+  mistake one level up (*"leaves her at 0.00 m and ~0.06 kn"*, a slack-water measurement
+  stated as a property of the gate) and now says **no THRUST**, not no motion.
+
+  ⚠ **AND IT IS THE ONLY ONE — CHECKED, NOT ASSUMED.** Every other place a Python suite
+  asserts a boat is stopped (`estop_chain` 10b and 11, `hold_station` 11g) is asserted on a
+  hull that is E-STOPPED, DISARMED or `idle`, and `SimVcu.tick` integrates the set **only
+  while `_running` and not `_estop`** — so those read a true 0.00 whatever the tide does.
+  **PAUSED is the one state that looks stopped and still drifts**, which is why this was the
+  one check the weather could reach. (Filed, not fixed: `run_link_control` :513 waits on
+  `sog_kn > 0.5` to decide she is under way, and today's 0.65 kn of set satisfies that on a
+  running boat whose prop has not yet taken hold — a readiness wait, not an assertion, so it
+  can only make a later check impatient.)
 
 * **⚠ 2026-09-22 — WHAT IS LEFT, IN ORDER.** The commanded-answer seam is now CLOSED: every
   command on the page reads its reply, there is one spelling of the test, and the three
