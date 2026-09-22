@@ -2453,15 +2453,21 @@ function renderIntent(){
   const el=$("#intentBody"); if(!el) return;
   const st=(S&&S.status)||{}, run=S&&S.run;
   const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
+  // ⚠ TWO ARRAYS, ON PURPOSE. `rr` answers "is there a plan drawn at all", which is what the
+  // empty-card test below needs. The rows that are INDEXED by the vessel's waypoint number need
+  // the array that number counts into, and a page loaded mid-run does not hold it - see
+  // indexedRoute. Null there is a ROW SAYING SO, in the same idiom the WHY block uses for a plan
+  // committed before this page; a number would be the wrong water measured confidently.
+  const ir = indexedRoute();
   const head=(t)=>'<div style="color:var(--ink-faint);margin-top:7px;font-size:9px;letter-spacing:.08em;text-transform:uppercase">'+t+'</div>';
   const row=(k,v,c)=>'<div style="display:flex;gap:6px;margin-top:2px"><span style="color:var(--ink-faint);min-width:74px">'+k+'</span><span style="color:'+(c||'var(--ink)')+'">'+v+'</span></div>';
   if(!rr.length && !planIntent){
     el.innerHTML = '<div style="color:var(--ink-faint)">No plan committed. Draw a survey, or command a Go-To / RTH / Transit — the reasoning behind it appears here.</div>';
     return;
   }
-  const idx = Math.min(window._wpIndex||0, Math.max(0, rr.length-1));
+  const idx = Math.min(window._wpIndex||0, Math.max(0, (ir||[]).length-1));
   const here = asv ? {lat:asv.lat, lon:asv.lon} : null;
-  const nextWp = rr[idx] || null;
+  const nextWp = ir ? (ir[idx] || null) : null;
   let html = "";
   // ---- NOW ----
   html += head("Now");
@@ -2471,17 +2477,20 @@ function renderIntent(){
   html += row("doing", act.activity.toUpperCase() + " — " + act.detail,
               act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "var(--ink-faint)" : "#e8c07a"));
   html += row("mode", kind.toUpperCase() + (run ? " · " + run : ""));
-  if(rr.length) html += row("waypoint", (idx+1) + " of " + rr.length + " — " + wptRole(idx, rr));
+  if(!ir) html += row("waypoint", "route not held by this page — the vessel is flying one this "
+                                 + "page did not upload; re-commit (Upload / Go-To / RTH) to measure "
+                                 + "it again", "var(--ink-faint)");
+  else if(ir.length) html += row("waypoint", (idx+1) + " of " + ir.length + " — " + wptRole(idx, ir));
   if(here && nextWp) html += row("next wp", fmtBrgRange(here, nextWp));
   // NAME WHAT IT IS MEASURED FROM. A bare distance with no subject is how the nearest-line
   // reading survived this long: nothing on the card said which line it meant, so a number
   // that had nothing to do with the boat's track was indistinguishable from one that did.
-  const ot = offTrack(rr, idx);
+  const ot = ir ? offTrack(ir, idx) : null;
   if(ot)
     html += row("off track", Math.abs(ot.m).toFixed(1) + " m " + (ot.m>0?"right":"left")
                              + " of " + ot.of,
                 Math.abs(ot.m) > 25 ? "#e8b46a" : "var(--ink)");
-  else if(here && rr.length)
+  else if(here && ir && ir.length)
     html += row("off track", "— no leg of advance yet", "var(--ink-faint)");
   // CLEARANCE, beside off track, because the two answer the operator's two questions about
   // where the boat is: how far off its intended line, and how far off EVERYTHING ELSE.
@@ -4122,7 +4131,7 @@ function isReversalGap(k){
 const LINE_MATCH_M = 5;                        // endpoint match tolerance (m)
 let _legLine = {key:"", line:-1};              // memo per (route, leg)
 function currentLegLine(){
-  const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
+  const rr=indexedRoute()||[];   // a page that did not upload this route cannot name its legs
   const idx=window._wpIndex||0;
   if(idx<1 || idx>=rr.length) return -1;       // pre-first-wp approach, or done
   const key=idx+":"+rr.length+":"+mission.lines.length;
@@ -4555,11 +4564,36 @@ function runTimeTip(){
       +" over "+runMotions+" commanded motions. " + RUNTIME_TIP
     : RUNTIME_TIP;
 }
+// ⚠⚠ WHICH ARRAY DOES `window._wpIndex` COUNT INTO? THE UPLOADED ROUTE. The corner block in
+// doUpload says it in words - "the set is keyed by the `wp_index` the vessel reports and that
+// indexes the uploaded route" - and the vessel reports that array's LENGTH back as `wp_total`.
+//
+// `runRoute` IS that array, but ONLY while this page is the page that uploaded it: a page
+// loaded mid-run never held it and nothing restores it. /api/state carries `wp_index` and
+// `wp_total`, never the route, and loadMission rebuilds `mission` alone. And `mission.waypoints`
+// is a DIFFERENT, SHORTER array whenever routePlan spliced a detour in - so indexing it with the
+// vessel's number measures the wrong water and says nothing about it. Measured on a 40-waypoint
+// routed plan at waypoint 32, same instant, before and after an F5:
+//
+//     open since Upload : 33 of 40   to end 1.62 km · ~26:12   off track 0.0 m
+//     after a reload    : 22 of 22   to end   349 m · ~5:40    off track 107.6 m right
+//
+// with the top-bar pill still reading 32 / 40 beside it, because that one takes the vessel's own
+// numbers. Two waypoint counts on one screen, and the shorter distance is the dangerous one.
+//
+// So the drawn plan may be used only when it IS the array the index counts into, and `wp_total`
+// is what decides - the same agreement `cornerSlowFor` already makes with it. NULL means "this
+// page cannot say", which every caller prints as "--" or as a row saying so, never as a number.
+function indexedRoute(){
+  if(runRoute && runRoute.length) return runRoute;
+  const w = mission.waypoints || [];
+  return (S && S.wp_total > 0 && w.length !== S.wp_total) ? null : w;
+}
 // Distance still to run and total route length, from the boat's current target
 // waypoint onward. Uses the drawn ENC-routed path when present, else the raw plan.
 function routeRemainingM(){
-  const rr=(runRoute&&runRoute.length)?runRoute:(mission.waypoints||[]);
-  if(rr.length<1 || !asv) return null;
+  const rr=indexedRoute();
+  if(!rr || rr.length<1 || !asv) return null;
   const idx=Math.min(window._wpIndex||0, rr.length-1);
   let remain=distTo({lat:asv.lat,lon:asv.lon}, rr[idx]);
   for(let i=idx;i<rr.length-1;i++) remain+=distTo(rr[i],rr[i+1]);
@@ -9807,7 +9841,10 @@ function lineMark(){
   // Which way along a→b is the boat going? The committed order is a→b, but a plan edited in
   // WPT mode need not be, so it is read off the waypoint the boat is steering for rather
   // than assumed. Getting this backwards would back the boat up into UNsurveyed water.
-  const rr = (runRoute && runRoute.length) ? runRoute : (mission.waypoints || []);
+  // ⚠ AND IT IS READ OFF THE ARRAY THE INDEX COUNTS INTO, or the direction is read off the
+  // wrong waypoint - which is the one mistake this block exists to avoid. See indexedRoute.
+  const rr = indexedRoute();
+  if(!rr || !rr.length) return null;
   const next = rr[Math.min(window._wpIndex || 0, rr.length - 1)];
   const fwd = (next && distTo(next, L.b) <= distTo(next, L.a)) ? 1 : -1;
   return {line: runLineIdx, along: alongLineM(L, asv), fwd,

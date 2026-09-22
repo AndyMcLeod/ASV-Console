@@ -134,7 +134,7 @@ eval([
   // markPause DELEGATES to lineMark, which the clearance guard's hold takes as well
   // (tests/guard_resume.js) - one implementation of "which line, how far along, which way",
   // because a second copy is a copy no mutation has ever been run against.
-  grab("resumeBackM"), grab("alongLineM"), grab("lineMark"), grab("markPause"),
+  grab("resumeBackM"), grab("alongLineM"), grab("indexedRoute"), grab("lineMark"), grab("markPause"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
@@ -227,6 +227,31 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
   runLineIdx = 0; S = { behavior: "goto", run: "running", status: {} };
   const raised3 = tryMark();
   const offSurvey = pauseMark;
+  // ⚠ 4b. AND THERE IS NO MARK WHEN THIS PAGE DOES NOT HOLD THE ROUTE THE INDEX COUNTS
+  // INTO. lineMark reads the DIRECTION along the line off the waypoint the boat is steering
+  // for - its own comment says "getting this backwards would back the boat up into
+  // UNsurveyed water" - and `_wpIndex` counts into the UPLOADED route, which a page loaded
+  // mid-run does not hold. `mission.waypoints` is a different, shorter array whenever
+  // routePlan spliced a detour in, so the waypoint at that index is some other corner
+  // entirely. Refusing the mark gives up the BACKTRACK, never the resume: check 12 already
+  // holds that a resume without a mark still runs, from where she lies.
+  runLineIdx = 0; S = { behavior: "survey", run: "running", status: {}, wp_total: 40 };
+  runRoute = null;                              // reloaded: the drawn plan and nothing else
+  mission.waypoints = [LINE_E.a, LINE_E.b];     // ...2 waypoints against her 40
+  asv = ll(150, 0); window._wpIndex = 1;
+  const raised4 = tryMark();
+  const noRoute = pauseMark;
+  S = { behavior: "survey", run: "running", status: {}, wp_total: 2 };   // degraded: ONE array
+  const raised5 = tryMark();
+  const degraded = pauseMark;
+  check("4b. ... nor when the page does not hold the route the vessel's index counts into "
+        + "- but a DEGRADED upload, where the drawn plan IS that route, still marks",
+        () => noRoute === null && !raised4 && !!degraded && !raised5,
+        () => "reload (2 drawn vs wp_total 40) -> " + (noRoute ? "MARKED" : "no mark")
+            + "; degraded upload (2 vs 2) -> " + (degraded ? "marked" : "NO MARK")
+            + ". The direction is read off the waypoint she is steering for, and on a "
+            + "reloaded page that index names a corner of a different array");
+
   check("4. ... and there is NO mark when she was not on a coverage line",
         () => offLine === null && offSurvey === null && !raised2 && !raised3,
         "mid-turn, on the approach, or on a Go-To there is no line to back down, and "

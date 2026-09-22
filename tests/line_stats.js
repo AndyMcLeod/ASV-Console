@@ -131,7 +131,7 @@ eval(grab("resetLineStats"));
 // eslint-disable-next-line no-eval
 eval(grab("resetRunTimer"));
 // eslint-disable-next-line no-eval
-eval(grab("routeRemainingM"));
+eval(grab("indexedRoute") + "\n" + grab("routeRemainingM"));
 
 const L = (a, b, c, d) => ({ a: { lat: a, lon: b }, b: { lat: c, lon: d } });
 const PLAN10 = [];
@@ -294,6 +294,67 @@ check("15. and it is WIRED to the console's counter, not to the run state: onSta
                /runSeq = s\.run_seq/.test(os) && /el\.title = runTimeTip\(\)/.test(grab("updateRunTime"));
       },
       "the page cannot tell a resume from a new command by `run` alone — it reads \"running\" through both");
+
+
+// ── 16. THE ARRAY THE INDEX COUNTS INTO ─────────────────────────────────────────────
+//
+// The progress figure is a fraction of a ROUTE (checks 7-10). This is the other half of
+// that sentence: WHICH route. `_wpIndex` is the vessel's own waypoint number and it counts
+// into the UPLOADED route, whose length the vessel reports back as `wp_total`. `runRoute`
+// is that array only on the page that uploaded it - nothing restores it, so a page loaded
+// mid-run holds the drawn plan and nothing else, and the drawn plan is SHORTER whenever
+// routePlan spliced a detour in. Measured on a 40-waypoint routed plan at waypoint 32,
+// before and after an F5 at the same instant: "to end 1.62 km · ~26:12" became
+// "349 m · ~5:40", with the top-bar pill still reading 32 / 40 beside it because that one
+// takes the vessel's own numbers. Two counts on one screen, and the shorter one is the
+// dangerous one.
+check("16. ⚠ A PAGE THAT DID NOT UPLOAD THE ROUTE HAS NO PROGRESS TO REPORT — `_wpIndex` " +
+      "counts into the UPLOADED route, so a reload that lost `runRoute` must not measure it " +
+      "against the shorter drawn plan; a DEGRADED upload, where the two ARE one array, " +
+      "still reads in full",
+      () => {
+        asv = { lat: 43.0, lon: -70.0 };
+        runRoute = null; mission.waypoints = route(22, 0.001);   // mid-run reload: the drawn plan only
+        S = { run: "running", wp_total: 40 };                    // ...while she flies a 40-waypoint route
+        global.window._wpIndex = 32;
+        const lost = routeRemainingM();
+        S = { run: "running", wp_total: 22 };                    // no chart model: Upload sent the drawn plan itself
+        global.window._wpIndex = 15;
+        const degraded = routeRemainingM();
+        runRoute = route(5, 0.001); global.window._wpIndex = 2;  // and the page that DID upload is untouched
+        S = { run: "running", wp_total: 5 };
+        const held = routeRemainingM();
+        return lost === null
+            && degraded && degraded.n === 22 && degraded.remain > 0
+            && held && held.n === 5 && held.remain > 0;
+      },
+      () => {
+        runRoute = null; mission.waypoints = route(22, 0.001);
+        S = { run: "running", wp_total: 40 }; global.window._wpIndex = 32;
+        const r = routeRemainingM();
+        return r ? "it reported " + Math.round(r.remain) + " m over " + r.n
+                   + " waypoints, while the boat has a 40-waypoint route still to fly"
+                 : "nothing to report, which is the truthful reading";
+      });
+
+// 16b. AND THE VESSEL SAYING NOTHING IS NOT A DISAGREEMENT. Before the first frame arrives,
+// and on any link that does not report a total, there is no number to disagree with - the
+// drawn plan is all there is and it is what the operator is looking at. A fix that keyed on
+// `runRoute` alone would blank the card for every page before its first telemetry frame.
+check("16b. ... but a vessel that has reported no total is not a disagreement: the drawn " +
+      "plan still reads",
+      () => {
+        asv = { lat: 43.0, lon: -70.0 };
+        runRoute = null; mission.waypoints = route(8, 0.001);
+        global.window._wpIndex = 3;
+        S = null;                                    // no frame yet
+        const noFrame = routeRemainingM();
+        S = { run: "running" };                      // a link that reports no total
+        const noTotal = routeRemainingM();
+        return noFrame && noFrame.n === 8 && noTotal && noTotal.n === 8;
+      },
+      () => "before the first frame and on a link with no wp_total, the drawn plan is the " +
+            "only route there is and reads in full");
 
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));

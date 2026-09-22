@@ -59,6 +59,42 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-21 — A PAGE RELOADED MID-RUN MEASURED THE WRONG ARRAY, CONFIDENTLY.**
+  `_wpIndex` counts into the UPLOADED route, whose length the vessel reports back as
+  `wp_total`. `runRoute` is that array only on the page that uploaded it — nothing restores
+  it, `/api/state` carries the index and the total but never the route — and
+  `mission.waypoints` is a **different, shorter** array whenever `routePlan` spliced a
+  detour in. Same instant, 40-waypoint routed plan at waypoint 32, before and after an F5:
+
+  ```
+  open since Upload : 33 of 40   to end 1.62 km · ~26:12   off track   0.0 m
+  after a reload    : 22 of 22   to end   349 m · ~5:40    off track 107.6 m right
+  ```
+
+  with the top-bar pill still reading **32 / 40** beside it, because that one takes the
+  vessel's own numbers. Two waypoint counts on one screen, and the shorter distance is the
+  dangerous one. One helper, `indexedRoute()`, answers which array the index means and
+  returns **null** when the page cannot know; every indexed reader goes through it, and the
+  intent card carries a row saying so rather than a blank that would read as "on track".
+  The degraded upload (no chart model, so Upload sent the drawn plan itself) still reads in
+  full, and so does any page before its first frame — a vessel that has reported no total is
+  not a disagreement. `tests/line_stats.js` 16/16b, `off_track.js` 17/17b,
+  `pause_resume.js` 4b — **7 mutations, 7 killed**. Six eval bundles needed
+  `grab("indexedRoute")` or they are ReferenceErrors, not failures.
+
+  **⚠ AND `lineMark` WAS THE ONE WITH TEETH MISSING.** It reads the DIRECTION the resume
+  backs down a line off the waypoint the boat is steering for — its own comment says
+  "getting this backwards would back the boat up into UNsurveyed water" — and nothing
+  asserted which array it read. That mutation survived until `pause_resume.js` 4b was
+  written. It gives up the BACKTRACK, never the resume.
+
+  **⚠⚠ 21 OF THE 53 SUITES THAT READ `asv.html` HAVE NO `ASV_HTML` OVERRIDE.** Found the
+  same way as `port_slew.js` yesterday: four of these seven mutations first scored SURVIVED
+  because `off_track.js` read the real page while the sweep wrote to a sidecar. `off_track`
+  has one now. **The other twenty are listed by `for f in tests/*.js; do grep -q
+  'static/asv.html' … done` and are a contained job worth doing** — any of them that claims
+  mutation teeth in its header cannot have been tested the way it says.
+
 * **2026-09-21 — THE RESUME'S BACKTRACK WAS DEAD: a PAUSED run could not be amended.**
   `resumeRun` rewrites the remainder to back the hull down the line BEFORE it presses
   Start, and the page states that ordering as its own deliberate decision — *"amend_plan
