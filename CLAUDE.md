@@ -193,6 +193,56 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     x0)** because my own mutation string used `\n` against a CRLF file — *a skipped mutation is
     not a passed one*, and the summary line said "6 killed, 0 survived" while it sat there.
 
+* **⚠⚠ 2026-09-22 — THE INTENT CARD STOPPED BLAMING ANOTHER CONSOLE, AND STOPPED
+  MEASURING AGAINST A ROUTE THE BOAT IS NOT FLYING (shipped).**
+
+  * **THREE FALSE SENTENCES, and the commonest one accused a console that did not exist.**
+    `runRoute === null` was printing two different pieces of news as one — *this page never
+    held the route* and *this page held it and gave it up on purpose two seconds ago* — and
+    the sentence written for the first said **"the vessel is flying one this page did not
+    upload"**. After a Hold pressed HERE, `wp_total` is 1, the drawn survey is still 40, so the
+    indexed route is null and that is exactly what the operator read. `#b_hold`'s own comment
+    had recorded the shape of it since the REFUSED path was fixed; the ACCEPTED path kept
+    printing it.
+  * **THE FIX IS A RECORD, NOT A GUESS.** All seven statements that drop the drawn route now go
+    through `giveUpRoute(why)` and name the act in the same statement. The card reads it back:
+    it says **what this page did**, never what another page did — the second is a claim about
+    a console it cannot see. `routeSayWhy()` has four arms and each says only what the code can
+    establish.
+  * **AND A FOURTH DEFECT, found by reading rather than filed.** `indexedRoute()` states the
+    rule — *"the drawn plan may be used only when it IS the array the index counts into, and
+    `wp_total` is what decides"* — and then applies it to `mission.waypoints` while letting
+    `runRoute` past on the early return. `runRoute` is the array **this page last installed**,
+    which four ordinary paths break with no second tab: a refused/lost upload (see below), a
+    STAGED upload, `doTransit`'s deliberate blocked-transit draw, and a tab that lost
+    supervision. The card has its own `cardRoute()` now, which asks the `wp_total` question of
+    whichever array was chosen.
+  * ⚠ **NOT WIDENED INSIDE `indexedRoute`, DELIBERATELY.** `speedGovernor` stands down on its
+    null, `currentLegLine` feeds every line timing, and `lineMark` is both the pause mark and
+    `markGuardHeld`'s — so widening it there would stand the helm down for the whole of a
+    staged upload and cost both resumes their backtrack. That is a helm decision with its own
+    live check.
+  * **ONE ADDITION TO THE PANEL'S DESIGN, because its own cost analysis said it would read as a
+    regression:** a STAGED upload is a disagreement **the console itself caused** and
+    `plan_staged` is on every frame. Lumped in with an unknown stale route, the card would go
+    quiet for as long as the operator takes to press Start — minutes, single-tab, nothing
+    wrong. Named, and with the staged plan listed **from its own start** (labeled, not
+    positioned by a waypoint number that counts into the plan she is still flying), the card is
+    better than it was rather than quieter.
+  * **WHAT IT DOES NOT DO.** A length test is not an identity test: a Hold sets `wp_total` to 1,
+    so a one-waypoint drawn plan agrees by arithmetic, and a deviation that splices one via in
+    and drops one waypoint leaves the length unchanged. The card **refuses while the counts
+    disagree**; it never asserts a measurement is good. `guardTrack` still projects along raw
+    `runRoute`. And `S.wp_total > 0` switches the test off entirely, so after a spawn or a port
+    change the drawn plan comes straight back — `S.plan_uploaded` is the fact that closes
+    that, and it is **not** closed here.
+  * **A behavior change rides inside a rename, said out loud:** the accepted empty upload was
+    the only one of the seven that left `runUnsafe`, so the red no-clear-detour legs of an
+    abandoned route stayed drawn over a chart with no route on it. It clears now.
+  * **6 mutations, 6 killed, 0 skipped, control read first.** New checks `command_result`
+    43-46 (driven against the page's own `routeSayWhy` and `cardRoute` — the WORDS are the
+    product), `off_track` 15 and 17b re-anchored to the STRONGER property.
+
 * **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
   retraction arm.**
 
@@ -220,18 +270,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
   1. ~~The escape rung's throttle claim~~ **— FIXED, and defects 1 and 2 turned out to be
      ONE question.** See the block below.
-  2. `renderIntent`'s **two false sentences** when `runRoute` is null but this page uploaded
-     the plan — **designed and NOT yet implemented**; the decision is in the session's
-     `intent-card-route-account` workflow result. It grew: `indexedRoute()` applies its own
-     stated rule (*"the drawn plan may be used only when it IS the array the index counts
-     into, and `wp_total` is what decides"*) to `mission.waypoints` and **not to `runRoute`**,
-     so a tab holding a stale route measures `wptRole`, `offTrack` and `routeRemainingM`
-     against a route the boat is not flying — the same failure the comment already measured
-     for the reload case (*33 of 40* vs *22 of 22*, off track 0.0 m vs 107.6 m), reachable by
-     a second door. The panel's answer: leave `indexedRoute` alone (widening it costs the
-     governor its role and both resumes their backtrack) and give the CARD its own agreement,
-     plus a `giveUpRoute()` that records what THIS page did to the picture. A third false
-     sentence was found while reading.
+  2. ~~`renderIntent`'s false sentences~~ **— FIXED. See the block below.**
   4. **53 medium + 21 low** findings, UNREPRODUCED. ⚠ Do not plan from that list — reproduce
      first. Several highs this session were wrong, understated, or already fixed, and **three
      of the twelve safety-category mediums turned out to be this same seam** (one of them,

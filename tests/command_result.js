@@ -242,6 +242,9 @@ const PRELUDE = [
   "const lineMark = () => ({line: 7, along: 120});",
   "const markPause = () => { pauseMark = lineMark(); };",
   "let escapeThrottle = true, commandedSpeed = 'low', speedWant = {key:'low'};",
+  // What THIS page did to the picture, written in the same statement that nulls the route.
+  // The card reads it where `runRoute` is null, so the checks below can read it too.
+  "let routeGone = null;",
   "const holdClearAt = () => 12;",
   "const mission = {waypoints: []};",
   // #b_start asks before it commands, and hands a paused boat to resumeRun
@@ -303,6 +306,8 @@ const EPILOGUE = "\nconst bHold = " + grabHandler("b_hold") + ";"
   + " reconcile: (s, st) => speedReconcile(s, st),"
   + " setViewOnly: (v) => { W.supervising = !v; },"
   + " want: () => speedWant,"
+  + " gone: () => routeGone, say: () => routeSayWhy(), card: () => cardRoute(),"
+  + " setS: (o) => { Object.assign(S, o); },"
   + " bar: () => ({runRoute, planIntent, runUnsafe, guardHeld, pauseMark, resumeSlow,"
   + "              escapeThrottle, commandedSpeed, speedWant}),"
   + " after: () => ({runRoute, planIntent, rthChainFailed,"
@@ -403,6 +408,13 @@ function world(opts) {
                            // the escape's claim on the throttle through it, so a change to
                            // that rule is a change HERE rather than a copy that can drift.
                            + grab("releaseEscapeClaim") + "\n"
+                           // The one door the drawn picture is given up through, real rather
+                           // than stubbed: #b_hold and #b_stop both go through it now.
+                           + grab("giveUpRoute") + "\n"
+                           // The card's own agreement and its three sentences, real rather
+                           // than restated: the WORDS are the product here.
+                           + grab("indexedRoute") + "\n" + grab("cardRoute") + "\n"
+                           + grab("routeSayWhy") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -936,6 +948,9 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
           + ". Only the last is a console that may have latched nothing");
 }
 
+// Strip comments before matching source: this repo has twice had a source check match the
+// COMMENT that records the very thing it was looking for.
+function codeOnlyH(){ return H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " "); }
 // 23. THE EMPTY-PLAN UPLOAD. Its clear is now nearly unreachable, because the console refuses
 // an empty plan in words - and that is the point rather than dead code: this branch is
 // reachable only while mission.waypoints is empty, which a Go-To or RTH does not fill, so
@@ -945,10 +960,15 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
   const src = grab("doUpload");
   check("23. the empty-plan upload clears only past the gate, and says why the clear is not "
         + "dead code",
-        /if\(took\(r\)\)\{ runRoute=null; planIntent=null; \}/.test(src)
-        && /may hold the Go-To or/.test(src),
+        /if\(took\(r\)\) giveUpRoute\("this page uploaded an empty plan"\)/.test(src)
+        && /may hold the Go-To or/.test(src)
+        && /function giveUpRoute\(why\)\{\s*runRoute = null; planIntent = null; runUnsafe = \[\];/
+             .test(codeOnlyH()),
         "a refusal here must not wipe a commanded motion that is still under way, and the "
-          + "reason is recorded beside it");
+          + "reason is recorded beside it. ⚠ It goes through giveUpRoute now, which also "
+          + "clears runUnsafe - this was the only one of the seven give-up sites that did "
+          + "not, so the red no-clear-detour legs of an abandoned route stayed drawn over a "
+          + "chart with no route on it. A behavior change riding inside a rename, said out loud");
 }
 
 
@@ -1415,6 +1435,78 @@ const ROUTE = [{lat: 43.0, lon: -70.5}, {lat: 43.01, lon: -70.49}];
           ? "the row carries the claim, and the tooltip names it"
           : "the row computes the role speed with no escape term - it warns on every escape")
           + ". Weak by construction: 39-41 are what hold the behaviour");
+}
+
+// ⚠⚠ 43-46. WHAT THE CARD MAY SAY ABOUT A ROUTE IT DOES NOT HOLD.
+// `runRoute === null` was printing two different pieces of news as one - this page NEVER held
+// the route, and this page held it and gave it up on purpose two seconds ago - and the sentence
+// written for the first told the operator that ANOTHER CONSOLE was flying their boat. After a
+// Hold pressed HERE, `wp_total` is 1, the drawn survey is still 40, so the indexed route is
+// null and the card said "the vessel is flying one this page did not upload". #b_hold's own
+// comment had recorded the shape of this since the refused path was fixed.
+{
+  const ROUTE3 = [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }];
+
+  // 43. THE PAIR. An accepted Hold records the ACT; a refused Hold records nothing, because
+  // nothing happened to the picture.
+  // ⚠ The refused half cannot fail alone - `routeGone` starts null, so "recorded nothing"
+  // and "never ran" are the same observation. The accepted half is what makes it evidence.
+  const hy = world({});
+  hy.seed(ROUTE3, { kind: "survey" });
+  await hy.bHold();
+  const hn = world({ reply: "refuse", why: "not connected" });
+  hn.seed(ROUTE3, { kind: "survey" });
+  await hn.bHold();
+  check("43. an accepted Hold records WHAT THIS PAGE DID to the picture; a refused one "
+        + "records nothing, because the picture never changed",
+        hy.gone() !== null && /commanded a Hold/.test(hy.gone().why)
+        && hy.bar().runRoute === null
+        && hn.gone() === null && hn.bar().runRoute === ROUTE3,
+        "accepted -> " + JSON.stringify(hy.gone() && hy.gone().why)
+          + "; refused -> " + JSON.stringify(hn.gone()));
+
+  // 44. AND THE SENTENCE NAMES THAT ACT, rather than blaming another console.
+  hy.setS({ wp_total: 1 });
+  const saidGone = hy.say();
+  check("44. ... and the sentence names the act this page took - never another console",
+        /given up/.test(saidGone) && /commanded a Hold/.test(saidGone)
+        && /1 aboard/.test(saidGone)
+        && !/did not upload/.test(saidGone),
+        JSON.stringify(saidGone));
+
+  // 45. A DISAGREEMENT STATES BOTH COUNTS AND NAMES NO CAUSE. The page cannot tell a refused
+  // upload from a staged one from a frozen second tab, so it must not guess at one.
+  const dis = world({});
+  dis.seed(ROUTE3, { kind: "survey" });
+  dis.setS({ wp_total: 40, plan_staged: false });
+  const saidDis = dis.say();
+  // ... and the STAGED case is named, because the console itself caused it and CAN name it.
+  // Without this the card goes quiet for as long as the operator takes to press Start.
+  dis.setS({ plan_staged: true });
+  const saidStaged = dis.say();
+  check("45. a DISAGREEMENT states both counts and names no cause; a STAGED upload is named, "
+        + "because that one the console caused and can establish",
+        /2 waypoints/.test(saidDis) && /40 aboard/.test(saidDis)
+        && !/STAGED/.test(saidDis)
+        && /STAGED/.test(saidStaged) && /until you press Start/.test(saidStaged),
+        "disagreement: " + JSON.stringify(saidDis) + " | staged: " + JSON.stringify(saidStaged));
+
+  // 46. AND THE CARD REFUSES TO MEASURE WHILE THEY DISAGREE - the half indexedRoute never
+  // applied to `runRoute`. ⚠ THE PAIR: equal counts must still MEASURE, or a mutation that
+  // returns null unconditionally would pass the first half and take every row off the card.
+  const agree = world({});
+  agree.seed(ROUTE3, { kind: "survey" });
+  agree.setS({ wp_total: 2 });
+  const whenAgree = agree.card();
+  agree.setS({ wp_total: 40 });
+  const whenDisagree = agree.card();
+  check("46. cardRoute asks the wp_total question of the DRAWN route too - null while the "
+        + "counts disagree, and the route itself when they agree",
+        whenAgree === ROUTE3 && whenDisagree === null,
+        "2 drawn vs 2 aboard -> " + (whenAgree ? "measured" : "REFUSED")
+          + "; 2 drawn vs 40 aboard -> " + (whenDisagree ? "MEASURED ANYWAY" : "refused")
+          + ". indexedRoute lets the drawn route past on its early return, which is the "
+          + "half that was never applied");
 }
 
 finished = true;

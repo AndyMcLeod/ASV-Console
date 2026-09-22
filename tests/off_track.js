@@ -322,9 +322,15 @@ console.log("Off track - displacement from the leg being flown, not from the nea
         () => !/activeXTE/.test(code) && /activeXTE/.test(H),
         "activeXTE was the value the card printed as off track; the comment that retired it stays");
   const rows = H.split("\n").filter(l => /row\("off track"/.test(l));
-  check("15. every off-track row is fed by offTrack() or says there is no leg",
-        () => rows.length > 0 && rows.every(l => /ot\.m|no leg of advance/.test(l)),
-        rows.length + " row(s) built");
+  // ⚠ "--" IS THE THIRD HONEST ANSWER, and it was missing. indexedRoute's own contract
+  // is that null prints as "--" or as a row saying so - but this row required `ir` in every
+  // branch, so with the route not held it did not degrade, it DISAPPEARED, and a card missing
+  // the row reads as a card whose row had nothing to report. What the check still forbids is
+  // the thing it was written for: a number fed by anything other than offTrack().
+  check("15. every off-track row is fed by offTrack(), or says there is no leg, or says the "
+        + "page cannot measure it - and never by anything else",
+        () => rows.length > 0 && rows.every(l => /ot\.m|no leg of advance|"--"/.test(l)),
+        rows.length + " row(s) built: " + rows.length + " accounted for");
   check("16. no nearest-line INDEX either - the chart highlight is runLineIdx",
         () => !/function updateActiveLine\(/.test(H) && !/activeLine/.test(code)
               && /act = \(i===runLineIdx\)/.test(code),
@@ -374,16 +380,28 @@ console.log("Off track - displacement from the leg being flown, not from the nea
   // a row quietly moved back onto `rr` is caught. 15 above holds that every off-track row is
   // fed by offTrack(); this holds WHAT offTrack is fed.
   const ri = H.slice(H.indexOf("function renderIntent"),
-                     H.indexOf("function renderIntent") + 4000);
+                     H.indexOf("function renderIntent") + 9000);
+  // """ + W + W + """ AND THE ARRAY IS NOW `cardRoute()`, WHICH IS STRICTLY STRONGER. `indexedRoute`
+  // states the rule - the drawn plan may be used only when it IS the array the index counts
+  // into - and then applies it to `mission.waypoints` while letting `runRoute` past on the
+  // early return. `runRoute` is not "the uploaded array"; it is the array THIS PAGE LAST
+  // INSTALLED, which a refused upload, a staged upload, a drawn-but-unstarted transit or a
+  // second tab all break without anyone doing anything wrong. cardRoute asks the same
+  // `wp_total` question of whichever array was chosen. It is deliberately NOT inside
+  // indexedRoute, which the helm reads - see the note at cardRoute.
   check("17b. ... and renderIntent's indexed rows - waypoint, next wp and off track - are " +
-        "fed by indexedRoute(), with a row that SAYS SO when it answers null",
-        () => /const ir = indexedRoute\(\);/.test(ri)
+        "fed by cardRoute(), which asks the wp_total question of the DRAWN route too, with " +
+        "a row that SAYS SO when it answers null",
+        () => /const ir = cardRoute\(\);/.test(ri)
+              && /function cardRoute\(\)\{[\s\S]*?w\.length !== S\.wp_total/.test(H)
               && /const ot = ir \? offTrack\(ir, idx\) : null;/.test(ri)
               && /const nextWp = ir \? \(ir\[idx\] \|\| null\) : null;/.test(ri)
-              && /if\(!ir\) html \+= row\("waypoint",/.test(ri)
-              && /route not held by this page/.test(ri),
-        "a blank row would read as 'on track'; the operator is told the page cannot measure " +
-        "it and what to do about it (re-commit), which is the one action that restores it");
+              && /if\(!ir\) html \+= row\("waypoint", routeSayWhy\(\)/.test(ri)
+              && /this page is drawing /.test(H) && /given up /.test(H)
+              && /not held by this page/.test(H),
+        "a blank row would read as 'on track'; the operator is told what the page CAN " +
+        "establish - the two counts, or the act this page took - and never that another " +
+        "console is flying the boat, which is what it used to say after a Hold pressed here");
 
 }
 

@@ -1269,6 +1269,30 @@ function linePhase(k, p){
   return {phase:"coverage", toCoverM:0, li, lo};
 }
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
+// ⚠⚠ `runRoute === null` HAS BEEN PRINTING TWO DIFFERENT PIECES OF NEWS AS ONE. This page
+// NEVER held the route - loaded mid-run, and nothing in /api/state restores it - and this page
+// HELD it and gave it up on purpose, seconds ago, because the operator pressed Hold HERE. The
+// second is far the commoner, and the sentence written for the first told the operator that
+// another console was flying their boat. #b_hold's own comment already said so in these words
+// - "renderIntent falls back to mission.waypoints and prints 'route not held by this page'
+// seconds after this page uploaded it" - and the commit that wrote it fixed the REFUSED path
+// and left the ACCEPTED one printing the falsehood.
+//
+// So the statements that give the route up name the ACT in the same statement. It is read only
+// where `runRoute` is null, and every statement that installs an array shadows it the instant
+// it runs - nothing to clear, nothing to forget.
+//
+// ⚠ NOT keyed to `planGen`: three of the installs (the guard's deviation splice, resumeRun's
+// backtrack, resumeHeldSurvey's tail) do not go through setPlanIntent, so a generation-keyed
+// record would survive a resumed survey still saying "hold".
+let routeGone = null;   // {why, at} - what THIS page did to the picture, never what the vessel did
+// THE ONE DOOR. Not a convenience: the null and the reason have to be one statement, or the
+// eighth site added next year sets one without the other and the card goes back to blaming
+// another console.
+function giveUpRoute(why){
+  runRoute = null; planIntent = null; runUnsafe = [];
+  routeGone = {why: why, at: Date.now()};
+}
 // --- INTENT: what the vessel is doing, WHY, and what it intends next ------------- //
 // Andy, 2026-08-28, running in Pago Pago: "Path planning seems odd but workable. is it
 // possible to generate a path planning tool that continuously updates status and
@@ -2629,6 +2653,39 @@ function offTrack(rr, idx){
 }
 // The live half: NOW and NEXT are DERIVED every tick from the route the boat is actually
 // following plus its reported waypoint index. Only the WHY is remembered.
+// WHY THE INDEXED ROUTE IS NULL, IN WORDS THE CODE CAN ESTABLISH. Four cases, and they are
+// not the same news.
+//
+// ⚠ `why` IS ALWAYS A PAST ACT OF THIS PAGE, never a state of the boat: "this page commanded
+// a Hold" stays true for ever, where "the vessel is holding" would not - another tab can
+// command her away a second later and this page would never know. The aboard count is read
+// from the LIVE frame on the frame it prints, so it cannot drift either, and it is the same
+// number as the top-bar WPT pill, which is the count the operator can reconcile with what they
+// can see.
+//
+// ⚠⚠ THE STAGED CASE IS NAMED SEPARATELY, and that is not decoration. An upload to a boat
+// that is station-keeping or paused is STAGED by design - the vessel carries on until Start -
+// so the two counts disagree for as long as the operator takes to press it, in a single-tab
+// console that has done nothing wrong. That is a disagreement THIS CONSOLE CAUSED and can name;
+// treating it as an unknown stale route would take the card quiet for minutes and read as a
+// fault. `plan_staged` is published on every frame and the command bar already reads it.
+function routeSayWhy(){
+  const n = (S && S.wp_total) || 0;
+  if(runRoute && runRoute.length){
+    if(S && S.plan_staged)
+      return "the " + runRoute.length + " waypoints drawn here are STAGED — she carries on with "
+           + "the " + n + " aboard until you press Start, so the rows below are the staged plan "
+           + "rather than her progress";
+    return "this page is drawing " + runRoute.length + " waypoints and the vessel reports " + n
+         + " aboard — not measured while they disagree; re-commit (Upload / Go-To / RTH) to "
+         + "measure it again";
+  }
+  if(routeGone)
+    return "given up — " + routeGone.why + (n ? "; the vessel reports " + n + " aboard" : "")
+         + ". Re-commit (Upload / Go-To / RTH) to measure it again";
+  return "not held by this page — this page has committed no route; re-commit (Upload / Go-To "
+       + "/ RTH) to measure it again";
+}
 function renderIntent(){
   // The gate is the CARD's visibility now, not a pop-out's: Intent is a section of #vcard.
   // Kept rather than dropped because this builds a page of HTML every telemetry frame, and
@@ -2642,30 +2699,71 @@ function renderIntent(){
   // the array that number counts into, and a page loaded mid-run does not hold it - see
   // indexedRoute. Null there is a ROW SAYING SO, in the same idiom the WHY block uses for a plan
   // committed before this page; a number would be the wrong water measured confidently.
-  const ir = indexedRoute();
+  // ⚠ AND EVERYTHING INDEXED BY THE VESSEL'S WAYPOINT NUMBER TAKES `ir`, which cardRoute
+  // answers null for whenever this page cannot place the boat in the plan the vessel is
+  // counting into. Null is a ROW SAYING SO, never a number. `ir` is either `rr` or null - the
+  // same array by a further test - so there is no third array on this card, and a row keyed to
+  // `rr` where it meant `ir` is a wrong PLACEMENT rather than wrong water.
+  const ir = cardRoute();
+  // The staged plan is a real plan, drawn here, and its SHAPE may be read even though the
+  // boat cannot be placed in it. Its rows say which they are.
+  const staged = !!(S && S.plan_staged && runRoute && runRoute.length);
   const head=(t)=>'<div style="color:var(--ink-faint);margin-top:7px;font-size:9px;letter-spacing:.08em;text-transform:uppercase">'+t+'</div>';
   const row=(k,v,c)=>'<div style="display:flex;gap:6px;margin-top:2px"><span style="color:var(--ink-faint);min-width:74px">'+k+'</span><span style="color:'+(c||'var(--ink)')+'">'+v+'</span></div>';
   if(!rr.length && !planIntent){
-    el.innerHTML = '<div style="color:var(--ink-faint)">No plan committed. Draw a survey, or command a Go-To / RTH / Transit — the reasoning behind it appears here.</div>';
+    // ⚠ "No plan committed" IS A CLAIM ABOUT THE BOAT, AND THIS BRANCH CANNOT MAKE IT.
+    // clearPlan and an accepted empty upload empty `mission.waypoints` HERE while the vessel
+    // carries on flying an N-waypoint plan whose count is on the top-bar WPT pill two inches
+    // away. A count the operator cannot reconcile with what they can see reads as a fault.
+    // `wp_total` is the one fact that separates "nothing anywhere" from "nothing HERE".
+    el.innerHTML = '<div style="color:var(--ink-faint)">' + ((S && S.wp_total)
+      ? 'Nothing drawn here — the vessel reports ' + S.wp_total + ' waypoints aboard, and '
+        + 'this page is not holding that plan. Re-commit (Upload / Go-To / RTH) to measure it.'
+      : 'No plan committed. Draw a survey, or command a Go-To / RTH / Transit — the reasoning '
+        + 'behind it appears here.') + '</div>';
     return;
   }
-  const idx = Math.min(window._wpIndex||0, Math.max(0, (ir||[]).length-1));
+  // ⚠ -1, NOT 0. `Math.max(0, (ir||[]).length-1)` is `Math.max(0,-1)` = 0, so with the route
+  // not held this collapsed to the FIRST waypoint and every block keyed to it went on to
+  // describe the drawn plan from its start - wp 2, wp 3, wp 4 - for a boat at waypoint 32.
+  // -1 indexes nothing, so a block that forgets to check `ir` shows nothing rather than the
+  // wrong array read confidently.
+  const idx = ir ? Math.min(window._wpIndex||0, Math.max(0, ir.length-1)) : -1;
   const here = asv ? {lat:asv.lat, lon:asv.lon} : null;
   const nextWp = ir ? (ir[idx] || null) : null;
   let html = "";
   // ---- NOW ----
   html += head("Now");
-  const act = currentActivity();
+  let act = currentActivity();
+  // ⚠ AND THE HEADLINE MAY NOT NAME A LEG THIS PAGE CANNOT PLACE. `indexedRoute()` null means
+  // "this page cannot say which array the vessel's index counts into"; currentLegLine then
+  // answers -1, `runLineIdx` stays -1, and currentActivity's survey branch falls through to
+  // "approach to the survey area" / "between coverage regions" - which this row printed, in
+  // amber, as a CONFIDENT sentence. A -1 meaning "not on a line" and a -1 meaning "cannot
+  // tell" are different answers and only one of them may be printed as a fact.
+  // ⚠ currentActivity ITSELF IS NOT CHANGED: speedRole() reads it and the governor reads that.
+  // The governor already stands down on this same condition; the card had not.
+  if(run === "running" && !st.holding && (S && S.behavior) === "survey" && !indexedRoute())
+    act = {...act, activity:"survey running", surveying:false,
+           detail:"the leg she is on is not known to this page — the route her waypoint "
+                + "number counts into is not held here, so no line can be named"};
   const kind = (planIntent && planIntent.kind) || (S&&S.behavior) || "—";
   // SURVEYING or TRANSITING first, because that is the question, and the MODE second.
   html += row("doing", act.activity.toUpperCase() + " — " + act.detail,
               act.surveying ? "#7fd6a0" : (act.activity==="idle" ? "var(--ink-faint)" : "#e8c07a"));
   html += row("mode", kind.toUpperCase() + (run ? " · " + run : ""));
-  if(!ir) html += row("waypoint", "route not held by this page — the vessel is flying one this "
-                                 + "page did not upload; re-commit (Upload / Go-To / RTH) to measure "
-                                 + "it again", "var(--ink-faint)");
+  // ⚠ THE SENTENCE MAY NAME ONLY WHAT THE PAGE CAN ESTABLISH - see routeSayWhy. The old one
+  // blamed another console, and the commonest way to reach this row is THIS page giving the
+  // route up on purpose: after a Hold this page commanded, `wp_total` is 1, the drawn survey is
+  // still 40, `ir` is null, and the card told the operator somebody else had the boat.
+  if(!ir) html += row("waypoint", routeSayWhy(), "var(--ink-faint)");
   else if(ir.length) html += row("waypoint", (idx+1) + " of " + ir.length + " — " + wptRole(idx, ir));
   if(here && nextWp) html += row("next wp", fmtBrgRange(here, nextWp));
+  // ⚠ "--", NOT NOTHING. This row and "off track" below required `ir` in every branch, so
+  // with the route not held they did not degrade - they DISAPPEARED, and a card missing two
+  // rows reads as a card whose rows had nothing to report. indexedRoute's own contract says
+  // null is printed as "--" or as a row saying so; this is that contract, kept.
+  else if(here && !ir) html += row("next wp", "--", "var(--ink-faint)");
   // NAME WHAT IT IS MEASURED FROM. A bare distance with no subject is how the nearest-line
   // reading survived this long: nothing on the card said which line it meant, so a number
   // that had nothing to do with the boat's track was indistinguishable from one that did.
@@ -2676,6 +2774,8 @@ function renderIntent(){
                 Math.abs(ot.m) > 25 ? "#e8b46a" : "var(--ink)");
   else if(here && ir && ir.length)
     html += row("off track", "— no leg of advance yet", "var(--ink-faint)");
+  else if(here && !ir)
+    html += row("off track", "--", "var(--ink-faint)");
   // CLEARANCE, beside off track, because the two answer the operator's two questions about
   // where the boat is: how far off its intended line, and how far off EVERYTHING ELSE.
   // Shown always once the model is loaded, not only when it is tight - a number watched in
@@ -2737,32 +2837,76 @@ function renderIntent(){
     // than the plan being flown. So a plan committed before this page loaded has none, and
     // the panel has to say that outright: a silently missing section reads as "no reasons",
     // which is a different and wrong claim.
-    html += '<div style="margin-top:3px;color:var(--ink-faint)">Not recorded — this plan was '
-          + 'committed before this page was loaded. Re-commit it (Upload / Go-To / RTH) to '
-          + 'capture the reasoning.</div>';
+    // ⚠ AND IT MAY NOT SAY WHEN. "committed before this page was loaded" is ONE way to get
+    // here and not the commonest: `planIntent` is nulled in the SAME STATEMENT as `runRoute` at
+    // all seven give-up sites, so this page having committed the plan seconds ago is exactly
+    // the state that printed it. Nothing in /api/state separates the two, so it states what it
+    // can establish and dates nothing.
+    // ⚠ KEYED ON `routeGone`, NOT ON `ir`. A DISAGREEMENT leaves `planIntent` intact, and the
+    // reasoning captured at commit still describes the route this page holds even while the
+    // vessel disagrees about which route that is - so this block is never reached in that case,
+    // which is right.
+    html += '<div style="margin-top:3px;color:var(--ink-faint)">'
+          + (routeGone
+              ? 'Cleared with the route — ' + routeGone.why + '. Re-commit it (Upload / Go-To '
+                + '/ RTH) to capture the reasoning again.'
+              : 'Not recorded — this page has not committed this plan. Re-commit it (Upload / '
+                + 'Go-To / RTH) to capture the reasoning.')
+          + '</div>';
   }
   // WAYPOINT DENSITY. The single most useful number for "the path looks odd": a plan whose
   // points sit metres apart is a resampled smooth track, and its bearings will swing wildly
   // between neighbors without the boat doing anything strange. Reported so the operator
   // can tell that apart from a genuinely erratic route.
+  // ⚠ THE DENSITY IS THE DRAWN PLAN'S; THE WINDOW WAS THE BOAT'S. Keyed to `rr` with `idx`
+  // collapsed to 0, this printed "17.4 m mean over the next 40" of the DRAWN plan for a boat
+  // the card had just said it could not place. The quantity is a property of the plan rather
+  // than a progress number, so with no placement it is taken over the whole drawn plan and SAYS
+  // SO - deleting the row would lose a real reading to a placement problem.
   if(rr.length > 2 && here){
+    const k0 = ir ? Math.max(1, idx) : 1, k1 = ir ? Math.min(rr.length, idx+40) : rr.length;
     let gaps = 0, n = 0;
-    for(let k=Math.max(1,idx); k<Math.min(rr.length, idx+40); k++){ gaps += distTo(rr[k-1], rr[k]); n++; }
-    if(n) html += row("wp spacing", (gaps/n).toFixed(1) + " m mean over the next " + n
+    for(let k=k0; k<k1; k++){ gaps += distTo(rr[k-1], rr[k]); n++; }
+    if(n) html += row("wp spacing", (gaps/n).toFixed(1) + " m mean over "
+                                    + (ir ? "the next " + n : "all " + n + " drawn")
                                     + " · " + rr.length + " total");
   }
   // ---- NEXT ----
   html += head("Then");
-  const after = [];
-  for(let k=idx+1; k<rr.length && after.length<3; k++) after.push(k);
-  if(after.length){
-    let prev = nextWp;
-    after.forEach(k=>{
-      html += row("wp " + (k+1), fmtBrgRange(prev, rr[k]) + " — " + wptRole(k, rr));
-      prev = rr[k];
-    });
-  } else if(rr.length){
-    html += row("wp " + rr.length, "last waypoint — " + wptRole(rr.length-1, rr));
+  // ⚠ THE ITINERARY IS POSITIONED BY THE VESSEL'S WAYPOINT NUMBER, so it takes `ir` or it
+  // says so. Keyed to `rr` and an `idx` that collapsed to 0, the card that had just said it
+  // could not name the waypoint went on to list wp 2, wp 3 and wp 4 of the DRAWN plan as what
+  // she would do next.
+  //
+  // ⚠⚠ THE STAGED PLAN IS THE ONE EXCEPTION, and it is read from ITS OWN START rather than
+  // from the vessel's index, because that index counts into the plan she is still flying. The
+  // rows say which they are. Without this the card goes quiet for as long as the operator takes
+  // to press Start - minutes, in a console that has done nothing wrong - which reads as a fault
+  // and is the one way this whole change could make the card worse than it was.
+  if(!ir && staged){
+    const from = runRoute;
+    for(let k=0; k<Math.min(3, from.length); k++)
+      html += row("staged wp " + (k+1),
+                  (k ? fmtBrgRange(from[k-1], from[k])
+                     : (here ? fmtBrgRange(here, from[0]) : "--"))
+                  + " — " + wptRole(k, from), "#e8c07a");
+    if(from.length > 3) html += row("", "… " + (from.length - 3) + " more, from the start of "
+                                        + "the staged plan", "var(--ink-faint)");
+  } else if(!ir){
+    html += row("next", "-- · positioned by the vessel's waypoint number, which this page "
+                      + "cannot place in the plan aboard", "var(--ink-faint)");
+  } else {
+    const after = [];
+    for(let k=idx+1; k<ir.length && after.length<3; k++) after.push(k);
+    if(after.length){
+      let prev = nextWp;
+      after.forEach(k=>{
+        html += row("wp " + (k+1), fmtBrgRange(prev, ir[k]) + " — " + wptRole(k, ir));
+        prev = ir[k];
+      });
+    } else if(ir.length){
+      html += row("wp " + ir.length, "last waypoint — " + wptRole(ir.length-1, ir));
+    }
   }
   // end-of-plan intent: the console already knows whether an RTH will chain
   const comp = (S && (S.run_completion || S.completion)) || null;
@@ -3544,7 +3688,7 @@ async function resetForNewArea(at, note){
   // the first frame - but only because the boot id had moved on too, which is luck, not a
   // rule.) The boot-id clear is still what actually covers the respawn race here; this is
   // the immediate one, same as doSpawn's.
-  clearTrack(); runRoute = null; planIntent=null; runUnsafe = [];
+  clearTrack(); giveUpRoute("this page changed the operating area");
   nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
   updateNogoUI(); render();
   const ll = at || (asv ? {lat:asv.lat, lon:asv.lon} : null);
@@ -4772,6 +4916,38 @@ function indexedRoute(){
   if(runRoute && runRoute.length) return runRoute;
   const w = mission.waypoints || [];
   return (S && S.wp_total > 0 && w.length !== S.wp_total) ? null : w;
+}
+// ⚠⚠ AND THE SAME QUESTION ASKED OF `runRoute`, FOR THE CARD ONLY. The rule above states
+// the test - the drawn plan may be used only when it IS the array the index counts into - and
+// then applies it to `mission.waypoints` and lets `runRoute` past on the early return, because
+// it was written for the page loaded mid-run, where `runRoute` is null and only the fallback is
+// in play. But `runRoute` is not "the uploaded array"; it is the array THIS PAGE LAST
+// INSTALLED, which is weaker, and four ordinary paths break it without a second tab existing:
+//   * doUpload installs BEFORE its POST and never reads the reply, so a refused, blocked or
+//     lost upload leaves this page holding a route the vessel declined;
+//   * an upload to a boat already running anything, a station-keep included, is STAGED, and the
+//     vessel's count does not move until Start - minutes, in the only tab;
+//   * doTransit's refusal branch draws a transit that was never started, on purpose;
+//   * a second tab's copy is frozen at whatever it installed while it WAS supervising.
+// The vessel publishes how many waypoints it holds; that is the cheapest thing the two can
+// agree on. One integer compare, on whichever array was chosen.
+//
+// ⚠ IT IS DELIBERATELY NOT INSIDE `indexedRoute`, WHICH IS NOT A READOUT HELPER.
+// speedGovernor STANDS DOWN on its null; currentLegLine feeds runLineIdx and every line timing;
+// lineMark is the pause mark AND markGuardHeld's mark, and a null there costs resumeRun and
+// resumeHeldSurvey their backtrack and makes each print "not on a coverage line", which is
+// false. Widening the null there would stand the helm down for the whole of a staged upload and
+// trade two honest rows for two new false sentences. That is a helm decision with its own live
+// check, not a card repair.
+//
+// ⚠ AND IT IS A LENGTH TEST, NOT AN IDENTITY TEST. Equal lengths mean nothing has
+// DISAGREED, never that the arrays are the same water: a Hold sets `wp_total` to 1, so a
+// one-waypoint drawn plan passes, and a deviation that splices one via in and drops one
+// waypoint leaves the length unchanged. Nothing on this card may assert the measurement is
+// GOOD, and nothing does.
+function cardRoute(){
+  const w = indexedRoute();
+  return (w && S && S.wp_total > 0 && w.length !== S.wp_total) ? null : w;
 }
 // Distance still to run and total route length, from the boat's current target
 // waypoint onward. Uses the drawn ENC-routed path when present, else the raw plan.
@@ -8855,7 +9031,7 @@ async function clearPlan(){
       "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
       + "is kept on the console as mission.json.bak1.", {always: true})) return;
   mission.waypoints=[]; mission.lines=[]; resetPattern();
-  runRoute=null; planIntent=null; runUnsafe=[]; saveMission(); render();
+  giveUpRoute("this page cleared the drawn plan"); saveMission(); render();
 }
 $("#ln_clr").onclick = clearPlan;
 $("#c_arrival").onchange = ()=>{ mission.arrival_radius_m = Math.max(1, Math.min(50, parseFloat($("#c_arrival").value)||2)); saveMission(); };
@@ -10175,7 +10351,10 @@ async function doUpload(){
   // which a commanded motion does not fill), and a refusal must not wipe it.
   if(!wps.length){
     const r = await cmd("/api/cmd/upload");
-    if(took(r)){ runRoute=null; planIntent=null; }
+    // ⚠ AND THIS NOW CLEARS `runUnsafe` TOO, WHICH IT DID NOT. It was the only one of the
+    // seven that left it, so the red "no clear detour" legs of an abandoned route stayed drawn
+    // over a chart with no route on it. A behavior change, not a tidy-up.
+    if(took(r)) giveUpRoute("this page uploaded an empty plan");
     return;
   }
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
@@ -10523,7 +10702,7 @@ $("#b_stop").onclick = async ()=>{
       : " - check the run state before pressing Stop again."));
     return;
   }
-  if(planGen === was.gen){ runRoute = null; planIntent = null; runUnsafe = []; }
+  if(planGen === was.gen) giveUpRoute("this page commanded a Stop");
   // A stopped run takes its holds with it: the post-pause low-speed hold belongs to THAT
   // run, and carrying it into the next one would be this console remembering an
   // instruction the operator gave about a survey that is over.
@@ -10785,7 +10964,7 @@ $("#b_hold").onclick = async ()=>{
       : " - check the behavior readout before pressing Hold again."));
     return;
   }
-  if(planGen === was.gen){ runRoute = null; planIntent = null; runUnsafe = []; }
+  if(planGen === was.gen) giveUpRoute("this page commanded a Hold");
   // ⚠ AND THE SAME GATE ENDS THE ESCAPE'S CLAIM. A boat the operator has deliberately
   // stopped and station-kept is not escaping, and the rung's own banner promises that Hold
   // overrides it. Fenced on the same generation as the picture: an escape the guard commanded
@@ -10830,7 +11009,7 @@ $("#b_estop").onclick = async ()=>{
   // read, so `state.estop` is absent exactly when the console has still latched. `refused`
   // survives that, because it is set from the STATUS.
   if(on && (took(r) || (r && r.refused))){
-    runRoute=null; planIntent=null; runUnsafe=[];
+    giveUpRoute("this page latched the E-STOP");
     render();
   }
   // ⚠ THE RELEASE PATH IS UNAFFECTED EITHER WAY: this clear is gated on `on`, and a
@@ -10860,7 +11039,7 @@ async function doSpawn(ll){
   // arrives between the click and the respawn. This is here so the screen answers the
   // click at once rather than a quarter-second later.
   clearTrack();
-  runRoute = null; planIntent=null; runUnsafe = []; updateMissionCard();
+  giveUpRoute("this page respawned the boat"); updateMissionCard();
   flashNote("Spawned at "+fmtLL(ll.lat, ll.lon)+" — energy full, SAFE, no plan.");
   render();
 }

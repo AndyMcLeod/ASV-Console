@@ -420,6 +420,11 @@ function refreshNogo(ll){ __asked = ll; return Promise.resolve(); }
 var trackSaveTimer;
 globalThis.localStorage = { getItem(){ return null; }, setItem(){}, removeItem(){} };
 eval(grabDecl("TRACK_KEY") + "\n" + grab("lsDel") + "\n" + grab("clearTrack"));
+// AND THE SAME ARGUMENT FOR giveUpRoute, which resetForNewArea now drops the drawn route
+// through: it records the ACT, so the Intent card says "this page changed the operating area"
+// rather than telling the operator another console is flying the boat.
+var routeGone = null;
+eval(grab("giveUpRoute"));
 eval(grabAsync("resetForNewArea"));
 
 const NEWBASE = { lat: 38.7800, lon: -75.1400 };
