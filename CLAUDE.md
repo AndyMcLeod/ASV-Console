@@ -243,6 +243,86 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     43-46 (driven against the page's own `routeSayWhy` and `cardRoute` — the WORDS are the
     product), `off_track` 15 and 17b re-anchored to the STRONGER property.
 
+* **⚠⚠ 2026-09-22 — THE UPLOAD READS ITS ANSWER (shipped). The commanded-answer seam
+  had one door left, and it was the widest one.**
+
+  * `doUpload` DREW the routed survey and posted it seventy lines later as
+    `.then(stagedNote)` — **not awaited**, and `stagedNote` reads the reply only for
+    `plan_staged`. `cmd()` answers a refusal rather than throwing, so the enclosing catch
+    never fired on one. ⚠ Its EMPTY-plan branch DID read its answer, and that branch's own
+    comment says it *"will essentially never run"*: **the one path that cannot happen checked
+    the reply and the two that always run did not.**
+  * **THE WORST SITE ON THE PAGE FOR IT.** `guardTrack` slices `runRoute` at the VESSEL's own
+    `wp_index` to project the whole clearance ladder; `markGuardHeld` banks it as the
+    remainder a later resume really uploads. Two of `Engine.upload`'s six refusals are
+    everyday operator mistakes — *"ARM before uploading a plan"* and *"the vessel is running
+    a plan - Hold or Stop it first"*.
+  * **THE WIDEST WINDOW ON THE PAGE** is `doUpload`'s unbounded `await guiConfirm`: the
+    telemetry frame the Upload button's own gate was drawn from can be minutes old by the
+    time the post goes out, which is how the arm and E-STOP refusals become reachable
+    *despite* the greyed button. An argument for reading the answer, not against it.
+  * **AND THE CORNER SET MOVED WITH IT, which is the part that can move the THROTTLE.**
+    `cornerSlow` is measured before the post and written only past it: `speedGovernor`
+    commands LOW wherever `S.wp_total === cornerSlowFor` and the vessel's `wp_index` is in
+    the set, and a refused upload was saved only by the coincidence that two route lengths
+    differ — which re-uploading an edited plan of the SAME waypoint count removes.
+    ⚠ A LOST reply drops the set; a REFUSAL keeps it — a refusal establishes she is still
+    flying the plan the corners were measured on, and a lost reply establishes nothing.
+  * **A FALSE COMMENT, FOUND AND CORRECTED RATHER THAN TRUSTED.** The blocked-transit branch
+    said *"plan stays not-uploaded, so Start stays gated"*. `plan_uploaded` is set at two
+    places and cleared **only at init and on connect** — never by a refusal, a Stop or a
+    blocked upload. So from the second upload of a session onward **Start is LIVE and runs the
+    OLD plan while the chart draws the new blocked one.** That branch still draws (its banner
+    promises the highlight, and `runUnsafe` is its only source), so this is recorded as a
+    **real, unfixed cost**, not explained away.
+  * **5 mutations, 5 killed, control read first.** New DRIVEN checks `pause_resume` 1k/1m/1n
+    — that suite already builds `doUpload` a full world, so the teeth are there rather than
+    in a source check. ⚠ One mutation first reported **SKIP (anchor x5)** because the
+    refusal phrasing now appears in five handlers; re-anchored uniquely, it KILLED 1m. **The
+    summary line said "4 killed, 0 survived" with it sitting in the run** — the second time
+    this session a skipped mutation nearly read as a passed one.
+
+* **⚠⚠ 2026-09-22 — A VESSEL-SIDE PANEL'S HEADLINE FINDING WAS HALF RIGHT, AND THE HALF IT
+  GOT WRONG WOULD HAVE AIMED THE FIX AT THE WRONG TARGET. Measured, not read.**
+
+  * **CONFIRMED:** a Start after a **Stop** relabels a guard escape (or a hold) `"survey"`.
+    Measured: `after STOP behavior=escape wp 0/1` then `after START behavior=survey wp 1/1`,
+    with `plan_uploaded` true throughout. My own objection — *"after a Stop, Start begins the
+    uploaded survey, so 'survey' is correct"* — is **refuted**: `wp_total` stays **1**, so she
+    is flying the escape's own one waypoint and holding at the escape point under a false
+    name. The `paused` control keeps `"escape"`, so the exemption works and the gap is the
+    rest states it does not cover.
+  * **AND THE CHAIN DOES FIRE — I MEASURED IT WRONG FIRST, WHICH IS THE LESSON.** I reported
+    that it could not, because the escape sets `run_completion` to `loiter`. The console
+    publishes **TWO** completion fields and the comment above them says outright which one
+    matters: `completion` = `plan_completion()`, *"the command-bar selector and the end-of-plan
+    RTH chain read this"*, and `run_completion` = what THIS run does at its end. The chain
+    tests `s.completion`, the operator's **standing** setting, which stays `rth` throughout.
+    My probe printed `run_completion || completion`, so a truthy `"loiter"` MASKED the field
+    that decides. Re-measured against every conjunct of the real predicate:
+    **`completion=rth/run=loiter` ... `CHAIN WOULD FIRE: YES` after Start.** The finding is
+    HIGH as filed. ⚠ A probe that conflates two fields the code deliberately keeps apart is
+    the same defect class as a check that cannot fail — and the answer is the same one: read
+    what the CODE reads, not what looks equivalent.
+  * **AND THERE IS A SECOND CONSEQUENCE the panel did not lead with: Stop then Start does not
+    resume the survey — it RE-FLIES THE ESCAPE.** `SimVcu` holds exactly one plan and the
+    escape's `_run_route` overwrote the operator's survey with its single waypoint, so there
+    is no survey to start. Measured: `after START ... wp 1/1`, holding at the escape point.
+    Their survey is gone from the vessel; the only way back is to Upload again. ⚠ Which is
+    also why HORN A is dead: `start()`'s only evidence of a new plan is `link.plan_staged`,
+    and an upload from REST applies directly rather than staging — so `plan_staged` is False
+    for a genuine new survey and for the leftover escape alike.
+  * **FILED, NOT FIXED** — the fix is two-horned and a panel is on it. Also filed:
+    `SimVcu.estop()` never clears `_paused` (HIGH); `run_completion` goes stale when
+    Stop/E-STOP/disarm consumes the staged plan; `/api/cmd/approach` is the one command input
+    with **no validator** — non-numeric is a 500, and **`nan` is ACCEPTED** and breaks guidance,
+    which is the trap `set_home`'s own comment already documents for coordinates.
+  * ⚠ **`tests/escape_chain.py:163` posts `/api/cmd/stop` WITH NO BODY**, which urllib sends
+    as a GET and the console 404s — so that boat is never stopped. `hold_station.py:428`
+    carries a comment recording the identical bug being found there ("it failed 4 runs in 6")
+    and this line survived it. It does not make check 5 pass falsely (the arm gate answers
+    first either way), but it is a silent no-op.
+
 * **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
   retraction arm.**
 

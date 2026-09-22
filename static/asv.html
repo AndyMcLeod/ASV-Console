@@ -10343,7 +10343,18 @@ async function doUpload(){
  try{
   // Set before the first await and cleared in the finally, so every exit - refused,
   // blocked, thrown or sent - puts the button back exactly once.
+  // ⚠ AND THE POST IS AWAITED NOW, so this one release covers the answer too. It used to
+  // be fire-and-forget, and the finally's own sentence ended "or SENT" - which was the
+  // defect's name: the button came back while the round trip was still out, so a second
+  // press installed a second picture and bumped `planGen` past the first reply's gate. It
+  // costs the operator the round trip, bounded at CMD_TIMEOUT_MS - the price #b_hold weighed
+  // and paid.
   uploadBusy = true; applyCmdState(S);
+  // ⚠ SNAPSHOT AT THE PRESS, NOT IN FRONT OF THE POST, and this function needs that more
+  // than doGoTo does: three of its exits sit behind an UNBOUNDED `await guiConfirm` and a
+  // corner walk that yields to the screen by design, and the clearance guard commands the
+  // boat at 4 Hz through all of it.
+  const was = {gen: planGen, route: runRoute};
   const wps = mission.waypoints || [];
   // The server refuses an empty plan in words, so the clear past this gate will essentially
   // never run - and that is the point rather than dead code: `runRoute` may hold the Go-To or
@@ -10354,7 +10365,19 @@ async function doUpload(){
     // ⚠ AND THIS NOW CLEARS `runUnsafe` TOO, WHICH IT DID NOT. It was the only one of the
     // seven that left it, so the red "no clear detour" legs of an abandoned route stayed drawn
     // over a chart with no route on it. A behavior change, not a tidy-up.
-    if(took(r)) giveUpRoute("this page uploaded an empty plan");
+    if(!took(r)){
+      const say = notTookSay(r, "UPLOAD");
+      if(say) showBanner(say + (r && r.refused
+        ? " - nothing was uploaded, and the chart still shows the plan she had."
+        : " - the chart still shows the plan she had; check the waypoint count on the "
+          + "vessel card before pressing Upload again."));
+      return;
+    }
+    // ⚠ AND IT CLEARS PAST A REPLY, so it takes #b_hold's fence: a Hold, a Stop or an
+    // escape that landed inside this round trip owns the picture, and this clear did not
+    // find it.
+    if(planGen === was.gen && runRoute === was.route)
+      giveUpRoute("this page uploaded an empty plan");
     return;
   }
   if(!asv){ flashNote("No position fix yet — Upload routes the approach from the boat, so it needs one."); return; }
@@ -10374,14 +10397,38 @@ async function doUpload(){
         + "the track with. Waiting until the NOGO row shows a zone count routes them properly.",
         {always: true})) return;
     const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps);          // degraded: the waypoints as they are
+    // ⚠ THE WIDEST WINDOW ON THE PAGE IS THE `guiConfirm` ABOVE THIS LINE. It is unbounded
+    // operator time, so the telemetry frame the Upload button's own gate was drawn from can
+    // be minutes old - which is how "ARM before uploading a plan" and "clear E-STOP first"
+    // become reachable here despite the button. That is an argument for reading the answer,
+    // not against it.
+    const r0 = await cmd("/api/cmd/upload");
+    if(!took(r0)){
+      const say0 = notTookSay(r0, "UPLOAD");
+      if(say0) showBanner(say0 + (r0 && r0.refused
+        ? " - NOTHING WAS UPLOADED: the vessel is still on the plan she had, and the chart "
+          + "still shows it."
+        : " - the chart still shows the plan she had; check the waypoint count on the "
+          + "vessel card before pressing Upload again."));
+      render(); return;
+    }
+    if(planGen !== was.gen || runRoute !== was.route){
+      showBanner("Plan UPLOADED UNROUTED (" + raw.route.length + " waypoints) — but the boat "
+        + "was commanded again while it was going out, so THE CHART IS NOT SHOWING THE "
+        + "UPLOADED PLAN. Upload again before Start.");
+      render(); return;
+    }
     runRoute = raw.route; runUnsafe = []; setPlanIntent("survey", raw, raw.route);
     // NO MODEL, NO CORNER CHECK - and no STALE one either. The previous plan's slow
     // corners are indices into a route that is no longer being flown, and a slow command
     // at the wrong waypoint is worse than none.
+    // ⚠ AND THAT SENTENCE READ BACKWARDS IS WHY THE CLEAR MOVED DOWN HERE WITH THE DRAW:
+    // the previous plan's corners go when THIS one lands, and they STAY when this one is
+    // refused, because she is still flying the plan they were measured on.
     cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
     showBanner("⚠ UNROUTED UPLOAD — " + why + ". The approach and transits were NOT checked against "
       + "the chart, and the clearance guard is not watching the track until the model loads.");
-    cmd("/api/cmd/upload").then(stagedNote);
+    stagedNote(r0);
     render(); return;
   }
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
@@ -10389,19 +10436,42 @@ async function doUpload(){
   // ASV never crosses land / a nogo zone on a transit.
   const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
   if(routeTooLong(plan.route.length)) return;         // the approach and the detours count too
-  runRoute = plan.route; setPlanIntent("survey", plan, plan.route);                          // drawn so the operator sees the real path
-  runUnsafe = plan.unroutable || [];
+  // ⚠⚠ NOTHING IS DRAWN UNTIL THE VESSEL HAS TAKEN IT. Two lines here used to install the
+  // route, the Intent card, its generation and the unsafe legs SEVENTY LINES IN FRONT OF A
+  // POST THAT WAS NEVER READ - and `cmd()` answers a refusal rather than throwing, so the
+  // catch below never fired on one. Engine.upload refuses for six ordinary reasons, two of
+  // them everyday operator mistakes: "ARM before uploading a plan" and "the vessel is
+  // running a plan - Hold or Stop it first".
+  //
+  // On any of them the page went on drawing a survey the boat was not flying, and this is
+  // the worst site on the page for that: `guardTrack` slices `runRoute` at the VESSEL's own
+  // wp_index to project the whole clearance ladder into it, and `markGuardHeld` banks it as
+  // the remainder a later resume really uploads. Review #7's chart-vessel divergence,
+  // reached through the Upload door.
+  const unsafe = plan.unroutable || [];
   const added = plan.route.length - wps.length;
-  if(runUnsafe.length){
+  if(unsafe.length){
     // An unroutable transit would drive the boat straight across a nogo zone.
-    // REFUSE the upload (plan stays not-uploaded, so Start stays gated) and show
-    // WHAT + WHERE (named highlight + red legs) so the operator can reposition / edit.
-    const reasons=legReasons(runUnsafe); setViolations(reasons); render();
-    showBanner(runUnsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
-    flashNote("Upload blocked: "+runUnsafe.length+" transit(s) — "+kindsSummary(reasons)+".");
+    // ⚠ THIS BRANCH DRAWS, AND IT IS THE ONE PLACE A REFUSED UPLOAD SHOULD - doTransit's
+    // identical branch, for the identical reason. Its banner promises the blocked legs are
+    // "highlighted", and that highlight is drawn from `runUnsafe` and nothing else:
+    // setViolations highlights the FEATURE, only `runUnsafe` highlights the LEG. Nothing is
+    // posted here, so "past the reply" has no meaning for it.
+    // ⚠⚠ AND THE OLD DEFENCE WRITTEN HERE WAS FALSE. It read "plan stays not-uploaded, so
+    // Start stays gated". Start is gated on the SERVER's `plan_uploaded`, which is set by any
+    // earlier successful upload of the session and is cleared ONLY at init and on connect -
+    // never by a refusal, a Stop or a blocked upload. So from the second upload of a session
+    // onward Start is LIVE and runs the OLD plan while this branch draws the new blocked one.
+    // That is a real, unfixed cost of drawing here, written down rather than explained away.
+    runRoute = plan.route; runUnsafe = unsafe; setPlanIntent("survey", plan, plan.route);
+    const reasons=legReasons(unsafe); setViolations(reasons); render();
+    showBanner(unsafe.length+" transit(s) blocked by "+kindsSummary(reasons)+" with NO clear detour (highlighted) — UPLOAD BLOCKED. Reposition the boat or edit the plan, then Upload again.");
+    flashNote("Upload blocked: "+unsafe.length+" transit(s) — "+kindsSummary(reasons)+".");
     return;
   }
-  clearViolation();
+  // (clearViolation has moved PAST the reply, below. It was the one thing this function
+  //  changed in front of the post, and on a refusal it wiped the highlight of a plan the
+  //  operator had not replaced.)
   // ⚠ THE CORNERS THE HULL CANNOT ROUND INSIDE THE BUFFER, MEASURED HERE AND NOWHERE ELSE.
   // This is the first and only point at which the FINAL route exists: punchOut never sees
   // the approach or legPath's detours, and the vessel never sees anything else. `legClear`
@@ -10423,7 +10493,14 @@ async function doUpload(){
   // set is cleared, the upload proceeds exactly as it does today, and the banner says the
   // check did not run. Failing CLOSED - refusing an upload that was fine yesterday
   // because a new advisory threw - would be the worse error of the two.
-  let cs = {slow: [], unanswered: []};
+  // ⚠⚠ MEASURED HERE, WRITTEN PAST THE REPLY. The walk needs nothing global, so it stays
+  // in front of the post where its cost is already paid. What MOVES is the SET, because
+  // `cornerSlow` is the one stale value on this path that can MOVE THE THROTTLE:
+  // speedGovernor commands "low" whenever `S.wp_total` equals `cornerSlowFor` and the
+  // vessel's wp_index is in the set, and `wp_total` keeps tracking the LINK's real plan. So
+  // a refused upload was saved only by the coincidence that two route lengths differ - and
+  // re-uploading an edited plan of the SAME waypoint count removes that coincidence.
+  let cs = {slow: [], unanswered: []}, csKey = cornerPlanKey, csErr = null;
   try {
     const planKey = SPEED_ROLES.map(roleSpeed)
                       .reduce((a, b) => ((V.SPEED_KN[b] || 0) > (V.SPEED_KN[a] || 0) ? b : a));
@@ -10439,14 +10516,14 @@ async function doUpload(){
     cs = {slow: raw.slow.map(i => i - 1).filter(i => i >= 0),
           unanswered: raw.unanswered.map(i => i - 1).filter(i => i >= 0)}
          || cs;
-    cornerPlanKey = planKey;
+    csKey = planKey;
   } catch(e) {
     cs = {slow: [], unanswered: []};
-    showBanner("⚠ The corner check did not run (" + ((e && e.message) || e) + "). The plan is uploaded and routed exactly as before, but no corner is being slowed for — the hull rounds every corner of a route and this is what measures that.");
+    // ⚠ RECORDED, NOT SAID - because its own sentence is "The plan is uploaded and routed
+    // exactly as before", which is a lie in front of a post that may be refused. Raised past
+    // the gate, where it is true.
+    csErr = (e && e.message) || e;
   }
-  cornerSlow = new Set(cs.slow);
-  cornerUnanswered = cs.unanswered || [];
-  cornerSlowFor = plan.route.length;
   if(added > 0)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
   // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the
@@ -10463,8 +10540,49 @@ async function doUpload(){
       + cornerPlanKey + " the hull would round them inside the " + (nogo.buffer || 0)
       + " m buffer. Nothing else in the plan changes.");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
-  cmd("/api/cmd/upload", {route: plan.route, hold_clear_m: holdClearAt(plan.route[plan.route.length-1])})
-    .then(stagedNote);
+  const r = await cmd("/api/cmd/upload", {route: plan.route,
+                      hold_clear_m: holdClearAt(plan.route[plan.route.length-1])});
+  if(!took(r)){
+    // ⚠ THREE ANSWERS, AND ONLY ONE IS A FACT ABOUT THE VESSEL. A REFUSAL may say she is
+    // still on the plan she had, because every one of Engine.upload's gates raises BEFORE
+    // `link.upload_plan` and touched nothing. A LOST reply may say nothing about her at all,
+    // so it names the readout that can settle it instead. A view-only tab gets null from
+    // notTookSay and this function says nothing about the boat.
+    const say = notTookSay(r, "UPLOAD");
+    if(say) showBanner(say + (r && r.refused
+      ? " - NOTHING WAS UPLOADED: the vessel is still on the plan she had, and the chart "
+        + "still shows it."
+      : " - the chart still shows the plan she had, but the corner speeds measured for it "
+        + "have been dropped; check the waypoint count on the vessel card before pressing "
+        + "Upload again."));
+    // ⚠⚠ AND A LOST REPLY TAKES THE CORNER SET DOWN, WHICH A REFUSAL DOES NOT. A refusal
+    // establishes she is still flying the plan the set was measured on, so the set is right
+    // and stays. A lost reply establishes nothing: she may be flying the new plan, and a
+    // slow commanded at the wrong waypoint is worse than none.
+    if(!(r && r.refused)){ cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1; }
+    render(); return;
+  }
+  // ⚠ AND THE DRAW MAY NOT OVERTAKE A COMMAND GIVEN SINCE - the guard commands at 4 Hz
+  // throughout, and this round trip followed a routing that can take seconds. If anything
+  // installed a picture while this was out, that command owns it and the operator is told
+  // the chart is not the plan the vessel now holds.
+  if(planGen !== was.gen || runRoute !== was.route){
+    showBanner("Plan UPLOADED (" + plan.route.length + " waypoints) — but the boat was "
+      + "commanded again while it was going out, so THE CHART IS NOT SHOWING THE UPLOADED "
+      + "PLAN. Upload again before Start.");
+    render(); return;
+  }
+  clearViolation();
+  runRoute = plan.route; runUnsafe = []; setPlanIntent("survey", plan, plan.route);
+  cornerSlow = new Set(cs.slow);
+  cornerUnanswered = cs.unanswered || [];
+  cornerSlowFor = plan.route.length;
+  cornerPlanKey = csKey;
+  if(csErr)
+    showBanner("⚠ The corner check did not run (" + csErr + "). The plan is uploaded and routed "
+      + "exactly as before, but no corner is being slowed for — the hull rounds every corner "
+      + "of a route and this is what measures that.");
+  stagedNote(r);
   render();
  }catch(e){ flashNote("Upload failed: " + ((e && e.message) || e)); }
  finally{ uploadBusy = false; applyCmdState(S); }

@@ -160,7 +160,13 @@ try:
     # guard, but the guard itself only fires while the console HAS authority (armed, not
     # e-stopped); if that gate were ever lost at the server, an escape must still refuse
     # rather than move a disarmed boat.
-    api(port, "/api/cmd/stop")
+    # ⚠ {} MAKES IT A POST. With no body api() sends a GET, which the console 404s - so
+    # for as long as this line read `api(port, "/api/cmd/stop")` the boat was never
+    # stopped. hold_station.py:428 records the IDENTICAL bug being found there ("it failed
+    # 4 runs in 6") and this line survived that fix. It did not make check 5 pass falsely -
+    # Engine.escape asks the ARM gate first, so the arm gate answers either way - but a
+    # silent no-op in a setup line is how the next check written here would.
+    api(port, "/api/cmd/stop", {})
     api(port, "/api/cmd/arm", {"on": False})
     code, r = api(port, "/api/cmd/escape", {"lat": tgt["lat"], "lon": tgt["lon"]})
     check("5. disarmed, an escape is REFUSED (409) like any other commanded motion, not "

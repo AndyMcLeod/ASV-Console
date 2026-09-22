@@ -496,7 +496,22 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     let mission = { waypoints: [{ lat: 43.08, lon: -70.71 }, { lat: 43.09, lon: -70.71 }] };
     let nogo = { ready: false, busy: false, band: null, note: "nogo not loaded" };
     let runRoute = null, planIntent = null, runUnsafe = [], answer = false, asked = null;
-    const cmd = (p, b) => { calls.push({ p, b }); return Promise.resolve({ ok: true, state: {} }); };
+    // ⚠ AN ANSWER THIS FIXTURE CAN CHOOSE. doUpload reads its reply since 2026-09-22, so
+    // "what the console said" is part of this world now. The three shapes are the three the
+    // page distinguishes: taken, REFUSED in words, and a reply that was lost.
+    let reply = null;   // null = taken
+    const cmd = (p, b) => { calls.push({ p, b });
+      if(reply === "refuse") return Promise.resolve(
+        {ok: false, error: "the vessel is running a plan - Hold or Stop it first",
+         sent: true, refused: true});
+      if(reply === "lost") return Promise.resolve(
+        {ok: false, error: "network error", sent: true, refused: false});
+      // ⚠ A COMMAND GIVEN WHILE THIS ONE IS OUT. The clearance guard commands the boat at
+      // 4 Hz throughout the round trip, and this upload followed a routing that can take
+      // seconds - so a guard deviation or an escape landing inside the window is ordinary,
+      // not exotic. It installs a picture, which is what setPlanIntent means.
+      if(reply === "race"){ runRoute = [{lat: 9, lon: 9}]; setPlanIntent("escape"); }
+      return Promise.resolve({ ok: true, state: {} }); };
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
     const render = () => {}, setViolations = () => {}, clearViolation = () => {};
     // doUpload measures where the HULL goes at every corner of the routed plan since
@@ -516,7 +531,18 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     let uploadBusy = false; const busySeq = [];
     const applyCmdState = () => busySeq.push(uploadBusy);
     const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
-    const setPlanIntent = (kind) => { planIntent = { kind, why: [] }; };
+    // ⚠ THE GENERATION LIVES WHERE THE PAGE PUTS IT - inside setPlanIntent, which is
+    // called at every site that installs a NEW commanded route and at neither that amends
+    // one. doUpload fences its draw on it now ("the draw may not overtake a command given
+    // since"), so a stub that bumped it elsewhere would test a different rule.
+    let planGen = 0;
+    const setPlanIntent = (kind) => { planGen++; planIntent = { kind, why: [] }; };
+    // The page's ONE success test and its operator wording, carried across verbatim so a
+    // change to either is a change HERE rather than in a copy that can drift.
+    // eslint-disable-next-line no-eval
+    const took = eval("(" + grab("took") + ")");
+    // eslint-disable-next-line no-eval
+    const notTookSay = eval("(" + grab("notTookSay") + ")");
     let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan
     const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
                                                    .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
@@ -529,7 +555,12 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
-                                  runRoute = null; setup(); await doUpload(); await Promise.resolve(); };
+                                  runRoute = null;
+                                  // Every run starts from TAKEN unless its own setup says
+                                  // otherwise: an answer leaking from the previous case is
+                                  // how a check passes for the wrong reason.
+                                  reply = null;
+                                  setup(); await doUpload(); await Promise.resolve(); };
 
     await up(() => { asv = null; nogo = { ready: true, band: "enc_harbour" }; });
     check("1c. Upload with no position fix is refused in words, and nothing is sent",
@@ -576,6 +607,63 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && banners.length === 0,
           () => "sent=" + JSON.stringify(calls.map((c) => [c.p, c.b && c.b.route && c.b.route.length])));
     delete S.route_max_wpts;
+  // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
+  // took the plan, so the upload is real - but the operator or the guard has commanded her
+  // somewhere in the meantime, and that command owns the picture. Drawing the survey over it
+  // would put the chart back to a plan she is no longer flying, with the clearance ladder
+  // projected along it.
+  // ⚠ THE PAIR: 1k's accepted case is this same world WITHOUT the mid-flight command, and
+  // it draws. Without that twin, "did not draw" here is indistinguishable from "never ran".
+  await up(() => { nogo.ready = true; reply = "race"; });
+  const raced = runRoute, racedSaid = banners.join(" | ");
+  check("1n. ... and an upload the vessel TOOK does not redraw over a command given while it "
+        + "was going out - it says the chart is not the plan aboard",
+        () => raced !== null && raced.length === 1 && raced[0].lat === 9
+              && /THE CHART IS NOT SHOWING THE UPLOADED PLAN/.test(racedSaid),
+        () => "after the race the chart holds " + (raced ? raced.length + " wpt" : "null")
+            + " (the command given since, not the upload), and the operator was "
+            + (/THE CHART IS NOT SHOWING/.test(racedSaid) ? "told" : "TOLD NOTHING"));
+
+  // ⚠⚠ 1k-1m. NOTHING THE VESSEL DID NOT TAKE IS DRAWN. doUpload installed the route,
+  // the Intent card and its generation SEVENTY LINES IN FRONT of a post it never read - the
+  // claim-then-post shape the commanded-answer commits closed for Go-To, RTH and Transit, at
+  // the one commanded motion they did not reach. Engine.upload refuses for six ordinary
+  // reasons, two of them everyday operator mistakes: "ARM before uploading a plan" and "the
+  // vessel is running a plan - Hold or Stop it first".
+  //
+  // ⚠ AND THIS IS THE WORST SITE ON THE PAGE FOR IT: guardTrack slices `runRoute` at the
+  // VESSEL's own wp_index to project the whole clearance ladder, and markGuardHeld banks it
+  // as the remainder a later resume really uploads. A drawn plan she is not flying is not a
+  // cosmetic problem here.
+  //
+  // ⚠ THE PAIR IS THE CHECK. `runRoute === null` is also the fixture's own starting value -
+  // `up()` nulls it before every run - so "correctly not drawn" and "nothing happened" are
+  // the same observation on the refused case alone. The ACCEPTED case is what makes it
+  // evidence, and it is the same world but for the answer.
+  await up(() => { nogo.ready = true; reply = null; });
+  const drew = runRoute, drewGen = planGen;
+  await up(() => { nogo.ready = true; reply = "refuse"; });
+  const refusedRoute = runRoute, refusedSaid = banners.join(" | "), refusedSent = calls.length;
+  check("1k. an accepted Upload draws the routed plan; a REFUSED one draws nothing and says "
+        + "so in the console's own words",
+        () => drew !== null && drew.length >= 2 && drewGen > 0
+              && refusedRoute === null && refusedSent === 1
+              && /UPLOAD REFUSED/.test(refusedSaid)
+              && /still on the plan she had/.test(refusedSaid),
+        () => "accepted -> " + (drew ? drew.length + " wpt drawn" : "NOTHING")
+            + "; refused -> " + (refusedRoute ? "DREW IT ANYWAY" : "nothing drawn")
+            + ", posted " + refusedSent + ", said " + JSON.stringify(refusedSaid.slice(0, 90)));
+
+  // 1l. AND A LOST REPLY IS NOT A REFUSAL. It may say nothing about the vessel at all, so it
+  // names the readout that can settle it rather than asserting she is still on her old plan.
+  await up(() => { nogo.ready = true; reply = "lost"; });
+  const lostSaid = banners.join(" | ");
+  check("1m. ... and a LOST reply says the console cannot tell, never that she refused",
+        () => runRoute === null && /UPLOAD NOT ACKNOWLEDGED/.test(lostSaid)
+              && /cannot tell whether she received it/.test(lostSaid)
+              && !/NOTHING WAS UPLOADED/.test(lostSaid),
+        () => JSON.stringify(lostSaid.slice(0, 140)));
+
   }
   {
     const els = { "#confirm": { style: {} }, "#confirmTtl": {}, "#confirmMsg": {}, "#confirmYes": {}, "#confirmNo": {} };

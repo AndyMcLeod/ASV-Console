@@ -960,7 +960,9 @@ function codeOnlyH(){ return H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/
   const src = grab("doUpload");
   check("23. the empty-plan upload clears only past the gate, and says why the clear is not "
         + "dead code",
-        /if\(took\(r\)\) giveUpRoute\("this page uploaded an empty plan"\)/.test(src)
+        /if\(planGen === was\.gen && runRoute === was\.route\)\s*giveUpRoute\("this page uploaded an empty plan"\)/
+             .test(src)
+        && /const say = notTookSay\(r, "UPLOAD"\)/.test(src)
         && /may hold the Go-To or/.test(src)
         && /function giveUpRoute\(why\)\{\s*runRoute = null; planIntent = null; runUnsafe = \[\];/
              .test(codeOnlyH()),
