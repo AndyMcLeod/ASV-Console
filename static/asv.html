@@ -4799,14 +4799,37 @@ function patStrikeKey(){
   return [c(pat.A), c(pat.B), c(pat.C), pat.align,
           boundaryActive() ? boundary.map(c).join(";") : "-",
           nogo.band||"-", (nogo.features||[]).length, nogo.buffer,
-          // ⚠ THE CLIP STANDOFF, NOT JUST THE BUFFER (2026-09-19). The coverage clip is
-          // taken at patClipBufM(), which grows with the SET - so two punches at the same
-          // buffer in a different set are two different clips, and a key naming only the
-          // buffer would hand the second one the first one's runs.
-          patClipBufM().toFixed(2),
+          // ⚠⚠ AND THE STRUCTURES READ OFF THE CHART. `nogo.features` is the ENC snapshot
+          // and names nothing about the chart SCAN, which folds its own polygons into the
+          // same model - so a punch taken before the tiles arrived and one taken after
+          // produced the IDENTICAL key. Measured: the first punch clipped with 0 chart areas
+          // and returned 4 runs crossing a 60x20 m float system; the operator re-commanded,
+          // the scan had by then found the structure, and the memo HIT and served the
+          // pre-scan runs straight back. A fresh clip of the same water gives 8 runs and
+          // none crossing it. The key has to name the READ, not just the ENC features.
+          (chartInk.key||"-").replace(/\|/g,"~"),
+          chartInk.lines.length+"/"+(chartInk.areas||[]).length,
           JSON.stringify(nogo.enf||{}), dr.min, dr.max,
           (sea.waterOffset||0).toFixed(3)].join("|");
 }
+
+/**
+ * THE MEMO's key: the strike key plus the standoff this punch clips at. DERIVED from the
+ * strike key rather than written out again, so the two cannot come to name different inputs.
+ *
+ * ⚠⚠ THE STANDOFF IS HERE AND NOT IN patStrikeKey, AND THE SPLIT IS THE WHOLE POINT. The
+ * CLIP must not be reused across a set change - two punches at the same buffer in a
+ * different set are two different clips, which is what the note this replaces was about.
+ * A STRIKE is a different question: it asks whether the run the operator clicked still
+ * EXISTS, and keptRuns' 1 m midpoint test already answers that.
+ *
+ * The set is published rounded to two decimals at 4 Hz and moves with the gusts. Measured
+ * over one 150 s capture it ran 0.36-0.40 kn, which at a 5 m buffer is a standoff of
+ * 6.20-6.62 m and FIVE distinct key terms: the strike key changed FOUR TIMES IN SIX SECONDS,
+ * and every change silently discarded every run the operator had struck off, because
+ * activeStruck() returns [] the moment the keys differ.
+ */
+function patClipKey(){ const k = patStrikeKey(); return k && k + "|" + patClipBufM().toFixed(2); }
 
 /** The strikes that still apply. A read — see patStrikeKey. */
 function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() ? patStruck : []; }
@@ -7279,17 +7302,19 @@ async function punchOut(){
     // It is SOUND, which the obvious memo one layer down is not. `clipped` is computed
     // from the pattern, the boundary and the keep-out model, and it is computed BEFORE
     // the strike filter — so it cannot see the strike list and cannot be invalidated by
-    // one. `patStrikeKey()` already names every input it does depend on, which is why
-    // that key serves both jobs. Contrast the routed transits below, which WorldView
+    // one. `patClipKey()` names every input it does depend on: the strike key, plus the
+    // STANDOFF, which the strike key deliberately no longer carries (see patClipKey).
+    // Contrast the routed transits below, which WorldView
     // tried to memo and could not: they are derived from the LINE SET, so a detour cached
     // before a strike can be invalid after it. Those re-solve, every time, on purpose.
     let clipped;
-    // The standoff this punch clips its COVERAGE at, read once: patStrikeKey() names it too,
-    // so the memo cannot serve a clip taken in a different set.
+    // The standoff this punch clips its COVERAGE at, read once. patClipKey() names it, so
+    // the memo cannot serve a clip taken in a different set - while the STRIKE key does not,
+    // so a gust no longer throws away the runs the operator struck off.
     const clipBuf = patClipBufM();
     const setKnNow = (() => { const st = (S && S.status) || {};
       return (st.env_set_kn != null && st.env_set_deg != null) ? +st.env_set_kn : 0; })();
-    const clipKey = patStrikeKey();
+    const clipKey = patClipKey();       // the strike key PLUS this punch's standoff
     if(clipKey && patClipMemo && patClipMemo.key === clipKey){
       // A COPY, not the cached array. The caller sorts, re-orients and filters what it is
       // given, and handing out the memo itself would let the next punch inherit the last

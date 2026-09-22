@@ -702,6 +702,44 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
               return w ? w.lengthM.toFixed(1) + " x " + w.widthM.toFixed(1) + " m, needs "
                          + C.AREA_MIN_M + " m" : "no wide mark"; });
 
+
+// ── 21. THE PUNCH MEMO KNOWS WHEN THE CHART HAS BEEN READ ────────────────────────────
+//
+// The scan folds its own polygons into the SAME keep-out model the ENC features are in
+// (foldChartInk), but `patStrikeKey` named only `nogo.features` - the ENC snapshot - so a
+// punch taken BEFORE the tiles arrived and one taken AFTER produced the identical key, and
+// the memo served the pre-scan runs back.
+//
+// MEASURED, driving the real punch phase over a 60x20 m float system: the first punch
+// clipped with 0 chart areas and returned 4 runs crossing the footprint; the operator
+// re-commanded, the scan had by then found the structure, and the memo HIT - the same 4
+// runs, still crossing. A fresh clip of that water gives 8 runs and none crossing. The
+// survey was planned straight through a structure the console had just read off the chart.
+//
+// ⚠ THE READ IS NAMED BY ITS KEY AND ITS COUNTS, NOT BY THE AREAS THEMSELVES. `chartInk.key`
+// is the box and band the scan was taken over, and the two counts move whenever the scan
+// finds something - between them they change on every transition that matters, and neither
+// costs a walk of the geometry on a key that is built on every punch.
+{
+  const i = H.indexOf("function patStrikeKey(){");
+  const strike = H.slice(i, H.indexOf("\n}", i));
+  check("21. the punch key names the CHART READ, not just the ENC features - a punch before "
+        + "the tiles arrived and one after must not share a memo",
+        () => /chartInk\.key/.test(strike)
+              && /chartInk\.lines\.length/.test(strike)
+              && /\(chartInk\.areas\|\|\[\]\)\.length/.test(strike),
+        "the key carries chartInk.key and the line/area counts. Without them the memo hit "
+          + "after the scan landed and served the pre-scan runs: 4 runs crossing a 60x20 m "
+          + "float system where a fresh clip gives 8 and none crossing");
+  // The separator has to survive being embedded: chartInk.key is built from a bbox and a
+  // band and could contain the "|" this key joins on, which would silently merge two fields
+  // and make two different reads produce one key.
+  check("21b. ... and the read's own key cannot break the field separator",
+        () => /\(chartInk\.key\|\|"-"\)\.replace\(\/\\\|\/g,"~"\)/.test(strike),
+        "chartInk.key is embedded with its pipes replaced; a raw key with a '|' in it would "
+          + "merge two fields and let two different reads collide");
+}
+
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
 process.exit(fails ? 1 : 0);

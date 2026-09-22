@@ -138,9 +138,10 @@ const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
-  // clip standoff and from patStrikeKey. Missing from this list it is a bare ReferenceError
-  // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash.
-  "patClipBufM",
+  // clip standoff and from patClipKey. Missing from this list it is a bare ReferenceError
+  // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash -
+  // and it caught patClipKey the same way the day the strike/clip split landed.
+  "patClipBufM", "patClipKey",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
@@ -176,6 +177,12 @@ function makeWorld(opts) {
     + "const mission = {lines: [], waypoints: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     + "const applyNogoControls = () => {}; const ensureNogoArea = async () => true; const render = () => {};\n"
     + "const foldChartInk = () => {};             // no chart image in this world\n"
+    // ⚠ AND THE CHART-READ STATE IT LEAVES BEHIND. patStrikeKey names the READ - its key
+    // and its line/area counts - since 2026-09-22, so without this the key is a bare
+    // ReferenceError inside the punch, which this world reports as "0 runs, 0 turns built"
+    // rather than as a crash. Exactly the trap the note above patClipBufM records, and it
+    // caught this the same day. Empty is the truthful value here: nothing is scanned.
+    + "const chartInk = {key: null, lines: [], areas: [], detached: [], note: null, z: null, ms: 0, busy: false};\n"
     // The REAL guard bodies, not stubs: patClipBufM derives the clip standoff from the
     // guard's own constants, and a suite substituting its own would be testing a seam that
     // is closed only inside the test.

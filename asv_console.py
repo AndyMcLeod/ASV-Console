@@ -4523,7 +4523,28 @@ class Engine:
         # armed than "the vessel is not running a plan" would be.
         self._require(self.armed, "ARM before commanding the boat")
         self._require(not self.estop, "clear E-STOP first")
-        self._require(self.run in ("running", "paused"), "the vessel is not running a plan")
+        # ⚠⚠ AND A PAUSED BOAT WITH A PLAN STAGED IS NOT A CONTINUATION. `Engine.start`
+        # already draws exactly this line - `resuming = self.run == "paused" and not
+        # link.plan_staged` - and the amend gate has to draw it too, because the console
+        # deliberately keeps Upload enabled while paused ("the plan is STAGED, and Start
+        # stays live for it") and routes Start-while-paused into `resumeRun`. So
+        # pause -> upload a revised plan -> Start is a supported sequence, and resumeRun
+        # posts its backtrack amendment against the plan being ABANDONED.
+        #
+        # Accepting it would be worse than refusing it: `start()` applies the staged plan
+        # and throws the amendment away, but the page reads the 200 as truth - it splices
+        # `runRoute` and says "backed up NN m so the coverage overlaps" when nothing backed
+        # up at all. Measured on a live console: amend accepted 1/3 -> 1/6, then Start gave
+        # wp 0/5 while the page drew six waypoints. `guardTrack` projects the clearance
+        # ladder along that array, so this is the chart-vessel divergence review #7 recorded
+        # at the edge rung - re-opened through the resume door. Found by an adversarial
+        # re-read of this very fix, after it was committed.
+        link0 = self._link
+        staged = bool(link0 is not None and link0.plan_staged)
+        self._require(self.run == "running" or (self.run == "paused" and not staged),
+                      "a new plan is staged - Start flies that, so there is no remainder to "
+                      "amend" if staged and self.run == "paused"
+                      else "the vessel is not running a plan")
         st = self.status
         self._require(not st.get("holding"), "the vessel is station-keeping, not running a plan")
         r = self._sanitize_route(route)

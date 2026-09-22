@@ -59,6 +59,41 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ### ➤ PICK UP HERE
 
+* **2026-09-22 — THE PUNCH KEY ANSWERED TWO QUESTIONS AND GOT BOTH WRONG.** One key served
+  the strike list and the clip memo; H10 and H25 are the two halves, and they compose.
+
+  * **H25 — a gust threw away the operator's strikes.** `patStrikeKey` carried the clip
+    STANDOFF, which grows with the set. The set is published rounded to 2 dp at 4 Hz and
+    moves with the gusts: over one 150 s capture it ran 0.36–0.40 kn, which at a 5 m buffer
+    is a standoff of **6.20–6.62 m — five distinct key terms, the strike key changing four
+    times in six seconds.** Every change makes `activeStruck()` return `[]`. The standoff
+    now lives in `patClipKey()`, **derived from** the strike key so the two cannot drift.
+  * **H10 — the memo did not know the chart had been read.** The scan folds its polygons
+    into the same model, but the key named only `nogo.features`. Measured on a 60×20 m float
+    system: punch 1 clipped with 0 chart areas and gave **4 runs crossing the footprint**;
+    the operator re-commanded, the scan had found the structure, and **the memo hit and
+    served the pre-scan runs back.** A fresh clip gives 8 runs, none crossing.
+
+  `tests/chart_ink.js` 21/21b, `planner_guard_seam.js` 5b — **5 mutations, 5 killed.**
+  ⚠ Check 5b used to read *"patStrikeKey() includes patClipBufM()"* — it pinned the bug as a
+  feature. It asserts the SPLIT now: memo names it, strike does not, clip derives from strike.
+
+* **⚠⚠ AND A REGRESSION IN MY OWN H05, FOUND BY THE ADVERSARIAL PASS AFTER IT SHIPPED
+  (`5e2b7b7cf`).** Two independent refuters found it with live-console evidence.
+  `pause → upload a revised plan → Start` is a **supported** sequence (Upload stays enabled
+  while paused — the page says so — and Start-while-paused routes into `resumeRun`). With
+  the gate widened to plain `paused`, `resumeRun` amends the plan being **abandoned**, the
+  Engine answers 200, the page believes it, splices `runRoute` and says *"backed up NN m so
+  the coverage overlaps"* — then `start()` applies the STAGED plan and discards the
+  amendment. Measured: amend 1/3 → 1/6, Start gives **wp 0/5 while the page draws 6**, and
+  `guardTrack` projects the ladder along that array. That is the H33 chart/vessel divergence
+  re-opened through the resume door.
+
+  `Engine.start` already draws this exact line (`resuming = paused and not plan_staged`);
+  the amend gate now carries the same qualifier, with a refusal that **names the real cause**
+  rather than repeating the run gate's words. `tests/amend_plan.py` 17/17b, **3 mutations,
+  3 killed** — one of them a verbatim reproduction of what I shipped.
+
 * **2026-09-22 — A GO-TO CLICKED DURING THE AUTOMATIC RE-EXTRACT DROVE STRAIGHT AT AN
   ISLAND.** `refreshNogo` returned at once while one was in flight, so `ensureNogoCovers`
   and `ensureNogoArea` handed their callers the PREVIOUS box's `nogo.ready` as coverage of

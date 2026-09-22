@@ -476,6 +476,61 @@ try:
           code_run == 409 and "not running a plan" in (words_run or ""),
           "%s %s" % (code_run, words_run))
 
+    # 17. ...BUT A PAUSED BOAT WITH A PLAN STAGED IS NOT A CONTINUATION, AND THE RESUME'S
+    # AMENDMENT MUST BE REFUSED THERE. The console keeps Upload enabled while paused - its
+    # own comment says "the plan is STAGED, and Start stays live for it" - and routes
+    # Start-while-paused into `resumeRun`. So pause, upload a revised plan, press Start is a
+    # supported sequence, and resumeRun posts its backtrack against the plan being ABANDONED.
+    #
+    # ⚠ ACCEPTING IT IS WORSE THAN REFUSING IT. `start()` applies the staged plan and throws
+    # the amendment away, but the page reads the 200 as truth: it splices `runRoute` and
+    # tells the operator "backed up NN m so the coverage overlaps" when nothing backed up.
+    # `guardTrack` then projects the clearance ladder along that array - the same
+    # chart-vessel divergence the guard's edge rung was fixed for, through the resume door.
+    # Engine.start already draws this exact line (`resuming = paused and not plan_staged`).
+    #
+    # Found by an adversarial re-read of check 15's own fix, AFTER it was committed.
+    _post("/api/cmd/goto", {"lat": api_route[-1]["lat"], "lon": api_route[-1]["lon"],
+                            "route": api_route})
+    for _ in range(80):
+        time.sleep(0.25)
+        d6, s6 = _state()
+        if d6.get("run") == "running" and (s6.get("wp_index") or 0) >= 1:
+            break
+    _post("/api/cmd/pause", {})
+    time.sleep(0.6)
+    d7, s7 = _state()
+    staged_before = d7.get("plan_staged")
+    # the operator uploads a REVISED plan while she lies there
+    revised = [{"lat": lat0 + 60 * M, "lon": lon0 + 60 * M / 0.73},
+               {"lat": lat0 + 260 * M, "lon": lon0 + 60 * M / 0.73}]
+    _post("/api/cmd/upload", {"route": revised})
+    time.sleep(0.6)
+    d8, s8 = _state()
+    code_st, words_st = _err("/api/cmd/amend",
+                             {"route": [api_via] + api_route[s8["wp_index"]:],
+                              "note": "resume backtrack against the OLD plan"})
+    time.sleep(0.4)
+    d9, s9 = _state()
+    check("17. ... but a paused boat with a plan STAGED is refused - the resume's backtrack "
+          "would be against the plan being abandoned, and Start throws it away",
+          code_st == 409 and "staged" in (words_st or "") and d9["run"] == "paused"
+          and d8.get("plan_staged") is True and staged_before is False,
+          "paused plan_staged %s -> after upload %s; amend -> %s %s; run=%s. Accepted, the "
+          "page splices runRoute and says the coverage overlaps, and the vessel flies the "
+          "staged plan from waypoint 0 instead"
+          % (staged_before, d8.get("plan_staged"), code_st, words_st, d9.get("run")))
+
+    # 17b. AND THE REFUSAL NAMES THE REAL CAUSE. "the vessel is not running a plan" is false
+    # here - she is paused mid-run, which 15 has just established IS amendable - so it would
+    # send the operator looking for the wrong thing. The sentence reaches them verbatim:
+    # resumeRun writes "could not amend the plan (<this>) - resumed where it lay".
+    check("17b. ... and it says WHY, rather than repeating the run gate's words",
+          "not running a plan" not in (words_st or "") and "Start flies that" in (words_st or ""),
+          "\"%s\" - the operator reads this inside \"could not amend the plan (...)\", so a "
+          "sentence naming a cause the console cannot produce is worse than no sentence"
+          % (words_st or ""))
+
     # 14. THE SERVER SURVIVED IT ALL. A handler can answer the client correctly and still
     # take down its own thread - the check http_contract.py exists for.
     d, s = _state()
