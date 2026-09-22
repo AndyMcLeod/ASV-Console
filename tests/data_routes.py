@@ -657,6 +657,31 @@ try:
           and api(port, "/api/vessels")[1].get("active") == "drix08",
           lambda: "%s %s" % (c8, (sw.get("error") or "")[:44]))
     cmd(port, "/api/cmd/arm", {"on": False})
+
+    # ⚠⚠ 8b. AND A LATCHED E-STOP IS TOLD WHAT IS ACTUALLY HOLDING IT. All three switch
+    # gates read `armed or estop or run != "idle"` and answered "disarm and stop the run" - but
+    # `set_estop` DISARMS and sets run "idle" as it latches, so with a latch held the operator
+    # was asked to do two things they had just done, while the one condition actually blocking
+    # the switch was never named. This project's own rule: a message naming a cause the
+    # operator cannot act on is worse than no message.
+    # ⚠ CHECK 8 ABOVE IS THE CONTROL, and it is what makes this a check rather than a
+    # tautology: 8 drives the ARMED case and still expects the old sentence, so a gate that
+    # answered every refusal with the E-STOP wording would fail it.
+    cmd(port, "/api/cmd/estop", {"on": True})
+    _ce, _se = cmd(port, "/api/vessel", {"id": "zboat_1800hs"})
+    _cp, _sp = cmd(port, "/api/ports", {"id": "pago_pago"})
+    _cst, _sst = api(port, "/api/state")
+    cmd(port, "/api/cmd/estop", {"on": False})
+    check("8b. ... and a LATCHED E-STOP is refused in words that name the LATCH, not the two "
+          "conditions it has already satisfied",
+          lambda: _ce == 409 and _cp == 409
+          and "E-STOP" in (_se.get("error") or "") and "E-STOP" in (_sp.get("error") or "")
+          and _sst.get("armed") is False and _sst.get("run") == "idle"
+          and _sst.get("estop") is True,
+          lambda: "with armed=%s run=%s estop=%s the switch said %r"
+                  % (_sst.get("armed"), _sst.get("run"), _sst.get("estop"),
+                     (_sp.get("error") or "")[:70]))
+
     zspawn = json.load(open(os.path.join(APP, "vessels", "zboat_1800hs.json"),
                             encoding="utf-8"))["spawn"]
     # where the console is BASED - the position the boat must keep across a hull switch

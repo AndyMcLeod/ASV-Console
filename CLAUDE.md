@@ -374,6 +374,18 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
     the count with no settle and compared a STALE telemetry frame against a fresh one. It
     asserts the count is UNCHANGED across the halt now.
 
+* **⚠ 2026-09-22 — THE SWITCH GATES NAME THE LATCH (shipped). The last of the six
+  vessel-side findings.**
+
+  All three switch gates — vessel, port-by-id, port-add-and-select — read
+  `armed or estop or run != "idle"` and answered *"disarm and stop the run"*. But `set_estop`
+  **disarms and sets run "idle" as it latches**, so with a latch held the operator was asked
+  to do two things they had just done, and the one condition actually blocking the switch was
+  never named. MEASURED: `armed=False run=idle estop=True` — and the old sentence.
+  ⚠ The ARMED case still gets the original wording, and that is the control that keeps the
+  new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
+  that answered every refusal with the E-STOP words. 1 mutation, killed.
+
 * **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
   retraction arm.**
 

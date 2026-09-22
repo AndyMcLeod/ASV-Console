@@ -5330,6 +5330,23 @@ def post_is_json(content_type):
     return (content_type or "").split(";", 1)[0].strip().lower() == "application/json"
 
 
+def _switch_blocked(st, what):
+    """Why a vessel or port switch is refused, in the operator's own terms - or None.
+
+    ⚠⚠ THE LATCH GETS ITS OWN SENTENCE, because it is the one condition that makes the
+    other two LOOK satisfied. `set_estop` disarms and sets run "idle" as it latches - measured:
+    an E-STOP leaves armed False, run "idle", estop True - so all three gates tripped on the
+    estop term and then told the operator to "disarm and stop the run", which they had just
+    done, while never naming the thing actually holding it. A message naming a cause the
+    operator cannot act on is worse than no message."""
+    if st.get("estop"):
+        return ("release the E-STOP before %s - she is already disarmed and idle, and the "
+                "latch is what is holding this" % what)
+    if st.get("armed") or st.get("run") != "idle":
+        return "disarm and stop the run before %s" % what
+    return None
+
+
 def estop_wants_latch(body):
     """What an E-STOP request asks for. ONLY an explicit off - false, or 0 - releases. The dispatcher used to read
     `bool(body.get("on"))`, and an unreadable body reads as {} (_read_json), so a garbled E-STOP RELEASED a latched
@@ -5696,8 +5713,9 @@ class Handler(BaseHTTPRequestHandler):
             if not vid:
                 return 400, {"error": "missing vessel id"}
             st = ENGINE.state()
-            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
-                return 409, {"error": "disarm and stop the run before switching vessel"}
+            why = _switch_blocked(st, "switching vessel")
+            if why:
+                return 409, {"error": why}
             try:
                 v = load_vessel(vid)
             except (OSError, ValueError) as e:
@@ -5717,8 +5735,9 @@ class Handler(BaseHTTPRequestHandler):
             # Both are gated exactly like a vessel switch: moving the base under a
             # running boat is as incoherent as swapping its physics.
             st = ENGINE.state()
-            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
-                return 409, {"error": "disarm and stop the run before changing port"}
+            why = _switch_blocked(st, "changing port")
+            if why:
+                return 409, {"error": why}
             found = None
             if body.get("name") is not None:
                 if body.get("lat") is None or body.get("lon") is None:
@@ -5760,8 +5779,9 @@ class Handler(BaseHTTPRequestHandler):
                 # in-memory registry has already changed, so a refusal there would leave the
                 # console half-moved. Nothing has been mutated at this point.
                 st = ENGINE.state()
-                if st.get("armed") or st.get("estop") or st.get("run") != "idle":
-                    return 409, {"error": "disarm and stop the run before changing port"}
+                why = _switch_blocked(st, "changing port")
+                if why:
+                    return 409, {"error": why}
                 try:
                     p = validate_port(body, "port")
                 except ValueError as e:
