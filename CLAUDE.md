@@ -55,7 +55,146 @@ so a suite added there runs the day it is written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-19 NIGHT — ITEMS 1-3 SHIPPED, ITEM 4 STAGE 0 SHIPPED, **THE JUNCTION CORNERS ARE MEASURED AND SLOWED FOR**; **STAGE 1 IS HALF-BUILT ON THE BRANCH `wip/launch-grant-stage1`** and master is clean — read the first block)
+## ⇒ START HERE (handoff refreshed 2026-09-23 — **THE LAUNCH GRANT IS MERGED TO MASTER**; the review branch `fix/criticals` follows below)
+
+> ⚠⚠ **THE LAUNCH GRANT WAS MERGED INTO MASTER ON 2026-09-23**, at Andy's word. Both
+> branches had rewritten this section wholesale, so both are kept: the grant's handoff
+> first because it is what just arrived, master's below it. **The grant needs a SERVER
+> RESTART, not a page reload** — `maybeLatchBerth()` is wired into `onState` and
+> `certifyDeparture()` runs at Upload, so a console still running the old process will not
+> have them. **AND THE LIVE CHECK IS STILL OWED** — nothing in this merge discharges it.
+
+### ⇒ THE LAUNCH GRANT, STAGE 1 (merged to master 2026-09-23)
+
+### ➤ PICK UP HERE
+
+**HANDOFF, 2026-09-20, TO THE NEXT "ASV Console Refinement" WINDOW.**
+
+**⚠⚠ READ THIS FIRST: THE WORK IS ON A BRANCH, NOT ON MASTER, AND IT IS LIVE RATHER THAN INERT.**
+`wip/launch-grant-stage1` now carries the WHOLE of item 4 stage 1 and **`maybeLatchBerth()` IS WIRED**, so
+unlike the previous handoff's state this is NOT inert: a berthed launch will latch, arm a grant at Upload,
+and stand the helm rung down. **His console runs the WORKING TREE of `D:\Claude\ASV`, which is on master
+and untouched.** Nothing on his machine has changed and no reload is needed until the branch is merged.
+
+**ANDY'S ORDER OF WORK, GIVEN ON THE DAY:** *"1. The turn geometry... 2. The helm rung's selection test...
+3. The planner/guard seam... 4. The launch grant, for the berth cases. In sequence."*
+
+| item | state | commit |
+|---|---|---|
+| 1. turn geometry | SHIPPED | `d7d3f905` + `3b15a8d4` |
+| 2. helm rung | SHIPPED | `f2fb80cd` |
+| 3. planner/guard seam | SHIPPED | `ea5e361f` |
+| 4. launch grant, STAGE 0 (blind readout) | SHIPPED | `49d542ce` |
+| 4. launch grant, STAGE 1 | **COMPLETE, on the branch** | see below |
+
+**⇒ THE DECISION THAT IS HIS: MERGE THE BRANCH TO MASTER, OR NOT YET.** It is a real change in what the
+console may do at a berth. Everything below is what it does and what was measured; the merge is one command
+and the branch is already up to date with master (merged 2026-09-20; no conflicts but the generated .docx,
+which was rebuilt from the merged builders and verified to carry BOTH sides' entries).
+
+#### ⚠⚠ THREE DEFECTS WERE FOUND IN THE HALF-BUILT CODE, BY READING IT AGAINST THE DESIGN
+
+Not one of them had a failing test; all three are now held by `tests/berth_grant.js` and by a killed mutation.
+
+1. **THE STALL AND THE CLOCK ENDED THE GRANT.** R14 and Andy's decision 5 both say they must STOP her and
+   keep standing down. The page's own comment said *"neither hands the helm back"* — and the code called
+   `standDown()`, which called `endGrant()`. Twenty seconds after a stalled departure the full ladder came
+   back against the launch pier with the boat still lying alongside it. **That is the original defect with a
+   delay on it, which is exactly what R15 names.** Now two separate functions: `stopAtBerth()` (stall, clock
+   — stops her, grant STANDS, latched so it commands once) and `standDownEnd()` (recession, model loss,
+   operator drop — ends it and holds the helm). Held by 14b, 14c, 14f; mutations M1/M1b killed.
+2. **A BRACE-LESS `else` IN R10.** The "STOPPED rather than held" note ran and then fell straight into the
+   hold's own "HOLDING" note, which overwrote it: the operator read the second and the boat did the first.
+   Held by check 10, which asserts the `} else {` structurally; mutation M6 killed.
+3. **`endGrant`'s success/failure ternary had IDENTICAL text on both branches**, so the PROOF end — R15's
+   one exception, the end that must never read as a giving-up — was worded exactly like a failure. It now
+   quotes the two numbers the proof turned on and says FULL CLEARANCE AUTHORITY RESTORED.
+
+#### WHAT STAGE 1 NOW HAS, beyond what the previous handoff listed as built
+
+* **R15 ACTUALLY GATES THE HELM.** `helmStoodDown()` is the function that reads `grantEndSay`; before it,
+  **nothing read it at all** — the banner said "the helm rung is held for 20 s" and the next frame could
+  command `/api/cmd/escape` at the vessel's HIGH speed. It gates the ACTION only: the alarm, the readout and
+  the lower rungs are untouched. ⚠ It is a NEW GATE IN FRONT OF AN OLD ONE, so 15b pairs every refusal
+  with the same fixture 20 s later where the escape MUST be commanded — without that, "no escape" passes
+  for a gate stuck shut, which is a console that can never steer again.
+* **THE THREE CONTROLS** — TAKE THE HELM NOW, HOLD THE GRANT (restores the grant inside the 20 s window,
+  re-basing `cMax` on the water she has NOW and restarting the clock, or the recession that just fired fires
+  again on the next frame and the button looks broken), and DROP THE GRANT (confirmed, and it gets the same
+  stand-down, because the press means "you may watch this berth again", not "steer her off it now").
+* **THE `depart` SPEED ROLE (R8) — BUT NOT VIA `SPEED_ROLES`, AND THAT IS DELIBERATE.** The design says
+  *"SPEED_ROLES gains depart"*. In THIS page `SPEED_ROLES` is the OPERATOR'S list: it builds the three
+  `#sp_spd_*` selectors and seeds `mission.speeds` from `mission.speed || "survey"`. Putting `depart` there
+  would have created a control whose only effect is to defeat the rule it serves — and the default
+  departure speed would have been the **SURVEY** speed, with no operator action at all. `roleSpeed()` pins
+  `depart` to `low` instead; `speedGovernor` still needs no edit, which was R8's actual goal. Held by 8, 8b, 8c.
+* **THE BAR**, in two new states, both drawn ABOVE renderGuardBar's `clear` branch — inside a grant the
+  filtered ladder usually reads clear, so a branch below that return can never run in the one regime it
+  exists for (15e, 15f; mutations M10/M11 killed). Five bar states now share four buttons, so every state
+  sets back the labels the others changed (15g) and the click handlers dispatch in the SAME order the bar
+  draws in (15h) — or a button does something other than what its own label says.
+* **THE TWO R14 ENDS THAT WERE MISSING ENTIRELY:** a new commanded motion (`grantOnNewMotion`, which ADOPTS
+  the first new `run_seq` — the Start of the departure IS a new motion, and ending on it would have made
+  the feature inert in a way that looks like it is working), and loss of the model, asked ABOVE
+  clearanceGuard's early return because below it `grantTick()` never runs and the grant could never end.
+* **`armGrant()`** as the single writer for both arming sites, so no field survives from one grant into the
+  next; and every grant decision reaches the recording through `logGrantEvent`.
+
+#### THE EVIDENCE
+
+* **`tests/berth_grant.js`, 46 checks, and 18 mutations with ZERO survivors** — run against a SIDECAR via
+  `ASV_HTML`, never the real source, verified afterwards by string. ⚠ **TWO OF THOSE CHECKS FIRST PASSED
+  FOR THE WRONG REASON** and it is recorded in the file: 14g asserted the model-loss end's POSITION, so
+  neutering its condition to `if(false)` left the sentence where it was and the check stayed green; 10b
+  asserted that `holdClearAt` was CALLED, so `holdClearAt(asv) * 2` still matched. Both assert the thing
+  that changes now.
+* **THE REPLAY IS DONE** — `ESCAPE_FINDINGS.md`, "THE REPLAY, DONE". Read it rather than re-deriving it.
+  The model is IDENTIFIED rather than assumed: each escape's own logged `hold_clear_m` is the oracle, and
+  the search reproduces it to **0.1 mm / 0.002 mm / 5.2 mm**. **The buffers were 3 m, 20 m and 3 m — NOT
+  the 5 m every worked example in DEPARTURE_PARADIGM.md assumes.**
+* **⚠⚠ ONLY ONE OF THE THREE ESCAPES REPRODUCES.** On their own identified models New Castle reaches
+  HOLD and Erie reaches SLOW — neither reaches the helm rung on ANY frame within ±30 s. That is the same
+  `chartInk` gap already recorded for Honolulu, and it makes item 5 (record the chart ink) a PREREQUISITE
+  for verifying any guard change against the record, not a tidy-up.
+* **⇒ PAGO PAGO, THE ONE THAT DOES REPRODUCE, IS DECISIVE: 6 of 6 in-extremis frames are DISARMED by the
+  grant, every one inside the corridor.** And the 20 s before Start is the whole Stage 0 argument, measured:
+  **19 consecutive frames** of `sog 0.0, cog null` — a stopped boat **4.9 m off a pier** — which today read
+  BLIND and before `49d542ce` read **CLEAR**. The escape fires 0.449 s after Start, on the first frame she
+  has a course.
+* **ERIE IS NOT A LAUNCH-GRANT CASE AND THE PARADIGM IS WRONG TO LIST IT.** Its escape followed a
+  `/api/cmd/goto` from **151.7 m** away with no upload after its spawn, so `certifyDeparture()` never runs.
+* **NONE OF THE REPLAY CAN SHIP AS A SUITE**: `charts/` and `logs/` are gitignored, so a check that reads
+  them fails for anyone who clones the repo and would fail in the hook. The invariants are on fixtures in
+  `tests/berth_grant.js`; the measurement against the record lives in ESCAPE_FINDINGS.md.
+
+#### ⚠ NINE SUITES NEEDED REPAIR, AND THE NEXT EDIT IN THE SAME PLACES WILL BREAK THEM AGAIN
+
+The four the previous handoff named, plus **five more that `currentActivity()` broke**: adding the `depart`
+branch means `grant` must exist in every eval-world that grabs it — `speed_modes`, `survey_transit_roles`,
+`survey_lead`, `drawn_lines` and `end_action` each crashed with a bare `ReferenceError`, which the crash
+guard reports as ONE failed check rather than as a crash. Each now declares `let grant = null;` with the
+reason written beside it. ⚠ And `units_toggle.js` 9 went red **for a COMMENT**: it greps the page for the
+divide-by-1000-then-toFixed fingerprint, and a comment that spelled the pattern out matched it exactly.
+
+#### WHAT IS LEFT
+
+1. **Andy's call on merging the branch.** After that: reload BOTH console windows, and **restart the
+   server** — `asv_console.py` gained `/api/cmd/berth` and the `berth` field, so the page half alone is not
+   enough.
+2. **Stage 2** — the mirror (`Engine.recover()`, `coast_from_m` on the way in, BRING HER ALONGSIDE, the
+   session-of pre-grant). DEPARTURE_PARADIGM.md says why it can wait: until it lands, a return to a
+   berth-set HOME behaves exactly as it does today.
+3. **Item 5, record `chartInk`** — now demonstrably a prerequisite for any further verification against
+   the record, not a tidy-up.
+4. **THE LIVE CHECK HAS NOT BEEN DONE.** Everything above is suites, mutations and the replay. The paradigm
+   asks for a spawn at each recorded launch position on a temp copy (`--sim --browser none --port 8796
+   --no-log --state-dir <temp>`, never 8791, never his session), Arm / Upload / Start through the page's own
+   buttons, and an observation that no escape is issued in the first 60 s, that the first speed command is
+   `low` and not `high`, that the bar carries the DEPARTING line, and that the grant survives a supervision
+   handover with its budget where it was.
+
+
+### ⇒ THE WORK THAT LANDED BESIDE IT
 
 ### ➤ PICK UP HERE
 

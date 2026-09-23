@@ -153,6 +153,11 @@ eval([
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
+  // R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+  // must exist in this world too. Null here - no berth is latched - so the classifier answers
+  // exactly as it always did, which is what makes these checks evidence that the OPEN regime
+  // is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+  "let grant = null;",
   grab("currentActivity"),
   "function __setMission(m){ mission = m; }",
   // A `const` declared inside a direct eval stays in the EVAL's scope — only the function

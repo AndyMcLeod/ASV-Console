@@ -131,7 +131,7 @@ var mission, runLineIdx = -1, curTurn = -1, turnSeg = [], turnSlowAt = {}, lastR
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 (tests/corner_slow.js).
 // Declared here for the same reason turnSlowAt is: this suite evals the function's source
 // into its own scope, so every global it names has to exist in that scope.
-var cornerSlow = new Set();
+var cornerSlow = new Set();
 var cornerSlowFor = -1;
 // The post-pause low-speed hold (2026-09-09). The governor stands down while it is set, the
 // same way it does for the safety override — declared here so the checks below run against
@@ -148,7 +148,11 @@ function showBanner(m) { banners.push(m); }
 // whose recorded activity had drifted apart, which is the exact failure the single
 // classifier exists to prevent.
 // eslint-disable-next-line no-eval
-eval(grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
+// R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+// must exist in this world too. Null here - no berth is latched - so the classifier answers
+// exactly as it always did, which is what makes these checks evidence that the OPEN regime
+// is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" +
      grab("currentActivity") + "\n" + grab("speedRole") + "\n" +
      // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +

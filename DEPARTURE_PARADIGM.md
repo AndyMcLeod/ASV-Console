@@ -337,6 +337,32 @@ A RUN AT A BERTH, IN ORDER. Numbers are a DriX (vessels/drix08.json: loa 7.71 m,
 
 ## How to prove it
 
+### ⚠⚠ DONE, 2026-09-19 — AND TWO OF THE CLAIMS BELOW ARE NOW KNOWN TO BE WRONG
+
+The replay asked for below has been run from the real extracts, per upload window. The full
+evidence, with every number, is in `ESCAPE_FINDINGS.md`'s "THE REPLAY, DONE" section. Read that
+rather than re-deriving any of this. Three corrections to what follows:
+
+1. **THE BUFFERS WERE 3 m, 20 m AND 3 m** (New Castle, Pago Pago, Erie), identified by searching
+   for the model that reproduces each escape's own logged `hold_clear_m` — to 0.1 mm, 0.002 mm and
+   5.2 mm. Every metre figure in the LIFECYCLE section above is a DriX at a 5 m buffer and is an
+   ILLUSTRATION, not a record of these sessions. Do not quote it as one.
+2. **ONLY PAGO PAGO REPRODUCES.** On their own identified models, New Castle reaches HOLD and
+   Erie reaches SLOW — neither reaches the helm rung on any frame within ±30 s of the escape the
+   console actually commanded. That is the same `chartInk` gap already recorded for Honolulu, and
+   it makes item 5 a PREREQUISITE, not a tidy-up. At Pago Pago the grant disarms **6 of 6**
+   in-extremis frames, all inside the corridor.
+3. **ERIE IS NOT A LAUNCH-GRANT CASE AND SHOULD NOT BE LISTED AS ONE.** Its escape followed a
+   `/api/cmd/goto` from 151.7 m away, with no upload after its spawn, so `certifyDeparture()`
+   never runs and no grant is ever armed. The launch grant leaves that escape exactly as it is.
+
+⚠ **AND NONE OF IT CAN SHIP AS A SUITE.** `charts/` and `logs/` are gitignored, so a check that
+reads them fails for anyone who clones this repo and would fail in the hook. `tests/berth_grant.js`
+holds the invariants on fixtures; ESCAPE_FINDINGS.md holds the measurement against the record.
+
+The original plan follows, unchanged.
+
+
 - REPLAY THE THREE RECORDED FRAMES. For each of New Castle (logs/asv_20260918-100307.jsonl, /api/cmd/start 10:47:14.215 → /api/cmd/escape 10:47:15.382, 1.17 s), Pago Pago (logs/asv_20260918-130610.jsonl, start 14:03:22.200 → escape 14:03:22.649, 0.449 s, second escape 14:03:28.659 at exactly GUARD_REASSESS_MS) and Erie (logs/asv_20260916-102925.jsonl, /api/cmd/goto 13:54:23.733 → escape 13:54:23.879, 0.146 s): assert `assess(p, vel, drift, koFull, buf)` is `helm` and `assess(p, vel, drift, koG, buf)` is NOT, at the recorded position, with the recorded set. ⚠⚠ **CORRECTED 2026-09-19: THE EXTRACTS *ARE* IN THE REPO AND THIS PLAN SHOULD USE THEM.** `charts/enc/features_v5_<bbox>.json` holds them, and a keep-out model rebuilt from them with the console's own `buildKeepouts` reproduced the console's own logged `hold_clear_m` at the Honolulu escape target to **4 mm** (48.961 m raw against a logged 43.965 m, which is the same number less the 5 m buffer). Andy's call when this was put to him: build the replay from the REAL extracts, **per upload window**. ⚠ And per WINDOW is not a detail - **sessions span several ports**: `asv_20260918-130610` uploads at both Pago Pago and New Castle, `asv_20260918-100307` at both Erie and New Castle, `asv_20260916-102925` at Pago Pago and Erie. One extract per SESSION mis-charts three of seven, and frames off the chart read `clear` for want of features rather than for want of hazard. (That is a mistake this session made and had to correct: an old-rung/new-rung occupancy replay was run one-chart-per-session, and while the like-for-like RATIO survives it, the absolute rung levels and the per-session attribution do not.) The reconstructed-geometry route below is kept only as an independent cross-check that does not depend on the extract mapping being right; as the PRIMARY evidence it would be weaker than what the repo already holds. The original wording follows: the keep-out geometry must be reproduced from the recording's own measured numbers — 0.9724 m of certified clear water at the boat at New Castle, 43.34 m at the escape target, 22.80 m at Pago Pago, 19.16 m at Erie. That pins the DECISION against geometry reconstructed from the recording; it is not a live replay of the chart, and calling it one would be a claim the evidence does not carry.
 - MUTATE EVERY RULE AND WATCH IT REDDEN, against a sidecar copy, never the real source, with `git diff` after every run. Membership test removed → every nearby feature granted. Place test removed → a grant everywhere the operator has been. The un-grantable kind list emptied → a charted hazard granted at a berth. The latch fired on geometry rather than on the launch event → a boat set onto a pier mid-mission gets a grant. `need0` re-derived live instead of frozen → a building set enlarges the granted set. The recession give made flat 5 m → the New Castle case at 0.97 m becomes undetectable (this mutation must redden a check written specifically for it, or the repair is unproven). The proof test replaced by a timer. `edge:true` inside a grant → a dog-leg verified through the launch pier. `koG` passed to escapeCourse. `holdClearAt` inflated. The stand-down removed → an instant escape on expiry. `featureClearanceM` ignoring `pt.r`.
 - PAIR EVERY REFUSAL WITH AN ACCEPTANCE, because a round-trip is not coverage. A berthed start that departs and proves, AND the same start with the gate past `snapCapM(buf)` (Upload refused, and the message names the cap and the measured best clearance). A pier 40 m from the launch that is NOT granted and still earns a helm on the same frame as a granted pier is standing down. A boat set onto a pier mid-mission that gets NO grant at all.
