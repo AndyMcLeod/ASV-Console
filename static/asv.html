@@ -8147,6 +8147,15 @@ async function punchOut(){
     // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nRace=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
     let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0, nTurnTrack=0;
+    // ⚠⚠ THE STAGGERED REVERSAL, WHICH USED TO SHIP SAYING NOTHING. A pair whose runs
+    // genuinely reverse but whose ends are further apart than the gate is judged a HOP: no
+    // turn is attempted and a straight leg ships, which asks the hull to reverse on the spot.
+    // That is the exact shape GAP_LINES exists to prevent, arriving through the one door
+    // GAP_LINES does not watch. Widening the gate MOVES REAL ROUTES and is a separate
+    // decision; counting it moves nothing, and an operator cannot judge what they are not
+    // told. `maxStagger` is the along-track offset of the worst one, because "82 m back down
+    // a line 10 m across" is what makes it recognisable on the chart.
+    let nStagger=0, maxStagger=0;
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
     let nTurnInboard=0, nTurnSlow=0, nGapTurn=0; turnSlowAt={};
@@ -8298,6 +8307,19 @@ async function punchOut(){
       // clipped to different extents, 82 m apart along track and 10 m across on Andy's
       // Honolulu plan of 2026-09-16 - is judged a HOP here, no turn is tried, and the
       // straight leg ships. Left for its own change: widening the gate moves real routes.
+      // ⚠ COUNTED BEFORE THE ROUTING LADDER, NOT INSIDE ONE OF ITS ARMS, because the pair
+      // is a staggered reversal whichever arm takes it - straight leg, routeAround or red -
+      // and counting it in one arm would report a number that depends on the water rather
+      // than on the geometry. Nothing below this line changes; this only observes.
+      if(antiParallel){
+        // llEN takes (lat, lon, ref) and returns an ABSOLUTE point in the plane, not a
+        // delta, so the offset is the difference of the two - a first cut passed
+        // `llEN(Ap, Bp, ref)`, which reads Bp as a longitude and is meaningless.
+        const eA=llEN(Ap.lat,Ap.lon,ref), eB=llEN(Bp.lat,Bp.lon,ref);
+        const ux=Math.sin(hE*Math.PI/180), uy=Math.cos(hE*Math.PI/180);
+        const along=Math.abs((eB.e-eA.e)*ux + (eB.n-eA.n)*uy);
+        nStagger++; if(along>maxStagger) maxStagger=along;
+      }
       if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
       const around=routeAround(Ap,Bp,ref,koHere,buffer);
       if(around){
@@ -8438,6 +8460,11 @@ async function punchOut(){
       // 2026-09-16 neither of them is a straight leg.
       (nUnsafeTurn?`, ${nUnsafeTurn} reversal(s) with NO flyable turn (red)`:``)+
       (nKnotFold?`, ${nKnotFold} detour(s) folded back at a line end`:``)+
+      // ⚠ SAID WITH THE NUMBER THAT MAKES IT RECOGNISABLE. "Judged a hop" is not something an
+      // operator can look for on a chart; "82 m back down the line" is.
+      (nStagger?`, ${nStagger} staggered reversal(s) judged as hops (the next line starts up `+
+        `to ${Math.round(maxStagger)} m back along the one before it, so NO turn is generated `+
+        `and the boat reverses at a point)`:``)+
       (nChanTurn?`, ${nChanTurn} missing turn(s) refused by a navigation channel`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+
       (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found (red; Upload tries again)`:``)+

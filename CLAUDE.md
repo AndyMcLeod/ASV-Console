@@ -386,6 +386,59 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-22 — THE STAGGERED REVERSAL IS NO LONGER SILENT, AND THE GATE TRADE IS
+  MEASURED ON HIS OWN PLANS (shipped).** CLAUDE.md's open item asked for exactly one thing
+  before this was touched: *"that trade needs measuring on his plans first."* Done, and the
+  two halves came apart cleanly.
+
+  * **THE DEFECT, in punchOut's own words since 2026-09-08:** *"ONE STILL DOES, SAID NOWHERE:
+    a pair whose runs reverse but whose ends are further apart than the gate ... is judged a
+    HOP here, no turn is tried, and the straight leg ships. Left for its own change: widening
+    the gate moves real routes."* The gate compares the STRAIGHT distance between two line
+    ends, so two neighbors the chart clipped to different extents fail it, no turn is
+    generated, and the hull is asked to come about at a point — the exact shape `GAP_LINES`
+    exists to prevent, arriving through the one door `GAP_LINES` does not watch.
+  * **WIDENING THE GATE MOVES REAL ROUTES. SAYING SO MOVES NOTHING.** Only the second half is
+    shipped: the pair is routed exactly as before — straight leg, routeAround or red,
+    unchanged — and the punch readout now COUNTS it and gives the along-track offset,
+    because *"judged a hop"* is not something an operator can look for on a chart and *"82 m
+    back down the line"* is. **`strike_run` 16g pins the counting block as free of control
+    flow**, which is the whole licence for making this change without asking: the moment a
+    `continue`, a `return` or a push appears in it, it stops being an observation.
+  * **THE MEASUREMENT, ACROSS HIS SIX COMMITTED PLANS** (`mission.json` + 5 backups, revs
+    177—231, read from `D:\Claude\ASV`, never written): **94 anti-parallel adjacent pairs,
+    93 already admitted by the current gate, and a crossing gate would pull in exactly ONE.**
+    ⚠ ROBUST — his plans are uniformly spaced, so the median, minimum and 25th-percentile
+    spacing estimators return the identical number for every plan and the identical answer;
+    the estimator was never the weak link it looked like. The 2026-09-08 fear (*0 -> 2 red on
+    a harbour plan*) **is not reproduced at this scale**, and the one pair it pulls in has its
+    ends 67.0 m apart — half 33.5 m against a 60 m `MAX_HALF_M` reversal-pair guard — so
+    the turn ladder would genuinely ATTEMPT it rather than refuse it as degenerate.
+  * **AND THE COST OF THE SILENCE, on the Honolulu route the item cites.** ⚠ The PLAN is
+    gone — `mission.json.bak1` has rotated from rev 70 to rev 221 — but the RECORDING
+    survives (`logs/asv_20260916-185954.jsonl`), and the uploaded route is better evidence
+    than the plan anyway: it is what the boat was actually asked to fly, after the punch had
+    made every turn decision. **Of 431 joints, 14 ask the hull to turn through more than 130
+    degrees AT A SINGLE WAYPOINT with both legs 20 m or longer, up to 175.8 degrees.** A
+    further 13 involve a leg under 20 m and may sit inside generated turn geometry; they are
+    counted apart and **claimed as nothing**.
+  * **⚠ AND MY OWN PROBE WAS WRONG TWICE BEFORE IT WAS RIGHT, both times silently.** It
+    selected the upload by `kind == "command"` and the timestamp — and TWO records carry that
+    second, the upload and an `/api/logevent` posted with it, so the loop kept the last, which
+    has no route, and reported *"no route found"* as though the recording were missing data it
+    was sitting on. And its docstring asserted every plan had zero leads; three carry 5, 10
+    and 10 m, which the real gate adds to its own limit. **An assumption stated as a check.**
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped**, control read first. Two survived
+    the first sweep and both were the trap `strike_run`'s own check 16 records about
+    `nGapTurn`: `/maxStagger/` matched its own DECLARATION, and `/${nStagger}/` matched text
+    inside the summary expression, so dropping the assignment and deadening the whole readout
+    both left the check green. Guards pinned, not fragments.
+  * **STILL ANDY'S: whether to widen the gate.** The measurement says it is close to a no-op
+    on his current plans and the one pair it changes is a genuine staggered reversal that
+    would get a real turn attempt. The risk it does not answer is a FUTURE harbour plan like
+    the 2026-09-08 one, which no longer exists to re-measure — a red pair refuses Add to plan,
+    which blocks work in the field.
+
 * **⚠⚠ 2026-09-22 — THE CORNER SET NOW DIES WITH THE ROUTE IT INDEXES, AT ALL FOUR
   DOORS — AND THE GOVERNOR STOPS ACCELERATING INTO THE LADDER'S OWN SILENCE (shipped).**
   A corner-slowing HIGH from the seventh panel, and the four checks that would have caught it
@@ -1856,6 +1909,9 @@ if it still cannot); **staggered reversals are a separate follow-up** (see OPEN 
     81.9 m BEHIND the exit and 10 m across - the gate measures the straight gap (82.5 m > 49 m), so no turn is tried and
     a ~173 deg reversal ships unflagged (or red as a hop). punchOut's 2026-09-08 comment records why measuring across was
     rejected then (0 -> 2 red on a harbour plan); with red now refusing, that trade needs measuring on his plans first.
+    ⚠ **MEASURED 2026-09-22, and it is no longer SILENT** - see the block at the head of this handoff. Across his
+    six committed plans a crossing gate pulls in ONE pair of 94, and the Honolulu route shipped 14 joints over 130 deg at
+    a single waypoint. The COUNTING is shipped; **WIDENING THE GATE IS STILL HIS CALL** and the decision input is there.
   * THE ESCAPE IN THE TURN OFF LINE 1 (19:11:50, Honolulu): a turn the punch judged flyable was escaped from 17 s in. Not
     investigated; the recording has the route and the telemetry.
   * A FOLDED DETOUR (nKnotFold) still ships with its fold and a banner - not refused. Not asked about.

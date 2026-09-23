@@ -333,6 +333,59 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
               && /\$\{nGapTurn\}/.test(punch)
               && /swing across a gap where a line is missing/.test(punch),
         "counted against the plain-neighbour threshold and named in the punch readout");
+
+  // -- 16f-16g. THE STAGGERED REVERSAL IS NO LONGER SILENT -------------------------------
+  // The gate compares the STRAIGHT distance between two line ends. A pair whose runs really
+  // do reverse but whose ends are far apart ALONG the line - the chart clipping two runs to
+  // different extents - fails that gate, so no turn is attempted and the straight leg ships:
+  // the hull is asked to reverse at a point. That is the exact shape GAP_LINES exists to
+  // prevent, arriving through the one door GAP_LINES does not watch, and punchOut's own
+  // comment has said so for a fortnight ("ONE STILL DOES, SAID NOWHERE").
+  //
+  // ⚠⚠ MEASURED BEFORE IT WAS TOUCHED, which is what CLAUDE.md asks for. Across Andy's six
+  // committed plans (revs 177-231): 94 anti-parallel adjacent pairs, 93 already admitted, and
+  // a crossing gate would pull in exactly ONE - and his plans are uniformly spaced, so the
+  // median, minimum and 25th-percentile spacing estimators all return the same answer. On the
+  // Honolulu route the item cites, recovered from the RECORDING because the plan has since
+  // rotated out of the backups: 14 joints of 431 ask for more than 130 degrees at a single
+  // waypoint with both legs 20 m or longer, up to 175.8 degrees.
+  //
+  // WIDENING THE GATE IS STILL ANDY'S - it moves real routes. This is the other half only.
+  // ⚠ COMMENT-STRIPPED. Four source checks in this review matched their own explanatory
+  // comment instead of the code, so the subject here is code or nothing.
+  {
+    const code = punch.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    check("16f. a staggered reversal judged as a hop is COUNTED and SAID, with the along-track "
+          + "offset that makes it recognisable on the chart",
+          // ⚠⚠ PINS THE GUARDS, NOT THE FRAGMENTS - twice, both found by mutation. `/maxStagger/`
+          // matched its own DECLARATION, so dropping the assignment left the check green over a
+          // readout that could only ever say 0 m. And `/\$\{nStagger\}/` matched the text inside
+          // the summary expression, so turning that expression's condition to `false` left every
+          // string in place while the operator was told nothing. Check 16 above records this
+          // exact lesson about nGapTurn; both fragments repeated it.
+          () => /if\(antiParallel\)\{/.test(code)
+                && /nStagger\+\+;/.test(code)
+                && /if\(along>maxStagger\) maxStagger=along;/.test(code)
+                && /\(nStagger\?`, \$\{nStagger\} staggered reversal/.test(code)
+                && /back along the one before it/.test(code),
+          "\"judged a hop\" is not something an operator can look for; \"82 m back down the "
+            + "line\" is - and until now the straight 180 shipped with nothing said at all");
+
+    // ⚠⚠ AND IT MUST NOT ROUTE. This is the whole licence for the change: the pair is
+    // still routed exactly as before - straight leg, routeAround or red - and only observed.
+    // A `continue`, a `return`, a `push` or an assignment to any of the route arrays inside
+    // this block turns an observation into a routing change, which is the decision that was
+    // deliberately NOT taken here.
+    const blk = (code.match(/if\(antiParallel\)\{[\s\S]*?\n      \}/) || [""])[0];
+    check("16g. ... and the counting block only OBSERVES - it moves no route",
+          () => blk.length > 0
+                && !/\b(continue|return)\b/.test(blk)
+                && !/patTransits|patUnsafe|patRed|patRoutes|via\s*=/.test(blk),
+          () => blk.length
+                  ? "the block is " + blk.length + " chars of measurement and no control flow"
+                  : "the antiParallel counting block was not found - if it was renamed or "
+                    + "restructured, this check cannot hold the promise it exists for");
+  }
 }
 
 // ── 16b-16c. BOTH GATES CARRY A LEAD ALLOWANCE ─────────────────────────────────────
