@@ -610,6 +610,17 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
     return planIntent;
   };
+  let grant = null, grantMemo = null, grantEndSay = null;
+  // The rest of the grant's state. `grantStop` latches the stall/clock STOP so it is
+  // commanded once; `grantLast` is what HOLD THE GRANT restores; `grantTrueLevel` is the
+  // TRUE model's verdict for the bar. All null in this world - no berth is ever latched
+  // here - but the SYMBOLS have to exist or clearanceGuard is a ReferenceError on frame one.
+  let grantStop = null, grantLast = null, grantTrueAt = 0, grantTrueLevel = null;
+  const logGrantEvent = () => {};
+  const { berthClearM, berthNeedM, grantFilter, grantProved, grantedFeatures,
+          inCorridor, recessionGiveM } = require("../static/js/berth.js");
+  const GRANT_STANDDOWN_MS = 20000, OVERRIDE_GIVE_M = 5, GUARD_HELM_S = G4.HELM_S;
+  let grantProofAt = 0, grantStallAt = 0;
   const RELEASE_HOLD_MS = +(H.match(/RELEASE_HOLD_MS = (\d+)/) || [])[1];
   const SLOW_ANSWER_MS = +(H.match(/const SLOW_ANSWER_MS = (\d+)/) || [])[1];
   // READ FROM THE PAGE, NOT RETYPED — a dwell this suite believes is 1.5 s while the page
@@ -673,6 +684,27 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
                      + grab(H, "helmSettled") + NL2
                      + grab(H, "sendSpeed") + NL2 + grab(H, "commandSpeed") + NL2
+                     // ⚠ THE LAUNCH GRANT (2026-09-19). clearanceGuard asks grantNow() on EVERY
+                     // frame, above every branch, so a bundle without it is a bare ReferenceError on
+                     // the first frame. In THIS world no berth is ever latched, so grantNow returns
+                     // null and every check in this file exercises the OPEN regime - which is the
+                     // point: that these suites pass UNMODIFIED is the evidence that OPEN is today's
+                     // console. tests/berth_grant.js is where a grant actually stands.
+                     + grab(H, "berthAt") + NL2 + grab(H, "grantMembers") + NL2
+                     + grab(H, "grantNow") + NL2
+                     // grantTick is the grant's LIFECYCLE and clearanceGuard asks it every frame,
+                     // above every branch. No berth is latched in this world so it returns at its
+                     // first line, but the SYMBOL has to exist or the first frame is a
+                     // ReferenceError - which the crash guard reports as one failed check.
+                     // ⚠ THE TWO ENDS ARE DIFFERENT FUNCTIONS AND BOTH ARE NEEDED.
+                     // stopAtBerth() is the stall/clock end, which STOPS her and KEEPS the
+                     // grant; standDownEnd() is the end that restores the ladder and
+                     // therefore holds the helm. helmStoodDown() is what READS grantEndSay,
+                     // and clearanceGuard asks it in front of the escape.
+                     + grab(H, "grantTick") + NL2 + grab(H, "stopAtBerth") + NL2
+                     + grab(H, "standDownEnd") + NL2 + grab(H, "helmStoodDown") + NL2
+                     + grab(H, "endGrant") + NL2
+                     + grab(H, "commandSpeed") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");

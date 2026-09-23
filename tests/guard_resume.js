@@ -278,6 +278,23 @@ eval([
   // has nothing to do with what they test. (`slowLieu` above it is still an implicit global
   // here: the rung only ever ASSIGNS it in this world, never reads it.)
   grabDecl("SLOW_ANSWER_MS"),
+  // ⚠ THE LAUNCH GRANT (2026-09-19): clearanceGuard calls grantNow() every frame, above
+  // every branch. No berth is latched in this world, so it returns null and every check here
+  // exercises the OPEN regime - which is exactly what this suite should be testing.
+  "let grant = null, grantMemo = null, grantEndSay = null;",
+  "let grantStop = null, grantLast = null, grantTrueAt = 0, grantTrueLevel = null;",
+  "const logGrantEvent = () => {};",
+  "const { berthClearM, berthNeedM, grantFilter, grantProved, grantedFeatures, inCorridor,"
+  + " recessionGiveM } = require('../static/js/berth.js');",
+  "const GRANT_STANDDOWN_MS = 20000, GUARD_HELM_S = 20;",   // OVERRIDE_GIVE_M is already grabbed above
+  "let grantProofAt = 0, grantStallAt = 0;",
+  grab("berthAt"), grab("grantMembers"), grab("grantNow"),
+  // grantTick is asked every frame, above every branch - the symbol must exist even where no
+  // berth is ever latched and it returns at its first line. Both ENDS are needed and they
+  // are different functions: stopAtBerth keeps the grant (stall/clock), standDownEnd drops
+  // it and holds the helm, and helmStoodDown is what clearanceGuard asks before an escape.
+  grab("grantTick"), grab("stopAtBerth"), grab("standDownEnd"),
+  grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),

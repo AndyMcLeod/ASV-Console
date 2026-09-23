@@ -1791,6 +1791,38 @@ and releases cleanly: clearing the latch leaves the boat SAFE and disarmed, neve
 re-armed, while a deliberate re-arm runs again — E-STOP is not a one-way trip.
 
 ```
+node tests/berth_grant.js
+```
+
+The **launch grant** — leaving a berth, and the only place in this console where the
+clearance ladder is deliberately given less authority than it has everywhere else. A boat a
+person has just placed alongside a pier is in extremis *by construction*: the look-ahead
+returns zero time-to-entry from inside a buffer before any threshold is consulted, so the
+ladder reaches its steering rung with no number weighed and answers a boat lying safely at a
+dock by commanding an escape at the hull's highest speed out of a slip. There is nothing to
+tune, because nothing was read. What changes instead is the keep-out **model** the ladder is
+asked about: the console records the launch as one point at the one instant it can be sure of
+it, works out at plan time the way *out* of it along the planner's own route, and while the
+boat is on that checked way out it assesses against a model with the launched-against features
+removed. `static/js/guard.js` is not modified at all, and check 1 asserts that rather than
+claiming it. Four things must hold together for a single frame's suppression — the feature
+must be one of those that makes the launch uncertifiable *and* of a kind a person on a float
+could have certified (a wreck, a channel buoy, a dredged area and a restricted area never
+qualify, and the operator cannot name them either); the boat must be inside the corridor,
+whose half-width is the hull's own scale and deliberately carries no reference to the
+operator's buffer; the grant must not have ended; and the depth half needs the vessel
+reporting its slowest speed, with a missing key failing closed. Giving ground ends it
+outright, with a give that scales to the water she has actually made — a flat five metres
+could never arm at the berth this was measured on, which had under a metre. Running out of
+time, or making no ground at all, does something different and the difference is the design:
+she is **stopped** and the standing-down **continues**, because the console does not steer a
+boat off a berth a person deliberately put her on. Only the ends that genuinely restore the
+ladder hold its steering rung for twenty announced seconds first, with a live count and two
+opposite answers to it. Throughout, the clearance the operator reads, the alarm, the escape
+search and the one clear-water figure the vessel acts on without further check are all on the
+**true** model and are never inflated.
+
+```
 node tests/buoy_lane.js
 ```
 

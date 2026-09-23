@@ -342,3 +342,84 @@ each other and the document does not say so.
   `patClip` goes on any delta).
 - 217 `page_stall` records over 09-17/18, 120 in one 66-minute session — `render()` redraws the whole
   chart every frame, visible or not.
+
+## ⇒ THE REPLAY, DONE — 2026-09-19, ITEM 4 STAGE 1
+
+The paradigm's "How to prove it" asks for three recorded escapes to be replayed from the REAL
+ENC extracts, per upload window. Done. The headline is not the one the plan expected.
+
+**THE MODEL IS IDENTIFIED, NOT ASSUMED, AND THE ORACLE IS THE CONSOLE'S OWN NUMBER.** Nothing in
+any session log records which extract was loaded, nor the buffer, nor the min depth. But every
+`/api/cmd/escape` body carries `hold_clear_m` for its target — a number the console computed and
+the vessel acted on — so the model is found by search: the combination that reproduces it IS the
+model the console had, and a combination that does not is the wrong model, on which no rung level
+means anything. All three reproduce:
+
+| episode | extract | buffer | min depth | logged `hold_clear_m` | rebuilt | error |
+|---|---|---|---|---|---|---|
+| New Castle 10:47:15 | `features_v5_-70.7118_43.0715_-70.7098_43.0730` | **3 m** | 2.0 m | 43.342772 m | 43.342638 m | **0.1 mm** |
+| Pago Pago 14:03:22 | `features_v5_-170.7407_-14.3167_-170.6480_-14.2269` | **20 m** | 1.0 m | 22.799859 m | 22.799861 m | **0.002 mm** |
+| Erie 13:54:23 | `features_v5_-80.1263_42.1146_-80.0052_42.2044` | **3 m** | 1.0 m | 19.160262 m | 19.165377 m | **5.2 mm** |
+
+⚠ **THE BUFFERS ARE 3 m, 20 m AND 3 m — NOT THE 5 m THE PARADIGM'S WORKED EXAMPLES ASSUME.** Every
+metre figure in that document's lifecycle section is a DriX at 5 m and should be read as an
+illustration, not as a record of these sessions.
+
+**⚠⚠ TWO OF THE THREE ESCAPES STILL DO NOT REPRODUCE, ON THEIR OWN IDENTIFIED MODELS.** Asked of
+the shipped `assess` at every telemetry frame within ±30 s of the escape command:
+
+| episode | frames | highest rung reached | reproduces? |
+|---|---|---|---|
+| New Castle | 54 | **HOLD** (t+26.8 s, 17.5 m clear) | **no** |
+| Pago Pago | 57 | **HELM on 6 frames** | **YES** |
+| Erie | 55 | **SLOW** (t+15.3 s, 26.9 m clear) | **no** |
+
+This CONFIRMS and EXTENDS the finding already recorded above for Honolulu and New Castle, and it
+settles Erie into the same class. The only input that differs is `chartInk`, which nothing records
+in any session log, ever — so item 5 (record the chart ink) remains a PREREQUISITE for verifying
+any guard change against the record. Do not read a "does not reproduce" row as "the guard was
+wrong"; read it as "the console saw something this repo cannot see".
+
+**⇒ AND PAGO PAGO, THE ONE THAT DOES REPRODUCE, IS DECISIVE.**
+
+Spawn 14:01:57 → upload 14:03:20 (92 waypoints) → Start 14:03:22.200 → escape 14:03:22.649,
+**0.449 s after Start**. On the identified model the launch latches (R2): the boat has **0.00 m**
+of certified clear water against a 6.0 m need. Four features are granted — `land` and three
+`a dock / pier` — and **none is refused**, so nothing un-grantable is holding the departure. The
+corridor is 1.9 m half-width (the small-class boat's own scale, buffer-INDEPENDENT — note it is
+1.9 m against a 20 m buffer, which is the point of R5) and the gate lands 30.0 m along the spine.
+
+| t vs escape | sog | cog | clearance | FULL model | GRANTED model | in corridor |
+|---|---|---|---|---|---|---|
+| +1.13 s | 1.10 kn | 142.2° | 3.9 m | **HELM** | CLEAR | yes |
+| +2.14 s | 3.16 kn | 256.0° | 4.7 m | **HELM** | CLEAR | yes |
+| +3.14 s | 5.34 kn | 276.8° | 7.1 m | **HELM** | CLEAR | yes |
+| +4.15 s | 5.61 kn | 273.8° | 10.0 m | **HELM** | CLEAR | yes |
+| +5.16 s | 5.56 kn | 272.0° | 12.9 m | **HELM** | CLEAR | yes |
+| +7.17 s | 5.54 kn | 271.3° | 18.6 m | **HELM** | CLEAR | yes |
+
+**6 of 6 in-extremis frames are disarmed by the grant, and every one of them is inside the
+corridor.** 124 features in the true model, 120 in the one the ladder is handed.
+
+⚠ **BE PRECISE ABOUT WHICH FRAMES THESE ARE.** They are the frames DURING the escape, not the
+frame that triggered it — the trigger frame does not reproduce either. What reproduces is the
+sustained in-extremis condition the escape ran through, and that is what the grant removes.
+
+**⚠⚠ AND THE 20 s BEFORE START IS THE WHOLE STAGE 0 ARGUMENT, MEASURED.** Every one of the
+**19 consecutive telemetry frames** in the 20 s before Start reads `sog 0.0, cog null` — a stopped
+boat lying **4.9 m off a pier**. On today's console those frames read **BLIND**. Before
+`49d542ce` they read **CLEAR**: for twenty seconds the console told the operator the water was
+clear while the boat lay four metres off a dock and it could not see at all, and then commanded a
+14 kn escape 0.449 s after Start. The escape fires on the first frame she has a course.
+
+**WHAT THE REPLAY CANNOT BE.** `charts/` and `logs/` are gitignored, so none of this can ship as a
+suite — a check that reads them fails for anyone who clones the repo, and would fail in the hook.
+It is recorded here as evidence and the scripts are disposable. `tests/berth_grant.js` holds the
+INVARIANTS on fixtures; this section holds the measurement against the record.
+
+**ERIE IS NOT A LAUNCH-GRANT CASE AT ALL, AND THE PARADIGM IS WRONG TO LIST IT.** Its escape
+followed a `/api/cmd/goto` at 13:54:23, from a position **151.7 m** from the 13:52:00 spawn, and
+there is **no upload after that spawn** in the whole window. `certifyDeparture()` runs at Upload,
+so no grant is ever armed, the boat is outside any corridor, and the launch grant leaves that
+escape exactly as it is. Whatever fires it, it is not a departure.
+

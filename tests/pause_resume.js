@@ -161,6 +161,12 @@ eval([
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
+  // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8). currentActivity() returns role "depart"
+  // while a grant stands, so `grant` must exist here or speedRole() - which every governor
+  // check in this file goes through - is a bare ReferenceError. Null in this world: no berth
+  // is latched, so the classifier answers exactly as it always did, and these checks are the
+  // evidence that the OPEN regime is unchanged.
+  "let grant = null;",
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"),
   grab("sendSpeed"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
@@ -614,7 +620,14 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // what it says instead of meaning 'the stub said nothing'.
     const { cornerSlowPlan } = require("../static/js/turns.js");
     const SPEED_ROLES = ["transit", "turn", "survey"];
-    const V = { SPEED_KN: { low: 1.5, survey: 3.0, high: 6.0 } };
+    // ⚠ ONE vessel model, carrying what BOTH halves of this world read: the hull for
+    // minTurnRadiusM and berthNeedM (the launch grant), and all three speed keys for
+    // cornerSlowPlan (which walks the routed plan at the survey speed against the low one).
+    // The merge that brought the grant in declared V TWICE - once from each side, in two
+    // places neither side had touched - and the file stopped parsing. A clean textual merge
+    // is not a working one.
+    const V = { VESSEL: { hull: { loa_m: 1.9 } },
+                SPEED_KN: { low: 1.5, survey: 3.0, high: 6.0 } };
     const roleSpeed = () => "survey";
     let cornerSlow = new Set(), cornerUnanswered = [], cornerPlanKey = "survey";
     // doUpload disables the Upload button for as long as it is measuring corners and
@@ -654,6 +667,21 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
       covered = (pts || []).map(p => ({lat: p.lat, lon: p.lon}));
       return true;
     });
+    // ⚠ THE LAUNCH GRANT (2026-09-19). doUpload now certifies the departure before it sends
+    // - see certifyDeparture and DEPARTURE_PARADIGM.md R5-R7. In THIS world no berth is ever
+    // latched, so certifyDeparture returns {none:true} at its first line and the upload path is
+    // unchanged; but the SYMBOL has to exist, or every check here fails with the upload throwing
+    // into doUpload's own catch as "Upload failed", which reads as a routing bug and is not one.
+    let grant = null, grantMemo = null;   // S is already declared in this world
+    if(!S) S = { berth: null, status: {} };
+    const groundVel = () => null, minTurnRadiusM = () => 1.03;
+    const { corridorGate, corridorHalfM, grantClockMs, grantedFeatures, isBerth,
+            berthNeedM } = require("../static/js/berth.js");
+    const { snapCapM } = require("../static/js/hold.js");
+    // eslint-disable-next-line no-eval
+    const berthAt = eval("(" + grab("berthAt") + ")");
+    // eslint-disable-next-line no-eval
+    const certifyDeparture = eval("(" + grab("certifyDeparture") + ")");
     // eslint-disable-next-line no-eval
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval

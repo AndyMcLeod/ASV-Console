@@ -794,6 +794,29 @@ export function clearanceM(p, ko, cap = 500) {
   return best;
 }
 
+/**
+ * The clearance from ONE feature, in the same terms `clearanceM` measures all of them.
+ *
+ * ⚠ IT DELEGATES RATHER THAN RE-IMPLEMENTS, AND THAT IS THE WHOLE POINT. The launch grant
+ * decides membership by asking "is THIS feature one of the ones that makes the berth
+ * uncertifiable?" - a per-feature question `clearanceM` cannot answer because it returns the
+ * minimum over the whole model. Writing the three loops again here would be a second copy of
+ * the rule that a wreck is measured from its own EDGE and a polygon from its ring, and the
+ * two copies would answer differently the first time either moved. So it builds a model of
+ * one feature and asks the real function.
+ *
+ * The allocation is deliberate and it is not on a hot path: the grant memoises membership on
+ * the keep-out model's own identity, so this runs once per `rebuildNogo`, not once per frame.
+ */
+export function featureClearanceM(p, f, cap = 500) {
+  if (!p || !f) return cap;
+  const one = { polys: [], lines: [], points: [], marks: [] };
+  if (f.ring) one.polys.push(f);
+  else if (f.pts) one.lines.push(f);
+  else one.points.push(f);
+  return clearanceM(p, one, cap);
+}
+
 /** Like `blocked`, but returns the offending keep-out so a refusal can name it. */
 export function blockedInfo(p, ko, buf) {
   for (const poly of ko.polys) {

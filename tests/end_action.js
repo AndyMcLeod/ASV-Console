@@ -385,7 +385,11 @@ check("16. ... and a stopped boat does not re-arm anything either",
 // because the distinction is what any continuously-collected data must be segmented by:
 // sonar cannot tell coverage from transit by looking at itself.
 {
-  eval(grab("alongLineM") + "\n" + grab("linePhase") + "\n" + grab("currentActivity") + "\n" +
+  // R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+  // must exist in this world too. Null here - no berth is latched - so the classifier answers
+  // exactly as it always did, which is what makes these checks evidence that the OPEN regime
+  // is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+  eval("let grant = null;" + grab("alongLineM") + "\n" + grab("linePhase") + "\n" + grab("currentActivity") + "\n" +
        // the DRAWN-LINE numbering "line N of M" now goes through (review #18) - the page's own, not a stub
        [grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("lineSetKey"), grab("linePartContinues"),
         grab("drawnLines"), grab("lineNo"), grab("lineCount"), grab("linePartTxt")].join("\n"));

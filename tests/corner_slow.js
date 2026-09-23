@@ -488,7 +488,12 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
   // eslint-disable-next-line no-new-func
   const W = new Function("V", "window", "performance", "M_PER_DEG_LAT", "azTo", "distTo",
                          "toEN", "llEN", "alignDeg", "fmtDist",
-    "let mission = null, asv = null, S = null, runRoute = null;\n"
+    // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8, merged 2026-09-23): currentActivity()
+    // returns role "depart" while a grant stands, so `grant` has to exist in this world or
+    // speedRole() - which the governor checks here all go through - is a bare ReferenceError.
+    // Null: no berth is latched, so the classifier answers exactly as it always did.
+    "let grant = null;\n"
+    + "let mission = null, asv = null, S = null, runRoute = null;\n"
     + "let runLineIdx = -1, turnSeg = [], curTurn = -1, lastRunLine = -1;\n"
     + "let lineActual = [], lineClock = null, lineStatsKey = null;\n"
     + "let turnSlowAt = {}, cornerSlow = new Set(), cornerSlowFor = -1;\n"

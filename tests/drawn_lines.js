@@ -96,6 +96,11 @@ const page = eval("(function(){ \"use strict\";\n"
   + "let mission = { lines: [], waypoints: [] }, S = {}, asv = null, runLineIdx = -1, curTurn = -1, turnSeg = [],"
   + " lineActual = [], transitEst = { transit: null, rth: null };\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
+  // R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+  // must exist in this world too. Null here - no berth is latched - so the classifier answers
+  // exactly as it always did, which is what makes these checks evidence that the OPEN regime
+  // is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+  + "let grant = null;\n"
   + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n" + decl(/^let _drawnLines = [^;]*;/m) + "\n"
   + decl(/^let _lineTableShape = [^;]*;/m) + "\n"
   + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "setCellText", "setHtmlIfChanged", "setStyleIfChanged",

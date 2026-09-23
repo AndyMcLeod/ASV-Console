@@ -113,6 +113,11 @@ eval([
   // all coverage and the answer is the one it always was — which is the point: adding the
   // feature must not move a single role on a plan that does not use it.
   grab("alongLineM"), grab("linePhase"),
+// R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
+// must exist in this world too. Null here - no berth is latched - so the classifier answers
+// exactly as it always did, which is what makes these checks evidence that the OPEN regime
+// is unchanged (DEPARTURE_PARADIGM.md R8; tests/berth_grant.js is where a grant stands).
+  "let grant = null;",
   grab("currentActivity"), grab("speedRole"), grab("roleSpeed"), grab("roleSpeedMS"),
   grab("committedRoleLengths"),
   // A `const` declared inside a direct eval stays in the EVAL's scope; only the function
