@@ -581,5 +581,44 @@ check("16. ... and a stopped boat does not re-arm anything either",
 }
 
 
+// ⚠⚠ AND THE INTENT CARD'S OWN ROW READS IT. `endAction()` is not advice: the comment
+// above runCompletion() says it is "the honest answer, and the ONLY thing the readouts show",
+// and the Mission card's End mode row reads it. The Intent card's "at the end" row did not -
+// it read `S.run_completion || S.completion`, which is the RUN's own field with the standing
+// setting behind an `||` that can never reach it while the first is truthy. Those are two
+// different facts the console keeps apart on purpose, and the chain fires off the standing
+// one. Filed THREE times in the requirements pass as three separate gaps; it is one line.
+{
+  // The world where they disagree, which is the ordinary one: a Go-To under End of Plan = RTH.
+  // The run station-keeps at its own endpoint, so `run_completion` is "loiter" - but the
+  // console will chain a Return-to-Home the moment it holds, so the boat's end state is HOME.
+  S = state({ behavior: "goto", run_completion: "loiter", completion: "rth" });
+  rthChainFailed = false;
+  const honest = endAction();
+  const raw = (S && (S.run_completion || S.completion)) || null;
+  // ⚠ BOUNDED BY THE FUNCTION, NOT BY A GUESSED LENGTH. renderIntent is about 16,500
+  // characters and this row is the LAST thing it builds, so a 12,000-character window missed
+  // it - and the absence clause below then passed for the wrong reason, because the
+  // expression it forbids was outside the window too. Same shape as an indexOf returning -1.
+  const _ri0 = H.indexOf("function renderIntent");
+  // ⚠⚠ STRIPPED, AND THIS CHECK LEARNED IT THE HARD WAY LIKE THE OTHERS. The comment on
+  // the repaired row QUOTES the expression the row no longer uses, to record what it used to
+  // read - so an absence clause that matches raw source matches the obituary and reports the
+  // defect as still present. clearance_guard's header records two checks that did exactly
+  // this, and its check 14 was repaired for it in this same session.
+  const RI = H.slice(_ri0, H.indexOf("el.innerHTML = html;", _ri0))
+              .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  check("36. the Intent card's \"at the end\" row reads endAction(), in a world where the "
+        + "honest answer and the raw fields DISAGREE",
+        honest === "rth" && raw === "loiter"
+        && /const comp = endAction\(\);/.test(RI)
+        && !/S\.run_completion \|\| S\.completion/.test(RI),
+        "a Go-To under End of Plan = RTH: endAction says " + JSON.stringify(honest)
+          + " and the raw fields say " + JSON.stringify(raw)
+          + " - the row showed the second, while the Mission card's End mode row showed the "
+          + "first, on the same card. ⚠ The disagreement is DRIVEN; only which one the row "
+          + "reads is source-anchored");
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

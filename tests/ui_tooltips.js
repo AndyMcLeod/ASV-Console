@@ -125,6 +125,50 @@ check("7. moving within the hovered control's children keeps the tip up",
 check("8. a mousedown hides the tip - a click means acting, not reading",
       () => /addEventListener\("mousedown", hideUiTip, true\)/.test(MECH),
       "");
+// ⚠⚠ 10. DRIVEN: A RUNTIME WRITE DOES NOT RE-ARM THE NATIVE TIP UNDER THE POINTER. Check 6
+// holds the restore on LEAVE; this holds the write DURING the hover, which is the half that
+// undid the mechanism. Five readouts rewrite their titles at runtime and the suppression
+// works by REMOVING the attribute, so a plain `el.title = ...` put it straight back - on
+// EVERY state frame for any tip carrying a live value. The fuel pill is the sharp case: its
+// tooltip is the only place `endurance_h` and `range_nm` appear at all, so it is a tip the
+// operator dwells on, and it was re-attached four times a second while they read it.
+// ⚠ THE PAIR IS THE CHECK. The un-hovered element must still get its attribute, or a
+// "fix" that simply never wrote a title would pass the first half and take every tooltip on
+// the page away.
+{
+  const mkEl = () => { const a = {}; return {
+    title: "", setAttribute(k, v){ a[k] = v; this.title = v; },
+    getAttribute(k){ return a[k]; }, removeAttribute(k){ delete a[k]; this.title = ""; } }; };
+  const uiTip = { style: { display: "none" }, textContent: "" };
+  const $ = () => uiTip;
+  let tipEl = null, tipStash = "";
+  eval(grab("setTip"));
+
+  const hovered = mkEl(), other = mkEl();
+  tipEl = hovered; tipStash = "old text";
+  hovered.title = "";                       // the hover has already stashed it away
+  setTip(hovered, "new text while hovered");
+  const onHovered = { attr: hovered.title, stash: tipStash };
+
+  setTip(other, "written to an element nobody is on");
+  const onOther = { attr: other.title, stash: tipStash };
+
+  // ... and a tip that is ON SCREEN follows the value rather than freezing at the hover.
+  uiTip.style.display = ""; uiTip.textContent = "old text";
+  setTip(hovered, "fresher still");
+  const shown = uiTip.textContent;
+
+  check("10. DRIVEN: a runtime title write during a hover goes to the STASH, not back onto "
+        + "the element - and an un-hovered element still gets its title",
+        () => onHovered.attr === "" && onHovered.stash === "new text while hovered"
+              && onOther.attr === "written to an element nobody is on"
+              && shown === "fresher still",
+        () => "hovered: attribute " + JSON.stringify(onHovered.attr) + " (empty = the native "
+            + "tip stays suppressed), stash " + JSON.stringify(onHovered.stash)
+            + "; un-hovered: " + JSON.stringify(onOther.attr)
+            + "; the shown tip followed the value -> " + JSON.stringify(shown));
+}
+
 check("9. the tip element is pointer-transparent and wraps long text",
       () => /id="uiTip"[^>]*pointer-events:none/.test(H) && /id="uiTip"[^>]*max-width:\s*\d+px/.test(H),
       "a tip that catches the mouse would flicker; a nowrap tip would run off-screen");

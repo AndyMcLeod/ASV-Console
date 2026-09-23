@@ -254,6 +254,29 @@ check("6c. ...and a contact that reports again is un-dimmed in the same pass",
         () => "after 1 miss " + JSON.stringify(afterOne) + ", after 2 gone=" + afterTwo.gone);
 }
 
+// ⚠⚠ 6e. AND AN EMPTY UPDATE IS EVERY CONTACT MISSING AT ONCE. The per-contact grace 6d
+// drives was unreachable for it: `if(!rows.length){ body.textContent = ""; return; }` sat
+// ABOVE the sweep, so one empty snapshot wiped the whole body instantly - scroll position,
+// selection and all - while a single missing contact got a dimmed row and an update of grace.
+// The feeder empties the list on ANY throw, so one bad poll did it. That is the rest of what
+// was reported: "The entire AIS traffic card blinks and resets data with each update."
+// ⚠ 6d IS THE PAIR. It proves what the sweep DOES; this proves the empty path reaches it.
+// Neither is worth much alone: a gate that lets an empty update through to a sweep that did
+// not hold would still blink, and a sweep that holds but is never reached is dead code.
+{
+  const R = RENDER.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const gated = /if\(!rows\.length && !holding\)\{ body\.textContent = ""; return; \}/.test(R);
+  const shows = /table\.style\.display = \(rows\.length \|\| holding\)/.test(R);
+  const bare = /if\(!rows\.length\)\{ body\.textContent = ""; return; \}/.test(R);
+  check("6e. an EMPTY update falls through to the grace sweep instead of wiping the body - "
+        + "and the table stays visible while rows are held, or the grace would be invisible",
+        () => gated && shows && !bare,
+        () => "empty-path return gated on held rows: " + gated
+            + "; table visible while holding: " + shows
+            + "; the old unconditional wipe still present: " + bare
+            + " (asserted on comment-stripped source)");
+}
+
 // 7. BEHAVIOURAL. Writing an identical string to a text node still collapses a selection
 // inside it, so the guard is not an optimisation - it is the reason a selection survives a
 // poll where nothing about that row changed.

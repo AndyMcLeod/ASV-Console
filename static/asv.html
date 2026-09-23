@@ -828,7 +828,7 @@
         <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
-        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as the <i>Run mode</i> on the vessel card.</li>
+        <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
         <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviours &mdash; all available once Armed, no survey plan required.</li>
       </ol>
@@ -2970,11 +2970,24 @@ function renderIntent(){
       html += row("wp " + ir.length, "last waypoint — " + wptRole(ir.length-1, ir));
     }
   }
-  // end-of-plan intent: the console already knows whether an RTH will chain
-  const comp = (S && (S.run_completion || S.completion)) || null;
+  // end-of-plan intent: the console already knows whether an RTH will chain.
+  // ⚠⚠ THROUGH endAction(), WHICH IS THE ONLY THING A READOUT MAY SHOW. This row read
+  // `S.run_completion || S.completion` - the RUN's own field, with the operator's STANDING
+  // setting behind an `||` that could never reach it while the first was truthy. Those are
+  // two different facts and the console keeps them apart on purpose: `run_completion` is what
+  // THIS run does at its end, `completion` is the standing end-of-plan setting, and the chain
+  // fires off the standing one. So under End of Plan = RTH a Go-To or Transit showed
+  // "hold station" HERE while the Mission card's End mode row showed RTH on the same card,
+  // and a mid-run setting change inverted which of the two was lying.
+  // The comment above runCompletion() has said the rule all along: "endAction() is the honest
+  // answer, and the ONLY thing the readouts show." This is a readout.
+  // ⚠ AND `rthPending()` IS A LIVE TEST - home, ARM, no E-STOP, chainable behavior, the
+  // chain not already spent - so this row now goes amber-and-REFUSED for the same reasons the
+  // End mode row does, instead of promising a return the console has already given up on.
+  const comp = endAction();
   if(comp) html += row("at the end", comp === "rth"
       ? "return to home" + (rthChainFailed ? " — REFUSED, will hold instead" : "")
-      : (comp === "hold" ? "hold station" : String(comp)),
+      : (comp === "hold" || comp === "loiter" ? "hold station" : String(comp)),
       rthChainFailed ? "#d9958f" : "var(--ink)");
   el.innerHTML = html;
 }
@@ -7149,8 +7162,21 @@ function renderAisTable(){
   setCellText(el.querySelector("#aisStMain"), stMain);
   setCellText(el.querySelector("#aisStNote"), stNote ? " · " + stNote : "");
   const table = el.querySelector("#aisRowsTable"), body = el.querySelector("#aisRowsBody");
-  table.style.display = rows.length ? "" : "none";
-  if(!rows.length){ body.textContent = ""; return; }
+  // ⚠⚠ AN EMPTY SNAPSHOT IS EVERY CONTACT MISSING AT ONCE, and this returned ABOVE the
+  // grace sweep - so the whole body was wiped on the first empty update while ONE missing
+  // contact got a full update of grace and a dimmed row saying so. That asymmetry is the rest
+  // of what Andy reported on 2026-09-08 ("The entire AIS traffic card blinks and resets data
+  // with each update"): the feeder empties the list on ANY throw, so a single bad poll blanked
+  // a card the operator was reading, scroll position and all.
+  // It falls through now. `shown` is empty so the update loop is a no-op, the row-cap loop is
+  // a no-op, and the sweep below marks every row missed, dims it, says so in its title, and
+  // removes it on the SECOND consecutive miss - exactly what one missing contact already gets.
+  // ⚠ AND THE TABLE STAYS VISIBLE WHILE ROWS ARE HELD, or the grace would be invisible:
+  // hiding the table shows the operator an empty card either way, which is the thing being
+  // fixed. It hides only when there is nothing left to show.
+  const holding = body.children.length > 0;
+  table.style.display = (rows.length || holding) ? "" : "none";
+  if(!rows.length && !holding){ body.textContent = ""; return; }
 
   // The live rows, DERIVED from the DOM rather than remembered in a parallel map - a map
   // would go stale the moment the card is closed and reopened, or the body cleared above.
@@ -7186,7 +7212,10 @@ function renderAisTable(){
       + (size ? " · " + size : "")
       + (v.dest ? " · → " + v.dest : "")
       + " · " + Math.round(v.age) + "s ago";
-    if(tr.title !== title) tr.title = title;
+    // ⚠ THROUGH setTip: `tr.title` is "" while this row is the hovered one, so the
+    // inequality is always true then and the old line re-attached the native tip on the very
+    // next render pass rather than only when the age ticked over.
+    if(tr.title !== title) setTip(tr, title);
     if(body.children[i] !== tr) body.insertBefore(tr, body.children[i] || null);  // move, not remake
   });
   // ⚠⚠ AND A CONTACT CUT BY THE ROW CAP IS NOT A CONTACT THAT STOPPED REPORTING. `existing`
@@ -7350,6 +7379,28 @@ function tipPos(r, tw, th, ww, wh){
   return {left, top};
 }
 let tipTimer=null, tipEl=null, tipStash="";
+// ⚠⚠ A TITLE WRITTEN WHILE THE POINTER IS ON THE ELEMENT GOES TO THE STASH, NOT TO THE
+// ELEMENT. The whole mechanism above works by REMOVING the title attribute, so a runtime
+// writer that sets it back re-arms the native tooltip under the cursor - the one thing this
+// exists to prevent, and it happens on EVERY state frame for any readout whose tip carries a
+// live value. The fuel pill is the sharp case: its tooltip is the only place `endurance_h`
+// and `range_nm` appear at all, so it is a tip the operator dwells on, and it was re-attached
+// four times a second while they read it.
+//
+// ⚠ THE VALUE STILL WINS. `hideUiTip` restores the stash on leave, so the newest text is
+// what comes back - it simply does not reappear beneath the pointer. And if the custom tip is
+// showing for this element it is updated in place, so a live readout does not freeze at
+// whatever it said when the hover began.
+function setTip(el, text){
+  if(!el) return;
+  if(tipEl === el){
+    tipStash = text;
+    const t = $("#uiTip");
+    if(t && t.style.display !== "none") t.textContent = text;
+    return;
+  }
+  el.title = text;
+}
 function hideUiTip(){
   clearTimeout(tipTimer); tipTimer=null;
   $("#uiTip").style.display="none";
@@ -9660,7 +9711,9 @@ function updateStationWinPills(){
       const w = cfg.src();
       el.title = "Open the " + cfg.label.toLowerCase() + " window for "
         + (w.name || w.station || "the nearest " + cfg.what)
-        + (w.dist_km != null ? " (" + w.dist_km.toFixed(1) + " km off)" : "")
+        // ⚠ THROUGH fmtDist, WHICH THE PILL DRIVES. The pill's tooltip names
+        // tide-station distance in its own scope; these printed raw km whatever it said.
+        + (w.dist_km != null ? " (" + fmtDist(w.dist_km * 1000, 1) + " off)" : "")
         + " — it then follows the boat: change port and this same tab re-points itself.";
     }
   }
@@ -10051,10 +10104,10 @@ function updateChartCard(){
     let corrTip = (water && water.name) ? "CO-OPS " + water.station + " " + water.name : "live water level";
     if(wsta.length > 1){
       corrTip += " — the applied offset is an inverse-distance blend of " + wsta.length + " stations: "
-               + wsta.map(g=>(g.id + " " + (g.name||"") + " " + (g.dist_km!=null ? g.dist_km.toFixed(1)+" km" : "")).trim()).join("; ")
+               + wsta.map(g=>(g.id + " " + (g.name||"") + " " + (g.dist_km!=null ? fmtDist(g.dist_km * 1000, 1) : "")).trim()).join("; ")
                + ". The station named here is the nearest reporting one, not the whole answer.";
     } else if(water && water.dist_km!=null){
-      corrTip += " — " + water.dist_km.toFixed(1) + " km away, this station alone";
+      corrTip += " — " + fmtDist(water.dist_km * 1000, 1) + " away, this station alone";
     }
     h += row("Correction",
              (off != null ? `${off>=0?"+":""}${off.toFixed(2)} m live`
@@ -11457,7 +11510,7 @@ function onState(s){
     let vtxt = (st.fuel_l!=null ? st.fuel_l+" L" : "--") + (st.fuel_pct!=null ? " ("+st.fuel_pct+"%)" : "");
     if(st.endurance_h!=null) vtxt += " · " + st.endurance_h + " h";
     if(st.range_nm!=null)    vtxt += " · " + st.range_nm + " nm";
-    if(pill) pill.title = "Fuel: " + vtxt + "\n" + OVR_TIP;
+    setTip(pill, "Fuel: " + vtxt + "\n" + OVR_TIP);   // see setTip: not under the pointer
   } else {
     const bstate = st.battery_state || "unknown";
     const bcls = bstate==="critical"?"critical":bstate==="warn"?"warn":bstate==="ok"?"ok":"";
@@ -11761,7 +11814,7 @@ function updateWaterUI(wl){
              : (wl.note || "no live/predicted data — using chart datum"));
   const hdr = kind==="predicted" ? "PREDICTED tide, interpolated from:" : "observed, interpolated from:";
   const tip = (wl.ok && stns.length) ? (hdr+"\n" + stns.map(s=>
-    `  ${s.name} — ${s.dist_km} km, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
+    `  ${s.name} — ${fmtDist(s.dist_km * 1000, 1)}, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
   // caution colour when we fell back off real-time data
   const trust = waterTrust(wl);
   // NOT APPLIED to charted depths: a remote reading, or a stale one (review #13) - see effectiveWaterOffset

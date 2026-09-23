@@ -386,6 +386,69 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-22 — THE REQUIREMENTS SEAM WAS REFUTED, AND THE FIRST BATCH OF WHAT
+  SURVIVED IS SHIPPED.** `req_gaps.md` said "first pass, UNREFUTED" on its own front page. It
+  has now been argued with, entry by entry.
+
+  * **61 filed gaps judged: 34 REAL, 16 OVERSTATED, 9 FIXED by this review's own commits, 1
+    WRONG, 1 already COVERED.** 44% did not survive contact with the current code. Filed
+    severity was 16 high / 25 medium / 20 low; **true severity is 5 / 14 / 28**, and 14 of the
+    61 have no defect behind them at all. The pass over-called gaps AND over-called severity,
+    consistently in that direction.
+  * ⚠ **AND THE 34 ARE ~30 DISTINCT ITEMS.** Eight sets collapse as duplicates no single
+    refuter could see: the Intent "at the end" row is filed THREE times (one line), the AIS
+    blanking twice (one line), `env_set_kn` three times, the launch grant three times, plus
+    the brand scrub, the tooltips, the hull livery and the ENC extract. One of the 30
+    (MarineTraffic) has no consequence. **Actionable residue: 29.**
+  * ⚠⚠ **WHAT THIS SAYS ABOUT THE 251 IT CALLS "IMPLEMENTED": nothing, and that is the
+    finding.** They carry no quote, no line, no consequence and no test name — nothing to
+    refute. We measured the pass's FALSE-POSITIVE rate and learned nothing whatever about its
+    false-negative rate. **Read "251 implemented" as "not checked", identical in standing to
+    the 102 it never looked at.** The header was honest; the counts are not coverage.
+  * **ONE OF THE FIVE HIGHS IS NOT WORK TO WRITE.** The launch point is BUILT on
+    `wip/launch-grant-stage1` — `maybeLatchBerth()` wired into `onState`,
+    `certifyDeparture()` at upload, `tests/berth_grant.js`. It is a merge plus the owed live
+    check, and merging is HIS call.
+
+  **SHIPPED IN THIS COMMIT — six fixes closing NINE filed entries:**
+
+  1. **The Intent card's "at the end" row reads `endAction()`** (filed 3x, one line). It read
+     `S.run_completion || S.completion` — the RUN's own field with the STANDING setting behind
+     an `||` that can never reach it — so under End of Plan = RTH a Go-To showed "hold
+     station" while the Mission card's End mode row showed RTH **on the same card**. The
+     comment above `runCompletion()` has said the rule all along: *"endAction() is the honest
+     answer, and the ONLY thing the readouts show."*
+  2. **American English in the generated documents: 14 — 0**, fixed in the BUILDERS, which is
+     the only place it holds — every rebuild destroyed the hand-corrections. The technical
+     manual's count had GROWN since the gap was filed, which is what a hand-edit cycle looks
+     like from outside.
+  3. **The AIS card no longer blanks whole** (filed 2x, one line). The empty-list path
+     `return`ed ABOVE the per-contact grace sweep, and the feeder empties the list on ANY
+     throw — so one bad poll wiped a card the operator was reading, scroll and selection
+     included, while ONE missing contact got a dimmed row and a full update of grace.
+  4. **Tooltips are no longer re-armed under the pointer** (filed 2x, one mechanism). The
+     suppression works by REMOVING the title attribute; the fuel pill rewrote its title on
+     every state frame, so the native tip came back under the cursor ~4 Hz — on the one tip
+     where `endurance_h` and `range_nm` appear nowhere else. All runtime writes go through
+     `setTip()` now, which writes the STASH while hovered and updates the shown tip in place.
+  5. **The km/nm pill is honoured at four tide-station readouts** that printed raw km — the
+     pill's own tooltip names "tide-station distance" in its scope.
+  6. **The quick-start overlay names rows that exist.** It sent a first-time operator to "the
+     Run mode on the vessel card"; the card is MISSION STATUS and that row was deliberately
+     removed. The overlay opens by itself on a first visit.
+
+  * **4 mutations, 4 killed, 0 skipped, control read first**, each killing exactly its own
+    check. Two checks are fully DRIVEN (`ui_tooltips` 10 against the real `setTip` in both
+    hover states; `end_action` 36 in a world where the honest answer and the raw fields
+    genuinely disagree), two are paired with existing driven checks.
+  * ⚠⚠ **AND A FINDING ABOUT A SUITE, not the code.** `units_toggle` check 9 exists to stop
+    *"a new hand-rolled site creeping back in beside the pill it would ignore"* — and it hunts
+    ONE fingerprint, `/1000).toFixed`. All four km sites printed `dist_km.toFixed(1)`, a field
+    ALREADY in kilometers, so there was no division to find and they walked past it for as
+    long as they existed. **A guard written against one fingerprint says nothing about a
+    second shape of the same mistake, and it reads like coverage either way.** Check 9b covers
+    the `_km`-field shape; mutation C4 proves it bites where 9 stayed green.
+
 * **⚠⚠ 2026-09-22 — THE ESCAPE'S RETRACTION: ONE LINE WAS TWO DEFECTS (shipped).
   Both of the items filed here are fixed.**
 

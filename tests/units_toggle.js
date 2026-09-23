@@ -209,6 +209,31 @@ check("9. NO hand-rolled km conversion remains beside the formatter",
   () => (H.match(/\/1000\)\.toFixed/g) || []).length + " in the page, " +
         (U_SRC.match(/\/1000\)\.toFixed/g) || []).length + " in units.js");
 
+// ⚠⚠ 9b. AND THE OTHER HAND-ROLLED SHAPE: A FIELD THAT IS ALREADY KILOMETERS. Check 9
+// hunts the fingerprint of the sites it was written against - `/1000).toFixed` - so a readout
+// holding a `_km` field straight off the wire has no division to find and walks past it. Four
+// did, for as long as they existed: the water-station offset, the station list, the
+// this-station-alone note and the tide detail list, all printing raw km beside a pill whose
+// own tooltip names "tide-station distance" in its scope.
+// A guard written against ONE fingerprint says nothing about a second shape of the same
+// mistake, and it reads like coverage either way.
+check("9b. NO readout prints a raw `_km` field either - the shape check 9 cannot see",
+  () => {
+    // Comment-stripped: the note above records the old shape verbatim, and an absence check
+    // that reads comments matches its own obituary.
+    const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const raw = code.match(/\b\w*dist_km[^;\n]{0,40}?toFixed\(\d\)\s*\+?\s*"\s*km/g) || [];
+    const tpl = code.match(/\$\{[^}]*dist_km[^}]*\}\s*km/g) || [];
+    return raw.length === 0 && tpl.length === 0;
+  },
+  () => {
+    const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const raw = code.match(/\b\w*dist_km[^;\n]{0,40}?toFixed\(\d\)\s*\+?\s*"\s*km/g) || [];
+    const tpl = code.match(/\$\{[^}]*dist_km[^}]*\}\s*km/g) || [];
+    return (raw.length + tpl.length) + " raw km site(s) left"
+      + (raw.length + tpl.length ? ": " + raw.concat(tpl).join(" | ").slice(0, 120) : "");
+  });
+
 // ---- the scope line holds ---------------------------------------------------------- //
 check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints nm when asked",
   () => {
