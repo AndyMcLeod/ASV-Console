@@ -116,6 +116,10 @@ const world = {
       polys: [{ ring: [EN(0.009, 0), EN(0.009, 0.01), EN(0.0095, 0.005)],
                 bb: bbOf([EN(0.009, 0), EN(0.009, 0.01), EN(0.0095, 0.005)]) }],
       points: [],
+      // ⚠ A BUOY SYSTEM, because identifyAt could not see this layer at all until 2026-09-23.
+      // Same shape the model carries: each chain is a list of marks in the FLAT PLANE.
+      sys: [{ port: [EN(0.015, 0), EN(0.015, 0.01)],
+              stbd: [EN(0.017, 0), EN(0.017, 0.01)] }],
     },
   },
 };
@@ -260,6 +264,29 @@ check("8. the row is in the chart menu, wired to the point the menu was opened o
       () => /<div class="cmi" id="cmWhat">/.test(H) && /cmRow\("#cmWhat",\s*ll => sayWhatIsHere\(ll\)\)/.test(H)
             && !/cmGate\("#cmWhat"/.test(H),
       "a question about what is drawn is not a command");
+
+// -- THE BUOY CHAINS ARE ITS OWN INK ---------------------------------------------------
+// ⚠⚠ THE ONE THING THIS READOUT MUST NEVER SAY ABOUT A LINE THE CONSOLE DREW IS "nothing".
+// drawMarks strokes a GREEN dashed line through the port-hand marks and a RED one through the
+// starboard-hand marks, unconditionally, from render(). identifyAt scanned ko.lines and
+// ko.polys and never ko.sys - so a green dashed line that looks exactly like a survey line
+// answered "Nothing the console drew is within 12 pixels of that point", and the advice was to
+// click nearer a line the operator was already on. Andy asked about this line by name.
+//
+// ⚠ AND THE SIDE IS ASSERTED, not just the hit. The PORT-hand chain is what the Rule 9
+// keep-right lane is measured a quarter-width to starboard of, so a readout that found the line
+// but named the wrong chain would be worse than one that found nothing.
+{
+  const port = hitAt(0.015, 0.005);
+  const stbd = hitAt(0.017, 0.005);
+  check("the green and red dashed BUOY CHAINS can be asked about - the console names its own "
+        + "ink, and names which side it is",
+        () => port && port.layer === "buoyline" && /PORT-hand/.test(port.what)
+              && /CHANNEL/.test(port.what)
+              && stbd && stbd.layer === "buoyline" && /STARBOARD-hand/.test(stbd.what),
+        () => "port chain: " + (port ? port.layer + " / " + port.what.slice(0, 60) : "NOTHING FOUND")
+            + " | stbd chain: " + (stbd ? stbd.what.slice(0, 40) : "NOTHING FOUND"));
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

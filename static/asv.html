@@ -5106,7 +5106,7 @@ function routeRemainingM(){
 function updateRunTime(){
   const el=$("#v_runtime"); if(!el) return;
   const run=S&&S.run;
-  el.title = runTimeTip();
+  setTip(el, runTimeTip());        // per-frame, and a tip the operator dwells on
   if(run!=="running" && run!=="paused"){
     el.textContent = (run==="complete" && runElapsed>0) ? ("done · "+fmtMS(runElapsed)) : "--";
     return;
@@ -6541,7 +6541,7 @@ function updateNogoUI(){
   if(btn){ btn.classList.toggle("on", nogoShow && nogo.ready); btn.disabled = false; }
   const el=$("#v_nogo"); if(!el) return;
   const r = nogoReadout();
-  el.textContent = r.text; el.title = r.title;
+  el.textContent = r.text; setTip(el, r.title);
   el.className = "vv " + r.cls;                 // .vv.warn is defined after .vrow .vv, so it wins
 }
             // how far from centerline toward the stbd edge (0.5 = ¼ width in from the edge)
@@ -9005,6 +9005,25 @@ function identifyAt(ll){
     for(const A of (ko.polys || [])) if(A && (A.ring || []).length > 2 && (!A.bb || inBB(en, A.bb, reach)))
       scan(A.ring.map(enAt), true, "keepout",
         "the edge of a KEEP-OUT AREA — water the console will not take the vessel into, red.");
+    // ⚠⚠ AND THE BUOY CHAINS, WHICH THIS CONSOLE DRAWS AND COULD NOT NAME. drawMarks strokes
+    // a green dashed line through the port-hand marks and a red one through the starboard-hand
+    // marks of every channel system it finds. A green dashed line looks exactly like a survey
+    // line, and asking about it answered "Nothing the console drew is within 12 pixels" - which
+    // is the one thing this readout exists to never say about its own ink. Andy asked about
+    // this line by name: "what is the story with the line heading out to the northwest".
+    //
+    // ⚠ THE SIDE IS THE PART WORTH KNOWING. The PORT-hand chain is the one the Rule 9 lane
+    // rides a quarter-width to starboard of, so confusing the two is confusing which side of the
+    // channel the vessel will keep.
+    for(const sy of (ko.sys || []))
+      for(const [chain, side] of [[sy.port, "PORT-hand"], [sy.stbd, "STARBOARD-hand"]]){
+        if(!chain || chain.length < 2) continue;
+        scan(chain.map(enAt), false, "buoyline",
+          "the " + side + " chain of a CHANNEL the console found in the chart — a dashed line "
+          + "joining its lateral marks in order, not anything the vessel runs. It is what the "
+          + "Rule 9 keep-right lane is measured from; the marks themselves carry their own "
+          + "numbers.");
+      }
   }
   return best;
 }
@@ -11270,11 +11289,13 @@ async function resumeHeldSurvey(){
     if(backtrackClear(from, to)){
       backedM = distTo(to, g.mark.at);
       tail.unshift(to);
-      note = "backed up " + fmtDist(backedM) + " down line " + (g.mark.line + 1)
+      // ⚠ lineNo(), like resumeRun's identical sentence. A drawn line the keep-outs cut
+      // is several SEGMENTS, and g.mark.line is a segment index - see review #18.
+      note = "backed up " + fmtDist(backedM) + " down line " + lineNo(g.mark.line)
            + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
     } else {
       note = (nogo.ready && nogo.frame && nogo.ko
-              ? "the way back down line " + (g.mark.line + 1) + " is not clear"
+              ? "the way back down line " + lineNo(g.mark.line) + " is not clear"
               : "the keep-out model is not loaded, so the way back could not be certified")
            + " — carried on from here, WITHOUT the backtrack";
     }
@@ -11346,7 +11367,10 @@ async function resumeHeldSurvey(){
   flashNote("Survey resumed at LOW — " + (note || "carrying on") + ". Speed stays low until "
             + "you change it.");
   logGuardLow("held_resume", g.clearM, g.kind, {backed_m: Math.round(backedM),
-              line: g.mark ? g.mark.line + 1 : null, waypoints: left, note});
+              // ⚠ AND THE RECORD, which is what the episode is reconstructed from
+              // afterwards - a log that names a different line from the banner the
+              // operator read is worse than either being wrong alone.
+              line: g.mark ? lineNo(g.mark.line) : null, waypoints: left, note});
   if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE after a guard HOLD at "
     + (g.clearM != null ? g.clearM.toFixed(1) + " m" : "unknown range") + " from "
     + (g.kind || "a keep-out") + " — the survey's remaining " + left + " waypoint"
@@ -11748,7 +11772,10 @@ function onState(s){
     if(pbk) pbk.textContent = "BATT";
     const btxt = st.battery_v!=null ? (st.battery_v+" V" + (st.battery_pct!=null?" ("+st.battery_pct+"%)":"")) : "on RC";
     pb.textContent = st.battery_v!=null ? st.battery_v+" V" : "on RC"; pb.className = bcls;
-    if(pill) pill.title = "Battery: " + btxt + "\n" + OVR_TIP;
+    // ⚠ THROUGH setTip, like the fuel branch seven lines above. Same pill, same frame:
+    // written directly, it re-armed the native tip under the pointer four times a second
+    // on every battery vessel - which is the console's own default hull.
+    if(pill) setTip(pill, "Battery: " + btxt + "\n" + OVR_TIP);
   }
   // energy-override: the energy pill turns MAGENTA while the override is on (click it to toggle)
   $("#battPill").classList.toggle("ovr", !!st.unlimited_energy);
@@ -12073,7 +12100,7 @@ READING IS ${fmtAge(trust.age_s)} OLD — nothing newer has reached the console 
 It is NOT being applied to charted depths: routing uses chart datum.`;
   // "(datum)" spells out that the number on screen is NOT the one correcting depths.
   const vw = $("#v_water"); if(vw){ vw.textContent = val+mark+ageTxt+(notApplied?" ⚠ (datum)":"");
-    vw.title = tip+farTxt+staleTxt+monitorErrTxt(wl);
+    setTip(vw, tip+farTxt+staleTxt+monitorErrTxt(wl));
     vw.style.color = warnCol ? "var(--warn)" : "";
     vw.style.opacity = ghost;
     vw.style.fontStyle = (trust.level==="local" && !trust.stale) ? "" : "italic"; }
@@ -12084,7 +12111,7 @@ It is NOT being applied to charted depths: routing uses chart datum.`;
     swn.textContent = detail + (why.length ? ` — ${why.join(", ")}; NOT applied to depths (using chart datum)`
                               : trust.level==="far" ? ` — ${fmtDist(trust.km*1000, 0)} away, indicative` : "")
                      + (!trust.stale && trust.age_s!=null ? ` · ${fmtAge(trust.age_s)} old` : "");
-    swn.title = tip+farTxt+staleTxt+monitorErrTxt(wl);
+    setTip(swn, tip+farTxt+staleTxt+monitorErrTxt(wl));
     swn.style.color = warnCol ? "var(--warn)" : "";
     swn.style.opacity = ghost;
     swn.style.fontStyle = (trust.level==="local" && !trust.stale) ? "" : "italic"; }
@@ -12130,9 +12157,10 @@ function updateEnvUI(env, st){
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
   const ageTip = (!simOff && typeof env.age_s==="number")
     ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend)." : "";
-  if(vw) vw.title = "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + ageTip + monitorErrTxt(env);
-  const vs=$("#v_sea"); if(vs) vs.title = "Sea state (sig. wave height / period / direction) pushing the sim boat. Sim only."
-    + ageTip + monitorErrTxt(env);
+  if(vw) setTip(vw, "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + ageTip + monitorErrTxt(env));
+  const vs=$("#v_sea");
+  if(vs) setTip(vs, "Sea state (sig. wave height / period / direction) pushing the sim boat. "
+    + "Sim only." + ageTip + monitorErrTxt(env));
 }
 // SURFACE CURRENT at the boat's own position (NOAA OFS via /api/currents, on the state).
 // A FORECAST for real water, so unlike the wind rows it is NOT sim-gated. Every way this

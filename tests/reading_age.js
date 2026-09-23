@@ -75,6 +75,11 @@ for (const id of ["#v_water", "#sp_water_note", "#sp_water", "#v_wind", "#v_sea"
 const world = { $: (s) => els[s], waterTrust, WATER_STALE_S, document: { activeElement: null },
                 fmtDist: (m) => Math.round(m / 1000) + " km" };
 // eslint-disable-next-line no-eval
+// ⚠ setTip is the ONE door a runtime tooltip goes through (2026-09-23): the suppression
+// works by REMOVING the title attribute while hovered, so a direct write re-arms the native
+// tip under the pointer. Stubbed to the plain write here - what this suite is about is the
+// TEXT, and ui_tooltips owns the hover behavior itself.
+function setTip(el, text){ if(el) el.title = text; }
 const page = eval("(function(){ \"use strict\"; const $ = world.$, waterTrust = world.waterTrust, WATER_STALE_S = world.WATER_STALE_S,"
   + " document = world.document, fmtDist = world.fmtDist; let roseEnv = null, roseCur = null;\n"
   + decl("^const CURRENT_AGE_SHOW_S = [^;]*;") + "\n"

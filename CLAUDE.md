@@ -386,6 +386,52 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 2: FOUR READOUTS THAT SAID THE WRONG
+  THING (shipped).** All 8 REAL findings from the re-judging are now closed. Final tally of the
+  61: **16 FIXED** by this review's own commits, **15 WRONG**, **9 OVERSTATED**, **6 DEFERRED**
+  to Andy, **8 REAL** — seven low, one medium.
+
+  * **"WHAT IS THIS LINE?" SAID "NOTHING" ABOUT A LINE THE CONSOLE HAD DRAWN ITSELF** (the one
+    MEDIUM, and Andy's own filed words: *"what is the story with the line heading out to the
+    northwest — it's a green line"*). `drawMarks` strokes a GREEN dashed line through the
+    port-hand marks and a RED one through the starboard-hand marks of every channel system,
+    unconditionally from `render()`. `identifyAt` scanned `ko.lines` and `ko.polys` and **never
+    `ko.sys`** — so the readout answered *"Nothing the console drew is within 12 pixels of
+    that point"* about its own ink, and advised clicking nearer a line the operator was already
+    on. It names the chain and **which side it is**, because the PORT-hand chain is what the
+    Rule 9 lane is measured a quarter-width to starboard of.
+  * **THE TOOLTIP SUPPRESSION HAD BEEN APPLIED TO ONE BRANCH OF ONE PILL.** The mechanism works
+    by REMOVING the `title` attribute while hovered, so any runtime write puts it straight back.
+    The energy pill's FUEL branch was routed through `setTip` and carries the comment *"see
+    setTip: not under the pointer"* — and the **BATTERY branch seven lines below it, on the
+    same pill in the same `onState` frame**, wrote `pill.title` directly. The fix landed for a
+    fuel vessel and missed every battery one, which is this console's own default hull. Five
+    more per-frame writers went with it: the live run-time tip, the water card's two, and the
+    env card's wind and sea.
+  * **`ui_tooltips` 11-12 ARE THE POINT.** Check 10 drives the real `setTip` and proves the
+    MECHANISM; nothing checked that anyone USED it, which is exactly how the battery branch
+    survived the commit that fixed its neighbour. **Check 12 caught the sea-state pill within a
+    minute of existing** — my own patch had done `updateEnvUI`'s wind writer and left the sea
+    one two lines below, the identical shape as the defect being fixed.
+  * **THE HELD RESUME NAMED A LINE THAT IS ON NO CHART.** Review #18 routed the console's
+    "line N" through `lineNo()`, because a drawn line the keep-outs cut becomes several
+    SEGMENTS. `resumeRun` says *"backed up 92 m down line " + lineNo(pauseMark.line)*;
+    `resumeHeldSurvey` said the same sentence word for word with `(g.mark.line + 1)` — in the
+    operator's note, the "way back is not clear" banner, and **the session log's `line` field**,
+    which is what the episode is reconstructed from afterwards. On a plan with no clipped line
+    the two agree exactly, which is why it went unnoticed.
+  * **⚠⚠ AND THAT CHECK COULD NOT FAIL ON THE SITE THAT MATTERED MOST.** The mutation that
+    put the SESSION LOG back SURVIVED, for two reasons both mine: the regex carried a `(?! *:)`
+    lookahead that **excludes exactly the ternary form the log uses**, and the threshold asked
+    for `>= 3` against FOUR real sites, so reverting one still satisfied it. **A threshold below
+    the true count cannot see a single regression.** Pinned to 4 and the log asserted by name.
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped** after that repair, control read
+    first. New checks: `ui_tooltips` 11/12, `drawn_lines` (held-resume line numbers),
+    `identify_layer` (the buoy chains, DRIVEN in the fixture's own flat plane).
+  * **THREE SUITES CAUGHT THE `setTip` RENAME** — `nogo_readout` and `reading_age` as honest
+    named crashes on the first frame (the crash guard every suite carries, doing its job), and
+    `line_stats` 15 as a source match. All three updated; the property each pins is unchanged.
+
 * **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 1: TWO CONVENTIONS THAT DECAYED BECAUSE
   NOTHING CHECKED THEM (shipped).** The 61 filed gaps were re-judged against the current tree,
   one agent per gap with an adversarial verifier behind each REAL. Of the first 39: **12

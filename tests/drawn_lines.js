@@ -178,5 +178,36 @@ check("8. the chart's labels, the turn table, the line tip, the held-survey bar 
             && !/\b(const|let|var)\s+(lineNo|lineCount|drawnLines)\b/.test(H),
       () => "shadowing declarations: " + ((H.match(/\b(const|let|var)\s+(lineNo|lineCount|drawnLines)\b/g) || []).join(", ") || "none"));
 
+// -- EVERY "line N" GOES THROUGH lineNo() ------------------------------------------------
+// ⚠⚠ THE FIXTURE ABOVE IS WHY THIS MATTERS: four segments map to lineNo 1,2,2,3, because
+// the keep-outs cut the second drawn line in two. A raw `k + 1` calls those last two segments
+// 3 and 4 - numbers that are on no chart the operator is looking at. On a plan with no clipped
+// line the two agree exactly, which is why it went unnoticed for so long.
+{
+  const H = require("fs").readFileSync(
+    process.env.ASV_HTML || require("path").join(__dirname, "..", "static", "asv.html"), "utf8");
+  const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  // ⚠⚠ NO LOOKAHEAD, AND THE COUNT IS EXACT. The first cut of this carried a `(?! *:)`
+  // that excluded the TERNARY form - which is precisely the SESSION LOG site
+  // (`g.mark ? g.mark.line + 1 : null`), the one an episode is reconstructed from. And it
+  // asked for `>= 3` against FOUR real sites, so reverting one still satisfied it. The
+  // mutation that put the log back SURVIVED both. A threshold below the true count cannot
+  // see a single regression.
+  const raw = (code.match(/g\.mark\.line \+ 1/g) || []);
+  const viaHelper = (code.match(/lineNo\(g\.mark\.line\)/g) || []).length;
+  // the held bar (1727) plus resumeHeldSurvey's note, banner and session log
+  const logSite = /line: g\.mark \? lineNo\(g\.mark\.line\) : null/.test(code);
+  check("every 'line N' the HELD resume states goes through lineNo(), like the pause resume "
+        + "beside it",
+        () => raw.length === 0 && viaHelper === 4 && logSite,
+        () => raw.length
+                ? raw.length + " raw segment-index conversion(s) left: " + raw.join(", ")
+                  + " - the note, the banner and the session log each name a line the chart "
+                  + "does not have"
+                : viaHelper + " site(s) through lineNo (the held bar, and the note, "
+                  + "banner and session log of the held resume); the log names the drawn "
+                  + "line: " + logSite);
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

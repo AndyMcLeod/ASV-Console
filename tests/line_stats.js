@@ -291,7 +291,7 @@ check("15. and it is WIRED to the console's counter, not to the run state: onSta
         const os = H.slice(H.indexOf("function onState"), H.indexOf("function onState") + 1400);
         return /s\.run_seq!=null && s\.run_seq!==runSeq/.test(os) &&
                /if\(!freshRun && runSeq!=null\) startNewMotion\(\)/.test(os) &&
-               /runSeq = s\.run_seq/.test(os) && /el\.title = runTimeTip\(\)/.test(grab("updateRunTime"));
+               /runSeq = s\.run_seq/.test(os) && /setTip\(el, runTimeTip\(\)\)/.test(grab("updateRunTime"))   // ⚠ through setTip since 2026-09-23; the row still writes the tip;
       },
       "the page cannot tell a resume from a new command by `run` alone — it reads \"running\" through both");
 

@@ -248,6 +248,11 @@ function featuresBboxRef() { return { lat: 38.7896, lon: -75.1609 }; }
 // plausible number would instead have kept this green while the row printed a floor the model
 // was never built at. It is the REAL one, imported at the top, for the same reason foldChartInk
 // is: this suite evals the shipped nogoReadout and must not be shown a different world.
+// ⚠ setTip is the ONE door a runtime tooltip goes through (2026-09-23): the suppression
+// works by REMOVING the title attribute while hovered, so a direct write re-arms the native
+// tip under the pointer. Stubbed to the plain write here - what this suite is about is the
+// TEXT, and ui_tooltips owns the hover behavior itself.
+function setTip(el, text){ if(el) el.title = text; }
 function render() {}
 function showBanner(t) { banners.push(t); }
 // The row element records EVERY paint, so the test can assert both what was shown during
