@@ -386,6 +386,42 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — A NaN ANYWHERE IN A FRAME STOPPED THE CONSOLE UPDATING, SILENTLY
+  AND FOR GOOD (shipped).** The last filed-not-fixed item, and the consequence is measured, not
+  reasoned about:
+
+      clamp(float('nan'), 0, 100)   -> nan      (NaN < lo is False; NaN > hi is False)
+      json.dumps({'fuel_pct': nan}) -> '{"fuel_pct": NaN}'
+
+  * **`NaN` IS NOT VALID JSON.** The browser's `JSON.parse` throws on it, so one non-finite
+    number anywhere in a frame takes the WHOLE frame down — and the frame is the telemetry
+    stream, so the page stops updating **entirely** rather than blanking one field, with
+    nothing on screen to say why. `json.loads` ACCEPTS a bare `NaN`, so it round-trips through
+    `mission.json` as well.
+  * **⚠⚠ AND THE FIX IS NOT "MAKE `clamp` SUBSTITUTE A VALUE",** which is the obvious move.
+    There is no single right substitute: `lo` is the conservative end of a percentage and is a
+    **HARD TURN** at `clamp(d_cross / v_thru, -0.9, 0.9)`, and a silent substitution inside the
+    steering integrator is worse than the NaN, because nothing downstream can tell it happened.
+    `clamp` stays IEEE-transparent and now SAYS so; the guarantee lives where numbers LEAVE.
+  * **BOTH DOORS, not one.** `finite_only()` is applied at `_publish` (the 4 Hz stream) and at
+    the polled `/api/state` — a page fetches the latter on load and would fail before the
+    stream ever opened. Non-finite becomes `null`, which every one of these readouts already
+    shows for "not reported".
+  * **AND THE REACHABLE ENTRY IS THE PLAN FILE.** `json.loads` accepts `NaN` out of
+    `mission.json`, `float()` keeps it, and `clamp` hands it straight to the published state.
+    The two radii go through `_finite()` where they are READ.
+  * **TEETH: 6 mutations, 6 killed, 0 survived, 0 skipped**, control read first, the real source
+    restored in a `finally` and the diff printed after. The one worth naming replaced the deep
+    walk with a **shallow** one — which reads correctly and lets through every NaN in `status`,
+    where `cog_deg` and `heading_deg` live.
+  * **⚠⚠ ONE MUTATION SURVIVED THE FIRST SWEEP, AND IT IS THE THIRD TIME THIS SESSION.**
+    Putting the raw `float(x or default)` back at the call site changed nothing, because check
+    3b tested the HELPER and nothing tested that anyone CALLS it. `setTip` and `lineNo` were the
+    other two. Check 3d pins the call sites.
+  * **AND `spelling.js` FAILED ON MY OWN NEW DOCSTRING** (`LICENCE`, `serialises`) — the guard
+    written two commits ago catching the commit that came after it, which is the entire argument
+    for having written it.
+
 * **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 3: THE RE-JUDGING FINISHED, AND IT
   FOUND FOUR THINGS AFTER MY OWN SWEEP HAD PASSED CLEAN (shipped).** The 61-gap pass completed:
   **20 FIXED, 16 WRONG, 11 OVERSTATED, 6 DEFERRED, 8 REAL** surviving adversarial verification

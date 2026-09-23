@@ -213,7 +213,59 @@ DEFAULT_VCU_PORT = 4001
 STARLINK_HOST, STARLINK_PORT = "192.168.100.1", 9200
 
 def clamp(v, lo, hi):
+    """Constrain v to [lo, hi].
+
+    ⚠⚠ NaN PASSES THROUGH UNCHANGED, and that is deliberate rather than overlooked.
+    `NaN < lo` and `NaN > hi` are both False, so a NaN takes the `else` arm. Substituting a
+    value here looks like the fix and is not: there is no single right one. `lo` is the
+    conservative end of a percentage and is a HARD TURN at
+    `clamp(d_cross / v_thru, -0.9, 0.9)`, and a silent substitution inside the steering
+    integrator is worse than the NaN, because nothing downstream can tell it happened.
+
+    The guarantee belongs at the BOUNDARIES, and both are built:
+      * nothing non-finite reaches the page - see `finite_only`, applied to `Engine.state()`
+        and to every published event. A NaN in a frame is INVALID JSON (`json.dumps` writes a
+        bare `NaN`), so one of them stops the browser parsing the whole frame and the console
+        stops updating entirely.
+      * the plan's own radii are checked where they are read, which is the reachable entry:
+        `json.loads` accepts a bare `NaN` out of mission.json and `float()` keeps it.
+    """
     return lo if v < lo else hi if v > hi else v
+
+
+def _finite(v, dflt):
+    """`v` as a float when it is one and is finite, else `dflt`.
+
+    ⚠ A PLAN FIELD IS NOT TRUSTED TO BE A NUMBER. `json.loads` accepts a bare `NaN`, and
+    `float("nan")` succeeds - so neither the parse nor the cast refuses one. This is the check
+    that does.
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return float(dflt)
+    return f if math.isfinite(f) and f != 0 else float(dflt)
+
+
+def finite_only(obj):
+    """The same structure with every non-finite float replaced by None.
+
+    ⚠⚠ `NaN` AND `Infinity` ARE NOT JSON. `json.dumps` writes them bare and happily;
+    `JSON.parse` in the browser then throws on the WHOLE frame, so a single bad number in the
+    telemetry stream does not blank one field - it stops the console updating at all, with
+    nothing on screen to say why. `None` serializes as `null`, which every one of these
+    readouts already treats as "not reported".
+
+    ⚠ THIS IS A BACKSTOP, NOT A LICENSE. It keeps a bug from taking the page down; it does
+    not make the number right, and a field that goes quietly null is still a defect upstream.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite_only(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [finite_only(v) for v in obj]
+    return obj
 
 
 # --------------------------------------------------------------------------- #
@@ -3348,8 +3400,12 @@ class SimVcu(VcuLink):
         upload rather than at a later start()."""
         plan = {
             "plan": [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])],
-            "arrival_m": clamp(float(arrival_radius_m or 5.0), 1.0, 50.0),
-            "approach_m": clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0),
+            # ⚠ FINITE FIRST, because clamp is NaN-transparent and this is the reachable
+            # entry: `json.loads` accepts a bare `NaN` out of mission.json, `float()` keeps
+            # it, and it would be published straight into the state frame. A plan that says
+            # nothing usable falls back to the same default an absent field does.
+            "arrival_m": clamp(_finite(arrival_radius_m, 5.0), 1.0, 50.0),
+            "approach_m": clamp(_finite(approach_radius_m, WP_APPROACH_M), 0.5, 50.0),
             "speed_key": speed if speed in SPEED_KN else "survey",
             # completion semantics at the last waypoint (goto/rth/hold -> loiter)
             "completion": completion if completion in ("complete", "loiter", "repeat", "rth") else "rth",
@@ -4088,7 +4144,10 @@ class Engine:
                 self._subscribers.remove(q)
 
     def _publish(self, event):
-        data = json.dumps(event)
+        # ⚠⚠ NOTHING NON-FINITE GOES OUT. `json.dumps` writes a bare `NaN`, which is not
+        # JSON - the browser's JSON.parse throws on the whole frame, so one bad number in the
+        # 4 Hz stream stops the console updating entirely rather than blanking one field.
+        data = json.dumps(finite_only(event))
         with self._sub_lock:
             subs = list(self._subscribers)
         for q in subs:
@@ -5449,7 +5508,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/log?"):
             self._serve_log()
         elif self.path == "/api/state":
-            self._send(200, json.dumps(ENGINE.state()))
+            # ⚠ THE POLLED ROUTE TOO, not only the stream: a page that fetches /api/state on load
+            # would hit the same invalid-JSON frame and fail before the stream ever opened.
+            self._send(200, json.dumps(finite_only(ENGINE.state())))
         elif self.path == "/events":
             self._serve_events()
         elif self.path.startswith("/tiles/"):
