@@ -8,7 +8,7 @@
 //
 // ⚠ WHAT HE WAS LOOKING AT WAS AN INBOARD SEMICIRCLE, AND THE NUMBER THAT EXPLAINS IT IS
 // THE RADIUS. `teardropTurn` sweeps a semicircle of radius HALF THE LINE OFFSET whenever
-// the hull can hold that radius. Measured on his plan: a Z-Boat at survey speed holds
+// the hull can hold that radius. Measured on his plan: the small-class boat at survey speed holds
 // 2.06 m, the line spacing was 31.5 m, so every reversal was flown round a 15.75 m
 // half-circle - SEVEN TIMES wider than the boat needed. Such an arc has to bulge
 // somewhere. It needs 15.75 m of clear water past the end of the line to bulge outboard,
@@ -163,7 +163,7 @@ function check(name, cond, detail) {
   if (!ok) fails++;
 }
 
-// Erie, and the plan's own numbers: a Z-Boat holding 2.06 m at survey speed, 1.03 m slow.
+// Erie, and the plan's own numbers: the small-class boat holding 2.06 m at survey speed, 1.03 m slow.
 const F = planeFrame({ lat: 42.1396, lon: -80.0902 });
 // ⚠ THE VESSEL MODEL HAS TO MATCH THE RADII, since turnWithRetry now asks the runtime
 // guard's own projection whether each shape is flyable (turns.js turnFlyable) and that

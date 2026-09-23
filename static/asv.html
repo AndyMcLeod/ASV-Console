@@ -4822,8 +4822,13 @@ function roseArm(ctx, ang, len, halfW, fill){
   ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
 }
 // THE HULL COLORS ARE VESSEL CONFIGURATION, not constants in this file. Andy: "Color will
-// be the common color of the given ASV. Yellow for the small ZBoat, Red for the DriX and
-// yellow/black for BEN" - which is a property of the BOAT, so it lives in vessels/<id>.json
+// be the common color of the given ASV. Yellow for the small [small-class boat], Red for
+// the DriX and yellow/black for BEN" - which is a property of the BOAT, so it lives in
+// ⚠ THE BRACKETS MARK A SUBSTITUTION: the original named the boat this derivative is
+// sanitized from. Altered in brackets rather than silently, because a quotation reworded
+// without saying so stops being evidence of what was actually asked for - which is the
+// only reason to keep quoting him at all. See CLAUDE.md's sanitization section.
+// vessels/<id>.json
 // as display.hull_color / display.hull_color2 and reaches here through V. A table of ids in
 // the page would be the hardcoded-vessel-constant this console spent a refactor removing.
 // Absent, it falls back to the chart's own --asv color, so a vessel file written before

@@ -23,7 +23,7 @@
 // Stubbed: the DOM (a fake element per selector), the ENC fetch (the features are handed in), the chart-ink fold (no
 // chart image here), and the banner / note / save sinks, which record what they were given.
 //
-// THE WORLD: five 200 m survey lines 10 m apart, running north-south, the Z-Boat's own numbers (3 kn, 60 deg/s, so a
+// THE WORLD: five 200 m survey lines 10 m apart, running north-south, the small-class boat's own numbers (3 kn, 60 deg/s, so a
 // 2.1 m turn radius), a 3 m buffer. A FINGER PIER sits between runs 3 and 4 at the north end, reaching 15 m down past
 // their ends - so the turn from run 3 to run 4 has no water on any side, outboard or inboard, at either radius, while
 // every other turn is clear. Moved 100 m east, the same pattern punches clean (the acceptance case).

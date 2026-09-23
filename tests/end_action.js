@@ -580,7 +580,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
     const yellowish = /^#f{0,1}f?d|^#ff[cd]/i.test(zb) || zb.toLowerCase() === "#ffd400";
     check("35. the shipped hulls carry their own colours (small launch yellow, DriX red)",
           yellowish && /^#d0342c$/i.test(dx),
-          "zboat " + zb + ", drix " + dx);
+          // ⚠ THE PROFILE ID, which is how a check names the thing exactly without naming
+          // the brand - and which the sanitization grep permits for that reason.
+          "zboat_1800hs=" + zb + " drix08=" + dx);
   }
 }
 

@@ -31,10 +31,20 @@ data key; the brand standing alone is branding. **`-P`, not `-E`** — a negativ
 lookahead needs PCRE. It still catches a line carrying BOTH, which is why this
 is one command rather than a second `grep -v` that would hide such a line.
 
-**⇒ AND IT IS CLEAN AS OF 2026-08-26.** Fixing the grep surfaced NINE prose hits
-that the `zboat_1800hs` noise had been hiding — `static/js/state.js`,
-`static/asv.html`, and seven in `tests/survey_card.js`. All nine are scrubbed;
-Andy's call, quotes included.
+**⇒ `tests/sanitization.py` RUNS THIS NOW, so this section no longer claims a date.**
+The 2026-08-26 grep fix surfaced NINE prose hits the `zboat_1800hs` noise had been
+hiding — `static/js/state.js`, `static/asv.html`, and seven in
+`tests/survey_card.js` — and they were scrubbed, Andy's call, quotes included.
+
+**⚠⚠ AND BY 2026-09-23 NINE MORE HAD DRIFTED BACK**, in seven different files,
+every one from a commit AFTER that scrub, and **one of them baked into the shipped
+technical manual `.docx`** — where the same entry said *"It is deliberately NOT the
+small-class boat"* two clauses after naming the vendor. This section had said
+*"IT IS CLEAN AS OF 2026-08-26"* throughout. **A dated claim beside a check nobody
+runs is not a check; it is a date.** The suite checks the code, the GENERATED
+DOCUMENTS (which is what an outsider is handed), and that these notes still name the
+sibling — that last one is the positive control, and if it ever reads zero then either
+the notes were scrubbed by mistake or the pattern has stopped matching anything.
 
 **⚠ A QUOTATION IS ALTERED IN BRACKETS, NEVER SILENTLY.** Four of them quoted
 him verbatim, and the replacement reads *"for the [small-class boat] this would
@@ -47,9 +57,10 @@ actually asked for — which is the only reason to keep quoting him at all.
 the PROFILE ID is the sanitized way to do it and the grep now permits it:
 `17b`'s detail line reads `drix08=80 zboat_1800hs=0`.
 
-**⚠ AND NOTHING RUNS THIS.** It lives here as prose, so it is a check only when
-somebody types it — which is how it stayed wrong. The hook globs `tests/*.py`,
-so a suite added there runs the day it is written.
+**⚠ IT USED TO BE TRUE THAT NOTHING RAN THIS.** It lived here as prose, so it was a
+check only when somebody typed it — which is how it stayed wrong, twice. The hook globs
+`tests/*.py`, so `tests/sanitization.py` has run every commit since the day it was
+written.
 
 **The rule is scoped to CODE.** THIS FILE deliberately names the sibling and its path — a
 maintainer has to be able to find it — which is why the check above filters by source
@@ -525,6 +536,38 @@ divide-by-1000-then-toFixed fingerprint, and a comment that spelled the pattern 
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — THE BRAND SCRUB, AND THE CHECK IT NEVER HAD (Andy's call,
+  shipped).** It was clean at the 2026-08-26 scrub commit and **nine hits had drifted back** by
+  now — seven files, every one from a commit AFTER that scrub, and **one baked into the shipped
+  technical manual `.docx`**, where the same entry said *"It is deliberately NOT the small-class
+  boat"* two clauses after naming the vendor.
+
+  * **THE ROOT CAUSE WAS ALREADY WRITTEN DOWN HERE**, which is the part worth sitting with:
+    *⚠ AND NOTHING RUNS THIS. It lives here as prose, so it is a check only when somebody types
+    it — which is how it stayed wrong."* It then stayed wrong a second time, beside a section
+    asserting **"IT IS CLEAN AS OF 2026-08-26"**. **A dated claim beside a check nobody runs is
+    not a check; it is a date.** That sentence is gone and points at the suite now.
+  * **THREE RULES, APPLIED AS THIS FILE STATES THEM, because they are not the same rule.** Plain
+    prose takes the house word *"the small-class boat"*. **A QUOTATION IS ALTERED IN BRACKETS**
+    — `asv.html`'s hull-livery comment quotes him verbatim, so it reads *"[small-class boat]"*
+    with a line beside it saying the brackets are a substitution, because a quotation reworded
+    without saying so stops being evidence of what was asked for. And where a check names the
+    thing exactly, **the PROFILE ID is the sanitized way**: `end_action` 35's detail line reads
+    `zboat_1800hs=... drix08=...`, which the pattern's negative lookahead permits on purpose.
+  * **`tests/sanitization.py` — 4 checks.** The code, the **GENERATED DOCUMENTS** (what an
+    outsider is actually handed, and where the last drift survived every rebuild), that the
+    **maintainer notes STILL name the sibling** — scoped to CODE, so this file deliberately does,
+    and that hit doubles as the **positive control**: if it ever reads zero, either the notes
+    were scrubbed by mistake or the pattern has stopped matching anything — and that the only
+    file it skips is **itself**, which a suite searching for a word must.
+  * **⚠⚠ AND IT CAUGHT TWO THINGS THE MOMENT IT EXISTED:** its own pattern definition (the
+    self-exemption above), and **the shipped technical manual still carrying the name** because
+    I had fixed the BUILDER and not yet rebuilt. Check 2 exists for exactly that gap.
+  * **⚠ I ALSO BROKE THE PRE-COMMIT HOOK AND THE HOOK'S OWN SUITE CAUGHT IT.** The advice entry
+    went in with a literal `\\n` instead of a newline — the file is LF, so the conversion
+    branch never ran — and `sh -n` reported a syntax error while `precommit_hook` 1/3/4/5 all
+    went red with `exit 2`. Repaired; the one remaining literal is a legitimate `printf '%s\\n'`.
+
 * **⚠⚠ 2026-09-23 — THE STAGGER GATE IS WIDENED (Andy's call, shipped). THE CROSSING
   SAYS "NEIGHBORS", THE SPAN SAYS "REACHABLE", AND ONE DISTANCE HAD BEEN STANDING IN FOR BOTH.**
 
@@ -741,7 +784,8 @@ divide-by-1000-then-toFixed fingerprint, and a comment that spelled the pattern 
     files and 96 suites**. Its sprint tile is legitimately DATED and stays; the size and suite
     figures are now **counted at build time** from the files themselves, per this repo's own
     rule — assert, do not quote. ⚠ The first derived count was over by one PER FILE
-    (`split(/?
+    (`split(/
+?
 /)` yields a trailing empty element), reading 28,696; it counts newlines now
     and reconciles with `wc -l` exactly.
   * **AND THE SERVER'S FIVE OPERATOR-VISIBLE REFUSALS** (`hold_clear_m`, `coast_from_m`,

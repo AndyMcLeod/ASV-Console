@@ -368,7 +368,7 @@ export function arcPts(C, R, a0, sweep, minSeg, map, stepM) {
  *
  * ⚠ WHAT HE WAS LOOKING AT WAS AN INBOARD SEMICIRCLE, AND THE NUMBER THAT EXPLAINS IT IS
  * THE RADIUS. `teardropTurn` sweeps a semicircle of radius HALF THE LINE OFFSET whenever
- * the hull can hold it. On a Z-Boat at survey speed the hull can hold 2.06 m; at 31.5 m
+ * the hull can hold it. On the small-class boat at survey speed the hull can hold 2.06 m; at 31.5 m
  * line spacing it was being flown round a 15.75 m half-circle - seven times wider than
  * anything the boat needed. That arc has to bulge SOMEWHERE, it needs 15.75 m of clear
  * water past the end of the line to bulge outboard, and when a wharf takes that water

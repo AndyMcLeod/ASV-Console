@@ -712,7 +712,7 @@ try:
           and st["status"].get("fuel_l") is None
           and abs((st["status"].get("lat_deg") or 0) - port_lat) < 0.01
           and abs((st["status"].get("lon_deg") or 0) - port_lon) < 0.01,
-          lambda: "energy=%s batt=%s lat=%.3f (port %.3f; the zboat file's own spawn is "
+          lambda: "energy=%s batt=%s lat=%.3f (port %.3f; zboat_1800hs.json's own spawn is "
                   "%.3f and must NOT be where it lands)"
                   % (st["status"].get("energy_type"), st["status"].get("battery_v"),
                      st["status"].get("lat_deg") or 0, port_lat, zspawn["lat"]))

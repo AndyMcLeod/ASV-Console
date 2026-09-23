@@ -303,7 +303,7 @@ const world = (...polys) => ({ polys, lines: [], points: [], marks: [], sys: [],
   // other way, on the second rung". Andy then reported what that shape looks like on the
   // chart - *"the turns are implemented as inverted teardrop turns"* - and the ladder grew
   // a rung above it: a RACETRACK, which needs the hull's own radius of outboard water
-  // (2.06 m on a Z-Boat) instead of half the line spacing, and so still turns AWAY from
+  // (2.06 m on the small-class boat) instead of half the line spacing, and so still turns AWAY from
   // the pier without sweeping back across the survey.
   //
   // What this check exists to defend is not the side and not the rung number. It is that
