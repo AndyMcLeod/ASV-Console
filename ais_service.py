@@ -940,13 +940,46 @@ def _aishub_normalize(recs):
             sog = None
         if cog is not None and abs(cog - 360.0) < 1e-6:      # AIS n/a sentinel
             cog = None
-        out.append({
+        rep = {
             "mmsi": m, "pos_time": _aishub_time(rec.get("TIME")),
             "lat": lat, "lon": lon, "sog": sog, "cog": cog,
             "heading": _num(rec.get("HEADING"), 511), "nav": rec.get("NAVSTAT"),
             "name": (str(rec.get("NAME") or "").strip() or None),
             "type": rec.get("TYPE"),
-        })
+        }
+        # ⚠⚠ THE PARTICULARS, which this feed threw away while being the HIGHEST-PRIORITY one
+        # (Registry.PRIORITY aishub 30). Andy asked for "the type of vessel, length" in the AIS
+        # capture; type was carried on every feed and length on two of four, so a hull only
+        # AISHub sees arrived with no size at all - and size is most of what judging a CPA and
+        # drawing an icon to scale need.
+        #
+        # A/B/C/D are the antenna-referenced offsets, WHOLE METRES in AIS and in AISHub's human
+        # format alike, so unlike lat/lon/sog/cog they need no raw-vs-human decision. `_dims`
+        # reads all-four-zero as the not-available encoding rather than as a zero-metre ship,
+        # and keeps a partial set - a hull reporting A and B alone still has a known LENGTH.
+        rep.update(_dims(rec.get("A"), rec.get("B"), rec.get("C"), rec.get("D")))
+        # `_ais_text` reads AIS's '@' padding as ABSENT, so an unset destination does not
+        # render as a blank field beside a populated one.
+        for key, field in (("DEST", "dest"), ("CALLSIGN", "callsign")):
+            v = _ais_text(rec.get(key))
+            if v:
+                rep[field] = v
+        imo = _num(rec.get("IMO"), 0)
+        if imo:
+            rep["imo"] = int(imo)
+        # ⚠ DRAUGHT IS DELIBERATELY NOT TAKEN. AIS carries it in TENTHS of a metre, and the
+        # raw-vs-human test above reads the COORDINATES - it says nothing about the unit this
+        # field arrives in. A 3.4 m draught published as 34 m on a console whose keep-out floor
+        # is a depth is worse than no draught at all. It needs a live response to settle, and
+        # this tree has no membership key.
+        #
+        # ⚠ AND THE KEYS ABOVE COME FROM AISHub's PUBLISHED OUTPUT FORMAT, not from a response
+        # seen here. If one is wrong, `_dims` of four Nones returns {} and `_ais_text` of None
+        # returns None - the particular is simply absent, exactly as it is today, and never
+        # wrong. That bounded failure is the whole reason this is written from the published
+        # format; the MarineTraffic source stays unbuilt because its shape changes what a
+        # reading MEANS, which no default can make safe.
+        out.append(rep)
     return out
 
 

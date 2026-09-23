@@ -334,7 +334,7 @@ c.push(TBL(["Block", "Fields", "Drives"], [
   ["`propulsion`", "`speeds_kn.{low,survey,high}`", "Plan speeds, ETA estimates, turn radius, moving-HOME closing check"],
   ["`maneuvering`", "`max_turn_rate_deg_s`, `approach_m`, `lookahead_m`, `arrival_radius_m`", "Minimum turn radius, survey turn geometry, waypoint following"],
   ["`autopilot`", "`xte_ki_deg`, `xte_i_max_deg`", "Cross-track integral term under a steady sideways push"],
-  ["`power`", "`type` = `battery` (voltage sag) or `fuel` (litres, burn curve)", "Endurance, range, the console's energy gauge"],
+  ["`power`", "`type` = `battery` (voltage sag) or `fuel` (liters, burn curve)", "Endurance, range, the console's energy gauge"],
   ["`planning`", "`nogo_buffer_m`, `under_keel_clearance_m`, optional `channel_reach_m`, optional `min_survey_line_m`, `roc`, `search`", "Keep-out buffer, depth floor, channel lane reach, shortest survey line worth running for this hull, ROC defaults, search sizes"],
   ["`display`", "optional `hull_color`, `hull_color2`", "The vessel marker's color on the chart - the hull's own livery. Absent falls back to the chart default, so an older profile is unchanged"],
   ["`spawn`", "`lat`, `lon`", "Where the simulated vessel comes up WHEN NO OPERATING PORT IS SELECTED - a port, if there is one, decides position (see 4.5)"],

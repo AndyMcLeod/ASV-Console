@@ -47,8 +47,17 @@ const ROOT = path.join(__dirname, "..");
 const BRITISH = ["behaviour", "colour", "centre", "metre", "kilometre", "centimetre",
                  "manoeuvre", "neighbour", "judgement", "honour", "favour", "cancelled",
                  "modelling", "labelled", "signalled", "fuelled", "travelled", "grey",
-                 "analyse", "recognise", "organis", "licence", "practis"];
-const RE = new RegExp("(?<![A-Za-z])(" + BRITISH.join("|") + ")", "gi");
+                 "analyse", "recognise", "organis", "licence", "practis",
+                 // ⚠ ADDED 2026-09-23, and every one was found by a re-judging pass AFTER this
+                 // suite had run clean. A word list built from what a grep turned up is a list
+                 // of the mistakes already made, not of the ones available to make.
+                 "artefact", "litre", "defence", "offence", "draught", "aluminium",
+                 "sceptic", "storey", "kerb", "plough", "tyre", "whilst", "amongst"];
+// ⚠⚠ NOT `programme`. Every apparent hit in this tree is `programmer` or
+// `non-programmer`, which is correct American English - a stem match with no right edge would
+// have "corrected" a word that was already right. The lookahead refuses a stem carried on by
+// `er` or `ing`, which is what makes a stem list safe to widen.
+const RE = new RegExp("(?<![A-Za-z])(" + BRITISH.join("|") + ")(?![A-Za-z]*(?:er|ing)\\b)", "gi");
 
 // """ + W + W + """ A VERBATIM QUOTATION IS EXEMPT, AND THE EXEMPTION IS NAMED RATHER THAN SILENT.
 // Rewording someone's own words without saying so is worse than the inconsistency, and
@@ -66,13 +75,24 @@ const QUOTED = /OPERATOR'S OWN SCHEME|Andy, 2026-08-28/;
 // one.
 const S57 = /"COLOUR"|CATLAM\/COLOUR|COLOUR for the buoy|ENC_KEEP_PROPS/;
 
+// ⚠⚠ AND THE AIS STATIC FIELD, for the same reason and found the same way. `draught` is
+// the AIS payload key: it is in ais_service.py's STATIC_KEYS, the message-5 decoder writes it,
+// and the page reads `v.draught` to print it. Renaming those would break the readout exactly
+// as renaming the chart attribute above would break the parser. In ORDINARY PROSE about a hull
+// - "a deep-draught vessel" - it is British and is corrected; the distinction is the field.
+// ⚠ AND A JUDGE GOT THIS WRONG in the pass that found it: it reported that the code "serves
+// `draft`", citing contracts.js. That is `draft_m`, the VESSEL PROFILE's own draft, a
+// different field entirely. Checked rather than taken.
+const AIS_FIELD = /v\.draught|"draught"|'draught'|STATIC_KEYS|draught, IMO number/;
+
 function scan(rel) {
   const txt = fs.readFileSync(path.join(ROOT, rel), "utf8");
   const hits = [], exempt = [];
   txt.split(/\r?\n/).forEach((ln, i) => {
     const m = ln.match(RE);
     if (!m) return;
-    const why = QUOTED.test(ln) ? "quotation" : S57.test(ln) ? "s57" : null;
+    const why = QUOTED.test(ln) ? "quotation" : S57.test(ln) ? "s57"
+              : AIS_FIELD.test(ln) ? "ais-field" : null;
     (why ? exempt : hits).push(rel + ":" + (i + 1) + " " + m.join(",") + (why ? " [" + why + "]" : ""));
   });
   return { hits, exempt };
@@ -120,11 +140,26 @@ console.log("American spellings, everywhere the console speaks in its own voice:
 // observation otherwise. It asserts the exemption is doing its job AND that it is one line.
 {
   const page = scan("static/asv.html");
+  // ⚠⚠ EACH KIND IS COUNTED SEPARATELY, not as one total. This asserted "exactly one
+  // exempt line" and broke the moment a SECOND KIND appeared - correctly, because a shared
+  // total cannot say which exemption grew. One check per kind means widening any one of them
+  // is a visible edit to the check that owns it.
+  const quoted = page.exempt.filter(s => /\[quotation\]/.test(s));
+  const aisField = page.exempt.filter(s => /\[ais-field\]/.test(s));
   check("4. ... and the quotation exemption covers exactly the operator's own words, not a "
         + "hole the rest could hide in",
-        () => page.exempt.length === 1 && /grey/i.test(page.exempt[0]),
-        () => "exempt: " + (page.exempt.join(" | ") || "NOTHING - if the quotation was "
+        () => quoted.length === 1 && /grey/i.test(quoted[0]),
+        () => "quotation-exempt: " + (quoted.join(" | ") || "NOTHING - if the quotation was "
               + "reworded, this check is the only thing that would have noticed"));
+
+  // ⚠ `draught` IS THE AIS PAYLOAD KEY where the page reads `v.draught` to print it - the
+  // same standing as the chart attribute in check 5. In ordinary prose about a hull it is
+  // British and is corrected; this pins the exemption to the ONE line that reads the field.
+  check("4b. ... and the AIS-field exemption covers only the line that READS the field",
+        () => aisField.length === 1 && /v\.draught|draught/.test(aisField[0]),
+        () => "ais-field-exempt: " + (aisField.join(" | ") || "NOTHING")
+            + ". `draught` is the AIS static key (ais_service STATIC_KEYS); renaming it would "
+            + "stop the size line printing a hull's draft at all");
 }
 
 // -- 5. THE S-57 EXEMPTION IS EXACTLY THREE LINES --------------------------------------

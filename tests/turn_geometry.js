@@ -922,8 +922,19 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // spiral is the floor; below it what ships is an arc wearing the word "eased".
 {
   const src = fs.readFileSync(path.join(STATIC, "js", "turns.js"), "utf8");
+  // ⚠ DRIVEN SINCE 2026-09-23, because the rule is now an EXPORTED function rather than
+  // an inline condition - the punch's readout has to read the ladder's own test to tell an
+  // operator who asked for EASED and got none WHICH fault it was, and a restated copy in the
+  // page is how an advisory comes to name a cause the code cannot produce. Driving it beats
+  // matching its text: the pair below is a settle length that CANNOT ramp at a 1 m approach
+  // radius and the same length that CAN at 0.5 m.
+  const { easeOffered } = require("../static/js/turns.js");
   check("49. the eased rung is withheld when the waypoint spacing cannot ramp",
-        /easeLs > 0 && \(easeGap <= 0 \|\| easeLs >= 4 \* easeGap\)/.test(src),
+        easeOffered(2.31, {approachM: 1.0}) === false
+        && easeOffered(2.31, {approachM: 0.5}) === true
+        && easeOffered(0, {approachM: 0.5}) === false
+        && /easeLs > 0 && \(gap <= 0 \|\| easeLs >= 4 \* gap\)/.test(src)
+        && /easeOffered\(easeLs, fly\)/.test(src),
         "a 2.31 m settle length thinned to a 1.0 m approach radius keeps two vertices, "
         + "which is an arc - the plain rung below takes the turn instead, exactly as it "
         + "would have before easing existed");

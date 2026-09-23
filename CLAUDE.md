@@ -386,6 +386,63 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 3: THE RE-JUDGING FINISHED, AND IT
+  FOUND FOUR THINGS AFTER MY OWN SWEEP HAD PASSED CLEAN (shipped).** The 61-gap pass completed:
+  **20 FIXED, 16 WRONG, 11 OVERSTATED, 6 DEFERRED, 8 REAL** surviving adversarial verification
+  — the verifier knocked three of the eleven REALs down, which is the panel working.
+
+  * **THE AISHUB POLL — THE HIGHEST-PRIORITY FEED — THREW EVERY HULL'S SIZE AWAY.** Andy asked
+    for *"the type of vessel, length"* in the AIS capture. Type is carried on every feed; length
+    on two of four. `_aishub_normalize` kept name and type and dropped the rest, and AISHub is
+    `PRIORITY 30`, the top of the registry — so a hull only it carries reached the console with
+    no length, beam, destination or IMO at all. It folds `_dims()` in now, the same helper the
+    NMEA decoder and aisstream already use.
+  * **⚠⚠ AND THE DRAUGHT IS DELIBERATELY NOT TAKEN, which `ais_particulars` 10c pins.** AIS
+    carries draught in TENTHS of a metre, and `_aishub_format_is_raw` decides raw-vs-human for a
+    response **by reading the COORDINATES** — it establishes nothing about a draught's unit.
+    Publishing 3.4 m as 34 m on a console whose keep-out floor IS a depth is worse than
+    publishing none. The field names come from AISHub's published format and are **not verified
+    against a live response** (no membership key in this tree); the failure mode is bounded and
+    stated — `_dims` of four Nones returns `{}`, so a wrong key gives exactly today's behavior
+    and never a wrong value. That bound is the only reason this was written at all; MarineTraffic
+    stays unbuilt because its shape changes what a reading MEANS.
+  * **THAT SUITE HAD ZERO AISHUB COVERAGE**, which is why the gap survived: `ais_particulars`
+    drove the NMEA decoder at three message types and aisstream, and never the feed at the top
+    of the priority list. Checks 10/10b/10c/10d added.
+  * **THE OPERATOR ASKED FOR EASED TURNS, GOT NONE, AND WAS TOLD NOTHING.** The rung is
+    *withheld* — not refused — when the spiral is shorter than four times the approach radius,
+    for a good reason the code states. But zero eased turns reads identically whether every
+    attempt was refused (which wants more water) or the rung was never offered (which wants a
+    finer approach radius), and **the remedies are opposite**. `easeOffered` is exported from
+    `turns.js` and the punch reads **the ladder's own test**, not a restated copy — a second
+    copy is how an advisory comes to name a cause the code cannot produce. `turn_geometry` 49 is
+    now DRIVEN on that export rather than matching its text.
+  * **CLR PLAN COUNTED THE SEGMENTS THE KEEP-OUTS LEFT.** *"A line is what the operator drew,
+    not what the keep-outs left of it"* — and the confirmation for the one irreversible action
+    on the card said `mission.lines.length`, the SEGMENT count. Three drawn lines cut into five
+    read "5 survey line(s)". `lineCount()` now. The waypoint count is left alone: the endpoints
+    it deletes really are per segment.
+  * **⚠⚠ FOUR BRITISH WORDS MY OWN GUARD NEVER CONTAINED** — `artefact`, `litre`,
+    `defence`, `draught` — found by the re-judging AFTER both my sweep and `tests/spelling.js`
+    had run clean. **A word list built from what a grep turned up is a list of the mistakes
+    already made, not of the ones available to make.** Widened, with two refinements a blunter
+    list would have got wrong: `programme` is NOT added (every hit was `programmer`, correct
+    American English — the pattern now refuses a stem carried on by `er`/`ing`), and `draught`
+    is exempted where it is **the AIS payload key** (`STATIC_KEYS`, `v.draught`) rather than
+    prose about a hull. Third exemption, asserted like the other two.
+  * **⚠ AND A JUDGE WAS WRONG ABOUT THAT, CHECKED RATHER THAN TAKEN.** It reported the manual
+    naming `draught` while *"the field the server actually serves is `draft`"*, citing
+    `contracts.js`. That is `draft_m`, **the vessel profile's own draft** — a different field.
+    The AIS key really is `draught`.
+  * **`spelling.js` check 4 then failed correctly** on a shared total: it asserted "exactly one
+    exempt line" and a SECOND KIND of exemption appeared. Each kind is counted separately now,
+    so widening any one is a visible edit to the check that owns it.
+  * **THREE MORE WORLDS CAUGHT NEW DEPENDENCIES** — `plan_save` on `lineCount` (a named crash,
+    the crash guard doing its job). ⚠ Repairing it through a shell heredoc **ate a backslash and
+    wrote a literal newline into a JS string literal**, and left four lone-LF lines in a CRLF
+    file; repaired by byte range with the ending count asserted afterwards. Fourth heredoc
+    mangling this session — the Write tool is the rule for a reason.
+
 * **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 2: FOUR READOUTS THAT SAID THE WRONG
   THING (shipped).** All 8 REAL findings from the re-judging are now closed. Final tally of the
   61: **16 FIXED** by this review's own commits, **15 WRONG**, **9 OVERSTATED**, **6 DEFERRED**

@@ -237,7 +237,7 @@ WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
 # None until a vessel with a coast datum is applied. None means this hull does not coast.
 COAST_LENGTH_M = None
 MAX_TURN_RATE_DEG_S = 60.0
-# Energy model: "battery" (draining voltage) or "fuel" (diesel litres burned).
+# Energy model: "battery" (draining voltage) or "fuel" (diesel liters burned).
 POWER_TYPE = "battery"
 DRAIN_IDLE = DRAIN_LOAD = 0.0                            # battery: per-second voltage drain
 FUEL_CAPACITY_L = 0.0                                    # fuel: tank size (L)
@@ -1649,7 +1649,7 @@ ENC_ROLES = {
     # or fairway":
     #   FAIRWY (Fairway_area)  - the designated lane for larger vessels. This IS
     #                            the object the rule is written about.
-    #   DRGARE (Dredged_Area)  - depth artificially maintained, so a deep-draught
+    #   DRGARE (Dredged_Area)  - depth artificially maintained, so a deep-draft
     #                            vessel "can safely navigate only within" it,
     #                            which is Rule 9(b)'s own test.
     # Already extracted above as "dredged" for the survey depth window; named
@@ -3282,7 +3282,7 @@ class SimVcu(VcuLink):
         self.sog_kn = 0.0
         self.pitch = 0.0
         self.roll = 0.0
-        # Energy state: a draining battery voltage OR a diesel fuel tank (litres),
+        # Energy state: a draining battery voltage OR a diesel fuel tank (liters),
         # per the active vessel's power.type. Only the relevant one is used.
         self.battery_v = BATT_FULL_V
         self.fuel_l = FUEL_CAPACITY_L
@@ -3891,7 +3891,7 @@ class SimVcu(VcuLink):
             "pitch_deg": self.pitch,
             "roll_deg": self.roll,
             "energy_type": POWER_TYPE,
-            # battery vessels report a voltage; fuel vessels report tank litres (the
+            # battery vessels report a voltage; fuel vessels report tank liters (the
             # other stays None so state()/UI shows only the relevant gauge)
             "battery_v": round(self.battery_v, 2) if POWER_TYPE == "battery" else None,
             "fuel_l": round(self.fuel_l, 1) if POWER_TYPE == "fuel" else None,
@@ -5295,7 +5295,7 @@ def read_log_text(path):
 
 
 # The page's ES modules (static/js/*.js). SAME GUARD SHAPE AS safe_log_path, and for the
-# same reason: this turns a URL into a filesystem read, so the only defence that holds is
+# same reason: this turns a URL into a filesystem read, so the only defense that holds is
 # refusing anything that is not a bare basename from one directory with one extension.
 # `os.path.basename(name) != name` rejects every traversal spelling at once (`../`, a
 # nested path, an absolute path, a drive letter) without trying to enumerate them.

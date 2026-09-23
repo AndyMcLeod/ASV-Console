@@ -167,7 +167,7 @@ c.push(NOTE("A MEASUREMENT IS YOURS, NOT THE VESSEL'S", "The ruler is an annotat
 c.push(H1("5  Choosing the vessel"));
 c.push(P("The console models a specific vessel, and almost everything downstream depends on which one: speeds, turn rate, how tight a turn a survey can ask for, how much energy is left, how deep the water must be before it is navigable, and how far off charted structures the vessel plans."));
 c.push(P("Pick the active profile from the vessel selector in the top bar. THE SWITCH IS GATED: it is only allowed when disarmed and with no run in progress. In the simulator the vessel respawns at the new profile's own operating area."));
-c.push(NOTE("WHY IT MATTERS", "Selecting a vessel changes the keep-out model. The minimum navigable depth is that vessel's own draft plus its under-keel clearance — so a deep-draught vessel refuses water a shallow-draught one crosses without comment. Never plan against one profile and run against another."));
+c.push(NOTE("WHY IT MATTERS", "Selecting a vessel changes the keep-out model. The minimum navigable depth is that vessel's own draft plus its under-keel clearance — so a deep-draft vessel refuses water a shallow-draft one crosses without comment. Never plan against one profile and run against another."));
 
 // 6 ---------------------------------------------------------------------------
 c.push(H1("6  Chart awareness and the keep-out model"));
@@ -401,7 +401,7 @@ c.push(P("A command the vessel REFUSED does not end the promise, because a refus
 c.push(H2("13.3  The plan will not route"));
 c.push(B("Check the Nogo row. If it reads amber, there is no model — see 13.4."));
 c.push(B("Check the buffer. A tight marina may need a smaller one; the vessel's own floor still applies."));
-c.push(B("Check the vessel. A deep-draught profile refuses water a shallow one crosses."));
+c.push(B("Check the vessel. A deep-draft profile refuses water a shallow one crosses."));
 c.push(B("Check the water level band. A remote reading is not applied, so charted depths are being used raw."));
 c.push(H2("13.4  No chart coverage"));
 c.push(P("The console says so and routes DIRECT. Every leg is then unverified. Either work manually, pre-cache the chart for the area, or accept the risk explicitly and keep the vessel in sight."));

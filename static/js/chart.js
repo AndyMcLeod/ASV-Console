@@ -228,7 +228,7 @@ export function waterTrust(wl){
 export function effectiveWaterOffset(wl){
   if(!wl || !wl.ok || wl.offset_m == null) return 0;
   // The manual-override exemption lives in waterTrust() and ONLY there - an operator's own
-  // number is never "remote". Repeating the check here looked like defence in depth but was
+  // number is never "remote". Repeating the check here looked like defense in depth but was
   // unreachable, and an unreachable guard is a guard nobody is testing.
   const trust = waterTrust(wl);
   return (trust.level === "remote" || trust.stale) ? 0 : wl.offset_m;

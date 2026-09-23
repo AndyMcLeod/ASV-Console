@@ -252,6 +252,21 @@ export function thinTrack(pts, minGapM, ref){
 }
 
 /** The waypoint spacing floor a shape is built to, for this hull. */
+/**
+ * IS THE EASED RUNG EVEN OFFERED for this settle length and this waypoint spacing?
+ *
+ * ⚠⚠ EXPORTED SO THE READOUT CAN READ THE LADDER'S OWN TEST. The punch has to tell an
+ * operator who asked for EASED and got NONE which of two things happened - the rung was
+ * offered and refused every time (that wants more water), or it was never offered at all
+ * (that wants a finer approach radius). Those have different remedies and the counts alone
+ * cannot tell them apart. A restated copy of this condition in the page is exactly how an
+ * advisory comes to name a cause the code cannot produce.
+ */
+export function easeOffered(easeLs, fly){
+  const gap = trackGapM(fly);
+  return easeLs > 0 && (gap <= 0 || easeLs >= 4 * gap);
+}
+
 export function trackGapM(fly){
   if(fly === false) return 0;
   const o = fly || {};
@@ -446,8 +461,7 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
   // not offered at all and the plain arc takes the turn, which is what it would have had
   // before easing existed. Same rule as SPIRAL_MIN_LS_M, measured against the consumer
   // rather than against zero.
-  const easeGap = trackGapM(fly);
-  if(easeLs > 0 && (easeGap <= 0 || easeLs >= 4 * easeGap))
+  if(easeOffered(easeLs, fly))
     tries.push({side: undefined, minR, slow: false, shape: 'eased'});
   tries.push({side: undefined, minR, slow: false, shape: 'arc'},
              {side: undefined, minR, slow: false, shape: 'racetrack'});

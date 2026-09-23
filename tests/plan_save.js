@@ -321,6 +321,10 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const clearPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }, { lat: 1, lon: 3 }], "
     + "lines: [{ a: { lat: 1, lon: 2 }, b: { lat: 1, lon: 3 } }] }, runRoute = [1], planIntent = {}, runUnsafe = [];"
     + " const resetPattern = () => {}, render = () => {}, saveMission = () => saves.push(1);\n"
+    // ⚠ clearPlan counts DRAWN lines now rather than the segments the keep-outs left,
+    // so it asks lineCount(). This fixture has one drawn line per segment, so the number it
+    // confirms is unchanged - what moved is WHICH QUESTION it asks.
+    + " const lineCount = () => mission.lines.length;\n"
     // The REAL giveUpRoute: clearPlan drops the drawn route through it now, and it records
     // WHAT THIS PAGE DID so the Intent card can name the act instead of blaming another
     // console. A stub would hold this green while the recording was broken.

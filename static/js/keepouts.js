@@ -551,7 +551,7 @@ export function channelPolys(frame, feats, marks) {
   for (const f of feats || []) {
     // A CHARTED CHANNEL IS A CHARTED OBJECT. S-57 names two that are a "narrow
     // channel or fairway" in COLREGS Rule 9's own words: DRGARE (Dredged_Area -
-    // depth artificially maintained, so a deep-draught vessel can navigate
+    // depth artificially maintained, so a deep-draft vessel can navigate
     // safely only within it, which is Rule 9(b)'s own test) and FAIRWY
     // (Fairway_area - the designated lane for larger vessels, which is the
     // object the rule is written about). Traffic separation schemes and

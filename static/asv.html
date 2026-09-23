@@ -879,6 +879,7 @@ import { scanChart, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
   from "/static/js/chartink.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
+import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
@@ -7453,7 +7454,7 @@ function updateAisTip(e){ const tip=$("#aisTip");
   // "have those data attached to the icon to read on cursor hover." Every row is omitted
   // rather than shown empty - a contact that broadcasts no destination must not display a
   // blank "Dest" that reads as "nowhere", and a Class B hull legitimately sends neither
-  // destination nor draught.
+  // destination nor draft.
   const rows = [`<b>${nm}MMSI ${v.mmsi}</b>`, aisTypeLabel(v)];
   const size = [];
   if(v.length!=null) size.push(`${fmtHullM(v.length)} LOA`);
@@ -8488,6 +8489,18 @@ async function punchOut(){
       // And the count of turns that did NOT get it matters just as much — the eased rung
       // needs more outboard water than the plain arc and falls back without complaint, so
       // "Eased" on the card and eased on the water are two different claims.
+      // ⚠⚠ AND IF THE RUNG WAS NEVER OFFERED, SAY WHICH FAULT THIS IS. Zero eased turns
+      // reads identically whether every attempt was refused (which wants more water) or the
+      // rung was withheld outright (which wants a finer approach radius) - and the remedies
+      // are opposite. `easeOffered` is the LADDER'S OWN test, imported rather than restated,
+      // so this sentence cannot come to name a cause the code no longer produces.
+      (easeLs > 0 && !easeOffered(easeLs, {approachM: mission.approach_radius_m})
+        ? `. EASED turns were NOT attempted: the ${easeLs.toFixed(1)} m settle length needs `
+          + `waypoints closer than a quarter of it, and this plan's approach radius is `
+          + `${(mission.approach_radius_m || 1).toFixed(1)} m - a curvature ramp thinned to `
+          + `that spacing would ship as an arc wearing the word "eased". Lower the approach `
+          + `radius, or leave the turn shape on Arc`
+        : ``)+
       (nEased?`, ${nEased} eased turn(s) @ R ${minTurnR.toFixed(1)}+ m with `+
         `${fmtDist(easeLs)} of spiral each end (${easedWpts} waypoints; a plain arc would be about half that)`+
         ((nSemi+nTear+nRace)?`, ${nSemi+nTear+nRace} that the eased shape would not fit and fell back to a plain turn`:``):``)+
@@ -9325,7 +9338,11 @@ $("#nogoBtn").onclick = ()=>{                     // toggle overlay; if nogo nev
 // plan, and it used to do that on one click with no question at all. An empty plan has nothing to lose, so it
 // is cleared without asking.
 async function clearPlan(){
-  const nW = (mission.waypoints || []).length, nL = (mission.lines || []).length;
+  // ⚠ lineCount(), NOT mission.lines.length. The latter counts SEGMENTS: a drawn line the
+  // keep-outs cut in two is two entries, and this is the confirmation for the one irreversible
+  // action on the card. "a line is what the operator drew, not what the keep-outs left of it".
+  // nW stays as it is - the endpoint waypoints this deletes really are per segment.
+  const nW = (mission.waypoints || []).length, nL = lineCount();
   if((nW || nL) && !await guiConfirm("Clear the plan",
       "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
       + "is kept on the console as mission.json.bak1.", {always: true})) return;
@@ -10785,7 +10802,7 @@ async function doUpload(){
     // "highlighted", and that highlight is drawn from `runUnsafe` and nothing else:
     // setViolations highlights the FEATURE, only `runUnsafe` highlights the LEG. Nothing is
     // posted here, so "past the reply" has no meaning for it.
-    // ⚠⚠ AND THE OLD DEFENCE WRITTEN HERE WAS FALSE. It read "plan stays not-uploaded, so
+    // ⚠⚠ AND THE OLD DEFENSE WRITTEN HERE WAS FALSE. It read "plan stays not-uploaded, so
     // Start stays gated". Start is gated on the SERVER's `plan_uploaded`, which is set by any
     // earlier successful upload of the session and is cleared ONLY at init and on connect -
     // never by a refusal, a Stop or a blocked upload. So from the second upload of a session
@@ -11749,7 +11766,7 @@ function onState(s){
   // vessels show BATT (V · %). Which one is driven by the vessel's power.type.
   // ⚠ THE VESSEL CARD'S ENERGY ROW IS GONE, AND IT WAS THE ONLY ONE OF THE EIGHT THAT WAS
   // NOT PURELY A DUPLICATE. The pill shows the headline - FUEL % or BATT V - but the row
-  // also carried the LITRES, the ENDURANCE and the RANGE, and `endurance_h` / `range_nm`
+  // also carried the LITERS, the ENDURANCE and the RANGE, and `endurance_h` / `range_nm`
   // appeared NOWHERE else in the page. Deleting the row outright would have taken a diesel
   // vessel's remaining hours and miles off the console altogether, which is not what
   // "repeated elsewhere" covers. They are the pill's TOOLTIP now, so the long form is one

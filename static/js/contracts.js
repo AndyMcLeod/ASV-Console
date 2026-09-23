@@ -514,9 +514,9 @@ export function batteryModel(o) {
 
 
 /**
- * Litres-burned endurance. gauge_profile is OPTIONAL and non-linear on
+ * Liters-burned endurance. gauge_profile is OPTIONAL and non-linear on
  * purpose: the DriX tank is 250 L by drawings against a gauge span of ~206
- * L, so percentage is not proportional to litres. Absent means treat the
+ * L, so percentage is not proportional to liters. Absent means treat the
  * gauge as linear.
  *
  * @param {number} o.capacity_l L
