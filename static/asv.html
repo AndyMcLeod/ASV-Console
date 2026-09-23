@@ -4027,7 +4027,7 @@ function render(){
 
   ctx.clearRect(0,0,w,h);
   const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
-  if(encShow) drawENC(toScreen);
+  if(encShow) drawENCCached(toScreen, w, h, o);   // cached layer; see drawENCCached for the key
   drawNogo(toScreen);
   drawMarks(toScreen);
   drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
@@ -6187,7 +6187,55 @@ function depthRange(){
   const mv = parseFloat($("#sp_maxdepth").value);
   return {min: mn, max: (mv>0 ? mv : 0)};
 }
-function drawENC(toScreen){
+// ⚠ TAKES ITS CONTEXT (2026-09-22). Every `ctx` below is now this parameter, which is the
+// module-level one for a direct call and the CACHE's own when drawENCCached fills the layer.
+// The two are interchangeable here because this function is reached with a pristine context
+// either way: render() assigns `cv.width` on entry, and assigning width RESETS every canvas
+// property, so the live path arrives with defaults - which is exactly what a fresh offscreen
+// canvas has. If that assignment ever moves, this equivalence goes with it.
+// ⚠⚠ THE ENC LAYER IS CACHED, AND THE KEY IS THE WHOLE POINT (2026-09-22).
+//
+// MEASURED: /api/enc for one view returns 5,674 features and 481,980 coordinate pairs, and
+// drawENC walks that list THREE times projecting every coordinate. That is ~1.4 M projections
+// per render, and at the state stream's 4 Hz it was 35.9 % of the main thread with nobody
+// touching the page - redrawing a chart that had not changed. Toggling the page's own CHRT
+// button: 57.5 % busy with it on, 3.4 % with it off, and 1,304 keep-out zones loaded both
+// ways, so this layer is the hang and drawNogo is not.
+//
+// ⚠⚠ AND `sea.enc` IS NOT THE WHOLE INPUT. hazExtent(f) -> koOpts() reads
+// `nogoDR().min`, V.WRECK_RADIUS_M, V.NOGO_BUFFER_M and **sea.waterOffset** - so the hazard
+// circles this layer draws move WITH THE TIDE and with the operator's depth floor, neither of
+// which changes the zoom or the origin. A key of (view + data) alone would hold a layer drawn
+// for a stale tide under an operator, with nothing on screen saying so. chart.js's own koOpts
+// comment refuses to cache itself for exactly this reason - "every field is live ... in the
+// direction that gives a deeper boat LESS clearance than its own file demands" - and the
+// strike key already in this file (see strikeKey) names the same four. This names them too.
+//
+// THE DATA IS COMPARED BY IDENTITY, not by a count: fetchENCBbox REPLACES `sea.enc` wholesale
+// (`sea.enc = {features: ...}`), never mutating it, so `===` is exact and free. A feature
+// COUNT would miss a refetch of the same water at a different depth band.
+let encLayer = null, encLayerSrc = null, encLayerKey = "";
+function encLayerKeyNow(w, h, o){
+  const dr = nogoDR();
+  return [w, h, zoom, Math.round(o.x), Math.round(o.y),
+          dr.min, V.WRECK_RADIUS_M, V.NOGO_BUFFER_M,
+          (sea.waterOffset || 0).toFixed(3)].join("|");
+}
+function drawENCCached(toScreen, w, h, o){
+  if(!sea.enc.features.length) return;
+  const key = encLayerKeyNow(w, h, o);
+  if(!(encLayer && encLayerSrc === sea.enc && encLayerKey === key)){
+    if(!encLayer) encLayer = document.createElement("canvas");
+    // Assigning width/height CLEARS the canvas and resets its context, which is what this
+    // layer wants on every miss - and it is also why the same size has to be cleared by hand.
+    if(encLayer.width !== w || encLayer.height !== h){ encLayer.width = w; encLayer.height = h; }
+    else encLayer.getContext("2d").clearRect(0, 0, w, h);
+    drawENC(toScreen, encLayer.getContext("2d"));
+    encLayerSrc = sea.enc; encLayerKey = key;
+  }
+  ctx.drawImage(encLayer, 0, 0);
+}
+function drawENC(toScreen, ctx){
   if(!sea.enc.features.length) return;
   ctx.save();
   const fillPoly=(g,fill,stroke)=>{ ctx.beginPath(); let any=false;
@@ -8724,6 +8772,32 @@ window.addEventListener("mouseup", e=>{
     render();
   }
 });
+// ⚠⚠ THE POINTER PATH ASKS FOR ONE DRAW PER FRAME, NOT ONE PER EVENT (2026-09-22).
+//
+// MEASURED: the handler below calls render() from SEVEN places, once per mousemove, and a
+// pointer samples at 60-120 Hz. With his plan loaded one render() costs 63.7 ms (the same
+// mousemove that returns before rendering costs 0.2 ms, so the draw is all of it), and in
+// SURV mode with a pattern down it costs 87.5 ms. A two-second corner drag is ~200 events,
+// i.e. ~17.5 s of blocked main thread - which is his 20.2 s page_stall at New Castle, in that
+// exact mode. The work is not just wasted, it ACCUMULATES: the queue grows faster than it
+// drains, so the page keeps redrawing positions the pointer left long ago.
+//
+// ⚠ requestAnimationFrame IS RIGHT HERE AND WRONG IN THE THREE PLACES THIS FILE WARNS
+// ABOUT IT. Those three - the slew, the window-split mirror and the card-size observer - are
+// LOGIC and SYNC that must still happen in a hidden or occluded window, and rAF is suspended
+// there, which is precisely how the mirror froze. This is DRAWING. A window nobody can see
+// has nothing to draw, and the suspension is the behavior wanted rather than the bug: the
+// pending flag survives, and the queued callback runs when the window is shown again.
+//
+// NOT USED BY onState. That path calls render() ONCE per telemetry frame, so there is nothing
+// to coalesce there - what that path needed was the cheaper draw above, and the two fixes are
+// deliberately separate because they answer two different measurements.
+let renderQueued = false;
+function renderSoon(){
+  if(renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(()=>{ renderQueued = false; render(); });
+}
 window.addEventListener("mousemove", e=>{
   const o = originPx(), r = mapEl.getBoundingClientRect();
   const ll = worldToLatLon(o.x + (e.clientX-r.left), o.y + (e.clientY-r.top), zoom);
@@ -8732,28 +8806,28 @@ window.addEventListener("mousemove", e=>{
   updateAisTip(e);                               // AIS vessel identity/course on hover
   if(roseDrag){                                  // chart-local, clamped on read by roseCentre()
     rosePos = {x: (e.clientX-r.left) - roseDrag.dx, y: (e.clientY-r.top) - roseDrag.dy};
-    render(); return; }
+    renderSoon(); return; }
   if(patDrag){
     if(patDrag==="M"){                            // move grip: translate every placed anchor by one delta
       if(patMoveLast){ const dlat=ll.lat-patMoveLast.lat, dlon=ll.lon-patMoveLast.lon;
         for(const k of ["A","B","C"]) if(pat[k]) pat[k]={lat:pat[k].lat+dlat, lon:pat[k].lon+dlon}; }
       patMoveLast = ll;
     } else pat[patDrag] = ll;
-    patClip=null; updatePatReadout(); render(); return; }
-  if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); render(); return; }
-  if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); render(); return; }
+    patClip=null; updatePatReadout(); renderSoon(); return; }
+  if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); renderSoon(); return; }
+  if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); renderSoon(); return; }
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
     syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
-    $("#lineTip").style.display="none"; render(); return; }
+    $("#lineTip").style.display="none"; renderSoon(); return; }
   // the pending measurement's far end follows the pointer. Deliberately does NOT return:
   // a pan may be live underneath (the chart still drags while the tool is armed), and the
   // pan branch below renders — so only render here when it will not.
-  if(measPend){ measPend.b = {lat:ll.lat, lon:ll.lon}; if(!dragging) render(); }
+  if(measPend){ measPend.b = {lat:ll.lat, lon:ll.lon}; if(!dragging) renderSoon(); }
   if(!dragging) return;
   follow = false; setFollow();
   const c = worldPx(center.lat, center.lon, zoom);
   center = worldToLatLon(c.x-(e.clientX-last.x), c.y-(e.clientY-last.y), zoom);
-  last = {x:e.clientX,y:e.clientY}; render();
+  last = {x:e.clientX,y:e.clientY}; renderSoon();
 });
 mapEl.addEventListener("mouseleave", ()=>{ $("#lineTip").style.display="none"; });
 mapEl.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.deltaY<0?1:-1, e.clientX, e.clientY); }, {passive:false});

@@ -386,6 +386,75 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-22 — THE PAGE HANG IS MEASURED, REPRODUCED AND FIXED: IT WAS `drawENC`,
+  AND THE POINTER ASKING FOR A REDRAW PER EVENT (shipped).** Review item #29, open since it was
+  first reported and never isolated.
+
+  * **MEASURED LIVE**, console on port 52010 with his `mission.json.bak1` (rev 221) and a temp
+    state dir, browser pane HIDDEN so every figure is a LOWER bound:
+    * one `render()` costs **63.7 ms**; the identical mousemove that hits `if(!dragging) return`
+      costs **0.2 ms** — so the draw is the entire cost, and event dispatch is free.
+    * idle, nobody touching the page: **13 long tasks / 1,795 ms / 35.9 % of the main thread**.
+    * **ENC on 57.5 % vs ENC off 3.4 %**, with **1,304 keep-out zones loaded BOTH ways** (`v_nogo`
+      read `1304 zones - floor 3.0 m`, i.e. essentially the 1,314 of his stall record). So
+      `drawENC` is ~50 points of it and `drawNogo` over 1,304 zones is ~4.
+    * `/api/enc` for one view returns **5,674 features / 481,980 coordinate pairs / 3,372 rings**,
+      and `drawENC` walks that list **THREE times** projecting every coordinate — ~1.4 M
+      projections per render, ~5.8 M per second at 4 Hz.
+  * **AND THE 20.2 s STALL IS REPRODUCED.** SURV mode, three-click pattern down, ENC + NOGO on:
+    **87.5 ms median per pointer event** (141.8 ms worst). A ~2 s corner drag at a 100 Hz pointer
+    rate is ~200 events — **~17.5 s of blocked main thread**, against his recorded **20.2 s**
+    `page_stall` at New Castle in that exact mode. The handoff's "reproducible from those
+    numbers" was right.
+  * **TWO PATHS, TWO FIXES, AND NEITHER ONE ALONE IS ENOUGH.** `onState` calls `render()` ONCE per
+    telemetry frame, so coalescing buys nothing there — what that path needed was a cheaper
+    draw. The chart `mousemove` handler called it **SEVEN times, once per pointer event**, so
+    what THAT path needed was coalescing. (1) the ENC layer is cached to an offscreen canvas;
+    (2) the pointer path goes through `renderSoon()`, one draw per animation frame.
+  * **⚠⚠ THE KEY IS THE WHOLE POINT, AND MY FIRST DESIGN WAS WRONG.** I proposed keying on
+    (view + ENC data). `hazExtent(f)` -> `koOpts()` reads `nogoDR().min`, `V.WRECK_RADIUS_M`,
+    `V.NOGO_BUFFER_M` and **`sea.waterOffset`** — so the hazard circles this layer draws move
+    **with the TIDE** and with the operator's depth floor, neither of which changes the zoom or
+    the origin. That key would have held a layer drawn for a stale tide under an operator with
+    nothing on screen saying so. `chart.js`'s own `koOpts` comment refuses to cache ITSELF for
+    exactly this reason — *"every field is live ... in the direction that gives a deeper boat
+    LESS clearance than its own file demands"* — and `strikeKey` in this file already names the
+    same four. The key names them now.
+  * **THE DATA IS COMPARED BY IDENTITY.** `fetchENCBbox` REPLACES `sea.enc` wholesale, never
+    mutating it, so `===` is exact and free; a feature COUNT would serve the old band's features
+    back after a refetch of the same water at a different depth.
+  * **AFTER: idle 35.9 % -> 1.0 %** (one 50 ms long task in 5 s), ink still on the chart (6,962
+    sampled pixels painted) and a zoom still invalidates the layer and redraws.
+  * **⚠⚠ AND ONE "MEASUREMENT" WAS WORTHLESS, WHICH IS THE LESSON.** The pan re-measure
+    came back at 0.5 ms per move against 63.7 ms before — a 117x improvement, and meaningless.
+    **`requestAnimationFrame` does not fire in a hidden pane**, so the coalesced draw never ran:
+    the number timed a handler that had deferred all its work to a callback that was never going
+    to happen. It is discarded. The IDLE figure survives because `onState` calls `render()`
+    DIRECTLY, so that path runs hidden or not. **A DISPLAYED-PANE PAN MEASUREMENT IS OWED.**
+  * **WHY `render()`'s BODY DID NOT MOVE.** Three suites — `measure_tool`, `pattern_move_grip`,
+    `trail_persist` — `grab("render")` and assert DRAW ORDER inside that source text. Moving the
+    body to a `renderNow()` would break them, and `measure_tool`'s `CHART_LABEL_PX` would fall
+    back to its `|| [0, 10]` default so check 7c would **pass for the wrong reason**. So
+    `render()` keeps its body and its name and the coalescing is applied at the seven call sites
+    that measurably needed it. `measure_tool` 14 caught the rename on its own guarded path and
+    was updated to match — the property it holds is unchanged.
+  * **rAF IS RIGHT HERE AND WRONG IN THE THREE PLACES THIS FILE WARNS ABOUT IT** (asv.html:3516,
+    9628, 9874). Those three are LOGIC and SYNC that must still run in an occluded window, and
+    rAF is suspended there — which is how the window-split mirror froze. This is DRAWING: a
+    window nobody can see has nothing to draw, and `onState`'s direct `render()` keeps the chart
+    current regardless. `enc_cache` 8 pins the telemetry path as NOT coalesced for that reason.
+  * **TEETH: 8 mutations, 8 killed, 0 survived, 0 skipped**, control read first. Four of them
+    drop ONE field from the key each — every one makes the page faster and leaves it showing a
+    layer drawn for a tide, a depth floor or a hull that no longer applies. New suite
+    `tests/enc_cache.js`, 8 checks, the cache DRIVEN against a recording fake context so a hit
+    and a miss are told apart by behavior rather than by grep.
+  * **⚠ THE REFUTATION PANEL WAS STOPPED, NOT COMPLETED.** It ran over an hour without
+    returning. Its five lenses were worked through by hand instead — purity (which is where
+    the `koOpts` hole came from), canvas-state ordering (`cv.width` is assigned on entry to
+    `render()` and assigning width RESETS the context, so the live path and a fresh offscreen
+    canvas both start pristine), the rAF history, what the cache does NOT buy for a pan, and the
+    three source-reading suites. Recorded as stopped rather than as passed.
+
 * **⚠⚠ 2026-09-22 — THE STAGGERED REVERSAL IS NO LONGER SILENT, AND THE GATE TRADE IS
   MEASURED ON HIS OWN PLANS (shipped).** CLAUDE.md's open item asked for exactly one thing
   before this was touched: *"that trade needs measuring on his plans first."* Done, and the

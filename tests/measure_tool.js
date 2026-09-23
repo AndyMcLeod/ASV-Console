@@ -343,8 +343,14 @@ const MOUSEMOVE = grabListener("window", "mousemove");
 // Match to end of LINE, not to the first `}` — the assignment's own object literal closes
 // a brace, so a `[^}]*` scan reads only half the statement and can never see the guard.
 const BAND = (MOUSEMOVE.match(/^.*if\(measPend\)\{.*$/m) || [""])[0];
+// ⚠ renderSoon(), NOT render(), since 2026-09-22: every draw request on the POINTER path is
+// coalesced to one per animation frame, because this handler was asking for a full redraw per
+// mousemove and each one cost 63.7 ms with a plan loaded. The property this check exists for is
+// unchanged and is the reason the rename is safe to accept here - the measurement leg must ask
+// for a draw ONLY when no pan is live (the pan branch below asks for its own), and it must not
+// `return`, or an armed measure tool would freeze the chart under a drag.
 check("14 the leg follows the pointer, and does not swallow a live pan",
-  () => /measPend\.b\s*=/.test(BAND) && /if\(!dragging\)\s*render\(\)/.test(BAND) && !/return/.test(BAND),
+  () => /measPend\.b\s*=/.test(BAND) && /if\(!dragging\)\s*renderSoon\(\)/.test(BAND) && !/return/.test(BAND),
   () => BAND.trim() || "<absent>");
 
 // ---- THE MENU: gates derived, not re-derived ---------------------------------------- //
