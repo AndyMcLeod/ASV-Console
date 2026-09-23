@@ -252,7 +252,7 @@ SPAWN_LAT = SPAWN_LON = 0.0
 # A PORT IS WHERE YOU ARE; THE VESSEL IS WHAT YOU ARE DRIVING. They were one thing
 # until now - each vessel file carried its own `spawn`, so choosing the DriX chose
 # Lewes - which meant the console could not be pointed at a different base without
-# editing a hull's configuration, and the chart opened on a hard-coded Erie centre
+# editing a hull's configuration, and the chart opened on a hard-coded Erie center
 # that belonged to neither. Andy, 2026-08-15: "change initialization to select port
 # and ASV. the ASV selection is a good model."
 #
@@ -310,8 +310,8 @@ def validate_port(p, source="port"):
 # matters:
 #
 #   1. GEOCODE the name (OpenStreetMap Nominatim - keyless, global, stdlib).
-#   2. SNAP THE RESULT TO CHARTED NAVIGABLE WATER, because a geocoder returns the centre
-#      of a TOWN and a town centre is on LAND. "Nome, Alaska" resolves to 64.4975,
+#   2. SNAP THE RESULT TO CHARTED NAVIGABLE WATER, because a geocoder returns the center
+#      of a TOWN and a town center is on LAND. "Nome, Alaska" resolves to 64.4975,
 #      -165.4062 - a street corner. Taking that as a survey home port would spawn the
 #      boat inland and refuse every route out of it, which is exactly the failure the
 #      seeded New Castle position hit (a pierside guess that sat in a charted 1.8 m area,
@@ -320,7 +320,7 @@ def validate_port(p, source="port"):
 # The snap searches the ENC's own depth areas for the nearest water deep enough for THIS
 # vessel, so the answer is a berth the boat can actually sit in rather than a coordinate
 # that merely looks coastal. Everything degrades in the open: no geocoder, no chart, or
-# no deep-enough water each come back saying so, and the un-snapped place centre is still
+# no deep-enough water each come back saying so, and the un-snapped place center is still
 # offered - the operator can drag the chart and save the view instead.
 GEOCODER = "https://nominatim.openstreetmap.org/search"
 _GEO_CACHE = {}
@@ -1177,7 +1177,7 @@ def load_mission():
             # LEAD-IN / LEAD-OUT (2026-09-08) - how far the boat runs ON a survey
             # line before the coverage starts, and past where it ends, so steering
             # and IMU are settled through the coverage. The stored value is the one
-            # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (metres) or
+            # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (meters) or
             # "s" (seconds, converted client-side at the survey speed). All three
             # travel together or none of them mean anything - a 20 that loses its
             # "s" is 20 m instead of ~41 m, silently.
@@ -1705,7 +1705,7 @@ def _enc_keep_props(props):
     console's own cache: 629 point hazards, 48 of them sounded, ZERO with a
     string VALSOU, and ZERO kept as a hazard despite having enough water over
     them. There is no local S-57 reader here and no operator chart-file import;
-    both are WorldView's, and they are the only two roads the text travelled.
+    both are WorldView's, and they are the only two roads the text traveled.
 
     SO WHAT IS THIS FOR. The day a second source appears - a cell read off a
     disk, an imported GeoJSON, a different service - the fault lands again and
@@ -1945,7 +1945,7 @@ def fetch_enc_features(bbox, min_depth=0.0):
             # accounting, no TTL and no revalidation, so one bad minute became the chart for
             # that bbox for ever. IT HAD ALREADY HAPPENED: an extract in this operator's own
             # cache holds 1591 features - 806 of them depth - and ZERO land, shoreline or dock,
-            # while its neighbour 80 m west, over the same south/east/north edges, holds 252
+            # while its neighbor 80 m west, over the same south/east/north edges, holds 252
             # structures. Land does not vanish over 80 m. Served, `band` is still set, so the
             # client's "we have chart data" fact is TRUE, the Nogo row reads healthy, and
             # Go-To / RTH / punch-out route across a shoreline that is not in the model.
@@ -3310,7 +3310,7 @@ class SimVcu(VcuLink):
         self._hold_clear_m = None
         self._hold_wants_route = False # set beyond the certified water: needs a routed return
         # THE DRIFT-IN. `_coast_from_m` is the range from the LAST waypoint at which the
-        # console asked for the prop to be stopped; None (the default) is today's behaviour
+        # console asked for the prop to be stopped; None (the default) is today's behavior
         # exactly. Once inside it `_coasting` latches and the way comes off under hull drag
         # instead of the engine-governed ramp - see the speed block in tick().
         self._coast_from_m = None
@@ -3608,7 +3608,7 @@ class SimVcu(VcuLink):
             # Latched on the LAST leg only, at the range the console solved for. It is
             # tested HERE, before the waypoint advance below, because that advance sets
             # `_holding` and the station-keep branch is an `elif` - entering from there
-            # would be one tick late by construction, and one tick at 4 kn is half a metre.
+            # would be one tick late by construction, and one tick at 4 kn is half a meter.
             #
             # ⚠ NEVER stop()/pause()/set_neutral() to achieve this. All three clear
             # `_running`, which switches OFF both the wind forcing and the tidal stream in
@@ -3647,7 +3647,7 @@ class SimVcu(VcuLink):
             # (2026-09-02). This model has no keep-out model of its own, so it cannot route;
             # what it has is the CONSOLE'S word, given with the plan, on how much water is
             # clear around the hold point (`_hold_clear_m`, hold.js). Inside that disc a
-            # straight chord back to the centre is clear by construction - every point of a
+            # straight chord back to the center is clear by construction - every point of a
             # disc is in the disc - so the direct drive is honest there. Beyond it the boat
             # takes the way off and says so (`hold_wants_route`), and the console answers
             # with a ROUTED re-approach through the same planner every other commanded
@@ -3674,10 +3674,10 @@ class SimVcu(VcuLink):
 
         # ⚠⚠ A SPENT COAST DOES NOT GET THE PLAN SPEED BACK. The handover below exists so the
         # coast ENDS - not so the engine can put the shed energy straight back in over the
-        # last few metres. Measured on the drix08 approach this suite drives: the coast
+        # last few meters. Measured on the drix08 approach this suite drives: the coast
         # releases 11.6 m off the berth at 1.00 kn, and ordinary powered control then ramped
         # her to 4.00 kn to cover that 11.6 m, arriving with SIXTEEN TIMES the kinetic energy
-        # the manoeuvre exists to remove.
+        # the maneuver exists to remove.
         #
         # ⚠ AND THE OLD RE-ARM BUG WAS HIDING IT. While the latch re-took the coast on every
         # tick the boat kept decaying and crept in at 0.73 kn, so the suite's "she arrives
@@ -3906,7 +3906,7 @@ class SimVcu(VcuLink):
             # THE DRIFT-IN, STATED. `drifting` is the propulsion-off state the mission card
             # has had a branch for since long before anything could set it - "DRIFT -
             # propulsion off, drifting with the environment" was unreachable until this
-            # manoeuvre gave it a producer. `coast_run_m` is what she has actually made good
+            # maneuver gave it a producer. `coast_run_m` is what she has actually made good
             # since the prop stopped, which is the number a coast-down trial reads off.
             "drifting": bool(self._coasting),
             "coast_run_m": (round(range_bearing(self._coast_s0[0], self._coast_s0[1],
@@ -4072,7 +4072,7 @@ class Engine:
         self.boot_id = BOOT_ID
         # Energy override (testing aid): report the pack/tank as full regardless of
         # the real reading, and (in sim) stop the drain/burn. Applies in EVERY mode
-        # and to every behaviour - see set_energy_override / state().
+        # and to every behavior - see set_energy_override / state().
         self.energy_override = False
 
     # -- SSE plumbing ------------------------------------------------------ #
@@ -4220,9 +4220,9 @@ class Engine:
         try:
             f = float(v)
         except (TypeError, ValueError):
-            raise VcuProtocolError("hold_clear_m must be numeric (metres), or absent")
+            raise VcuProtocolError("hold_clear_m must be numeric (meters), or absent")
         if not math.isfinite(f) or f < 0.0:
-            raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of metres")
+            raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of meters")
         return f
 
     @staticmethod
@@ -4235,9 +4235,9 @@ class Engine:
         try:
             f = float(v)
         except (TypeError, ValueError):
-            raise VcuProtocolError("coast_from_m must be numeric (metres), or absent")
+            raise VcuProtocolError("coast_from_m must be numeric (meters), or absent")
         if not math.isfinite(f) or f < 0.0:
-            raise VcuProtocolError("coast_from_m must be a finite, non-negative number of metres")
+            raise VcuProtocolError("coast_from_m must be a finite, non-negative number of meters")
         return f
 
     def upload(self, route=None, hold_clear_m=None):
@@ -4266,7 +4266,7 @@ class Engine:
             self._require(len(wpts) >= 1, "add at least one waypoint first")
             # The saved plan's own waypoints (an upload with no route) meet the same bound.
             self._require(len(wpts) <= ROUTE_MAX_WPTS, too_many_wpts(len(wpts), ROUTE_MAX_WPTS, "saved plan"))
-            completion = plan_completion()            # a plan run honours the setting
+            completion = plan_completion()            # a plan run honors the setting
             # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
             # console's governor re-asserts the right role on the first telemetry frame
             # either way, but starting the boat at the survey speed for a 30-minute transit
@@ -4360,7 +4360,7 @@ class Engine:
     def set_energy_override(self, on):
         """Energy override (testing aid): report the pack/tank as full regardless of
         the real reading, and - in sim - stop the drain/burn. Applies in EVERY mode and
-        to every behaviour, mission running or not: it just forces the energy the console
+        to every behavior, mission running or not: it just forces the energy the console
         sees (battery voltage or fuel tank, whichever the vessel uses). Not gated on
         connection or mode."""
         on = bool(on)
@@ -4400,10 +4400,10 @@ class Engine:
             #
             # MEASURED before this: an escape, then Stop, then Start left `behavior` "survey" on
             # the escape's own one-waypoint plan (wp 1/1), holding at the escape point. That
-            # handed the page a CHAINABLE name for the guard's own manoeuvre, so the end-of-plan
+            # handed the page a CHAINABLE name for the guard's own maneuver, so the end-of-plan
             # Return-to-Home chain fired a return from a point chosen only to be clear of a
             # hazard - the Eastport shape the whitelist exists to prevent - and it re-derived
-            # `run_completion` from nothing, leaving it describing the run the Stop had cancelled.
+            # `run_completion` from nothing, leaving it describing the run the Stop had canceled.
             #
             # A RESUME KEEPS ITS NAME BY CONSTRUCTION: it applies no plan, so these two reads
             # return what was already loaded. `resuming` no longer guards the name at all - it
@@ -4532,7 +4532,7 @@ class Engine:
         self._run_route(r, "goto", note, hold_clear_m, coast_from_m)
 
     def escape(self, lat, lon, hold_clear_m=None):
-        """The in-extremis clearance guard's OWN manoeuvre (guard.js escapeCourse, the helm
+        """The in-extremis clearance guard's OWN maneuver (guard.js escapeCourse, the helm
         rung of clearanceGuard in the page) - never the operator's, and kept structurally
         distinct from go_to() for exactly one reason: `behavior` is "escape", not "goto",
         so its arrival can never be mistaken for an ordinary commanded run.
@@ -4575,7 +4575,7 @@ class Engine:
         it has been set beyond the water certified clear around its hold point
         (`hold_wants_route` on the telemetry - see SimVcu's station-keep branch).
 
-        IT KEEPS THE BEHAVIOUR. A Go-To would do the same driving, and would also rename a
+        IT KEEPS THE BEHAVIOR. A Go-To would do the same driving, and would also rename a
         boat holding at HOME after a Return-to-Home as a "goto" on every card - the run is
         still the run it was; this is a leg of it. Gated on the vessel actually HOLDING,
         because outside that state a route arriving here is a command nobody gave.
@@ -4600,10 +4600,10 @@ class Engine:
         Andy, 2026-09-04: *"Investigate forcing slight deviations in a given track to prevent
         holds when there is still plenty of available water away from the nogo."*
 
-        IT KEEPS THE BEHAVIOUR AND THE RUN, for the same reason reapproach() does: a Go-To
+        IT KEEPS THE BEHAVIOR AND THE RUN, for the same reason reapproach() does: a Go-To
         would do the same driving and would rename a survey a "goto" on every card. This is
-        not a new command, it is the same command with a few metres taken out of it - and a
-        deviation that re-labelled the run would also re-arm the end-of-plan chain, which is
+        not a new command, it is the same command with a few meters taken out of it - and a
+        deviation that re-labeled the run would also re-arm the end-of-plan chain, which is
         the trap the in-extremis escape was rebuilt to avoid.
 
         ⚠ GATED ON AN UNDER-WAY, NON-HOLDING PLAN. A route arriving while the boat is
@@ -4685,7 +4685,7 @@ class Engine:
         TWO SOURCES FOR ONE FIELD, AND THEY FAIL DIFFERENTLY - which is why the branches
         below stay separate rather than merging. Until 2026-08-08 a supplied position was
         DISCARDED and only the live fix was ever used; the operator asked for the chart's
-        right-click point to set HOME, so an explicit lat/lon is now honoured.
+        right-click point to set HOME, so an explicit lat/lon is now honored.
 
         WHAT THAT CHANGES, stated plainly because RETURN-TO-HOME DRIVES TO HOME: an
         explicit point is OPERATOR INPUT landing in a field the vessel will later be sent
@@ -5139,7 +5139,7 @@ class Engine:
         elif etype != "fuel":
             st["battery_state"] = "unknown"
         # Energy override forces a full reading in every mode (even when the link
-        # reports no energy telemetry), so it holds regardless of behaviour. It
+        # reports no energy telemetry), so it holds regardless of behavior. It
         # tops up whichever gauge the active vessel uses.
         if self.energy_override:
             if etype == "fuel":
@@ -5198,7 +5198,7 @@ class Engine:
             # WHICH STATION WINDOWS THE OPERATOR ASKED FOR. The PAGE owns those windows
             # now (it is the only thing that can re-point one in place), so the
             # --no-tide-window / --no-weather-window flags have to reach it - a flag the
-            # server honours and the client does not is a control that half works.
+            # server honors and the client does not is a control that half works.
             "station_windows": {"tide": STATION_WINDOWS_ON["tide"],
                                 "weather": STATION_WINDOWS_ON["weather"]},
             "water": WATER.snapshot(),
@@ -5755,7 +5755,7 @@ class Handler(BaseHTTPRequestHandler):
                         return 400, {"error": "could not find a place called %r "
                                               "(no geocoder, or no such place)" % body["name"]}
                     glat, glon, disp = g
-                    # A GEOCODER RETURNS A TOWN CENTRE, WHICH IS ON LAND. Snap to charted
+                    # A GEOCODER RETURNS A TOWN CENTER, WHICH IS ON LAND. Snap to charted
                     # water this hull can float in, or say plainly that it could not.
                     snap = snap_to_water(glat, glon, MIN_NAV_DEPTH_M)
                     if snap.get("ok"):
@@ -5764,7 +5764,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "snapped": True, "depth_m": snap.get("depth_m"),
                                  "moved_m": snap.get("moved_m"), "note": snap.get("note")}
                     else:
-                        # Still create it at the place centre - the operator can see the
+                        # Still create it at the place center - the operator can see the
                         # chart and move it - but do NOT pretend it is a berth.
                         body = dict(body, lat=glat, lon=glon)
                         found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
@@ -5774,7 +5774,7 @@ class Handler(BaseHTTPRequestHandler):
                 # RE-TAKE it against the state this mutation will actually meet. Arming and
                 # Starting during the lookup was answered ok:True while ENGINE.connect()
                 # below tore the running SimVcu down and respawned the boat at the new base,
-                # thousands of kilometres away, mid-run.
+                # thousands of kilometers away, mid-run.
                 # ⚠ IT HAS TO BE HERE AND NOT LOWER: by the time PORTS is rewritten the
                 # in-memory registry has already changed, so a refusal there would leave the
                 # console half-moved. Nothing has been mutated at this point.
@@ -5826,7 +5826,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     WATER.set_manual(None if mo in (None, "") else float(mo))
                 except (TypeError, ValueError):
-                    return 400, {"error": "manual_offset must be numeric (metres), or empty to clear"}
+                    return 400, {"error": "manual_offset must be numeric (meters), or empty to clear"}
             if body.get("refresh"):
                 WATER.refresh_now()
             return 200, {"ok": True, "water": WATER.snapshot()}
@@ -5923,7 +5923,7 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.stop()
             elif path == "/api/cmd/estop":
                 ENGINE.set_estop(estop_wants_latch(body))  # only an explicit off releases (review #25)
-            # `hold_clear_m` on the four holding behaviours is the console's certified clear
+            # `hold_clear_m` on the four holding behaviors is the console's certified clear
             # disc around the end point (hold.js) - absent means the vessel re-approaches
             # direct, exactly as it always did.
             elif path == "/api/cmd/rth":               # optional ENC-aware detour route
@@ -5938,7 +5938,7 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station
                 ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
-            elif path == "/api/cmd/escape":            # the in-extremis guard's OWN manoeuvre
+            elif path == "/api/cmd/escape":            # the in-extremis guard's OWN maneuver
                 ENGINE.escape(body.get("lat"), body.get("lon"), body.get("hold_clear_m"))
             elif path == "/api/cmd/amend":             # deviate the RUNNING plan, keep the run
                 ENGINE.amend(body.get("route"), body.get("note"))
@@ -7074,7 +7074,7 @@ def main():
     # are OFFERED at all, which is a question about the operator's flags and not about how
     # the console happened to be launched. Inside the block, `--browser none` (every
     # headless harness, and anyone opening the page by hand) would silently ignore
-    # --no-tide-window, and a flag the server honours only sometimes is worse than none.
+    # --no-tide-window, and a flag the server honors only sometimes is worse than none.
     STATION_WINDOWS_ON["tide"] = not args.no_tide_window
     STATION_WINDOWS_ON["weather"] = not args.no_weather_window
 

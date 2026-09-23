@@ -18,7 +18,7 @@
  *          window culls are padded to match (2026-09-21). Grid points span
  *          [x0, x0+(W-1)*cell] while the cull ran to x0+W*cell, so a feature
  *          just outside was culled AND every sample of it rounded to -1, and
- *          one inside the window past the last row's centre rounded to H. The
+ *          one inside the window past the last row's center rounded to H. The
  *          dilation had nothing to grow and the boundary row stayed FREE --
  *          which is the one direction this grid must never be wrong in, because
  *          routing.js relies on it over-approximating and legPath never
@@ -74,7 +74,7 @@
  * `rasterKeepouts` paints the model into a byte grid, `stampSeg` draws one
  * segment into it, and `dilateGrid` grows the painted cells by the keep-clear
  * buffer. Nothing here knows about latitude, longitude or a frame — the model
- * arrives already in ENU metres and the grid is indexed in cells. That is why
+ * arrives already in ENU meters and the grid is indexed in cells. That is why
  * these three could be shared when the rest of the routing layer could not.
  *
  * MEASURED IDENTICAL BEFORE THE MOVE, 2026-08-19. The ASV console and WorldView
@@ -102,7 +102,7 @@
  * `pad` is a margin IN CELLS. A sample landing inside it is CLAMPED to the edge
  * rather than dropped, which is what keeps the boundary rows honest: the grid's
  * own points span [x0, x0+(W-1)*cell], so a hazard just outside that — or inside
- * the window but past the last row's centre — rounded to gx/gy = -1 or W/H and
+ * the window but past the last row's center — rounded to gx/gy = -1 or W/H and
  * was thrown away, leaving the boundary row FREE with the dilation then having
  * nothing to grow. Measured on a 100x100 grid at 3 m: a quay 1.8 m below the
  * first row left 100 cells the exact `blocked()` test refuses, and `legPath`

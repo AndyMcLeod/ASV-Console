@@ -141,7 +141,7 @@
   .vcard .vbar i{display:block;height:100%;background:var(--ink-faint);width:0%;}
   .vcard .vdetail{font-family:var(--sans);font-size:9px;color:var(--ink-faint);line-height:1.3;white-space:normal;word-break:break-word;}
   /* INTENT, moved in from its own 310px pop-out. THAT PANEL CARRIED `font:11px Consolas` ON
-     ITSELF, and renderIntent's rows set only colours - so in a card that declares a
+     ITSELF, and renderIntent's rows set only colors - so in a card that declares a
      font-size nowhere except on .vrow, the whole section inherited the DOCUMENT's 16px and
      rendered enormous. The card is also 196px against the pop-out's 310, so the rows stack
      key-over-value here rather than sitting side by side: at this width a 74px label column
@@ -182,7 +182,7 @@
   .vminipill{display:none;position:absolute;z-index:7;font-family:var(--mono);font-size:10px;padding:4px 9px;
     border-radius:2px;border:1px solid var(--line2);background:rgba(10,17,25,.9);color:var(--ink-dim);cursor:pointer;}
   /* TRANSIENT ALERTS ONLY, AND NOT OVER THE STATUS BAR. This box used to sit at top:52px -
-     centred, directly on top of the status bar's second row - and it carried the SERVER'S
+     centerd, directly on top of the status bar's second row - and it carried the SERVER'S
      STANDING NOTE, which on a simulator connection reads "Simulator connected. No hardware in
      the loop." and never changes. So a permanent string covered live readouts for the whole
      session (Andy, 2026-09-06: "There's a floating message on the top status bar ... Remove
@@ -237,7 +237,7 @@
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);border-radius:3px;
     padding:4px 10px;max-width:80vw;text-align:center;display:none;}
   /* THE GUARD BAR. Above the ENC banner and louder than it, because this one is about the
-     boat rather than about the chart, and it carries a control. Colour tracks the rung. */
+     boat rather than about the chart, and it carries a control. Color tracks the rung. */
   .guardbar{position:absolute;left:50%;transform:translateX(-50%);bottom:152px;z-index:7;
     font-family:var(--mono);font-size:10px;color:#160d02;background:var(--warn);
     border-radius:3px;padding:5px 10px;max-width:80vw;display:none;
@@ -245,7 +245,7 @@
   .guardbar.edge{background:#7fd6a0;}
   .guardbar.helm{background:#e07a6a;color:#180806;}
   /* BLIND is not a rung and must not look like one: no alarm color, because nothing has
-     been measured and nothing is being commanded. Grey says "the console cannot see",
+     been measured and nothing is being commanded. Gray says "the console cannot see",
      which is a different fact from "the console is acting". */
   .guardbar.blind{background:#8a8f96;color:#0d1117;}
   .guardbar.over{background:#9fb6c8;}
@@ -309,7 +309,7 @@
        see openChartMenu(). -->
   <div id="chartMenu" class="cmenu">
     <div class="cmhd" id="cmPos">--</div>
-    <!-- WHAT IS THIS LINE? (review #28): the console draws seven things that look like lines and only their colour
+    <!-- WHAT IS THIS LINE? (review #28): the console draws seven things that look like lines and only their color
          tells them apart. This row names the layer under the click. It reads; it commands nothing, so it is never
          gated on the link, the arm state or which tab is supervising. -->
     <div class="cmi" id="cmWhat"><span>What is this line?</span><span class="cmk" id="cmWhatK">names the layer</span></div>
@@ -357,7 +357,7 @@
 
   <div class="topbar">
     <div class="brand"><b>ASV</b> Status</div>
-    <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current centre as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
+    <select id="portSel" class="pill" title="Operating PORT - where the console opens and, in sim, where the boat spawns. Pick a base here and the vessel separately: a port is where you are, the ASV is what you are driving. Choose &quot;+ Add port here...&quot; to save the chart's current center as a new base - it is retained in this list from then on. (Disarm and stop the run first.)"></select>
     <select id="vesselSel" class="pill" title="Active vessel profile — switch to study another ASV (disarm and stop the run first)"></select>
     <div class="pill"><span class="dot" id="dot"></span><span id="linktext">idle</span></div>
     <div class="pill" id="buildPill" style="display:none;color:var(--warn);border-color:var(--warn);" title=""></div>
@@ -378,7 +378,7 @@
     <div class="pill" title="Vessel roll (starboard down +). In the sim, driven by the sea state (beam seas roll most)."><span class="k">ROLL</span><b id="p_roll">--</b></div>
     <div class="pill batt" id="battPill" title="Click to toggle the energy-full override (report the battery/fuel as full and stop the sim drain/burn). Turns MAGENTA when on. Applies in every mode."><span class="k" id="p_batt_k">BATT</span><b id="p_batt">--</b></div>
     <div class="pill"><span class="k">WPT</span><b id="p_wpt">--</b></div>
-    <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometres or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in metres, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
+    <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometers or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
 
@@ -390,7 +390,7 @@
   <div class="controls">
     <button class="ctl" id="zin" title="Zoom in">+</button>
     <button class="ctl" id="zout" title="Zoom out">&minus;</button>
-    <button class="ctl small on" id="follow" title="Keep the boat centred">BOAT</button>
+    <button class="ctl small on" id="follow" title="Keep the boat centerd">BOAT</button>
     <button class="ctl small" id="wptBtn" title="Waypoint / edit mode: drag a waypoint to move it, click a waypoint to delete, SHIFT-click a survey line to delete it, click open water to add. Edit a punched plan before Upload.">WPT</button>
     <button class="ctl small" id="lineBtn" title="Survey pattern (CAMP 3-click): click start corner, opposite corner, then a point that sets line spacing + direction. Lines fill the box automatically.">SURV</button>
     <button class="ctl small" id="bndBtn" title="Survey-area boundary (CAMP-style): click the chart to drop points, click the first point to close. Survey lines are clipped to this arbitrary polygon.">BND</button>
@@ -399,7 +399,7 @@
     <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; editing in BND always shows it.">AREA</button>
     <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
-    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, coloured by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
+    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, colored by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
@@ -419,7 +419,7 @@
     <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
     <div class="prow"><label>Width</label><span class="phint" id="sp_width" style="color:var(--ink);">--</span></div>
     <div class="prow"><label>Lines</label><span class="phint" id="sp_count" style="color:var(--ink);">--</span></div>
-    <div class="prow punchsep"><label>Min depth m</label><input type="number" id="sp_mindepth" value="2" min="0" max="500" step="0.5" title="Survey COVERAGE minimum — don't survey shallower than this. Separate from the fixed 1 m nogo navigability floor (which every behaviour always avoids)."/></div>
+    <div class="prow punchsep"><label>Min depth m</label><input type="number" id="sp_mindepth" value="2" min="0" max="500" step="0.5" title="Survey COVERAGE minimum — don't survey shallower than this. Separate from the fixed 1 m nogo navigability floor (which every behavior always avoids)."/></div>
     <div class="prow"><label>Max depth m</label><input type="number" id="sp_maxdepth" value="" min="0" max="1000" step="1" placeholder="none" title="Survey coverage maximum. Blank = no maximum (deep water is fine to survey). Deep water is never a nogo — the boat may transit it."/></div>
     <div class="prow"><label>Water m</label>
       <span style="display:flex;gap:3px;align-items:center;">
@@ -427,7 +427,7 @@
         <button class="ctl small" id="sp_water_ref" style="width:22px;height:22px;padding:0;font-size:13px;" title="Refresh from the nearest tide station">&#8635;</button>
       </span></div>
     <div class="phint" id="sp_water_note">tide station: --</div>
-    <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviours (Go-To / RTH / search / survey) route clear by."/></div>
+    <div class="prow"><label>Buffer m</label><input type="number" id="sp_buffer" value="3" min="0" max="200" step="1" title="Keep-clear buffer around every nogo zone. SHARED — this is the buffer all behaviors (Go-To / RTH / search / survey) route clear by."/></div>
     <!-- SPEED BY ROLE. A survey run is three jobs and they do not want one speed; the
          console commands each as the boat moves between them. They start EQUAL, so a
          console that has never been told otherwise behaves exactly as it always did. -->
@@ -440,7 +440,7 @@
         <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
       </select></div>
     <div class="prow"><label>Transit spd</label>
-      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviours.">
+      <select id="sp_spd_transit" title="Speed on everything that is not coverage and not a turn: the approach out to the survey area, hops between separated regions, and the Go-To / RTH / Transit behaviors.">
         <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
       </select></div>
     <div class="phint" id="sp_spd_note">speeds: --</div>
@@ -457,7 +457,7 @@
       <span style="display:flex;gap:3px;align-items:center;">
         <input type="number" id="sp_lead_in" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-IN — how far (or how long) the boat runs ON the line BEFORE the coverage starts, so steering and IMU are settled by the first usable ping. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
         <input type="number" id="sp_lead_out" value="0" min="0" max="2000" step="1" style="min-width:0" title="LEAD-OUT — how far (or how long) the boat keeps running past the END of the coverage before the turn begins. 0 = none. Applied by Punch Out, which is what checks the extra water is clear."/>
-        <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in metres or a DURATION in seconds. A duration is converted at the survey speed.">
+        <select id="sp_lead_mode" style="width:46px" title="Whether the two figures are a DISTANCE in meters or a DURATION in seconds. A duration is converted at the survey speed.">
           <option value="m" selected>m</option><option value="s">s</option>
         </select>
       </span></div>
@@ -468,7 +468,7 @@
          above exists to hide. An EASED turn ramps instead: a clothoid in, the arc, a
          clothoid out, so the helm rate is constant and the boat rolls onto the next line
          with the wheel already amidships.
-         OFF BY DEFAULT, and deliberately: it needs a few metres more outboard water and
+         OFF BY DEFAULT, and deliberately: it needs a few meters more outboard water and
          roughly twice the waypoints, so a console that has never been told otherwise plans
          exactly the turns it always did. The spiral length is the VESSEL's steering settle
          time times the turn speed, so a profile that does not declare one cannot ease. -->
@@ -477,7 +477,7 @@
         <option value="arc" selected>Arc</option><option value="eased">Eased</option>
       </select></div>
     <div class="phint" id="sp_ease_note">turns: arc</div>
-    <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behaviour (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviours.">
+    <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
       <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
       <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
       <label><input type="checkbox" id="enf_haz" checked/>Aids &amp; hazards</label>
@@ -495,7 +495,7 @@
     <div class="phint" id="sp_hint">Click the survey start corner (A).</div>
     <!-- STRIKING A PUNCHED RUN OFF. Its own row rather than another branch of `sp_hint`:
          that element already has five branches writing it and a comment warning that a
-         sixth would forget to reset the warning colour. This one says what is selected,
+         sixth would forget to reset the warning color. This one says what is selected,
          what Delete will do, and — because a deletion with no way back is a trap and a
          struck run is not on the chart to click a second time — carries the only way
          home as a real control rather than a sentence describing one. -->
@@ -657,7 +657,7 @@
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
     <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Nogo keep-clear buffer: how far the ASV stays off every charted structure / shallow when routing (Go-To / RTH / search / survey). Lower it (e.g. 3-5 m) to thread a tight marina; raise it for more standoff. Shared with the SURV panel Buffer; re-routes live.">Buf m</label>
     <input id="c_buffer" type="number" value="3" min="0" max="200" step="1"
-      title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behaviour; re-routes live."
+      title="Nogo keep-clear buffer (m) — the tightness the ASV threads between piers. Lower for tight marinas (3-5 m), raise for more standoff. SHARED by every behavior; re-routes live."
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
     <!-- MIN DEPTH, and it is a ROUTING FLOOR for every behavior now, not a survey setting.
          Andy, 2026-09-07: "On GOTO selection without survey in place there is no option for
@@ -667,9 +667,9 @@
          mirrored with the panel's Buffer. The effective floor is the DEEPER of this and the
          hull's own (see nogoDR in chart.js); Max depth stays survey-coverage-only, because
          deep water is not a hazard and enforcing it would make a deep channel unroutable. -->
-    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Minimum water the ASV will route through, for EVERY behaviour (Go-To / RTH / search / survey) — not just survey coverage. The floor actually used is the deeper of this and the hull's own navigability limit (draft + under-keel clearance), so setting it lower than the hull needs cannot narrow its clearance. Shared with the SURV panel Min depth; re-routes live.">Min dep m</label>
+    <label style="font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-transform:uppercase;" title="Minimum water the ASV will route through, for EVERY behavior (Go-To / RTH / search / survey) — not just survey coverage. The floor actually used is the deeper of this and the hull's own navigability limit (draft + under-keel clearance), so setting it lower than the hull needs cannot narrow its clearance. Shared with the SURV panel Min depth; re-routes live.">Min dep m</label>
     <input id="c_mindepth" type="number" value="2" min="0" max="500" step="0.5"
-      title="Minimum water depth to route through (m) — SHARED by every behaviour. The hull's own floor is the lower bound; ask for more water here and every route respects it. Max depth is survey-coverage only (deep water is never a keep-out)."
+      title="Minimum water depth to route through (m) — SHARED by every behavior. The hull's own floor is the lower bound; ask for more water here and every route respects it. Max depth is survey-coverage only (deep water is never a keep-out)."
       style="width:44px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
     <!-- TRANSIT SPEED. The other two roles (survey, turn) are survey concepts and stay in the
          SURV card; TRANSIT is the one that governs Go-To, RTH and a drawn Transit, so it is
@@ -680,7 +680,7 @@
     <select id="c_spd_transit" title="TRANSIT speed — governs Go-To, RTH, Transit, the approach to a survey and region hops. Shared with the SURV panel's Transit spd; applies live, mid-run included." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="low">Low</option><option value="survey" selected>Survey</option><option value="high">High</option>
     </select>
-    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behaviour (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
+    <select id="c_completion" title="What the ASV does at the end of the plan (Survey / search route): RTH = chain the Return-to-Home behavior (ENC-routed) and station-keep at home (default); Complete = stop; Loiter = station-keep at the last waypoint; Repeat = loop the route until Stop." style="background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:6px 4px;border-radius:2px;">
       <option value="rth" selected>RTH</option><option value="complete">Complete</option><option value="loiter">Loiter</option><option value="repeat">Repeat</option>
     </select>
     <span class="cdiv"></span>
@@ -753,7 +753,7 @@
       <div class="vsec" id="v_mission" style="display:none;">
         <div class="vsechead">Run</div>
         <div class="vrow"><span class="vk">Doing</span><span class="vv" id="mi_activity" style="text-transform:uppercase;" title="What the vessel is doing RIGHT NOW. SURVEYING means it is on a coverage line - and nothing else does. The approach from home, every reversal between lines, a hop between coverage regions, a Go-To and a Return-to-Home are all TRANSITING: the vehicle is under way but not acquiring survey coverage. This is the distinction any continuously-collected data (sonar) must be segmented by.">--</span></div>
-        <div class="vrow"><span class="vk">Mode</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behaviour the RUN is in: survey / search / goto / rth / transit. This stays the same for the whole run - it is not what the vessel is doing at this moment (see Doing).">--</span></div>
+        <div class="vrow"><span class="vk">Mode</span><span class="vv" id="mi_type" style="text-transform:uppercase;" title="The behavior the RUN is in: survey / search / goto / rth / transit. This stays the same for the whole run - it is not what the vessel is doing at this moment (see Doing).">--</span></div>
         <div class="vrow"><span class="vk">Speed</span><span class="vv" id="mi_speed" title="The speed the VESSEL is running to, as it reports it — not merely what the selector says. They should agree; if they do not, this is the one that is moving the boat.">--</span></div>
         <div class="vrow"><span class="vk">Waypoint</span><span class="vv" id="v_wpt" title="Progress along the uploaded route. Before Upload it shows the planned waypoint count.">--</span></div>
         <div class="vrow"><span class="vk">Length</span><span class="vv" id="mi_len" title="Total routed run length (ENC-routed path, incl. the approach)">--</span></div>
@@ -824,13 +824,13 @@
           </ol>
           Parallel survey lines fill the box automatically (boustrophedon). <b>Drag A / B / C</b> to adjust &mdash; spacing, line count and dimensions update live, or <b>type a Spacing</b> to force it. Click <span class="tag">Add&nbsp;to&nbsp;plan</span> to commit.</li>
         <li><b>Survey area (optional).</b> Click <span class="tag">BND</span> and drop points to draw <i>any</i> survey-area polygon (click the first point to close; drag vertices to adjust). The pattern's lines are clipped to that area &mdash; concave shapes split legs correctly.</li>
-        <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behaviour avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
+        <li><b>Punch Out (optional).</b> Click <span class="tag">Punch&nbsp;Out</span> to trim the survey lines to the <b>same nogo zones every behavior avoids</b> (off land / docks, aids &amp; hazards, water below the 1&nbsp;m floor) &mdash; segments clip cyan, transits auto-route amber, unroutable flag red. The survey <b>Min / Max depth</b> is an extra <i>coverage</i> window on top of the nogo (survey only 3&ndash;10&nbsp;m, say). <b>Buffer</b> and the <b>enforce toggles</b> are <i>shared</i> &mdash; changing them re-routes Go-To / RTH / search too. Composes with the survey-area boundary. <span class="tag">CHRT</span> / <span class="tag">NOGO</span> show the chart / nogo overlays. Planning aid only &mdash; verify the plan.</li>
         <li><b>Search pattern (alternative to a survey).</b> Click <span class="tag">SRCH</span>, pick a pattern (<b>Expanding box</b> / <b>Sector</b> / <b>Parallel</b>), click the chart to set the <b>datum</b> (drag the D handle to move it), tune the params, then <span class="tag">Add&nbsp;to&nbsp;plan</span>. Legs clip to the nogo zones (cyan kept / amber routed-around / red blocked). The ASV runs it via the same Arm / Upload / Start flow.</li>
         <li><b>NOGO zones (automatic).</b> On startup the console extracts ENC nogo boundaries for the operating area &mdash; shoreline, manmade features, and water shallower than <b>1&nbsp;m corrected</b> (charted depth + live water level). <span class="tag">NOGO</span> shows / hides the red overlay. <b>Every</b> behavior avoids them: <span class="tag">Go-To</span> and <span class="tag">RTH</span> route around them (or refuse an unreachable target), and search / survey legs clip to clear water. If there's no ENC coverage the console warns and routes direct &mdash; verify the plan.</li>
         <li>Or click <span class="tag">WPT</span> to place / remove individual waypoints.</li>
         <li>Set the <b>arrival radius</b>, <b>speed</b> (Low / Survey / High), and <b>completion</b> in the command bar &mdash; <b>RTH</b> (Return-to-Home at the end, ENC-routed, then station-keep &mdash; the default), <b>Complete</b> (stop at the end), <b>Loiter</b> (station-keep at the last waypoint), or <b>Repeat</b> (loop the route until Stop). Applies on the next Upload; shown as <i>Type</i> and <i>End mode</i> in the <b>Run</b> section of the <b>Mission Status</b> card.</li>
         <li>Command a <b>survey / search</b> plan: <span class="tag">Arm</span> &rarr; <span class="tag">Upload</span> &rarr; <span class="tag">Start</span>. Use <span class="tag">Pause</span> / <span class="tag">Stop</span> / <span class="tag">E-STOP</span> as needed.</li>
-        <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviours &mdash; all available once Armed, no survey plan required.</li>
+        <li><b>Transit (no survey needed).</b> Click <span class="tag">TRAN</span>, click the chart to draw a single- or multi-segment transit line, then <span class="tag">Arm</span> and press <span class="tag">Follow</span> &mdash; the ASV drives the line clear of ENC obstacles and station-keeps at the end. <span class="tag">Go-To</span> (single point), <span class="tag">Hold</span>, and <span class="tag">RTH</span> are the other plan-free behaviors &mdash; all available once Armed, no survey plan required.</li>
       </ol>
       <div class="qnote">The RC transmitter is master &mdash; Sw A &amp; the RC E-STOP are the true failsafe.</div>
     </div>
@@ -860,7 +860,7 @@ import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          ptInGeom, segSamplesEN } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
-// the numbers follow a manoeuvre by either vessel the moment the next report lands -
+// the numbers follow a maneuver by either vessel the moment the next report lands -
 // see the module header for why nothing is cached.
 import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
@@ -1067,7 +1067,7 @@ const TILE_URL = z => (x,y) => `/tiles/${z}/${x}/${y}.png`;
 const MINZ = 3, MAXZ = 20, MAX_TRACK = 40000;  // TILE + M_PER_DEG_LAT: geodesy.js. The trail: 80 km at TRACK_STEP_M
 
 let zoom = 13;
-// Chart centre until the first fix arrives. THIS USED TO BE A HARD-CODED ERIE
+// Chart center until the first fix arrives. THIS USED TO BE A HARD-CODED ERIE
 // POSITION (42.137, -80.087) that belonged to no configured vessel and no operating
 // base - the console simply opened over Lake Erie every time. It is now seeded from
 // the ACTIVE PORT by loadPorts(), which runs at boot; this literal is only what the
@@ -1104,7 +1104,7 @@ let haveFix = false, follow = true;
 // isn't saved while the boat is moving, and only about 4 km is kept. The browser-storage copy saves only after 800 ms
 // without a new point. Above about 1.5 kn a point arrives every 0.75 s or sooner, so it never saves. A reload
 // mid-survey loses the trail back to the last slow-down."
-// * saveTrack was a DEBOUNCE: every new point cancelled the pending write and started the wait again, so a boat laying
+// * saveTrack was a DEBOUNCE: every new point canceled the pending write and started the wait again, so a boat laying
 //   points faster than the wait never wrote at all. It is a THROTTLE now - the first new point arms ONE write
 //   TRACK_SAVE_MS later and the points after it ride along - and the page flushes a pending write when it is hidden
 //   or unloaded (pagehide / visibilitychange, wired below `let asv`), so a reload keeps the whole trail.
@@ -1204,13 +1204,13 @@ function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.su
 // settling of IMU stability after a turn. The user should have options ... to select
 // distance or duration."
 //
-// Every consumer wants METRES, so the conversion lives here and only here. A duration is
+// Every consumer wants METERS, so the conversion lives here and only here. A duration is
 // converted at the SURVEY speed and at no other: the lead exists so the boat is settled
 // AT THE SPEED IT SURVEYS AT by the first usable ping, so timing it at any other speed
 // gives a lead of the wrong length by construction.
 //
 // ⚠ THE STORED VALUE IS THE ONE THE OPERATOR TYPED, in the unit they chose - never the
-// converted metres. Storing metres would freeze a settling TIME into a distance, and the
+// converted meters. Storing meters would freeze a settling TIME into a distance, and the
 // next survey-speed change would leave a lead that no longer settles anything, silently.
 // That is the "remembered snapshot drifts from the plan" shape committedPatternInfo
 // exists to avoid, one card over.
@@ -1224,7 +1224,7 @@ function leadMetres(v){
 function leadInM(){  return leadMetres(mission.lead_in);  }
 function leadOutM(){ return leadMetres(mission.lead_out); }
 /**
- * The EASED reversal's spiral length, in metres — 0 when there is to be no easing.
+ * The EASED reversal's spiral length, in meters — 0 when there is to be no easing.
  *
  * Ls = (how long this hull's steering takes to reach the commanded rate) × (the speed the
  * turn is flown at). The TURN speed, not the survey speed: the spiral is part of the
@@ -1238,7 +1238,7 @@ function easeLsM(){
   const t = V.STEERING_SETTLE_S || 0;
   return t > 0 ? t * roleSpeedMS("turn") : 0;
 }
-/** Along-track distance of `p` from L.a, in metres, signed along a→b. */
+/** Along-track distance of `p` from L.a, in meters, signed along a→b. */
 function alongLineM(L, p){
   if(!L || !p) return 0;
   const ref = L.a, a = llEN(L.a.lat, L.a.lon, ref), b = llEN(L.b.lat, L.b.lon, ref),
@@ -1401,7 +1401,7 @@ let planGen = 0;
 function setPlanIntent(kind, plan, route){
   planGen++;
   // ⚠ A NEW COMMANDED MOTION IS A NEW DECISION. The operator's "proceed" was about one
-  // situation on one track; carrying it into the next run would make a per-episode judgement
+  // situation on one track; carrying it into the next run would make a per-episode judgment
   // into a standing permission, which is the one thing that override must never become. The
   // console's own budget for moving the operator's track resets with it, for the same
   // reason - a fresh plan has not been deviated at all yet. `guardActedAt` and `holdWant` are
@@ -1438,7 +1438,7 @@ function setPlanIntent(kind, plan, route){
   if(plan.lane){
     w.push(plan.partial
       ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
-      : {t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centreline to port"});
+      : {t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centerline to port"});
   }
   const un = (plan.unroutable||[]).length;
   if(un){ planIntent.unsafe = un;
@@ -1447,7 +1447,7 @@ function setPlanIntent(kind, plan, route){
   if(r.length) planIntent.target = r[r.length-1];
   return planIntent;
 }
-// WHAT EACH WAYPOINT IS FOR. Labelled only from what is KNOWN, never guessed: a point that
+// WHAT EACH WAYPOINT IS FOR. Labeled only from what is KNOWN, never guessed: a point that
 // matches a committed plan waypoint IS one, the last point IS the target, and the rest are
 // the router's or the lane's own insertions. Saying "generated" is the honest answer where
 // the console cannot distinguish a detour vertex from a lane vertex, and is far better than
@@ -1521,7 +1521,7 @@ let clearance = {m:null, kind:null, closing:false, slowed:false, prev:null, info
 let pauseMark = null;      // {line, along, at:{lat,lon}, t} or null (not on a line)
 // ⚠ TWELVE BOAT LENGTHS IS ANDY'S NUMBER, AND IT IS A LENGTH THAT BELONGS TO THE HULL.
 // 92.5 m on the 7.7 m diesel ASV, 22.8 m on the 1.9 m launch - which is the point of
-// expressing it in hulls rather than metres: the distance a boat needs to settle and to
+// expressing it in hulls rather than meters: the distance a boat needs to settle and to
 // lay down overlapping coverage scales with the boat, not with the survey.
 const RESUME_BACK_LENGTHS = 12;
 function resumeBackM(){
@@ -1577,7 +1577,7 @@ let escapeThrottle = false;
 // and guardTrack projects along exactly that, so the ladder reads CLEAR on the next frame BY
 // CONSTRUCTION - clearance_guard 15z3 prints it: `levels helm,helm,clear,clear`, with the boat
 // unmoved. A release on the guard's clear branch would therefore fire a few frames into a
-// manoeuvre a whole horizon long, and the governor WOULD bid, because that branch nulls
+// maneuver a whole horizon long, and the governor WOULD bid, because that branch nulls
 // `commandedSpeed` on the same line.
 //
 // NOT on arrival either: a boat station-keeping at the escape point is sitting at a point
@@ -1606,7 +1606,7 @@ function updateClearance(){
   const m = clearanceM(p, nogo.ko, CLEAR_CAP_M);
   const now = Date.now();
   // CLOSING IS MEASURED OVER A WINDOW, not against the previous frame. Telemetry jitter of
-  // a few centimetres would otherwise flip "closing" on and off every second - and take an
+  // a few centimeters would otherwise flip "closing" on and off every second - and take an
   // automatic speed command with it, which is the last thing that should chatter.
   const prev = clearance.prev;
   const closing = !!(prev && now - prev.t >= CLEAR_CLOSING_MS && m < prev.m - 0.5);
@@ -1621,7 +1621,7 @@ function updateClearance(){
 }
 // THE RESPONSE. Separated from the measurement so the number can be shown - and tested -
 // without anything being commanded, and so there is exactly ONE place that decides to
-// command. The judgement itself lives in static/js/guard.js and commands nothing.
+// command. The judgment itself lives in static/js/guard.js and commands nothing.
 //
 // ⚠⚠ THIS RUNG LADDER REVERSES A STANDING RULE AT ITS LAST STEP, ON ANDY'S EXPLICIT
 // INSTRUCTION (2026-09-02): *"console should take the helm in extremis."* After the Pago
@@ -1804,7 +1804,7 @@ let holdWant = null;
  *
  * So the root is fixed upstream, and this is the damping that should have been here anyway:
  * NO SINGLE FRAME MAY HAND BACK THE THROTTLE. Four seconds is four times the period of the
- * oscillation actually recorded, and at survey speed it costs about five metres.
+ * oscillation actually recorded, and at survey speed it costs about five meters.
  */
 const RELEASE_HOLD_MS = 4000;
 let clearHoldAt = 0;               // when the water first read clear AND the counterfactual agreed
@@ -2007,7 +2007,7 @@ function clearanceGuard(){
   const act = !!(S && S.armed && !S.estop) && supervising();
   const rose = a.level !== "clear" && a.level !== guardLevel;
   // `blind` sits at the bottom with `clear` so it can never read as an ESCALATION - it is
-  // the absence of a judgement, not a rung - but it is not `clear` anywhere else.
+  // the absence of a judgment, not a rung - but it is not `clear` anywhere else.
   const RUNG = {blind:0, clear:0, edge:1, slow:2, hold:3, helm:4};
   const escalated = RUNG[a.level] > RUNG[guardLevel];
   // ⚠ ONE CALL, ABOVE THE BRANCH, AND THAT PLACEMENT IS THE WHOLE GUARANTEE. The dwell has
@@ -2105,7 +2105,7 @@ function clearanceGuard(){
   renderGuardBar(a, c);
   if(!act) return c;                       // the operator has it; alarm, do not fight
 
-  // ── RUNG 1: EDGE. A few metres over, and keep going. ──────────────────────────────
+  // ── RUNG 1: EDGE. A few meters over, and keep going. ──────────────────────────────
   //
   // Andy, 2026-09-04, with a survey stopped at its own start and a Go-To put into holding:
   // *"the recent modifications have been built to prevent the ASV from running into
@@ -2116,7 +2116,7 @@ function clearanceGuard(){
   // ⚠ THIS IS THE PLANNER ACTING, NOT THE HELM. The console does not command a heading here
   // - it amends the ROUTE, through the same keep-out model and the same verification every
   // commanded motion goes through, and the vessel's own guidance flies it. That is the
-  // authority the console has always had over a route, exercised a few metres at a time.
+  // authority the console has always had over a route, exercised a few meters at a time.
   // The helm rung below is still the only place a course is commanded directly.
   //
   // ⚠ AND IT IS NOT GATED ON THE OVERRIDE. A deviation is continued forward progress at
@@ -2214,9 +2214,9 @@ function clearanceGuard(){
     // Andy, 2026-09-10, on the third of four defects: *"The deviation rung can't answer a
     // turn. Re-generating the reversal tighter or further inboard is a real amendment;
     // moving one arc vertex is not."* He is right about the diagnosis and his own log proves
-    // it - NOT ONE `/api/cmd/amend` in the whole session, with fifteen metres of deviation
+    // it - NOT ONE `/api/cmd/amend` in the whole session, with fifteen meters of deviation
     // budget unspent, because `edgeAround` may move a corner and a reversal is not a corner:
-    // it is a run of vertices a metre apart, and nudging one of them makes a spike the
+    // it is a run of vertices a meter apart, and nudging one of them makes a spike the
     // re-projection then refuses.
     //
     // But the answer to a turn was never a deviation. A turn's trouble is TRACKING - how
@@ -2358,7 +2358,7 @@ function clearanceGuard(){
   // ── RUNG 4: THE HELM. In extremis: the drift-only track enters too, so no amount of
   // slowing or stopping helps. Steer out.
   //
-  // ⚠ A DEDICATED BEHAVIOUR, NOT A GO-TO. An escape shaped as an ordinary Go-To used to
+  // ⚠ A DEDICATED BEHAVIOR, NOT A GO-TO. An escape shaped as an ordinary Go-To used to
   // arrive, hold, and - because completion="rth" is the operator's STANDING setting, not
   // something this emergency touches - immediately re-fire the end-of-plan chain, sending
   // the boat straight back toward whatever it had just been steered clear of. Measured
@@ -2644,7 +2644,7 @@ function speedGovernor(){
   // and needs the same stand-down. Without it the helm rung's HIGH was countermanded on the
   // frame that issued it - see escapeThrottle's own note.
   if(escapeThrottle) return null;
-  // ⚠ A COASTING BOAT HAS NO GOVERNOR. The whole manoeuvre is the ABSENCE of a commanded
+  // ⚠ A COASTING BOAT HAS NO GOVERNOR. The whole maneuver is the ABSENCE of a commanded
   // speed, and this function's job is to command one every time the role changes - it would
   // re-power the prop within a frame of it stopping and drive the boat at the berth it was
   // gliding onto. The vessel says when it is coasting; that is the one authority here.
@@ -2943,7 +2943,7 @@ function renderIntent(){
           + '</div>';
   }
   // WAYPOINT DENSITY. The single most useful number for "the path looks odd": a plan whose
-  // points sit metres apart is a resampled smooth track, and its bearings will swing wildly
+  // points sit meters apart is a resampled smooth track, and its bearings will swing wildly
   // between neighbors without the boat doing anything strange. Reported so the operator
   // can tell that apart from a genuinely erratic route.
   // ⚠ THE DENSITY IS THE DRAWN PLAN'S; THE WINDOW WAS THE BOAT'S. Keyed to `rr` with `idx`
@@ -3024,7 +3024,7 @@ let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finis
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
 let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
 let patClip = null;                            // Punch-Out result: the RUNS, lead included [[p0,p1]..]
-// Per-run lead ACTUALLY APPLIED, in metres: {in, out}, parallel to patClip. It is what the
+// Per-run lead ACTUALLY APPLIED, in meters: {in, out}, parallel to patClip. It is what the
 // chart allowed, not what was asked for - a lead is trimmed where the extra water is not
 // clear - so it is the only honest source for "which part of this run is coverage".
 // ⚠ EVERY READ MUST TOLERATE A MISSING ENTRY. patClip is assigned from several places and
@@ -3125,7 +3125,7 @@ let uploadBusy = false;
 // and what follows carries the three fixes that came out of diagnosing that.
 //
 // `Min depth` and `MIN_SURVEY_LINE_M` already drop coverage by RULE. This is the same
-// decision one line at a time, because "not worth surveying" is a judgement about this
+// decision one line at a time, because "not worth surveying" is a judgment about this
 // water and this vessel that no threshold makes for you.
 //
 // ⚠ MIDPOINTS, NOT INDICES. The runs are rebuilt from the three corners and the chart
@@ -3155,17 +3155,17 @@ let patClipMemo = null;
 // mission.waypoints and run through the normal upload/start flow.
 let search = {type:"expbox", datum:null, turn:1};   // in-memory only (like pat)
 let searchDrag = false;                        // datum handle being dragged
-// single/multi-segment transit line (draw + follow behaviour) - [{lat,lon}] vertices
+// single/multi-segment transit line (draw + follow behavior) - [{lat,lon}] vertices
 let planKind = "survey";                         // what the last committed PLAN is (survey | search)
 // THE DISTANCE DISPLAY UNIT - one operator preference, LONG distances only (the DIST pill
-// on the top bar). Canonical is METRES everywhere - vessel files, mission store, wire,
+// on the top bar). Canonical is METERS everywhere - vessel files, mission store, wire,
 // every calculation - and the choice is applied at the DISPLAY EDGE, exactly like the feet
 // on chart tiles and the nm on the AIS card. The scope decisions are deliberate and
 // settled, don't widen them: SHORT distances (line spacing, buffers, draft, depths, the
-// LINES table) always read in METRES - 25 m of spacing is 0.0135 nm, unusable - and the
+// LINES table) always read in METERS - 25 m of spacing is 0.0135 nm, unusable - and the
 // AIS card reads nm ALWAYS, because its contact list has never been anything else.
 // fmtDist() is THE formatter for a long distance; a new readout that hand-rolls its own
-// divide-by-1000 kilometre string beside it will not follow the pill
+// divide-by-1000 kilometer string beside it will not follow the pill
 // (tests/units_toggle.js checks none has crept back in).
 const UNITS_KEY = "asv_units_v1";
 setDistUnit(lsGet(UNITS_KEY, {u:"km"}).u);   // units.js owns the value; this seeds it
@@ -3247,10 +3247,10 @@ const AIS_LABEL = {cargo:"Cargo", tanker:"Tanker", passenger:"Passenger", fishin
   special:"Pilot / SAR / gov", military:"Military", other:"Other", unknown:"Unknown type"};
 function aisTypeLabel(v){ return (AIS_LABEL[v.cat]||v.cat) + (v.type ? " (AIS "+v.type+")" : ""); }
 // A hull dimension in the operator's own distance unit is WRONG - a ship is quoted in
-// metres the world over, and converting 295 m to 0.16 NM helps nobody. Metres always.
+// meters the world over, and converting 295 m to 0.16 NM helps nobody. Meters always.
 function fmtHullM(m){ return m >= 100 ? Math.round(m)+" m" : m.toFixed(1).replace(/\.0$/,"")+" m"; }
 // CPA/TCPA for one contact against the boat, RECOMPUTED ON EVERY CALL. Nothing is cached,
-// so a manoeuvre by either vessel is reflected as soon as the next report lands - see
+// so a maneuver by either vessel is reflected as soon as the next report lands - see
 // static/js/targets.js. Null when the boat has no fix or the contact reports no track.
 function aisCpa(v){
   // ⚠ THE BOAT'S TRACK IS ON `S.status`, NOT ON `asv`. `asv` carries the POSITION and the
@@ -3271,10 +3271,10 @@ function aisCpa(v){
 // and printing its old closest approach as though it were ahead is the one wrong answer
 // that reads exactly like a working alarm.
 function cpaText(c){
-  // ⚠ fmtDist TAKES METRES. This read `fmtDist(c.cpaM/1000)` and every CPA under a
-  // kilometre rendered as "0 m" - a 434 m closest approach displayed as a collision.
-  // fmtDist keeps anything under 1000 m in metres in both unit modes, which is exactly
-  // right for a CPA: metres where it matters, the operator's own unit beyond that.
+  // ⚠ fmtDist TAKES METERS. This read `fmtDist(c.cpaM/1000)` and every CPA under a
+  // kilometer rendered as "0 m" - a 434 m closest approach displayed as a collision.
+  // fmtDist keeps anything under 1000 m in meters in both unit modes, which is exactly
+  // right for a CPA: meters where it matters, the operator's own unit beyond that.
   const d = fmtDist(c.cpaM);
   if(c.tcpaS == null) return `CPA ${d} · holding station`;
   if(!c.closing)      return `CPA ${d} · opening`;
@@ -3405,7 +3405,7 @@ async function loadMission(){
       $("#c_buffer").value = nogo.buffer; $("#sp_buffer").value = nogo.buffer;
       // The lead controls, restored onto the card. The MODE first: the two numbers mean
       // different lengths depending on it, and a mode restored after them would leave the
-      // note quoting metres for a duration until the next keystroke.
+      // note quoting meters for a duration until the next keystroke.
       if($("#sp_lead_mode")) $("#sp_lead_mode").value = mission.lead_mode || "m";
       if($("#sp_lead_in"))   $("#sp_lead_in").value   = mission.lead_in  ?? 0;
       if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out ?? 0;
@@ -3454,7 +3454,7 @@ function applyVesselToUI(v){
     V.NOGO_MIN_DEPTH_M = v.hull.draft_m + v.planning.under_keel_clearance_m;
   // Rule 9 keep-right fairway reach (wider for a big boat in a wide dredged channel)
   V.CHANNEL_REACH_M = (v.planning && typeof v.planning.channel_reach_m==="number") ? v.planning.channel_reach_m : null;
-  // The hull's own colour on the chart (see state.js). A string or nothing - anything
+  // The hull's own color on the chart (see state.js). A string or nothing - anything
   // else is ignored rather than handed to the canvas, where a bad value paints nothing
   // and the boat silently disappears.
   const disp = v.display || {};
@@ -3479,7 +3479,7 @@ function applyVesselToUI(v){
 // "+ Add port here..." row - the operator's own bases are appended to the registry and
 // RETAINED, so a place typed once is in this list for good.
 //
-// THE NEW PORT'S POSITION IS THE CHART'S CURRENT CENTRE, not a typed coordinate. The
+// THE NEW PORT'S POSITION IS THE CHART'S CURRENT CENTER, not a typed coordinate. The
 // operator is already looking at the place; asking them to read a latitude off the screen
 // and type it back in is a transcription error waiting to happen, and this console has a
 // standing rule that the gesture should carry the point (the same reasoning that moved
@@ -3529,7 +3529,7 @@ let slew = null;               // {t0,from,to,z0,zOut,outMs,panMs,inMs,total} wh
 // not theoretical. The server RESPAWNS the sim boat at the new base inside the /api/ports
 // request, so a telemetry frame carrying the new position can arrive BEFORE the fetch
 // promise resolves. Gating BOAT-follow on `slew` alone left that gap open: follow snapped
-// the centre to the destination first, and startPortSlew then planned a flight from the
+// the center to the destination first, and startPortSlew then planned a flight from the
 // new base to the new base - total 0 ms, short-circuited, no animation at all. It looked
 // exactly like the teleport it was meant to replace, and only sampling the live zoom
 // showed it (the arc never left z13). Set before the request, cleared by portMoveDone().
@@ -3590,7 +3590,7 @@ function startPortSlew(to, label, fromLabel, from){
   const s = planSlew(from || {lat:center.lat, lon:center.lon}, to, zoom);
   s.toLabel = label || ""; s.fromLabel = fromLabel || "";
   portMoveShow(label, s.km);
-  // A base a few hundred metres away is not a journey - land it and say so, rather than
+  // A base a few hundred meters away is not a journey - land it and say so, rather than
   // playing a two-frame animation nobody can read.
   if(s.total < SLEW_STEP_MS){ center = {...to}; render(); portMoveProgress(1); return; }
   s.t0 = Date.now(); slew = s;
@@ -3672,7 +3672,7 @@ function portMoveStage(text){
   $("#portMoveSub").textContent = text;
 }
 function portMoveDone(note){
-  portMoving = false;                                    // BOAT-follow has the centre back
+  portMoving = false;                                    // BOAT-follow has the center back
   const el=$("#portMove"); if(el) el.style.display = "none";
   const sel=$("#portSel"); if(sel) sel.disabled = false;
   if(note) flashNote(note);
@@ -3740,8 +3740,8 @@ async function switchPort(id){
   }
 }
 // FIND A SURVEY BASE BY NAME. The server geocodes the name and then SNAPS the result to
-// charted water this hull can float in - a geocoder returns the centre of a town, and a
-// town centre is on land ("Nome, Alaska" resolves to a street corner 600 m inland of
+// charted water this hull can float in - a geocoder returns the center of a town, and a
+// town center is on land ("Nome, Alaska" resolves to a street corner 600 m inland of
 // usable water). What comes back says which of those happened, and the operator is told:
 // a base that could not be put on water is flagged rather than quietly spawning inland.
 async function findPortByName(){
@@ -3770,7 +3770,7 @@ async function findPortByName(){
                  + " Chart moved there; verify the berth before running.");
     } else {
       showBanner("Port \"" + q + "\" → " + (f.geocoded || "") + ". ⚠ " + (f.note || "no chart")
-                 + " — this is the PLACE CENTRE, which is on land. Pan to a berth and use "
+                 + " — this is the PLACE CENTER, which is on land. Pan to a berth and use "
                  + "\"Save this view as a port\" before spawning here.");
     }
     await resetForNewArea(d.spawn, null);
@@ -3781,7 +3781,7 @@ async function findPortByName(){
 }
 async function addPortHere(){
   const name = (window.prompt("Name this port (it is added to the list and kept):", "") || "").trim();
-  if(!name){ fillPortPicker(); return; }                 // cancelled - restore the selection
+  if(!name){ fillPortPicker(); return; }                 // canceled - restore the selection
   const body = {name, lat: center.lat, lon: center.lon};
   // ⚠ CAUGHT TOO, though this one latches nothing: it sets `portMoving` only AFTER the
   // request. What a rejection costs here is the PICKER - fillPortPicker is skipped, so
@@ -4086,7 +4086,7 @@ function render(){
         ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); });
       ctx.setLineDash([]);
     }
-    // Behaviour routes (Go-To / RTH / Transit) have no mission.waypoints, so draw the
+    // Behavior routes (Go-To / RTH / Transit) have no mission.waypoints, so draw the
     // route's waypoints here as diamonds - same style/labels as a survey's W#. (Hold has
     // no transit, and clears runRoute.)
     // UNLABELLED: these routes are GENERATED (the channel lane resamples them at a
@@ -4178,14 +4178,14 @@ function render(){
 // [[verify-the-ink-not-the-box]].
 //
 // WHAT IT SHOWS: the wind the sim is actually pushing the boat with, FROM-direction (the
-// meteorological convention the readouts already use), speed in knots at the centre.
+// meteorological convention the readouts already use), speed in knots at the center.
 const ROSE_KEY = "asv_windrose_v1";
 const ROSE_R = 92;                                    // the ONE dimension; everything derives
 // Ring + lettering ink (Andy, 2026-08-10: "make the rings and lettering black"). Kept as
 // named constants so the two are changed together and neither drifts into a literal.
 const ROSE_INK = "rgba(8,14,20,0.92)";                // rings, ticks, cardinal letters
 const ROSE_INK_SOFT = "rgba(8,14,20,0.62)";           // the 5° minor ticks
-let rosePos = lsGet(ROSE_KEY, null);                  // {x,y} chart-local centre, or null = default
+let rosePos = lsGet(ROSE_KEY, null);                  // {x,y} chart-local center, or null = default
 let roseDrag = null;                                  // {dx,dy} grab offset while dragging
 let roseEnv = null;                                   // last env block seen (wind lives here)
 let roseCur = null;                                   // last `current` block (NOAA OFS forecast)
@@ -4208,24 +4208,24 @@ function roseArm(ctx, ang, len, halfW, fill){
   ctx.moveTo(0, -len); ctx.lineTo(halfW, 0); ctx.lineTo(0, halfW*0.55); ctx.lineTo(-halfW, 0);
   ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
 }
-// THE HULL COLOURS ARE VESSEL CONFIGURATION, not constants in this file. Andy: "Color will
+// THE HULL COLORS ARE VESSEL CONFIGURATION, not constants in this file. Andy: "Color will
 // be the common color of the given ASV. Yellow for the small ZBoat, Red for the DriX and
 // yellow/black for BEN" - which is a property of the BOAT, so it lives in vessels/<id>.json
 // as display.hull_color / display.hull_color2 and reaches here through V. A table of ids in
 // the page would be the hardcoded-vessel-constant this console spent a refactor removing.
-// Absent, it falls back to the chart's own --asv colour, so a vessel file written before
+// Absent, it falls back to the chart's own --asv color, so a vessel file written before
 // this existed looks exactly as it did.
 function hullColor(){ return V.HULL_COLOR || getCSS("--asv"); }
 function hullColor2(){ return V.HULL_COLOR2 || null; }
 // An ISOSCELES triangle: apex forward, base astern, longer than it is wide so the pointed
 // end is unmistakable at a glance and at any rotation. `course` is degrees true.
 //
-// A SECOND COLOUR IS A LIVERY, NOT A GRADIENT: the aft third is filled with it (BEN is
+// A SECOND COLOR IS A LIVERY, NOT A GRADIENT: the aft third is filled with it (BEN is
 // yellow and black). Drawn as its own polygon rather than a clip, so it survives the canvas
 // state the rest of render() leaves behind.
 const GLYPH_FWD = 12, GLYPH_AFT = 7, GLYPH_HALF = 6.5;
 // AN OUTLINE THAT CANNOT DISAPPEAR. The chart ground is near-black (#0a141c), so a dark
-// hull outlined in a darker colour has no edge at all - and one of the AIS categories is
+// hull outlined in a darker color has no edge at all - and one of the AIS categories is
 // BLACK by the operator's own scheme (tug / tug and tow). Pick the outline from the FILL's
 // luminance rather than fixing it: dark ink on a light hull, light ink on a dark one.
 // Relative luminance, sRGB weights; anything the canvas cannot parse falls back to dark.
@@ -4241,8 +4241,8 @@ function glyphOutline(fill){
 // disagree about which way "forward" is. `scale` sizes it (AIS contacts are drawn smaller
 // than the vessel under command, so the operator's own boat stays the salient one).
 // A CONTACT AT ITS TRUE SIZE, in the same bow-forward shape as the glyph so the two read
-// as the same kind of object at different scales. `box` is hullBox()'s output in metres,
-// `mpp` the chart's metres-per-pixel; the shape is drawn about the ANTENNA, which is where
+// as the same kind of object at different scales. `box` is hullBox()'s output in meters,
+// `mpp` the chart's meters-per-pixel; the shape is drawn about the ANTENNA, which is where
 // the reported position actually is, using the fore/aft and port/starboard offsets AIS
 // broadcast. A hull is a rectangle with a raked bow - not a pentagon glyph - because at
 // this zoom the operator is looking at a berth or a channel and the footprint is the point.
@@ -4343,14 +4343,14 @@ function drawWindRose(){
     ctx.fillStyle = live ? "rgba(46,134,171,0.95)" : "rgba(120,120,120,0.45)"; ctx.fill();
     ctx.restore();
   }
-  // --- the CURRENT ARROW: a different SHAPE, not just a different colour ------
+  // --- the CURRENT ARROW: a different SHAPE, not just a different color ------
   // WIND AND CURRENT USE OPPOSITE CONVENTIONS and that is the whole hazard here.
   // Wind is named by where it comes FROM; a current's SET is where the water GOES.
-  // Two needles of the same shape, differing only in colour, is precisely how an
+  // Two needles of the same shape, differing only in color, is precisely how an
   // operator reads one as the other at a glance - so the current is a single-headed
   // ARROW (one unambiguous point, in the direction the water moves) rather than the
   // wind's two-tone double-ended needle, and it rides OUTSIDE the star on the ring
-  // instead of through the middle. Colour agrees with the convention rather than
+  // instead of through the middle. Color agrees with the convention rather than
   // carrying it: sea-blue for water.
   const cs = (roseCur && roseCur.ok && roseCur.speed_kn != null) ? roseCur.speed_kn : null;
   const cset = (roseCur && roseCur.ok && roseCur.set_deg != null) ? roseCur.set_deg : null;
@@ -4388,7 +4388,7 @@ function drawWindRose(){
   ctx.strokeText(txt, 0, R*1.02); ctx.fillText(txt, 0, R*1.02);
   if(sub){ ctx.font = "600 " + (R*0.22).toFixed(1) + "px Consolas,monospace";
     ctx.strokeText(sub, 0, R*1.38); ctx.fillText(sub, 0, R*1.38); }
-  // The current's own line, BELOW the wind's and LABELLED. Two speeds in knots stacked
+  // The current's own line, BELOW the wind's and LABELED. Two speeds in knots stacked
   // unlabelled would be a guessing game; "set" names both the quantity and its
   // convention. A projected value keeps the same `~` it carries in the vessel card.
   if(cs != null && cset != null){
@@ -4703,7 +4703,7 @@ function accumLineTime(){
 // stats, so a survey STOPPED MID-REVERSAL leaves it set; a speedRole() that looked straight
 // at it would have called the chained Return-to-Home a TURN and run the whole way home at
 // the turn speed. This function has always got that right, because it asks what the
-// BEHAVIOUR is before it looks at either variable. One classifier, one answer, one place.
+// BEHAVIOR is before it looks at either variable. One classifier, one answer, one place.
 function currentActivity(){
   const run = S && S.run, st = (S && S.status) || {};
   if(st.holding){
@@ -4795,7 +4795,7 @@ function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flo
     const run = distTo(L.a, L.b);
     // `len` STAYS COVERAGE — "a LINE is coverage, always" — but `plan` is the whole RUN,
     // because `actual` is clocked over the whole run (the boat is on the line from the
-    // first metre of lead-in) and two columns measuring different water cannot be
+    // first meter of lead-in) and two columns measuring different water cannot be
     // compared. The lead column is what reconciles them; without it the plan would read
     // long against a coverage length for no visible reason.
     const lead = Math.min(run, Math.max(0, L.lead_in_m||0) + Math.max(0, L.lead_out_m||0));
@@ -4808,7 +4808,7 @@ function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, 
 // a comment admitting the real approach is routed at Upload - and at this console's home
 // water the straight line from the pier to the survey area crosses LAND, so a straight-line
 // "transit time" here would not be an approximation, it would be a different route's time.
-// These two rows use the same planner every behaviour flies (planNogoRoute: keep-outs +
+// These two rows use the same planner every behavior flies (planNogoRoute: keep-outs +
 // the Rule 9 lane), so the time quoted is the time of the route the boat would actually run.
 //
 // ROUTING IS CPU WORK AND renderLineTable RUNS ON EVERY TELEMETRY FRAME. So the routes are
@@ -4840,7 +4840,7 @@ function transitEstKey(boat, wps, home){
 }
 function transitEstCompute(boat, wps, home){
   // Pure of the DOM and of the cache: route the two legs and report honestly.
-  //   {m, direct}  routed metres (direct=true when nogo wasn't loaded - a straight guess)
+  //   {m, direct}  routed meters (direct=true when nogo wasn't loaded - a straight guess)
   //   {err}        the planner REFUSED (start/target in a keep-out, no clear route)
   //   null         an input is missing (no fix / no home / no plan)
   // No ensureNogoCovers here: a passive readout must not trigger chart extraction. The
@@ -5140,7 +5140,7 @@ function updateRunTime(){
 const HANDLE = {A:{c:"#3fbf6b",t:"A"}, B:{c:"#d9534f",t:"B"}, C:{c:"#39c0ff",t:"C"}};
 function patScreen(k){ if(!pat[k]) return null;
   const p = worldPx(pat[k].lat,pat[k].lon,zoom), o = originPx(); return {x:p.x-o.x, y:p.y-o.y}; }
-// Whole-pattern MOVE grip at the A-B rectangle centre. The pattern is fully
+// Whole-pattern MOVE grip at the A-B rectangle center. The pattern is fully
 // derived from the three anchors, so translating A/B/C by one delta moves the
 // whole pattern with shape, spacing and direction preserved exactly (the SRCH
 // datum handle works the same way - this gives the CAMP pattern that affordance).
@@ -5170,7 +5170,7 @@ function planRef(){
 }
 // The survey lines that feed everything (draw/punch/commit): the pattern's
 // parallel legs, clipped to the arbitrary boundary polygon if one is closed
-// (CAMP SurveyArea behaviour - exact line-vs-polygon intersection).
+// (CAMP SurveyArea behavior - exact line-vs-polygon intersection).
 function patSourceLines(){
   const sp = currentPattern(); if(!sp) return [];
   if(!boundaryActive()) return sp.lines;
@@ -5211,11 +5211,11 @@ function patCoverSeg(k){
 }
 /** Midpoint of run `k`'s COVERAGE - the value a strike is stored and matched as. */
 function patCoverMid(k){ const s = patCoverSeg(k); return s ? runMid(s) : null; }
-/** Total lead metres actually applied across the punched runs. */
+/** Total lead meters actually applied across the punched runs. */
 function patLeadTotal(){ return patLead.reduce((a,L)=>a + (L?(L.in||0)+(L.out||0):0), 0); }
 
 /**
- * Run `k` rebuilt with its leads set to `li` / `lo` metres — the COVERAGE is untouched.
+ * Run `k` rebuilt with its leads set to `li` / `lo` meters — the COVERAGE is untouched.
  *
  * Built off `patCoverSeg`, so it cannot drift from what the rest of the console calls
  * coverage, and so shrinking a lead is exactly reversible: the coverage segment is
@@ -5271,7 +5271,7 @@ const LEAD_GIVE = [0.6, 0.3, 0];
  * planner/guard seam - one of the two numbers has to move, and the guard's is the arbitrary
  * one."* The guard's moved first; asked what to do about the rest, he chose to make the
  * PLANNER clip to what the guard needs. WHAT THE SEAM WAS, measured on his own plans before
- * this existed: the planner clipped to the buffer to within THREE CENTIMETRES (a 5.03 m
+ * this existed: the planner clipped to the buffer to within THREE CENTIMETERS (a 5.03 m
  * minimum waypoint clearance against a 5 m buffer, zero waypoints inside it) while the guard
  * judged the boat against a band reaching much further - so a plan could be legal by
  * construction and still be one the console would take the helm on.
@@ -5338,7 +5338,7 @@ function activeStruck(){ return patStruckKey && patStruckKey === patStrikeKey() 
 /**
  * `runs` minus anything struck off.
  *
- * A metre of tolerance. The runs are rebuilt deterministically from the same corners and
+ * A meter of tolerance. The runs are rebuilt deterministically from the same corners and
  * the same chart, so an untouched plan reproduces its midpoints exactly; the tolerance
  * only stops floating point resurrecting a struck run. It is far below any usable line
  * spacing, so it can never reach a neighbor.
@@ -5356,7 +5356,7 @@ function keptRuns(runs){
  * clipped it into some.
  *
  * ⚠ THE TOLERANCE IS CAPPED AT 0.45 OF THE LINE SPACING. WorldView's reverted build used
- * a bare `10 × metresPerPixel` with no cap — a sane 6 m zoomed in, and 400 m at 40 m/px,
+ * a bare `10 × metersPerPixel` with no cap — a sane 6 m zoomed in, and 400 m at 40 m/px,
  * which is wider than any line spacing. A click nowhere near the survey then selected an
  * arbitrary line and that build deleted it on the spot. Capped below half the spacing,
  * the test can never reach past the midpoint between two lines.
@@ -5700,7 +5700,7 @@ function committedPatternInfo(){
     // parallel test, direction-agnostic: a boustrophedon alternates end for end
     if(Math.abs((ex*uy - ey*ux) / el) > 0.035) return null;   // ~2 deg
     // COVERAGE, not run. "Line len" on this card is the length the operator drew and the
-    // sensor covers; a lead makes the RUN longer without covering another metre, so
+    // sensor covers; a lead makes the RUN longer without covering another meter, so
     // reporting the run here would quietly inflate the survey by twice the lead.
     const lead = Math.min(el, Math.max(0, l.lead_in_m||0) + Math.max(0, l.lead_out_m||0));
     legLength = Math.max(legLength, el - lead);   // longest: a clipped plan has short end lines
@@ -5731,7 +5731,7 @@ function committedPatternInfo(){
 }
 function updatePatReadout(){
   const sp = currentPattern();
-  // CLEAR THE WARNING COLOUR FIRST, unconditionally. The capped branch below
+  // CLEAR THE WARNING COLOR FIRST, unconditionally. The capped branch below
   // paints `sp_hint` amber, and `.phint` is deliberately faint — so a hint left
   // amber after the operator widens the spacing would say "still truncated"
   // about a pattern that now fits. Resetting here rather than in each of the
@@ -5806,7 +5806,7 @@ function updatePatReadout(){
         +sp.wanted+". THE PATTERN DOES NOT COVER THE AREA YOU DREW. Widen the spacing "
         +"(about "+Math.ceil(sp.width/MAX_SURVEY_LINES)+" m fills it) or draw a smaller box.";
       // AMBER, because `.phint` is styled faint on purpose. Dropped coverage
-      // rendered in the same de-emphasised grey as "drag A / B / C to adjust"
+      // rendered in the same de-emphasised gray as "drag A / B / C to adjust"
       // is a warning nobody reads. --warn, not --bad: the pattern is wrong, the
       // boat is not in danger.
       $("#sp_hint").style.color = "var(--warn)";
@@ -5814,9 +5814,9 @@ function updatePatReadout(){
     // With no punch, Add to plan is refused only when the page threw the punch away (patDropped) - and then this line
     // must not offer it: the note under the button says why, and Punch Out is the way on.
     else if(!patClip) $("#sp_hint").textContent = pat.C
-      ? "Drag A / B / C to adjust, the centre grip to move the whole pattern, or Punch Out" + (refused ? " again." : " / Add to plan.")
+      ? "Drag A / B / C to adjust, the center grip to move the whole pattern, or Punch Out" + (refused ? " again." : " / Add to plan.")
       : "Click a 3rd point to set line spacing + direction (or type Spacing, or Punch Out" + (refused ? " again" : " / Add")
-        + "). Centre grip moves the whole pattern.";
+        + "). Center grip moves the whole pattern.";
   } else {
     // No pattern being drawn. If one is COMMITTED, keep describing it rather than
     // blanking the card - the plan is still there, and so is the operator's need to
@@ -6181,7 +6181,7 @@ function commitSearch(){
 
 // --- ENC chart features + Punch Out -------------------------------------- //
 // GeoJSON geometry iterators ([lon,lat] order).
-// survey depth window from the panel: {min, max} in metres (max 0 = no maximum)
+// survey depth window from the panel: {min, max} in meters (max 0 = no maximum)
 function depthRange(){
   const mn = Math.max(0, parseFloat($("#sp_mindepth").value)||0);
   const mv = parseFloat($("#sp_maxdepth").value);
@@ -6276,7 +6276,7 @@ function drawENC(toScreen, ctx){
   ctx.restore();
 }
 
-// bbox of the current survey pattern (+pad metres), for the ENC fetch
+// bbox of the current survey pattern (+pad meters), for the ENC fetch
 function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
   let S=1e9,N=-1e9,W=1e9,E=-1e9;
   sp.lines.forEach(l=>l.forEach(p=>{ S=Math.min(S,p.lat);N=Math.max(N,p.lat);W=Math.min(W,p.lon);E=Math.max(E,p.lon); }));
@@ -6439,7 +6439,7 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
     // painting the row while this was still true left it reading "loading…" forever on
     // the SUCCESS path - the one path that never repainted afterwards. The model was
-    // built and every behaviour routed off it correctly; only the readout was stuck,
+    // built and every behavior routed off it correctly; only the readout was stuck,
     // which is the worst kind of stale: it says "not ready" about something that is.
     nogo.busy=false;
     rebuildNogo();
@@ -6544,7 +6544,7 @@ function updateNogoUI(){
   el.textContent = r.text; el.title = r.title;
   el.className = "vv " + r.cls;                 // .vv.warn is defined after .vrow .vv, so it wins
 }
-            // how far from centreline toward the stbd edge (0.5 = ¼ width in from the edge)
+            // how far from centerline toward the stbd edge (0.5 = ¼ width in from the edge)
 // SCRATCH ONLY. The two lane stages set this; channelLaneRoute resets it on entry and
 // consumes it on the same tick, returning the value with the route. NOTHING outside
 // channelLaneRoute may read it - the moment a banner reads it directly it is a remembered
@@ -6608,7 +6608,7 @@ async function doGoTo(target){
 // Return-to-Home DRIVES TO HOME: a home on land, inside a charted structure or in water
 // too shallow for this hull is a return that will be refused LATER — mid-mission, at the
 // moment it is least useful to discover. So the point is tested against the same keep-out
-// model every behaviour routes by, and anything wrong with it is said NOW, at the one
+// model every behavior routes by, and anything wrong with it is said NOW, at the one
 // moment the operator is looking at that spot and can pick a better one.
 //
 // The extract is widened to cover the point first, exactly as Go-To does: without that,
@@ -6779,7 +6779,7 @@ function drawTransit(toScreen){                   // the transit DRAFT being dra
 }
 // --- the measurement overlay ---------------------------------------------- //
 // MAGENTA on purpose: S-52 reserves it for the MARINER'S OWN information, and it is the
-// one chart colour this console had not already spent - amber is the plan, cyan the
+// one chart color this console had not already spent - amber is the plan, cyan the
 // track and the transit draft, green/orange the routed run. A measurement can therefore
 // never be mistaken for something the boat will drive.
 const MEAS_COL = "#e05cff";
@@ -6796,7 +6796,7 @@ const MEAS_FONT = "bold " + MEAS_FONT_PX + "px Consolas,monospace";
 const MEAS_LABEL_GAP = Math.round(MEAS_FONT_PX * 0.45);   // text sits this far off the leg
 const MEAS_HALO_PX = MEAS_FONT_PX * 0.30;                 // outline behind the glyphs
 const MEAS_LABEL_PAD_PX = 10;     // ... and this much clear leg either side of the text
-// The readout FLOWS ALONG THE LINE: rotated to the leg's screen angle, centred on its
+// The readout FLOWS ALONG THE LINE: rotated to the leg's screen angle, centerd on its
 // midpoint, sitting just off the leg so it never has to punch a hole in it. Distance goes
 // through fmtDist(), so a measurement follows the DIST pill exactly like every other long
 // distance on the console; the bearing is the TRUE azimuth a->b in three digits, as a
@@ -6904,7 +6904,7 @@ async function doTransit(){
 }
 // nogo overlay: a red wash on the keep-out zones so they read at a glance
 // The single depth-shading layer: RED = hard nogo (land / manmade / water below
-// the 1 m navigability floor that every behaviour avoids); AMBER = water outside
+// the 1 m navigability floor that every behavior avoids); AMBER = water outside
 // the survey COVERAGE window (navigable, just not surveyed) - shown only while a
 // survey pattern is being planned. drawENC no longer shades depth (no duplication).
 function drawNogo(toScreen){
@@ -6963,7 +6963,7 @@ function drawMarks(toScreen){
   ctx.save();
   // The BUOY LINES the routing actually uses: each system's marks joined in number
   // order (= the conventional direction of buoyage). Drawn dashed in their own
-  // colour so the operator can see the fairway the console believes in - a lane
+  // color so the operator can see the fairway the console believes in - a lane
   // that looks wrong on the water is nearly always a buoy line that looks wrong
   // here (a mis-merged system, or a mark the ENC didn't attribute).
   const sys = nogo.ready && nogo.ko && nogo.ko.sys;
@@ -6993,11 +6993,11 @@ function drawMarks(toScreen){
 }
 // --- AIS layer: nearby vessels from the standalone AIS service (/api/ais) ------
 // The console proxies ais_service.py; the browser only polls /api/ais for the current
-// viewport. Draw each vessel as a triangle pointing along its course, coloured by
+// viewport. Draw each vessel as a triangle pointing along its course, colored by
 // ship type; hover for identity/course/speed. Situational awareness only.
 // AIS area is chosen SERVER-SIDE by /api/ais from the boat position: on a Great Lake
 // it returns the WHOLE lake's traffic, at sea a 50 km box. The browser just sends its
-// centre and renders whatever comes back (no client-side range filter). `aisArea`
+// center and renders whatever comes back (no client-side range filter). `aisArea`
 // carries the mode/name for the table header. aisCenter() is still used for the
 // range/bearing columns.
 let aisArea = null;
@@ -7052,7 +7052,7 @@ function setAIS(on){ aisShow=on; const btn=$("#aisBtn"); if(btn) btn.classList.t
 // The AIS traffic TABLE: opens with the layer, closable to a reopen chip (open/close
 // at will). Lists the in-range vessels by range, with bearing / SOG.
 let aisTableShown=false;
-// THE RANGE CONTROL READS IN NAUTICAL MILES; THE WIRE STAYS IN KILOMETRES. The contact
+// THE RANGE CONTROL READS IN NAUTICAL MILES; THE WIRE STAYS IN KILOMETERS. The contact
 // list has always reported range in nm (fmtNm above), so a selector in km meant filtering
 // in one unit and reading distances in another. Converting at the display edge keeps the
 // canonical value metric, which is this console's standing rule - chart tiles print feet,
@@ -7565,7 +7565,7 @@ function drawAIS(toScreen){
     //
     // ⚠ AND IT IS DRAWN ABOUT THE ANTENNA, NOT ABOUT THE MIDDLE. The reported lat/lon is
     // the GNSS antenna; AIS says where that sits in the hull (A forward, C to port). On a
-    // container ship with the bridge aft that is 150 m of difference, so a box centred on
+    // container ship with the bridge aft that is 150 m of difference, so a box centerd on
     // the position would put the bow where the water is. hullBox carries the offsets.
     const box = hullBox(v);
     const mpp = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
@@ -7672,7 +7672,7 @@ function drawViolation(toScreen){
 // RENDERER draws it; NOAA's VECTOR service does not carry it.
 //
 // So the chart image is a source of navigational fact the vector extract does not contain.
-// The judgement lives in static/js/chartink.js and is pure; this is the half that has a
+// The judgment lives in static/js/chartink.js and is pure; this is the half that has a
 // browser - it fetches the tiles, paints what the ENC already explains, and turns what
 // survives into keep-out lines.
 //
@@ -7706,7 +7706,7 @@ let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms
  * Fold the chart-read structures into a keep-out model. Returns how many went in.
  *
  * ⚠⚠ ONE FOLD, TWO CALLERS, AND THE SECOND IS WHY THIS IS A FUNCTION. `rebuildNogo`
- * builds the SHARED model every behaviour routes clear of - but `punchOut` builds its OWN,
+ * builds the SHARED model every behavior routes clear of - but `punchOut` builds its OWN,
  * because a survey clip layers the operator's coverage depth window on top of the
  * navigability floor. That second model was assembled straight from `nogo.features`, so
  * Go-To, RTH and transit all went round the piers read off the chart while a punched SURVEY
@@ -7749,7 +7749,7 @@ function loadTile(z, x, y){
  * Scan the chart image over `bb` and return the structures the ENC does not explain.
  *
  * THE ZOOM IS CHOSEN BY THE BUDGET, NOT BY THE VIEW, and it degrades honestly. A survey area
- * can be a kilometre across; at CHART_INK_Z that is thousands of tiles. The scan drops a
+ * can be a kilometer across; at CHART_INK_Z that is thousands of tiles. The scan drops a
  * zoom at a time until it fits CHART_INK_MAX_TILES and REFUSES below CHART_INK_MIN_Z, where
  * the smallest mark it looks for is under two pixels and a "clean" scan would mean nothing
  * at all. Saying so is the answer; a silent empty result is not.
@@ -7934,7 +7934,7 @@ async function ensureNogoCovers(pts, padM){
   return nogo.ready && bboxContains(nogo.bbox, b);
 }
 /**
- * Push `from` OUTWARD along the line, away from `toward`, by up to `want` metres of
+ * Push `from` OUTWARD along the line, away from `toward`, by up to `want` meters of
  * water that is actually clear. Returns the new end point and how much was bought.
  *
  * ⚠ A LEAD IS FLOWN WATER, SO IT IS CLIPPED LIKE FLOWN WATER. The clipped run ends where
@@ -7948,7 +7948,7 @@ async function ensureNogoCovers(pts, padM){
  * further out with a rock in between, and that water is not reachable along this line.
  */
 function extendLead(from, toward, want, ref, ko, buf){
-  // clipLine returns nothing under a metre of segment, so a sub-metre lead is no lead.
+  // clipLine returns nothing under a meter of segment, so a sub-meter lead is no lead.
   if(!(want >= 1)) return {p: from, m: 0};
   const tip = atDA(from, want, azTo(toward, from));
   const segs = clipLine(from, tip, ref, ko, buf) || [];
@@ -8116,7 +8116,7 @@ async function punchOut(){
     // re-phases itself across the gap and the pair really IS a reversal — it is only
     // WIDER. A semicircle at half of a two-spacing offset is exactly as valid as one at
     // half of a single spacing; it just reaches further outboard, and the readout says by
-    // how much. Four spacings is a judgement: beyond it the pair is better understood as
+    // how much. Four spacings is a judgment: beyond it the pair is better understood as
     // a region hop, and the router handles those, lane and all.
     //
     // STRICTLY WIDER THAN WHAT IT REPLACES, both here and in the cap below, so no turn
@@ -8127,7 +8127,7 @@ async function punchOut(){
     // (it compares against the HALF-distance), and its default is a bare 60 m - a 4 m-USV
     // assumption. That cost a 7.7 m USV EVERY turn above 122 m of line spacing (ordinary
     // deep-water multibeam spacing): no loop was drawn, and the banner blamed a keep-out
-    // for it. Sized off `gapSpan` so the "is this a reversal pair" judgement is made once
+    // for it. Sized off `gapSpan` so the "is this a reversal pair" judgment is made once
     // instead of twice at two different scales.
     const turnMaxHalf = Math.max(MAX_HALF_M, sp.spacing*gapSpan/2 + 2);
     // MINIMUM SURVEY LINE (per-vessel, Andy 2026-08-10: "short survey lines are
@@ -8236,7 +8236,7 @@ async function punchOut(){
       const antiParallel = Math.abs(((hF-hE+360)%360)-180) < 50;   // ~reversal (boustrophedon)
       // ⚠ THE TWO SPACING GATES BELOW CARRY A LEAD ALLOWANCE (2026-09-08). Both compare
       // the straight distance between the two line ends against a multiple of the line
-      // spacing, and a lead inflates that distance without adding a metre of spacing: a
+      // spacing, and a lead inflates that distance without adding a meter of spacing: a
       // 120 m lead-in on a 20 m-spaced plan puts the ends 122 m apart. Left alone, a big
       // enough lead would (a) push the pair past the reversal gate entirely, leaving a
       // 180° nobody attempted and nobody counted — the exact silent-unflyable-turn shape
@@ -8336,7 +8336,7 @@ async function punchOut(){
       // straight line IS clear - it is the loop the boat flies INSTEAD of it that is not,
       // and by the time the ladder above has exhausted outboard, inboard and both slow
       // radii, the console knows the water for that loop is foul on every side. Shipping
-      // it anyway hands the boat a manoeuvre it cannot perform next to the one feature
+      // it anyway hands the boat a maneuver it cannot perform next to the one feature
       // that refused it. Flagged red like any other unroutable leg, so the operator moves the
       // line, widens the spacing or slows the plan.
       // ⚠ AND THE RED IS ENFORCED WHERE IT CAN STILL BE FIXED: ADD TO PLAN (Andy, 2026-09-16).
@@ -8897,7 +8897,7 @@ let menuLL = null;                                 // the chart point the open m
 function chartMenuOpen(){ return !!cmenuEl && cmenuEl.style.display === "block"; }
 function closeChartMenu(){ if(cmenuEl) cmenuEl.style.display = "none"; menuLL = null; }
 // A row is enabled by the console's own gate predicate and says WHY when it is off — a
-// greyed row with no reason beside it reads exactly like a broken control (the ROC Remove
+// grayed row with no reason beside it reads exactly like a broken control (the ROC Remove
 // lesson). `allowed` is the predicate's ANSWER, so the rule itself is never spelled here.
 function cmGate(rowId, allowed, why){
   const row = $(rowId), off = !allowed;
@@ -8909,8 +8909,8 @@ function cmGate(rowId, allowed, why){
 // Andy, on his own console at Eastport: "This should be a simple survey pattern. What is the story with the line
 // heading out to the northwest?", then "there is a line drawn from buoy 7 to buoy 9", then "its a green dashed line
 // like a survey line". THAT question is a LAYER question, and it cost most of a session to answer by inference: the
-// console draws seven things that look like lines, and only their COLOUR and DASH tell them apart (review #19 made
-// the pattern preview cyan and labelled it for the same reason). Whatever that particular line was, the operator
+// console draws seven things that look like lines, and only their COLOR and DASH tell them apart (review #19 made
+// the pattern preview cyan and labeled it for the same reason). Whatever that particular line was, the operator
 // should never have to ask a second time - so the chart answers it: right-click the line and the console says which
 // layer it is, in the same words the legend uses, with what to do about it.
 // ⚠ IT READS, IT DOES NOT COMMAND. This row is available with no link, disarmed, in any tab, view-only included.
@@ -8993,7 +8993,7 @@ function identifyAt(ll){
   if(fr){
     // ⚠ AND THE MODEL'S OWN BOUNDING BOXES DO THE SKIPPING. Measured live at New Castle, 778 lines + 300 areas:
     // 210-320 ms a click without this, which is a visible pause on a menu row - and review #29 exists because the
-    // page froze. `inBB` is the model's own test, with the reach converted from pixels to metres at this zoom.
+    // page froze. `inBB` is the model's own test, with the reach converted from pixels to meters at this zoom.
     const en = fr.toEN(ll);
     const mPerPx = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
     const reach = IDENTIFY_PX * mPerPx + 1;
@@ -9166,18 +9166,18 @@ $("#sp_dir").onchange = ()=>{
   patClip=null; updatePatReadout(); render();
 };
 // Buffer + enforce toggles are the SHARED nogo controls (they define the keep-out
-// model every behaviour routes clear of); fold them into nogo + rebuild live.
+// model every behavior routes clear of); fold them into nogo + rebuild live.
 function applyNogoControls(){
   // The same floor as setBuffer's, for the same reason: this is the OTHER writer of
   // nogo.buffer, and a floor enforced by one of two writers is not a floor.
   nogo.buffer = bufferFloor(Math.max(0, parseFloat($("#sp_buffer").value)||0));
   nogo.enf = {land:$("#enf_land").checked, depth:$("#enf_depth").checked,
               haz:$("#enf_haz").checked, area:$("#enf_area").checked};
-  if(nogo.features && nogo.features.length) rebuildNogo();   // behaviours update immediately
+  if(nogo.features && nogo.features.length) rebuildNogo();   // behaviors update immediately
 }
 // The nogo keep-clear buffer, edited from EITHER the command bar (#c_buffer, always
 // accessible - lower it to thread a tight marina) or the SURV panel (#sp_buffer).
-// Both stay in sync; it persists and re-routes every behaviour live.
+// Both stay in sync; it persists and re-routes every behavior live.
 function setBuffer(v){
   // ⚠⚠ THE VESSEL'S OWN planning.nogo_buffer_m IS A FLOOR HERE TOO, not only on mission load
   // and vessel switch (2878, 2920). A ZERO buffer does not merely narrow the model - IT
@@ -9234,7 +9234,7 @@ function setLeadMode(m){
   saveMission(); patClip = null; updateLeadNote(); updatePatReadout(); render();
 }
 /**
- * What the two figures come to in METRES, at the speed they will be flown at.
+ * What the two figures come to in METERS, at the speed they will be flown at.
  *
  * A DURATION is not a length until something names the speed it was converted at, so the
  * note names it — the same discipline the punch readout follows when it quotes the turn
@@ -9392,7 +9392,7 @@ function recalcCommittedForSpeed(){
   let runLen = 0;
   for(let i=1;i<wps.length;i++) runLen += distTo(wps[i-1], wps[i]);
   const approachLen = asv ? distTo({lat:asv.lat,lon:asv.lon}, wps[0]) : 0;
-  // ⚠ EVERY METRE OF THE COMMITTED CHAIN USED TO BE DIVIDED BY THE SURVEY SPEED - the
+  // ⚠ EVERY METER OF THE COMMITTED CHAIN USED TO BE DIVIDED BY THE SURVEY SPEED - the
   // coverage lines, the reversals between them, and the hop to the next coverage region
   // alike. The governor has flown those three at three different speeds since the roles
   // were split, so the estimate and the boat disagreed by construction. Each part is
@@ -9469,7 +9469,7 @@ function setRoleSpeed(role, v){
   updateSpeedNote();
   // A lead typed as a DURATION is a distance only once a speed is chosen, so the survey
   // speed moving moves it. The note is what tells the operator their 20 s just became a
-  // different number of metres; without this it would keep quoting the old one until the
+  // different number of meters; without this it would keep quoting the old one until the
   // next keystroke in a field they have no reason to touch.
   if(role === "survey" && mission.lead_mode === "s") updateLeadNote();
   // The TURN speed is not only a throttle: it sets the radius every generated turn is
@@ -9497,7 +9497,7 @@ function updateSpeedNote(){
 //   runCompletion() - what the run IN PROGRESS does at its end. A Go-To station-keeps,
 //                     so this reads "loiter" during a Go-To, correctly.
 //   S.completion    - the operator's END-OF-PLAN SETTING, straight from the mission
-//                     store on the server. A behaviour can never change it.
+//                     store on the server. A behavior can never change it.
 // They were one field once, so commanding a Go-To made "End of Plan: RTH" read back as
 // Loiter and silently disarmed the end-of-plan RTH chain.
 function runCompletion(){ return (S && (S.run_completion || S.completion)) || mission.completion || "loiter"; }
@@ -9518,7 +9518,7 @@ function runCompletion(){ return (S && (S.run_completion || S.completion)) || mi
 //     chain; and a run whose own completion is "rth" ends as a plain LOITER whenever the
 //     chain cannot fire. The chain, not the field, is what makes an RTH happen.
 function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="rth"; }
-// WHICH BEHAVIOURS ARE A PLAN THAT RAN TO ITS END - the only thing an end-of-plan return may
+// WHICH BEHAVIORS ARE A PLAN THAT RAN TO ITS END - the only thing an end-of-plan return may
 // chain from. A WHITELIST, and that is the whole point of it.
 //
 // ⚠ IT WAS A BLACKLIST AND THE BLACKLIST WAS ALWAYS ONE SHORT. "rth" was excluded so the
@@ -9527,7 +9527,7 @@ function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="r
 // Eastport on 2026-09-03 the guard's own HOLD rung ("stop, you are standing into it") was
 // read as a finished plan NINE TIMES IN THREE MINUTES, each one answered within a second by
 // an RTH to a HOME with 1.47 m of clear water round it. The boat reached 1.74 m from that
-// point at 6.07 kn. Every one of those behaviours is a SAFETY COMMAND or a STOP, and naming
+// point at 6.07 kn. Every one of those behaviors is a SAFETY COMMAND or a STOP, and naming
 // them one at a time was always going to lose that race - so the question is now asked the
 // other way round: a return chains from a plan that ENDED, and nothing else.
 const CHAINABLE_BEHAVIORS = ["survey", "search", "goto", "transit"];
@@ -9564,7 +9564,7 @@ function rearmRthChain(s, st){
 // (`hold_wants_route`); it does NOT drive a bearing back, because a bearing through a pier
 // is the loop Andy photographed at Eastport. The way back is planned here, through the same
 // planner every other commanded motion uses, and sent as a re-approach - which keeps the
-// run's behaviour (a boat holding at home after an RTH stays "rth" on every card).
+// run's behavior (a boat holding at home after an RTH stays "rth" on every card).
 //
 // One in flight at a time, and a floor between them: the tide sets a boat off a tight hold
 // every few seconds, and each re-approach is a real command the server persists and the
@@ -9620,7 +9620,7 @@ $("#c_completion").onchange = ()=>{
   flashNote(mission.completion === "rth"
     ? "End of plan: RTH — live now; the boat will be returned home when the plan ends."
     : "End of plan: " + mission.completion + " — live now. The uploaded route keeps its own "
-      + "end behaviour until the next Upload.");
+      + "end behavior until the next Upload.");
   // Recompute what depends on it. The authoritative value is the server's, which arrives
   // on the next state frame and drives End mode via endAction(); this refreshes the rest
   // immediately rather than leaving a card a quarter-second stale.
@@ -9916,7 +9916,7 @@ const RESIZABLE_CARDS = [
   {sel:"#lineTablePanel", body:"#lineTableBody"},  // per-line table, grows with the plan
   {sel:"#aisTablePanel",  body:"#aisTableBody"},   // traffic list, grows with the sea
   {sel:"#chartPanel",     body:"#chartBody"},
-  {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations centre
+  {sel:"#rocPanel",       body:"#roc_list"},       // one row per operations center
   {sel:"#linePanel"}, {sel:"#boundPanel"}, {sel:"#searchPanel"},
   {sel:"#transitPanel"},                           // forms: no body to nominate, scroll whole
 ];
@@ -10109,12 +10109,12 @@ makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "
 //     over water whose deepest charted band is ~9 m, which only reads as feet.
 //     (The service's own metadata endpoint 500s, so there is no units field to
 //     query - hence the empirical check.)
-//   * the ENC VECTOR data is METRES (S-57 mandates it), and so is every number this
+//   * the ENC VECTOR data is METERS (S-57 mandates it), and so is every number this
 //     console computes with: the nogo floor, corrected depths, the logs.
-// The operator reads feet off the chart while the console reasons in metres, so the
+// The operator reads feet off the chart while the console reasons in meters, so the
 // card says both out loud rather than letting the operator assume they match.
 const CHART_DISPLAY_UNITS = "feet";                // what the tile service prints
-const CHART_DATA_UNITS = "metres";                 // what S-57 stores / the console uses
+const CHART_DATA_UNITS = "meters";                 // what S-57 stores / the console uses
 const CATZOC_LBL = {1:["ZOC A1","\u00b15 m + 5% depth"], 2:["ZOC A2","\u00b120 m"],
   3:["ZOC B","\u00b150 m"], 4:["ZOC C","\u00b1500 m"],
   5:["ZOC D","worse than ZOC C"], 6:["ZOC U","unassessed"]};
@@ -10252,13 +10252,13 @@ function updateChartCard(){
     h += row("Usage", (usage || "--") + (band ? ` <span style="color:var(--ink-faint);">(${band.replace("enc_","")})</span>` : ""),
              "ENC usage band from the cell name's 3rd character");
     // Units, stated explicitly for both sides - the operator reads the chart in
-    // FEET while every number the console computes is METRES. The nogo floor is
+    // FEET while every number the console computes is METERS. The nogo floor is
     // V.VESSEL-DERIVED here (draft + under-keel clearance), so quote it live.
     h += row("Soundings", 'chart <b style="color:var(--ink);">' + CHART_DISPLAY_UNITS +
              '</b> · data ' + CHART_DATA_UNITS,
              "The chart image prints soundings in FEET (NOAA chart service default). "+
              "The ENC data, the " + V.NOGO_MIN_DEPTH_M.toFixed(1) + " m nogo floor for this "+
-             "vessel and every depth the console computes or logs are METRES. "+
+             "vessel and every depth the console computes or logs are METERS. "+
              "They do not match - convert before comparing.");
     h += row("Datum", dat || "--",
              "Chart datum of the depth data. The console corrects to it live.");
@@ -10567,7 +10567,7 @@ function cmdLabel(path, body){
   }
 }
 let noteTimer = null;
-// SHOWS AND THEN HIDES. It used to only fade the COLOUR back after 4 s, because the box was
+// SHOWS AND THEN HIDES. It used to only fade the COLOR back after 4 s, because the box was
 // always on screen anyway carrying the server's standing note. With that gone the element is
 // hidden by default, so a flash has to put it up and take it down again - otherwise the last
 // refusal of the session stays on the chart for ever.
@@ -10978,10 +10978,10 @@ function lineMark(){
 function markPause(){ pauseMark = lineMark(); }
 
 /**
- * Where a resumed run rejoins line `L`: `backM` metres back down it from the mark, on the
+ * Where a resumed run rejoins line `L`: `backM` meters back down it from the mark, on the
  * side the boat came FROM, clamped to the line's own ends.
  *
- * ⚠ CLAMPED, NOT WRAPPED. Pause a boat twenty metres into a line and twelve hull lengths
+ * ⚠ CLAMPED, NOT WRAPPED. Pause a boat twenty meters into a line and twelve hull lengths
  * back is off the end of it — and the water there is the turn it has just flown, which is
  * no place to rejoin a survey. The start of the RUN is as far back as back goes; on a line
  * with a lead-in that start is already ahead of the coverage, so whatever overlap the line
@@ -11017,7 +11017,7 @@ function backtrackClear(from, to){
  * needs a RUNNING plan and pause leaves `_running` true while stopping the prop, so the
  * remainder can be rewritten before anything moves. Resuming first would give the boat a
  * frame or more of the OLD plan - it would start back toward the line end it was heading
- * for, from wherever the tide had put it, which is the manoeuvre this exists to prevent.
+ * for, from wherever the tide had put it, which is the maneuver this exists to prevent.
  */
 async function resumeRun(){
   const back = resumeBackM();
@@ -11190,7 +11190,7 @@ $("#gb_proceed").onclick = ()=>{
 };
 $("#gb_cancel").onclick = ()=>{
   guardOverride = null;
-  flashNote("Override cancelled — the console has the situation again.");
+  flashNote("Override canceled — the console has the situation again.");
   renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
 };
 
@@ -11201,7 +11201,7 @@ $("#gb_cancel").onclick = ()=>{
  * continue at slow speed"*.
  *
  * PROCEED hands the throttle straight back to the governor, which re-asserts the SURVEY
- * speed - and an operator looking at a charted feature forty metres away, deciding they can
+ * speed - and an operator looking at a charted feature forty meters away, deciding they can
  * see it and want to keep surveying, has not decided to go past it at seven knots. That was
  * the only offer on the bar, so the choice was full speed or a stopped survey.
  *
@@ -11242,7 +11242,7 @@ function continueAtLow(){
  * amendment the way the pause resume is: the remainder has to be uploaded as a plan of its
  * own and started. Everything else is the pause resume, deliberately - twelve boat lengths
  * back down the line she was on, the way back checked against the chart, and low until the
- * operator says otherwise. One resume behaviour, reached two ways.
+ * operator says otherwise. One resume behavior, reached two ways.
  *
  * ⚠ THE PAUSE COMES FIRST, AND IT IS NOT TIDINESS. `upload_plan` clears `_holding` and sets
  * the speed to the TRANSIT role, while `_running` is still true from the hold - so an upload
@@ -11531,7 +11531,7 @@ async function resetMission(){
 $("#b_reset").onclick = resetMission;
 
 // Energy override: click the energy pill (BATT/FUEL) anywhere to toggle "report the
-// energy as full" (and stop the sim drain/burn). Applies in every mode/behaviour,
+// energy as full" (and stop the sim drain/burn). Applies in every mode/behavior,
 // running or not. The pill turns MAGENTA while the override is on (see onState).
 $("#battPill").onclick = ()=>{
   const on = !(S.status && S.status.unlimited_energy);
@@ -11614,7 +11614,7 @@ function applyCmdState(s){
   $("#b_upload").disabled = !armed || estop || underWay || uploadBusy;
   if(uploadBusy) $("#b_upload").title = "Measuring the plan’s corners — the route has not been sent yet.";
   $("#b_start").disabled = !armed || estop || !s.plan_uploaded || (run==="running" && !s.plan_staged);
-  // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to grey out the
+  // ⚠ PAUSE IS ENABLED WHILE PAUSED, BECAUSE IT IS THE WAY BACK. It used to gray out the
   // moment it worked, which left Start as the only resume — a control the operator has no
   // reason to look at for a run that is already going. It toggles, it says which way it
   // will go, and it FLASHES until somebody answers it.
@@ -11665,7 +11665,7 @@ function onState(s){
   syncCompletionSel(s);                          // the selector mirrors the server setting
   rearmRthChain(s, st);
   // End-of-Plan RTH: the sim safely HOLDS at the last waypoint; the console chains the
-  // existing Return-to-Home behaviour (ENC-routed doRTH) exactly as if the operator had
+  // existing Return-to-Home behavior (ENC-routed doRTH) exactly as if the operator had
   // pressed RTH. One-shot per run, and never re-chained off the RTH run itself.
   //
   // ⚠ NOR OFF A SAFETY COMMAND, AND THAT IS NOW A WHITELIST - see CHAINABLE_BEHAVIORS. The
@@ -11757,7 +11757,7 @@ function onState(s){
   const wtxt = (s.wp_total ? (s.wp_index||0)+" / "+s.wp_total : "--");
   $("#p_wpt").textContent = wtxt; $("#v_wpt").textContent = wtxt;
 
-  // (Run mode used to live here as "behaviour · completion". It is now the Run block's
+  // (Run mode used to live here as "behavior · completion". It is now the Run block's
   // Type + End mode rows, driven by updateMissionCard() - one place, not two.)
 
   // comms
@@ -11796,7 +11796,7 @@ function onState(s){
     if(!last || distTo(last, asv) >= TRACK_STEP_M){
       track.push({lat:asv.lat, lon:asv.lon}); if(track.length>MAX_TRACK) track.shift(); saveTrack();
     }
-    // ⚠ THE SLEW OWNS THE CENTRE WHILE IT FLIES, and this is the line that would take it
+    // ⚠ THE SLEW OWNS THE CENTER WHILE IT FLIES, and this is the line that would take it
     // back. A port change RESPAWNS the sim boat at the new base immediately (the server
     // reconnects the sim in the same request), so the very next telemetry frame reports a
     // position 500 km away - and BOAT-follow would snap the chart there on frame one,
@@ -12046,7 +12046,7 @@ function updateWaterUI(wl){
   const hdr = kind==="predicted" ? "PREDICTED tide, interpolated from:" : "observed, interpolated from:";
   const tip = (wl.ok && stns.length) ? (hdr+"\n" + stns.map(s=>
     `  ${s.name} — ${fmtDist(s.dist_km * 1000, 1)}, ${(s.offset_m>=0?"+":"")+s.offset_m} m`).join("\n")) : detail;
-  // caution colour when we fell back off real-time data
+  // caution color when we fell back off real-time data
   const trust = waterTrust(wl);
   // NOT APPLIED to charted depths: a remote reading, or a stale one (review #13) - see effectiveWaterOffset
   const notApplied = trust.level==="remote" || trust.stale;
@@ -12489,7 +12489,7 @@ setInterval(tickClock, 1000); tickClock();
 // The controls window is a mirror only - it runs no app logic, no SSE, no chart. Only
 // the main window boots the app; both wire the UI-split bridge.
 if(UIROLE === "main"){ setFollow(); render();
-  // PORTS FIRST: it seeds the chart centre, so the first paint is the operating
+  // PORTS FIRST: it seeds the chart center, so the first paint is the operating
   // area rather than the literal above it.
   loadPorts().then(loadVessel).then(loadMission); applyNogoControls(); updateNogoUI(); connect(); }
 setupUISplit();

@@ -3,7 +3,7 @@
 // No DOM, no shared state. Two coordinate conventions live here and they are NOT
 // interchangeable — mixing them is the easiest mistake to make in this file:
 //
-//   * ENU points  {e, n}   metres east / north about some reference (see geodesy.llEN).
+//   * ENU points  {e, n}   meters east / north about some reference (see geodesy.llEN).
 //                          Everything that measures, clips or tests containment works here.
 //   * lat/lon     {lat,lon} degrees. Only lerpLL and bboxAround take these.
 //
@@ -72,7 +72,7 @@ export function segInt(p1,p2,p3,p4){
 // Each walker is a no-op on a geometry of the wrong type, so a caller can run all three
 // over a mixed feature list without testing `type` itself.
 
-// Is (lat,lon) inside a Polygon/MultiPolygon? Evaluated in an ENU frame CENTRED
+// Is (lat,lon) inside a Polygon/MultiPolygon? Evaluated in an ENU frame CENTERD
 // ON THE POINT ITSELF, so the point under test is the origin and each ring is
 // projected around it - which keeps the flat-earth error smallest exactly
 // where the answer is decided.

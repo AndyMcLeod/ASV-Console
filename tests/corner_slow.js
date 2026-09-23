@@ -716,8 +716,10 @@ await (async () => {
   check("24. the command latency is the console's own state throttle, and pass 2 flies it",
         () => SPEED_CMD_LATENCY_S === 1.0
            && /const lateM = lowMs \* SPEED_CMD_LATENCY_S;/.test(SRC)
-           && /\(travelled - legStart\) < lateM \? planMs : lowMs/.test(SRC),
-        "SPEED_CMD_LATENCY_S = " + SPEED_CMD_LATENCY_S + " s, withheld by distance travelled"
+           // ⚠ "traveled", since the 2026-09-23 American-English sweep - the variable moved
+           // with the prose. The property this pins is unchanged.
+           && /\(traveled - legStart\) < lateM \? planMs : lowMs/.test(SRC),
+        "SPEED_CMD_LATENCY_S = " + SPEED_CMD_LATENCY_S + " s, withheld by distance traveled"
           + " into the leg rather than by tick count, so it holds at any speed");
 
   // 25. THE SET MAY NOT OUTLIVE THE ROUTE IT INDEXES. It is vertex numbers into ONE

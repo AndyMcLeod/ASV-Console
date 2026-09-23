@@ -51,7 +51,7 @@
 //
 // He is right that the punch-out kept the run clear, and that is exactly the trouble. The
 // old look-ahead was a STRAIGHT extrapolation of the present ground velocity for up to 45
-// seconds - a manoeuvre nobody intends to make - while every planner in this console clips
+// seconds - a maneuver nobody intends to make - while every planner in this console clips
 // or routes to the buffer edge and then TURNS. So a plan is correct precisely when it
 // grazes the buffer, and the guard alarmed 40-60 m before that same edge. The two rules
 // could not both be satisfied, and the plan lost. Measured (a pier, buffer 5 m, no wind,
@@ -73,7 +73,7 @@
 // the hull's own turn rate, and adds the drift as advection at every step. A boat holding
 // its track reads clear because it IS clear; a boat being set off one still reads the
 // entry, because the set is in the integration. What it no longer does is invent a
-// straight-ahead manoeuvre at a boat that is about to turn.
+// straight-ahead maneuver at a boat that is about to turn.
 //
 // ⚠ AND IT APPLIES ONLY WHILE A ROUTE IS BEING FOLLOWED. A station-keeping boat is not
 // being steered anywhere, so it has no route to project along and falls back to the
@@ -101,7 +101,7 @@ export const HORIZON_S = 45;
  *   REACH   the trigger distance was EXACTLY `buf + HORIZON_S * |set|` - 15.7 m at a
  *           0.46 kn set and 45.5 m at 1.75 kn, on a 5 m buffer. Those are the sets in his
  *           own record. The planner meanwhile clips plans to the buffer to within
- *           centimetres, so the two disagreed by 3-9x (ESCAPE_FINDINGS.md H3).
+ *           centimeters, so the two disagreed by 3-9x (ESCAPE_FINDINGS.md H3).
  *   MARGIN  a drift track passing 5.001 m off read CLEAR; one passing 4.999 m off read IN
  *           EXTREMIS. A 2 mm difference, skipping every rung in between, because
  *           `timeToEntry` returns on `blocked()` - a boolean at exactly `buf`.
@@ -135,7 +135,7 @@ export const HELM_ENTRY_FRAC = 0.5;
  * Through-water speed below which "take the way off" is not a different state.
  *
  * The same 0.05 m/s `guardTrack` uses to decide a boat is not being steered along anything.
- * Shared here so the two judgements cannot drift apart: both are asking whether there is any
+ * Shared here so the two judgments cannot drift apart: both are asking whether there is any
  * way ON to take OFF.
  */
 export const STOPPABLE_MS = 0.05;
@@ -494,7 +494,7 @@ export function edgeAround(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) {
   // legitimately outside `buf` and inside `buf + margin` - 6 m off a pier face on a 5 m
   // buffer, which is exactly where a clipped survey line puts it - failed that test
   // identically for EVERY candidate, so the deviation search died whole and the ladder held
-  // a boat alongside a structure instead of going a few metres round.
+  // a boat alongside a structure instead of going a few meters round.
   //
   // ⚠ IT CAN ONLY EVER RELAX, AND NEVER BELOW `buf`: a boat already inside the buffer never
   // reaches here (the `hit.t > 0` test above returns null first), and the SCREENING pass
@@ -625,7 +625,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
   // (tests/in_extremis.js 6), and it is the reason this line exists rather than a tidier
   // version of the two tests above.
   //
-  // The predicate is the one `guardTrack` already uses for the same judgement - is there
+  // The predicate is the one `guardTrack` already uses for the same judgment - is there
   // any through-water speed at all - so the two cannot drift apart in meaning.
   const twMs = Math.hypot(vel.e - drift.e, vel.n - drift.n);
   const canStop = twMs > STOPPABLE_MS;

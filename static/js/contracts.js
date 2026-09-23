@@ -63,8 +63,8 @@ export class ContractError extends Error {
 }
 
 export const WAYPOINT_KIND_VALUES = Object.freeze(["transit", "line", "turn", "home", "loiter", "station"]);
-export const SURVEYPARAMS_ALIGN_VALUES = Object.freeze(["start", "centre", "finish"]);
-export const PATTERN_ALIGN_VALUES = Object.freeze(["start", "centre", "finish"]);
+export const SURVEYPARAMS_ALIGN_VALUES = Object.freeze(["start", "center", "finish"]);
+export const PATTERN_ALIGN_VALUES = Object.freeze(["start", "center", "finish"]);
 export const VERDICT_SEVERITY_VALUES = Object.freeze(["clear", "caution", "block"]);
 export const TIMELINEEVENT_KIND_VALUES = Object.freeze(["depart", "arrive", "line_start", "line_end", "turn", "waypoint", "refuel", "reserve", "loiter", "abort", "mark"]);
 export const TIMELINEEVENT_PHASE_VALUES = Object.freeze(["outbound", "survey", "inbound", "station", "other"]);
@@ -72,7 +72,7 @@ export const TIMELINEEVENT_PHASE_VALUES = Object.freeze(["outbound", "survey", "
 
 /**
  * A geographic position, degrees. The only position type that crosses a
- * seam. Metres belong in EN, and only ever paired with the Frame they were
+ * seam. Meters belong in EN, and only ever paired with the Frame they were
  * measured in.
  *
  * @param {number} o.lat deg
@@ -105,7 +105,7 @@ export function latLon(o) {
 
 
 /**
- * East/north metres in a tangent plane. MEANINGLESS without the Frame it was
+ * East/north meters in a tangent plane. MEANINGLESS without the Frame it was
  * computed in: two EN values from different Frames must never be compared,
  * differenced or drawn together. Carrying the frame id makes that mistake
  * catchable instead of silent.
@@ -589,7 +589,7 @@ export function fuelTankModel(o) {
 /**
  * One ASV's capability, whole. planning is a deliberately free-form dict
  * carrying the OPTIONAL planning keys (CHANNEL_REACH_M and friends): absent
- * or 0 means the old behaviour, which is how a vessel config adds behaviour
+ * or 0 means the old behavior, which is how a vessel config adds behavior
  * without forking the code path.
  *
  * @param {string} o.id
@@ -710,7 +710,7 @@ export function surveyParams(o) {
   } else out.speed_kt = null;
   v = o["align"];
   if (v === undefined || v === null) v = "start";
-  if (!SURVEYPARAMS_ALIGN_VALUES.includes(v))     throw new ContractError("SurveyParams.align must be one of start/centre/finish, got" + " " + JSON.stringify(v));
+  if (!SURVEYPARAMS_ALIGN_VALUES.includes(v))     throw new ContractError("SurveyParams.align must be one of start/center/finish, got" + " " + JSON.stringify(v));
   out.align = v;
   return Object.freeze(out);
 }
@@ -751,7 +751,7 @@ export function pattern(o) {
   } else out.c = null;
   v = o["align"];
   if (v === undefined || v === null) v = "start";
-  if (!PATTERN_ALIGN_VALUES.includes(v))     throw new ContractError("Pattern.align must be one of start/centre/finish, got" + " " + JSON.stringify(v));
+  if (!PATTERN_ALIGN_VALUES.includes(v))     throw new ContractError("Pattern.align must be one of start/center/finish, got" + " " + JSON.stringify(v));
   out.align = v;
   v = o["turn_radius_m"];
   if (v === undefined || v === null) v = null;
@@ -1152,7 +1152,7 @@ const POWER_KINDS = Object.freeze({
  * Resolve a power model from its discriminator.
  *
  * A missing or unknown kind throws rather than defaulting: guessing battery
- * for a fuelled hull would silently produce an endurance number with no
+ * for a fueled hull would silently produce an endurance number with no
  * relation to the vessel.
  */
 export function powerModel(o) {

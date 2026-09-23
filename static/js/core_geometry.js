@@ -53,7 +53,7 @@
 /**
  * Planar geometry primitives — the layer underneath every keep-out decision.
  *
- * All take and return `{e, n}` in metres, in whatever tangent frame the caller
+ * All take and return `{e, n}` in meters, in whatever tangent frame the caller
  * is working in. Nothing here knows about latitude, longitude or a projection;
  * that is the caller's business and is exactly why these are shared.
  *

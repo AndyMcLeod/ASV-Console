@@ -58,7 +58,7 @@ export const V = {
   // COLREGS Rule 9 keep-right wall-detection reach (m): a channel engages keep-right only
   // when BOTH walls are within this on each side. null -> the buf*10 tight-marina default.
   CHANNEL_REACH_M: null,
-  // Shortest survey line worth running, in metres, AS RUN (after the turn margin is taken
+  // Shortest survey line worth running, in meters, AS RUN (after the turn margin is taken
   // off both ends). A survey line costs two turns whatever its length, so below some
   // length the boat spends more time manoeuvring onto the line than surveying it - and
   // that length is a property of the HULL, not of the survey. A 7.7 m DriX at survey
@@ -68,20 +68,20 @@ export const V = {
   // line (the default, so a vessel file that says nothing behaves as it always did).
   // SURVEYS ONLY - transits, search patterns and hand-drawn lines are never filtered.
   MIN_SURVEY_LINE_M: 0,
-  // THE HULL'S OWN COLOUR on the chart - "the common color of the given ASV" (Andy,
+  // THE HULL'S OWN COLOR on the chart - "the common color of the given ASV" (Andy,
   // 2026-08-28): yellow for the small survey launch, red for the 8 m diesel ASV, a
   // two-tone yellow/black livery for the work-class boat. It identifies the VESSEL, so it
   // belongs to the vessel file and not to the page; null falls back to the chart's own
-  // --asv colour, so a profile written before this existed is unchanged.
+  // --asv color, so a profile written before this existed is unchanged.
   HULL_COLOR: null,
-  HULL_COLOR2: null,       // second livery colour, filled across the aft third; null = plain
+  HULL_COLOR2: null,       // second livery color, filled across the aft third; null = plain
   // Intrinsic radius for a charted point hazard of UNKNOWN extent - a wreck symbol is a
   // position, not a size, and the casualty under it can be a 100 m ship.
   WRECK_RADIUS_M: 50,
 };
 
 // --- the keep-out model ----------------------------------------------------------------
-// THE ONE MODEL EVERY BEHAVIOUR ROUTES CLEAR OF: shoreline, manmade structures, charted
+// THE ONE MODEL EVERY BEHAVIOR ROUTES CLEAR OF: shoreline, manmade structures, charted
 // hazards, and water shallower than this vessel's own corrected floor.
 //
 // WHICH CLASSES ARE ENFORCED. A charted AREA is advisory here; the shoreline, structures,

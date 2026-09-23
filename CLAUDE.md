@@ -386,6 +386,58 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 1: TWO CONVENTIONS THAT DECAYED BECAUSE
+  NOTHING CHECKED THEM (shipped).** The 61 filed gaps were re-judged against the current tree,
+  one agent per gap with an adversarial verifier behind each REAL. Of the first 39: **12
+  FIXED** by the eight commits since they were filed, **9 WRONG**, **6 OVERSTATED**, **6
+  DEFERRED** to Andy, **6 REAL** — every one of them LOW.
+
+  * **AMERICAN ENGLISH HAD ERODED BACK TO 166 SPELLINGS**, with every suite green throughout.
+    The 2026-09-07 pass fixed the BUILDERS, which is the only place it holds — and stopped
+    there. Measured before the sweep: 2 in `build_tech_manual.js`, 2 in `build_ops_manual.js`
+    (**shipped manual prose**), 34 in `asv_console.py`, 128 in `static/asv.html`. Not all
+    comments: `behaviour` was in the `title=` tooltips the operator reads on hover
+    (asv.html 422/430/443/480) and `centreline` in the Rule 9 lane readout itself.
+  * **`tests/spelling.js` IS THE POINT OF THE ENTRY.** A convention with no check is a
+    convention that decays, and this one demonstrably did. **It found two faults in my own
+    sweep within a minute of existing:** 23 spellings in CAPITALS the sweep's word list had
+    missed (`METRES`, `BEHAVIOUR`, `CENTRE`, two of them operator-visible — *"this is the
+    PLACE CENTRE, which is on land"*), and **19 shared modules under `static/js` the sweep had
+    never been pointed at**, carrying 173 more.
+  * **⚠⚠ AND IT STOPPED A SWEEP THAT WOULD HAVE BROKEN CHART PARSING.** `COLOUR` is an
+    **S-57 ENC attribute acronym**, not a word — a key in `ENC_KEEP_PROPS` that the parser
+    reads off published chart data. A blanket uppercase pass would have renamed it to `COLOR`
+    and **silently stopped every channel mark carrying its symbol color through.** The suite
+    surfaced the three lines for inspection instead of my sweep replacing them.
+  * **BOTH EXEMPTIONS ARE ASSERTED, NOT LEFT AS HOLES IN A PATTERN** — check 4 pins the
+    quotation exemption to the ONE line (Andy's own words keep his own spelling; rewording
+    someone without saying so is worse than the inconsistency, which is `survey_card.js`'s
+    rule for the brand substitution) and check 5 pins the S-57 one to THREE. An exemption
+    nobody counts is how a guard stops guarding.
+  * **⚠ AND MY CLAIM THAT NO IDENTIFIERS WERE AT RISK WAS INCOMPLETE.** I checked compound
+    names (`centreline`, `metresPerPixel`, `greyed`) and concluded prose only — but
+    `travelled` is a bare LOCAL in `turns.js` and `metresPerDegreeEllipsoidal` an EXPORTED
+    function in `core_geodesy.js`. Both were renamed consistently (6 uses and 2 respectively,
+    no external importers, verified), and **`corner_slow` 24 and `pattern_move_grip` 7 caught
+    the rename** — which is what a source-anchored check is for. Both updated; the property
+    each pins is unchanged.
+  * **THE DECK STATED A CONSOLE THAT HAD NOT EXISTED FOR SIX WEEKS:** *~11,700 lines across 6
+    source files*, *30 suites / 415 assertions*, against a tree of **28,675 lines across 21
+    files and 96 suites**. Its sprint tile is legitimately DATED and stays; the size and suite
+    figures are now **counted at build time** from the files themselves, per this repo's own
+    rule — assert, do not quote. ⚠ The first derived count was over by one PER FILE
+    (`split(/?
+/)` yields a trailing empty element), reading 28,696; it counts newlines now
+    and reconciles with `wc -l` exactly.
+  * **AND THE SERVER'S FIVE OPERATOR-VISIBLE REFUSALS** (`hold_clear_m`, `coast_from_m`,
+    `manual_offset`) said *metres*. Filed as "11 operator strings"; it was **10 occurrences, 5
+    of which reach an operator** — the count is corrected rather than repeated.
+  * Two standing conventions caught the new suite, both the same ones `enc_cache.js` hit:
+    `precommit_hook` 5 (advice entry) and `docs_valid` 7 (the technical manual refuses to ship
+    a suite with no GUARDS entry). ⚠ And `spelling.js` then failed on **my own GUARDS
+    prose**, which spelled the attribute out — reworded rather than widening the exemption to
+    cover documentation.
+
 * **⚠⚠ 2026-09-23 — UPLOAD ROUTED THE APPROACH OVER WATER THE CHART SCAN NEVER LOOKED
   AT (shipped).** The last of the review's HIGHS, and the asymmetry is the whole finding.
 

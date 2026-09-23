@@ -1,7 +1,7 @@
 // static/js/chart.js - WHAT THE CHART SAYS, and whether the vessel may be there.
 //
 // The keep-out model: charted hazards and the extent they really occupy, depth corrected to
-// NOW, the clearance tests every behaviour routes against, and the identity of the fairway
+// NOW, the clearance tests every behavior routes against, and the identity of the fairway
 // (IALA lateral marks and the channel polygons they define). No DOM, no canvas, no fetch -
 // a question in, an answer out - so a suite can call it directly rather than lifting these
 // functions out of a 5,000-line page as source text and eval-ing them.
@@ -76,7 +76,7 @@ export { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, MARK_TAIL, CL_EXTEND_CAP_M,
 //     hull floor while the router kept out of the radius from the deeper one, so a route
 //     could swing wide of a circle that was never drawn - the exact fault the drawing
 //     code's own comment says it exists to prevent;
-//   * nogoKind labelled a shallow-water polygon "water shallower than 1.0 m" on a model
+//   * nogoKind labeled a shallow-water polygon "water shallower than 1.0 m" on a model
 //     built at 2.0 m, which is a count the operator cannot reconcile with the card.
 //
 // It is also the CONSERVATIVE direction: a deeper floor is a higher bar for calling a
@@ -110,7 +110,7 @@ export function hazPassable(f){ return coreHazPassable(f, koOpts()); }
 // water level near its own station. The console interpolates the nearest few, but if the
 // nearest is hundreds of km off, the number on screen is another coast's tide - which is
 // exactly what showed an Erie level while the boat sat at Lewes (the console had started
-// on the Erie vessel; the reading was correctly LABELLED Erie, but it looked as
+// on the Erie vessel; the reading was correctly LABELED Erie, but it looked as
 // authoritative as any other, and the operator has no reason to read the station name on
 // a value that is normally trustworthy).
 //
@@ -150,7 +150,7 @@ export function bufferFloor(missionBuf){
 // THE CORE'S ANSWER FOR "chan_mark" IS "a channel buoy" WHERE THIS FILE USED TO SAY
 // "land", and nothing can reach the difference: buildKeepouts is the only caller in either
 // repo, and it handles marks and CONTINUES before this is called - the buoy points it
-// builds are labelled at the push site. The core's is the correct answer and the model was
+// builds are labeled at the push site. The core's is the correct answer and the model was
 // never affected either way; the core's tests/keepouts.py pins the unreachability rather
 // than the strings, because an unreachable branch asserted by its output is a comment.
 export function nogoKind(r, depthbad){ return coreNogoKind(r, depthbad, koOpts()); }
@@ -164,7 +164,7 @@ export function nogoKind(r, depthbad){ return coreNogoKind(r, depthbad, koOpts()
 // Every state is DERIVED from values that already exist - `busy`, `nogo.band` (set only
 // by a successful extract, so it is the "we have chart data" fact), `nogo.note` (why not,
 // when not) and the keep-out counts. No new state field, so nothing can drift out of step
-// with the model the behaviours actually route against.
+// with the model the behaviors actually route against.
 export function nogoKindCounts(){                      // tally the keep-outs by their own kind names
   const c = {}, ko = nogo.ko;
   if(!ko) return c;

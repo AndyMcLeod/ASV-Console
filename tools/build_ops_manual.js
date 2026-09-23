@@ -358,7 +358,7 @@ c.push(P("Stop, E-STOP and a disarm each end station-keeping along with the run:
 c.push(H2("11.4  What you should be watching"));
 c.push(B("THE WATER, first. Everything below is secondary to that."));
 c.push(B("The RUN block's status line and percent — the fastest read on whether the run is progressing."));
-c.push(B("Energy, against the distance still to run. The card gives endurance and range for fuelled vessels."));
+c.push(B("Energy, against the distance still to run. The card gives endurance and range for fueled vessels."));
 c.push(B("The communications bar. A degrading link is visible before it is lost."));
 c.push(B("The Nogo row, if the vessel is transiting into an area the model was not built for — it re-extracts, and says so."));
 c.push(H2("11.5  End of plan — where the run leaves the vessel"));
@@ -406,7 +406,7 @@ c.push(B("Check the water level band. A remote reading is not applied, so charte
 c.push(H2("13.4  No chart coverage"));
 c.push(P("The console says so and routes DIRECT. Every leg is then unverified. Either work manually, pre-cache the chart for the area, or accept the risk explicitly and keep the vessel in sight."));
 c.push(H2("13.5  Energy running low"));
-c.push(P("The energy readout bands as it depletes, and fuelled vessels report endurance and range. Decide against the distance still to run and the distance HOME — not against the percentage. A return is a routed transit and may be considerably longer than the straight-line range shown."));
+c.push(P("The energy readout bands as it depletes, and fueled vessels report endurance and range. Decide against the distance still to run and the distance HOME — not against the percentage. A return is a routed transit and may be considerably longer than the straight-line range shown."));
 c.push(H2("13.6  The turn is reported untrackable"));
 c.push(P("See 9.5.1. The pattern asks the vessel to reverse where no turn it can fly is clear, so Add to plan is refused, and the note under the button lists the remedies that apply there: pull the line ends back from what refused the turn, strike off a run, slow the TURN speed (a turn the vessel could not track — the punch reruns by itself), or widen the spacing (a pattern of teardrop turns). Otherwise Punch Out again after the change."));
 c.push(H2("13.7  Something on the card looks stale"));

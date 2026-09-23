@@ -9,7 +9,7 @@
 //
 // WHAT RULE 9 MEANS HERE. In a narrow channel or fairway a power-driven vessel keeps to the
 // starboard side of the fairway. The lane is derived GEOMETRICALLY - a quarter-width offset
-// from the channel centreline - NOT from buoy colour, so it holds in either IALA region and
+// from the channel centerline - NOT from buoy color, so it holds in either IALA region and
 // where the marks are sparse. `channelSpanKeepouts` then stops a SURVEY line from spanning
 // the channel it should be running along.
 //
@@ -188,16 +188,16 @@ export function regionOrder(segs, ref, legHeading, spacing, legSafe){
 // own result, not off a flag describing whichever route was planned most recently.
 export function buoyageNote(lane, partial){
   // Go-To / RTH / Transit ride the CHANNEL LANE: offset to starboard of the buoy-pair
-  // centreline, so the centreline stays to port and the starboard-hand marks to
+  // centerline, so the centerline stays to port and the starboard-hand marks to
   // starboard - either direction of travel.
   //
   // A PARTIAL LANE SAYS SO. The banner is the only thing telling the operator whether
   // the boat is keeping right, and "Rule 9: channel lane" over a route that rides one
-  // channel's centreline dead on, or that lost the lane to a spliced detour, is worse
+  // channel's centerline dead on, or that lost the lane to a spliced detour, is worse
   // than no banner: it is a claim they would otherwise have checked.
   if(!lane) return "";
-  return partial ? "Rule 9: channel lane, centreline to port — PARTIAL: some of this route is not laned"
-                 : "Rule 9: channel lane, centreline to port";
+  return partial ? "Rule 9: channel lane, centerline to port — PARTIAL: some of this route is not laned"
+                 : "Rule 9: channel lane, centerline to port";
 }
 // One entry point, applied to EVERY mode: lane off the buoys where a channel is marked,
 // off the water's own edges where it isn't, then smooth + set the waypoint spacing.
@@ -213,7 +213,7 @@ export function buoyageNote(lane, partial){
 // operation that did not produce it.
 // THE GATE: no route leaves the lane pipeline without passing the SAME legClear the
 // obstacle search obeyed. Found at Erie (2026-08-06): legPath routed clear of every
-// keep-out, then buoyChannelLane REPLACED that route with the buoy-gate centreline
+// keep-out, then buoyChannelLane REPLACED that route with the buoy-gate centerline
 // (offset to port) and smoothTrack rounded the bends - and where the charted channel
 // hugs the waterfront, that lane geometry crossed the seawall's land polygon in three
 // places. Nothing re-checked the substitution, so the banner said "routed around
@@ -269,26 +269,26 @@ export function pruneJunctionKnots(lineIn, Ap, via, Bp, lineOut, ref, ko, buf){
 }
 // ============================================================================
 // CHANNEL LANE (ported from the sibling console, 2026-07-31). COLREGS Rule 9 for
-// every transit: ride a lane offset to STARBOARD of the channel CENTRELINE, half
+// every transit: ride a lane offset to STARBOARD of the channel CENTERLINE, half
 // the local half-width out (= a quarter of the full width in from the edge), so the
-// centreline stays to PORT. Colour is never an input - it falls out, because IALA
+// centerline stays to PORT. Color is never an input - it falls out, because IALA
 // lateral marks sit on fixed sides. Direction of travel picks the side, so inbound
 // and outbound ride opposite halves and opposing traffic passes port-to-port.
-// Marked channels take the centreline from PAIRED buoy midpoints; unmarked but
+// Marked channels take the centerline from PAIRED buoy midpoints; unmarked but
 // confined water takes it from the water's own edges. This REPLACED an earlier
-// colour-driven buoy-line rule that rode the wrong side of the buoys on the water
+// color-driven buoy-line rule that rode the wrong side of the buoys on the water
 // twice, because it derived its offset from a fragile edge ray-march instead of
-// from the centreline. That rule and its colour helpers were deleted 2026-08-02.
+// from the centerline. That rule and its color helpers were deleted 2026-08-02.
 // ============================================================================
 // Smooth + densify a coarse waypoint list into a followable track. The channel
-// centreline has only ONE point per buoy pair, so a bare boat->midpoints->target path
+// centerline has only ONE point per buoy pair, so a bare boat->midpoints->target path
 // dog-legs at each bend and is too sparse for the follower to track smoothly. Two
 // steps: (1) linearly RESAMPLE onto ~STEP-spaced points that lie exactly on the input
-// polyline (so straight runs stay dead on the centreline); (2) round the corners with a
+// polyline (so straight runs stay dead on the centerline); (2) round the corners with a
 // couple of light [0.25,0.5,0.25] smoothing passes - identity on a straight run, so it
 // only rounds the bends, and it can only move a point INWARD (never bulging into the
 // far bank). Endpoints are fixed; a smoothed point that would land in a keep-out is left
-// un-smoothed. Net: many waypoints, on the centreline on the straights, gently rounded
+// un-smoothed. Net: many waypoints, on the centerline on the straights, gently rounded
 // at the bends.
 // THE END OF A COMMANDED ROUTE IS WHERE THE BOAT WILL HOLD, so a target is a HOLD POINT
 // and not merely a destination (the command-time half of the Eastport work, 2026-09-03).
@@ -380,9 +380,9 @@ export function planNogoRoute(from, to, opts){
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
   const routed = leg.length > 1;
-  // The lane's centreline is EXTENDED to the charted end of the fairway before the lane
+  // The lane's centerline is EXTENDED to the charted end of the fairway before the lane
   // is built on it (extendCenterline), so the stand-on past a mouth needs no separate
-  // pass here. This comment used to claim the same thing about the UNextended centreline
+  // pass here. This comment used to claim the same thing about the UNextended centerline
   // - "it already runs out to the last buoy pair, so the fairway projects past the mouth"
   // - which was false: it ran out AT the last pair and the offset was decaying before it.
   const path = [{lat:from.lat,lon:from.lon}, ...leg];

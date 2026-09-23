@@ -99,7 +99,7 @@
  *   `routeAround(A, B, frame, ko, buf)`   A* around the keep-outs, rasterised
  *   `routeAroundSeg(...)`                 the same, split so a long leg keeps a fine grid
  *   `legPath(A, B, frame, ko, buf)`       the escalation ladder, or null
- *   `pruneStitch(full, frame, ko, buf)`   drop a vertex whose neighbours connect clear
+ *   `pruneStitch(full, frame, ko, buf)`   drop a vertex whose neighbors connect clear
  *   `channelLaneRoute(path, frame, ko, buf)`  the whole Rule 9 pipeline
  *
  * ─ WHY THIS FILE EXISTS ─
@@ -148,7 +148,7 @@
  * that check is the only thing in the estate that would notice.
  *
  * ⚠ AND ASV'S PLANE IS STILL FLAT WHILE ITS METRIC IS NOW TRUE — 0.278 % apart,
- * on purpose. A point placed r metres out through `fromEN` measures 0.9972·r by
+ * on purpose. A point placed r meters out through `fromEN` measures 0.9972·r by
  * `frame.distTo`. Safe because of WHERE the metric is used here: the escape-ring
  * filter and sort, the 60° fold, the within-2·buf exemption. All three are
  * HEURISTICS — which candidate to prefer, which vertex to drop, which block to
@@ -173,7 +173,7 @@
  * corner, and the guarantee is gone while every route still looks plausible.
  */
 
-// The planar primitives come from the geometry module and the keep-out behaviour
+// The planar primitives come from the geometry module and the keep-out behavior
 // from the keep-out one, rather than everything through the latter's re-export.
 // `./geometry.js` and `./keepouts.js` both resolve to the core copy in either
 // destination -- WorldView's vendored `core/` dir keeps the natural names, and
@@ -192,7 +192,7 @@ export { stampSeg, dilateGrid, rasterKeepouts };
  * Sub-leg length for a long transit.
  *
  * The grid spans the whole A–B box at a cell capped by `maxDim`, so past a few
- * kilometres the cell coarsens until it can no longer thread a channel. Split a
+ * kilometers the cell coarsens until it can no longer thread a channel. Split a
  * long leg into fine-grid-sized pieces, route each, and stitch.
  */
 export const SEG_LEN_M = 2200;
@@ -331,7 +331,7 @@ export function routeAround(A, B, frame, ko, buffer, marginOv, maxDimOv) {
       // turns no check red, and that was checked rather than assumed. The reason
       // is `rasterKeepouts` always dilating by at least one cell: two blocked
       // cells can then never touch at only a corner, so in practice this only
-      // forbids a diagonal that HUGS a wall (one orthogonal neighbour blocked),
+      // forbids a diagonal that HUGS a wall (one orthogonal neighbor blocked),
       // and the raster's own conservatism already keeps that exactly clear. It
       // stays because it is the standard correctness condition for grid A* and
       // costs nothing; it is not load-bearing here. Do not add a mutation for it
@@ -452,7 +452,7 @@ export function routeAroundSeg(A, B, frame, ko, buf) {
 }
 
 /**
- * Drop any waypoint forming a sharp turn (>60°) whose neighbours connect clear.
+ * Drop any waypoint forming a sharp turn (>60°) whose neighbors connect clear.
  *
  * A stitched or refined path keeps only the turns an obstacle actually forces.
  * This can only ever SHORTEN a path that is already clear by construction —
@@ -480,7 +480,7 @@ export function pruneStitch(full, frame, ko, buf) {
  *
  * The escalation ladder, in sections with a safe fallback. The fast search
  * region is the A–B box plus at most 900 m, which cannot round a LARGE
- * landmass: the detour leaves that window by kilometres, so a long transit was
+ * landmass: the detour leaves that window by kilometers, so a long transit was
  * refused while short ones worked. Two stacked constraints:
  *
  *   1. the swing needs a WIDER region → retry at 2700 m and 8100 m (the grid
@@ -593,7 +593,7 @@ export function legPath(A, B, frame, ko, buf, opts = {}) {
   return null;
 }
 
-/** How far off the centreline the lane rides, as a fraction of the half-width. */
+/** How far off the centerline the lane rides, as a fraction of the half-width. */
 export const LANE_FRAC = 0.5;
 
 /**
@@ -607,17 +607,17 @@ export const LANE_FRAC = 0.5;
  * Measured on the Erie plan he was looking at. Home to the first survey line is 681 m and
  * the router returns it as ONE waypoint — the straight run is already clear, there is no
  * obstacle anywhere on it. The buoyed channel there has a 150 m half-width, so the old
- * test captured anything within 375 m of the centreline: 225 m BEYOND the buoys. Sampled
+ * test captured anything within 375 m of the centerline: 225 m BEYOND the buoys. Sampled
  * along that straight run, only 7 of 21 points were actually inside the channel — it
- * leaves the buoy line about a third of the way along and ends 279 m off the centreline,
+ * leaves the buoy line about a third of the way along and ends 279 m off the centerline,
  * 129 m outside it — yet 21 of 21 were captured. So a route that had left the channel was
  * treated as a full channel transit and pinned to its starboard edge for the whole leg,
  * arriving 196 m off the direct line and then cutting back across. 681 m of clear water
  * became 20 waypoints and 829 m.
  *
  * The lane itself was never wrong, and that is worth recording because it looked wrong:
- * measured against the centreline's own direction every sample read "port", which is the
- * WRONG SIDE for Rule 9 — but a buoyed centreline runs in the direction of BUOYAGE, and
+ * measured against the centerline's own direction every sample read "port", which is the
+ * WRONG SIDE for Rule 9 — but a buoyed centerline runs in the direction of BUOYAGE, and
  * this transit was outbound against it. Measured against the direction of travel, all of
  * it is 75 m to STARBOARD at exactly LANE_FRAC of the half-width. Correct, all along.
  *
@@ -633,17 +633,17 @@ export const LANE_CAPTURE_STANDOFF_M = (buf) => Math.max(60, (buf || 0) * 10);
 
 /**
  * How wide the water may be and still be a NARROW CHANNEL for COLREGS Rule 9,
- * in metres, edge to edge.
+ * in meters, edge to edge.
  *
  * ⚠ THIS IS A POLICY NUMBER AND IT IS SAID OUT LOUD, because COLREGS defines no
  * width. Rule 9 speaks of "a narrow channel or fairway" and Rule 9(b) of a vessel
  * "which can safely navigate only within a narrow channel or fairway" — a test
- * about the OTHER vessel's room to manoeuvre, not a measurement. So a threshold
+ * about the OTHER vessel's room to maneuver, not a measurement. So a threshold
  * has to be chosen, and the honest thing is to name it, state the reasoning, and
  * let it be overridden rather than bury it in a comparison.
  *
  * 150 m is chosen so that a large vessel is genuinely constrained: a ship of
- * 30-40 m beam has under four beam-widths of water and no room to manoeuvre
+ * 30-40 m beam has under four beam-widths of water and no room to maneuver
  * around a small craft. Above it, a bay may be shaped like a channel without
  * being one, and that is exactly the over-application this bound exists to stop —
  * the previous code had NO width test at all and treated any water with edges
@@ -658,7 +658,7 @@ export const NARROW_MAX_M = 150;
 
 
 /**
- * The centreline the lane is built on: the buoy-pair midline, extended past
+ * The centerline the lane is built on: the buoy-pair midline, extended past
  * both ends to the charted extent of the fairway.
  *
  * Every consumer goes through this, so "where does the channel reach to" cannot
@@ -755,7 +755,7 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
     const qa = proj(base[i0], cl), qb = proj(base[i1], cl);
     if (clLen(cl, qa.u, qb.u) < 0.5 * runM) continue;          // ALONG the channel, not across it
     // ONE SYSTEM IS LANED PER LEG. A transit down two successive buoyed
-    // channels rides the second dead on its centreline — the head-on position —
+    // channels rides the second dead on its centerline — the head-on position —
     // and nothing downstream could tell, because the flag only recorded "a lane
     // was ridden". Count what qualified so the caller can say `partial`.
     qualified++;
@@ -766,7 +766,7 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
   const { cl, i0, i1 } = pick;
   const pa = proj(base[i0], cl), pb = proj(base[i1], cl);
 
-  // INVARIANT 5. A real ENC channel may have 2–3 buoy pairs over kilometres,
+  // INVARIANT 5. A real ENC channel may have 2–3 buoy pairs over kilometers,
   // which leaves ONE interior vertex whose tangent is computed from itself — a
   // zero-length starboard vector, so no offset is applied at all. Measured on
   // the live Erie channel: 7% starboard, mean −0.08·hw.
@@ -809,7 +809,7 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
     want[i] = blocked(at(off), ko, buf) ? 0 : off;
   }
   // Pass 2 — SLEW-LIMIT so the lane eases in and out of foul stretches instead
-  // of stepping. A step between neighbours laid a rung across a shoal corner;
+  // of stepping. A step between neighbors laid a rung across a shoal corner;
   // a one-way forward sweep was sticky and collapsed the whole lane downstream
   // of the first tight spot (the inbound lane kept 54 of ~190 points). Both
   // passes only ever REDUCE, so no point is pushed past the clear-water limit.
@@ -845,18 +845,18 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
   // A RESCUE IS AN UN-LANED PATCH: legPath's detour is lawful but carries no
   // starboard bias, so a lane that needed rescuing was not delivered end to end.
   //
-  // ⚠⚠ AND AN OFFSET OF ZERO IS THE CENTRELINE - THE HEAD-ON POSITION - SO `used` MAY NOT
+  // ⚠⚠ AND AN OFFSET OF ZERO IS THE CENTERLINE - THE HEAD-ON POSITION - SO `used` MAY NOT
   // CLAIM A LANE THE GEOMETRY NEVER DELIVERED. `want[i]` reaches 0 two ways: the shrink loop
   // above can exit on `k < 12` with `off` still blocked, and pass 2's slew limit can drag a
-  // neighbour down to it. Either way the lane point collapses ONTO the centreline while
-  // `used: true` had the page banner "routed to starboard of the channel centreline
+  // neighbor down to it. Either way the lane point collapses ONTO the centerline while
+  // `used: true` had the page banner "routed to starboard of the channel centerline
   // (Rule 9)" - a claim of keeping right, made about a route sitting exactly where a head-on
   // meeting happens. The two-system guard above counts SYSTEMS; this is the same failure one
   // level down, counted per POINT.
   //
   // STANDOFF / 2 is the "is this a lane at all" floor rather than a bare `> 0`, because the
   // shrink loop can also leave a near-zero survivor - off = 0.519 m when the final `blocked`
-  // happens to clear - which is a centreline route by any operational reading.
+  // happens to clear - which is a centerline route by any operational reading.
   const flat = want.reduce((a, w) => a + (w > STANDOFF / 2 ? 0 : 1), 0);
   if (flat === want.length) return nil;    // nothing delivered: hand back the routed path
   return { path: out, used: true,
@@ -870,8 +870,8 @@ export function buoyChannelLane(pathLL, frame, ko, buf) {
  *
  * A channel does not stop being a channel because nobody buoyed it — a basin
  * exit, a canal, a dredged cut between banks all get identical treatment. Here
- * the centreline comes from the WATER ITSELF: march perpendicular to travel to
- * the first obstruction each side, and the local centre is `(RC−LC)/2` to
+ * the centerline comes from the WATER ITSELF: march perpendicular to travel to
+ * the first obstruction each side, and the local center is `(RC−LC)/2` to
  * starboard with half-width `(RC+LC)/2`.
  *
  * Fires ONLY where BOTH edges answer within `CONFINE` — genuinely channel-like
@@ -903,7 +903,7 @@ export function narrowChannelLane(pathLL, frame, ko, buf, opts = {}) {
   if (N < 4) return nil;
 
   // Stretches already laned off the buoys are left exactly as they are — the
-  // SAME extended centreline, so the stand-on past a mouth is recognised as
+  // SAME extended centerline, so the stand-on past a mouth is recognized as
   // buoy-laned water and is not re-laned off the banks.
   const cls = (ko.sys || []).map((sy) => laneCenterline(sy, ko)).filter((cl) => cl.length >= 2);
   const inBuoyChannel = (p) => {
@@ -994,7 +994,7 @@ export function narrowChannelLane(pathLL, frame, ko, buf, opts = {}) {
   }
 
   // Blend, but ONLY across samples that actually measured a channel. Averaging
-  // in the zeros of non-channel neighbours halved the lane in a short confined
+  // in the zeros of non-channel neighbors halved the lane in a short confined
   // stretch — 15/13/20 m of shift washed down to ~10 on the Canal Basin exit.
   const sm = new Float64Array(N);
   for (let i = 0; i < N; i++) {
@@ -1029,7 +1029,7 @@ export function narrowChannelLane(pathLL, frame, ko, buf, opts = {}) {
 /**
  * Resample and gently round a coarse waypoint list into a followable track.
  *
- * A buoy-pair centreline has one point per pair, so a bare path dog-legs at
+ * A buoy-pair centerline has one point per pair, so a bare path dog-legs at
  * each bend. Two steps: resample by ARC LENGTH onto ~STEP-spaced points that lie
  * exactly on the input polyline (so straight runs stay dead on it), then two
  * light [0.25, 0.5, 0.25] passes — identity on a straight run, so only the bends
@@ -1130,7 +1130,7 @@ export function gateLegClear(route, fallback, frame, ko, buf) {
  * gate, then the knot prune.
  *
  * THE KNOT PRUNE LIVES IN THE PRODUCER. A gate SPLICE SEAM can fold a reversal
- * knot — the patch rejoins the lane a few metres BEHIND where it left, and the
+ * knot — the patch rejoins the lane a few meters BEHIND where it left, and the
  * shipped route then demands a ~180° turn in less water than any hull can turn
  * in. Flown at Lewes as a full 360° orbit at the mouth of Roosevelt Inlet.
  * Pruning here means every consumer inherits it, the same producer-not-consumers
