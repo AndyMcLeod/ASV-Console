@@ -262,6 +262,9 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
   // for - its own comment says "getting this backwards would back the boat up into
   // UNsurveyed water" - and `_wpIndex` counts into the UPLOADED route, which a page loaded
   // mid-run does not hold. `mission.waypoints` is a different, shorter array whenever
+  // ⚠ AT THIS SCOPE, not inside the upload block: a `const` declared in there is invisible
+  // to the checks below, which is how a fixture ends up reading its own untouched default.
+  var covered = null, routedAfterCover = null;
   // routePlan spliced a detour in, so the waypoint at that index is some other corner
   // entirely. Refusing the mark gives up the BACKTRACK, never the resume: check 12 already
   // holds that a resume without a mark still runs, from where she lies.
@@ -633,10 +636,24 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // eslint-disable-next-line no-eval
     const notTookSay = eval("(" + grab("notTookSay") + ")");
     let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan
-    const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
+    const routePlan = (start, wps) => (routedAfterCover = covered !== null, { route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
                                                    .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
                                           unroutable: [], degraded: !nogo.ready });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
+    // ⚠ RECORDS, DOES NOT SWALLOW (2026-09-22). doUpload now covers the water the plan will
+    // use before it routes, the way every other commanded motion does. A stub that just
+    // returned would be satisfied by a doUpload that covered the SURVEY alone - which is
+    // precisely the defect, since the approach starts wherever the boat is lying. So the
+    // points are kept and check 1p reads them.
+    // ⚠⚠ AND IT RESOLVES ASYNCHRONOUSLY, ON PURPOSE. A stub that set `covered` before
+    // returning made the AWAIT invisible: dropping `await` in doUpload leaves the scan pending
+    // while routePlan runs against the un-extended model - the fix doing nothing at all - and
+    // that mutation SURVIVED a sweep until this stub started resolving on a later tick.
+    // `routedAfterCover` is what actually pins the ordering.
+    const ensureNogoCovers = (pts) => Promise.resolve().then(() => {
+      covered = (pts || []).map(p => ({lat: p.lat, lon: p.lon}));
+      return true;
+    });
     // eslint-disable-next-line no-eval
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval
@@ -649,6 +666,13 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                                   // otherwise: an answer leaking from the previous case is
                                   // how a check passes for the wrong reason.
                                   reply = null;
+                                  // ⚠⚠ AND THE COVER RECORDER, for the same reason and found the
+                                  // same way. These persisted across runs, so check 1p read a
+                                  // value an EARLIER upload had written and the "cover is not
+                                  // awaited" mutation SURVIVED twice - the check could not
+                                  // fail, because what it asserted was already true before
+                                  // the code under test ran.
+                                  covered = null; routedAfterCover = null;
                                   setup(); await doUpload(); await Promise.resolve(); };
 
     await up(() => { asv = null; nogo = { ready: true, band: "enc_harbour" }; });
@@ -730,6 +754,41 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
   // the same observation on the refused case alone. The ACCEPTED case is what makes it
   // evidence, and it is the same world but for the answer.
   await up(() => { nogo.ready = true; reply = null; });
+  // -- 1p. THE APPROACH IS PLANNED OVER WATER THE CHART WAS READ FOR ----------------------
+  // ⚠⚠ THE ASYMMETRY IS THE FINDING. Go-To covers [boat, target], RTH covers [boat, home],
+  // Transit covers [boat, ...transit] - every commanded motion covers the water it is about to
+  // use, and every one of them puts the BOAT in the box. Upload covered nothing, and it is the
+  // one that routes an approach from wherever the boat happens to be lying.
+  //
+  // It inherited the PUNCH's model, whose chart-ink scan box is encBbox(120 + lead) - the
+  // survey's own water, which does not contain the boat. So the survey legs were planned
+  // against the ENC *and* the structures read off the chart image, while the approach was
+  // planned against the ENC alone; an unpublished pier between the boat and the survey was
+  // invisible to it, and the clearance guard reads the same model, so it was blind there too.
+  // Unscanned water reads as CLEAR, not as unknown - ensureNogoArea says so in those words -
+  // so there was no banner, and there could not have been one: nothing knew it had not looked.
+  //
+  // The fixture's boat is at 43.07 and its two waypoints at 43.08 / 43.09, so "three points,
+  // first one the boat" is the whole assertion. `covered` is null until doUpload calls out.
+  check("1p. Upload covers the water the plan will USE - the boat AND every waypoint, not "
+        + "just the survey",
+        () => Array.isArray(covered) && covered.length === 3
+              && Math.abs(covered[0].lat - 43.07) < 1e-9
+              && Math.abs(covered[2].lat - 43.09) < 1e-9
+              && routedAfterCover === true,
+        () => "covered " + (covered ? covered.length : "null") + " point(s)"
+            + (covered && covered.length
+                ? " from " + covered[0].lat.toFixed(2) + " to "
+                  + covered[covered.length - 1].lat.toFixed(2)
+                  + "; first is " + (Math.abs(covered[0].lat - 43.07) < 1e-9
+                      ? "THE BOAT" : "NOT the boat")
+                : "")
+            + "; routed AFTER the cover: " + routedAfterCover
+            + ". The approach is the one leg that starts where the boat is, and it was the one "
+            + "leg nothing had scanned the chart image for. The ordering half matters as much: "
+            + "an un-awaited cover leaves routePlan running on the model it was trying to "
+            + "extend, which is the fix present and doing nothing");
+
   const drew = runRoute, drewGen = planGen;
   await up(() => { nogo.ready = true; reply = "refuse"; });
   const refusedRoute = runRoute, refusedSaid = banners.join(" | "), refusedSent = calls.length;

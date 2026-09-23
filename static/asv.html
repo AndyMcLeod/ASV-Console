@@ -10713,6 +10713,33 @@ async function doUpload(){
     stagedNote(r0);
     render(); return;
   }
+  // ⚠⚠ COVER THE WATER THIS PLAN WILL USE, INCLUDING THE APPROACH. Every other commanded
+  // motion does this and every one of them puts the BOAT in the box - Go-To
+  // ([boat, target]), RTH ([boat, home]), Transit ([boat, ...transit]). Upload did not, and
+  // it is the one that routes an approach from wherever the boat happens to be lying.
+  //
+  // It inherited the punch's model, whose chart-ink scan box is `encBbox(120 + lead)` - the
+  // SURVEY's own water, which does not contain the boat. So the survey legs were planned
+  // against the ENC *and* the structures read off the chart image, while the approach - often
+  // the longest leg in the plan - was planned against the ENC alone. An unpublished pier or
+  // float system between the boat and the survey was invisible to it, and the clearance guard
+  // reads the same model, so it was blind on that leg too. That is the New Castle failure the
+  // punch's own comment records, arriving by the one door that never got the fix.
+  //
+  // ⚠ AND UNSCANNED WATER READS AS CLEAR, NOT AS UNKNOWN - ensureNogoArea says so in those
+  // words. There is no banner for this and there could not be one: nothing knew it had not
+  // looked.
+  //
+  // A NO-OP IN THE ORDINARY CASE. ensureNogoCovers is bbox-cached and contained-checked, so a
+  // boat already sitting in the surveyed water costs one contains test.
+  //
+  // ⚠ AND THIS AWAIT IS ALREADY FENCED. `was` is snapshotted at the TOP of doUpload, above
+  // every await in it - the unbounded guiConfirm included - and the post at the bottom checks
+  // `planGen !== was.gen || runRoute !== was.route` before it draws anything. So a command the
+  // operator gives while this scan runs bumps the generation and is caught there, exactly as
+  // one given during the confirm is. A new await on this path is only safe BECAUSE that
+  // snapshot is taken first; anything added above it would not be.
+  await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps]);
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.

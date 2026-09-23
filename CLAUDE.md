@@ -386,6 +386,42 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — UPLOAD ROUTED THE APPROACH OVER WATER THE CHART SCAN NEVER LOOKED
+  AT (shipped).** The last of the review's HIGHS, and the asymmetry is the whole finding.
+
+  * **EVERY OTHER COMMANDED MOTION COVERS THE WATER IT IS ABOUT TO USE, AND EVERY ONE PUTS THE
+    BOAT IN THE BOX:** Go-To `ensureNogoCovers([boat, target])`, RTH `([boat, home])`, Transit
+    `([boat, ...transit])`, a placed mark `([ll], 400)`, and the punch `ensureNogoArea()`.
+    **`doUpload` called neither** — and it is the one that routes an approach from wherever
+    the boat happens to be lying.
+  * **SO IT INHERITED THE PUNCH'S MODEL**, whose chart-ink scan box is `encBbox(120 + lead)`:
+    the survey's own water, which **does not contain the boat**. The survey legs were planned
+    against the ENC *and* the structures the console reads off the chart image; the approach —
+    often the longest leg in the plan — was planned against the ENC alone. An unpublished pier
+    or float system between the boat and the survey was invisible to the approach routing, and
+    the clearance guard reads the same model, **so it was blind on that leg too**. That is the
+    New Castle failure `punchOut`'s own comment records (*"a Go-To went round the piers at New
+    Castle and a survey LINE was clipped through them"*), arriving by the one door that never
+    got the fix.
+  * **AND IT READ AS CLEAR, NOT AS UNKNOWN** — `ensureNogoArea`'s own comment says it in those
+    words. There was no banner and there could not have been one: nothing knew it had not
+    looked.
+  * **THE FIX IS THE CALL EVERY OTHER DOOR ALREADY MAKES**, on this plan's own water:
+    `await ensureNogoCovers([{boat}, ...wps])` before `routePlan`. It is bbox-cached and
+    contained-checked, so a boat already sitting in the surveyed water costs one contains test.
+    ⚠ It is safe to add an await HERE only because `was = {gen: planGen, route: runRoute}` is
+    snapshotted at the TOP of `doUpload`, above every await in it, and the post at the bottom
+    fences on it — a command given while this scan runs is caught exactly as one given during
+    the unbounded `guiConfirm` is.
+  * **TEETH: 4 mutations, 4 killed, 0 survived, 0 skipped**, control read first. New driven
+    check `pause_resume` 1p. ⚠⚠ **TWO SWEEPS WERE NEEDED AND BOTH FAILURES WERE MINE.** The
+    "cover is not AWAITED" mutation — the fix present and doing nothing, because `routePlan`
+    then runs on the model it was trying to extend — survived twice. First because the stub
+    resolved synchronously, so the await was invisible; then because `covered` was **not reset
+    between runs**, so 1p read a value an EARLIER upload had written. **A check that cannot
+    fail, in the exact shape this handoff keeps recording: ask what the value WAS before the
+    code ran.** `up()` already reset five other things for that reason; mine were the omission.
+
 * **⚠⚠ 2026-09-22 — THE PAGE HANG IS MEASURED, REPRODUCED AND FIXED: IT WAS `drawENC`,
   AND THE POINTER ASKING FOR A REDRAW PER EVENT (shipped).** Review item #29, open since it was
   first reported and never isolated.
