@@ -280,7 +280,11 @@ check("10. the pair gate and the margin the technical manual quotes: a reversal 
       + "and a gap under (GAP_LINES + 0.6) spacings, GAP_LINES = 4; every run loses max(2 m, half a spacing) each end",
       () => /const antiParallel = Math\.abs\(\(\(hF-hE\+360\)%360\)-180\) < 50;/.test(punch)
             && /const GAP_LINES = 4, gapSpan = GAP_LINES \+ 0\.6;/.test(punch)
-            && /if\(antiParallel && distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3 \+ leadSlack\)\{/.test(punch)
+            // ⚠ TWO QUESTIONS SINCE 2026-09-23: the CROSSING decides whether the lines are
+            // neighbours, the SPAN whether a turn can reach between them. One distance had
+            // been standing in for both, which is why a staggered pair shipped as a hop.
+            && /acrossM < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(punch)
+            && /distTo\(Ap,Bp\) <= 2\*turnMaxHalf/.test(punch)
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(punch)
             && /const ro=regionOrder\(runs, ref, sp\.direction, sp\.spacing, legSafe\);/.test(punch),
       "antiParallel < 50; gapSpan 4.6; turnMargin max(2, spacing/2); regionOrder on the kept runs");

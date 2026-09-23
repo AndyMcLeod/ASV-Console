@@ -525,6 +525,43 @@ divide-by-1000-then-toFixed fingerprint, and a comment that spelled the pattern 
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-23 — THE STAGGER GATE IS WIDENED (Andy's call, shipped). THE CROSSING
+  SAYS "NEIGHBORS", THE SPAN SAYS "REACHABLE", AND ONE DISTANCE HAD BEEN STANDING IN FOR BOTH.**
+
+  * **THE DEFECT:** the gate compared the STRAIGHT distance between two line ends, so a pair
+    whose runs genuinely reverse but whose ends are far apart ALONG the line — what the chart
+    clip leaves when it cuts two neighbors to different extents — failed it. No turn was
+    attempted and the straight leg shipped: the hull asked to come about at a point, which is
+    the shape `GAP_LINES` exists to prevent, arriving through the one door it did not watch.
+  * **⚠⚠ AND THE NAIVE FIX WAS RIGHT TO BE REJECTED IN 2026-09-08.** The crossing is ALWAYS
+    <= the distance, so swapping one for the other admits pairs whose ends NO TURN CAN SPAN;
+    the ladder refuses those as `degenerate`, a refused reversal is RED, and red refuses Add to
+    plan. That note measured **0 -> 2 unroutable** on a harbour plan doing exactly this.
+  * **SO THE BOUND IS THE LADDER'S OWN.** `turnMaxHalf` is what every turn builder refuses past
+    (`half > maxHalf`), so a pair is buildable as a reversal exactly when its ends are within
+    **twice** it. The gate asks the CROSSING against the spacing and the SPAN against the turn
+    cap — two different questions, where one number had been answering both.
+  * **MEASURED ON HIS SIX COMMITTED PLANS BEFORE IT WAS WRITTEN** (revs 177—231): **94
+    anti-parallel pairs, old gate 93, new gate 94, GAINED 1, would-be-degenerate 0.** The one
+    gained is a genuine staggered reversal — a spacing across, 66 m of stagger, ends 67 m
+    apart against a 120 m span. **That zero is the safety of the change.**
+  * **`acrossTrackM` IS NOW AN EXPORT OF `geometry.js`, because a mutation of its AXIS
+    SURVIVED.** Every check pinned the COMPARISON and none the ARITHMETIC, so computing the
+    along-track component in place of the across-track one — which inverts the entire change,
+    gating on the very quantity that was wrong — walked through all three. Inline trig cannot
+    be driven; as an export it can, and `strike_run` 16m drives it on known geometry.
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped**, control read first. New checks
+    `strike_run` 16h/16j/16k/16m. The technical manual's quoted rule moved with the code, and
+    `survey_order` 10 — which exists to hold the code to what the manual says — moved with
+    both.
+  * **⚠⚠ AND turn_refusal REPORTED IT AS A WRONG ANSWER, NOT A CRASH.** That suite RUNS
+    punchOut; `acrossTrackM` was not in its world, so the call was a bare ReferenceError that
+    **punchOut's own catch swallowed** — reported as *"5 runs, 0 turns built"*. The suite's own
+    header records the same trap from 2026-09-22. **"No turns" has to be read as "something
+    threw" until proved otherwise.** `strike_run` and `survey_order` were unaffected because
+    they read punchOut's SOURCE; only a suite that RUNS a function can be broken by a symbol it
+    lacks.
+
 * **⚠⚠ 2026-09-23 — A NaN ANYWHERE IN A FRAME STOPPED THE CONSOLE UPDATING, SILENTLY
   AND FOR GOOD (shipped).** The last filed-not-fixed item, and the consequence is measured, not
   reasoned about:

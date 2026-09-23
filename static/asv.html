@@ -857,7 +857,7 @@ import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nm
          fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
 import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
-         ptInGeom, segSamplesEN } from "/static/js/geometry.js";
+         ptInGeom, segSamplesEN, acrossTrackM } from "/static/js/geometry.js";
 import { V, NOGO_ENF, nogo, sea } from "/static/js/state.js";
 // CPA / TCPA and the hull footprint an AIS contact broadcasts. Pure kinematics, so
 // the numbers follow a maneuver by either vessel the moment the next report lands -
@@ -8890,7 +8890,31 @@ async function punchOut(){
       // still a reversal, and one that is not attempted is one that falls through to a
       // straight 180 nothing counts and nothing reports.
       const gapWide = distTo(Ap,Bp) > sp.spacing*1.6 + 3 + leadSlack;
-      if(antiParallel && distTo(Ap,Bp) < sp.spacing*gapSpan + 3 + leadSlack){
+      // ⚠⚠ THE CROSSING SAYS "NEIGHBORS", THE SPAN SAYS "REACHABLE", AND ONE DISTANCE WAS
+      // STANDING IN FOR BOTH (2026-09-23, Andy's call on a measurement). A pair whose runs
+      // genuinely reverse but whose ends are far apart ALONG the line - what the chart clip
+      // leaves when it cuts two neighbors to different extents - failed the straight-distance
+      // test, so no turn was attempted and the straight leg shipped: the hull asked to come
+      // about at a point, which is the shape GAP_LINES exists to prevent.
+      //
+      // ⚠⚠ AND THE CROSSING ALONE IS NOT THE FIX - the 2026-09-08 note above is right and
+      // it cost a measurement to learn. The crossing is ALWAYS <= the distance, so on its own
+      // it admits pairs whose ends NO TURN CAN SPAN; the ladder then refuses them as
+      // `degenerate`, a refused reversal is RED, and red refuses Add to plan. That note
+      // measured 0 -> 2 unroutable on a harbour plan doing exactly this.
+      //
+      // So the span is bounded by the LADDER'S OWN cap. `turnMaxHalf` is what every turn
+      // builder refuses past (`half > maxHalf`, half being these two ends halved), so a pair
+      // is buildable as a reversal exactly when its ends are within twice it. Nothing is
+      // admitted here that the ladder is then forced to refuse.
+      //
+      // MEASURED ON HIS SIX COMMITTED PLANS FIRST (revs 177-231): 94 anti-parallel pairs, the
+      // old gate admitting 93 and this one 94 - one genuine staggered reversal gained, a
+      // spacing across and 66 m of stagger, ends 67 m apart against a 120 m span - and ZERO
+      // that this admits and the ladder cannot span. That last number is the safety.
+      const acrossM = acrossTrackM(Ap, Bp, hE, ref);
+      if(antiParallel && acrossM < sp.spacing*gapSpan + 3 + leadSlack
+                      && distTo(Ap,Bp) <= 2*turnMaxHalf){
         // THE LADDER, not one attempt: outboard, then INBOARD (away from whatever refused
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
         // the wharf this exists for - the old single attempt refused, and refusing was

@@ -86,6 +86,7 @@ const G = require("../static/js/geodesy.js");
 const U = require("../static/js/units.js");
 const S = require("../static/js/state.js");
 const T = require("../static/js/turns.js");
+const GEOM = require("../static/js/geometry.js");
 // The run-time guard, for `guardStandoffM` - the planner/guard seam reads the GUARD's own
 // constants, so this suite must hand punchOut the real module rather than a stand-in.
 const GU = require("../static/js/guard.js");
@@ -160,10 +161,16 @@ function makeWorld(opts) {
   const log = { banners: [], notes: [], saves: 0, violations: [] };
   const turnWithRetry = o.turnWithRetry ? o.turnWithRetry(T.turnWithRetry) : T.turnWithRetry;
   // eslint-disable-next-line no-new-func
-  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "$", "document", "log", "turnWithRetry",
+  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
     + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg} = T;\n"
+    // ⚠ THE REVERSAL GATE MEASURES THE CROSSING (2026-09-23), so the punch calls
+    // acrossTrackM. This suite RUNS punchOut, and without the symbol the call was a bare
+    // ReferenceError that punchOut's OWN catch swallowed - reported as "5 runs, 0 turns
+    // built", a wrong ANSWER rather than a crash. `no turns` has to be read as `something
+    // threw` until proved otherwise.
+    + "const {acrossTrackM} = GEOM;\n"
     + "const {channelLaneRoute, channelSpanKeepouts, channelTurnKeepouts, junctionKnot, pruneJunctionKnots,"
     + " regionOrder, routeAround} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
@@ -203,7 +210,7 @@ function makeWorld(opts) {
     + " clearClip: () => { patClip = null; },"
     + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
     + " pending: () => { patRepunchT = setTimeout(() => {}, 0); } };")(
-    G, U, S, T, PS, C, GU, $, document, log, turnWithRetry);
+    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry);
   // The vessel and the chart, as the page holds them.
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
   S.V.MAX_TURN_RATE_DEG_S = o.turnRate || 60;

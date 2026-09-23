@@ -311,7 +311,11 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
   const span = gap ? parseInt(gap[1], 10) + parseFloat(gap[2]) : 0;
   check("14. the reversal gate admits a pair separated by a MISSING line",
         () => gap !== null && span >= 2
-              && /distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(punch),
+              // ⚠ THE PROPERTY IS UNCHANGED and only the text it matches moved: the gate
+              // still admits a pair separated by a MISSING line at gapSpan spacings rather
+              // than a fixed 1.6. It measures that separation ACROSS now (2026-09-23), which
+              // is what a struck line leaves when the survivors are also staggered.
+              && /acrossM < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(punch),
         gap ? "gapSpan " + span + " spacings — a struck line leaves survivors 2 apart"
             : "the gate is still a fixed 1.6 spacings: a struck line yields a SILENT "
               + "straight 180 the hull cannot track");
@@ -624,6 +628,74 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
         () => iGuard > 0 && iDel > iGuard,
         iDel > iGuard ? "field guard first, and it covers Delete as well as Escape"
                       : "Delete would strike a run off while the operator types a number");
+}
+
+// -- 16h-16j. THE GATE ASKS TWO QUESTIONS, AND THE SECOND IS THE SAFETY -----------------
+// ⚠⚠ ONE DISTANCE HAD BEEN STANDING IN FOR BOTH. "Are these two lines neighbours" is a
+// question about the CROSSING; "can a turn reach between their ends" is a question about the
+// SPAN. Comparing the straight end-to-end distance answered the second and was read as the
+// first, so a pair whose runs genuinely reverse but whose ends are far apart ALONG the line -
+// what the chart clip leaves when it cuts two neighbours to different extents - failed the
+// gate, no turn was attempted, and the straight leg shipped: the hull asked to come about at
+// a point.
+//
+// MEASURED ON ANDY'S SIX COMMITTED PLANS BEFORE THE CHANGE WAS WRITTEN (revs 177-231): 94
+// anti-parallel adjacent pairs, the old gate admitting 93 and this one 94. The one gained is
+// a genuine staggered reversal - one spacing across, 66 m of stagger, ends 67 m apart against
+// a 120 m span.
+{
+  const punch = grab("punchOut");
+  const code = punch.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  check("16h. the reversal gate measures the CROSSING, so a staggered pair is still a pair",
+        () => /const acrossM = /.test(code)
+              && /acrossM < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(code),
+        () => "the crossing is what 'how many spacings apart' means; the straight distance "
+            + "between two ends is not, once the chart has clipped them to different lengths");
+
+  // ⚠⚠ AND THIS IS THE ONE THAT MAKES IT SAFE. The 2026-09-08 note measured the naive
+  // version - crossing ALONE - at 0 -> 2 unroutable on a 7-line harbour plan: the crossing is
+  // always <= the distance, so on its own it admits pairs whose ends NO TURN CAN SPAN. The
+  // ladder then refuses them as `degenerate`, a refused reversal is RED, and since 2026-09-16
+  // red refuses Add to plan. A check that only proved "staggered pairs are admitted now" would
+  // pass just as happily against that version.
+  check("16j. ... and the SPAN is bounded by the ladder's own cap, so nothing is admitted that "
+        + "the turn builders would then have to refuse",
+        () => /distTo\(Ap,Bp\) <= 2\*turnMaxHalf/.test(code),
+        () => "turnMaxHalf is what every turn builder refuses past (`half > maxHalf`), so twice "
+            + "it is exactly the furthest a generated turn can reach. Measured across his six "
+            + "plans: ZERO pairs admitted that the ladder cannot span");
+
+  // ⚠ AND THE TWO TESTS ARE DIFFERENT QUANTITIES, which is the whole point. A version that
+  // compared the crossing against BOTH thresholds, or the distance against both, would read
+  // almost identically and would be one of the two defects again.
+  // ⚠⚠ DRIVEN, BECAUSE A MUTATION OF THE AXIS SURVIVED EVERYTHING ABOVE. 16h/16j/16k all
+  // pin the COMPARISON; none of them pins the ARITHMETIC, so computing the separation along the
+  // heading instead of across it - which inverts the entire change, gating on the very quantity
+  // that was wrong before - walked straight through all three. Inline trig could not be driven;
+  // it is an exported function now, and this is the check the sweep asked for.
+  {
+    const { acrossTrackM } = require("../static/js/geometry.js");
+    const { planeFrame, fromEN } = require("../static/js/geodesy.js");
+    const fr = planeFrame({ lat: 43.07, lon: -70.76 });
+    const at = (e, n) => fromEN(e, n, fr);
+    // heading 090: 66 m EAST is along, 10 m NORTH is across
+    const across = acrossTrackM(at(0, 0), at(66, 10), 90, fr);
+    const pureAlong = acrossTrackM(at(0, 0), at(66, 0), 90, fr);
+    const pureAcross = acrossTrackM(at(0, 0), at(0, 10), 90, fr);
+    check("16m. ... and the crossing is measured ACROSS the track, not along it",
+          () => Math.abs(across - 10) < 0.05 && pureAlong < 0.05
+                && Math.abs(pureAcross - 10) < 0.05,
+          () => "66 m along + 10 m across -> " + across.toFixed(2) + " m (want 10); a pure "
+              + "ALONG offset -> " + pureAlong.toFixed(2) + " m (want 0); a pure ACROSS one -> "
+              + pureAcross.toFixed(2) + " m (want 10). Projecting onto the heading instead of "
+              + "its normal reads almost identically and inverts every judgement built on it");
+  }
+
+  check("16k. ... and they are two different quantities, not one compared twice",
+        () => !/acrossM <= 2\*turnMaxHalf/.test(code)
+              && !/distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(code),
+        "the crossing is tested against the spacing and the span against the turn cap - "
+          + "swapping either would collapse the pair of questions back into one");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

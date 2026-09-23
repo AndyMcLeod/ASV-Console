@@ -43,6 +43,28 @@ export { bbOf, inBB, dSeg, pinp, eachRing, eachPath, eachPoint };
 export function bboxContains(outer, inner){      // does the fetched coverage cover a survey bbox?
   return outer && inner && outer.W<=inner.W && outer.S<=inner.S && outer.E>=inner.E && outer.N>=inner.N;
 }
+/**
+ * How far `to` lies ACROSS the track from `from`, for a vessel heading `headingDeg`.
+ *
+ * ⚠⚠ THE ACROSS-TRACK COMPONENT IS NOT THE DISTANCE, and the difference is the whole
+ * reason this exists. Two survey lines one spacing apart are NEIGHBORS however far apart
+ * their ends are along the line - and the chart clip leaves neighboring runs at different
+ * extents routinely, so their ends can be a hundred metres apart while the lines are ten
+ * metres apart. Asking the straight end-to-end distance answers a different question and
+ * reads as the first one.
+ *
+ * ⚠ THE AXIS IS THE WHOLE CONTENT OF THIS FUNCTION. Projecting onto the heading gives the
+ * ALONG-track component; projecting onto its normal gives the ACROSS. Swapping them inverts
+ * every judgement built on it, and reads almost identically - which is exactly what a
+ * mutation of this line did survive, back when it was inline trig nobody could drive.
+ */
+export function acrossTrackM(from, to, headingDeg, ref) {
+  const a = llEN(from.lat, from.lon, ref), b = llEN(to.lat, to.lon, ref);
+  const th = headingDeg * Math.PI / 180;
+  const u = Math.sin(th), v = Math.cos(th);          // the unit vector ALONG the heading
+  return Math.abs((b.e - a.e) * -v + (b.n - a.n) * u);   // ...onto its NORMAL
+}
+
 export function bboxAround(ll, radM){
   const dlat=radM/M_PER_DEG_LAT, dlon=radM/(M_PER_DEG_LAT*Math.cos(ll.lat*Math.PI/180));
   return {W:ll.lon-dlon, S:ll.lat-dlat, E:ll.lon+dlon, N:ll.lat+dlat};
