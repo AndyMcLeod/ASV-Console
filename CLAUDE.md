@@ -386,6 +386,82 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
+* **⚠⚠ 2026-09-22 — THE CORNER SET NOW DIES WITH THE ROUTE IT INDEXES, AT ALL FOUR
+  DOORS — AND THE GOVERNOR STOPS ACCELERATING INTO THE LADDER'S OWN SILENCE (shipped).**
+  A corner-slowing HIGH from the seventh panel, and the four checks that would have caught it
+  did not exist.
+
+  * **TWO FAILURES IN OPPOSITE DIRECTIONS, FROM ONE MISSING RULE.** `cornerSlow` is keyed on
+    `cornerSlowFor === S.wp_total` — a LENGTH. A deviation that **bends** adds a waypoint, so
+    the key falls silent by itself and every measured corner is flown at the plan speed for
+    the rest of the run, with the upload's promise left standing on screen. One that **moves**
+    a corner replaces a waypoint, **the tail is the same length**, so the key stays TRUE and
+    the set stays ARMED against a corner that has physically moved by up to `edgeCapM(buf)`.
+    That is the page's own *"a slow command at the wrong waypoint is worse than none"*. So
+    **"do nothing" was never the safe default**, and the plausible half-fix `cornerSlowFor =
+    -1` is wrong on exactly the case that matters.
+  * **ONE DOOR: `dropCornerSlow(why)`.** Four callers — the clearance guard's edge rung (both
+    its lost-reply arm and its accepted splice), `resumeRun`'s amendment, and
+    `resumeHeldSurvey`'s re-upload of the remainder. `doUpload` keeps its own three
+    assignments — it re-*arms* rather than retracting. **Dropped, not re-indexed:** the via
+    point is a corner `cornerSlowPlan` never walked and the corners either side of it have new
+    geometry, so a mapped flag is stale in VALUE where it is right in POSITION.
+    ⚠ **And it may not take its caller down with it** — the edge rung's tail is
+    `.catch(() => { guardEdgeAt = 0; })`, so a throw in here would cancel the settling an
+    accepted deviation is entitled to. The three assignments come first and cannot throw; the
+    saying is fenced. **The same asymmetry everywhere:** a REFUSAL keeps the set (she is still
+    flying the plan it measured); a LOST reply drops it (silence is not an answer).
+  * **AND THE SAYING IS HALF THE BEHAVIOR.** On a resume the length key would fall silent by
+    itself — a remainder is shorter — so the operator who was promised corner slowing at
+    Upload gets the wrong outcome **quietly**, and the next Upload arms the whole mechanism
+    again as though it never lapsed.
+  * **THE GOVERNOR'S SETTLE FLOOR, which is the one that moves the throttle.** Rungs 2 and 3
+    of the clearance ladder both begin `if(settling) return c;` — for `EDGE_REASSESS_MS` the
+    slow and hold rungs are deliberately quiet, because the deviation is supposed to BE the
+    answer. **Nothing stood the GOVERNOR down**, so anything moving `want` upward inside that
+    window accelerated the boat during the two seconds the safety ladder is silent, on water
+    the guard had just called foul — and the deviation was certified at the speed she was
+    DOING (`guardTrack`'s measured `twMs`), with turn radius scaling with speed. Lowering is
+    always allowed. Computed from `guardEdgeAt`, **not latched**, so it expires by itself.
+  * **⚠⚠ THE SWEEP FOUND TWO FIXES WITH NO CHECK THAT BITES THEM, AND THE SUITES WERE
+    GREEN FOR BOTH.** `guard_resume` 21 and 22 drive the edge rung harder than anything else
+    in the file, and both ran with an **empty** corner set, so the mutation that simply
+    deletes the rung's drop — *the exact defect this batch was written to fix* — SURVIVED.
+    A check cannot observe a state its fixture never enters. Checks 22b/22c/22d arm it.
+  * **AND THE SUITE COULD ONLY PRODUCE ONE SHAPE OF FAILURE.** `guard_resume`'s `cmd` stub
+    answered `{refused:true}` and nothing else, so every check reading *"a REFUSED command
+    keeps X"* was really saying *"a FAILED command keeps X"* — the wrong rule stated in a form
+    that looks right, and the reason the lost-reply mutation survived. The stub now takes
+    `lost` beside `refuse`; `pause_resume`'s learned the same second shape.
+  * **⚠⚠ AND A MISSING GLOBAL IN A TEST WORLD IS A MISSING DEPENDENCY, WHICH REPORTS TWO
+    COMPLETELY DIFFERENT WAYS.** `dropCornerSlow` reads all four corner globals and was not in
+    any world. In `guard_resume` the identical ReferenceError landed inside the edge rung's
+    `.then`, where the rung's own `.catch` **swallowed it whole**: one FAIL line reading
+    `edgeSpentM 0 over 0 deviation(s)`, nothing about a crash, and it looked like a wrong
+    answer from the code. In `pause_resume` `resumeRun` has no such catch and it came out as a
+    **named crash on the first frame**. Same defect, two faces — and the honest one is the
+    one without the catch. `speed_modes` was worse again: it declared **neither** symbol the
+    settle floor reads, and stayed green over a bare ReferenceError because
+    `commandedSpeed && ...` short-circuits on every case written before the floor landed.
+  * **⚠ AND THE FIXTURE HAS TO REACH THE SUBJECT.** `pause_resume` declared the corner set
+    with `let` **inside the eval bundle**, so the new checks' `cornerSlow = new Set([2,3])`
+    created a SECOND, unread global in sloppy mode. Two of the three read back their own
+    untouched fixture and failed; the third **PASSED**, reporting *"the set survived a
+    refusal"* about a set nothing had ever referred to. Moved to module scope, as
+    `guard_resume` records for `holdWant`.
+  * **TEETH: 9 mutations, 9 killed, 0 survived, 0 skipped, control run and READ first.** The
+    nine are the shipped state at each of the four doors, the `cornerSlowFor = -1` half-fix,
+    a silent drop, an unconditional drop (throws a live measurement away on a refusal), and
+    the settle floor both deleted and frozen-solid. **Two intermediate sweeps reported
+    SURVIVED and one reported SKIP on a mis-transcribed anchor** — the sweep, not the green
+    suites, is what said the work was not finished.
+  * **New checks:** `guard_resume` 14b/14c/22b/22c/22d, `pause_resume` 12f/12g/12h,
+    `speed_modes` 20, `corner_slow` 25b. ⚠ `speed_modes` 20's lowering arm **first passed for
+    the wrong reason**: it commanded `high` on a `transit` leg, where the role wants `high`
+    too, so `want === commandedSpeed` returned above the floor and the arm reported `"high"`
+    identically to a governor frozen solid. Driven on a LINE now (`survey` 7.0 kn against a
+    commanded `high` 14.0), which is a real reduction.
+
 * **⚠⚠ 2026-09-22 — THE REQUIREMENTS SEAM WAS REFUTED, AND THE FIRST BATCH OF WHAT
   SURVIVED IS SHIPPED.** `req_gaps.md` said "first pass, UNREFUTED" on its own front page. It
   has now been argued with, entry by entry.

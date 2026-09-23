@@ -127,6 +127,16 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
 // red check into a dead run.
 var planIntent = { why: [] }, notes = [];
 function flashNote(m) { notes.push(m); }
+// ⚠ AND showBanner, BECAUSE dropCornerSlow FENCES ITS OWN SAYING. Its three assignments
+// come first and cannot throw; the flashNote and showBanner that follow sit in a try/catch, so
+// that a page without a banner bar cannot take the edge rung's `.catch` down with it. In a
+// world with no showBanner that fence swallows the whole announcement - the set would clear,
+// the operator would be told nothing, and a check asserting the banner would fail for a
+// reason that has nothing to do with the page.
+var banners = [];
+// The corner set, at MODULE scope so the fixtures can actually arm it - see the bundle below.
+var cornerSlow = new Set(), cornerUnanswered = [], cornerSlowFor = -1, cornerPlanKey = "survey";
+function showBanner(m) { banners.push(m); }
 function updateMissionCard() {}
 function render() {}
 globalThis.fetch = () => Promise.resolve({ ok: true, status: 200,
@@ -155,10 +165,17 @@ eval([
   grab("sendSpeed"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
-  // speedGovernor also reads the JUNCTION corner set since 2026-09-19
-  // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
-  "let cornerSlow = new Set();",
-  "let cornerSlowFor = -1;",
+  // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and
+  // resumeRun now DROPS it (2026-09-22): the amended tail begins at a rejoin point the
+  // measurement never walked. dropCornerSlow reads all four, so the door comes across too.
+  // ⚠⚠ THE FOUR ARE DECLARED OUT AT MODULE SCOPE, NOT IN THIS BUNDLE, AND THAT IS THE
+  // WHOLE POINT. A `let` inside a direct eval lives in the eval's own scope and nothing
+  // outside can reach it - so a fixture writing `cornerSlow = new Set([2,3])` out there in
+  // sloppy mode creates a SECOND, unread global and the subject never sees it. Driven that
+  // way, checks 12f-12h all read back their own untouched fixture: two of them failed, and
+  // 12g PASSED, reporting "the set survived a refusal" about a set nothing had ever
+  // referred to. guard_resume records the same trap about holdWant.
+  grab("dropCornerSlow"),
   // took() is the page's ONE test for "did the command land?" - carried across rather
   // than restated, so a change to it is a change here.
   grab("took"), grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
@@ -369,8 +386,13 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                      if (p === "/api/cmd/amend") globalThis.__lastRoute = b && b.route;
                      // 12c: a command the console must NOT assume worked (review #6)
                      if (p === globalThis.__failPath)
-                       return Promise.resolve({ ok: false, error: "simulated refusal",
-                                                sent: true, refused: true });
+                       // ⚠ TWO SHAPES OF FAILURE, NOT ONE. cmd() answers {refused:true} when the
+                       // VESSEL said no and {refused:false} when the reply never came back,
+                       // and the page's rules differ between them - 12g against 12h. A stub
+                       // with only the refused shape cannot tell those two checks apart.
+                       return Promise.resolve(globalThis.__refuseAmend === false
+                         ? { ok: false, error: "no answer", sent: true, refused: false }
+                         : { ok: false, error: "simulated refusal", sent: true, refused: true });
                      return Promise.resolve({ ok: true, state: {} }); }
 
 (async () => {
@@ -445,6 +467,73 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
         () => "sent " + JSON.stringify(refusedLow.sent.map(x => x.p)) + "; note: "
               + (refusedLow.notes.find(n => /Resume/.test(n)) || "none"));
   __setResumeSlow(false);
+
+  // -- 12f-12h. THE CORNER SET DIES WITH THE ROUTE IT INDEXED -----------------------------
+  // The amended tail begins at a REJOIN POINT cornerSlowPlan never walked, and inserting it
+  // changes the geometry of the corner either side of it. Every index in the set names a
+  // corner of a plan the vessel is no longer flying, and speedGovernor is asked again on the
+  // very next state frame - so the console would command LOW at a waypoint that has moved, or
+  // stay at the survey speed through one that has not. The page's own rule, from the upload:
+  // a slow command at the wrong waypoint is worse than none.
+  //
+  // ⚠ AND THE SAYING IS HALF THE BEHAVIOR. The operator was PROMISED corner slowing when
+  // they uploaded. A plan whose backtrack lengthens it would fall silent on the length key by
+  // itself, with nothing on screen - which is the same wrong outcome arrived at quietly.
+  const armCorners = () => {
+    cornerSlow = new Set([2, 3]); cornerUnanswered = [4];
+    cornerSlowFor = 99; cornerPlanKey = "survey";
+  };
+  const cornersNow = () => ({ slow: cornerSlow.size, un: cornerUnanswered.length,
+                              key: cornerSlowFor });
+
+  armCorners();
+  const okDrop = await drive();
+  const afterOk = cornersNow();
+  check("12f. an ACCEPTED resume drops the corner set with the route it indexed, and says so",
+        () => afterOk.slow === 0 && afterOk.un === 0 && afterOk.key === -1
+              && /CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "2 slowing + 1 unanswered before -> " + afterOk.slow + " + " + afterOk.un
+            + ", key " + afterOk.key + "; banners: "
+            + (banners.filter(b => /CORNER/.test(b)).length) + ". The rejoin point is a "
+            + "corner the measurement never walked and it moves the two either side of it");
+
+  // ⚠ THE ARM THAT MAKES THE OTHER TWO MEAN SOMETHING. A refusal establishes she is still
+  // flying the plan the corners were measured on, so a console that drops the set here has
+  // thrown away a live measurement for nothing - and an unconditional drop at the top of
+  // resumeRun passes 12f and 12h identically.
+  armCorners();
+  banners = [];
+  globalThis.__failPath = "/api/cmd/amend";
+  globalThis.__refuseAmend = true;
+  await drive();
+  globalThis.__failPath = null; globalThis.__refuseAmend = false;
+  const afterRefused = cornersNow();
+  check("12g. ... and a REFUSED amendment keeps it - she is still flying the plan it measured",
+        () => afterRefused.slow === 2 && afterRefused.un === 1 && afterRefused.key === 99
+              && !/CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "after a refusal: " + afterRefused.slow + " slowing + " + afterRefused.un
+            + " unanswered, key " + afterRefused.key + ", "
+            + banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). The vessel "
+            + "said no, so nothing about the route she is flying changed");
+  __setResumeSlow(false);
+
+  // A LOST reply establishes nothing - she may have taken the amendment.
+  armCorners();
+  banners = [];
+  globalThis.__failPath = "/api/cmd/amend";
+  globalThis.__refuseAmend = false;
+  await drive();
+  globalThis.__failPath = null;
+  const afterLost = cornersNow();
+  check("12h. ... and a LOST one drops it, because the console cannot say which route she is on",
+        () => afterLost.slow === 0 && afterLost.un === 0 && afterLost.key === -1
+              && /CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "after a lost reply: " + afterLost.slow + " slowing + " + afterLost.un
+            + " unanswered, key " + afterLost.key + ". Same asymmetry the upload and the "
+            + "edge rung both keep - `refused` is an answer, silence is not");
+  __setResumeSlow(false);
+  banners = [];
+
   {
     const fnotes = [];
     const flashNote = (m) => fnotes.push(m);

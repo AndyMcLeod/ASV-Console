@@ -2151,6 +2151,13 @@ function clearanceGuard(){
                 + (c.kind || "a keep-out") + "."}).then(r => {
         if(!took(r)){
           guardEdgeAt = 0;   // nothing is in flight: the slow and hold rungs run next frame
+          // ⚠ A REFUSAL LEAVES THE SET ALONE; A LOST REPLY MAY NOT. Same asymmetry as the
+          // upload's, for the same reason: a refusal establishes she is still flying the plan
+          // the set was measured on. A lost reply establishes nothing - she may have taken it
+          // - and on a MOVE amendment the length key would not catch it.
+          if(!(r && r.refused))
+            dropCornerSlow("a deviation was sent and NOT acknowledged, so the console cannot "
+                           + "say which route she is flying");
           flashNote("Deviation " + (r && r.refused ? "REFUSED" : "NOT ACKNOWLEDGED") + " ("
                     + ((r && r.error) || "no answer") + ") — the plan is unchanged; the guard "
                     + "will slow or stop her instead.");
@@ -2159,6 +2166,11 @@ function clearanceGuard(){
         // The drawn route follows the vessel's, or the chart shows a track the boat is not
         // flying and every derived figure on the cards is measured off the wrong line.
         runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];
+        // ⚠⚠ AND THE CORNER SET GOES WITH THE ROUTE IT INDEXED - in this statement list, in
+        // front of every await and every render, because speedGovernor is asked again on the
+        // next state frame. Until this line, one accepted deviation left the set indexing a
+        // route that no longer existed, for the rest of the run. See dropCornerSlow.
+        dropCornerSlow("the clearance guard deviated the plan " + edgeText(a.edge));
         edgeSpentM += a.edge.offsetM; edgeCount++;
         if(planIntent) planIntent.why.push({t:"warn", s:"DEVIATED " + edgeText(a.edge)
           + " — the projected track was entering " + (c.kind||"a keep-out") + " in "
@@ -2672,6 +2684,20 @@ function speedGovernor(){
                    && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
   const want = ((role === "turn" && gap >= 0 && (mission.lines[gap] || {}).slow_turn_out) || atCorner)
                ? "low" : roleSpeed(role);
+  // ⚠⚠ AND THE GOVERNOR MAY NOT RAISE THE SPEED WHILE A DEVIATION IS SETTLING. Rungs 2 and
+  // 3 both begin `if(settling) return c;` - the deviation is supposed to answer the hazard, so
+  // for EDGE_REASSESS_MS the slow and hold rungs are deliberately quiet. Nothing stood the
+  // GOVERNOR down, so anything moving `want` upward inside that window accelerates the boat in
+  // the two seconds the safety ladder is silent, on water the guard has just called foul.
+  // The deviation was verified at the speed she was DOING (guardTrack's `twMs`), and turn
+  // radius scales with speed, so raising it invalidates the verification of the track she is
+  // now flying. LOWERING is always allowed.
+  // ⚠ COMPUTED FROM `guardEdgeAt`, NOT LATCHED, so it expires by itself and cannot stick if
+  // the guard stops running.
+  if(commandedSpeed && want !== commandedSpeed
+     && (V.SPEED_KN[want] || 0) > (V.SPEED_KN[commandedSpeed] || 0)
+     && Date.now() - guardEdgeAt < EDGE_REASSESS_MS)
+    return commandedSpeed;
   if(want === commandedSpeed) return want;
   commandedSpeed = want;
   commandSpeed(want);
@@ -3044,6 +3070,46 @@ let cornerUnanswered = [];        // ...and the ones slowing does NOT answer
 // that is the cheapest thing the two can agree on. Found in review.
 let cornerSlowFor = -1;           // plan length the set was measured against
 let cornerPlanKey = "survey";     // the speed they were judged at, for the banner
+// ⚠⚠ THE ONE DOOR THE SET LEAVES BY, FOR EVERYTHING THAT AMENDS A RUNNING PLAN. doUpload
+// clears it with its own three assignments; every amendment comes through here.
+//
+// ⚠ AND `cornerSlowFor = -1` ALONE IS NOT THE FIX. A deviation that BENDS makes the plan one
+// waypoint longer, so the length key falls silent by itself. One that MOVES a corner replaces
+// one waypoint and the LENGTH DOES NOT CHANGE: the key stays TRUE and the set stays ARMED
+// against a corner that has moved by up to edgeCapM(buf). The SET has to go, and
+// synchronously - speedGovernor is asked again on the very next state frame.
+//
+// ⚠ DROPPED, NOT RE-INDEXED. The splice arithmetic is short and the answer is still wrong:
+// the via point is a corner cornerSlowPlan never walked, and the corners either side of it
+// have new geometry - a mapped flag is stale in VALUE where it is right in POSITION.
+// Re-indexing a measurement is not the same as re-taking it.
+//
+// ⚠ AND IT MAY NOT TAKE ITS CALLER DOWN WITH IT. The edge rung's tail is
+// `.catch(() => { guardEdgeAt = 0; })`, which means "nothing is in flight: the slow and hold
+// rungs run next frame" - a throw in here would cancel the settling an accepted deviation is
+// entitled to. The three assignments come first and cannot throw; the saying is fenced.
+function dropCornerSlow(why){
+  const had = cornerSlow.size, un = cornerUnanswered.length;
+  cornerSlow = new Set();
+  cornerUnanswered = [];
+  cornerSlowFor = -1;
+  // `cornerPlanKey` stays: it is the speed the measurement was judged at, and doUpload seeds
+  // its own `csKey` from it.
+  if(!(had || un)) return;   // nothing was claimed, so nothing to retract - and this is what
+                             // makes the saying happen ONCE: the next deviation finds it empty.
+  const what = (had ? had + " corner(s) measured at " + cornerPlanKey : "")
+             + (had && un ? ", and the " : "")
+             + (un ? un + " corner(s) slowing did not answer" : "");
+  try {
+    flashNote("Corner slowing has lapsed — " + why + ". Set the survey speed to LOW to fly "
+      + "the rest slowly; the corners can only be measured again by an Upload.");
+    showBanner("CORNER SLOWING HAS LAPSED — " + why + ", so the " + what + " index a route "
+      + "she is no longer flying, and the console will not guess which corners of the amended "
+      + "route those numbers name. Nothing is being slowed FOR A CORNER now; the clearance "
+      + "guard is unchanged and still assessing the track ahead. To fly the rest at the low "
+      + "speed, set the survey speed to LOW.");
+  } catch(e) {}
+}
 // ⚠ UPLOAD IS NOW AWAITED BEFORE IT POSTS, SO IT NEEDS A BUSY STATE. Measuring the
 // corners hands the main thread back between them, and in a hidden tab a yield costs
 // about a second - so there is real time between the press and the POST where the
@@ -10644,15 +10710,22 @@ async function doUpload(){
   // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the
   // operator did not ask for it, and a corner slowing does NOT answer is a plan defect they
   // can still do something about - move the waypoint, widen the spacing, lower the speed.
-  if(cornerUnanswered.length)
-    showBanner("⚠ " + cornerUnanswered.length + " corner(s) take the hull inside the "
+  // ⚠⚠ THE BANNER SAYS WHAT WAS JUST MEASURED, WHICH IS `cs` - NOT THE GLOBALS. The
+  // globals still hold the PREVIOUS plan's set, deliberately: the block above does not write
+  // them until past the reply, so a refused upload cannot arm a set measured for a plan the
+  // vessel never took. Reading them HERE therefore announced the LAST upload's corners -
+  // nothing at all on the first upload of a session, and the wrong plan's waypoint numbers
+  // and speed key on every one after it. A regression introduced by that same move.
+  const csUn = cs.unanswered || [], csSlow = cs.slow || [];
+  if(csUn.length)
+    showBanner("⚠ " + csUn.length + " corner(s) take the hull inside the "
       + (nogo.buffer || 0) + " m buffer EVEN AT THE LOW SPEED (route waypoint"
-      + (cornerUnanswered.length > 1 ? "s " : " ") + cornerUnanswered.slice(0, 6).join(", ")
-      + (cornerUnanswered.length > 6 ? " …" : "")
+      + (csUn.length > 1 ? "s " : " ") + csUn.slice(0, 6).join(", ")
+      + (csUn.length > 6 ? " …" : "")
       + "). Slowing does not answer those — move the waypoint, or give the corner more water.");
-  else if(cornerSlow.size)
-    showBanner(cornerSlow.size + " corner(s) will be flown at the LOW speed: at "
-      + cornerPlanKey + " the hull would round them inside the " + (nogo.buffer || 0)
+  else if(csSlow.length)
+    showBanner(csSlow.length + " corner(s) will be flown at the LOW speed: at "
+      + csKey + " the hull would round them inside the " + (nogo.buffer || 0)
       + " m buffer. Nothing else in the plan changes.");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
   const r = await cmd("/api/cmd/upload", {route: plan.route,
@@ -10837,10 +10910,27 @@ async function resumeRun(){
       const r = await cmd("/api/cmd/amend", {route: tail,
         note: "Resuming the survey " + fmtDist(backedM) + " back down line "
               + lineNo(pauseMark.line) + " of the pause point."});
-      if(!took(r)){ note = "could not amend the plan (" + ((r && r.error) || "no answer")
-                            + ") — resumed where it lay"; }
+      if(!took(r)){
+        note = "could not amend the plan (" + ((r && r.error) || "no answer")
+             + ") — resumed where it lay";
+        // ⚠ SAME ASYMMETRY AS THE EDGE RUNG'S. A refusal establishes she is still flying
+        // the plan the corners were measured on, so the set stands. A LOST reply establishes
+        // nothing - she may have taken the amendment - and a tail that begins at the rejoin
+        // point is not a plan this measurement ever walked.
+        if(!(r && r.refused))
+          dropCornerSlow("the resume backtrack was sent and NOT acknowledged, so the console "
+                         + "cannot say which route she is flying");
+      }
       else {
         runRoute = [...rr.slice(0, idx), ...tail];
+        // ⚠ AND THE CORNER SET GOES WITH THE ROUTE IT INDEXED. The tail starts at a REJOIN
+        // POINT cornerSlowPlan never walked, and inserting it changes the geometry of the
+        // corner either side of it - the flags are stale in VALUE where they are right in
+        // position. The plan is one waypoint longer here so the length key would fall silent
+        // by itself, but silent is not the same as SAID: the operator was promised corner
+        // slowing at upload and has to be told it has lapsed.
+        dropCornerSlow("the survey was resumed " + fmtDist(backedM) + " back down line "
+                       + lineNo(pauseMark.line) + ", which amended the plan");
         note = "backed up " + fmtDist(backedM) + " down line " + lineNo(pauseMark.line)
              + " (" + RESUME_BACK_LENGTHS + " boat lengths) so the coverage overlaps";
       }
@@ -11086,6 +11176,12 @@ async function resumeHeldSurvey(){
     // ⚠ PUT HER BACK ON STATION. She is paused beside the very feature the console stopped
     // her off, and a paused boat does not station-keep - it drifts. The offer stays up.
     guardOverride = null; resumeSlow = false;
+    // ⚠ BEFORE THE HOLD GOES OUT, because `hold` itself uploads a one-waypoint plan over
+    // whatever she is holding. A refused upload leaves her on the survey the corners were
+    // measured on; a LOST one may have landed, and then the hold lands on top of it. Neither
+    // of those two routes is the one the set indexes.
+    if(!(up && up.refused))
+      dropCornerSlow("the remainder was sent and NOT acknowledged");
     await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
     showBanner("⚠ COULD NOT RESUME THE SURVEY — " + up.error + ". The boat is station-keeping "
       + "again and the remainder is still held; try again, or Stop and re-plan.");
@@ -11094,6 +11190,13 @@ async function resumeHeldSurvey(){
   // The drawn route is the plan the vessel is flying, indexed by the same `wp_index` - the
   // upload restarted that index at zero, so the route it counts into has to be the tail.
   runRoute = tail; runUnsafe = [];
+  // ⚠⚠ AND THE VESSEL'S WAYPOINT NUMBERING HAS RESTARTED AT ONE. This is an UPLOAD, not
+  // an amendment: every index in the corner set now names a different corner of a different
+  // plan, and `cornerSlowFor` is keyed on a length that a remainder will not match - so the
+  // set falls silent without ever saying so. The operator was promised corner slowing when
+  // they uploaded; they are told here that the promise has lapsed.
+  dropCornerSlow("the held remainder was re-uploaded as a new plan of " + tail.length
+                 + " waypoint(s) and the vessel's waypoint numbering restarted at one");
   if(planIntent) planIntent.route = tail.length;
   const slowed = await commandSpeed("low");
   const lowOk = took(slowed);

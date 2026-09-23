@@ -153,6 +153,13 @@ var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = 
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
 var cornerSlow = new Set();
 var cornerSlowFor = -1;
+// ⚠ ALL FOUR, because the edge rung drops the set when it deviates and dropCornerSlow
+// reads every one of them. With two missing the call threw, and the throw took the rest of
+// the rung's statement list with it - the splice landed, the budget never moved, and check 22
+// read `edgeSpentM 0 over 0 deviation(s)`. A missing global in a world is a missing
+// dependency, and the page declares these beside the other two.
+var cornerUnanswered = [];
+var cornerPlanKey = "survey";
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
 var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
 // The helm rung's claim on the throttle. speedGovernor stands down on it exactly as it does
@@ -197,7 +204,7 @@ globalThis.fetch = (p, o) => {
 };
 // Commands are RECORDED, not stubbed to nothing, so a check can say WHAT was sent and in
 // what order rather than only that something was. `refuse` drives the refusal branch.
-var sent = [], refuse = null;
+var sent = [], refuse = null, lost = null;
 function cmd(p, b) {
   sent.push({ p, speed: b && b.speed, route: b && b.route });
   // ⚠ THE HOLD IS MODELLED, NOT JUST RECORDED, AND THAT IS WHAT MAKES CHECK 6 REAL. On the
@@ -213,7 +220,15 @@ function cmd(p, b) {
   // cmd() answers {ok:true, state:{...}} on success and {ok:false, error, sent, refused}
   // on every failure; a stub that answers anything else is testing a console that does
   // not exist.
-  return Promise.resolve(refuse && refuse === p
+  // ⚠⚠ TWO SHAPES OF FAILURE, NOT ONE. Until 2026-09-22 this stub could only answer
+  // {refused:true}, so every check in the file reading "a REFUSED command keeps X" was really
+  // testing "a FAILED command keeps X" - and the page's asymmetry, which is the whole point
+  // (`refused` is the vessel's answer; silence is not an answer), had no case anywhere. The
+  // mutation that deletes the lost-reply arm of the edge rung survived a sweep because of it.
+  // `lost` names the path whose reply never comes back.
+  return Promise.resolve(lost && lost === p
+    ? { ok: false, error: "no answer", sent: true, refused: false }
+    : refuse && refuse === p
     ? { ok: false, error: "ARM before uploading a plan", sent: true, refused: true }
     : { ok: true, state: {} });
 }
@@ -277,6 +292,14 @@ eval([
   // The one door the escape gives its claim back through (2026-09-22), carried across
   // verbatim so a change to that rule is a change HERE and not in a copy that drifts.
   grab("releaseEscapeClaim"),
+  // ⚠ AND THE ONE DOOR THE CORNER SET LEAVES BY (2026-09-22). The edge rung calls it on both
+  // arms - a lost reply and an accepted deviation - so a bundle without it is a bare
+  // ReferenceError INSIDE the rung's `.then`, where the rung's own
+  // `.catch(() => { guardEdgeAt = 0; })` swallows it whole. That is what check 22 was
+  // reading: the amend went out, the throw ate the rest of the statement list, and the
+  // budget, the arming and the saying all silently did not happen. A swallowed
+  // ReferenceError reports as a wrong ANSWER, never as a crash.
+  grab("dropCornerSlow"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
 ].join("\n"));
 var __clr = {};
@@ -948,13 +971,14 @@ function finish() {
     //
     // ⚠ THE COMMIT NOW LANDS ON A MICROTASK, so both cases await before reading runRoute. Any
     // future driven check of this rung must do the same.
-    const deviate = async (refusal) => {
+    const deviate = async (refusal, lostPath) => {
       deviating();
       const before = runRoute.slice();
       refuse = refusal || null;
+      lost = lostPath || null;
       tryIt(() => clearanceGuard());
       await Promise.resolve(); await Promise.resolve();
-      refuse = null;
+      refuse = null; lost = null;
       return { before, paths: sent.map(x => x.p), route: runRoute.slice(),
                spent: edgeSpentM, count: edgeCount, edgeAt: guardEdgeAt,
                why: planIntent.why.map(w => w.s), notes: notes.slice() };
@@ -982,7 +1006,104 @@ function finish() {
               + JSON.stringify(after) + ". A deviation the vessel refused must not move the "
               + "chart, must not spend the budget, and must not stand the slow and hold rungs "
               + "down - the console read CLEAR at 11 m off a pier face doing exactly that");
-    const yes2 = await deviate(null);
+    // -- 14b-14c. THE HELD RESUME IS AN UPLOAD, AND THE CORNER SET CANNOT SURVIVE ONE --------
+  // `hold` already uploaded a one-waypoint plan over the survey; this uploads the REMAINDER
+  // over that. The vessel's waypoint numbering restarts at one both times, so every index in
+  // the set names a corner of a plan that no longer exists - and `cornerSlowFor`, keyed on a
+  // length, goes quiet by ITSELF here because a remainder is shorter than the survey it came
+  // from. That silence is why this was invisible: the promise made at upload lapses with
+  // nothing on screen, and the next Upload re-arms the whole mechanism as though it never had.
+  {
+    const armCorners = () => { cornerSlow = new Set([2, 3]); cornerUnanswered = [5];
+                               cornerSlowFor = 99; cornerPlanKey = "survey"; };
+    armCorners();
+    const okR = await resumeFrom();
+    const okSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("14b. resuming the held remainder drops the corner set, and TELLS the operator it "
+          + "has lapsed",
+          () => okSet.slow === 0 && okSet.un === 0 && okSet.key === -1
+                && /CORNER SLOWING HAS LAPSED/.test(okR.banners.join(" ")),
+          () => "2 slowing + 1 unanswered before -> " + okSet.slow + " + " + okSet.un
+              + ", key " + okSet.key + "; "
+              + okR.banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). The "
+              + "length key would fall silent here on its own - a remainder is shorter - so "
+              + "without this the promise lapses with nothing said and the next Upload arms "
+              + "it again as though it never had");
+
+    // ⚠ AND THE PAIR. A REFUSED upload leaves her holding the plan the set was measured on,
+    // so dropping it there throws a live measurement away for nothing - and an unconditional
+    // drop at the top of resumeHeldSurvey passes 14b exactly as the right one does.
+    armCorners();
+    const noR = await resumeFrom({ refuse: "/api/cmd/upload" });
+    const noSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("14c. ... and a REFUSED upload keeps it - she never left the plan it measured",
+          () => noSet.slow === 2 && noSet.un === 1 && noSet.key === 99
+                && !/CORNER SLOWING HAS LAPSED/.test(noR.banners.join(" ")),
+          () => "after a refusal: " + noSet.slow + " slowing + " + noSet.un + " unanswered, "
+              + "key " + noSet.key + ", "
+              + noR.banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). She is "
+              + "put back on station on the very plan those corners index");
+    cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
+  }
+
+  // -- 22b-22c. AND THE RUNG'S OWN CORNER SET, WHICH THE SWEEP FOUND UNCOVERED -------------
+  // ⚠⚠ 21 AND 22 BOTH RAN WITH AN EMPTY SET. They drive this rung harder than anything
+  // else in the suite, and neither could see the drop, so the mutation that simply deletes it
+  // - the exact defect the batch was written to fix - SURVIVED a sweep that reported seven
+  // kills. A check cannot observe a state its fixture never enters.
+  //
+  // ⚠ AND THE LENGTH KEY WOULD NOT HAVE SAVED IT. A deviation that BENDS adds a waypoint,
+  // so the key falls silent; one that MOVES a corner replaces a waypoint and the length does
+  // not change, so the key stays TRUE and the set stays ARMED against a corner that has
+  // physically moved by up to edgeCapM(buf). Both of those are driven here - the accepted
+  // deviation below is a MOVE, which is the case "do nothing" gets wrong.
+  {
+    const armCorners = () => { cornerSlow = new Set([2, 3]); cornerUnanswered = [5];
+                               cornerSlowFor = 99; cornerPlanKey = "survey"; };
+    armCorners();
+    const okD = await deviate(null);
+    const okSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22b. an accepted deviation drops the corner set with the route it re-shaped, and "
+          + "says the promise has lapsed",
+          () => okSet.slow === 0 && okSet.un === 0 && okSet.key === -1
+                && /CORNER SLOWING HAS LAPSED/.test(okD.notes.concat(banners).join(" ")),
+          () => "2 slowing + 1 unanswered before -> " + okSet.slow + " + " + okSet.un
+              + ", key " + okSet.key + ". The via point is a corner cornerSlowPlan never "
+              + "walked and the corners either side of it have new geometry - a mapped flag "
+              + "stale in VALUE where it is right in position");
+
+    armCorners();
+    const noD = await deviate("/api/cmd/amend");
+    const noSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22c. ... and a REFUSED one keeps it - the plan the corners index is the plan she "
+          + "is still flying",
+          () => noSet.slow === 2 && noSet.un === 1 && noSet.key === 99
+                && !/CORNER SLOWING HAS LAPSED/.test(noD.notes.concat(banners).join(" ")),
+          () => "after a refusal: " + noSet.slow + " slowing + " + noSet.un + " unanswered, "
+              + "key " + noSet.key + ". Check 21 already holds that a refusal claims nothing "
+              + "else either - this is the same rule for the one piece of state it was "
+              + "silently still claiming");
+
+    // ⚠ AND THE THIRD ANSWER, WHICH IS THE ONE THE ASYMMETRY EXISTS FOR. `amend` answers
+    // {ok:false, refused:false} when the reply never comes back, and she MAY have taken it.
+    // 21 and 22c both drive a refusal, so between them they say "a failure keeps the set" -
+    // which is the wrong rule stated in a form that looks right. On a MOVE amendment the
+    // length key does not change either, so nothing downstream would catch it.
+    armCorners();
+    const lostD = await deviate(null, "/api/cmd/amend");
+    const lostSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22d. ... and a LOST reply drops it, because she may have taken the deviation",
+          () => lostSet.slow === 0 && lostSet.un === 0 && lostSet.key === -1
+                && /NOT ACKNOWLEDGED/.test(lostD.notes.join(" ")),
+          () => "after a lost reply: " + lostSet.slow + " slowing + " + lostSet.un
+              + " unanswered, key " + lostSet.key + "; said \""
+              + (lostD.notes[0] || "") + "\". A refusal is the vessel's answer and silence "
+              + "is not one - the console cannot say which route she is flying");
+
+    cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
+  }
+
+  const yes2 = await deviate(null);
     check("22. ... and an ACCEPTED one still does its whole job - the corner moves, the budget "
           + "is spent, and both the operator and the Intent card are told",
           () => yes2.paths.includes("/api/cmd/amend")

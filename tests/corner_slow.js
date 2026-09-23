@@ -729,6 +729,38 @@ await (async () => {
            && /const atCorner = sameRoute && cornerSlow\.size > 0/.test(H)
            && /cornerSlowFor = plan\.route\.length;/.test(H),
         "keyed on the vessel's own wp_total, which is the cheapest thing the two agree on");
+
+  // ⚠⚠ 25b. AND THE BANNER DESCRIBES THE PLAN IT MEASURED. The set is written PAST the
+  // upload's reply, deliberately - a refused upload must not arm a set measured for a plan
+  // the vessel never took - so the globals still hold the PREVIOUS plan while these banners
+  // are built. Reading them here announced the last upload's corners: on the FIRST upload of
+  // a session, nothing at all however many corners breach the buffer, and on every one after
+  // it the wrong plan's waypoint numbers and speed key. Introduced by that same move.
+  // ⚠ SOURCE-ANCHORED, AND THAT IS A REAL LIMIT. The banners are built into a string inside
+  // doUpload, and the one suite that drives it uses the REAL cornerSlowPlan on two-point
+  // fixtures where it returns an empty set - so there is no driven path to a non-empty banner
+  // without new geometry. This pins WHICH VALUES the banner reads; it cannot prove what the
+  // operator sees.
+  // ⚠ AND NOTHING CAUGHT THE REGRESSION: this suite, pause_resume and command_result were
+  // all green while the first upload banners nothing. pause_resume 1j asserts
+  // `banners.length === 0` for an ordinary upload - it catches a banner APPEARING and is
+  // blind to one going MISSING.
+  check("25b. the upload's corner banners read the measurement just taken, not the globals "
+        + "that still describe the previous plan",
+        () => {
+          const code = H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+          const up = code.slice(code.indexOf("async function doUpload"),
+                                code.indexOf("function stagedNote"));
+          const reads = /const csUn = cs\.unanswered \|\| \[\], csSlow = cs\.slow \|\| \[\];/.test(up)
+                     && /if\(csUn\.length\)/.test(up) && /else if\(csSlow\.length\)/.test(up)
+                     && /\+ csKey \+ " the hull would round them/.test(up);
+          // and the globals are NOT what the banner block reads any more
+          const stale = /if\(cornerUnanswered\.length\)\s*\n?\s*showBanner/.test(up)
+                     || /else if\(cornerSlow\.size\)\s*\n?\s*showBanner/.test(up);
+          return reads && !stale;
+        },
+        "the set is written past the reply on purpose, so the globals describe the LAST plan "
+          + "while these banners are built (source-anchored: see the note above)");
 })();
 
 // 26. THE SLOWED WALK IS SWEPT IN FULL, AND ITERATED. Pass 2 flies a different track and

@@ -142,6 +142,14 @@ var resumeSlow = false;
 // is a bare ReferenceError. False here - no escape is commanded - so these checks are the
 // evidence that an ordinary run still governs its own speed as it always did.
 var escapeThrottle = false;
+// ⚠ AND THE DEVIATION'S SETTLE WINDOW (2026-09-22). The governor now refuses to RAISE the
+// speed for EDGE_REASSESS_MS after the clearance guard deviated the plan, so both symbols are
+// read inside speedGovernor. Neither was in this world: the guard `commandedSpeed && ...`
+// short-circuits on every case written before the floor landed, so the whole suite stayed
+// green over a bare ReferenceError waiting for the first check to drive a raise. Check 20 is
+// that check, and it would have failed for the wrong reason without these two lines.
+var guardEdgeAt = 0;
+const EDGE_REASSESS_MS = 2000;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
 // ⚠ indexedRoute READS `runRoute` AND `S.wp_total`. This world drives the governor from
 // `mission` alone and its S carries no wp_total, so there is nothing for the drawn plan to
@@ -561,6 +569,58 @@ console.log("Speed by mode - three settings, and the console governs which one i
   check("19f. every frame asks, right after the governor",
         () => /speedGovernor\(\); speedReconcile\(s, st\);/.test(H),
         "onState: the governor states the want, the reconcile checks the vessel has it");
+}
+
+// ⚠⚠ 20. THE GOVERNOR STANDS ITS SPEED DOWN WHILE A DEVIATION SETTLES.
+//
+// The clearance guard's edge rung answers a hazard by moving a waypoint, and then stands the
+// slow and hold rungs down for EDGE_REASSESS_MS - both of them begin `if(settling) return c;`
+// - because the deviation is supposed to BE the answer. Nothing stood the GOVERNOR down, so
+// anything moving `want` upward inside that window (a turn ending, a line starting, the role
+// changing under the splice) accelerated the boat during the two seconds the safety ladder is
+// deliberately silent, on water the guard had just called foul. And the deviation was
+// certified at the speed she was DOING - guardTrack projects at the measured `twMs`, and turn
+// radius scales with speed - so raising it invalidates the verification of the very track she
+// is now flying.
+//
+// ⚠ COMPUTED FROM `guardEdgeAt`, NOT LATCHED. It expires by itself and cannot stick if the
+// guard stops running, which a latch set by the rung and cleared by another would not.
+{
+  const realNow = Date.now;
+  try {
+    let clock = 1000000;
+    Date.now = () => clock;
+
+    // A raise, with the deviation one second old: HELD at what is already commanded.
+    world(); onTransit(); __setCommanded("survey"); guardEdgeAt = clock - 1000;
+    const held = speedGovernor();
+
+    // ⚠ THE PAIR, AND IT IS NOT OPTIONAL. Without the next two arms a governor that simply
+    // never raised - or one frozen outright while settling - passes the first arm exactly as
+    // the right one does. LOWERING past a hazard is always allowed; that is the direction the
+    // whole ladder moves.
+    // ⚠ AND onLine(), NOT onTransit(). With the transit role the governor WANTS 'high'
+    // too, so `want === commandedSpeed` returns above the floor and the arm reports 'high'
+    // for a reason that has nothing to do with lowering - it passes identically against a
+    // governor frozen solid. On a line the role wants 'survey' (7.0 kn) against a commanded
+    // 'high' (14.0), which is a genuine reduction inside the window.
+    world(); onLine(); __setCommanded("high"); guardEdgeAt = clock - 1000;
+    const lowered = speedGovernor();
+
+    // The same raise with the window expired: it goes.
+    world(); onTransit(); __setCommanded("survey"); guardEdgeAt = clock - (EDGE_REASSESS_MS + 1);
+    const after = speedGovernor();
+
+    check("20. the governor may not RAISE the speed while a deviation is settling - and may "
+          + "still lower it, and raises again the moment the window is out",
+          () => held === "survey" && lowered === "survey" && after === "high",
+          "raise 1 s after the deviation -> " + JSON.stringify(held)
+            + " (the transit role wants 'high'); a LOWER in the same window -> "
+            + JSON.stringify(lowered) + "; the same raise " + (EDGE_REASSESS_MS + 1)
+            + " ms after -> " + JSON.stringify(after) + ". The slow and hold rungs are BOTH "
+            + "standing down here on purpose; a governor that accelerates into that silence "
+            + "is the one part of the ladder still moving, and it is moving the wrong way");
+  } finally { Date.now = realNow; guardEdgeAt = 0; }
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
