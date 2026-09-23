@@ -97,7 +97,22 @@ The clearance guard went in extremis, rung 4 took the helm, and `/api/cmd/escape
 
 ⚠⚠ **AND TWO OF THOSE WERE INVISIBLE TO THE CHECKS THAT SHOULD HAVE SEEN THEM.** `guard_resume`'s `cmd` stub RECORDED the pause without modeling it, so `run` stayed "running" for the whole resume and check 15b's "the offer stays up" was a statement about an untouched variable. And it applied vessel-side effects SYNCHRONOUSLY, which closed the very window the one-at-a-time gate exists for — that mutation SURVIVED twice before the harness was made faithful (state lands in the reply, one guard tick per round trip). **The fidelity of a stub is a safety property.** Sweep now 5/5.
 
-**STILL OWED:** the launch grant's live check; and this work's own — the CAP is verified live (real browser, module as served, 92.5 m → 33.9 m from a 13.0 s in-extremis state), but the capture/offer/resume chain is driven checks and mutation only.
+### ⚠ THE LIVE CHECK, AND EXACTLY HOW FAR IT GOT (2026-09-23)
+
+Driven on a throwaway console (own port, own `--state-dir`, sim, New Castle NH). **PROVEN LIVE on a console serving this code:**
+
+* the page LOADS AND RUNS with every change present in the loaded DOM — the suites `eval` sliced source text and can never show this;
+* the whole ladder executed against the real server: **EDGE** ("Route amended — Deviation: 2.5 m to port"), **HOLD** ("station-keeping at present position"), and a genuine **IN-EXTREMIS ESCAPE** — `behavior: escape`, speed up to 9.63 kn, the banner quoting the drift projection ("19.7 m off land · ... on drift ALONE it is 0 s from within 30.0 m of it — under the 20 s a decision needs, so stopping does not answer it");
+* `renderHeldBar` is wired (it relabels `gb_drop` to LEAVE IT HOLDING);
+* the CAP, in the browser, on `guard.js` **as actually served**: 92.5 m → 33.9 m from a 13.0 s in-extremis state, drift unable to reach her there.
+
+⚠⚠ **THE OFFER AND THE RESUME ARE STILL UNPROVEN LIVE.** Both times the guard fired, the boat was at her LAST waypoint, so `markGuardHeld` declined at its own `idx >= runRoute.length` guard — correct behaviour, no remainder to bank. The fixture was the problem: punched surveys kept collapsing to one coverage line. **What is needed is one run with a survey long enough to still have unflown waypoints when the guard fires.**
+
+⚠⚠ **AND THE CONSOLE SNAPSHOTS `asv.html` AT BOOT.** `/api/state` carries `build` vs `build_on_disk`, and a page loaded before an edit serves the OLD one — while `static/js/*.js` ARE served from disk every request. So a reload tests the old page and the new modules, silently. **Any page-level live check needs a SERVER RESTART**, the same rule already recorded for the launch grant. This cost a whole run before it was noticed; the tell is `build != build_on_disk` in `/api/state`.
+
+⚠ **DRIVING THE CHART FROM AUTOMATION** — every panel is a SIBLING of `#map` (`asv.html:301`), so panels swallow clicks; the Quick Start backdrop (`.qsback`, z-index 8) eats the FIRST click anywhere on a fresh profile; and the wind rose claims the press inside a **92 px disc** at about `(W-137, H-192)` before any mode chain runs (`asv.html:9418-9425`, `ROSE_R` at `:4900`). The reliable test before any click is `document.elementFromPoint(x,y).closest('#map')`. The pattern needs a mousedown AND a mouseup within 5 px — the window handler returns on `!wasDrag || !downAt` (`asv.html:9467`) — and only TWO accurate clicks are needed, because `#sp_spacing.onchange` builds `pat.C` numerically (`asv.html:9944`).
+
+**STILL OWED:** the launch grant's live check; and the offer/resume half of this one.
 
 
 
