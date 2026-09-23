@@ -86,6 +86,7 @@ const G = require("../static/js/geodesy.js");
 const U = require("../static/js/units.js");
 const S = require("../static/js/state.js");
 const T = require("../static/js/turns.js");
+const GEOM = require("../static/js/geometry.js");
 // The run-time guard, for `guardStandoffM` - the planner/guard seam reads the GUARD's own
 // constants, so this suite must hand punchOut the real module rather than a stand-in.
 const GU = require("../static/js/guard.js");
@@ -138,9 +139,10 @@ const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
-  // clip standoff and from patStrikeKey. Missing from this list it is a bare ReferenceError
-  // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash.
-  "patClipBufM",
+  // clip standoff and from patClipKey. Missing from this list it is a bare ReferenceError
+  // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash -
+  // and it caught patClipKey the same way the day the strike/clip split landed.
+  "patClipBufM", "patClipKey",
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
@@ -159,10 +161,16 @@ function makeWorld(opts) {
   const log = { banners: [], notes: [], saves: 0, violations: [] };
   const turnWithRetry = o.turnWithRetry ? o.turnWithRetry(T.turnWithRetry) : T.turnWithRetry;
   // eslint-disable-next-line no-new-func
-  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "$", "document", "log", "turnWithRetry",
+  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
     + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg} = T;\n"
+    // ⚠ THE REVERSAL GATE MEASURES THE CROSSING (2026-09-23), so the punch calls
+    // acrossTrackM. This suite RUNS punchOut, and without the symbol the call was a bare
+    // ReferenceError that punchOut's OWN catch swallowed - reported as "5 runs, 0 turns
+    // built", a wrong ANSWER rather than a crash. `no turns` has to be read as `something
+    // threw` until proved otherwise.
+    + "const {acrossTrackM} = GEOM;\n"
     + "const {channelLaneRoute, channelSpanKeepouts, channelTurnKeepouts, junctionKnot, pruneJunctionKnots,"
     + " regionOrder, routeAround} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
@@ -176,6 +184,12 @@ function makeWorld(opts) {
     + "const mission = {lines: [], waypoints: [], approach_radius_m: 1, speeds: {}, speed: 'survey'};\n"
     + "const applyNogoControls = () => {}; const ensureNogoArea = async () => true; const render = () => {};\n"
     + "const foldChartInk = () => {};             // no chart image in this world\n"
+    // ⚠ AND THE CHART-READ STATE IT LEAVES BEHIND. patStrikeKey names the READ - its key
+    // and its line/area counts - since 2026-09-22, so without this the key is a bare
+    // ReferenceError inside the punch, which this world reports as "0 runs, 0 turns built"
+    // rather than as a crash. Exactly the trap the note above patClipBufM records, and it
+    // caught this the same day. Empty is the truthful value here: nothing is scanned.
+    + "const chartInk = {key: null, lines: [], areas: [], detached: [], note: null, z: null, ms: 0, busy: false};\n"
     // The REAL guard bodies, not stubs: patClipBufM derives the clip standoff from the
     // guard's own constants, and a suite substituting its own would be testing a seam that
     // is closed only inside the test.
@@ -196,7 +210,7 @@ function makeWorld(opts) {
     + " clearClip: () => { patClip = null; },"
     + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
     + " pending: () => { patRepunchT = setTimeout(() => {}, 0); } };")(
-    G, U, S, T, PS, C, GU, $, document, log, turnWithRetry);
+    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry);
   // The vessel and the chart, as the page holds them.
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
   S.V.MAX_TURN_RATE_DEG_S = o.turnRate || 60;

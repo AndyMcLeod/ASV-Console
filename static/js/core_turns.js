@@ -18,7 +18,7 @@
  *     2. THE SEMICIRCLE BUILT FROM THE TWO POSES rather than from the E-F
  *        chord (2026-09-08), with the run-out epsilon, the lateral branch
  *        gate, and `outboard` MEASURED off the points in both this shape and
- *        racetrackTurn instead of asserted. Upstream still centres the arc on
+ *        racetrackTurn instead of asserted. Upstream still centers the arc on
  *        the midpoint of E-F and takes its radius from half that chord, which
  *        is correct only while the two line ends are ABEAM. Give the pair any
  *        along-track offset -- which lead-in / lead-out extensions produce at
@@ -95,7 +95,7 @@
  * 14.4 m" -- both false, and the advisory alongside it said WIDEN THE LINES,
  * which makes it strictly worse. punchOut now passes
  * Math.max(60, spacing * 1.6), the same 1.6 its own reversal gate uses, so
- * the judgement is made once instead of twice at two different scales. Below
+ * the judgment is made once instead of twice at two different scales. Below
  * 120 m of spacing nothing moves.
  *
  * TWO HARDENINGS CAME WITH THE BODIES AND NEITHER IS REACHABLE FROM THE UI.
@@ -168,7 +168,7 @@
  *     boat with a 14.4 m minimum can hold. The advisory alongside it said WIDEN THE
  *     LINES, which makes it strictly worse. Both consoles now derive the cap from the
  *     spacing — `Math.max(60, spacing * 1.6)`, the same 1.6 the callers' own "is this a
- *     reversal pair" gate uses — so the judgement is made once instead of twice at two
+ *     reversal pair" gate uses — so the judgment is made once instead of twice at two
  *     different scales.
  *
  * WHAT IS *NOT* HERE. `regionOrder`, `junctionKnot`, `pruneJunctionKnots`, `KNOT_TURN_DEG`
@@ -219,7 +219,7 @@ export const SPIRAL_MIN_LS_M = 0.5;
  *
  * The 1.4 is line-following margin on the physical `v/ω`.
  *
- * ⚠ ZERO IS AN ANSWER, NOT A CRASH, and that is the behaviour ASV did not have. With no
+ * ⚠ ZERO IS AN ANSWER, NOT A CRASH, and that is the behavior ASV did not have. With no
  * speed or no turn rate this returns 0 and the caller's `Math.max(0.75, minR)` floor
  * takes over. ASV's own version divided by ω unguarded, so a vessel file with
  * `max_turn_rate_deg_s: 0` returned Infinity and drove `teardropTurn` to NaN waypoints;
@@ -235,7 +235,7 @@ export function minTurnRadiusM(speedKts, maxTurnRateDegS = 20, margin = TRACKING
 }
 
 /**
- * Arc point spacing for a radius, in metres.
+ * Arc point spacing for a radius, in meters.
  *
  * Held as a fraction of the radius rather than a constant, so the chord sagitta
  * (≈ step²/8R) stays proportionate: 3 m at a 2 m radius, 12.5 m at a 250 m one. The
@@ -245,7 +245,7 @@ export function minTurnRadiusM(speedKts, maxTurnRateDegS = 20, margin = TRACKING
 export const arcStepFor = (R) => Math.max(3, R / 20);
 
 /**
- * Shorten a survey segment by `m` metres at BOTH ends: settle on-line, and leave room
+ * Shorten a survey segment by `m` meters at BOTH ends: settle on-line, and leave room
  * for the turn to loop in. Left untouched if that would make it too short to be worth
  * running.
  *
@@ -278,10 +278,10 @@ export function shortenSeg(a, b, m, dist) {
 }
 
 /**
- * Interior points of a circular arc: centre `C`, radius `R`, from angle `a0` sweeping
+ * Interior points of a circular arc: center `C`, radius `R`, from angle `a0` sweeping
  * `sweep` radians (signed, + = CCW). EXCLUDES both endpoints.
  *
- * Chords cut INBOARD — away from the arc's own centre — and every chord is validated by
+ * Chords cut INBOARD — away from the arc's own center — and every chord is validated by
  * the caller's `clear`, so a sparse arc stays clear of anything the arc curves around.
  * `map(x, y)` takes frame coordinates to a lat/lon point.
  *
@@ -331,7 +331,7 @@ export function arcPts(C, R, a0, sweep, minSeg, map, stepM) {
  *
  * C2 is tangent to both outer circles (|C1−C2| = |C2−C3| = 2R), solvable exactly when
  * d ≤ 2R — precisely the case the semicircle cannot serve. Tangent points are the
- * circle-centre midpoints, because the radii are equal. Net heading change is −180° by
+ * circle-center midpoints, because the radii are equal. Net heading change is −180° by
  * construction, and at d = 2R it degenerates (q = 0, outer arcs vanish) into the plain
  * semicircle, so the two shapes agree on their shared boundary.
  *
@@ -396,9 +396,9 @@ export function arcPts(C, R, a0, sweep, minSeg, map, stepM) {
  * along the exit heading, +x toward the next line, `d` = the lateral offset):
  *
  *     start (0,0) heading +y
- *       arc 1: centre (R,0), pi->pi/2      ends (R, R) heading +x
+ *       arc 1: center (R,0), pi->pi/2      ends (R, R) heading +x
  *       straight                            to  (d-R, R)
- *       arc 2: centre (d-R,0), pi/2->0      ends (d, 0) heading -y
+ *       arc 2: center (d-R,0), pi/2->0      ends (d, 0) heading -y
  *
  * Needs `d >= 2R` for the straight to exist; below that the loop has to overshoot and
  * `teardropTurn`'s three-arc form is the right answer, so this refuses and says so.
@@ -455,7 +455,7 @@ export function racetrackTurn(E, F, hE, hF, frame, opts = {}) {
   // ⚠ MEASURED, NOT ASSERTED (2026-09-08). The reach past the end of the line is the arc
   // radius "and nothing more" only while the two ends are ABEAM. This shape has always
   // absorbed an along-track offset with the run-out above, and when it does the arcs start
-  // `along` metres further down the line and reach `along + R` — so the constant under-
+  // `along` meters further down the line and reach `along + R` — so the constant under-
   // reported by exactly the offset. Nothing produced offsets routinely until lead-in /
   // lead-out extensions did, which is why it stood. It is the figure the operator decides
   // "is that water clear?" against, so it is counted off the points like every other shape.
@@ -671,7 +671,7 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
     // ── SEMICIRCLE: the offset itself supplies a radius the vessel can hold ─────────
     //
     // ⚠⚠ BUILT FROM THE TWO POSES, NOT FROM THE E–F CHORD (2026-09-08). This branch used
-    // to set R = half and centre the arc on the midpoint of E–F, which makes the tangents
+    // to set R = half and center the arc on the midpoint of E–F, which makes the tangents
     // perpendicular to the CHORD. While the two ends are abeam that is the same thing as
     // perpendicular to the LINES and the shape is right — which is why it stood for
     // months. Give the pair any along-track offset and it is wrong by exactly
@@ -751,7 +751,7 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
     const qy = Math.sqrt(qy2);
     const C1 = { x: -R, y: 0 }, C3 = { x: d + R, y: 0 }, C2 = { x: d / 2, y: qy };
     const T1 = { x: (C1.x + C2.x) / 2, y: (C1.y + C2.y) / 2 };   // equal radii → the tangent point
-    const T2 = { x: (C2.x + C3.x) / 2, y: (C2.y + C3.y) / 2 };   // is the midpoint of the centres
+    const T2 = { x: (C2.x + C3.x) / 2, y: (C2.y + C3.y) / 2 };   // is the midpoint of the centers
     const n2pi = (a) => { a %= 2 * Math.PI; return a < 0 ? a + 2 * Math.PI : a; };
     const ang = (Pt, Ct) => Math.atan2(Pt.y - Ct.y, Pt.x - Ct.x);
     const s1 = n2pi(ang(T1, C1));                         // arc 1: CCW from angle 0 (the entry)
@@ -772,7 +772,7 @@ export function teardropTurn(E, F, hE, hF, frame, opts = {}) {
   // FOR EVERY BRANCH. This is the water the operator has to have clear, and it is the
   // number the card quotes them. Both branches used to assert it instead: the semicircle
   // said `R` and the teardrop measured. `R` was right only while the two ends were abeam
-  // — with the run-out above, the arc starts `along` metres further down the line and
+  // — with the run-out above, the arc starts `along` meters further down the line and
   // reaches `along + R`. An asserted reach that is short is worse than none, because it
   // is the figure the operator decides "is that water clear?" against.
   outboard = 0;

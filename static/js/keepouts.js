@@ -136,7 +136,7 @@
  * WorldView. Neither console can reach it: `buildKeepouts` handles `chan_mark`
  * and `continue`s BEFORE `nogoKind` is called, and `buildKeepouts` is the only
  * caller in either repo. WorldView's answer is kept because it is the correct
- * one — the buoy points it builds are labelled "a channel buoy" at the push
+ * one — the buoy points it builds are labeled "a channel buoy" at the push
  * site, so the two agree about the model and only ever disagreed about a
  * question nothing asks. `tests/keepouts.py` pins both halves of that claim.
  *
@@ -153,7 +153,7 @@
  * FLAT pair and you get ASV's numbers; hand it WorldView's ELLIPSOIDAL pair and
  * you get WorldView's, 1.719 m apart on the same features. That divergence is
  * real and documented, and it is why the core ships both frame constructors:
- * neither console changes behaviour on the day it adopts this file.
+ * neither console changes behavior on the day it adopts this file.
  *
  * ─ WHAT IS DELIBERATELY NOT HERE ─
  *
@@ -163,7 +163,7 @@
  *
  * `clipLine` looks like it belongs with `legClear` and does NOT. Both consoles
  * have one, and they are not the same function: WorldView interpolates the
- * clipped ends in ENU METRES and converts back through the frame, while ASV
+ * clipped ends in ENU METERS and converts back through the frame, while ASV
  * interpolates in LAT/LON directly. Under a flat frame those are nearly the
  * same answer and under an ellipsoidal one they are not, so it is a merge to
  * decide rather than a body to move. It stays in WorldView.
@@ -236,7 +236,7 @@ export const ENFORCE_DEFAULTS = { land: true, depth: true, haz: true, area: fals
  * default `haz: true` armed — the caller asks for hazards off and gets them
  * enforced, with nothing anywhere reporting a problem. That is the same
  * silent-success shape as a UTM zone of 99 writing an openable shapefile four
- * million kilometres out, and the answer is the same: refuse rather than guess.
+ * million kilometers out, and the answer is the same: refuse rather than guess.
  */
 export function enforcement(o) {
   const out = { ...ENFORCE_DEFAULTS };
@@ -419,7 +419,7 @@ export function markSystems(marks) {
 }
 
 /**
- * The CENTRELINE of one buoy system, ordered along the channel.
+ * The CENTERLINE of one buoy system, ordered along the channel.
  *
  * Pair each port-hand buoy with its nearest starboard-hand buoy, take the
  * midpoint, order by buoy NUMBER. This is the geometric middle of the buoyed
@@ -463,13 +463,13 @@ export const CL_EXTEND_CAP_M = 1200;
  * across the fairway at exactly the place converging traffic expects it to hold
  * — the mouth.
  *
- * ASV shipped without this on the reasoning that the centreline "already runs
+ * ASV shipped without this on the reasoning that the centerline "already runs
  * out to the last buoy pair". Measured, it does not: the offset was decaying
  * 50 m INSIDE the buoyage, was 21 of a wanted 25 AT the final pair, and 7 one
  * channel width past it. It took nine days to notice because every suite stayed
  * green — the clause had no implementation to fail.
  *
- * The fix is upstream of the lane rather than inside it: extend the CENTRELINE
+ * The fix is upstream of the lane rather than inside it: extend the CENTERLINE
  * along its own terminal axis and the existing machinery holds the full offset
  * through the extension without knowing it is there. Straight, because standing
  * on is what a mouth asks for; following a curve out of one invents water.
@@ -517,7 +517,7 @@ export function extendCenterline(cl, chans) {
 
 /**
  * Pair lateral marks into channel GATES: each port-hand mark with its nearest
- * starboard-hand mark across the channel, giving the gate centre, its width and
+ * starboard-hand mark across the channel, giving the gate center, its width and
  * the channel axis through it.
  */
 export function pairGates(marks) {
@@ -543,7 +543,7 @@ export function pairGates(marks) {
  * Charted-channel polygons: the ENC dredged areas, plus buoy-gate FAIRWAY
  * corridors where no dredged polygon is charted (an inlet mouth, typically).
  *
- * ONE list, shared by the lane's centreline extension and the survey span and
+ * ONE list, shared by the lane's centerline extension and the survey span and
  * turn rules, so "what counts as a channel" cannot drift between them.
  */
 export function channelPolys(frame, feats, marks) {
@@ -551,7 +551,7 @@ export function channelPolys(frame, feats, marks) {
   for (const f of feats || []) {
     // A CHARTED CHANNEL IS A CHARTED OBJECT. S-57 names two that are a "narrow
     // channel or fairway" in COLREGS Rule 9's own words: DRGARE (Dredged_Area -
-    // depth artificially maintained, so a deep-draught vessel can navigate
+    // depth artificially maintained, so a deep-draft vessel can navigate
     // safely only within it, which is Rule 9(b)'s own test) and FAIRWY
     // (Fairway_area - the designated lane for larger vessels, which is the
     // object the rule is written about). Traffic separation schemes and
@@ -583,7 +583,7 @@ export function channelPolys(frame, feats, marks) {
  *
  * `chan_mark` is here for completeness and is NOT reachable from
  * `buildKeepouts`, which handles marks and continues before this is called —
- * the buoy points it builds are labelled at the push site. It is the one answer
+ * the buoy points it builds are labeled at the push site. It is the one answer
  * the two consoles gave differently before this file existed (ASV said "land"),
  * and it is why `tests/keepouts.py` pins the unreachability rather than
  * asserting the strings agree.
@@ -613,7 +613,7 @@ export function nogoKind(role, depthbad, opts = {}) {
  * @param {{min:number,max:number}} [opts.depthRange]  the survey depth window
  * @param {object} [opts.enforce]  {land, depth, haz, area} — operator toggles
  * @returns {{polys:Array, lines:Array, points:Array, marks:Array, passed:number,
- *            sys:Array, chans:Array}} in the frame's metres. `passed` counts the
+ *            sys:Array, chans:Array}} in the frame's meters. `passed` counts the
  *          charted hazards a charted sounding proved passable, and which are
  *          therefore absent from `points` -- a model that drops something has to
  *          be able to say how much.
@@ -630,7 +630,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // ⚠ `bridge` IS THE SUPPORTS, NOT THE SPAN. A bridge pylon is a pier that happens
     // to hold something up and is enforced exactly like one; the DECK (`bridge_span`)
     // is overhead and is deliberately absent from every list here - enforcing it would
-    // refuse passage under every bridge, which for a hull with a metre of air draft is
+    // refuse passage under every bridge, which for a hull with a meter of air draft is
     // wrong on all of them. The span is fetched and cached for drawing, and that is all.
     // ⚠ EACH ROLE BELONGS TO EXACTLY ONE OF THESE, because the dispatch below is an
     // if/else chain on geometry: `isLand` draws RINGS, `isShore` draws PATHS, `isHaz`
@@ -646,7 +646,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
 
     // Lateral marks do TWO jobs, and they are not the same job. As keep-outs
     // they are small points — do not hit a buoy. As channel structure they pair
-    // into the centreline the Rule 9 lane rides. CATLAM gives the side: 1/3 are
+    // into the centerline the Rule 9 lane rides. CATLAM gives the side: 1/3 are
     // port-hand, 2/4 starboard-hand.
     //
     // They are collected as `marks` regardless of the hazard toggle: turning off
@@ -673,7 +673,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // what the closing comment there already says. An explicit `continue` was
     // written here first and MUTATION PROVED IT DEAD: removing it changed
     // nothing, because the fall-through was already the right answer. The rule
-    // lives in one place now, and rule9_scope check 3 asserts the behaviour
+    // lives in one place now, and rule9_scope check 3 asserts the behavior
     // rather than the guard.
     //
     // ⚠ THE REAL RISK IS `isArea`, one line down. Adding 'fairway' to it beside
@@ -724,7 +724,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
   };
 }
 
-/** Is this point (frame metres) inside a keep-out, or within `buf` of one? */
+/** Is this point (frame meters) inside a keep-out, or within `buf` of one? */
 export function blocked(p, ko, buf) {
   for (const poly of ko.polys) {
     if (!inBB(p, poly.bb, buf)) continue;
@@ -752,11 +752,11 @@ export function blocked(p, ko, buf) {
 }
 
 /**
- * How far this point (frame metres) is from the NEAREST keep-out, capped at `cap`.
+ * How far this point (frame meters) is from the NEAREST keep-out, capped at `cap`.
  *
  * `blocked` answers yes/no at ONE buffer, which is all a PLANNER needs: a leg is either
  * clear or it is not. A RUNNING BOAT needs the number. Andy, 2026-08-31, after a DriX
- * passed a wharf at 0.6 m with a 5 m buffer set: the buffer was honoured by the planner
+ * passed a wharf at 0.6 m with a 5 m buffer set: the buffer was honored by the planner
  * (the commanded path cleared the pier by 14.3 m) and then enforced on nothing, because
  * every keep-out test in this console is a plan-time test. There was no quantity to watch.
  *

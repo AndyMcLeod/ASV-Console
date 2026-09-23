@@ -30,7 +30,7 @@
 // THE METHOD, and each step is a different question:
 //
 //   ink          what is DRAWN. The chart's fills are all light (water 209-221, land 255,
-//                a pier's tan 232) and its strokes and text are grey 114 or black, so one
+//                a pier's tan 232) and its strokes and text are gray 114 or black, so one
 //                luminance threshold separates them. Measured on the live tiles.
 //   explained    what the ENC ALREADY ACCOUNTS FOR. Every vector the console holds, painted
 //                thick; ink within a few pixels of a charted object is that object's own
@@ -52,13 +52,13 @@
 //                    from a quay; that is what makes it a finger pier.
 //   PERPENDICULAR    at least PERP_MIN_DEG off the thing it springs from. ⚠ THIS IS THE ONE
 //                    THAT SEPARATES A PIER FROM A CONTOUR, which is exactly the confusion
-//                    Andy called out - they are drawn in the same grey at the same width,
+//                    Andy called out - they are drawn in the same gray at the same width,
 //                    and what tells them apart is that a depth contour runs ALONG the shore
 //                    and a pier runs OUT from it.
 //
 // MEASURED over 670 x 670 m of New Castle at 0.22 m/px: 1,825 components, TWO kept - both
 // of them real finger piers, 88 deg and 89 deg off the pier they stand on, attached to
-// within a metre. Over 715 x 715 m of Lewes: ZERO kept, zero false positives.
+// within a meter. Over 715 x 715 m of Lewes: ZERO kept, zero false positives.
 //
 // ⚠ WHAT THIS DELIBERATELY DOES NOT DO IS DETACHED INK. Five candidates at New Castle were
 // line-like but stood 11-19 m off anything charted; on inspection every one was foreshore or
@@ -70,10 +70,10 @@
 export const INK_LUM = 170;
 /**
  * ... and it must be NEUTRAL. Max channel minus min channel, above which the mark is a
- * COLOURED one and belongs to a different alphabet.
+ * COLORED one and belongs to a different alphabet.
  *
  * ⚠ THIS IS NOT A TIDY-UP, IT REMOVED A WHOLE CLASS OF FALSE CANDIDATE. NOAA draws physical
- * things in greys and black and reserves magenta for aids, limits, cable and pipeline runs
+ * things in grays and black and reserves magenta for aids, limits, cable and pipeline runs
  * and anchorage symbology - none of which is a structure a hull can hit. Measured over the
  * west shore at New Castle: structure ink runs 0-26 of saturation, the magenta furniture
  * runs 110-146, and 15.9% of everything the luminance test called ink was that furniture. A
@@ -157,7 +157,7 @@ export const REACH_MIN_M = 3.0;
 
 /** Collinear pieces closer than this along their own axis are one mark. */
 export const CHAIN_GAP_M = 5.0;
-/** ... and no further off each other's axis than this. A parallel neighbour is not a piece. */
+/** ... and no further off each other's axis than this. A parallel neighbor is not a piece. */
 export const CHAIN_OFFSET_M = 1.6;
 /** ... and no more than this many degrees apart in direction. */
 export const CHAIN_DEG = 20.0;
@@ -189,7 +189,7 @@ export const GROW_ROUNDS = 3;
 //
 // ⚠ THE HULL OVER-CLAIMS ON PURPOSE. A comb's hull fills in the water between its fingers,
 // which is water a hull could in principle thread. That is the right direction to be wrong
-// in: the gaps between floats are metres wide, they hold moored boats the chart does not
+// in: the gaps between floats are meters wide, they hold moored boats the chart does not
 // draw, and a survey ASV has no business in them. A concave outline would be truer to the
 // ink and falser to the place.
 //
@@ -207,8 +207,8 @@ const R2D = 180 / Math.PI;
 /**
  * Ink: one pass over RGBA, one threshold.
  *
- * ⚠ LUMINANCE, NOT "IS IT GREY". The strokes this is after are grey 114 AND black text AND
- * the darker blue of a heavy contour; a colour match would need one rule per palette entry
+ * ⚠ LUMINANCE, NOT "IS IT GRAY". The strokes this is after are gray 114 AND black text AND
+ * the darker blue of a heavy contour; a color match would need one rule per palette entry
  * and would break the first time NOAA restyled. What every fill on this chart has in common
  * is that it is LIGHT, and that is a single number.
  */
@@ -219,7 +219,7 @@ export function inkMask(rgba, w, h, lum = INK_LUM, sat = INK_SAT_MAX) {
     if (0.299 * r + 0.587 * g + 0.114 * b >= lum) continue;
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
     const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    if (mx - mn > sat) continue;                  // coloured: an aid, a limit, a cable
+    if (mx - mn > sat) continue;                  // colored: an aid, a limit, a cable
     m[i] = 1;
   }
   return m;
@@ -318,7 +318,7 @@ function endGap(f, g) {
  * Are these two marks pieces of ONE line?
  *
  * Three tests, and all three are needed: the same DIRECTION (a cross is not a chain), a
- * small OFFSET from each other's axis (a parallel neighbour ten metres away is a different
+ * small OFFSET from each other's axis (a parallel neighbor ten meters away is a different
  * structure, not the rest of this one), and a small GAP between their nearest ends.
  */
 export function chainable(f, g, mPerPx, opts = {}) {
@@ -327,8 +327,8 @@ export function chainable(f, g, mPerPx, opts = {}) {
   const degMax = opts.chainDeg ?? CHAIN_DEG;
   const dot = Math.abs(f.ux * g.ux + f.uy * g.uy);
   if (Math.acos(Math.min(1, dot)) * R2D > degMax) return false;
-  // ⚠ ONE SYMMETRIC TEST, NOT TWO. This was written as a pair - g's centre off f's axis, and
-  // f's centre off g's - and mutation showed the pair indistinguishable: deleting either left
+  // ⚠ ONE SYMMETRIC TEST, NOT TWO. This was written as a pair - g's center off f's axis, and
+  // f's center off g's - and mutation showed the pair indistinguishable: deleting either left
   // every check green, because within the 20° direction cap the two are all but equal and
   // the survivor always fired. Two statements where one always implies the other is one
   // statement nobody can test. The MAX is the same rule, stated once.
@@ -428,7 +428,7 @@ export function classify(fit, segs, mPerPx, opts = {}) {
   const aspect = lengthM / Math.max(widthM, mPerPx);
   if (aspect < minAsp) { r.why = "not thin enough (" + aspect.toFixed(1) + ":1)"; return r; }
   // ⚠ THE ALLOWANCE SCALES WITH THE MARK (ATTACH_FRAC): a float system reached by an
-  // uncharted ramp stands metres off the coastline, and the longer the thing you have found
+  // uncharted ramp stands meters off the coastline, and the longer the thing you have found
   // the more confident you may be that the gap is a gap in the CHART rather than open water.
   if (!r.attached) {
     r.why = "not attached (" + r.attachM.toFixed(1) + " m off anything charted, allowed "

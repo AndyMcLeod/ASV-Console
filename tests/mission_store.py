@@ -33,6 +33,15 @@ and every POST route answers. TEETH - 10 mutations RUN in a scratch clone, 10 ki
   End of Plan taken up from a save before its revision is checked -> 12 (a stale tab could change the
   setting the console runs by without writing a byte - found reading the code after the first 9)
 
+⚠ AND CHECK 5 IS COUNTED, NOT TIMED, SINCE 2026-09-21. It used to run for a wall-clock 3 s
+and require more than 50 saves and 50 reads in it, which measures the MACHINE, not the console.
+On this box it landed on the boundary: three consecutive runs scored save_ok 34, 48 and 50
+against a floor of "> 50", so it blocked a commit, passed a minute later, and blocked again. A
+check that fails at random teaches everyone to re-run it. Each writer now does a fixed number
+of saves and the readers run until both are done: the same contention, an exact save count, and
+no assertion about disk speed. Still killed by "the read does not hold the writer lock", which
+is the fault it was written for.
+
 Everything runs against a TEMP mission path - the module's MISSION_PATH is re-pointed before
 anything is read or written - and check 10 RECORDS every write, replace or remove that names the
 app folder's plan files (review #16: a hash of mission.json compared before and after failed a commit
@@ -208,6 +217,20 @@ check("4b. a replace refused by a reader in another process is RETRIED, not fail
 
 # 5. THE REPORTED FAULT, driven: writers and readers together, the way a speed command, a
 #    Go-To and the page's plan save meet in the HTTP threads.
+#
+# COUNTED, NOT TIMED (2026-09-21). This used to run for a wall-clock 3 s and then require
+# more than 50 saves and 50 reads to have happened in it - which is not a property of the
+# console, it is a property of the machine it ran on. On this box it sits right on the
+# boundary: three consecutive runs scored save_ok 34, 48 and 50 against a floor of "> 50",
+# so it blocked a commit, passed on the next minute, and blocked again. A check that fails
+# at random teaches everyone to re-run it, which is worse than not having it.
+#
+# The subject here is "no empty plan, no refused read, no failed save WHILE writers and
+# readers overlap". So each writer now does a fixed number of saves and the readers run
+# until both are done: the contention is guaranteed, the save count is exact, and nothing
+# is asserted about how fast the disk is. A save that has become pathologically slow is
+# caught by the hook's own per-suite timeout, which is the honest place for it.
+SAVES_EACH = 40                       # 80 in all - more than the timed version ever reached
 stats = {"empty": 0, "unavailable": 0, "read_ok": 0, "save_ok": 0, "save_err": 0}
 stop = threading.Event()
 lock = threading.Lock()
@@ -220,7 +243,7 @@ def _count(k):
 
 def _writer(buf):
     doc = dict(PLAN, buffer_m=buf)
-    while not stop.is_set():
+    for _ in range(SAVES_EACH):
         try:
             _C.save_mission(doc)
             _count("save_ok")
@@ -237,18 +260,20 @@ def _reader():
             _count("unavailable")
 
 
-threads = [threading.Thread(target=_writer, args=(b,)) for b in (3, 4)] + \
-          [threading.Thread(target=_reader) for _ in range(2)]
-[t.start() for t in threads]
-time.sleep(3.0)
-stop.set()
-[t.join() for t in threads]
+writers = [threading.Thread(target=_writer, args=(b,)) for b in (3, 4)]
+readers = [threading.Thread(target=_reader) for _ in range(2)]
+[t.start() for t in writers + readers]
+[t.join() for t in writers]
+stop.set()                            # the readers stop once both writers have finished
+[t.join() for t in readers]
 final = _C.load_mission()
-check("5. THE REPORTED FAULT: two writers and two readers for 3 s - no empty plan, no refused read, "
-      "no failed save",
+check("5. THE REPORTED FAULT: two writers and two readers overlapping - no empty plan, no "
+      "refused read, no failed save",
       stats["empty"] == 0 and stats["unavailable"] == 0 and stats["save_err"] == 0
-      and stats["save_ok"] > 50 and stats["read_ok"] > 50 and len(final["waypoints"]) == 385,
-      json.dumps(stats))
+      and stats["save_ok"] == 2 * SAVES_EACH and stats["read_ok"] > 0
+      and len(final["waypoints"]) == 385,
+      json.dumps(stats) + "  - every save is counted, so save_ok is EXACT; read_ok is "
+      "whatever the readers managed alongside them and is asserted only to be non-zero")
 
 # 6-7. A speed command commands the boat and writes nothing; a Go-To takes the live speed.
 _C.save_mission(PLAN)

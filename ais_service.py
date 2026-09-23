@@ -1,4 +1,47 @@
 # ============================================================================
+# ⚠⚠ ASV OWNS THIS FILE NOW (2026-09-21). DO NOT RE-VENDOR IT.
+#
+# Andy, 2026-08-31: "stop updating other projects. We concentrate only on ASV
+# Console moving forward. There may be components of other projects that we
+# pull over." The flow is ONE WAY: asv_core is a place to pull FROM, never a
+# place this repo writes back to. The vendor header below is kept for
+# PROVENANCE -- it records where this body came from -- and its instruction is
+# now wrong for this repo, in the same dangerous way it was already wrong for
+# static/js/keepouts.js, routing.js and core_turns.js:
+#
+#   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+#     THIS FILE. If a `--check` there reports this copy as DRIFTED, that is
+#     correct and expected: it has drifted, on purpose, and here is the whole
+#     of it.
+#
+#       1. `Registry._rank` (2026-09-21). `PRIORITY` is keyed by FEED, but
+#          `src` carries the ENDPOINT's name so several receivers stay distinct
+#          in `srcs` -- so a labeled receiver ("nmea-udp-10110") ranked 0 and
+#          the boat's own AIS set lost the position to a shore relay 9 km away.
+#          Fixed in asv_core at 2a0b53d and pulled across; tests/ais_sources.py.
+#       2. The DATA clock, `last_report` (2026-09-21). `_ok` stamps `updated` on
+#          every successful CONNECT, and a far end that accepts then hangs up
+#          never reaches `_err`, so the AISHub poll deferred for ever to a
+#          stream delivering nothing -- measured, 51 accepts, one report, zero
+#          polls in 150 s. Fixed in asv_core at 2a0b53d and pulled across.
+#       3. AND THE BIG ONE, WHICH IS THIS REPO'S OWN AND PREDATES BOTH: the
+#          STATIC / VOYAGE particulars -- `STATIC_KEYS`,
+#          `_static_from_aisstream`, the ITU-R M.1371 message-5 bit offsets, and
+#          the serialiser that stops a correctly decoded field dying in a
+#          whitelist. 219 diff lines against the core, answering Andy's
+#          2026-09-02 ask for vessel type, length, width and destination. A
+#          `vendor.py` run would have deleted every line of it without a prompt.
+#
+# ⚠⚠ AND THAT CHECK HAD BEEN LYING BY OMISSION UNTIL 2026-09-21. `vendor.py
+# --check` prints the first differing line of a drifted copy; a Windows console
+# is cp1252, these files are written in em dashes, and the print raised
+# UnicodeEncodeError -- so the whole check died at the FIRST drifted copy whose
+# sample line happened to contain one, and the run looked finished. It was
+# hiding four drifts. Fixed in asv_core (2a0b53d); mentioned here because a
+# green vendor check is the only thing standing between this file and being
+# silently overwritten.
+# ============================================================================
+# ============================================================================
 # VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
 #
 #   source : asv_core/ais_service.py
@@ -189,6 +232,27 @@ class Registry:
     #: picture — that would be worse than the coin-toss this replaces.
     PRIMARY_HOLD_S = 180.0
 
+    @classmethod
+    def _rank(cls, src):
+        """A report's POSITION rank.
+
+        ⚠ PRIORITY IS KEYED BY FEED, AND `src` IS NOT A FEED NAME. It carries the
+        ENDPOINT's own name, because several receivers have to stay distinct in
+        `srcs` and in the health panel — AIS-catcher on one UDP port and rtl-ais on
+        another are two boxes on deck, not one. So a labeled receiver reports as
+        "nmea-udp-10110", `PRIORITY.get` answered 0 for it, and the boat's own
+        receiver LOST to the shore relay it exists to beat: measured, an aisstream
+        position 9 km away held the ship while the deck box was reporting.
+
+        It is the same provenance/health split `health_name` records one class
+        down. "nmea-udp-10110" is still the nmea receiver, so a name PRIORITY does
+        not list falls back to the feed before its first '-'.
+        """
+        p = cls.PRIORITY
+        if src in p:
+            return p[src]
+        return p.get((src or "").split("-", 1)[0], 0)
+
     def update(self, mmsi, src, pos_time=None, **fields):
         """Merge a report into the registry. Only overwrites keys that are present
         (so a static-data update keeps the last position and vice-versa).
@@ -228,7 +292,7 @@ class Registry:
                 # whole reason the others are still running.
                 held_by = v.get("src")
                 held_age = now - (v.get("pos_ts") or 0)
-                outranked = (self.PRIORITY.get(src, 0) < self.PRIORITY.get(held_by, 0)
+                outranked = (self._rank(src) < self._rank(held_by)
                              and held_age < self.PRIMARY_HOLD_S)
                 if outranked or t < v.get("pos_time", -1e18) - 2.0:
                     # a lower-priority feed, or a stale position from a slower
@@ -299,7 +363,20 @@ class Source(threading.Thread):
     def __init__(self, reg):
         super().__init__(daemon=True)
         self.reg = reg
-        self.status = {"state": "starting", "note": "", "updated": 0, "reports": 0}
+        # ⚠ TWO CLOCKS, AND THEY MEAN DIFFERENT THINGS. `updated` is the TRANSPORT
+        # clock — when the link last changed state — and `last_report` is the DATA
+        # clock, when a datum last arrived. Anything asking "is this feed carrying
+        # the picture?" must read the data clock: a far end that ACCEPTS and then
+        # hangs up refreshes `updated` on every reconnect and never reaches `_err`,
+        # because recv() returning b"" leaves the try block normally. Measured
+        # against a real loopback server: 27 reconnects, one report ever, the
+        # transport clock never older than 1.5 s, and the poll that exists to carry
+        # the feed when the stream drops deferred to it for ever.
+        self.status = {"state": "starting", "note": "", "updated": 0, "reports": 0,
+                       "last_report": 0}
+
+    def _ok(self, note=""):
+        self.status.update(state="ok", note=note, updated=time.time())
 
     def _ok(self, note=""):
         self.status.update(state="ok", note=note, updated=time.time())
@@ -310,6 +387,7 @@ class Source(threading.Thread):
     def _report(self, mmsi, **fields):
         self.reg.update(mmsi, self.name, **fields)
         self.status["reports"] += 1
+        self.status["last_report"] = time.time()
 
 
 # --------------------------------------------------------------------------- #
@@ -862,13 +940,46 @@ def _aishub_normalize(recs):
             sog = None
         if cog is not None and abs(cog - 360.0) < 1e-6:      # AIS n/a sentinel
             cog = None
-        out.append({
+        rep = {
             "mmsi": m, "pos_time": _aishub_time(rec.get("TIME")),
             "lat": lat, "lon": lon, "sog": sog, "cog": cog,
             "heading": _num(rec.get("HEADING"), 511), "nav": rec.get("NAVSTAT"),
             "name": (str(rec.get("NAME") or "").strip() or None),
             "type": rec.get("TYPE"),
-        })
+        }
+        # ⚠⚠ THE PARTICULARS, which this feed threw away while being the HIGHEST-PRIORITY one
+        # (Registry.PRIORITY aishub 30). Andy asked for "the type of vessel, length" in the AIS
+        # capture; type was carried on every feed and length on two of four, so a hull only
+        # AISHub sees arrived with no size at all - and size is most of what judging a CPA and
+        # drawing an icon to scale need.
+        #
+        # A/B/C/D are the antenna-referenced offsets, WHOLE METRES in AIS and in AISHub's human
+        # format alike, so unlike lat/lon/sog/cog they need no raw-vs-human decision. `_dims`
+        # reads all-four-zero as the not-available encoding rather than as a zero-metre ship,
+        # and keeps a partial set - a hull reporting A and B alone still has a known LENGTH.
+        rep.update(_dims(rec.get("A"), rec.get("B"), rec.get("C"), rec.get("D")))
+        # `_ais_text` reads AIS's '@' padding as ABSENT, so an unset destination does not
+        # render as a blank field beside a populated one.
+        for key, field in (("DEST", "dest"), ("CALLSIGN", "callsign")):
+            v = _ais_text(rec.get(key))
+            if v:
+                rep[field] = v
+        imo = _num(rec.get("IMO"), 0)
+        if imo:
+            rep["imo"] = int(imo)
+        # ⚠ DRAUGHT IS DELIBERATELY NOT TAKEN. AIS carries it in TENTHS of a metre, and the
+        # raw-vs-human test above reads the COORDINATES - it says nothing about the unit this
+        # field arrives in. A 3.4 m draught published as 34 m on a console whose keep-out floor
+        # is a depth is worse than no draught at all. It needs a live response to settle, and
+        # this tree has no membership key.
+        #
+        # ⚠ AND THE KEYS ABOVE COME FROM AISHub's PUBLISHED OUTPUT FORMAT, not from a response
+        # seen here. If one is wrong, `_dims` of four Nones returns {} and `_ais_text` of None
+        # returns None - the particular is simply absent, exactly as it is today, and never
+        # wrong. That bounded failure is the whole reason this is written from the published
+        # format; the MarineTraffic source stays unbuilt because its shape changes what a
+        # reading MEANS, which no default can make safe.
+        out.append(rep)
     return out
 
 
@@ -955,11 +1066,17 @@ class AishubSource(Source):
         self.stream = stream
 
     def _stream_live(self):
+        # ⚠ THE DATA CLOCK, NOT THE CONNECT CLOCK. This used to read `updated`,
+        # which `_ok` refreshes on every successful CONNECT — so a far end that
+        # accepted and immediately hung up looked alive for ever (it never reaches
+        # `_err`: recv() returning b"" leaves the try block normally) and the poll
+        # stood by against a socket delivering nothing. "Carrying the feed" is a
+        # claim about DATA, and only `last_report` is evidence of data.
         st = getattr(self.stream, "status", None)
         if not st or not st.get("reports"):
             return False
         return (st.get("state") == "ok"
-                and time.time() - (st.get("updated") or 0) < self.STREAM_FRESH_S)
+                and time.time() - (st.get("last_report") or 0) < self.STREAM_FRESH_S)
 
     def _fetch(self):
         q = {"username": self.user, "format": "1", "output": "json", "compress": "0"}

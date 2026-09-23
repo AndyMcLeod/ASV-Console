@@ -338,6 +338,35 @@ check("E. SOG over the ground is non-zero with the engines STOPPED — the numbe
       abs((_a["tel"].get("sog_kn") or 0) - 2.0) < 0.1,
       "engines stopped, SOG %s kn" % _a["tel"].get("sog_kn"))
 
+# ⚠⚠ F. AND THE SET IS PUBLISHED ON A BOAT THAT HAS NOT BEEN STARTED. The CURRENTS snapshot
+# itself used to be gated on `_running`, so a console sitting at a berth reported
+# env_set_kn = 0.00 - not "unknown", but a POSITIVE CLAIM OF SLACK WATER.
+#
+# That frame is what every hold point and every coast release is solved against, and BOTH are
+# asked at COMMAND time - precisely when the boat is stopped. holdOpts() sizes the berth's
+# margin from it and solveCoastFor() sizes the release range; holdMarginM(0) is the 6 m floor
+# where 1 m/s of stream needs 20 m. So the one moment the margin is chosen was the one moment
+# the set read zero.
+#
+# ⚠ THE ACCEPTANCE HALF IS IN THE SAME CHECK: a stopped boat must still not WANDER. The
+# REPORT is ungated; the position integration is not, and it must stay that way.
+_C.CURRENTS = _FakeCurrents(1.5, 90.0)
+_v = _C.SimVcu()
+_v.lat, _v.lon = 44.906, -66.983
+_t0 = _v.tick(0.25)                       # never started: _running is False
+_lat0, _lon0 = _v.lat, _v.lon
+for _ in range(80):
+    _v.tick(0.25)
+_moved = _math.hypot((_v.lat - _lat0) * _C.M_PER_DEG_LAT,
+                     (_v.lon - _lon0) * _C.M_PER_DEG_LAT * _math.cos(_math.radians(_v.lat)))
+check("F. the SET is reported on a boat that has NOT been started - that frame is what every "
+      "hold point and coast release is solved against, and both are solved while she is stopped",
+      abs((_t0.get("env_set_kn") or 0) - 1.5) < 0.05
+      and abs(((_t0.get("env_set_deg") or 0) - 90 + 180) % 360 - 180) < 2
+      and _moved < 0.5,
+      "never started: SET %s kn @ %s deg (it read 0.00 - a claim of slack water), and she has "
+      "not wandered: %.3f m in 20 s" % (_t0.get("env_set_kn"), _t0.get("env_set_deg"), _moved))
+
 
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else "\nall checks passed (%d)" % ran)

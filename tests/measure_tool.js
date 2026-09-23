@@ -70,7 +70,11 @@ const path = require("path");
 const { azTo, distTo } = require("../static/js/geodesy.js");
 const { fmtDist, setDistUnit } = require("../static/js/units.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 let fails = 0, ran = 0;
 // Every condition is a thunk and a THROW is a failed check, never a dead process - a
@@ -339,8 +343,14 @@ const MOUSEMOVE = grabListener("window", "mousemove");
 // Match to end of LINE, not to the first `}` — the assignment's own object literal closes
 // a brace, so a `[^}]*` scan reads only half the statement and can never see the guard.
 const BAND = (MOUSEMOVE.match(/^.*if\(measPend\)\{.*$/m) || [""])[0];
+// ⚠ renderSoon(), NOT render(), since 2026-09-22: every draw request on the POINTER path is
+// coalesced to one per animation frame, because this handler was asking for a full redraw per
+// mousemove and each one cost 63.7 ms with a plan loaded. The property this check exists for is
+// unchanged and is the reason the rename is safe to accept here - the measurement leg must ask
+// for a draw ONLY when no pan is live (the pan branch below asks for its own), and it must not
+// `return`, or an armed measure tool would freeze the chart under a drag.
 check("14 the leg follows the pointer, and does not swallow a live pan",
-  () => /measPend\.b\s*=/.test(BAND) && /if\(!dragging\)\s*render\(\)/.test(BAND) && !/return/.test(BAND),
+  () => /measPend\.b\s*=/.test(BAND) && /if\(!dragging\)\s*renderSoon\(\)/.test(BAND) && !/return/.test(BAND),
   () => BAND.trim() || "<absent>");
 
 // ---- THE MENU: gates derived, not re-derived ---------------------------------------- //
@@ -479,9 +489,14 @@ check("15b2 ... and the chosen point is CHECKED against the keep-out model, then
 // announces "Home set" for a command the server never saw. Test for the POSITIVE signal -
 // the server answers {ok:true} and nothing else does. Same family as the extract widening
 // two checks up: in both, the absence of bad news was being read as good news.
+// ⚠ ANCHORED ON THE NAMED TEST, NOT ON A SPELLING OF IT. This pinned the literal
+// `if(!(r && r.ok)) return;` - one of the FOUR textual forms the page carried for the
+// same question, two of which were wrong on an answer with neither field. Naming the
+// test (took(), 2026-09-22) is what stops a new call site copying the wrong neighbor,
+// and a check pinned to one spelling would have made that repair look like a regression.
 check("15b3 ... and it confirms Home only on the server's OWN ok, never on silence",
-  () => /if\(!\(r && r\.ok\)\)\s*return;/.test(SETHOME_SRC)
-    && SETHOME_SRC.indexOf("r.ok") < SETHOME_SRC.indexOf("Home set at the chosen point"),
+  () => /if\(!took\(r\)\)\s*return;/.test(SETHOME_SRC)
+    && SETHOME_SRC.indexOf("took(r)") < SETHOME_SRC.indexOf("Home set at the chosen point"),
   () => (SETHOME_SRC.match(/if\(![^\n]*\)\s*return;/) || ["<no success guard>"])[0]);
 
 // Andy moved all three off the command bar. A button left behind is a SECOND path to a

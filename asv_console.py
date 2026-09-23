@@ -213,7 +213,59 @@ DEFAULT_VCU_PORT = 4001
 STARLINK_HOST, STARLINK_PORT = "192.168.100.1", 9200
 
 def clamp(v, lo, hi):
+    """Constrain v to [lo, hi].
+
+    ⚠⚠ NaN PASSES THROUGH UNCHANGED, and that is deliberate rather than overlooked.
+    `NaN < lo` and `NaN > hi` are both False, so a NaN takes the `else` arm. Substituting a
+    value here looks like the fix and is not: there is no single right one. `lo` is the
+    conservative end of a percentage and is a HARD TURN at
+    `clamp(d_cross / v_thru, -0.9, 0.9)`, and a silent substitution inside the steering
+    integrator is worse than the NaN, because nothing downstream can tell it happened.
+
+    The guarantee belongs at the BOUNDARIES, and both are built:
+      * nothing non-finite reaches the page - see `finite_only`, applied to `Engine.state()`
+        and to every published event. A NaN in a frame is INVALID JSON (`json.dumps` writes a
+        bare `NaN`), so one of them stops the browser parsing the whole frame and the console
+        stops updating entirely.
+      * the plan's own radii are checked where they are read, which is the reachable entry:
+        `json.loads` accepts a bare `NaN` out of mission.json and `float()` keeps it.
+    """
     return lo if v < lo else hi if v > hi else v
+
+
+def _finite(v, dflt):
+    """`v` as a float when it is one and is finite, else `dflt`.
+
+    ⚠ A PLAN FIELD IS NOT TRUSTED TO BE A NUMBER. `json.loads` accepts a bare `NaN`, and
+    `float("nan")` succeeds - so neither the parse nor the cast refuses one. This is the check
+    that does.
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return float(dflt)
+    return f if math.isfinite(f) and f != 0 else float(dflt)
+
+
+def finite_only(obj):
+    """The same structure with every non-finite float replaced by None.
+
+    ⚠⚠ `NaN` AND `Infinity` ARE NOT JSON. `json.dumps` writes them bare and happily;
+    `JSON.parse` in the browser then throws on the WHOLE frame, so a single bad number in the
+    telemetry stream does not blank one field - it stops the console updating at all, with
+    nothing on screen to say why. `None` serializes as `null`, which every one of these
+    readouts already treats as "not reported".
+
+    ⚠ THIS IS A BACKSTOP, NOT A LICENSE. It keeps a bug from taking the page down; it does
+    not make the number right, and a field that goes quietly null is still a defect upstream.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite_only(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [finite_only(v) for v in obj]
+    return obj
 
 
 # --------------------------------------------------------------------------- #
@@ -237,7 +289,7 @@ WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
 # None until a vessel with a coast datum is applied. None means this hull does not coast.
 COAST_LENGTH_M = None
 MAX_TURN_RATE_DEG_S = 60.0
-# Energy model: "battery" (draining voltage) or "fuel" (diesel litres burned).
+# Energy model: "battery" (draining voltage) or "fuel" (diesel liters burned).
 POWER_TYPE = "battery"
 DRAIN_IDLE = DRAIN_LOAD = 0.0                            # battery: per-second voltage drain
 FUEL_CAPACITY_L = 0.0                                    # fuel: tank size (L)
@@ -252,7 +304,7 @@ SPAWN_LAT = SPAWN_LON = 0.0
 # A PORT IS WHERE YOU ARE; THE VESSEL IS WHAT YOU ARE DRIVING. They were one thing
 # until now - each vessel file carried its own `spawn`, so choosing the DriX chose
 # Lewes - which meant the console could not be pointed at a different base without
-# editing a hull's configuration, and the chart opened on a hard-coded Erie centre
+# editing a hull's configuration, and the chart opened on a hard-coded Erie center
 # that belonged to neither. Andy, 2026-08-15: "change initialization to select port
 # and ASV. the ASV selection is a good model."
 #
@@ -310,8 +362,8 @@ def validate_port(p, source="port"):
 # matters:
 #
 #   1. GEOCODE the name (OpenStreetMap Nominatim - keyless, global, stdlib).
-#   2. SNAP THE RESULT TO CHARTED NAVIGABLE WATER, because a geocoder returns the centre
-#      of a TOWN and a town centre is on LAND. "Nome, Alaska" resolves to 64.4975,
+#   2. SNAP THE RESULT TO CHARTED NAVIGABLE WATER, because a geocoder returns the center
+#      of a TOWN and a town center is on LAND. "Nome, Alaska" resolves to 64.4975,
 #      -165.4062 - a street corner. Taking that as a survey home port would spawn the
 #      boat inland and refuse every route out of it, which is exactly the failure the
 #      seeded New Castle position hit (a pierside guess that sat in a charted 1.8 m area,
@@ -320,7 +372,7 @@ def validate_port(p, source="port"):
 # The snap searches the ENC's own depth areas for the nearest water deep enough for THIS
 # vessel, so the answer is a berth the boat can actually sit in rather than a coordinate
 # that merely looks coastal. Everything degrades in the open: no geocoder, no chart, or
-# no deep-enough water each come back saying so, and the un-snapped place centre is still
+# no deep-enough water each come back saying so, and the un-snapped place center is still
 # offered - the operator can drag the chart and save the view instead.
 GEOCODER = "https://nominatim.openstreetmap.org/search"
 _GEO_CACHE = {}
@@ -1182,7 +1234,7 @@ def load_mission():
             # LEAD-IN / LEAD-OUT (2026-09-08) - how far the boat runs ON a survey
             # line before the coverage starts, and past where it ends, so steering
             # and IMU are settled through the coverage. The stored value is the one
-            # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (metres) or
+            # the operator typed IN THE UNIT THEY CHOSE: lead_mode "m" (meters) or
             # "s" (seconds, converted client-side at the survey speed). All three
             # travel together or none of them mean anything - a 20 that loses its
             # "s" is 20 m instead of ~41 m, silently.
@@ -1352,6 +1404,13 @@ def probe_ubiquiti_airos(host, username, password, timeout=4.0):
             last_err = "HTTP %d (check credentials)" % e.code
         except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
             last_err = str(e) or type(e).__name__
+        except (AttributeError, TypeError, KeyError) as e:
+            # ⚠ THE RADIO SUPPLIES THE SHAPE, NOT ONLY THE BYTES. Everything above reaches
+            # into a JSON body the bullet returned - `wl.get(...)`, an index, an arithmetic
+            # on a field - so a firmware that answers 200 with a different structure raises
+            # here, not in the transport errors named above. This function's whole contract
+            # is "a reading or a refusal in words", and a raise is neither.
+            last_err = "unexpected status shape: %s: %s" % (type(e).__name__, e)
     return {"ok": False, "note": last_err}
 
 
@@ -1405,7 +1464,30 @@ class CommsMonitor:
         while not self._stop.is_set():
             with self._lock:
                 mode, host, user, pw = self.mode, self.host, self.username, self._password
-            result = self._poll_once(mode, host, user, pw)
+            try:
+                result = self._poll_once(mode, host, user, pw)
+            except Exception as e:      # noqa: BLE001 - recorded and survived, never swallowed
+                # ⚠⚠ A PASS THAT RAISES MUST NOT END THIS MONITOR. `_poll_once` reaches into
+                # a JSON body the radio supplies - `wl.get(...)` on whatever arrived - so a
+                # firmware that answers 200 with a different shape raises AttributeError or
+                # TypeError, which the probe's own except tuple does not name. The thread
+                # then ended, and with it every future poll: `_last` FROZE at the last good
+                # reading and the vessel card went on showing a live uplink - "COMMS 87%" -
+                # for a link that was gone. A monitor that dies quietly is worse than one
+                # that reports badly, and this one died GREEN.
+                #
+                # ⚠ THE LAST VALUE IS DELIBERATELY NOT KEPT, which is where this differs from
+                # the water/weather/current loops and their `_monitor_pass`. There, a stale
+                # reading with its age beside it is still useful. Here the reading IS the
+                # link's health, so the honest answer is ok:False with the fault named - the
+                # card already paints that red and prints the note.
+                #
+                # ⚠ AND IT IS NOT `_monitor_pass`, for a reason that was measured rather than
+                # assumed: that helper is defined ~900 lines below, while `COMMS =
+                # CommsMonitor()` starts this thread at module level before it exists, so a
+                # first pass that raised would hit NameError instead.
+                result = {"mode": mode, "ok": False,
+                          "note": "%s: %s" % (type(e).__name__, e)}
             with self._lock:
                 self._last = result
             self._stop.wait(self.POLL_S)
@@ -1624,7 +1706,7 @@ ENC_ROLES = {
     # or fairway":
     #   FAIRWY (Fairway_area)  - the designated lane for larger vessels. This IS
     #                            the object the rule is written about.
-    #   DRGARE (Dredged_Area)  - depth artificially maintained, so a deep-draught
+    #   DRGARE (Dredged_Area)  - depth artificially maintained, so a deep-draft
     #                            vessel "can safely navigate only within" it,
     #                            which is Rule 9(b)'s own test.
     # Already extracted above as "dredged" for the survey depth window; named
@@ -1680,7 +1762,7 @@ def _enc_keep_props(props):
     console's own cache: 629 point hazards, 48 of them sounded, ZERO with a
     string VALSOU, and ZERO kept as a hazard despite having enough water over
     them. There is no local S-57 reader here and no operator chart-file import;
-    both are WorldView's, and they are the only two roads the text travelled.
+    both are WorldView's, and they are the only two roads the text traveled.
 
     SO WHAT IS THIS FOR. The day a second source appears - a cell read off a
     disk, an imported GeoJSON, a different service - the fault lands again and
@@ -1739,6 +1821,16 @@ def _enc_layer_map(band, timeout=20.0):
         for L in info.get("layers", []):
             if L.get("geometryType"):            # skip group layers
                 m[(L.get("name") or "").split(".")[-1]] = L["id"]
+        # ⚠⚠ A FAILED SERVICE IS NOT A LAYERLESS ONE. ArcGIS REST answers its own faults with
+        # HTTP 200 and {"error": ...} and no "layers" - which parses fine and leaves this map
+        # EMPTY. This file carries no version and no TTL, so caching that makes one bad minute
+        # at NOAA the permanent truth about the whole band: every later extract reads back an
+        # empty map, builds no jobs, and the console has no ENC there for ever. Refused the
+        # same way the transport failure above is - return {} and write nothing.
+        if not m:
+            print("[enc] REFUSING TO CACHE an empty layer map for %s - the service answered "
+                  "with no usable layers; re-fetched next time" % band, flush=True)
+            return {}
         _cache_json(path, m)
     with _enc_layermap_lock:
         _enc_layermaps[band] = m
@@ -1784,6 +1876,15 @@ def _enc_query_ids(band, layer_id, bbox, timeout=25.0):
     req = urllib.request.Request(url, headers={"User-Agent": "ASV-Console/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
+    # ⚠⚠ AN ARCGIS ERROR PAYLOAD IS NOT AN EMPTY LAYER. The REST service reports its own
+    # faults as HTTP 200 with {"error": {...}} and no objectIds, which parses perfectly and
+    # falls straight through the `or []` below - so a refusal arrived at the caller wearing
+    # the exact shape of "there is nothing of this class here". That is the hole the extract's
+    # `ok` flag exists to see, and it cannot see it unless this raises. Both callers already
+    # catch (OSError, ValueError), so nothing above needs changing.
+    if isinstance(d.get("error"), dict):
+        raise ValueError("ENC %s/%d: %s"
+                         % (band, layer_id, d["error"].get("message") or "service error"))
     return d.get("objectIds") or (d.get("properties") or {}).get("objectIds") or []
 
 
@@ -1894,6 +1995,23 @@ def fetch_enc_features(bbox, min_depth=0.0):
         jobs += [("extra", cls, lid) for cls, lid in lm.items() if cls not in _named]
 
         def _one(job):
+            # ⚠⚠ A FAILED LAYER IS NOT AN EMPTY ONE, AND ANSWERING [] FOR BOTH POISONED THE
+            # CACHE PERMANENTLY. Every one of the ~200 per-layer jobs used to return [] on any
+            # network or service error, which is indistinguishable from "this layer has no
+            # features here" - and the assembled dict was then written to disk with no success
+            # accounting, no TTL and no revalidation, so one bad minute became the chart for
+            # that bbox for ever. IT HAD ALREADY HAPPENED: an extract in this operator's own
+            # cache holds 1591 features - 806 of them depth - and ZERO land, shoreline or dock,
+            # while its neighbor 80 m west, over the same south/east/north edges, holds 252
+            # structures. Land does not vanish over 80 m. Served, `band` is still set, so the
+            # client's "we have chart data" fact is TRUE, the Nogo row reads healthy, and
+            # Go-To / RTH / punch-out route across a shoreline that is not in the model.
+            # A refusal was indistinguishable from success.
+            #
+            # Hence (ok, cls, features). The caller refuses to CACHE an extract with a failed
+            # layer in it, which is what makes a bad minute last one request instead of for
+            # ever. ⚠ `_enc_query_ids` widens the same hole and is why `ok` is not merely
+            # "did we throw": it answers [] for an ArcGIS error payload too.
             role, cls, lid = job
             # ID-first: resolve object ids (the reliable spatial query), then fetch
             # geometry by id. This is what makes the finger piers actually appear -
@@ -1901,16 +2019,25 @@ def fetch_enc_features(bbox, min_depth=0.0):
             try:
                 ids = _enc_query_ids(band, lid, bbox)
             except (OSError, ValueError):
-                return []
+                return (False, cls, [])
             if not ids:
-                return []
+                return (True, cls, [])                 # genuinely nothing of this class here
+            short = False
             try:
                 features = _enc_query_by_ids(band, lid, ids)
             except (OSError, ValueError):
                 try:                                   # last resort: the direct query
-                    features = _enc_query(band, lid, bbox).get("features", [])
+                    d = _enc_query(band, lid, bbox)
+                    features = d.get("features", [])
                 except (OSError, ValueError):
-                    return []
+                    return (False, cls, [])
+                # ⚠⚠ A SHORT ANSWER IS A FAILED LAYER, NOT A THIN ONE. `resultRecordCount` is
+                # a REQUEST; the service caps at its own maxRecordCount - 1000 on ENCDirect -
+                # and says so in `exceededTransferLimit`. `ids` came from the ID query, which
+                # is NOT capped, so it is the count to beat. Cached as complete, a truncated
+                # layer is a chart missing everything past the cap with nothing to show for
+                # it: TWO extracts in this operator's cache hold exactly 1000 soundings.
+                short = bool(d.get("exceededTransferLimit")) or len(features) < len(ids)
             out = []
             for ft in features:
                 g = ft.get("geometry")
@@ -1921,17 +2048,36 @@ def fetch_enc_features(bbox, min_depth=0.0):
                 # any second one. See its docstring.
                 kept = _enc_keep_props(ft.get("properties"))
                 out.append({"role": role, "cls": cls, "props": kept, "geometry": g})
-            return out
+            # A truncated layer reports as a FAILURE, so the extract is served once and
+            # never cached - the same rule a dead socket gets, for the same reason.
+            return (not short, cls, out)
 
         feats = []
+        failed = []
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for res in ex.map(_one, jobs):
+            for ok, cls, res in ex.map(_one, jobs):
+                if not ok:
+                    failed.append(cls)
                 feats.extend(res)
         counts = {}
         for ft in feats:
             counts[ft["cls"]] = counts.get(ft["cls"], 0) + 1
-        data = {"band": band, "features": feats, "counts": counts}
-        _cache_json(cache, data)
+        data = {"band": band, "features": feats, "counts": counts,
+                "partial": sorted(set(failed))}
+        # ⚠⚠ A PARTIAL EXTRACT IS NEVER WRITTEN TO THE CACHE. This is the whole repair: the
+        # data is still RETURNED (a chart with a hole in it, this once, beats no chart at all
+        # on a flaky link) but nothing durable is made of it, so the next request re-fetches
+        # and a transient failure cannot become the permanent truth about that water.
+        # `partial` rides on the response so a caller can refuse to trust it as a keep-out
+        # source - which is the follow-up this fix deliberately does not reach into.
+        if failed:
+            print("[enc] REFUSING TO CACHE a partial extract for %s: %d of %d layer(s) failed "
+                  "(%s) - it is served once and re-fetched next time"
+                  % (_bbox_key(bbox), len(failed), len(jobs), ", ".join(sorted(set(failed))[:6])),
+                  flush=True)
+        else:
+            data["complete"] = True
+            _cache_json(cache, data)
     md = float(min_depth or 0.0)
     for ft in data["features"]:
         if ft["role"] == "depth_area":
@@ -3000,9 +3146,58 @@ CURRENTS = CurrentsMonitor()
 apply_port()
 
 
+def _json_body_yielding(obj):
+    """Serialize a LARGE response without holding the GIL for the whole of it.
+
+    ⚠⚠ `json.dumps` IS ONE C CALL THAT NEVER YIELDS, AND THE CONTROL LOOP IS IN THIS PROCESS.
+    Measured on this machine against real cached extracts, with a 4 Hz thread running beside
+    it: a 10.6 MB extract stalled that thread for 0.52 s, and a 165 MB one for 8.56 s. For
+    those 8.5 seconds the telemetry loop does not run, which means the clearance ladder does
+    not run - the guard is not slow, it is absent. `JSONEncoder().iterencode` is the
+    PURE-PYTHON encoder: it yields between fragments, so the interpreter switches threads.
+    Same measurement: worst gap 0.26 s and 0.28 s, i.e. the tick keeps its cadence.
+
+    ⚠ IT COSTS ABOUT 4x WALL TIME ON THIS REQUEST, and that is the trade, stated rather than
+    buried: 0.54 -> 2.03 s on the ordinary extract, 8.55 -> 34.6 s on the 165 MB outlier. A
+    chart fetch happens on an area change, not per frame, so it is paid rarely; a guard
+    blackout is paid at the one moment nobody can afford it.
+
+    ⚠ AND THE 165 MB EXTRACT IS ITSELF SUSPECT - its bbox spans two operating areas
+    (-80.09 W to -70.65 W, Erie to New Castle), which no single fetch should ever produce.
+    Worth its own look; it is not the reason this function exists.
+    """
+    out = bytearray()
+    for piece in json.JSONEncoder().iterencode(obj):
+        out += piece.encode("utf-8")
+    return bytes(out)
+
+
 def _opt_float(v):
     """None/"" -> None; else float(v). For optional numeric fields in JSON bodies."""
     return None if v in (None, "") else float(v)
+
+
+def _coord(v, what):
+    """A lat/lon off a JSON body, validated as INPUT.
+
+    ⚠⚠ ONE RANGE GUARD, AND IT COVERS THE NON-FINITE VALUES TOO. inf, -inf and nan all make
+    this comparison False - every nan comparison is - which is the same trick `set_home` and
+    `_sanitize_route` already rely on. It is not cosmetic on the ROC route either: a ROC can
+    BE home, Return-to-Home drives to its arrival point, and a nan reaching there makes every
+    /api/state body and every SSE frame INVALID JSON. The page cannot parse those, so it
+    drops every frame and raises TELEMETRY STALE - and because the registry is persisted, the
+    state survives a page reload AND a console restart.
+    """
+    f = float(v)
+    lim = 90.0 if what == "lat" else 180.0
+    if not (-lim <= f <= lim):
+        raise ValueError("roc %s out of range: %r" % (what, f))
+    return f
+
+
+def _opt_coord(v, what):
+    """None/"" -> None; else _coord(v, what). For the optional lat/lon in JSON bodies."""
+    return None if v in (None, "") else _coord(v, what)
 
 
 # Remote Operations Centers. Global like COMMS / WATER / ENV; the Engine pulls
@@ -3067,7 +3262,8 @@ class VcuLink:
 
     # command surface (Engine gates these before calling)
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None, coast_from_m=None): ...
+                    completion="complete", hold_clear_m=None, coast_from_m=None,
+                    name="unknown"): ...
     def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run
     def start(self): ...
     def pause(self): ...
@@ -3080,6 +3276,25 @@ class VcuLink:
     # True while an uploaded plan waits for start() because the link was running when it
     # arrived (SimVcu). A link that cannot stage never reports one.
     plan_staged = False
+    # WHAT THE LOADED PLAN IS FOR, and what it does at its end. Read back by the Engine at
+    # Start, because after a Stop, an E-STOP or a disarm the console has no other way to know
+    # WHICH plan the link is holding: `_apply_plan`'s first line is `self._staged = None`, and
+    # it runs INSIDE stop(), estop() and set_neutral() - so a halt that consumes a staged plan
+    # destroys the evidence in the same call that installs the plan.
+    #
+    # ⚠ `loaded_name` IS SHORE-SIDE BOOKKEEPING WEARING A VESSEL'S CLOTHES. No VCU will ever
+    # report "this plan is an escape" - that is a console concept, invented by the console's own
+    # guard and meaningful only to the page's chainable-behavior whitelist. The link RECORDS
+    # what it was handed; it does not learn it from the boat. `loaded_completion` IS a real plan
+    # parameter the vessel is told. A link that implements upload_plan must record both, or
+    # every run on it starts nameless.
+    #
+    # ⚠⚠ AND THE DEFAULT IS DELIBERATELY NOT "survey". "survey" is chainable, so a call site
+    # that forgot to name its plan would hand the end-of-plan Return-to-Home chain a run it may
+    # fire from - rebuilding the very defect this mechanism exists to fix, inside the fix. An
+    # unnamed plan fails SAFE and fails VISIBLY: the card reads it as unknown and nothing chains.
+    loaded_name = "unknown"
+    loaded_completion = "rth"
 
 
 # SCALE: these defaults are sized for the actual boat - a survey ASV
@@ -3124,7 +3339,7 @@ class SimVcu(VcuLink):
         self.sog_kn = 0.0
         self.pitch = 0.0
         self.roll = 0.0
-        # Energy state: a draining battery voltage OR a diesel fuel tank (litres),
+        # Energy state: a draining battery voltage OR a diesel fuel tank (liters),
         # per the active vessel's power.type. Only the relevant one is used.
         self.battery_v = BATT_FULL_V
         self.fuel_l = FUEL_CAPACITY_L
@@ -3140,6 +3355,10 @@ class SimVcu(VcuLink):
         self._completion = "rth"       # complete (stop) | loiter (station-keep) | repeat (loop) | rth
         self._holding = False          # currently station-keeping (loiter reached the end)
         self._staged = None            # a plan uploaded while running, applied by start()
+        # WHAT THE LOADED PLAN IS FOR (VcuLink.loaded_name). Declared here as well as written
+        # in _apply_plan because `_plan` is also assigned in __init__, so the first telemetry
+        # frame before any upload would otherwise read a missing attribute.
+        self._plan_name = "unknown"
         # THE HOLD DISC. `_hold_clear_m` is the radius around the hold point the CONSOLE
         # certified clear of the keep-out model at the operator's buffer (hold.js), or None
         # when no model was consulted. Inside it a straight re-approach is clear by
@@ -3148,12 +3367,13 @@ class SimVcu(VcuLink):
         self._hold_clear_m = None
         self._hold_wants_route = False # set beyond the certified water: needs a routed return
         # THE DRIFT-IN. `_coast_from_m` is the range from the LAST waypoint at which the
-        # console asked for the prop to be stopped; None (the default) is today's behaviour
+        # console asked for the prop to be stopped; None (the default) is today's behavior
         # exactly. Once inside it `_coasting` latches and the way comes off under hull drag
         # instead of the engine-governed ramp - see the speed block in tick().
         self._coast_from_m = None
         self._coasting = False
         self._coast_s0 = None          # (lat,lon) at release, for the run made good
+        self._coast_spent = False      # this plan has had its drift-in: no plan speed back
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
         self._paused = False
@@ -3170,7 +3390,8 @@ class SimVcu(VcuLink):
 
     # -- commands ---------------------------------------------------------- #
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
-                    completion="complete", hold_clear_m=None, coast_from_m=None):
+                    completion="complete", hold_clear_m=None, coast_from_m=None,
+                    name="unknown"):
         """Load a plan. AN UPLOAD NEVER CHANGES WHAT THE BOAT IS DOING - only start() does.
 
         ⚠ IT USED TO, and that is review #3 (2026-09-14). This replaced the active plan and
@@ -3184,11 +3405,20 @@ class SimVcu(VcuLink):
         upload rather than at a later start()."""
         plan = {
             "plan": [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])],
-            "arrival_m": clamp(float(arrival_radius_m or 5.0), 1.0, 50.0),
-            "approach_m": clamp(float(approach_radius_m or WP_APPROACH_M), 0.5, 50.0),
+            # ⚠ FINITE FIRST, because clamp is NaN-transparent and this is the reachable
+            # entry: `json.loads` accepts a bare `NaN` out of mission.json, `float()` keeps
+            # it, and it would be published straight into the state frame. A plan that says
+            # nothing usable falls back to the same default an absent field does.
+            "arrival_m": clamp(_finite(arrival_radius_m, 5.0), 1.0, 50.0),
+            "approach_m": clamp(_finite(approach_radius_m, WP_APPROACH_M), 0.5, 50.0),
             "speed_key": speed if speed in SPEED_KN else "survey",
             # completion semantics at the last waypoint (goto/rth/hold -> loiter)
             "completion": completion if completion in ("complete", "loiter", "repeat", "rth") else "rth",
+            # WHAT THIS PLAN IS FOR, normalized here like every other plan value so an
+            # unrecognized name becomes "unknown" - which is NOT chainable - rather than
+            # silently becoming a survey. See VcuLink.loaded_name for why that matters.
+            "name": name if name in ("survey", "search", "goto", "rth", "hold",
+                                     "transit", "escape") else "unknown",
             # None means "no model consulted" and keeps the direct re-approach - the same honest
             # degrade as a Go-To with no route. A number is the console's certified clear disc.
             "hold_clear_m": None if hold_clear_m is None else max(0.0, float(hold_clear_m)),
@@ -3205,9 +3435,20 @@ class SimVcu(VcuLink):
     def plan_staged(self):
         return self._staged is not None
 
+    @property
+    def loaded_name(self):
+        return self._plan_name
+
+    @property
+    def loaded_completion(self):
+        # A PROPERTY, NOT A COPY. `_completion` is what tick() steers on at the last waypoint;
+        # a second attribute holding the same thing would be a second truth.
+        return self._completion
+
     def _apply_plan(self, p):
         self._staged = None
         self._plan = p["plan"]
+        self._plan_name = p["name"]    # the identity arrives WITH the plan, at every install
         self._arrival_m = p["arrival_m"]
         self._approach_m = p["approach_m"]
         self._speed_key = p["speed_key"]
@@ -3219,6 +3460,7 @@ class SimVcu(VcuLink):
         self._coast_from_m = p["coast_from_m"]
         self._coasting = False
         self._coast_s0 = None
+        self._coast_spent = False      # a FRESH plan runs at its own speed
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
 
@@ -3269,6 +3511,7 @@ class SimVcu(VcuLink):
         self._coast_from_m = None
         self._coasting = False
         self._coast_s0 = None
+        self._coast_spent = False
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
@@ -3316,6 +3559,17 @@ class SimVcu(VcuLink):
         self._estop = False
         self._laps = 0
         self._xte_i = 0.0
+        # ⚠ START DELIBERATELY DOES NOT CLEAR THE COAST STATE, and that was MEASURED rather
+        # than assumed. A coast interrupted from the front panel (pause/stop/estop all set
+        # `sog_kn = 0.0`) used to come back with the way already off and NEVER MOVE AGAIN -
+        # 3009 s of simulated time at 0.0000 kn with `running: True`, the console showing a
+        # run under way. Clearing `_coasting` HERE looks like the fix and is inert:
+        # `_coast_from_m` survives Start, so the latch re-takes it on the very next tick and
+        # the release immediately re-spends it. What actually frees her is the release
+        # DISARMING the range (see the speed block) - a mutation says so, because dropping
+        # this block reddens nothing while dropping that one reddens four checks. The spent-
+        # coast cap then holds her at walking pace for the rest of the plan, which is the
+        # safe answer beside a berth; uploading a new plan lifts it.
         self._seg_start = {"lat": self.lat, "lon": self.lon}    # first leg: here -> wp0
 
     def pause(self):
@@ -3346,6 +3600,19 @@ class SimVcu(VcuLink):
         self._estop = bool(on)
         if on:
             self._running = False
+            # ⚠⚠ AND IT CLEARS THE PAUSE, as stop() and set_neutral() both do and this one
+            # did not. A pause the E-STOP ended is not a pause: with the flag left set, the
+            # console reported `run = "paused"` the moment the latch was released - MEASURED:
+            # E-STOP a paused boat and she comes back reading paused, armed False - and the
+            # page routes Start into its RESUME path on exactly that word, so the operator was
+            # offered a resume that posts a backtrack amendment for a pause that no longer
+            # exists.
+            # ⚠ AND DELIBERATELY NOT `_wp_index = 0` AS WELL. The asymmetry against stop() is
+            # the point: a Stop ABORTS the run, so a later Start re-flies it from waypoint one,
+            # whereas an E-STOP released and started continues from where she was. start()'s
+            # own guard only zeroes the index for a plan already fully flown, so it does not
+            # rescue the mid-plan case either way.
+            self._paused = False
             self._end_hold()
             if self._staged is not None:
                 self._apply_plan(self._staged)
@@ -3402,7 +3669,7 @@ class SimVcu(VcuLink):
             # Latched on the LAST leg only, at the range the console solved for. It is
             # tested HERE, before the waypoint advance below, because that advance sets
             # `_holding` and the station-keep branch is an `elif` - entering from there
-            # would be one tick late by construction, and one tick at 4 kn is half a metre.
+            # would be one tick late by construction, and one tick at 4 kn is half a meter.
             #
             # ⚠ NEVER stop()/pause()/set_neutral() to achieve this. All three clear
             # `_running`, which switches OFF both the wind forcing and the tidal stream in
@@ -3441,7 +3708,7 @@ class SimVcu(VcuLink):
             # (2026-09-02). This model has no keep-out model of its own, so it cannot route;
             # what it has is the CONSOLE'S word, given with the plan, on how much water is
             # clear around the hold point (`_hold_clear_m`, hold.js). Inside that disc a
-            # straight chord back to the centre is clear by construction - every point of a
+            # straight chord back to the center is clear by construction - every point of a
             # disc is in the disc - so the direct drive is honest there. Beyond it the boat
             # takes the way off and says so (`hold_wants_route`), and the console answers
             # with a ROUTED re-approach through the same planner every other commanded
@@ -3465,6 +3732,24 @@ class SimVcu(VcuLink):
             # (review #8); this makes the rule structural rather than remembered, because the
             # speed above is set before any branch has decided there is something to steer for.
             target_kn = 0.0
+
+        # ⚠⚠ A SPENT COAST DOES NOT GET THE PLAN SPEED BACK. The handover below exists so the
+        # coast ENDS - not so the engine can put the shed energy straight back in over the
+        # last few meters. Measured on the drix08 approach this suite drives: the coast
+        # releases 11.6 m off the berth at 1.00 kn, and ordinary powered control then ramped
+        # her to 4.00 kn to cover that 11.6 m, arriving with SIXTEEN TIMES the kinetic energy
+        # the maneuver exists to remove.
+        #
+        # ⚠ AND THE OLD RE-ARM BUG WAS HIDING IT. While the latch re-took the coast on every
+        # tick the boat kept decaying and crept in at 0.73 kn, so the suite's "she arrives
+        # gently" check passed - on a frame that also reported `drifting: False`. Fixing the
+        # latch honestly is what exposed this, and one without the other is a worse console
+        # than the bug: it powers a hull into a dock at the plan speed.
+        #
+        # The cap lives until a new plan or a new Start, which is the same life as the coast
+        # it belongs to: an approach that has spent its coast ends at walking pace.
+        if self._coast_spent and COAST_END_KN:
+            target_kn = min(target_kn, COAST_END_KN)
 
         # ── SPEED: ENGINE-GOVERNED RAMP, OR HULL-GOVERNED DECAY WHILE COASTING ──────────
         #
@@ -3490,7 +3775,18 @@ class SimVcu(VcuLink):
             # to an ESTIMATED coast length: the error moves where this happens, never how
             # fast she is going when it does.
             if self.sog_kn <= COAST_END_KN:
+                # ⚠⚠ THE RELEASE IS ONE-SHOT, AND DISARMING `_coast_from_m` IS WHAT MAKES IT
+                # ONE. Clearing `_coasting` alone left the arming range set while the boat was
+                # still inside it on the last leg, so the latch above re-took it on the very
+                # next tick - taken and dropped inside the same tick, for ever. The boat never
+                # got its power back: measured at 0.993 kn with 72.3 m still to run, she kept
+                # decaying and took 457 s more to arrive, while every frame reported
+                # `drifting: False` and `speed_target_kn: 7.0` - the card said "under power at
+                # 7 kn" with the DRIFT branch dark and the prop off in the model.
                 self._coasting = False
+                self._coast_from_m = None
+                self._coast_s0 = None
+                self._coast_spent = True        # ...and she does not get the plan speed back
         else:
             # smooth speed toward target
             self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
@@ -3571,22 +3867,35 @@ class SimVcu(VcuLink):
         # This is also what makes "stop the boat" an unsafe answer near a structure, which
         # is the whole reason the run-time guard is allowed the helm: with way off, the
         # vessel does not hold - it is set, bodily, at the stream's own rate.
-        cur = CURRENTS.snapshot() if self._running and not self._estop else None
+        cur = CURRENTS.snapshot()
         cur_e = cur_n = 0.0
         if cur and cur.get("ok") and cur.get("speed_kn"):
             # `set_deg` is the mariner's SET: the direction the stream flows TOWARD.
             cv = float(cur["speed_kn"]) * 0.514444
             ct = math.radians(float(cur.get("set_deg") or 0.0))
             cur_e, cur_n = cv * math.sin(ct), cv * math.cos(ct)
-            drift_e += cur_e
-            drift_n += cur_n
+        # ⚠⚠ REPORTED ALWAYS, INTEGRATED ONLY WHILE DEPLOYED. The SNAPSHOT itself used to be
+        # gated on `_running`, so a boat that had not been started published env_set_kn as
+        # 0.00 - not "unknown", but a POSITIVE CLAIM OF SLACK WATER. That number is what
+        # holdOpts() sizes every hold point against and what solveCoastFor() solves every
+        # release range against, and BOTH are asked at COMMAND time - which is precisely when
+        # the boat is stopped. So the one moment the margin is chosen was the one moment the
+        # set read zero: holdMarginM(0) gives the 6 m floor where 1 m/s of stream needs 20 m.
+        #
+        # The paragraph above is the argument FOR this: a hull lying stopped in a 3 kn stream
+        # goes 3 kn over the ground with no force on it at all. She is in the stream whether
+        # or not the operator has pressed Start. The POSITION integration below stays gated
+        # exactly as it was, so a stopped sim boat still does not wander.
+        set_e, set_n = drift_e + cur_e, drift_n + cur_n
+        if self._running and not self._estop:
+            drift_e, drift_n = set_e, set_n
         # THE CARD SAYS "SET", SO IT MUST REPORT THE WHOLE SET. Reported from the summed
         # ground drift - leeway plus stream - rather than from the wind/wave force alone,
         # which is what it used to show under a label that promises more than that.
-        dmag = math.hypot(drift_e, drift_n)
+        dmag = math.hypot(set_e, set_n)
         if dmag > 1e-4:
             set_kn = dmag * 1.9438
-            set_dir = math.degrees(math.atan2(drift_e, drift_n)) % 360.0
+            set_dir = math.degrees(math.atan2(set_e, set_n)) % 360.0
 
         # integrate position: forward thrust along heading + environmental leeway set
         p_lat, p_lon = self.lat, self.lon
@@ -3643,7 +3952,7 @@ class SimVcu(VcuLink):
             "pitch_deg": self.pitch,
             "roll_deg": self.roll,
             "energy_type": POWER_TYPE,
-            # battery vessels report a voltage; fuel vessels report tank litres (the
+            # battery vessels report a voltage; fuel vessels report tank liters (the
             # other stays None so state()/UI shows only the relevant gauge)
             "battery_v": round(self.battery_v, 2) if POWER_TYPE == "battery" else None,
             "fuel_l": round(self.fuel_l, 1) if POWER_TYPE == "fuel" else None,
@@ -3658,7 +3967,7 @@ class SimVcu(VcuLink):
             # THE DRIFT-IN, STATED. `drifting` is the propulsion-off state the mission card
             # has had a branch for since long before anything could set it - "DRIFT -
             # propulsion off, drifting with the environment" was unreachable until this
-            # manoeuvre gave it a producer. `coast_run_m` is what she has actually made good
+            # maneuver gave it a producer. `coast_run_m` is what she has actually made good
             # since the prop stopped, which is the number a coast-down trial reads off.
             "drifting": bool(self._coasting),
             "coast_run_m": (round(range_bearing(self._coast_s0[0], self._coast_s0[1],
@@ -3774,7 +4083,6 @@ class Engine:
         self.armed = False
         self.estop = False
         self.plan_uploaded = False
-        self._staged_completion = None   # the completion a STAGED upload runs with (see upload)
         self.run = "idle"          # idle | running | paused | stopped | complete
         # ⚠ THE LIST WAS STALE: `escape` has been a behavior since the guard was given the
         # helm, and `/api/cmd/escape` sets it (see the escape route). A comment that omits the
@@ -3812,6 +4120,7 @@ class Engine:
         self._rth_follow = False       # True while RTH is chasing a moving home
         self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
         self._rth_params = None        # captured run params (arrival/speed/approach) for the chase
+        self._rth_lost_link = False    # the ROC's GPS link died MID-chase; said once per outage
         self.link = self.LINK_IDLE
         self.note = "Not connected."
         self.status = {}           # latest telemetry
@@ -3832,7 +4141,7 @@ class Engine:
         self.boot_id = BOOT_ID
         # Energy override (testing aid): report the pack/tank as full regardless of
         # the real reading, and (in sim) stop the drain/burn. Applies in EVERY mode
-        # and to every behaviour - see set_energy_override / state().
+        # and to every behavior - see set_energy_override / state().
         self.energy_override = False
 
     # -- SSE plumbing ------------------------------------------------------ #
@@ -3848,7 +4157,10 @@ class Engine:
                 self._subscribers.remove(q)
 
     def _publish(self, event):
-        data = json.dumps(event)
+        # ⚠⚠ NOTHING NON-FINITE GOES OUT. `json.dumps` writes a bare `NaN`, which is not
+        # JSON - the browser's JSON.parse throws on the whole frame, so one bad number in the
+        # 4 Hz stream stops the console updating entirely rather than blanking one field.
+        data = json.dumps(finite_only(event))
         with self._sub_lock:
             subs = list(self._subscribers)
         for q in subs:
@@ -3980,9 +4292,9 @@ class Engine:
         try:
             f = float(v)
         except (TypeError, ValueError):
-            raise VcuProtocolError("hold_clear_m must be numeric (metres), or absent")
+            raise VcuProtocolError("hold_clear_m must be numeric (meters), or absent")
         if not math.isfinite(f) or f < 0.0:
-            raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of metres")
+            raise VcuProtocolError("hold_clear_m must be a finite, non-negative number of meters")
         return f
 
     @staticmethod
@@ -3995,9 +4307,9 @@ class Engine:
         try:
             f = float(v)
         except (TypeError, ValueError):
-            raise VcuProtocolError("coast_from_m must be numeric (metres), or absent")
+            raise VcuProtocolError("coast_from_m must be numeric (meters), or absent")
         if not math.isfinite(f) or f < 0.0:
-            raise VcuProtocolError("coast_from_m must be a finite, non-negative number of metres")
+            raise VcuProtocolError("coast_from_m must be a finite, non-negative number of meters")
         return f
 
     def upload(self, route=None, hold_clear_m=None):
@@ -4026,7 +4338,7 @@ class Engine:
             self._require(len(wpts) >= 1, "add at least one waypoint first")
             # The saved plan's own waypoints (an upload with no route) meet the same bound.
             self._require(len(wpts) <= ROUTE_MAX_WPTS, too_many_wpts(len(wpts), ROUTE_MAX_WPTS, "saved plan"))
-            completion = plan_completion()            # a plan run honours the setting
+            completion = plan_completion()            # a plan run honors the setting
             # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
             # console's governor re-asserts the right role on the first telemetry frame
             # either way, but starting the boat at the survey speed for a 30-minute transit
@@ -4035,17 +4347,24 @@ class Engine:
             _sp = _norm_speeds(m.get("speeds"), m.get("speed", "survey"))
             link.upload_plan(wpts, m.get("arrival_radius_m", 2.0), _sp["transit"],
                              m.get("approach_radius_m", WP_APPROACH_M), completion=completion,
-                             hold_clear_m=hold_clear_m)
+                             hold_clear_m=hold_clear_m, name="survey")
             self.plan_uploaded = True
             if link.plan_staged:
-                # The run in progress (the hold) keeps its own completion and waypoint count
-                # until Start; the staged plan's completion is applied then.
-                self._staged_completion = completion
-                self.note = ("Run plan uploaded (%d waypoints%s, %s) and STAGED: the boat carries "
-                             "on station-keeping until Start." % (
-                                 len(wpts), " · ENC-routed" if route else "", completion))
+                # The run in progress keeps its own completion and waypoint count until Start;
+                # the staged plan carries its own completion in its own dict, so there is
+                # nothing to shadow here - `link.loaded_completion` still reports the RUN's.
+                # ⚠ AND THE SENTENCE NAMES WHAT SHE IS ACTUALLY DOING. The gate above admits TWO
+                # states - station-keeping OR paused - because `pause()` leaves the link running,
+                # so the old wording told a PAUSED operator the boat was carrying on
+                # station-keeping, which is not what a paused boat is doing.
+                self.note = ("Run plan uploaded (%d waypoints%s, %s) and STAGED: the boat %s "
+                             "until Start." % (
+                                 len(wpts), " · ENC-routed" if route else "", completion,
+                                 "stays paused" if self.run == "paused"
+                                 else "carries on station-keeping"))
             else:
-                self.run_completion = completion
+                # What the LINK normalized and holds, not what the console asked for.
+                self.run_completion = link.loaded_completion
                 self.wp_total = len(wpts)
                 self.wp_index = 0
                 self.note = "Run plan uploaded (%d waypoints%s, %s)." % (
@@ -4053,7 +4372,31 @@ class Engine:
         self._push_state()
 
     def set_approach(self, m):
-        """Live-tune the waypoint approach radius on the connected link (sim)."""
+        """Live-tune the waypoint approach radius on the connected link (sim).
+
+        ⚠⚠ VALIDATED HERE, BECAUSE IT WAS THE ONE COMMAND INPUT THAT WAS NOT. Every other
+        numeric the console takes is checked for finiteness and refused in WORDS; this one went
+        straight into `float()` at the endpoint, so a non-numeric radius surfaced as a 500 -
+        which kills the handler's session-log entry - and a non-finite one was accepted.
+
+        ⚠ AND NaN GOT PAST THE CLAMP, WHICH IS WHY ACCEPTING IT MATTERED. `clamp` is written
+        as two comparisons, `lo if v < lo else hi if v > hi else v`, and EVERY comparison
+        against NaN is False - so the clamp returns NaN unchanged. Infinity and negatives clamp
+        correctly; NaN alone escapes.
+
+        MEASURED: with the approach radius NaN, a boat driving an 80 m two-leg plan is still at
+        waypoint 0 after 120 s. Both arrival tests compare against this number - the along-track
+        one and the range one - so she never reaches a waypoint, never holds, and the plan never
+        completes. She drives through every waypoint for ever.
+
+        The same trap `set_home` records for coordinates: "a non-finite value reaching HOME does
+        not merely set a bad home, it stops the console"."""
+        try:
+            m = float(m)
+        except (TypeError, ValueError):
+            raise VcuProtocolError("the approach radius must be a number of meters")
+        if not math.isfinite(m):
+            raise VcuProtocolError("the approach radius must be a finite number of meters")
         with self._lock:
             if self._link is not None:
                 try:
@@ -4092,7 +4435,7 @@ class Engine:
         ⚠ ONE INSTANT, NEVER RE-DERIVED. The caller passes the point and the moment; this
         stores them and nothing else. A berth that the server recomputed from the boat's
         CURRENT position would follow her out of the slip and certify whatever she reached,
-        which is precisely the licence R1 exists to withhold.
+        which is precisely the license R1 exists to withhold.
         """
         with self._lock:
             self.berth = berth
@@ -4103,7 +4446,7 @@ class Engine:
     def set_energy_override(self, on):
         """Energy override (testing aid): report the pack/tank as full regardless of
         the real reading, and - in sim - stop the drain/burn. Applies in EVERY mode and
-        to every behaviour, mission running or not: it just forces the energy the console
+        to every behavior, mission running or not: it just forces the energy the console
         sees (battery voltage or fuel tank, whichever the vessel uses). Not gated on
         connection or mode."""
         on = bool(on)
@@ -4131,23 +4474,44 @@ class Engine:
             # the run "survey" - so a paused ESCAPE or HOLD came back as a chainable run, and the
             # page chains the end-of-plan Return-to-Home from a survey that is holding: straight
             # back toward whatever the escape had just steered clear of. A staged plan is a new run.
-            resuming = self.run == "paused" and not link.plan_staged
-            if link.plan_staged:
-                self.run_completion = self._staged_completion or plan_completion()
+            resuming = self.run == "paused" and not link.plan_staged   # read BEFORE start() clears it
             link.start()
             self.run = "running"
             self._commanded()
+            # ⚠⚠ THE RUN'S IDENTITY IS THE LOADED PLAN'S, read back AFTER link.start() has
+            # applied any staged plan. Not remembered from the upload, and not derived from
+            # `plan_staged`: `_apply_plan`'s first line is `self._staged = None`, and it runs
+            # INSIDE stop(), estop() and set_neutral() - so a halt that consumed a staged plan
+            # destroys the console's only evidence in the very call that installs the plan.
+            #
+            # MEASURED before this: an escape, then Stop, then Start left `behavior` "survey" on
+            # the escape's own one-waypoint plan (wp 1/1), holding at the escape point. That
+            # handed the page a CHAINABLE name for the guard's own maneuver, so the end-of-plan
+            # Return-to-Home chain fired a return from a point chosen only to be clear of a
+            # hazard - the Eastport shape the whitelist exists to prevent - and it re-derived
+            # `run_completion` from nothing, leaving it describing the run the Stop had canceled.
+            #
+            # A RESUME KEEPS ITS NAME BY CONSTRUCTION: it applies no plan, so these two reads
+            # return what was already loaded. `resuming` no longer guards the name at all - it
+            # does its one real job, which is not bumping `run_seq`.
+            self.behavior = link.loaded_name
+            self.run_completion = link.loaded_completion
             if not resuming:
                 self.run_seq += 1          # a staged plan is a new motion; a resume is the old one carrying on
             if resuming:
                 self.note = "Resumed."
             else:
-                self.behavior = "survey"
-                self.note = {"complete": "Survey started.",
-                             "loiter": "Survey started (will loiter / station-keep at the end).",
-                             "repeat": "Survey started (will repeat the route).",
-                             "rth": "Survey started (will Return-to-Home at the end)."}.get(
-                                 self.run_completion, "Survey started.")
+                # The run says what it IS. An unnamed plan says so rather than claiming to be a
+                # survey; the survey wording is byte-identical to what it was.
+                noun = {"survey": "Survey", "search": "Search", "goto": "Go-To",
+                        "rth": "Return-to-Home", "hold": "Station-keep",
+                        "transit": "Transit", "escape": "Escape"}.get(self.behavior,
+                                                                      "Run (plan not named)")
+                self.note = noun + {"complete": " started.",
+                                    "loiter": " started (will loiter / station-keep at the end).",
+                                    "repeat": " started (will repeat the route).",
+                                    "rth": " started (will Return-to-Home at the end)."}.get(
+                                        self.run_completion, " started.")
         self._push_state()
 
     # -- generalized behaviors (route + station-keep) ---------------------- #
@@ -4177,19 +4541,39 @@ class Engine:
             link.upload_plan(route, m.get("arrival_radius_m", 2.0),
                              getattr(link, "speed_key", None) or m.get("speed", "survey"),
                              m.get("approach_radius_m", WP_APPROACH_M), completion="loiter",
-                             hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
+                             hold_clear_m=hold_clear_m, coast_from_m=coast_from_m,
+                             name=behavior)
             link.start()
             self._commanded()
             self.plan_uploaded = True
             # goto/rth/hold/transit always station-keep at their own endpoint. This is
             # the RUN's completion only - the operator's end-of-plan setting is untouched.
-            self.run_completion = "loiter"
+            # ⚠ ONE SOURCE: `self.behavior` and `self.run_completion` are assigned from
+            # `link.loaded_*` and nowhere else, so grepping those two assignments is the whole
+            # audit. Here the link was handed this plan and started on it one line above, under
+            # the same lock, so the read-back IS the value just stamped - passed through the
+            # link's own normalizer, which is what stops an unrecognized behavior string
+            # reaching the page's chainable whitelist as a live name.
+            self.run_completion = link.loaded_completion
             self.wp_total = len(route)
             self.wp_index = 0
             self.run = "running"
             if not continuing:
                 self.run_seq += 1          # a re-approach is this motion still running, not another one
-            self.behavior = behavior
+            # ⚠⚠ AND THE LAST FRAME'S `holding` IS NOW A FACT ABOUT WHERE SHE WAS. Dropping
+            # the frame read ACROSS this command is only half of it: the frame already
+            # APPLIED describes the station-keep this command has just ENDED, and
+            # reapproach()'s gate - `self._require(bool(st.get("holding")), ...)` - reads
+            # exactly that copy. So for up to two ticks a re-approach arriving behind the
+            # guard's escape passed "the vessel is station-keeping" and drove the boat back
+            # to the hold point the escape had just steered it clear of.
+            #
+            # State an event has invalidated is not state - the same rule connect() applies
+            # when it clears status for a new link. Rebound rather than mutated in place,
+            # because the telemetry loop publishes this dict by reference.
+            if self.status.get("holding"):
+                self.status = dict(self.status, holding=False)
+            self.behavior = link.loaded_name        # see the completion read-back above
             self.note = note
         self._push_state()
 
@@ -4221,13 +4605,20 @@ class Engine:
     def go_to(self, lat, lon, route=None, hold_clear_m=None, coast_from_m=None):
         # route (if given) is the client's ENC-aware detour path ending at the point;
         # else drive straight to the point (honest degrade when no nogo model).
-        r = self._sanitize_route(route) if route else [{"lat": float(lat), "lon": float(lon)}]
+        # ⚠⚠ THE DIRECT POINT GOES THROUGH THE SAME VALIDATOR AS A ROUTE. The SAME coordinate
+        # was refused inside a `route` and accepted as a bare lat/lon - `float()` alone takes
+        # inf, nan and 1e12 happily. A nan reaching the plan makes every /api/state body and
+        # every SSE frame invalid JSON, which the page cannot parse, so the console goes
+        # TELEMETRY STALE with no way back short of a restart. `route or [...]` keeps the
+        # existing truthiness exactly - an empty route still falls through to the point - and
+        # the `note` below reads `route`, not `r`, so both Go-To sentences are unchanged.
+        r = self._sanitize_route(route or [{"lat": lat, "lon": lon}])
         note = ("Go-To: following the ENC-aware route to the point (%d wpts), will station-keep on arrival." % len(r)
                 if route else "Go-To: driving to point, will station-keep on arrival.")
         self._run_route(r, "goto", note, hold_clear_m, coast_from_m)
 
     def escape(self, lat, lon, hold_clear_m=None):
-        """The in-extremis clearance guard's OWN manoeuvre (guard.js escapeCourse, the helm
+        """The in-extremis clearance guard's OWN maneuver (guard.js escapeCourse, the helm
         rung of clearanceGuard in the page) - never the operator's, and kept structurally
         distinct from go_to() for exactly one reason: `behavior` is "escape", not "goto",
         so its arrival can never be mistaken for an ordinary commanded run.
@@ -4243,7 +4634,9 @@ class Engine:
         Taking the helm is meant to buy the operator's attention, not hand the console
         straight back to whatever was already running - so this holds at the escape point
         and waits. Nothing here re-arms automatically; the operator re-commands."""
-        r = [{"lat": float(lat), "lon": float(lon)}]
+        # The same validator, for the same reason as goto above - and it matters more here:
+        # this is the safety rung's own command, issued without an operator in the loop.
+        r = self._sanitize_route([{"lat": lat, "lon": lon}])
         self._run_route(r, "escape",
                         "In extremis: steered clear. Holding here - the end-of-plan return "
                         "does not chain from an escape; re-command when ready.", hold_clear_m)
@@ -4268,7 +4661,7 @@ class Engine:
         it has been set beyond the water certified clear around its hold point
         (`hold_wants_route` on the telemetry - see SimVcu's station-keep branch).
 
-        IT KEEPS THE BEHAVIOUR. A Go-To would do the same driving, and would also rename a
+        IT KEEPS THE BEHAVIOR. A Go-To would do the same driving, and would also rename a
         boat holding at HOME after a Return-to-Home as a "goto" on every card - the run is
         still the run it was; this is a leg of it. Gated on the vessel actually HOLDING,
         because outside that state a route arriving here is a command nobody gave.
@@ -4293,23 +4686,72 @@ class Engine:
         Andy, 2026-09-04: *"Investigate forcing slight deviations in a given track to prevent
         holds when there is still plenty of available water away from the nogo."*
 
-        IT KEEPS THE BEHAVIOUR AND THE RUN, for the same reason reapproach() does: a Go-To
+        IT KEEPS THE BEHAVIOR AND THE RUN, for the same reason reapproach() does: a Go-To
         would do the same driving and would rename a survey a "goto" on every card. This is
-        not a new command, it is the same command with a few metres taken out of it - and a
-        deviation that re-labelled the run would also re-arm the end-of-plan chain, which is
+        not a new command, it is the same command with a few meters taken out of it - and a
+        deviation that re-labeled the run would also re-arm the end-of-plan chain, which is
         the trap the in-extremis escape was rebuilt to avoid.
 
-        ⚠ GATED ON A RUNNING, NON-HOLDING PLAN. A route arriving while the boat is
-        station-keeping, paused or stopped is a command nobody gave, and the vessel says so
-        rather than quietly accepting it: `amend_plan` refuses the same case a second time,
-        so the seam cannot leak if this gate is ever loosened."""
+        ⚠ GATED ON AN UNDER-WAY, NON-HOLDING PLAN. A route arriving while the boat is
+        station-keeping or stopped is a command nobody gave, and the vessel says so rather
+        than quietly accepting it: `amend_plan` refuses the same case a second time, so the
+        seam cannot leak if this gate is ever loosened.
+
+        ⚠⚠ AND PAUSED COUNTS AS UNDER WAY, BECAUSE THE CONSOLE ITSELF IS THE CALLER. This
+        gate read `run == "running"` and refused the operator's own Resume: `resumeRun`
+        rewrites the remainder to back the hull down the line BEFORE it presses Start, and
+        the page states that ordering as its own deliberate decision - "amend_plan needs a
+        RUNNING plan and pause leaves `_running` true while stopping the prop, so the
+        remainder can be rewritten before anything moves. Resuming first would give the boat
+        a frame or more of the OLD plan."
+
+        The page's premise is about the LINK's flag, and it is correct: pause leaves
+        `_running` true. This gate is the ENGINE's, added later, and the two disagreed about
+        what running means. Measured in-process on a paused boat: `amend_plan` ACCEPTED and
+        `Engine.amend` answered 409 "the vessel is not running a plan", so the backtrack was
+        dead and the operator read "could not amend the plan … resumed where it lay" instead
+        of the overlap the feature promises.
+
+        The link's gate is untouched and still refuses a stopped, idle, holding or
+        fully-flown plan - and nothing moves until Start, so widening this one cannot put
+        way on a hull: an amendment to a paused boat adds NO THRUST to her.
+
+        ⚠ "NO THRUST" IS NOT "NO MOTION", and the difference cost a blocked commit. The
+        measurement that first stood here - "leaves her at 0.00 m and ~0.06 kn" - was taken
+        on slack water and then read as a property of this gate. A paused hull is still IN
+        the stream: pause leaves `_running` true, the summed set is integrated, and her
+        speed over the GROUND is the weather's number rather than this gate's. Measured
+        2026-09-22 on the same sequence: 0.80 m and 0.64 kn against a published set of
+        0.64 kn - the SAME number, which is what being set rather than driven looks like.
+        tests/amend_plan.py 15b asks it that way now."""
         # ARM FIRST, THEN E-STOP, THEN THE RUN - the same order _run_route uses. Ordering
         # matters to the OPERATOR, not to the logic: whichever gate answers is the sentence
         # they read, and "ARM before commanding the boat" is more use to someone who has not
         # armed than "the vessel is not running a plan" would be.
         self._require(self.armed, "ARM before commanding the boat")
         self._require(not self.estop, "clear E-STOP first")
-        self._require(self.run == "running", "the vessel is not running a plan")
+        # ⚠⚠ AND A PAUSED BOAT WITH A PLAN STAGED IS NOT A CONTINUATION. `Engine.start`
+        # already draws exactly this line - `resuming = self.run == "paused" and not
+        # link.plan_staged` - and the amend gate has to draw it too, because the console
+        # deliberately keeps Upload enabled while paused ("the plan is STAGED, and Start
+        # stays live for it") and routes Start-while-paused into `resumeRun`. So
+        # pause -> upload a revised plan -> Start is a supported sequence, and resumeRun
+        # posts its backtrack amendment against the plan being ABANDONED.
+        #
+        # Accepting it would be worse than refusing it: `start()` applies the staged plan
+        # and throws the amendment away, but the page reads the 200 as truth - it splices
+        # `runRoute` and says "backed up NN m so the coverage overlaps" when nothing backed
+        # up at all. Measured on a live console: amend accepted 1/3 -> 1/6, then Start gave
+        # wp 0/5 while the page drew six waypoints. `guardTrack` projects the clearance
+        # ladder along that array, so this is the chart-vessel divergence review #7 recorded
+        # at the edge rung - re-opened through the resume door. Found by an adversarial
+        # re-read of this very fix, after it was committed.
+        link0 = self._link
+        staged = bool(link0 is not None and link0.plan_staged)
+        self._require(self.run == "running" or (self.run == "paused" and not staged),
+                      "a new plan is staged - Start flies that, so there is no remainder to "
+                      "amend" if staged and self.run == "paused"
+                      else "the vessel is not running a plan")
         st = self.status
         self._require(not st.get("holding"), "the vessel is station-keeping, not running a plan")
         r = self._sanitize_route(route)
@@ -4329,7 +4771,7 @@ class Engine:
         TWO SOURCES FOR ONE FIELD, AND THEY FAIL DIFFERENTLY - which is why the branches
         below stay separate rather than merging. Until 2026-08-08 a supplied position was
         DISCARDED and only the live fix was ever used; the operator asked for the chart's
-        right-click point to set HOME, so an explicit lat/lon is now honoured.
+        right-click point to set HOME, so an explicit lat/lon is now honored.
 
         WHAT THAT CHANGES, stated plainly because RETURN-TO-HOME DRIVES TO HOME: an
         explicit point is OPERATOR INPUT landing in a field the vessel will later be sent
@@ -4461,9 +4903,12 @@ class Engine:
         self.connect("sim", self._host, self._port, "tcp", spawn=spawn)
         with self._lock:
             self.home = None
+            # ⚠ THE ONE DOCUMENTED EXCEPTION to "identity is read back off the link". This is a
+            # power-cycle onto a FRESH link that holds no plan at all, so there is nothing to
+            # read: connect() cleared `plan_uploaded`, and Start is gated on it.
             # The grant is latched at ONE launch. A reset is a new power-cycle and a new
             # launch, so the old one may not survive it - see R1: the latch is at the launch
-            # and only there, and that single rule is what stops this being a licence.
+            # and only there, and that single rule is what stops this being a license.
             self.berth = None
             self.behavior = "survey"
             self.run_completion = "complete"
@@ -4496,6 +4941,17 @@ class Engine:
                 chase = " (MOVING)" if intent.get("closable", True) else (
                     " (MOVING - WARNING: closing at only %.1f kn, the ASV may never overhaul it)"
                     % max(0.0, intent.get("closing_kn", 0.0)))
+                # ⚠⚠ AND WHETHER THE POINT IS STILL EVIDENCE. Nothing in roc_tracks clears a
+                # ROC when its NMEA feed stops - the reader retries every 3 s for ever - so
+                # `point`, `moving` and `closing_kn` all FREEZE at their last value and this
+                # sentence read identically on a live link and a dead one. The card beside it
+                # was already red. It says so now, because the difference between "chasing a
+                # ship" and "driving to where a ship was forty seconds ago" is the whole
+                # decision: measured, 40 m of error at 20 s and growing 123 m/min.
+                if intent.get("link") == "lost":
+                    chase += (" - WARNING: the ROC's GPS LINK IS LOST (%s s old), so this is "
+                              "where she WAS, not where she is"
+                              % intent.get("age_s"))
             note = "Return-to-Home: %s %s%s," % (
                 "chasing" if intent["moving"] else "returning to",
                 intent["name"] or "the ROC", chase)
@@ -4667,7 +5123,30 @@ class Engine:
                     if not (self.behavior == "rth" and self.run == "running"):
                         self._rth_follow = False
                         self._rth_last_target = None
+                        self._rth_lost_link = False
                     elif self._rth_follow and intent and intent["point"]:
+                        # ⚠⚠ THE LINK CAN DIE MID-CHASE, AFTER THE NOTE WAS WRITTEN, and the
+                        # command-time warning above cannot cover that. Worse, this loop
+                        # re-targets only when the point MOVES - and a frozen point never
+                        # does, so the chase falls silent at exactly the moment it stops
+                        # meaning anything. Said ONCE per outage, not once a tick: a link
+                        # that reconnects every 3 s would otherwise fill the operator's log.
+                        #
+                        # ⚠ IT QUALIFIES, IT DOES NOT REFUSE. The rung above is the repo's
+                        # idiom for an unreachable moving home - "say so rather than let it
+                        # chase forever" - and a refusal here would take away the operator's
+                        # only recovery action over a 16-second dropout.
+                        if intent.get("link") == "lost":
+                            if not self._rth_lost_link:
+                                self._rth_lost_link = True
+                                self.note = ("RTH chase: the ROC's GPS LINK IS LOST (%s s) - "
+                                             "holding the last known recovery point. It is "
+                                             "where %s WAS, not where she is. Take the RC or "
+                                             "re-home."
+                                             % (intent.get("age_s"),
+                                                intent.get("name") or "the ROC"))
+                        else:
+                            self._rth_lost_link = False
                         tgt = intent["point"]
                         p = self._rth_params or {}
                         thresh = max(2.0, float(p.get("arrival", ARRIVAL_DEFAULT_M)) * 0.5)
@@ -4677,11 +5156,27 @@ class Engine:
                                                tgt["lat"], tgt["lon"])[0] > thresh)
                         if moved:
                             try:
+                                # ⚠⚠ THE LIVE SPEED, NEVER THE CAPTURED ONE. `_rth_params["speed"]`
+                                # is taken ONCE, when RTH is commanded, and this chase re-uploads on
+                                # every re-target - so a frozen key drove the boat back up to its
+                                # pre-guard speed about once a second while chasing a moving
+                                # recovery point. Measured against SimVcu: RTH at high, the guard
+                                # commands low, one chase re-target -> high again. SimVcu.set_speed's
+                                # own protection (it patches `_staged["speed_key"]`) cannot help,
+                                # because this uploads and starts inside the same lock and leaves no
+                                # window for a speed command to land between them. Read the LINK,
+                                # exactly as _run_route does.
+                                # ⚠ AND IT NAMES THE PLAN. This is the third upload_plan call
+                                # site and it re-uploads about once a second while chasing a
+                                # moving recovery point, so without the stamp the loaded plan
+                                # goes nameless on every re-target and a Stop-then-Start during
+                                # a chase would read "unknown" instead of "rth".
                                 link.upload_plan([{"lat": tgt["lat"], "lon": tgt["lon"]}],
                                                  p.get("arrival", ARRIVAL_DEFAULT_M),
-                                                 p.get("speed", "survey"),
+                                                 getattr(link, "speed_key", None)
+                                                 or p.get("speed", "survey"),
                                                  p.get("approach", WP_APPROACH_M),
-                                                 completion="loiter")
+                                                 completion="loiter", name="rth")
                                 link.start()
                                 self._rth_last_target = dict(tgt)
                             except Exception:
@@ -4734,7 +5229,7 @@ class Engine:
         elif etype != "fuel":
             st["battery_state"] = "unknown"
         # Energy override forces a full reading in every mode (even when the link
-        # reports no energy telemetry), so it holds regardless of behaviour. It
+        # reports no energy telemetry), so it holds regardless of behavior. It
         # tops up whichever gauge the active vessel uses.
         if self.energy_override:
             if etype == "fuel":
@@ -4794,7 +5289,7 @@ class Engine:
             # WHICH STATION WINDOWS THE OPERATOR ASKED FOR. The PAGE owns those windows
             # now (it is the only thing that can re-point one in place), so the
             # --no-tide-window / --no-weather-window flags have to reach it - a flag the
-            # server honours and the client does not is a control that half works.
+            # server honors and the client does not is a control that half works.
             "station_windows": {"tide": STATION_WINDOWS_ON["tide"],
                                 "weather": STATION_WINDOWS_ON["weather"]},
             "water": WATER.snapshot(),
@@ -4891,7 +5386,7 @@ def read_log_text(path):
 
 
 # The page's ES modules (static/js/*.js). SAME GUARD SHAPE AS safe_log_path, and for the
-# same reason: this turns a URL into a filesystem read, so the only defence that holds is
+# same reason: this turns a URL into a filesystem read, so the only defense that holds is
 # refusing anything that is not a bare basename from one directory with one extension.
 # `os.path.basename(name) != name` rejects every traversal spelling at once (`../`, a
 # nested path, an absolute path, a drive letter) without trying to enumerate them.
@@ -4924,6 +5419,23 @@ POST_ANY_TYPE = ("/api/cmd/stop", "/api/cmd/pause")
 
 def post_is_json(content_type):
     return (content_type or "").split(";", 1)[0].strip().lower() == "application/json"
+
+
+def _switch_blocked(st, what):
+    """Why a vessel or port switch is refused, in the operator's own terms - or None.
+
+    ⚠⚠ THE LATCH GETS ITS OWN SENTENCE, because it is the one condition that makes the
+    other two LOOK satisfied. `set_estop` disarms and sets run "idle" as it latches - measured:
+    an E-STOP leaves armed False, run "idle", estop True - so all three gates tripped on the
+    estop term and then told the operator to "disarm and stop the run", which they had just
+    done, while never naming the thing actually holding it. A message naming a cause the
+    operator cannot act on is worse than no message."""
+    if st.get("estop"):
+        return ("release the E-STOP before %s - she is already disarmed and idle, and the "
+                "latch is what is holding this" % what)
+    if st.get("armed") or st.get("run") != "idle":
+        return "disarm and stop the run before %s" % what
+    return None
 
 
 def estop_wants_latch(body):
@@ -5028,7 +5540,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/log?"):
             self._serve_log()
         elif self.path == "/api/state":
-            self._send(200, json.dumps(ENGINE.state()))
+            # ⚠ THE POLLED ROUTE TOO, not only the stream: a page that fetches /api/state on load
+            # would hit the same invalid-JSON frame and fail before the stream ever opened.
+            self._send(200, json.dumps(finite_only(ENGINE.state())))
         elif self.path == "/events":
             self._serve_events()
         elif self.path.startswith("/tiles/"):
@@ -5210,7 +5724,7 @@ class Handler(BaseHTTPRequestHandler):
             data = fetch_enc_features(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch
             return self._send(502, json.dumps({"error": str(e)}))
-        self._send(200, json.dumps(data))
+        self._send(200, _json_body_yielding(data))
 
     def _serve_chartinfo(self):
         # /api/chartinfo?bbox=W,S,E,N -> ENC cells + zone-of-confidence polygons
@@ -5292,8 +5806,9 @@ class Handler(BaseHTTPRequestHandler):
             if not vid:
                 return 400, {"error": "missing vessel id"}
             st = ENGINE.state()
-            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
-                return 409, {"error": "disarm and stop the run before switching vessel"}
+            why = _switch_blocked(st, "switching vessel")
+            if why:
+                return 409, {"error": why}
             try:
                 v = load_vessel(vid)
             except (OSError, ValueError) as e:
@@ -5313,8 +5828,9 @@ class Handler(BaseHTTPRequestHandler):
             # Both are gated exactly like a vessel switch: moving the base under a
             # running boat is as incoherent as swapping its physics.
             st = ENGINE.state()
-            if st.get("armed") or st.get("estop") or st.get("run") != "idle":
-                return 409, {"error": "disarm and stop the run before changing port"}
+            why = _switch_blocked(st, "changing port")
+            if why:
+                return 409, {"error": why}
             found = None
             if body.get("name") is not None:
                 if body.get("lat") is None or body.get("lon") is None:
@@ -5332,7 +5848,7 @@ class Handler(BaseHTTPRequestHandler):
                         return 400, {"error": "could not find a place called %r "
                                               "(no geocoder, or no such place)" % body["name"]}
                     glat, glon, disp = g
-                    # A GEOCODER RETURNS A TOWN CENTRE, WHICH IS ON LAND. Snap to charted
+                    # A GEOCODER RETURNS A TOWN CENTER, WHICH IS ON LAND. Snap to charted
                     # water this hull can float in, or say plainly that it could not.
                     snap = snap_to_water(glat, glon, MIN_NAV_DEPTH_M)
                     if snap.get("ok"):
@@ -5341,11 +5857,24 @@ class Handler(BaseHTTPRequestHandler):
                                  "snapped": True, "depth_m": snap.get("depth_m"),
                                  "moved_m": snap.get("moved_m"), "note": snap.get("note")}
                     else:
-                        # Still create it at the place centre - the operator can see the
+                        # Still create it at the place center - the operator can see the
                         # chart and move it - but do NOT pretend it is a berth.
                         body = dict(body, lat=glat, lon=glon)
                         found = {"geocoded": disp, "place": {"lat": glat, "lon": glon},
                                  "snapped": False, "note": snap.get("note")}
+                # ⚠⚠ THE GATE ABOVE IS NOW UP TO ~110 s OLD - a geocode (20 s) plus
+                # snap_to_water (90 s) - and the operator had the console for all of it.
+                # RE-TAKE it against the state this mutation will actually meet. Arming and
+                # Starting during the lookup was answered ok:True while ENGINE.connect()
+                # below tore the running SimVcu down and respawned the boat at the new base,
+                # thousands of kilometers away, mid-run.
+                # ⚠ IT HAS TO BE HERE AND NOT LOWER: by the time PORTS is rewritten the
+                # in-memory registry has already changed, so a refusal there would leave the
+                # console half-moved. Nothing has been mutated at this point.
+                st = ENGINE.state()
+                why = _switch_blocked(st, "changing port")
+                if why:
+                    return 409, {"error": why}
                 try:
                     p = validate_port(body, "port")
                 except ValueError as e:
@@ -5390,7 +5919,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     WATER.set_manual(None if mo in (None, "") else float(mo))
                 except (TypeError, ValueError):
-                    return 400, {"error": "manual_offset must be numeric (metres), or empty to clear"}
+                    return 400, {"error": "manual_offset must be numeric (meters), or empty to clear"}
             if body.get("refresh"):
                 WATER.refresh_now()
             return 200, {"ok": True, "water": WATER.snapshot()}
@@ -5418,13 +5947,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if op == "add":
                     rid = ROC.add(body.get("kind", "shore"), body.get("name"),
-                                  lat=_opt_float(body.get("lat")),
-                                  lon=_opt_float(body.get("lon")), offset=body.get("offset"))
+                                  lat=_opt_coord(body.get("lat"), "lat"),
+                                  lon=_opt_coord(body.get("lon"), "lon"), offset=body.get("offset"))
                     return 200, {"ok": True, "id": rid, "roc": ROC.snapshot()}
                 if op == "update":
                     ok = ROC.update(body.get("id"), name=body.get("name"),
-                                    lat=_opt_float(body.get("lat")),
-                                    lon=_opt_float(body.get("lon")))
+                                    lat=_opt_coord(body.get("lat"), "lat"),
+                                    lon=_opt_coord(body.get("lon"), "lon"))
                     return (200 if ok else 404), {"ok": ok, "roc": ROC.snapshot()}
                 if op == "offset":
                     ok = ROC.set_offset(body.get("id"), range_m=_opt_float(body.get("range_m")),
@@ -5459,7 +5988,11 @@ class Handler(BaseHTTPRequestHandler):
                     ROC.clear_home()
                     return 200, {"ok": True, "roc": ROC.snapshot()}
                 if op == "feed":
-                    ok = ROC.feed(body.get("id"), float(body["lat"]), float(body["lon"]),
+                    # ⚠ THE EXTERNAL PUSH IS THE LEAST TRUSTED INPUT ON THIS CONSOLE - any
+                    # GPS bridge or ship nav PC posts here - and it was the only coordinate
+                    # path with no range guard at all.
+                    ok = ROC.feed(body.get("id"), _coord(body["lat"], "lat"),
+                                  _coord(body["lon"], "lon"),
                                   cog=_opt_float(body.get("cog")), sog=_opt_float(body.get("sog")))
                     return (200 if ok else 404), {"ok": ok}
                 return 400, {"error": "unknown roc op: %r" % op}
@@ -5483,7 +6016,7 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.stop()
             elif path == "/api/cmd/estop":
                 ENGINE.set_estop(estop_wants_latch(body))  # only an explicit off releases (review #25)
-            # `hold_clear_m` on the four holding behaviours is the console's certified clear
+            # `hold_clear_m` on the four holding behaviors is the console's certified clear
             # disc around the end point (hold.js) - absent means the vessel re-approaches
             # direct, exactly as it always did.
             elif path == "/api/cmd/rth":               # optional ENC-aware detour route
@@ -5498,14 +6031,17 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station
                 ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
-            elif path == "/api/cmd/escape":            # the in-extremis guard's OWN manoeuvre
+            elif path == "/api/cmd/escape":            # the in-extremis guard's OWN maneuver
                 ENGINE.escape(body.get("lat"), body.get("lon"), body.get("hold_clear_m"))
             elif path == "/api/cmd/amend":             # deviate the RUNNING plan, keep the run
                 ENGINE.amend(body.get("route"), body.get("note"))
             elif path == "/api/cmd/sethome":           # home = the chosen point, or the present fix
                 ENGINE.set_home(body.get("lat"), body.get("lon"))
             elif path == "/api/cmd/approach":          # live-tune waypoint approach radius
-                ENGINE.set_approach(float(body.get("m", WP_APPROACH_M)))
+                # ⚠ NOT `float(...)` HERE. That raised ValueError on a non-numeric body and the
+                # handler answered 500; the Engine validates it and refuses in words, like
+                # every other command input.
+                ENGINE.set_approach(body.get("m", WP_APPROACH_M))
             elif path == "/api/cmd/speed":             # live speed change (low|survey|high)
                 ENGINE.set_speed(str(body.get("speed", "survey")))
             elif path == "/api/ais/radius":            # live AIS DISPLAY radius (km)
@@ -6648,7 +7184,7 @@ def main():
     # are OFFERED at all, which is a question about the operator's flags and not about how
     # the console happened to be launched. Inside the block, `--browser none` (every
     # headless harness, and anyone opening the page by hand) would silently ignore
-    # --no-tide-window, and a flag the server honours only sometimes is worse than none.
+    # --no-tide-window, and a flag the server honors only sometimes is worse than none.
     STATION_WINDOWS_ON["tide"] = not args.no_tide_window
     STATION_WINDOWS_ON["weather"] = not args.no_weather_window
 

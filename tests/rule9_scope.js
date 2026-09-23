@@ -87,7 +87,11 @@ const { NARROW_MAX_M } = require("../static/js/routing.js");
 
 const R = (f) => fs.readFileSync(path.join(__dirname, "..", "static", "js", f), "utf8");
 const ROUTING = R("routing.js"), PASSAGE = R("passage.js"), KEEPOUTS = R("keepouts.js");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 const PY = fs.readFileSync(path.join(__dirname, "..", "asv_console.py"), "utf8");
 
 function grab(src, name) {

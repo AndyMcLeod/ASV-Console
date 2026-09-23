@@ -63,7 +63,11 @@ const path = require("path");
 // that leans on a vessel default is reading the real one.
 const { V } = require("../static/js/state.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   let start = H.indexOf("function " + name + "(");
@@ -118,7 +122,21 @@ function check(name, cond, detail) {
   console.log((cond ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : ""));
   if (!cond) fails++;
 }
+// ⚠⚠ A SUITE THAT STOPS RUNNING ITS CHECKS MUST NOT EXIT 0. The checks below live in an
+// async IIFE, and an await that never settles does not crash node - it runs out of work and
+// the process exits CLEANLY, mid-suite, printing no summary. A runner reading the exit code
+// scores that as PASSED. Found by mutation (2026-09-22): dropping refreshNogo's `settle()`
+// left three waiters suspended for ever, checks 19-19c never ran, the summary never printed,
+// and the mutant was reported SURVIVED. This flag is the evidence that the end was reached.
+let finished = false;
+process.on("exit", (code) => {
+  if (finished || code !== 0) return;
+  console.log("  FAIL 0. the suite EXITED EARLY without reaching its summary - an await that "
+            + "never settled, after " + ran + " check(s) ran. Exiting 0 here reads as a pass.");
+  process.exitCode = 1;
+});
 function summary() {
+  finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                     : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
@@ -230,6 +248,11 @@ function featuresBboxRef() { return { lat: 38.7896, lon: -75.1609 }; }
 // plausible number would instead have kept this green while the row printed a floor the model
 // was never built at. It is the REAL one, imported at the top, for the same reason foldChartInk
 // is: this suite evals the shipped nogoReadout and must not be shown a different world.
+// ⚠ setTip is the ONE door a runtime tooltip goes through (2026-09-23): the suppression
+// works by REMOVING the title attribute while hovered, so a direct write re-arms the native
+// tip under the pointer. Stubbed to the plain write here - what this suite is about is the
+// TEXT, and ui_tooltips owns the hover behavior itself.
+function setTip(el, text){ if(el) el.title = text; }
 function render() {}
 function showBanner(t) { banners.push(t); }
 // The row element records EVERY paint, so the test can assert both what was shown during
@@ -245,19 +268,35 @@ function $(sel) { return FAKE[sel] || null; }
 function buildKeepouts() { return { polys: [{ kind: "land" }], lines: [],
                                     points: [{ kind: "a charted hazard" }] }; }
 var FETCH = null;
-function fetchENCBbox() { return FETCH(); }
+// ⚠ THE BOX IS PASSED THROUGH, because check 19 asks WHICH box a caller fetched - and a
+// stub that swallowed its argument would let a refresh fetch the wrong water and stay green.
+function fetchENCBbox(b, floor) { return FETCH(b, floor); }
 // ⚠ rebuildNogo NOW FOLDS THE CHART-READ STRUCTURES, through a helper punchOut shares -
 // so foldChartInk and the two kinds it stamps have to resolve here too, for the same
 // reason planeFrame and chartInk do. THE REAL ONE, not a stub: a stub would keep this
 // suite green while the fold it stands in for was broken. `bbOf` is what it builds its
 // bounding boxes with, and `chartInk` above starts empty, so an untouched scenario
 // folds nothing.
-const { bbOf } = require("../static/js/geometry.js");
+const { bbOf, bboxContains } = require("../static/js/geometry.js");
+const { M_PER_DEG_LAT } = require("../static/js/geodesy.js");
 const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
 const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in the ENC";
 // eslint-disable-next-line no-eval
-eval(grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
-     grab("updateNogoUI") + "\n" + grab("refreshNogo"));
+// ⚠ ensureNogoCovers IS IN THE BUNDLE TOO (2026-09-22), because the queue is only half
+// the fix: the other half is that this function answers about THIS PLAN'S water rather than
+// about whether a model exists at all. `asv` is null in this world, so it takes its own
+// midpoint branch, and ensureChartInk is stubbed - the chart read is chart_ink.js's subject.
+var asv = null;
+async function ensureChartInk() { return true; }
+// ⚠ NOGO_QUEUE_MAX_MS bounds the queue wait. READ from the page, not retyped, so a suite
+// that believes a different bound than the page uses cannot happen - and declared OUT HERE
+// as well as inside the bundle, because a `const` in a direct eval stays in the eval's own
+// scope and check 19g could not see it.
+const NOGO_QUEUE_MAX_MS = +(H.match(/const NOGO_QUEUE_MAX_MS = (\d+)/) || [])[1];
+eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
+     grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
+     grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
+     "const M_PER_DEG_LAT = " + M_PER_DEG_LAT + ";" + "\n" + grab("ensureNogoCovers"));
 
 async function drive(fetchResult) {
   setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
@@ -306,6 +345,257 @@ async function drive(fetchResult) {
   check("15. state.js ships a CONSERVATIVE depth floor for the pre-vessel window",
         !!dflt && parseFloat(dflt[1]) === 1.0,
         "default floor " + (dflt ? dflt[1] : "not found") + " m (the vessel raises it)");
+
+
+  // ── 19. AN EXTRACT IN FLIGHT IS SOMETHING TO WAIT FOR, NOT A REASON TO SAY "DONE" ──
+  //
+  // refreshNogo used to `return` at once while one was running. Its callers then handed
+  // their own callers the PREVIOUS box's `nogo.ready` as coverage of water nobody had
+  // fetched - and outside the extract the keep-out model is EMPTY, which reads as CLEAR
+  // rather than as unknown. Driven end to end: a Go-To clicked 9.8 km away during the
+  // automatic 3 km re-extract was planned as a STRAIGHT LINE through a charted island,
+  // with no banner at all, and the identical click a second later detoured 616 m round it.
+  // resetForNewArea already waited this window out by hand; the plan paths never did.
+  {
+    // A fetch that does not resolve until we let it, so a second caller really does arrive
+    // mid-flight rather than after.
+    let release = null;
+    const held = new Promise(r => release = r);
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    const boxes = [];
+    // ⚠ CONCURRENCY IS WHAT `while` BUYS, AND ONLY A COUNTER CAN SEE IT. With `if` all three
+    // still fetch all three boxes and the last one still wins, so a check on the boxes alone
+    // stays green - the difference is that two extracts are then IN THE AIR AT ONCE, each
+    // clobbering the other's pending promise. Measured here, not inferred.
+    let inFlight = 0, maxInFlight = 0;
+    FETCH = async (b) => {
+      boxes.push(b); inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      try { await held; return { band: "enc_5" }; } finally { inFlight--; }
+    };
+    const first = refreshNogo(null, { W: -70.8, S: 43.0, E: -70.7, N: 43.1 });
+    await Promise.resolve();
+    const busyMid = nogo.busy;
+    // ⚠ TWO MORE CALLERS ARRIVE WHILE THE FIRST IS STILL IN THE AIR, not one. With a single
+    // waiter an `if` is indistinguishable from a `while`: the one wake is the only wake. It
+    // takes a THIRD to show that a waiter which wakes to find `busy` set again by the waiter
+    // ahead of it goes round once more instead of falling through into a second concurrent
+    // extract. Each asks for a DIFFERENT box, so the last one to land is identifiable.
+    const second = refreshNogo(null, { W: -70.6, S: 43.0, E: -70.5, N: 43.1 });
+    const third  = refreshNogo(null, { W: -70.4, S: 43.0, E: -70.3, N: 43.1 });
+    await Promise.resolve();
+    const fetchesWhileHeld = boxes.length;
+    release();
+    await first; await second; await third;
+    const overlapped = boxes.some((b, i) => i > 0 && b.E === boxes[i - 1].E);
+    check("19. a refresh that arrives MID-EXTRACT waits for it and then does its own, so "
+          + "the box each caller asked for is a box that lands - and three waiters queue, "
+          + "they do not pile in together",
+          busyMid === true && fetchesWhileHeld === 1 && boxes.length === 3 && !overlapped
+          && maxInFlight === 1 && nogo.bbox && Math.abs(nogo.bbox.E - (-70.3)) < 1e-9,
+          "while the first was in flight: busy=" + busyMid + ", fetches=" + fetchesWhileHeld
+          + "; after all three settled: " + boxes.length + " fetch(es) for boxes ending "
+          + boxes.map(b => b.E).join(", ") + ", most in flight at once=" + maxInFlight
+          + ", nogo.bbox.E="
+          + (nogo.bbox ? nogo.bbox.E : "none")
+          + ". It used to return at once and leave the caller holding the FIRST box as "
+          + "coverage of water in the second");
+  }
+
+  // 19b. AND A FAILED EXTRACT RELEASES THE WAITERS. The whole point of waiting is that the
+  // caller gets an answer; a throw that never settles the pending promise would hang the
+  // Go-To for ever instead of ending it in the ordinary refusal.
+  {
+    let release = null;
+    const held = new Promise(r => release = r);
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    let n = 0;
+    FETCH = async () => { n++; if (n === 1) { await held; throw new Error("connection reset"); }
+                          return { band: "enc_5" }; };
+    const first = refreshNogo(null, { W: -70.8, S: 43.0, E: -70.7, N: 43.1 });
+    await Promise.resolve();
+    const second = refreshNogo(null, { W: -70.6, S: 43.0, E: -70.5, N: 43.1 });
+    await Promise.resolve();
+    release();
+    const landed = await Promise.race([
+      Promise.all([first, second]).then(() => "both returned"),
+      new Promise(r => setTimeout(() => r("HUNG"), 1500)),
+    ]);
+    check("19b. ... and a FAILED extract releases the waiter rather than hanging it",
+          landed === "both returned" && nogo.busy === false,
+          landed + "; busy=" + nogo.busy + ", fetches=" + n
+          + ". A waiter stranded on a promise nobody settles is a Go-To that never answers");
+  }
+
+  // 19c. THE DEADLOCK STOP. `busy` can be left standing by a throw ABOVE the try - in
+  // updateNogoUI or nogoStatus - with nothing in flight to wait for. The guard is
+  // `busy && pending`, so that case PROCEEDS rather than spinning for ever. Without the
+  // second half this check hangs, which is exactly the failure it exists to prevent.
+  {
+    setNogo({ ready: false, busy: true, frame: null, ko: null, band: null,   // stranded
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    let n = 0;
+    FETCH = async () => { n++; return { band: "enc_5" }; };
+    const landed = await Promise.race([
+      refreshNogo(null, { W: -70.6, S: 43.0, E: -70.5, N: 43.1 }).then(() => "returned"),
+      new Promise(r => setTimeout(() => r("HUNG"), 1500)),
+    ]);
+    check("19c. a `busy` flag left standing with nothing in flight does not hang the next "
+          + "refresh - it proceeds",
+          landed === "returned" && n === 1,
+          landed + " after " + n + " fetch(es). `while(busy && pending)`, not `while(busy)`: "
+          + "a throw above the try strands busy at true, and a wait on a promise that was "
+          + "never created is a console that stops planning");
+  }
+
+
+
+  // 19g. AND THE QUEUE IS BOUNDED. `fetchENCBbox` is a bare `fetch` with no timeout and no
+  // AbortController, so an extract that never returns would take every Go-To, RTH and punch
+  // on the page with it - for ever, and with no banner. That is a worse failure than the one
+  // the queue fixes, and the repo already knows it: resetForNewArea bounds ITS wait at the
+  // same 8 s, and check 2 above exists so a hung fetch stays VISIBLE as a hung fetch. Past
+  // the bound a waiter PROCEEDS rather than refusing - the caller then gets a real answer,
+  // and the coverage test at the end of ensureNogoCovers is what keeps that answer honest.
+  //
+  // ⚠ DRIVEN AGAINST A FETCH THAT NEVER SETTLES, with the bound read off the page. The clock
+  // is not mocked: the check waits the real 8 s once, which is the price of proving that the
+  // thing which used to hang does not.
+  {
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    let n = 0;
+    const forever = new Promise(() => {});
+    FETCH = async () => { n++; if (n === 1) await forever; return { band: "enc_5" }; };
+    const hung = refreshNogo(null, { W: -70.8, S: 43.0, E: -70.7, N: 43.1 });
+    await Promise.resolve();
+    const t0 = Date.now();
+    const landed = await Promise.race([
+      refreshNogo(null, { W: -70.6, S: 43.0, E: -70.5, N: 43.1 }).then(() => "returned"),
+      new Promise(r => setTimeout(() => r("HUNG"), NOGO_QUEUE_MAX_MS + 6000)),
+    ]);
+    const waited = Date.now() - t0;
+    check("19g. ... and the wait is BOUNDED: an extract that never returns does not take the "
+          + "console's planning with it",
+          landed === "returned" && waited >= NOGO_QUEUE_MAX_MS - 500
+          && waited < NOGO_QUEUE_MAX_MS + 4000 && n === 2,
+          landed + " after " + waited + " ms against a bound of " + NOGO_QUEUE_MAX_MS
+          + " ms, with " + n + " fetch(es) issued. Unbounded, this call never returns and "
+          + "every Go-To, RTH and punch on the page waits behind it in silence");
+    void hung;
+  }
+
+  // ── 19d. THE CALLER'S QUESTION, THROUGH THE BUSY WINDOW ─────────────────────────────
+  //
+  // This is the fault as the operator met it: the boat passes the 3 km trigger, onState
+  // fires the automatic re-extract, and a Go-To is clicked 9.8 km away while it is in the
+  // air. ensureNogoCovers asked refreshNogo, which returned AT ONCE, and then answered TRUE
+  // on the strength of the PREVIOUS box - so the leg was planned as a straight line through
+  // a charted island, with no banner, and the identical click a second later detoured 616 m
+  // round it. Driven here through the real ensureNogoCovers rather than asserted of
+  // refreshNogo alone, because the caller's answer is what the planner acts on.
+  {
+    let release = null;
+    const held = new Promise(r => release = r);
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    const boxes = [];
+    FETCH = async (b) => { boxes.push(b); return { band: "enc_5" }; };
+    await refreshNogo(null, { W: -70.78, S: 43.02, E: -70.65, N: 43.11 });   // the operating box
+    const small = { ...nogo.bbox };
+    // the automatic re-extract goes out and is still in the air
+    FETCH = async (b) => { boxes.push(b); await held; return { band: "enc_5" }; };
+    const auto = refreshNogo(null, { W: -70.79, S: 43.02, E: -70.66, N: 43.12 });
+    await Promise.resolve();
+    const busyMid = nogo.busy;
+    // ...and the operator clicks Go-To, 9.8 km east, outside anything fetched
+    const target = { lat: 43.07, lon: -70.56 };
+    const ask = ensureNogoCovers([target], 300);
+    await Promise.resolve();
+    release();
+    const answered = await ask;
+    await auto;
+    // ⚠ STRICTLY INSIDE THE FUNCTION'S OWN 300 m PAD (~0.0037 deg of longitude here), not a
+    // round number of my own: a `need` wider than the box the function actually asks for
+    // fails for arithmetic rather than for behaviour, which is how the first cut of this
+    // check went red against a correct fix.
+    const need = { W: target.lon - 0.002, S: target.lat - 0.002,
+                   E: target.lon + 0.002, N: target.lat + 0.002 };
+    check("19d. a plan asked for DURING the automatic re-extract is answered about its own "
+          + "water - it waits, fetches the union, and the target's box really is covered",
+          busyMid === true && answered === true && bboxContains(nogo.bbox, need)
+          && !bboxContains(small, need) && boxes.length === 3,
+          "mid-extract busy=" + busyMid + "; ensureNogoCovers answered " + answered
+          + " after " + boxes.length + " fetch(es); the target's box was OUTSIDE the "
+          + "operating box (" + bboxContains(small, need) + ") and is inside the model now ("
+          + bboxContains(nogo.bbox, need) + "). It used to answer true having fetched nothing");
+  }
+
+  // 19e. ACCEPTANCE: water the model already covers still answers TRUE, and costs no second
+  // extract. A fix that always answered false, or always re-fetched, would satisfy 19d and
+  // make every ordinary plan pay for an extract it does not need.
+  {
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    painted = []; banners = [];
+    let fetches = 0;
+    FETCH = async () => { fetches++; return { band: "enc_5" }; };
+    await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+    const before = fetches;
+    const inside = await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }], 300);
+    check("19e. ACCEPTANCE: water the model already covers still answers TRUE, and costs no "
+          + "second extract",
+          inside === true && fetches === before,
+          "answered " + inside + " after " + (fetches - before) + " further fetch(es) - the "
+          + "contained-check short-circuit is what keeps an ordinary plan free");
+  }
+
+  // 19f. AND THE SURVEY PATH ASKS THE SAME QUESTION THE SAME WAY. ensureNogoArea is the
+  // other caller - the one punchOut acts on - and it met this fault from its own side: an
+  // auto re-extract in flight left it answering TRUE while `nogo.features` still held the
+  // PREVIOUS area's keep-outs, so the new survey was clipped against the old sea. Both now
+  // go through refreshNogo's queue (19-19d) and both end on the same coverage test. Source,
+  // because the two endings are the thing being held together and a second driven fixture
+  // would only re-test the queue; measured against master, ensureNogoArea returned ok=true
+  // with features ["OLD-1","OLD-2","OLD-3"] and punchOut's own gate let it through.
+  {
+    const area = H.slice(H.indexOf("async function ensureNogoArea"),
+                         H.indexOf("async function ensureNogoCovers"));
+    const covers = H.slice(H.indexOf("async function ensureNogoCovers"),
+                           H.indexOf("async function ensureNogoCovers") + 3000);
+    const ends = (src) => /return nogo\.ready && bboxContains\(nogo\.bbox, b\);/.test(src);
+    check("19f. the SURVEY path and the plan path answer the same question the same way - "
+          + "both end on whether the model covers THIS box, not on whether a model exists",
+          ends(area) && ends(covers) && /await refreshNogo\(/.test(area)
+          && /await refreshNogo\(/.test(covers),
+          "ensureNogoArea ends on the coverage test: " + ends(area)
+          + "; ensureNogoCovers: " + ends(covers)
+          + ". Two readers of one model that disagree about what 'covered' means is how the "
+          + "survey path and the plan path came to give different answers about the same sea");
+  }
+
+  // ⚠ AND ONE HALF OF THE FIX IS RECORDED AS UNCOVERED RATHER THAN CLAIMED. ensureNogoArea
+  // and ensureNogoCovers now end `return nogo.ready && bboxContains(nogo.bbox, b)`, and with
+  // the queue above in place no fixture can reach a state where those two disagree: after
+  // refreshNogo the model either covers the asked box or the extract failed and `ready` is
+  // false. Measured, not assumed - reverting the `&& bboxContains` alone leaves every check
+  // here green, and reverting the QUEUE alone turns the answer from true into false, which
+  // is what shows the two halves do different jobs: the queue makes the answer true for the
+  // right reason, and the bboxContains makes it honest if anything ever returns early again.
+  // It costs one comparison and is the difference between "cannot happen" and "must not
+  // happen"; it is kept for the same reason edgeAround keeps its astern test.
 
   summary();
 })();

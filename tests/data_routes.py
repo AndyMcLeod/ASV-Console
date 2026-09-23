@@ -619,6 +619,33 @@ try:
           "a deleted ROC must hear about it",
           lambda: c12 == 404 and r_feed.get("ok") is False,
           lambda: "%s ok=%s" % (c12, r_feed.get("ok")))
+
+    # ⚠⚠ 12c. A COORDINATE THAT IS NOT A COORDINATE IS REFUSED AT THE FACE. `op:"feed"` is the
+    # external HTTP push - any GPS bridge or ship nav PC posts to it - and it was the only
+    # coordinate path on this console with no range guard at all. A ROC can BE home, RTH
+    # drives to its arrival point, and a nan reaching there makes every /api/state body and
+    # every SSE frame INVALID JSON: the page cannot parse them, drops every frame, and raises
+    # TELEMETRY STALE. The registry is persisted, so that survives a page reload AND a
+    # console restart.
+    #
+    # ⚠ THE LAST ASSERTION IS THE ONE WITH TEETH. After the bad pushes /api/state must still
+    # be parseable JSON - a check that read only the status code would pass happily on a
+    # console that had already been poisoned.
+    _bad = [float("nan"), float("inf"), 1e12, 95.0]
+    _codes, _errs = [], []
+    for _v in _bad:
+        _c, _r = cmd(port, "/api/roc", {"op": "feed", "id": r_add.get("id"),
+                                        "lat": _v, "lon": -75.1})
+        _codes.append(_c)
+        _errs.append((_r.get("error") or "")[:48])
+    _cs, _state = api(port, "/api/state")
+    check("12c. a coordinate that is not a coordinate is REFUSED at the /api/roc face, and the "
+          "console is still emitting parseable JSON afterwards",
+          lambda: all(c == 400 for c in _codes)
+                  and all("out of range" in e for e in _errs)
+                  and _cs == 200 and isinstance(_state, dict),
+          lambda: "nan/inf/1e12/95 -> codes %s, errors %s; /api/state %s parseable=%s"
+                  % (_codes, _errs[:1], _cs, isinstance(_state, dict)))
     cmd(port, "/api/roc", {"op": "remove", "id": r_add.get("id")})
 
     # ---- THE VESSEL SWITCH, LAST (it moves the boat to Lake Erie and back) --------- #
@@ -630,6 +657,31 @@ try:
           and api(port, "/api/vessels")[1].get("active") == "drix08",
           lambda: "%s %s" % (c8, (sw.get("error") or "")[:44]))
     cmd(port, "/api/cmd/arm", {"on": False})
+
+    # ⚠⚠ 8b. AND A LATCHED E-STOP IS TOLD WHAT IS ACTUALLY HOLDING IT. All three switch
+    # gates read `armed or estop or run != "idle"` and answered "disarm and stop the run" - but
+    # `set_estop` DISARMS and sets run "idle" as it latches, so with a latch held the operator
+    # was asked to do two things they had just done, while the one condition actually blocking
+    # the switch was never named. This project's own rule: a message naming a cause the
+    # operator cannot act on is worse than no message.
+    # ⚠ CHECK 8 ABOVE IS THE CONTROL, and it is what makes this a check rather than a
+    # tautology: 8 drives the ARMED case and still expects the old sentence, so a gate that
+    # answered every refusal with the E-STOP wording would fail it.
+    cmd(port, "/api/cmd/estop", {"on": True})
+    _ce, _se = cmd(port, "/api/vessel", {"id": "zboat_1800hs"})
+    _cp, _sp = cmd(port, "/api/ports", {"id": "pago_pago"})
+    _cst, _sst = api(port, "/api/state")
+    cmd(port, "/api/cmd/estop", {"on": False})
+    check("8b. ... and a LATCHED E-STOP is refused in words that name the LATCH, not the two "
+          "conditions it has already satisfied",
+          lambda: _ce == 409 and _cp == 409
+          and "E-STOP" in (_se.get("error") or "") and "E-STOP" in (_sp.get("error") or "")
+          and _sst.get("armed") is False and _sst.get("run") == "idle"
+          and _sst.get("estop") is True,
+          lambda: "with armed=%s run=%s estop=%s the switch said %r"
+                  % (_sst.get("armed"), _sst.get("run"), _sst.get("estop"),
+                     (_sp.get("error") or "")[:70]))
+
     zspawn = json.load(open(os.path.join(APP, "vessels", "zboat_1800hs.json"),
                             encoding="utf-8"))["spawn"]
     # where the console is BASED - the position the boat must keep across a hull switch
@@ -696,6 +748,26 @@ try:
           d_nc < 1e-4,
           "boat %.4f,%.4f vs port %.4f,%.4f (drix08.json's own spawn is Lewes 38.79/-75.16)"
           % ((st11.get("lat_deg") or 0), (st11.get("lon_deg") or 0), ncp["lat"], ncp["lon"]))
+
+    # ⚠⚠ 11d. THE PORT SWITCH IS GATED SAFE, AND THE 409 PATH HAD NO CHECK AT ALL. Moving the
+    # base under a running boat is as incoherent as swapping its physics - which /api/vessel
+    # already refuses - and the gate was written here but never exercised from either side.
+    #
+    # ⚠ AND IT IS TAKEN TWICE ON THE SLOW PATH, WHICH IS THE ACTUAL DEFECT. A port added BY
+    # NAME geocodes (20 s) and snaps to water (90 s), so the first gate reading can be ~110 s
+    # old by the time anything is mutated, and the operator had the console for all of it:
+    # arming and Starting during the lookup was answered ok:True while ENGINE.connect() tore
+    # the running SimVcu down and respawned the boat at the new base. The re-take sits after
+    # the lookup and BEFORE the first mutation, so a refusal leaves the console untouched.
+    api(port, "/api/cmd/arm", {"on": True})
+    c_gate, r_gate = api(port, "/api/ports", {"id": "lewes_de"})
+    _cg, after_gate = api(port, "/api/ports")
+    api(port, "/api/cmd/arm", {"on": False})
+    check("11d. the port switch is REFUSED while the boat is armed, and nothing moves",
+          c_gate == 409 and "disarm" in (r_gate.get("error") or "")
+          and after_gate.get("active") == "new_castle_nh",
+          "armed -> %s %r; active still %s"
+          % (c_gate, (r_gate.get("error") or "")[:44], after_gate.get("active")))
 
     # 12. Switching moves the boat - proving apply_port ran AND the sim respawned.
     c12, sw = api(port, "/api/ports", {"id": "lewes_de"})
@@ -834,6 +906,45 @@ try:
     check("12e. the SHIPPED registry is untouched - no suite reaches ports.default.json",
           real_ids == seeded_ids,
           "real=%s seeded=%s" % (real_ids, seeded_ids))
+
+    # ⚠⚠ 14. THE APPROACH RADIUS IS VALIDATED, AND IT WAS THE ONE COMMAND INPUT THAT WAS NOT.
+    # The endpoint read `float(body.get("m", ...))`, so a non-numeric radius raised and surfaced as
+    # a 500 - which kills the handler's session-log entry - and a non-finite one was ACCEPTED.
+    #
+    # ⚠ AND NaN GOT PAST THE CLAMP, which is why accepting it mattered. `clamp` is two
+    # comparisons, `lo if v < lo else hi if v > hi else v`, and every comparison against NaN is
+    # False, so it returns NaN unchanged. Infinity and negatives clamp correctly; NaN alone escapes.
+    # MEASURED in-process: with the approach radius NaN, a boat driving an 80 m two-leg plan is
+    # still at waypoint 0 after 120 s - both arrival tests compare against this number, so she
+    # never reaches a waypoint, never holds, and the plan never completes.
+    #
+    # ⚠ THE BODY GOES OUT AS A LITERAL, because a bare NaN is not legal JSON but json.dumps
+    # emits it and Python's json.loads accepts it - which is precisely the door it came in by. A
+    # test that sent None instead would be testing a different thing and would pass either way.
+    #
+    # THE PAIR: a plain number must still be ACCEPTED, or a fix that refused everything would pass
+    # the three refusals and break the control the operator actually uses.
+    def _raw_approach(port, raw):
+        req = urllib.request.Request("http://127.0.0.1:%d/api/cmd/approach" % port,
+                                     raw.encode(), {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+
+    _appr = {tag: _raw_approach(port, raw) for tag, raw in
+             (("good", '{"m": 3.0}'), ("text", '{"m": "abc"}'),
+              ("nan", '{"m": NaN}'), ("inf", '{"m": Infinity}'))}
+    check("14. /api/cmd/approach refuses a non-numeric or non-finite radius in WORDS (409), and "
+          "still takes an ordinary one - NaN passes clamp() untouched, and a boat whose approach "
+          "radius is NaN never reaches a waypoint at all",
+          _appr["good"] == 200 and _appr["text"] == 409
+          and _appr["nan"] == 409 and _appr["inf"] == 409,
+          "3.0 -> %s, \"abc\" -> %s, NaN -> %s, Infinity -> %s (a 500 here would also kill the "
+          "handler's session-log entry)"
+          % (_appr["good"], _appr["text"], _appr["nan"], _appr["inf"]))
 
 finally:
     try:

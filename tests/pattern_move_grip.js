@@ -50,7 +50,11 @@ process.on("unhandledRejection", __crash);
 const fs = require("fs");
 const path = require("path");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   let start = H.indexOf("function " + name + "(");
@@ -131,8 +135,11 @@ check("6. render() draws the grip AFTER the boat marker",
 // ever told the operator the handle existed.
 const hints = grab("updatePatReadout");
 check("7. the survey hint names the grip, before AND after the 3rd click",
-      (hints.match(/centre grip|Centre grip/g) || []).length >= 2,
-      (hints.match(/centre grip|Centre grip/gi) || []).length + " mention(s)");
+      // ⚠ "center", since the 2026-09-23 American-English sweep. The PROPERTY is unchanged -
+      // the hint has to name the handle, before and after the third click - and this check is
+      // what caught the rename, which is what a source-anchored check is for.
+      (hints.match(/center grip|Center grip/g) || []).length >= 2,
+      (hints.match(/center grip|Center grip/gi) || []).length + " mention(s)");
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

@@ -31,6 +31,7 @@ TEETH - 11 mutations RUN in a scratch clone, 11/11 caught (recorded results):
 """
 
 import os
+import glob
 import re
 import shutil
 import subprocess
@@ -189,6 +190,51 @@ try:
             using.append(n)
     check("7. no suite still fails on any line containing \"Error\"; the console-output checks use the shared finder",
           lambda: not broad and len(using) >= 11, lambda: "broad match left in: %s; using the finder: %d" % (broad or "none", len(using)))
+
+    # ── 8. EVERY SUITE THAT READS THE PAGE CAN BE POINTED AT A SIDECAR ──────────────────
+    #
+    # A mutation sweep writes its mutants to a copy of static/asv.html and points the suite
+    # at it with ASV_HTML. A suite that reads a FIXED path never sees them and scores every
+    # mutant as SURVIVED - which is worse than having no teeth at all, because the header
+    # then claims teeth it never had. Three suites were caught this way in two days
+    # (port_slew.js, off_track.js, turn_geometry.js), each time by a sweep that came back
+    # unanimously clean.
+    #
+    # ⚠ AND IT IS THE `readFileSync` CALL THAT IS CHECKED, NOT THE FILE. The first audit of
+    # this grepped each suite for the WORD "ASV_HTML" and counted turn_geometry.js as
+    # covered - it has the word, twice, in COMMENTS explaining that a DIFFERENT file has no
+    # override. Every read of the page is tested on its own here, so a suite with one
+    # guarded read and one bare one is caught too, which is what turn_geometry had.
+    page_reads, unguarded = 0, []
+    for js in sorted(glob.glob(os.path.join(HERE, "*.js"))):
+        src = open(js, encoding="utf-8", errors="replace").read()
+        for m in re.finditer(r"readFileSync\(", src):
+            arg = src[m.end():m.end() + 240]
+            depth, end = 1, 0
+            for k, c in enumerate(arg):                 # the call's own argument list
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if not depth:
+                        end = k
+                        break
+            arg = arg[:end]
+            if "asv.html" not in arg:
+                continue
+            page_reads += 1
+            if "process.env.ASV_HTML" not in arg:
+                unguarded.append("%s:%d" % (os.path.basename(js), src.count("\n", 0, m.start()) + 1))
+    check("8. every read of static/asv.html in a suite goes through ASV_HTML, so a mutation "
+          "sweep can point it at a sidecar - a suite reading a fixed path scores every "
+          "mutant SURVIVED and its teeth table is fiction",
+          # the floor proves the SCAN found them: a parser that matched nothing would
+          # otherwise report "all guarded" and pass for ever. 32 today.
+          lambda: not unguarded and page_reads >= 25,
+          lambda: "%d page read(s) across the suites, %s"
+                  % (page_reads, ("all guarded" if not unguarded
+                                  else "UNGUARDED: " + ", ".join(unguarded))))
+
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 

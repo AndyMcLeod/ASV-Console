@@ -1,4 +1,35 @@
 /* ========================================================================
+ * ⚠⚠ ASV OWNS THIS FILE NOW (2026-09-21). DO NOT RE-VENDOR IT.
+ *
+ * Andy, 2026-08-31: "stop updating other projects. We concentrate only on ASV
+ * Console moving forward. There may be components of other projects that we
+ * pull over." The flow is ONE WAY: asv_core is a place to pull FROM, never a
+ * place this repo writes back to. The vendor header below is kept for
+ * PROVENANCE -- it records where this body came from -- and its instruction is
+ * now wrong for this repo, in the same dangerous way it was already wrong for
+ * keepouts.js, routing.js and core_turns.js:
+ *
+ *   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+ *     THIS FILE. If a `--check` there reports this copy as DRIFTED, that is
+ *     correct and expected: it has drifted, on purpose, and here is the whole
+ *     of it.
+ *
+ *       1. `stampSeg` takes a `pad` and CLAMPS instead of dropping, and both
+ *          window culls are padded to match (2026-09-21). Grid points span
+ *          [x0, x0+(W-1)*cell] while the cull ran to x0+W*cell, so a feature
+ *          just outside was culled AND every sample of it rounded to -1, and
+ *          one inside the window past the last row's center rounded to H. The
+ *          dilation had nothing to grow and the boundary row stayed FREE --
+ *          which is the one direction this grid must never be wrong in, because
+ *          routing.js relies on it over-approximating and legPath never
+ *          re-checks a raster-clear leg. Measured: three commanded legs whose
+ *          closest approach was 1.80 m at a 3 m buffer.
+ *
+ * The body here is asv_core's own, pulled across at 2a0b53d, so this copy is
+ * NOT carrying a private fix -- it is ahead of nothing. The header is what
+ * stops a future `vendor.py` run from being harmless-looking.
+ * ======================================================================== */
+/* ========================================================================
  * VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
  *
  *   source : asv_core_js/raster.js
@@ -43,7 +74,7 @@
  * `rasterKeepouts` paints the model into a byte grid, `stampSeg` draws one
  * segment into it, and `dilateGrid` grows the painted cells by the keep-clear
  * buffer. Nothing here knows about latitude, longitude or a frame — the model
- * arrives already in ENU metres and the grid is indexed in cells. That is why
+ * arrives already in ENU meters and the grid is indexed in cells. That is why
  * these three could be shared when the rest of the routing layer could not.
  *
  * MEASURED IDENTICAL BEFORE THE MOVE, 2026-08-19. The ASV console and WorldView
@@ -65,8 +96,26 @@
  * a merge — see the handoff.
  */
 
-/** Stamp a segment into the grid, one cell per step, with no gaps. */
-export function stampSeg(blk, W, H, x0, y0, cell, a, b) {
+/**
+ * Stamp a segment into the grid, one cell per step, with no gaps.
+ *
+ * `pad` is a margin IN CELLS. A sample landing inside it is CLAMPED to the edge
+ * rather than dropped, which is what keeps the boundary rows honest: the grid's
+ * own points span [x0, x0+(W-1)*cell], so a hazard just outside that — or inside
+ * the window but past the last row's center — rounded to gx/gy = -1 or W/H and
+ * was thrown away, leaving the boundary row FREE with the dilation then having
+ * nothing to grow. Measured on a 100x100 grid at 3 m: a quay 1.8 m below the
+ * first row left 100 cells the exact `blocked()` test refuses, and `legPath`
+ * shipped three commanded legs whose closest approach was 1.80 m at a 3 m buffer.
+ *
+ * ⚠ THE TEST IS PER SAMPLE, NOT PER FEATURE, and that is what stops the clamp
+ * dragging distant geometry onto the edge: a landmass 5 km outside still paints
+ * exactly what it painted before. Clamping over-approximates by up to `pad` cells
+ * on the outermost rows, which is the direction routing.js already relies on —
+ * "over-approximates the keep-outs, so a raster-clear shortcut is genuinely
+ * clear". Under-approximating is the one thing this grid must never do.
+ */
+export function stampSeg(blk, W, H, x0, y0, cell, a, b, pad = 0) {
   const ax = (a.e - x0) / cell, ay = (a.n - y0) / cell;
   const bx = (b.e - x0) / cell, by = (b.n - y0) / cell;
   const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
@@ -74,7 +123,10 @@ export function stampSeg(blk, W, H, x0, y0, cell, a, b) {
     const t = i / steps;
     const gx = Math.round(ax + (bx - ax) * t);
     const gy = Math.round(ay + (by - ay) * t);
-    if (gx >= 0 && gy >= 0 && gx < W && gy < H) blk[gy * W + gx] = 1;
+    if (gx < -pad || gy < -pad || gx >= W + pad || gy >= H + pad) continue;
+    const cx = gx < 0 ? 0 : (gx >= W ? W - 1 : gx);
+    const cy = gy < 0 ? 0 : (gy >= H ? H - 1 : gy);
+    blk[cy * W + cx] = 1;
   }
 }
 
@@ -123,10 +175,18 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
   const X1 = x0 + W * cell, Y1 = y0 + H * cell;
   const gxOf = (e) => (e - x0) / cell;
   const gyOf = (n) => (n - y0) / cell;
+  // THE DILATION RADIUS, HOISTED — the pad has to be at least it, or a feature
+  // clamped onto the boundary row would still not reach the water the buffer
+  // covers. Both window culls below widen by the same margin in world units:
+  // culling a feature that the clamp would have painted is the same hole one
+  // gate up, and it was the half that made case (a) invisible.
+  const rad = Math.max(1, Math.round(buffer / cell));
+  const pad = rad + 1, PM = pad * cell;
 
   for (const poly of ko.polys) {
     const bb = poly.bb;
-    if (bb.x1 < x0 || bb.x0 > X1 || bb.y1 < y0 || bb.y0 > Y1) continue;   // window cull
+    if (bb.x1 < x0 - PM || bb.x0 > X1 + PM
+        || bb.y1 < y0 - PM || bb.y0 > Y1 + PM) continue;   // window cull
     const rg = poly.ring;
     const gy0 = Math.max(0, Math.floor(gyOf(bb.y0)));
     const gy1 = Math.min(H - 1, Math.ceil(gyOf(bb.y1)));
@@ -147,15 +207,16 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
     // The EDGES as well as the fill: a sliver narrower than a cell has no
     // scanline crossing pair to fill, so without this it is simply not there.
     for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
-      stampSeg(blk, W, H, x0, y0, cell, rg[j], rg[i]);
+      stampSeg(blk, W, H, x0, y0, cell, rg[j], rg[i], pad);
     }
   }
 
   for (const ln of ko.lines) {
     const bb = ln.bb;
-    if (bb.x1 < x0 || bb.x0 > X1 || bb.y1 < y0 || bb.y0 > Y1) continue;
+    if (bb.x1 < x0 - PM || bb.x0 > X1 + PM
+        || bb.y1 < y0 - PM || bb.y0 > Y1 + PM) continue;
     for (let i = 1; i < ln.pts.length; i++) {
-      stampSeg(blk, W, H, x0, y0, cell, ln.pts[i - 1], ln.pts[i]);
+      stampSeg(blk, W, H, x0, y0, cell, ln.pts[i - 1], ln.pts[i], pad);
     }
   }
 
@@ -167,7 +228,9 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
     const gx = Math.round(gxOf(pt.e)), gy = Math.round(gyOf(pt.n));
     const rc = Math.round((pt.r || 0) / cell);
     if (rc <= 0) {
-      if (gx >= 0 && gy >= 0 && gx < W && gy < H) blk[gy * W + gx] = 1;
+      // through the padded stamp, or a zero-radius hazard just off the grid
+      // drops the same way a polygon edge used to
+      stampSeg(blk, W, H, x0, y0, cell, pt, pt, pad);
       continue;
     }
     for (let dy = -rc; dy <= rc; dy++) {
@@ -179,5 +242,5 @@ export function rasterKeepouts(blk, W, H, x0, y0, cell, ko, buffer) {
     }
   }
 
-  dilateGrid(blk, W, H, Math.max(1, Math.round(buffer / cell)));
+  dilateGrid(blk, W, H, rad);
 }

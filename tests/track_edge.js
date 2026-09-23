@@ -119,7 +119,14 @@ const fs = require("fs");
 const path = require("path");
 const { bbOf } = require("../static/js/geometry.js");
 const G = require("../static/js/guard.js");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// The real keep-out test, for check 11d: a deviation is only an answer if its via is in
+// water, and asserting that needs the same `blocked` the guard itself calls.
+const { blocked } = require("../static/js/keepouts.js");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 const SRC = fs.readFileSync(path.join(__dirname, "..", "static", "js", "guard.js"), "utf8");
 
 let fails = 0, ran = 0;
@@ -234,6 +241,42 @@ check("8. THE TURN RATE IS THE HULL'S: the same corner is clear for a boat that 
         return tight === "clear" && drix !== "clear";
       },
       "a 10 m turn circle at a corner 7 m off the face reaches 3 m INSIDE the structure");
+// ⚠⚠ 8b. THE PROJECTION MUST NOT CARE HOW FINELY THE ROUTE WAS DRAWN, and it used to care
+// enormously. The waypoint advance sat outside any inner loop, so the index rose by at most
+// ONE per integration step while the position rose by twMs*step - and whenever a step is
+// longer than the waypoint gap the projected boat passes its target every step, turnToward
+// swings it toward a point ASTERN, and the projection flies loops around the boat instead of
+// down the route.
+//
+// ⚠ THIS IS THE SHIPPED SPACING, NOT AN EXOTIC INPUT. The route gap floor in this console IS
+// the approach radius (thinTrack's 1 m floor), and guardTrack passes mission.json's
+// `approach_radius_m`, which ships as 1 m. At 6 kn a 0.5 s step covers 1.5 m, so every step
+// passed a waypoint.
+//
+// MEASURED against a point hazard dead ahead, truth 17.5 s to the buffer: at a 1 m gap the
+// old projection returned NULL and `assess` answered CLEAR - the guard blind into a shoal it
+// was looking straight at. At 60 deg/s it answered "entry in 41 s", 2.3x late, and the rung
+// that should have fired was hold. The identical route at 2 m read 17.5 s and held.
+{
+  const SHOAL = { polys: [], lines: [],
+                  points: [{ e: 0, n: 60, r: 1, kind: "a charted hazard" }], marks: [] };
+  const north = (gap) => { const r = [];
+    for (let d = gap; d <= 200; d += gap) r.push({ e: 0, n: d }); return r; };
+  const GAPS = [1, 2, 5, 10];
+  const TW = KN(6);
+  const TRUTH = 54 / TW;                     // n = 60 - r 1 - BUF 5, straight, no set
+  const hitAt = (gap) => G.projectRoute({ e: 0, n: 0 }, 0, TW, SLACK, north(gap), SHOAL, BUF,
+                                        { turnRateDegS: 20, approachM: 1 });
+  check("8b. the projection answers the SAME for one straight route however finely it is "
+        + "drawn - a 1 m waypoint gap is this console's own floor",
+        () => GAPS.every((g) => { const h = hitAt(g);
+                                  return !!h && Math.abs(h.t - TRUTH) < 1.0; }),
+        "truth " + TRUTH.toFixed(1) + " s; by gap -> "
+        + GAPS.map((g) => { const h = hitAt(g);
+            return g + "m:" + (h ? h.t.toFixed(1) + "s" : "CLEAR"); }).join("  ")
+        + "  (1 m read CLEAR before the waypoint advance was fixed)");
+}
+
 check("9. a boat ALREADY inside the buffer projects t = 0, never clear",
       () => {
         const r = G.projectRoute({ e: -2, n: 0 }, 270, KN(4), SLACK,
@@ -268,6 +311,40 @@ check("11. the deviation taken is VERIFIED by re-projecting the amended track, a
                              Object.assign({}, DRIX, { capM: e.offsetM - G.edgeStepM(BUF) }));
       },
       "score the actual track, never the intention");
+// ⚠⚠ 11d. AND THE VERIFICATION BUFFER IS NOT ASKED OF THE BOAT'S OWN POSITION. `want` is
+// buf + margin = 7.5 m here, and projectRoute tests its FIRST sample - the boat itself. So a
+// hull legitimately outside the buffer and inside buf+margin failed that test identically for
+// EVERY candidate, the search died whole, and the ladder held a boat alongside a structure
+// with open water one step to port. It is not an exotic position: `clipLine` ends a correctly
+// punched survey run about buf + 2 m off the face, which is 7.0 m - inside the dead band.
+//
+// MEASURED across the band, pier face at e = 0: at 6.0, 7.0 and 7.4 m off it, edgeAround
+// returned null; at 8.0 m and beyond it returned a deviation. The discontinuity is the bug.
+// The three clauses below are the whole property - it fires in the band, every via is in
+// genuinely clear water, and open water is untouched (a strict no-op: clearanceM returns the
+// cap there). The boat INSIDE the buffer must still get null, which is `hit.t > 0`'s job and
+// check 11c's subject.
+{
+  const pileAt = (e) => ({ polys: PIER.polys, lines: [],
+                           points: [{ e, n: 60, r: 3, kind: "an obstruction" }],
+                           marks: [], sys: [], chans: [] });
+  const devAt = (e) => G.edgeAround({ e, n: 0 }, 0, KN(4), SLACK,
+                                    [{ e, n: 40 }, { e, n: 200 }], pileAt(e), BUF, DRIX);
+  const want = BUF + G.edgeMarginM(BUF);
+  const band = [-6, -7, -7.4].map(devAt);          // outside buf, inside buf + margin
+  const open = [-8, -10, -20].map(devAt);          // beyond the band: must not change
+  const inBuf = devAt(-4);                         // inside the buffer: still no deviation
+  check("11d. the deviation search is not killed by the boat's OWN clearance — a hull outside "
+        + "the buffer but inside buf+margin still gets one",
+        () => band.every((d, i) => d && !blocked(d.via, pileAt([-6, -7, -7.4][i]), BUF))
+              && open.every((d) => !!d) && inBuf === null,
+        "want " + want + " m; in the band 6.0/7.0/7.4 m off the face -> "
+          + band.map((d) => d ? "via e=" + d.via.e.toFixed(1) : "NULL").join(", ")
+          + "; open water 8/10/20 m -> " + open.map((d) => d ? "via" : "NULL").join(",")
+          + "; inside the buffer at 4.0 m -> " + (inBuf ? "via" : "NULL")
+          + " (a clipped survey run ends at " + (BUF + 2) + " m, inside the band)");
+}
+
 check("12. THE DEVIATION IS VERIFIED WITH ROOM TO SPARE — the amended track is clear at the " +
       "buffer PLUS the margin, not merely at the buffer that triggered it",
       () => {

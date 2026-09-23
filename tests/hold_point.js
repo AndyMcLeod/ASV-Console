@@ -228,6 +228,40 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         + "to sit there' are different sentences to an operator",
         () => ht.heldOff && ht.heldOff.tight === true && /too tight/.test(ht.heldOff.kind),
         ht.heldOff ? ht.heldOff.kind : "no heldOff");
+
+  // ⚠⚠ 6g2: AND THE HOLD DISC IS THE OTHER HALF OF THAT GATE. 6g stands with HOLD_R = 2,
+  // which is UNDER the working margin - so there the two predicates agree, and a gate asking
+  // only for `need` still passes it. They part company in the band ABOVE the margin and
+  // BELOW the hold radius: room for the boat, none for its wander. That band is where this
+  // check has to stand, and it is reachable from the panel - Appr m accepts 0.5 to 50 m.
+  //
+  // The last clause is the one with teeth: the disc the vessel is TOLD it has must cover the
+  // disc the vessel will actually use. Before the gate was removed this returned
+  // heldOff: null, moved 0 and holdClear 8.0 - a boat sent to wander 20 m round a point with
+  // 8 m of water, and told in `hold_clear_m` that it had room.
+  {
+    // The pier face is at n = 6.5 (see 6d), so a point at n = -10 is 16.5 m off it: 11.5 m
+    // of certified water, comfortably over the 6.0 m margin - and still inside the 25 m
+    // disc a 20 m hold radius needs. That band, margin-satisfied and disc-blocked, is the
+    // whole of this check; it does not exist at all when holdR is under the margin.
+    const WIDE = 20;                              // an operator-set Appr m, well over `need`
+    const p13 = { e: 0, n: -10 };                 // 16.5 m off the face -> 11.5 m clear
+    const need13 = H.holdMarginM(0);
+    const wide = P.holdTarget(frame.fromEN(p13.e, p13.n), { holdR: WIDE });
+    const wEn = wide.to ? frame.toEN(wide.to) : null;
+    check("6g2. ... and the HOLD DISC is the other half of that gate: water enough for the "
+          + "BOAT is still no place to hold one that may wander 20 m",
+          () => H.holdClearM(p13, EAST, BUF) >= need13         // the MARGIN is satisfied...
+                && !wide.error && wide.heldOff && wide.heldOff.m > 0  // ...and it moves anyway
+                && wEn && !blocked(wEn, EAST, BUF + WIDE)      // onto water the DISC fits in
+                && wide.holdClear >= WIDE - 1e-9,              // ...and it says so
+          "16.5 m off the face: " + H.holdClearM(p13, EAST, BUF).toFixed(1) + " m clear (margin "
+          + need13.toFixed(1) + " m - SATISFIED), hold radius " + WIDE + " m -> "
+          + (wide.heldOff ? "moved " + wide.heldOff.m.toFixed(1) + " m, holdClear "
+             + wide.holdClear.toFixed(1) + " m"
+             : "NOT MOVED, holdClear " + (wide.holdClear != null
+                ? wide.holdClear.toFixed(1) : "?") + " m"));
+  }
   S.nogo.ko = KO;
 }
 
@@ -284,7 +318,11 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
 
 // ── 9-14. THE PAGE WIRING ──────────────────────────────────────────────────────────
 {
-  const PAGE = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+  const PAGE = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const goTo = noComments(grab(PAGE, "doGoTo"));
   const rth = noComments(grab(PAGE, "doRTH"));
   const tran = noComments(grab(PAGE, "doTransit"));
@@ -301,12 +339,18 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
               && /planNogoRoute\([^)]*holdOpts\(\)\)/.test(goTo),
         "a Go-To that names the pier as its target would hold ON the pier");
+  // The #b_hold handler in full, so the check reads the property rather than a distance.
+  const BH = PAGE.indexOf('$("#b_hold").onclick');
+  const BHOLD_SRC = noComments(PAGE.slice(BH, PAGE.indexOf('$("#', BH + 10)));
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
         () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
               && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
               && /cmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
-              && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(noComments(PAGE.slice(PAGE.indexOf('$("#b_hold").onclick'), PAGE.indexOf('$("#b_hold").onclick') + 300))),
+              // ⚠ THE WHOLE HANDLER, NOT A 300-CHARACTER WINDOW. #b_hold grew a comment
+              // when it started reading its command's answer, and the post fell outside
+              // the window - a check measuring distance rather than the property.
+              && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(BHOLD_SRC),
         "every holding command tells the vessel how much water it has");
   // 9c. EVERY hold point is chosen against the SAME water. Four call sites reach the
   // planner; if one of them forgets the set, a berth commanded from that button is sized by

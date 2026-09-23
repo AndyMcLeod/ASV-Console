@@ -81,7 +81,12 @@ const path = require("path");
 // lets a scenario be written in metres and read back in metres.
 const { toEN, fromEN, distTo, llEN } = require("../static/js/geodesy.js");
 
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run. Without it a sweep writes its
+// mutants to a file this suite never reads and scores every one as SURVIVED - which is
+// exactly what happened to checks 17/17b on their first sweep (2026-09-21). An audit that
+// morning found 21 of the 53 suites reading asv.html had no override at all.
+const H = fs.readFileSync(process.env.ASV_HTML
+                          || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 // a module-level `const NAME = ...;` / `let NAME = ...;` pulled out verbatim
 function grabDecl(name) {
@@ -102,6 +107,10 @@ function grab(name) {
 // The page globals the two functions read. `var` at module scope so the eval'd function
 // declarations - which sloppy-mode direct eval binds HERE - can see them.
 var asv = null, runRoute = null, mission = { waypoints: [], lines: [] };
+// indexedRoute asks the vessel's reported wp_total whether the drawn plan IS the route the
+// index counts into. Null here is "nothing reported yet", which every check below relies on:
+// with no total to disagree with, the drawn plan stands and checks 1-16 read as they always did.
+var S = null;
 var window = { _wpIndex: 0 };
 
 // ONE eval, so currentLegLine and offTrack close over the SAME _legLine memo, and so
@@ -113,7 +122,7 @@ eval(grabDecl("LINE_MATCH_M") + "\n" + grabDecl("_legLine") + "\n" +
      // the DRAWN-LINE numbering the "of: line N" label now goes through (review #18) - the page's own
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
-     grab("currentLegLine") + "\n" + grab("offTrack") + "\n" +
+     grab("indexedRoute") + "\n" + grab("currentLegLine") + "\n" + grab("offTrack") + "\n" +
      "function __resetLegMemo(){ _legLine = {key:'', line:-1}; }");
 
 let fails = 0;
@@ -313,14 +322,87 @@ console.log("Off track - displacement from the leg being flown, not from the nea
         () => !/activeXTE/.test(code) && /activeXTE/.test(H),
         "activeXTE was the value the card printed as off track; the comment that retired it stays");
   const rows = H.split("\n").filter(l => /row\("off track"/.test(l));
-  check("15. every off-track row is fed by offTrack() or says there is no leg",
-        () => rows.length > 0 && rows.every(l => /ot\.m|no leg of advance/.test(l)),
-        rows.length + " row(s) built");
+  // ⚠ "--" IS THE THIRD HONEST ANSWER, and it was missing. indexedRoute's own contract
+  // is that null prints as "--" or as a row saying so - but this row required `ir` in every
+  // branch, so with the route not held it did not degrade, it DISAPPEARED, and a card missing
+  // the row reads as a card whose row had nothing to report. What the check still forbids is
+  // the thing it was written for: a number fed by anything other than offTrack().
+  check("15. every off-track row is fed by offTrack(), or says there is no leg, or says the "
+        + "page cannot measure it - and never by anything else",
+        () => rows.length > 0 && rows.every(l => /ot\.m|no leg of advance|"--"/.test(l)),
+        rows.length + " row(s) built: " + rows.length + " accounted for");
   check("16. no nearest-line INDEX either - the chart highlight is runLineIdx",
         () => !/function updateActiveLine\(/.test(H) && !/activeLine/.test(code)
               && /act = \(i===runLineIdx\)/.test(code),
         "one answer to \"which line is being run\": the timings, the table, the tip and the "
         + "chart stroke all read it, so none of them can disagree with the others");
+
+  // ── 17. THE ROWS THE VESSEL'S WAYPOINT NUMBER INDEXES ────────────────────────────
+  //
+  // `_wpIndex` counts into the UPLOADED route, and a page loaded mid-run does not hold it:
+  // nothing restores `runRoute`, /api/state carries the index and the total but never the
+  // route, and `mission.waypoints` is a DIFFERENT, SHORTER array whenever routePlan spliced
+  // a detour in. Measured on a 40-waypoint routed plan at waypoint 32, same instant, before
+  // and after an F5: "0.0 m right of leg 32→33" became "107.6 m right of leg 21→22" - a
+  // confident number about a leg the boat is nowhere near, while the top-bar pill beside it
+  // still read 32 / 40 off the vessel's own figures.
+  // ⚠ COMPUTED FIRST, THEN ASSERTED. This suite's check() takes a plain detail string, not
+  // a thunk, so it is built at the CALL - a detail that reads the results has to have them
+  // already. (A thunk here prints its own source, which is how port_slew.js's new checks
+  // first reported themselves.)
+  const __drawn = LAWN.slice();
+  const __leg = (() => {
+    mission = { waypoints: __drawn, lines: [L1, L2] };
+    asv = Object.assign({ hdg: 0 }, P(0, 60));
+    window._wpIndex = 1;      // leg LAWN[0]->LAWN[1], which IS survey line 1
+    runRoute = null;                                          // a page loaded mid-run
+    S = { run: "running", wp_total: __drawn.length + 18 };    // ...she is flying a longer one
+    __resetLegMemo();
+    const lost = currentLegLine();
+    S = { run: "running", wp_total: __drawn.length };          // a degraded upload: ONE array
+    __resetLegMemo();
+    const degraded = currentLegLine();
+    runRoute = __drawn;                                        // the page that DID upload
+    __resetLegMemo();
+    const held = currentLegLine();
+    return { lost, degraded, held };
+  })();
+  check("17. currentLegLine names NO leg on a page that did not upload the route - and " +
+        "still names one when the drawn plan IS the uploaded route",
+        () => __leg.lost === -1 && __leg.degraded === __leg.held && __leg.held >= 0,
+        "reload (wp_total disagrees) -> " + __leg.lost + "; degraded upload -> "
+        + __leg.degraded + "; the uploading page -> " + __leg.held
+        + ". A page holding only the drawn plan cannot say which leg the vessel's index "
+        + "means, and -1 is how this function already says 'no leg'");
+
+  // 17b. AND renderIntent'S INDEXED ROWS READ THE SAME ARRAY. Source, because the rows are
+  // built into an HTML string and this suite has no DOM - but pinned on the ARRAY NAME, so
+  // a row quietly moved back onto `rr` is caught. 15 above holds that every off-track row is
+  // fed by offTrack(); this holds WHAT offTrack is fed.
+  const ri = H.slice(H.indexOf("function renderIntent"),
+                     H.indexOf("function renderIntent") + 9000);
+  // """ + W + W + """ AND THE ARRAY IS NOW `cardRoute()`, WHICH IS STRICTLY STRONGER. `indexedRoute`
+  // states the rule - the drawn plan may be used only when it IS the array the index counts
+  // into - and then applies it to `mission.waypoints` while letting `runRoute` past on the
+  // early return. `runRoute` is not "the uploaded array"; it is the array THIS PAGE LAST
+  // INSTALLED, which a refused upload, a staged upload, a drawn-but-unstarted transit or a
+  // second tab all break without anyone doing anything wrong. cardRoute asks the same
+  // `wp_total` question of whichever array was chosen. It is deliberately NOT inside
+  // indexedRoute, which the helm reads - see the note at cardRoute.
+  check("17b. ... and renderIntent's indexed rows - waypoint, next wp and off track - are " +
+        "fed by cardRoute(), which asks the wp_total question of the DRAWN route too, with " +
+        "a row that SAYS SO when it answers null",
+        () => /const ir = cardRoute\(\);/.test(ri)
+              && /function cardRoute\(\)\{[\s\S]*?w\.length !== S\.wp_total/.test(H)
+              && /const ot = ir \? offTrack\(ir, idx\) : null;/.test(ri)
+              && /const nextWp = ir \? \(ir\[idx\] \|\| null\) : null;/.test(ri)
+              && /if\(!ir\) html \+= row\("waypoint", routeSayWhy\(\)/.test(ri)
+              && /this page is drawing /.test(H) && /given up /.test(H)
+              && /not held by this page/.test(H),
+        "a blank row would read as 'on track'; the operator is told what the page CAN " +
+        "establish - the two counts, or the act this page took - and never that another " +
+        "console is flying the boat, which is what it used to say after a Hold pressed here");
+
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

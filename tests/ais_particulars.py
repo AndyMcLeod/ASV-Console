@@ -219,6 +219,59 @@ check("9b. ... and INVENTS no voyage data, because a Class B hull broadcasts non
       lambda: _d24 and "dest" not in _d24 and "draught" not in _d24 and "eta" not in _d24,
       lambda: "carries: %s" % sorted(k for k in (_d24 or {}) if k != "mmsi"))
 
+
+# -- 10. THE AISHUB POLL, which had no coverage here at all ---------------------------
+# ⚠⚠ AISHub IS PRIORITY 30, THE HIGHEST IN THE REGISTRY, and this suite never drove it.
+# It normalized name and type and dropped the rest, so a hull only this feed carries arrived
+# with no length, beam, destination or IMO - and checks 1-9 stayed green throughout, because
+# every one of them drives the NMEA decoder or aisstream.
+_hub = A._aishub_normalize([{
+    "MMSI": 366123456, "TIME": "2026-09-23 11:04:00 GMT",
+    "LATITUDE": 43.07, "LONGITUDE": -70.71, "SOG": 8.2, "COG": 91.0,
+    "HEADING": 90, "NAVSTAT": 0, "NAME": "TEST HULL", "TYPE": 70,
+    "A": 180, "B": 40, "C": 16, "D": 16,
+    "DEST": "PORTSMOUTH", "CALLSIGN": "WDE1234", "IMO": 9134270,
+    "DRAUGHT": 34,
+}])[0]
+check("10. the AISHub poll carries the hull's SIZE, not just its name and type",
+      lambda: _hub.get("length") == 220.0 and _hub.get("beam") == 32.0
+              and (_hub.get("dim") or {}).get("a") == 180.0,
+      lambda: "%s x %s m, dim %s - the highest-priority feed had been discarding all of it"
+              % (_hub.get("length"), _hub.get("beam"), _hub.get("dim")))
+
+check("10b. ... and the destination, call sign and IMO",
+      lambda: _hub.get("dest") == "PORTSMOUTH" and _hub.get("callsign") == "WDE1234"
+              and _hub.get("imo") == 9134270,
+      lambda: "dest=%r callsign=%r imo=%r" % (_hub.get("dest"), _hub.get("callsign"),
+                                              _hub.get("imo")))
+
+# ⚠⚠ AND THE DRAUGHT IS ABSENT ON PURPOSE - this check exists to keep it that way.
+# AIS carries draught in TENTHS of a metre. `_aishub_format_is_raw` decides raw-vs-human for
+# this response by reading the COORDINATES, and says nothing whatever about the unit a draught
+# arrives in. The fixture above sends DRAUGHT 34, which is either 3.4 m or 34 m and nothing on
+# this path can tell. Publishing the wrong one on a console whose keep-out floor IS a depth is
+# worse than publishing none, so it is not taken - and a later hand adding "just one more
+# field" has to argue with this check first.
+check("10c. ... and NOT the draught, whose unit nothing on this path establishes",
+      lambda: "draught" not in _hub and "draft" not in _hub,
+      lambda: "carries: %s - a DRAUGHT of 34 is 3.4 m or 34 m and the raw/human test reads "
+              "the COORDINATES, so it settles nothing here"
+              % sorted(k for k in _hub if _hub.get(k) is not None))
+
+# ⚠ THE PAIR FOR 10: an absent set must stay absent rather than become zeros. All four
+# offsets zero is AIS's not-available encoding, not a zero-metre ship.
+_bare = A._aishub_normalize([{
+    "MMSI": 366999888, "TIME": "2026-09-23 11:04:00 GMT",
+    "LATITUDE": 43.07, "LONGITUDE": -70.71, "NAME": "NO PARTICULARS", "TYPE": 37,
+    "A": 0, "B": 0, "C": 0, "D": 0, "DEST": "@@@@@@@@", "IMO": 0,
+}])[0]
+check("10d. ... and a hull that reports none of it carries none - not zeros, not blanks",
+      lambda: "length" not in _bare and "beam" not in _bare and "dim" not in _bare
+              and "dest" not in _bare and "imo" not in _bare,
+      lambda: "carries: %s - all-four-zero is the not-available encoding and '@@@@@@@@' is "
+              "padding, neither of which may reach the card as a value"
+              % sorted(k for k in _bare if _bare.get(k) is not None))
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

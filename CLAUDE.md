@@ -198,6 +198,1560 @@ divide-by-1000-then-toFixed fingerprint, and a comment that spelled the pattern 
 
 ### ➤ PICK UP HERE
 
+* **⚠⚠ 2026-09-22 — A FOUR-LENS ADVERSARIAL PASS FOUND TWO BLOCKING DEFECTS IN `471ac0de0`,
+  A REGRESSION OF `90e97a024`, AND FOUR OF MY OWN CHECKS PASSING FOR THE WRONG REASON.**
+  Fixed here. **Read this before adding anything to this seam.**
+
+  * **THE DRAWN PICTURE IS ONE THING.** The guard's deviation rung **replaces** `runRoute`
+    with a new array while **mutating** the same `planIntent` in place — so per-field
+    identity guards disagreed, and an accepted Hold left the track drawn with its reasoning
+    nulled. ⚠ The obvious repair has the other horn: keying on the route's identity means an
+    **amended plan never clears**, when an amendment is the *same* plan. The answer is a
+    `planGen` bumped **inside `setPlanIntent`** — called at all eight sites that install a
+    new commanded route and at **neither** of the two that amend one. Verified, not assumed.
+  * **`#b_start` RESTORED UNCONDITIONALLY**, which is the mirror of the fault `command_result`
+    27 calls blocking on the sibling: if the helm rung took the boat during the Start's round
+    trip and the Start was refused, the restore **un-gagged the governor mid-escape**.
+  * **⚠⚠ AND I REGRESSED `90e97a024` WHILE FIXING AN EARLIER LENS.** The stand-down
+    `if(runRoute !== escRoute) return;` was placed above the **whole** retraction, so it
+    fenced the throttle release, the episode record **and the alarm** — a refused in-extremis
+    escape could go **silent again**, the exact defect that commit exists to remove. **It is
+    the drawing that may be overtaken; the alarm never is.** `clearance_guard` 15z9.
+
+  **⚠⚠⚠ SIX OF MY CHECKS PASSED FOR THE WRONG REASON THIS SESSION, IN THREE SHAPES.
+  Not one was caught by reading; every one came from a mutation sweep or a refuter
+  evaluating the predicate against a deliberate revert:**
+  1. **Asserting the fixture's own default.** `command_result` 20 asserted
+     `runRoute === null` **for the refused case** — the literal opposite of its headline —
+     and passed, because the world starts it null and nothing set it. *"Left alone"* and
+     *"never there"* are the same observation until you **seed** it.
+  2. **`indexOf` returns −1.** My re-anchored `guard_resume` 8 and `pause_resume` 15 compared
+     `offset > BHOLD.indexOf("took(r)")`. Delete the gate and the token goes with it, so the
+     comparison becomes `offset > -1` — **true for every real offset.** Both passed for the
+     exact revert they existed to catch. **A check whose failure mode is "the thing I am
+     looking for is absent" must say so, not treat absence as a free pass.**
+  3. **Asserting a value the check itself wrote.** `command_result` 32 set
+     `speedWant = {key:"high"}` **during** the round trip and then asserted it, so deleting
+     `#b_start`'s restore left the value the check had put there; `clearance_guard` 15z9 gave
+     the overtaking route the **same coordinates on every frame**, so the escape rung
+     captured a route indistinguishable from the one it was later compared against. Both
+     passed on the very defect they exist for.
+
+  **⚠ AND SOMETIMES NEITHER HALF ALONE IS THE PROPERTY.** The repair for `command_result` 32
+  needed TWO worlds: one where the guard writes `speedWant` in flight (it must NOT be
+  overwritten by the restore) and one where nothing touches it (it MUST come back). The first
+  cannot see a missing restore; the second cannot see an overwrite. **The pair is the check.**
+
+  **THE ONE QUESTION THAT CATCHES ALL THREE SHAPES: when a check asserts a value, ask what
+  that value WAS before the code ran.** If *"the code did its job"* and *"nothing happened at
+  all"* produce the same observation, the check cannot fail.
+
+  **Also folded in:** `speedReconcile`'s re-send now goes through the one door (`sendSpeed`)
+  and is **driven**, not called directly; `#b_hold`'s compare-and-clear got the coverage
+  `#b_stop` already had; an unreadable 409 gates on `refused` (it carries no `state`); and
+  **`#b_pause` was a sixth site** — `markPause()` recorded where she stopped before the
+  console answered, so a pause this tab was never allowed to send left a mark the next Resume
+  would back up from.
+
+* **⚠⚠ 2026-09-22 — A SUITE THAT HAD PASSED FOR WEEKS BLOCKED A COMMIT CONTAINING NO
+  PYTHON, AND IT WAS RIGHT TO FAIL — IT WAS ASSERTING A PROPERTY OF THE WEATHER.**
+  `amend_plan` 15b means *"amending a paused boat does not start her"* and asked it as
+  `sog_kn < 0.5`. But **`sog_kn` is speed over the GROUND and includes the drift**, and the
+  sim integrates the summed set on a PAUSED hull **on purpose** — `pause` leaves `_running`
+  true, and `SimVcu.tick`'s own comment says a boat lying stopped in a stream is carried by
+  it with no force on her at all. So the ceiling tested the day, not the console: measured,
+  paused and amended, **sog 0.61 kn against `env_set_kn` 0.61 kn — the same number**, which
+  is exactly what being *set* rather than *driven* looks like. Two runs in three failed.
+
+  It compares against the published set now, so it asks the question it always meant to ask.
+  **Teeth re-verified against the mutation it exists for** (`link.start()` after
+  `link.amend_plan`): control green, mutant **3.31 kn against a set of 0.63** — killed, and
+  each of the three clauses fails on its own. `Engine.amend`'s docstring carried the same
+  mistake one level up (*"leaves her at 0.00 m and ~0.06 kn"*, a slack-water measurement
+  stated as a property of the gate) and now says **no THRUST**, not no motion.
+
+  ⚠ **AND IT IS THE ONLY ONE — CHECKED, NOT ASSUMED.** Every other place a Python suite
+  asserts a boat is stopped (`estop_chain` 10b and 11, `hold_station` 11g) is asserted on a
+  hull that is E-STOPPED, DISARMED or `idle`, and `SimVcu.tick` integrates the set **only
+  while `_running` and not `_estop`** — so those read a true 0.00 whatever the tide does.
+  **PAUSED is the one state that looks stopped and still drifts**, which is why this was the
+  one check the weather could reach. (Filed, not fixed: `run_link_control` :513 waits on
+  `sog_kn > 0.5` to decide she is under way, and today's 0.65 kn of set satisfies that on a
+  running boat whose prop has not yet taken hold — a readiness wait, not an assertion, so it
+  can only make a later check impatient.)
+
+* **⚠⚠ 2026-09-22 — THE ESCAPE'S CLAIM ON THE THROTTLE NOW ENDS WHERE THE OPERATOR
+  ENDS IT (shipped). Two of the three filed escape-rung defects were the same question, and
+  the answer is not the one-line fix either of them suggested.**
+
+  * **THE LIFETIME WAS COPIED FROM A FLAG WITH THE OPPOSITE SAFETY POLARITY.** `escapeThrottle`
+    says so at its own declaration — *"Its life is `resumeSlow`'s, deliberately"* — so this was
+    a decision, not a slip. But `resumeSlow` holds the boat at **LOW**, where overstaying costs
+    a slow survey; this holds her at **HIGH** and, because `if(escapeThrottle) return null;`
+    sits above **every** decision `speedGovernor` makes, it also stands down the
+    flagged-corner slow-down and the slow-radius turn rule — the two rules that exist because
+    the hull cannot track those geometries at speed. **MEASURED** against the page's own
+    governor: claim standing, flagged corner ahead — the control commands `low`, the claim
+    commands **nothing**. The filed symptom (*"the recovery transit is flown at HIGH"*)
+    understated it: the console's speed control was gone for the rest of the run.
+  * **AND THE DEFECT WAS LOAD-BEARING, which is why the obvious fix is worse.** The guard's
+    release branch at `:2039` also does `commandedSpeed = null` — *"let the governor
+    re-assert"*. The only reason it does not re-assert mid-escape is that the flag is still
+    set. Clearing it there hands the role speed back in the middle of the steer. That branch
+    fires within a few frames of every accepted escape, because the rung overwrites `runRoute`
+    with the single escape point and `guardTrack` projects along exactly that —
+    `clearance_guard` 15z3 prints it: **`levels helm,helm,clear,clear`**, boat unmoved.
+  * ⚠⚠ **AND "THE VESSEL OWNS THE EPISODE" IS A TRAP.** Keying the stand-down on
+    `S.behavior === "escape"` looks like the honest answer — it is vessel state, it survives a
+    reload, a second tab sees it. It is fatal: `Engine.start` keeps the name of a **resumed**
+    run (`resuming = self.run == "paused" and not link.plan_staged`; `if not resuming:
+    self.behavior = "survey"`), so a paused escape resumed still reports `"escape"` and a
+    telemetry-derived gag would pin whatever the resume commanded — **LOW**, via `resumeRun`
+    — with `setRoleSpeed` unable to release a flag it does not own. Found by refutation, after
+    I had verified the mechanism and was ready to build on it.
+  * **THE RULE.** Released by a speed set by hand, or by a commanded motion the vessel **TOOK**
+    — Go-To, RTH, Transit, Hold (Start and Stop already did it) — and by nothing else. Never
+    by the water, never by arrival, never by a clock. Every release goes through one door,
+    `releaseEscapeClaim()`, and every one is fenced on **`planGen`**, because the guard commands
+    at 4 Hz throughout each round trip and an escape claimed inside one must keep the throttle
+    it just took. A boolean snapshot cannot express that: `escapeThrottle === was` is true both
+    when the claim stands and when the rung claimed again.
+  * **TWO THINGS THE OPERATOR READS WERE FALSE AND ARE FIXED WITH IT.** The release branch
+    flashed *"speed back to survey"* during the escape, and the **Mission card cried
+    DISAGREEMENT on every accepted escape** — the vessel at `high`, the row computing the role
+    speed — which is exactly what that row's own comment warns against (*"would train the
+    operator to ignore the one readout that catches a real one"*). `escapeThrottle` had been
+    read in one place and rendered nowhere.
+  * **THE COST, UNSOFTENED.** An escape nobody deals with holds the throttle **indefinitely**,
+    and `reapproachIfSetOff` re-approaches at the vessel's live `speed_key` — HIGH — for as
+    long as the set lasts. There is no expiry. The trade is deliberate: a claim that outlives
+    its episode costs speed, a claim released mid-escape costs the boat. The Mission card row
+    is the only thing on screen that names it.
+  * **7 mutations, 7 killed, control run and READ first** across `guard_resume`,
+    `command_result` and `clearance_guard`. ⚠ One of the seven first reported **SKIP (anchor
+    x0)** because my own mutation string used `\n` against a CRLF file — *a skipped mutation is
+    not a passed one*, and the summary line said "6 killed, 0 survived" while it sat there.
+
+* **⚠⚠ 2026-09-22 — THE INTENT CARD STOPPED BLAMING ANOTHER CONSOLE, AND STOPPED
+  MEASURING AGAINST A ROUTE THE BOAT IS NOT FLYING (shipped).**
+
+  * **THREE FALSE SENTENCES, and the commonest one accused a console that did not exist.**
+    `runRoute === null` was printing two different pieces of news as one — *this page never
+    held the route* and *this page held it and gave it up on purpose two seconds ago* — and
+    the sentence written for the first said **"the vessel is flying one this page did not
+    upload"**. After a Hold pressed HERE, `wp_total` is 1, the drawn survey is still 40, so the
+    indexed route is null and that is exactly what the operator read. `#b_hold`'s own comment
+    had recorded the shape of it since the REFUSED path was fixed; the ACCEPTED path kept
+    printing it.
+  * **THE FIX IS A RECORD, NOT A GUESS.** All seven statements that drop the drawn route now go
+    through `giveUpRoute(why)` and name the act in the same statement. The card reads it back:
+    it says **what this page did**, never what another page did — the second is a claim about
+    a console it cannot see. `routeSayWhy()` has four arms and each says only what the code can
+    establish.
+  * **AND A FOURTH DEFECT, found by reading rather than filed.** `indexedRoute()` states the
+    rule — *"the drawn plan may be used only when it IS the array the index counts into, and
+    `wp_total` is what decides"* — and then applies it to `mission.waypoints` while letting
+    `runRoute` past on the early return. `runRoute` is the array **this page last installed**,
+    which four ordinary paths break with no second tab: a refused/lost upload (see below), a
+    STAGED upload, `doTransit`'s deliberate blocked-transit draw, and a tab that lost
+    supervision. The card has its own `cardRoute()` now, which asks the `wp_total` question of
+    whichever array was chosen.
+  * ⚠ **NOT WIDENED INSIDE `indexedRoute`, DELIBERATELY.** `speedGovernor` stands down on its
+    null, `currentLegLine` feeds every line timing, and `lineMark` is both the pause mark and
+    `markGuardHeld`'s — so widening it there would stand the helm down for the whole of a
+    staged upload and cost both resumes their backtrack. That is a helm decision with its own
+    live check.
+  * **ONE ADDITION TO THE PANEL'S DESIGN, because its own cost analysis said it would read as a
+    regression:** a STAGED upload is a disagreement **the console itself caused** and
+    `plan_staged` is on every frame. Lumped in with an unknown stale route, the card would go
+    quiet for as long as the operator takes to press Start — minutes, single-tab, nothing
+    wrong. Named, and with the staged plan listed **from its own start** (labeled, not
+    positioned by a waypoint number that counts into the plan she is still flying), the card is
+    better than it was rather than quieter.
+  * **WHAT IT DOES NOT DO.** A length test is not an identity test: a Hold sets `wp_total` to 1,
+    so a one-waypoint drawn plan agrees by arithmetic, and a deviation that splices one via in
+    and drops one waypoint leaves the length unchanged. The card **refuses while the counts
+    disagree**; it never asserts a measurement is good. `guardTrack` still projects along raw
+    `runRoute`. And `S.wp_total > 0` switches the test off entirely, so after a spawn or a port
+    change the drawn plan comes straight back — `S.plan_uploaded` is the fact that closes
+    that, and it is **not** closed here.
+  * **A behavior change rides inside a rename, said out loud:** the accepted empty upload was
+    the only one of the seven that left `runUnsafe`, so the red no-clear-detour legs of an
+    abandoned route stayed drawn over a chart with no route on it. It clears now.
+  * **6 mutations, 6 killed, 0 skipped, control read first.** New checks `command_result`
+    43-46 (driven against the page's own `routeSayWhy` and `cardRoute` — the WORDS are the
+    product), `off_track` 15 and 17b re-anchored to the STRONGER property.
+
+* **⚠⚠ 2026-09-22 — THE UPLOAD READS ITS ANSWER (shipped). The commanded-answer seam
+  had one door left, and it was the widest one.**
+
+  * `doUpload` DREW the routed survey and posted it seventy lines later as
+    `.then(stagedNote)` — **not awaited**, and `stagedNote` reads the reply only for
+    `plan_staged`. `cmd()` answers a refusal rather than throwing, so the enclosing catch
+    never fired on one. ⚠ Its EMPTY-plan branch DID read its answer, and that branch's own
+    comment says it *"will essentially never run"*: **the one path that cannot happen checked
+    the reply and the two that always run did not.**
+  * **THE WORST SITE ON THE PAGE FOR IT.** `guardTrack` slices `runRoute` at the VESSEL's own
+    `wp_index` to project the whole clearance ladder; `markGuardHeld` banks it as the
+    remainder a later resume really uploads. Two of `Engine.upload`'s six refusals are
+    everyday operator mistakes — *"ARM before uploading a plan"* and *"the vessel is running
+    a plan - Hold or Stop it first"*.
+  * **THE WIDEST WINDOW ON THE PAGE** is `doUpload`'s unbounded `await guiConfirm`: the
+    telemetry frame the Upload button's own gate was drawn from can be minutes old by the
+    time the post goes out, which is how the arm and E-STOP refusals become reachable
+    *despite* the greyed button. An argument for reading the answer, not against it.
+  * **AND THE CORNER SET MOVED WITH IT, which is the part that can move the THROTTLE.**
+    `cornerSlow` is measured before the post and written only past it: `speedGovernor`
+    commands LOW wherever `S.wp_total === cornerSlowFor` and the vessel's `wp_index` is in
+    the set, and a refused upload was saved only by the coincidence that two route lengths
+    differ — which re-uploading an edited plan of the SAME waypoint count removes.
+    ⚠ A LOST reply drops the set; a REFUSAL keeps it — a refusal establishes she is still
+    flying the plan the corners were measured on, and a lost reply establishes nothing.
+  * **A FALSE COMMENT, FOUND AND CORRECTED RATHER THAN TRUSTED.** The blocked-transit branch
+    said *"plan stays not-uploaded, so Start stays gated"*. `plan_uploaded` is set at two
+    places and cleared **only at init and on connect** — never by a refusal, a Stop or a
+    blocked upload. So from the second upload of a session onward **Start is LIVE and runs the
+    OLD plan while the chart draws the new blocked one.** That branch still draws (its banner
+    promises the highlight, and `runUnsafe` is its only source), so this is recorded as a
+    **real, unfixed cost**, not explained away.
+  * **5 mutations, 5 killed, control read first.** New DRIVEN checks `pause_resume` 1k/1m/1n
+    — that suite already builds `doUpload` a full world, so the teeth are there rather than
+    in a source check. ⚠ One mutation first reported **SKIP (anchor x5)** because the
+    refusal phrasing now appears in five handlers; re-anchored uniquely, it KILLED 1m. **The
+    summary line said "4 killed, 0 survived" with it sitting in the run** — the second time
+    this session a skipped mutation nearly read as a passed one.
+
+* **⚠⚠ 2026-09-22 — A VESSEL-SIDE PANEL'S HEADLINE FINDING WAS HALF RIGHT, AND THE HALF IT
+  GOT WRONG WOULD HAVE AIMED THE FIX AT THE WRONG TARGET. Measured, not read.**
+
+  * **CONFIRMED:** a Start after a **Stop** relabels a guard escape (or a hold) `"survey"`.
+    Measured: `after STOP behavior=escape wp 0/1` then `after START behavior=survey wp 1/1`,
+    with `plan_uploaded` true throughout. My own objection — *"after a Stop, Start begins the
+    uploaded survey, so 'survey' is correct"* — is **refuted**: `wp_total` stays **1**, so she
+    is flying the escape's own one waypoint and holding at the escape point under a false
+    name. The `paused` control keeps `"escape"`, so the exemption works and the gap is the
+    rest states it does not cover.
+  * **AND THE CHAIN DOES FIRE — I MEASURED IT WRONG FIRST, WHICH IS THE LESSON.** I reported
+    that it could not, because the escape sets `run_completion` to `loiter`. The console
+    publishes **TWO** completion fields and the comment above them says outright which one
+    matters: `completion` = `plan_completion()`, *"the command-bar selector and the end-of-plan
+    RTH chain read this"*, and `run_completion` = what THIS run does at its end. The chain
+    tests `s.completion`, the operator's **standing** setting, which stays `rth` throughout.
+    My probe printed `run_completion || completion`, so a truthy `"loiter"` MASKED the field
+    that decides. Re-measured against every conjunct of the real predicate:
+    **`completion=rth/run=loiter` ... `CHAIN WOULD FIRE: YES` after Start.** The finding is
+    HIGH as filed. ⚠ A probe that conflates two fields the code deliberately keeps apart is
+    the same defect class as a check that cannot fail — and the answer is the same one: read
+    what the CODE reads, not what looks equivalent.
+  * **AND THERE IS A SECOND CONSEQUENCE the panel did not lead with: Stop then Start does not
+    resume the survey — it RE-FLIES THE ESCAPE.** `SimVcu` holds exactly one plan and the
+    escape's `_run_route` overwrote the operator's survey with its single waypoint, so there
+    is no survey to start. Measured: `after START ... wp 1/1`, holding at the escape point.
+    Their survey is gone from the vessel; the only way back is to Upload again. ⚠ Which is
+    also why HORN A is dead: `start()`'s only evidence of a new plan is `link.plan_staged`,
+    and an upload from REST applies directly rather than staging — so `plan_staged` is False
+    for a genuine new survey and for the leftover escape alike.
+  * **FILED, NOT FIXED** — the fix is two-horned and a panel is on it. Also filed:
+    `SimVcu.estop()` never clears `_paused` (HIGH); `run_completion` goes stale when
+    Stop/E-STOP/disarm consumes the staged plan; `/api/cmd/approach` is the one command input
+    with **no validator** — non-numeric is a 500, and **`nan` is ACCEPTED** and breaks guidance,
+    which is the trap `set_home`'s own comment already documents for coordinates.
+  * ⚠ **`tests/escape_chain.py:163` posts `/api/cmd/stop` WITH NO BODY**, which urllib sends
+    as a GET and the console 404s — so that boat is never stopped. `hold_station.py:428`
+    carries a comment recording the identical bug being found there ("it failed 4 runs in 6")
+    and this line survived it. It does not make check 5 pass falsely (the arm gate answers
+    first either way), but it is a silent no-op.
+
+* **⚠⚠ 2026-09-22 — A HALT NO LONGER RENAMES THE RUN (shipped). Four vessel-side
+  findings; findings 1 and 3 turned out to be ONE defect, two fields three lines apart.**
+
+  * **THE ROOT IS NOT WHAT I FIRST WROTE.** I filed it as *"the halt ends the run without
+    clearing what the run was"* — wrong verb, and it would have aimed the fix at clearing,
+    which is **forbidden** (it would relabel the card SURVEY while the operator is reading
+    IN EXTREMIS). The real root: **`_apply_plan`'s FIRST statement is `self._staged = None`,
+    and it runs inside `stop()`, `estop()` and `set_neutral()` — so a halt that consumes a
+    staged plan destroys the console's only evidence in the very call that installs the plan.**
+    `Engine.start` then asked a question that could no longer be answered, and answered
+    "survey".
+  * **THE RULE:** a plan is handed to the link WITH a name and a completion, both installed at
+    `SimVcu._apply_plan` (the one choke point all five install paths go through), and
+    `Engine.behavior` / `Engine.run_completion` are assigned from `link.loaded_*` **and
+    nowhere else** — so grepping those two assignments is the whole audit. A resume keeps its
+    name by construction: it applies no plan, so the read-back returns what was loaded.
+  * ⚠ **THE DEFAULT IS `"unknown"`, NOT `"survey"`, DELIBERATELY.** "survey" is on the page's
+    chainable whitelist, so a call site that forgot to name its plan would hand the
+    end-of-plan RTH chain a run it may fire from — rebuilding the defect **inside the fix**.
+    An unnamed plan fails safe and fails visibly.
+  * **MEASURED, before and after.** Before: `escape -> STOP -> START` gave `behavior=survey`
+    on the escape's own `wp 1/1`, holding at the escape point, and every conjunct of the chain
+    predicate was satisfied. After: `behavior=escape`, `CHAIN WOULD FIRE: no`. The PAUSE
+    control is unchanged, and `hold -> STOP -> START` keeps `hold` too.
+  * **TWO DEAD ENDS, paid for so nobody rebuilds them:** widening the `resuming` exemption has
+    **no discriminating power** (an upload from rest applies DIRECTLY rather than staging, so
+    `plan_staged` is False for a genuine new survey and a leftover escape alike, and it is a
+    constant False on `VcuLink`); and naming the run in `Engine.upload` fires the chain **on
+    the Upload press**, because upload is permitted while station-keeping.
+  * **ALSO FIXED:** `SimVcu.estop()` now clears `_paused` as its two siblings do — measured,
+    an E-STOPPED paused boat used to come back reading `run=paused` and the page routes Start
+    into `resumeRun()` on exactly that word. ⚠ Deliberately NOT also zeroing `_wp_index`: the
+    asymmetry against `stop()` is the point (a Stop aborts, an E-STOP released continues).
+  * **AND `/api/cmd/approach`, the one command input with no validator.** A non-numeric radius
+    was a **500** (which kills the handler's session-log entry); `NaN` was **accepted**,
+    because `clamp` is `lo if v < lo else hi if v > hi else v` and every comparison against
+    NaN is false, so it returns NaN unchanged. **MEASURED: with the approach radius NaN, a
+    boat driving an 80 m two-leg plan is still at waypoint 0 after 120 s** — both arrival
+    tests compare against it, so she never arrives, never holds, and the plan never completes.
+    Refused in words now. The neighboring door is already safe: `upload_plan`'s `approach_m`
+    comes from the mission, and `save_mission` checks `math.isfinite`.
+  * **FINDING 3 IS MEDIUM, NOT HIGH** — settled at the line and independently by measurement.
+    `run_completion` does not appear in the chain predicate at all (that reads `completion`,
+    the STANDING setting), and the VESSEL is unaffected because its own `_completion` rides in
+    the plan dict. It corrupted a READOUT. It is fixed by the same read-back.
+  * **5 mutations, 5 killed, 0 skipped, control read first.** New checks `escape_chain` 8/9/10
+    and `estop_chain` 11z and `data_routes` 14. ⚠ Check 8 failed first on MY error, not the
+    code's: I asserted `wp_total == 1` when check 6's re-approach leaves 2 aboard, then read
+    the count with no settle and compared a STALE telemetry frame against a fresh one. It
+    asserts the count is UNCHANGED across the halt now.
+
+* **⚠ 2026-09-22 — THE SWITCH GATES NAME THE LATCH (shipped). The last of the six
+  vessel-side findings.**
+
+  All three switch gates — vessel, port-by-id, port-add-and-select — read
+  `armed or estop or run != "idle"` and answered *"disarm and stop the run"*. But `set_estop`
+  **disarms and sets run "idle" as it latches**, so with a latch held the operator was asked
+  to do two things they had just done, and the one condition actually blocking the switch was
+  never named. MEASURED: `armed=False run=idle estop=True` — and the old sentence.
+  ⚠ The ARMED case still gets the original wording, and that is the control that keeps the
+  new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
+  that answered every refusal with the E-STOP words. 1 mutation, killed.
+
+* **⚠⚠ 2026-09-23 — THE STAGGER GATE IS WIDENED (Andy's call, shipped). THE CROSSING
+  SAYS "NEIGHBORS", THE SPAN SAYS "REACHABLE", AND ONE DISTANCE HAD BEEN STANDING IN FOR BOTH.**
+
+  * **THE DEFECT:** the gate compared the STRAIGHT distance between two line ends, so a pair
+    whose runs genuinely reverse but whose ends are far apart ALONG the line — what the chart
+    clip leaves when it cuts two neighbors to different extents — failed it. No turn was
+    attempted and the straight leg shipped: the hull asked to come about at a point, which is
+    the shape `GAP_LINES` exists to prevent, arriving through the one door it did not watch.
+  * **⚠⚠ AND THE NAIVE FIX WAS RIGHT TO BE REJECTED IN 2026-09-08.** The crossing is ALWAYS
+    <= the distance, so swapping one for the other admits pairs whose ends NO TURN CAN SPAN;
+    the ladder refuses those as `degenerate`, a refused reversal is RED, and red refuses Add to
+    plan. That note measured **0 -> 2 unroutable** on a harbour plan doing exactly this.
+  * **SO THE BOUND IS THE LADDER'S OWN.** `turnMaxHalf` is what every turn builder refuses past
+    (`half > maxHalf`), so a pair is buildable as a reversal exactly when its ends are within
+    **twice** it. The gate asks the CROSSING against the spacing and the SPAN against the turn
+    cap — two different questions, where one number had been answering both.
+  * **MEASURED ON HIS SIX COMMITTED PLANS BEFORE IT WAS WRITTEN** (revs 177—231): **94
+    anti-parallel pairs, old gate 93, new gate 94, GAINED 1, would-be-degenerate 0.** The one
+    gained is a genuine staggered reversal — a spacing across, 66 m of stagger, ends 67 m
+    apart against a 120 m span. **That zero is the safety of the change.**
+  * **`acrossTrackM` IS NOW AN EXPORT OF `geometry.js`, because a mutation of its AXIS
+    SURVIVED.** Every check pinned the COMPARISON and none the ARITHMETIC, so computing the
+    along-track component in place of the across-track one — which inverts the entire change,
+    gating on the very quantity that was wrong — walked through all three. Inline trig cannot
+    be driven; as an export it can, and `strike_run` 16m drives it on known geometry.
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped**, control read first. New checks
+    `strike_run` 16h/16j/16k/16m. The technical manual's quoted rule moved with the code, and
+    `survey_order` 10 — which exists to hold the code to what the manual says — moved with
+    both.
+  * **⚠⚠ AND turn_refusal REPORTED IT AS A WRONG ANSWER, NOT A CRASH.** That suite RUNS
+    punchOut; `acrossTrackM` was not in its world, so the call was a bare ReferenceError that
+    **punchOut's own catch swallowed** — reported as *"5 runs, 0 turns built"*. The suite's own
+    header records the same trap from 2026-09-22. **"No turns" has to be read as "something
+    threw" until proved otherwise.** `strike_run` and `survey_order` were unaffected because
+    they read punchOut's SOURCE; only a suite that RUNS a function can be broken by a symbol it
+    lacks.
+
+* **⚠⚠ 2026-09-23 — A NaN ANYWHERE IN A FRAME STOPPED THE CONSOLE UPDATING, SILENTLY
+  AND FOR GOOD (shipped).** The last filed-not-fixed item, and the consequence is measured, not
+  reasoned about:
+
+      clamp(float('nan'), 0, 100)   -> nan      (NaN < lo is False; NaN > hi is False)
+      json.dumps({'fuel_pct': nan}) -> '{"fuel_pct": NaN}'
+
+  * **`NaN` IS NOT VALID JSON.** The browser's `JSON.parse` throws on it, so one non-finite
+    number anywhere in a frame takes the WHOLE frame down — and the frame is the telemetry
+    stream, so the page stops updating **entirely** rather than blanking one field, with
+    nothing on screen to say why. `json.loads` ACCEPTS a bare `NaN`, so it round-trips through
+    `mission.json` as well.
+  * **⚠⚠ AND THE FIX IS NOT "MAKE `clamp` SUBSTITUTE A VALUE",** which is the obvious move.
+    There is no single right substitute: `lo` is the conservative end of a percentage and is a
+    **HARD TURN** at `clamp(d_cross / v_thru, -0.9, 0.9)`, and a silent substitution inside the
+    steering integrator is worse than the NaN, because nothing downstream can tell it happened.
+    `clamp` stays IEEE-transparent and now SAYS so; the guarantee lives where numbers LEAVE.
+  * **BOTH DOORS, not one.** `finite_only()` is applied at `_publish` (the 4 Hz stream) and at
+    the polled `/api/state` — a page fetches the latter on load and would fail before the
+    stream ever opened. Non-finite becomes `null`, which every one of these readouts already
+    shows for "not reported".
+  * **AND THE REACHABLE ENTRY IS THE PLAN FILE.** `json.loads` accepts `NaN` out of
+    `mission.json`, `float()` keeps it, and `clamp` hands it straight to the published state.
+    The two radii go through `_finite()` where they are READ.
+  * **TEETH: 6 mutations, 6 killed, 0 survived, 0 skipped**, control read first, the real source
+    restored in a `finally` and the diff printed after. The one worth naming replaced the deep
+    walk with a **shallow** one — which reads correctly and lets through every NaN in `status`,
+    where `cog_deg` and `heading_deg` live.
+  * **⚠⚠ ONE MUTATION SURVIVED THE FIRST SWEEP, AND IT IS THE THIRD TIME THIS SESSION.**
+    Putting the raw `float(x or default)` back at the call site changed nothing, because check
+    3b tested the HELPER and nothing tested that anyone CALLS it. `setTip` and `lineNo` were the
+    other two. Check 3d pins the call sites.
+  * **AND `spelling.js` FAILED ON MY OWN NEW DOCSTRING** (`LICENCE`, `serialises`) — the guard
+    written two commits ago catching the commit that came after it, which is the entire argument
+    for having written it.
+
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 3: THE RE-JUDGING FINISHED, AND IT
+  FOUND FOUR THINGS AFTER MY OWN SWEEP HAD PASSED CLEAN (shipped).** The 61-gap pass completed:
+  **20 FIXED, 16 WRONG, 11 OVERSTATED, 6 DEFERRED, 8 REAL** surviving adversarial verification
+  — the verifier knocked three of the eleven REALs down, which is the panel working.
+
+  * **THE AISHUB POLL — THE HIGHEST-PRIORITY FEED — THREW EVERY HULL'S SIZE AWAY.** Andy asked
+    for *"the type of vessel, length"* in the AIS capture. Type is carried on every feed; length
+    on two of four. `_aishub_normalize` kept name and type and dropped the rest, and AISHub is
+    `PRIORITY 30`, the top of the registry — so a hull only it carries reached the console with
+    no length, beam, destination or IMO at all. It folds `_dims()` in now, the same helper the
+    NMEA decoder and aisstream already use.
+  * **⚠⚠ AND THE DRAUGHT IS DELIBERATELY NOT TAKEN, which `ais_particulars` 10c pins.** AIS
+    carries draught in TENTHS of a metre, and `_aishub_format_is_raw` decides raw-vs-human for a
+    response **by reading the COORDINATES** — it establishes nothing about a draught's unit.
+    Publishing 3.4 m as 34 m on a console whose keep-out floor IS a depth is worse than
+    publishing none. The field names come from AISHub's published format and are **not verified
+    against a live response** (no membership key in this tree); the failure mode is bounded and
+    stated — `_dims` of four Nones returns `{}`, so a wrong key gives exactly today's behavior
+    and never a wrong value. That bound is the only reason this was written at all; MarineTraffic
+    stays unbuilt because its shape changes what a reading MEANS.
+  * **THAT SUITE HAD ZERO AISHUB COVERAGE**, which is why the gap survived: `ais_particulars`
+    drove the NMEA decoder at three message types and aisstream, and never the feed at the top
+    of the priority list. Checks 10/10b/10c/10d added.
+  * **THE OPERATOR ASKED FOR EASED TURNS, GOT NONE, AND WAS TOLD NOTHING.** The rung is
+    *withheld* — not refused — when the spiral is shorter than four times the approach radius,
+    for a good reason the code states. But zero eased turns reads identically whether every
+    attempt was refused (which wants more water) or the rung was never offered (which wants a
+    finer approach radius), and **the remedies are opposite**. `easeOffered` is exported from
+    `turns.js` and the punch reads **the ladder's own test**, not a restated copy — a second
+    copy is how an advisory comes to name a cause the code cannot produce. `turn_geometry` 49 is
+    now DRIVEN on that export rather than matching its text.
+  * **CLR PLAN COUNTED THE SEGMENTS THE KEEP-OUTS LEFT.** *"A line is what the operator drew,
+    not what the keep-outs left of it"* — and the confirmation for the one irreversible action
+    on the card said `mission.lines.length`, the SEGMENT count. Three drawn lines cut into five
+    read "5 survey line(s)". `lineCount()` now. The waypoint count is left alone: the endpoints
+    it deletes really are per segment.
+  * **⚠⚠ FOUR BRITISH WORDS MY OWN GUARD NEVER CONTAINED** — `artefact`, `litre`,
+    `defence`, `draught` — found by the re-judging AFTER both my sweep and `tests/spelling.js`
+    had run clean. **A word list built from what a grep turned up is a list of the mistakes
+    already made, not of the ones available to make.** Widened, with two refinements a blunter
+    list would have got wrong: `programme` is NOT added (every hit was `programmer`, correct
+    American English — the pattern now refuses a stem carried on by `er`/`ing`), and `draught`
+    is exempted where it is **the AIS payload key** (`STATIC_KEYS`, `v.draught`) rather than
+    prose about a hull. Third exemption, asserted like the other two.
+  * **⚠ AND A JUDGE WAS WRONG ABOUT THAT, CHECKED RATHER THAN TAKEN.** It reported the manual
+    naming `draught` while *"the field the server actually serves is `draft`"*, citing
+    `contracts.js`. That is `draft_m`, **the vessel profile's own draft** — a different field.
+    The AIS key really is `draught`.
+  * **`spelling.js` check 4 then failed correctly** on a shared total: it asserted "exactly one
+    exempt line" and a SECOND KIND of exemption appeared. Each kind is counted separately now,
+    so widening any one is a visible edit to the check that owns it.
+  * **THREE MORE WORLDS CAUGHT NEW DEPENDENCIES** — `plan_save` on `lineCount` (a named crash,
+    the crash guard doing its job). ⚠ Repairing it through a shell heredoc **ate a backslash and
+    wrote a literal newline into a JS string literal**, and left four lone-LF lines in a CRLF
+    file; repaired by byte range with the ending count asserted afterwards. Fourth heredoc
+    mangling this session — the Write tool is the rule for a reason.
+
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 2: FOUR READOUTS THAT SAID THE WRONG
+  THING (shipped).** All 8 REAL findings from the re-judging are now closed. Final tally of the
+  61: **16 FIXED** by this review's own commits, **15 WRONG**, **9 OVERSTATED**, **6 DEFERRED**
+  to Andy, **8 REAL** — seven low, one medium.
+
+  * **"WHAT IS THIS LINE?" SAID "NOTHING" ABOUT A LINE THE CONSOLE HAD DRAWN ITSELF** (the one
+    MEDIUM, and Andy's own filed words: *"what is the story with the line heading out to the
+    northwest — it's a green line"*). `drawMarks` strokes a GREEN dashed line through the
+    port-hand marks and a RED one through the starboard-hand marks of every channel system,
+    unconditionally from `render()`. `identifyAt` scanned `ko.lines` and `ko.polys` and **never
+    `ko.sys`** — so the readout answered *"Nothing the console drew is within 12 pixels of
+    that point"* about its own ink, and advised clicking nearer a line the operator was already
+    on. It names the chain and **which side it is**, because the PORT-hand chain is what the
+    Rule 9 lane is measured a quarter-width to starboard of.
+  * **THE TOOLTIP SUPPRESSION HAD BEEN APPLIED TO ONE BRANCH OF ONE PILL.** The mechanism works
+    by REMOVING the `title` attribute while hovered, so any runtime write puts it straight back.
+    The energy pill's FUEL branch was routed through `setTip` and carries the comment *"see
+    setTip: not under the pointer"* — and the **BATTERY branch seven lines below it, on the
+    same pill in the same `onState` frame**, wrote `pill.title` directly. The fix landed for a
+    fuel vessel and missed every battery one, which is this console's own default hull. Five
+    more per-frame writers went with it: the live run-time tip, the water card's two, and the
+    env card's wind and sea.
+  * **`ui_tooltips` 11-12 ARE THE POINT.** Check 10 drives the real `setTip` and proves the
+    MECHANISM; nothing checked that anyone USED it, which is exactly how the battery branch
+    survived the commit that fixed its neighbour. **Check 12 caught the sea-state pill within a
+    minute of existing** — my own patch had done `updateEnvUI`'s wind writer and left the sea
+    one two lines below, the identical shape as the defect being fixed.
+  * **THE HELD RESUME NAMED A LINE THAT IS ON NO CHART.** Review #18 routed the console's
+    "line N" through `lineNo()`, because a drawn line the keep-outs cut becomes several
+    SEGMENTS. `resumeRun` says *"backed up 92 m down line " + lineNo(pauseMark.line)*;
+    `resumeHeldSurvey` said the same sentence word for word with `(g.mark.line + 1)` — in the
+    operator's note, the "way back is not clear" banner, and **the session log's `line` field**,
+    which is what the episode is reconstructed from afterwards. On a plan with no clipped line
+    the two agree exactly, which is why it went unnoticed.
+  * **⚠⚠ AND THAT CHECK COULD NOT FAIL ON THE SITE THAT MATTERED MOST.** The mutation that
+    put the SESSION LOG back SURVIVED, for two reasons both mine: the regex carried a `(?! *:)`
+    lookahead that **excludes exactly the ternary form the log uses**, and the threshold asked
+    for `>= 3` against FOUR real sites, so reverting one still satisfied it. **A threshold below
+    the true count cannot see a single regression.** Pinned to 4 and the log asserted by name.
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped** after that repair, control read
+    first. New checks: `ui_tooltips` 11/12, `drawn_lines` (held-resume line numbers),
+    `identify_layer` (the buoy chains, DRIVEN in the fixture's own flat plane).
+  * **THREE SUITES CAUGHT THE `setTip` RENAME** — `nogo_readout` and `reading_age` as honest
+    named crashes on the first frame (the crash guard every suite carries, doing its job), and
+    `line_stats` 15 as a source match. All three updated; the property each pins is unchanged.
+
+* **⚠⚠ 2026-09-23 — THE MEDIUMS AND LOWS, BATCH 1: TWO CONVENTIONS THAT DECAYED BECAUSE
+  NOTHING CHECKED THEM (shipped).** The 61 filed gaps were re-judged against the current tree,
+  one agent per gap with an adversarial verifier behind each REAL. Of the first 39: **12
+  FIXED** by the eight commits since they were filed, **9 WRONG**, **6 OVERSTATED**, **6
+  DEFERRED** to Andy, **6 REAL** — every one of them LOW.
+
+  * **AMERICAN ENGLISH HAD ERODED BACK TO 166 SPELLINGS**, with every suite green throughout.
+    The 2026-09-07 pass fixed the BUILDERS, which is the only place it holds — and stopped
+    there. Measured before the sweep: 2 in `build_tech_manual.js`, 2 in `build_ops_manual.js`
+    (**shipped manual prose**), 34 in `asv_console.py`, 128 in `static/asv.html`. Not all
+    comments: `behaviour` was in the `title=` tooltips the operator reads on hover
+    (asv.html 422/430/443/480) and `centreline` in the Rule 9 lane readout itself.
+  * **`tests/spelling.js` IS THE POINT OF THE ENTRY.** A convention with no check is a
+    convention that decays, and this one demonstrably did. **It found two faults in my own
+    sweep within a minute of existing:** 23 spellings in CAPITALS the sweep's word list had
+    missed (`METRES`, `BEHAVIOUR`, `CENTRE`, two of them operator-visible — *"this is the
+    PLACE CENTRE, which is on land"*), and **19 shared modules under `static/js` the sweep had
+    never been pointed at**, carrying 173 more.
+  * **⚠⚠ AND IT STOPPED A SWEEP THAT WOULD HAVE BROKEN CHART PARSING.** `COLOUR` is an
+    **S-57 ENC attribute acronym**, not a word — a key in `ENC_KEEP_PROPS` that the parser
+    reads off published chart data. A blanket uppercase pass would have renamed it to `COLOR`
+    and **silently stopped every channel mark carrying its symbol color through.** The suite
+    surfaced the three lines for inspection instead of my sweep replacing them.
+  * **BOTH EXEMPTIONS ARE ASSERTED, NOT LEFT AS HOLES IN A PATTERN** — check 4 pins the
+    quotation exemption to the ONE line (Andy's own words keep his own spelling; rewording
+    someone without saying so is worse than the inconsistency, which is `survey_card.js`'s
+    rule for the brand substitution) and check 5 pins the S-57 one to THREE. An exemption
+    nobody counts is how a guard stops guarding.
+  * **⚠ AND MY CLAIM THAT NO IDENTIFIERS WERE AT RISK WAS INCOMPLETE.** I checked compound
+    names (`centreline`, `metresPerPixel`, `greyed`) and concluded prose only — but
+    `travelled` is a bare LOCAL in `turns.js` and `metresPerDegreeEllipsoidal` an EXPORTED
+    function in `core_geodesy.js`. Both were renamed consistently (6 uses and 2 respectively,
+    no external importers, verified), and **`corner_slow` 24 and `pattern_move_grip` 7 caught
+    the rename** — which is what a source-anchored check is for. Both updated; the property
+    each pins is unchanged.
+  * **THE DECK STATED A CONSOLE THAT HAD NOT EXISTED FOR SIX WEEKS:** *~11,700 lines across 6
+    source files*, *30 suites / 415 assertions*, against a tree of **28,675 lines across 21
+    files and 96 suites**. Its sprint tile is legitimately DATED and stays; the size and suite
+    figures are now **counted at build time** from the files themselves, per this repo's own
+    rule — assert, do not quote. ⚠ The first derived count was over by one PER FILE
+    (`split(/?
+/)` yields a trailing empty element), reading 28,696; it counts newlines now
+    and reconciles with `wc -l` exactly.
+  * **AND THE SERVER'S FIVE OPERATOR-VISIBLE REFUSALS** (`hold_clear_m`, `coast_from_m`,
+    `manual_offset`) said *metres*. Filed as "11 operator strings"; it was **10 occurrences, 5
+    of which reach an operator** — the count is corrected rather than repeated.
+  * Two standing conventions caught the new suite, both the same ones `enc_cache.js` hit:
+    `precommit_hook` 5 (advice entry) and `docs_valid` 7 (the technical manual refuses to ship
+    a suite with no GUARDS entry). ⚠ And `spelling.js` then failed on **my own GUARDS
+    prose**, which spelled the attribute out — reworded rather than widening the exemption to
+    cover documentation.
+
+* **⚠⚠ 2026-09-23 — UPLOAD ROUTED THE APPROACH OVER WATER THE CHART SCAN NEVER LOOKED
+  AT (shipped).** The last of the review's HIGHS, and the asymmetry is the whole finding.
+
+  * **EVERY OTHER COMMANDED MOTION COVERS THE WATER IT IS ABOUT TO USE, AND EVERY ONE PUTS THE
+    BOAT IN THE BOX:** Go-To `ensureNogoCovers([boat, target])`, RTH `([boat, home])`, Transit
+    `([boat, ...transit])`, a placed mark `([ll], 400)`, and the punch `ensureNogoArea()`.
+    **`doUpload` called neither** — and it is the one that routes an approach from wherever
+    the boat happens to be lying.
+  * **SO IT INHERITED THE PUNCH'S MODEL**, whose chart-ink scan box is `encBbox(120 + lead)`:
+    the survey's own water, which **does not contain the boat**. The survey legs were planned
+    against the ENC *and* the structures the console reads off the chart image; the approach —
+    often the longest leg in the plan — was planned against the ENC alone. An unpublished pier
+    or float system between the boat and the survey was invisible to the approach routing, and
+    the clearance guard reads the same model, **so it was blind on that leg too**. That is the
+    New Castle failure `punchOut`'s own comment records (*"a Go-To went round the piers at New
+    Castle and a survey LINE was clipped through them"*), arriving by the one door that never
+    got the fix.
+  * **AND IT READ AS CLEAR, NOT AS UNKNOWN** — `ensureNogoArea`'s own comment says it in those
+    words. There was no banner and there could not have been one: nothing knew it had not
+    looked.
+  * **THE FIX IS THE CALL EVERY OTHER DOOR ALREADY MAKES**, on this plan's own water:
+    `await ensureNogoCovers([{boat}, ...wps])` before `routePlan`. It is bbox-cached and
+    contained-checked, so a boat already sitting in the surveyed water costs one contains test.
+    ⚠ It is safe to add an await HERE only because `was = {gen: planGen, route: runRoute}` is
+    snapshotted at the TOP of `doUpload`, above every await in it, and the post at the bottom
+    fences on it — a command given while this scan runs is caught exactly as one given during
+    the unbounded `guiConfirm` is.
+  * **TEETH: 4 mutations, 4 killed, 0 survived, 0 skipped**, control read first. New driven
+    check `pause_resume` 1p. ⚠⚠ **TWO SWEEPS WERE NEEDED AND BOTH FAILURES WERE MINE.** The
+    "cover is not AWAITED" mutation — the fix present and doing nothing, because `routePlan`
+    then runs on the model it was trying to extend — survived twice. First because the stub
+    resolved synchronously, so the await was invisible; then because `covered` was **not reset
+    between runs**, so 1p read a value an EARLIER upload had written. **A check that cannot
+    fail, in the exact shape this handoff keeps recording: ask what the value WAS before the
+    code ran.** `up()` already reset five other things for that reason; mine were the omission.
+
+* **⚠⚠ 2026-09-22 — THE PAGE HANG IS MEASURED, REPRODUCED AND FIXED: IT WAS `drawENC`,
+  AND THE POINTER ASKING FOR A REDRAW PER EVENT (shipped).** Review item #29, open since it was
+  first reported and never isolated.
+
+  * **MEASURED LIVE**, console on port 52010 with his `mission.json.bak1` (rev 221) and a temp
+    state dir, browser pane HIDDEN so every figure is a LOWER bound:
+    * one `render()` costs **63.7 ms**; the identical mousemove that hits `if(!dragging) return`
+      costs **0.2 ms** — so the draw is the entire cost, and event dispatch is free.
+    * idle, nobody touching the page: **13 long tasks / 1,795 ms / 35.9 % of the main thread**.
+    * **ENC on 57.5 % vs ENC off 3.4 %**, with **1,304 keep-out zones loaded BOTH ways** (`v_nogo`
+      read `1304 zones - floor 3.0 m`, i.e. essentially the 1,314 of his stall record). So
+      `drawENC` is ~50 points of it and `drawNogo` over 1,304 zones is ~4.
+    * `/api/enc` for one view returns **5,674 features / 481,980 coordinate pairs / 3,372 rings**,
+      and `drawENC` walks that list **THREE times** projecting every coordinate — ~1.4 M
+      projections per render, ~5.8 M per second at 4 Hz.
+  * **AND THE 20.2 s STALL IS REPRODUCED.** SURV mode, three-click pattern down, ENC + NOGO on:
+    **87.5 ms median per pointer event** (141.8 ms worst). A ~2 s corner drag at a 100 Hz pointer
+    rate is ~200 events — **~17.5 s of blocked main thread**, against his recorded **20.2 s**
+    `page_stall` at New Castle in that exact mode. The handoff's "reproducible from those
+    numbers" was right.
+  * **TWO PATHS, TWO FIXES, AND NEITHER ONE ALONE IS ENOUGH.** `onState` calls `render()` ONCE per
+    telemetry frame, so coalescing buys nothing there — what that path needed was a cheaper
+    draw. The chart `mousemove` handler called it **SEVEN times, once per pointer event**, so
+    what THAT path needed was coalescing. (1) the ENC layer is cached to an offscreen canvas;
+    (2) the pointer path goes through `renderSoon()`, one draw per animation frame.
+  * **⚠⚠ THE KEY IS THE WHOLE POINT, AND MY FIRST DESIGN WAS WRONG.** I proposed keying on
+    (view + ENC data). `hazExtent(f)` -> `koOpts()` reads `nogoDR().min`, `V.WRECK_RADIUS_M`,
+    `V.NOGO_BUFFER_M` and **`sea.waterOffset`** — so the hazard circles this layer draws move
+    **with the TIDE** and with the operator's depth floor, neither of which changes the zoom or
+    the origin. That key would have held a layer drawn for a stale tide under an operator with
+    nothing on screen saying so. `chart.js`'s own `koOpts` comment refuses to cache ITSELF for
+    exactly this reason — *"every field is live ... in the direction that gives a deeper boat
+    LESS clearance than its own file demands"* — and `strikeKey` in this file already names the
+    same four. The key names them now.
+  * **THE DATA IS COMPARED BY IDENTITY.** `fetchENCBbox` REPLACES `sea.enc` wholesale, never
+    mutating it, so `===` is exact and free; a feature COUNT would serve the old band's features
+    back after a refetch of the same water at a different depth.
+  * **AFTER: idle 35.9 % -> 1.0 %** (one 50 ms long task in 5 s), ink still on the chart (6,962
+    sampled pixels painted) and a zoom still invalidates the layer and redraws.
+  * **⚠⚠ AND ONE "MEASUREMENT" WAS WORTHLESS, WHICH IS THE LESSON.** The pan re-measure
+    came back at 0.5 ms per move against 63.7 ms before — a 117x improvement, and meaningless.
+    **`requestAnimationFrame` does not fire in a hidden pane**, so the coalesced draw never ran:
+    the number timed a handler that had deferred all its work to a callback that was never going
+    to happen. It is discarded. The IDLE figure survives because `onState` calls `render()`
+    DIRECTLY, so that path runs hidden or not. **A DISPLAYED-PANE PAN MEASUREMENT IS OWED.**
+  * **WHY `render()`'s BODY DID NOT MOVE.** Three suites — `measure_tool`, `pattern_move_grip`,
+    `trail_persist` — `grab("render")` and assert DRAW ORDER inside that source text. Moving the
+    body to a `renderNow()` would break them, and `measure_tool`'s `CHART_LABEL_PX` would fall
+    back to its `|| [0, 10]` default so check 7c would **pass for the wrong reason**. So
+    `render()` keeps its body and its name and the coalescing is applied at the seven call sites
+    that measurably needed it. `measure_tool` 14 caught the rename on its own guarded path and
+    was updated to match — the property it holds is unchanged.
+  * **rAF IS RIGHT HERE AND WRONG IN THE THREE PLACES THIS FILE WARNS ABOUT IT** (asv.html:3516,
+    9628, 9874). Those three are LOGIC and SYNC that must still run in an occluded window, and
+    rAF is suspended there — which is how the window-split mirror froze. This is DRAWING: a
+    window nobody can see has nothing to draw, and `onState`'s direct `render()` keeps the chart
+    current regardless. `enc_cache` 8 pins the telemetry path as NOT coalesced for that reason.
+  * **TEETH: 8 mutations, 8 killed, 0 survived, 0 skipped**, control read first. Four of them
+    drop ONE field from the key each — every one makes the page faster and leaves it showing a
+    layer drawn for a tide, a depth floor or a hull that no longer applies. New suite
+    `tests/enc_cache.js`, 8 checks, the cache DRIVEN against a recording fake context so a hit
+    and a miss are told apart by behavior rather than by grep.
+  * **⚠ THE REFUTATION PANEL WAS STOPPED, NOT COMPLETED.** It ran over an hour without
+    returning. Its five lenses were worked through by hand instead — purity (which is where
+    the `koOpts` hole came from), canvas-state ordering (`cv.width` is assigned on entry to
+    `render()` and assigning width RESETS the context, so the live path and a fresh offscreen
+    canvas both start pristine), the rAF history, what the cache does NOT buy for a pan, and the
+    three source-reading suites. Recorded as stopped rather than as passed.
+
+* **⚠⚠ 2026-09-22 — THE STAGGERED REVERSAL IS NO LONGER SILENT, AND THE GATE TRADE IS
+  MEASURED ON HIS OWN PLANS (shipped).** CLAUDE.md's open item asked for exactly one thing
+  before this was touched: *"that trade needs measuring on his plans first."* Done, and the
+  two halves came apart cleanly.
+
+  * **THE DEFECT, in punchOut's own words since 2026-09-08:** *"ONE STILL DOES, SAID NOWHERE:
+    a pair whose runs reverse but whose ends are further apart than the gate ... is judged a
+    HOP here, no turn is tried, and the straight leg ships. Left for its own change: widening
+    the gate moves real routes."* The gate compares the STRAIGHT distance between two line
+    ends, so two neighbors the chart clipped to different extents fail it, no turn is
+    generated, and the hull is asked to come about at a point — the exact shape `GAP_LINES`
+    exists to prevent, arriving through the one door `GAP_LINES` does not watch.
+  * **WIDENING THE GATE MOVES REAL ROUTES. SAYING SO MOVES NOTHING.** Only the second half is
+    shipped: the pair is routed exactly as before — straight leg, routeAround or red,
+    unchanged — and the punch readout now COUNTS it and gives the along-track offset,
+    because *"judged a hop"* is not something an operator can look for on a chart and *"82 m
+    back down the line"* is. **`strike_run` 16g pins the counting block as free of control
+    flow**, which is the whole licence for making this change without asking: the moment a
+    `continue`, a `return` or a push appears in it, it stops being an observation.
+  * **THE MEASUREMENT, ACROSS HIS SIX COMMITTED PLANS** (`mission.json` + 5 backups, revs
+    177—231, read from `D:\Claude\ASV`, never written): **94 anti-parallel adjacent pairs,
+    93 already admitted by the current gate, and a crossing gate would pull in exactly ONE.**
+    ⚠ ROBUST — his plans are uniformly spaced, so the median, minimum and 25th-percentile
+    spacing estimators return the identical number for every plan and the identical answer;
+    the estimator was never the weak link it looked like. The 2026-09-08 fear (*0 -> 2 red on
+    a harbour plan*) **is not reproduced at this scale**, and the one pair it pulls in has its
+    ends 67.0 m apart — half 33.5 m against a 60 m `MAX_HALF_M` reversal-pair guard — so
+    the turn ladder would genuinely ATTEMPT it rather than refuse it as degenerate.
+  * **AND THE COST OF THE SILENCE, on the Honolulu route the item cites.** ⚠ The PLAN is
+    gone — `mission.json.bak1` has rotated from rev 70 to rev 221 — but the RECORDING
+    survives (`logs/asv_20260916-185954.jsonl`), and the uploaded route is better evidence
+    than the plan anyway: it is what the boat was actually asked to fly, after the punch had
+    made every turn decision. **Of 431 joints, 14 ask the hull to turn through more than 130
+    degrees AT A SINGLE WAYPOINT with both legs 20 m or longer, up to 175.8 degrees.** A
+    further 13 involve a leg under 20 m and may sit inside generated turn geometry; they are
+    counted apart and **claimed as nothing**.
+  * **⚠ AND MY OWN PROBE WAS WRONG TWICE BEFORE IT WAS RIGHT, both times silently.** It
+    selected the upload by `kind == "command"` and the timestamp — and TWO records carry that
+    second, the upload and an `/api/logevent` posted with it, so the loop kept the last, which
+    has no route, and reported *"no route found"* as though the recording were missing data it
+    was sitting on. And its docstring asserted every plan had zero leads; three carry 5, 10
+    and 10 m, which the real gate adds to its own limit. **An assumption stated as a check.**
+  * **TEETH: 5 mutations, 5 killed, 0 survived, 0 skipped**, control read first. Two survived
+    the first sweep and both were the trap `strike_run`'s own check 16 records about
+    `nGapTurn`: `/maxStagger/` matched its own DECLARATION, and `/${nStagger}/` matched text
+    inside the summary expression, so dropping the assignment and deadening the whole readout
+    both left the check green. Guards pinned, not fragments.
+  * **STILL ANDY'S: whether to widen the gate.** The measurement says it is close to a no-op
+    on his current plans and the one pair it changes is a genuine staggered reversal that
+    would get a real turn attempt. The risk it does not answer is a FUTURE harbour plan like
+    the 2026-09-08 one, which no longer exists to re-measure — a red pair refuses Add to plan,
+    which blocks work in the field.
+
+* **⚠⚠ 2026-09-22 — THE CORNER SET NOW DIES WITH THE ROUTE IT INDEXES, AT ALL FOUR
+  DOORS — AND THE GOVERNOR STOPS ACCELERATING INTO THE LADDER'S OWN SILENCE (shipped).**
+  A corner-slowing HIGH from the seventh panel, and the four checks that would have caught it
+  did not exist.
+
+  * **TWO FAILURES IN OPPOSITE DIRECTIONS, FROM ONE MISSING RULE.** `cornerSlow` is keyed on
+    `cornerSlowFor === S.wp_total` — a LENGTH. A deviation that **bends** adds a waypoint, so
+    the key falls silent by itself and every measured corner is flown at the plan speed for
+    the rest of the run, with the upload's promise left standing on screen. One that **moves**
+    a corner replaces a waypoint, **the tail is the same length**, so the key stays TRUE and
+    the set stays ARMED against a corner that has physically moved by up to `edgeCapM(buf)`.
+    That is the page's own *"a slow command at the wrong waypoint is worse than none"*. So
+    **"do nothing" was never the safe default**, and the plausible half-fix `cornerSlowFor =
+    -1` is wrong on exactly the case that matters.
+  * **ONE DOOR: `dropCornerSlow(why)`.** Four callers — the clearance guard's edge rung (both
+    its lost-reply arm and its accepted splice), `resumeRun`'s amendment, and
+    `resumeHeldSurvey`'s re-upload of the remainder. `doUpload` keeps its own three
+    assignments — it re-*arms* rather than retracting. **Dropped, not re-indexed:** the via
+    point is a corner `cornerSlowPlan` never walked and the corners either side of it have new
+    geometry, so a mapped flag is stale in VALUE where it is right in POSITION.
+    ⚠ **And it may not take its caller down with it** — the edge rung's tail is
+    `.catch(() => { guardEdgeAt = 0; })`, so a throw in here would cancel the settling an
+    accepted deviation is entitled to. The three assignments come first and cannot throw; the
+    saying is fenced. **The same asymmetry everywhere:** a REFUSAL keeps the set (she is still
+    flying the plan it measured); a LOST reply drops it (silence is not an answer).
+  * **AND THE SAYING IS HALF THE BEHAVIOR.** On a resume the length key would fall silent by
+    itself — a remainder is shorter — so the operator who was promised corner slowing at
+    Upload gets the wrong outcome **quietly**, and the next Upload arms the whole mechanism
+    again as though it never lapsed.
+  * **THE GOVERNOR'S SETTLE FLOOR, which is the one that moves the throttle.** Rungs 2 and 3
+    of the clearance ladder both begin `if(settling) return c;` — for `EDGE_REASSESS_MS` the
+    slow and hold rungs are deliberately quiet, because the deviation is supposed to BE the
+    answer. **Nothing stood the GOVERNOR down**, so anything moving `want` upward inside that
+    window accelerated the boat during the two seconds the safety ladder is silent, on water
+    the guard had just called foul — and the deviation was certified at the speed she was
+    DOING (`guardTrack`'s measured `twMs`), with turn radius scaling with speed. Lowering is
+    always allowed. Computed from `guardEdgeAt`, **not latched**, so it expires by itself.
+  * **⚠⚠ THE SWEEP FOUND TWO FIXES WITH NO CHECK THAT BITES THEM, AND THE SUITES WERE
+    GREEN FOR BOTH.** `guard_resume` 21 and 22 drive the edge rung harder than anything else
+    in the file, and both ran with an **empty** corner set, so the mutation that simply
+    deletes the rung's drop — *the exact defect this batch was written to fix* — SURVIVED.
+    A check cannot observe a state its fixture never enters. Checks 22b/22c/22d arm it.
+  * **AND THE SUITE COULD ONLY PRODUCE ONE SHAPE OF FAILURE.** `guard_resume`'s `cmd` stub
+    answered `{refused:true}` and nothing else, so every check reading *"a REFUSED command
+    keeps X"* was really saying *"a FAILED command keeps X"* — the wrong rule stated in a form
+    that looks right, and the reason the lost-reply mutation survived. The stub now takes
+    `lost` beside `refuse`; `pause_resume`'s learned the same second shape.
+  * **⚠⚠ AND A MISSING GLOBAL IN A TEST WORLD IS A MISSING DEPENDENCY, WHICH REPORTS TWO
+    COMPLETELY DIFFERENT WAYS.** `dropCornerSlow` reads all four corner globals and was not in
+    any world. In `guard_resume` the identical ReferenceError landed inside the edge rung's
+    `.then`, where the rung's own `.catch` **swallowed it whole**: one FAIL line reading
+    `edgeSpentM 0 over 0 deviation(s)`, nothing about a crash, and it looked like a wrong
+    answer from the code. In `pause_resume` `resumeRun` has no such catch and it came out as a
+    **named crash on the first frame**. Same defect, two faces — and the honest one is the
+    one without the catch. `speed_modes` was worse again: it declared **neither** symbol the
+    settle floor reads, and stayed green over a bare ReferenceError because
+    `commandedSpeed && ...` short-circuits on every case written before the floor landed.
+  * **⚠ AND THE FIXTURE HAS TO REACH THE SUBJECT.** `pause_resume` declared the corner set
+    with `let` **inside the eval bundle**, so the new checks' `cornerSlow = new Set([2,3])`
+    created a SECOND, unread global in sloppy mode. Two of the three read back their own
+    untouched fixture and failed; the third **PASSED**, reporting *"the set survived a
+    refusal"* about a set nothing had ever referred to. Moved to module scope, as
+    `guard_resume` records for `holdWant`.
+  * **TEETH: 9 mutations, 9 killed, 0 survived, 0 skipped, control run and READ first.** The
+    nine are the shipped state at each of the four doors, the `cornerSlowFor = -1` half-fix,
+    a silent drop, an unconditional drop (throws a live measurement away on a refusal), and
+    the settle floor both deleted and frozen-solid. **Two intermediate sweeps reported
+    SURVIVED and one reported SKIP on a mis-transcribed anchor** — the sweep, not the green
+    suites, is what said the work was not finished.
+  * **New checks:** `guard_resume` 14b/14c/22b/22c/22d, `pause_resume` 12f/12g/12h,
+    `speed_modes` 20, `corner_slow` 25b. ⚠ `speed_modes` 20's lowering arm **first passed for
+    the wrong reason**: it commanded `high` on a `transit` leg, where the role wants `high`
+    too, so `want === commandedSpeed` returned above the floor and the arm reported `"high"`
+    identically to a governor frozen solid. Driven on a LINE now (`survey` 7.0 kn against a
+    commanded `high` 14.0), which is a real reduction.
+
+* **⚠⚠ 2026-09-22 — THE REQUIREMENTS SEAM WAS REFUTED, AND THE FIRST BATCH OF WHAT
+  SURVIVED IS SHIPPED.** `req_gaps.md` said "first pass, UNREFUTED" on its own front page. It
+  has now been argued with, entry by entry.
+
+  * **61 filed gaps judged: 34 REAL, 16 OVERSTATED, 9 FIXED by this review's own commits, 1
+    WRONG, 1 already COVERED.** 44% did not survive contact with the current code. Filed
+    severity was 16 high / 25 medium / 20 low; **true severity is 5 / 14 / 28**, and 14 of the
+    61 have no defect behind them at all. The pass over-called gaps AND over-called severity,
+    consistently in that direction.
+  * ⚠ **AND THE 34 ARE ~30 DISTINCT ITEMS.** Eight sets collapse as duplicates no single
+    refuter could see: the Intent "at the end" row is filed THREE times (one line), the AIS
+    blanking twice (one line), `env_set_kn` three times, the launch grant three times, plus
+    the brand scrub, the tooltips, the hull livery and the ENC extract. One of the 30
+    (MarineTraffic) has no consequence. **Actionable residue: 29.**
+  * ⚠⚠ **WHAT THIS SAYS ABOUT THE 251 IT CALLS "IMPLEMENTED": nothing, and that is the
+    finding.** They carry no quote, no line, no consequence and no test name — nothing to
+    refute. We measured the pass's FALSE-POSITIVE rate and learned nothing whatever about its
+    false-negative rate. **Read "251 implemented" as "not checked", identical in standing to
+    the 102 it never looked at.** The header was honest; the counts are not coverage.
+  * **ONE OF THE FIVE HIGHS IS NOT WORK TO WRITE.** The launch point is BUILT on
+    `wip/launch-grant-stage1` — `maybeLatchBerth()` wired into `onState`,
+    `certifyDeparture()` at upload, `tests/berth_grant.js`. It is a merge plus the owed live
+    check, and merging is HIS call.
+
+  **SHIPPED IN THIS COMMIT — six fixes closing NINE filed entries:**
+
+  1. **The Intent card's "at the end" row reads `endAction()`** (filed 3x, one line). It read
+     `S.run_completion || S.completion` — the RUN's own field with the STANDING setting behind
+     an `||` that can never reach it — so under End of Plan = RTH a Go-To showed "hold
+     station" while the Mission card's End mode row showed RTH **on the same card**. The
+     comment above `runCompletion()` has said the rule all along: *"endAction() is the honest
+     answer, and the ONLY thing the readouts show."*
+  2. **American English in the generated documents: 14 — 0**, fixed in the BUILDERS, which is
+     the only place it holds — every rebuild destroyed the hand-corrections. The technical
+     manual's count had GROWN since the gap was filed, which is what a hand-edit cycle looks
+     like from outside.
+  3. **The AIS card no longer blanks whole** (filed 2x, one line). The empty-list path
+     `return`ed ABOVE the per-contact grace sweep, and the feeder empties the list on ANY
+     throw — so one bad poll wiped a card the operator was reading, scroll and selection
+     included, while ONE missing contact got a dimmed row and a full update of grace.
+  4. **Tooltips are no longer re-armed under the pointer** (filed 2x, one mechanism). The
+     suppression works by REMOVING the title attribute; the fuel pill rewrote its title on
+     every state frame, so the native tip came back under the cursor ~4 Hz — on the one tip
+     where `endurance_h` and `range_nm` appear nowhere else. All runtime writes go through
+     `setTip()` now, which writes the STASH while hovered and updates the shown tip in place.
+  5. **The km/nm pill is honoured at four tide-station readouts** that printed raw km — the
+     pill's own tooltip names "tide-station distance" in its scope.
+  6. **The quick-start overlay names rows that exist.** It sent a first-time operator to "the
+     Run mode on the vessel card"; the card is MISSION STATUS and that row was deliberately
+     removed. The overlay opens by itself on a first visit.
+
+  * **4 mutations, 4 killed, 0 skipped, control read first**, each killing exactly its own
+    check. Two checks are fully DRIVEN (`ui_tooltips` 10 against the real `setTip` in both
+    hover states; `end_action` 36 in a world where the honest answer and the raw fields
+    genuinely disagree), two are paired with existing driven checks.
+  * ⚠⚠ **AND A FINDING ABOUT A SUITE, not the code.** `units_toggle` check 9 exists to stop
+    *"a new hand-rolled site creeping back in beside the pill it would ignore"* — and it hunts
+    ONE fingerprint, `/1000).toFixed`. All four km sites printed `dist_km.toFixed(1)`, a field
+    ALREADY in kilometers, so there was no division to find and they walked past it for as
+    long as they existed. **A guard written against one fingerprint says nothing about a
+    second shape of the same mistake, and it reads like coverage either way.** Check 9b covers
+    the `_km`-field shape; mutation C4 proves it bites where 9 stayed green.
+
+* **⚠⚠ 2026-09-22 — THE ESCAPE'S RETRACTION: ONE LINE WAS TWO DEFECTS (shipped).
+  Both of the items filed here are fixed.**
+
+  * `took(r)` is `r && r.ok`, so a REFUSAL, a LOST reply, a 15 s timeout and an unreadable
+    2xx all fell through one gate into one retraction — and `escapeThrottle = false` ran for
+    all of them.
+  * **A LOST REPLY IS NOT A REFUSAL, and releasing on one is the ONE thing that takes the
+    escape's speed back off her.** The guard's clear branch fires a few frames into every
+    ACCEPTED escape (15z4b measured it, boat unmoved 13 m off a pier) and nulls
+    `commandedSpeed`; with the gag gone the governor commands `roleSpeed("transit")` over the
+    rung's HIGH — silently, because that line went round `releaseEscapeClaim`. And it buys
+    nothing: during an escape `currentActivity` returns role "transit" and `atCorner` needs
+    `S.wp_total === cornerSlowFor` while an escape route is ONE waypoint, so **neither
+    hull-limit rule the gag stands down can fire during an escape at all.**
+  * ⚠ **THE COST OF KEEPING IT, UNSOFTENED and written at the site.** If the post really was
+    lost and she never got it, she runs the survey with the governor gagged — where those
+    two rules ARE live — and **`speedReconcile` carries the HIGH across a link outage**:
+    `commandSpeed("high")` set `speedWant`, nothing overwrites it while gagged, and it
+    re-sends for as long as she reports armed and running. So "lost to a 40 s outage, she
+    never got it" does not merely fail to slow her; **it drives her to HIGH the instant the
+    link returns.** A reader who finds a hull driven into a corner at HIGH after a link drop
+    should look at the release and at `speedReconcile`. The other horn is worse in the way
+    that matters: it is SILENT, and it fires on the boat that TOOK the command.
+  * **AND IT WROTE `false` OVER WHATEVER CLAIM IT FOUND, not over its own.** The door is
+    HOLDING, not the re-approach: once she station-keeps at the escape point `guardTrack`
+    bails on `st.holding`, the phantom stops being projected, the honest drift projection
+    returns, the level reads helm again and `firstOfEpisode` posts a SECOND escape
+    **HELM_DWELL_MS later — 1.5 s, not 6** — and a refused OR lost #2 ended #1's claim. The
+    retraction restores `heldEsc.throttle` now, and `escapeThrottle &&` stops a late answer
+    resurrecting a claim on a stopped boat.
+  * **THE BANNER FOLLOWS THE ANSWER.** It appended *"THE HELM WAS NOT TAKEN ... and nothing is
+    steering her off it"* to all three answers, one clause after `notTookSay` had written *"the
+    console cannot tell whether she received it"*. The helper did its job and the next
+    concatenation undid it. The `say ||` fallback is gone too: that arm is unreachable (every
+    rung sits behind `act`, which includes `supervising()`).
+  * **4 mutations, 4 killed, 0 skipped**, and they DISCRIMINATE: R2 (follows the answer but
+    still writes `false`) kills only 15z11; R3 (banner unconditional) kills only 15z10. New
+    checks `clearance_guard` 15z10/15z11 — ⚠ **the fixture had supported a lost answer since
+    it was written and NO CHECK HAD EVER CALLED IT**, so the commonest not-took there is had
+    never reached this rung.
+  * ⚠ **AND CHECK 14 WAS READING COMMENTS AS CODE** — the third in that file to do it. It
+    asserts the guard's gate no longer names `st.holding`, on the RAW function, so a comment
+    explaining why `guardTrack` bails on it turned it red with the code unchanged. It strips
+    first now, which is what the file's own header has told it to do since 15e and 16c.
+  * **RESIDUE, knowingly left:** out-of-order resolution — a refusal for post #1 arriving
+    after post #2 has claimed writes #1's snapshot over #2's live claim. Bounded by the
+    command timeout and by the six doors that end a claim in one press.
+
+* **⚠ 2026-09-22 — ~~FILED, WITH EVIDENCE, NOT FIXED~~ — BOTH NOW FIXED, above. Kept for
+  the evidence.**
+
+  1. **A LOST REPLY RELEASES THE CLAIM, AND THE BANNER CONTRADICTS ITSELF.** Driven (the
+     fixture already supported `"lost"`; **no check had ever called it**). What the operator
+     reads: *"IN EXTREMIS ESCAPE NOT ACKNOWLEDGED: network error — the console cannot tell
+     whether she received it — **THE HELM WAS NOT TAKEN**: ... and **nothing is steering her
+     off it**. TAKE MANUAL CONTROL."* `notTookSay` — whose own comment says a lost reply *"must
+     not be reported as a refusal"* — does its job, and the next string concatenation undoes it.
+     The state half is genuinely two-horned (keeping the claim gags the governor on a boat that
+     may be running the survey at the HIGH the rung just commanded), so it belongs with a
+     decision, not a snap fix. The mitigation does keep re-firing either way: `levels` reads
+     `helm,helm,helm,helm` and the rung re-posts at the 6 s re-solve.
+  2. **A REFUSED SECOND ESCAPE DESTROYS AN ACCEPTED FIRST ONE'S CLAIM**, because `:2405`
+     clears unconditionally. Narrower than it sounds — while she holds, `act` is false, and
+     while she steers the phantom route reads clear — so the reachable path is after a
+     re-approach puts `holding` false again. It **cannot** be fixed with the picture fence
+     (`runRoute === escRoute`): that is precisely the placement the previous commit removed,
+     which let a refused escape go silent. It needs the rung to identify its own claim.
+
+* **⚠ 2026-09-22 — WHAT IS LEFT, IN ORDER.** The commanded-answer seam is now CLOSED: every
+  command on the page reads its reply, there is one spelling of the test, and the three
+  shapes (claim-then-post, clear-then-post, and the guard ladder's retraction) are each
+  covered by driven checks. What remains:
+
+  1. ~~The escape rung's throttle claim~~ **— FIXED, and defects 1 and 2 turned out to be
+     ONE question.** See the block below.
+  2. ~~`renderIntent`'s false sentences~~ **— FIXED. See the block below.**
+  4. **53 medium + 21 low** findings, UNREPRODUCED. ⚠ Do not plan from that list — reproduce
+     first. Several highs this session were wrong, understated, or already fixed, and **three
+     of the twelve safety-category mediums turned out to be this same seam** (one of them,
+     `commandSpeed`, is fixed here as a five-line change).
+  5. **The requirements seam, which is larger than the bug list**: `req_gaps.md` has 320 of
+     422 requests verified, FIRST PASS, UNREFUTED — 9 drifted, 4 missing, 48 partial, and
+     ~102 never checked at all.
+
+* **⚠ 2026-09-22 — NOTHING IS THROWN AWAY BEFORE THE REPLY (shipped).** `#b_hold`, `#b_stop`,
+  `#b_start` and the empty-plan upload cleared the drawn route, the Intent card and the run's
+  speed holds and THEN posted. Nothing puts that back — `runRoute` is written only by a
+  commanded motion and `/api/state` carries no route.
+
+  ⚠ **The only refusals a Stop can produce are `"not connected"` and the link refusing
+  outright** (and `set_estop`'s own comment records that *"the real VCU link refuses every
+  command today"*). So the console went blank in exactly the moments the boat was least
+  under control.
+
+  ⚠⚠ **`#b_estop` IS EXEMPT AND MUST STAY SO.** `Engine.set_estop` latches, disarms, sets
+  `run="idle"` and `_push_state()`s **before** re-raising — so a 409 on a LATCH is the case
+  where the console HAS latched. The reason is written at the exemption; `command_result` 22
+  guards it.
+
+  ⚠ **`commandSpeed` recorded a want for a command a view-only tab never sent**, so
+  `speedReconcile` re-sent for ever and then blamed the vessel — and that banner is what
+  silently REPLACED the in-extremis one. **Only `sent === false` clears the want**; a refusal
+  or a lost reply must KEEP it, because re-sending is what that mechanism is for.
+
+  `command_result` 20–25. **10 mutations, 10 killed** — but ⚠ **two survived the first sweep,
+  and both were changes shipped with NO executable check at all.** A change whose only
+  witness is its own source text has not been tested.
+
+* **⚠ 2026-09-22 — SHAPE B IS WHAT IS LEFT, and it needs the OPPOSITE repair to Shape A.**
+  `#b_hold` (`:10451`), `#b_stop` (`:10227`), `#b_estop` (`:10469`) and the empty upload
+  (`:9952`) **clear the drawn plan and then post unchecked**. Fix by POSTING FIRST and
+  clearing only past the gate — `doSpawn` at `:10490` already does exactly this and says
+  why in its own comment.
+
+  * ⚠⚠ **`#b_estop` MUST BE EXEMPTED.** `Engine.set_estop` (`asv_console.py:4646`) latches
+    estop, disarms and sets `run="idle"` on the console **and then** raises — so a 409 there
+    is precisely the case where it DID take effect. Measured: state after the 409 was
+    `estop=true, armed=false, run=idle`. A uniform `if(!took(r)) return;` would be wrong.
+  * ⚠ **`renderIntent` makes a null `runRoute` worse than a blank chart**: it falls back to
+    `mission.waypoints` and prints two FALSE sentences — *"route not held by this page"* and
+    *"this plan was committed before this page was loaded"* — seconds after this page
+    uploaded it.
+  * `#b_stop` also clears `escapeThrottle`, `pauseMark`, `resumeSlow` and `commandedSpeed`
+    before posting. `:10078` `#b_start` posts unchecked while `:10202` and `:10385` check.
+
+* **⚠⚠ 2026-09-22 — A REFUSED IN-EXTREMIS ESCAPE SILENCED ITS OWN ALARM (shipped).** The
+  rung OVERWRITES `runRoute` with the single escape point before posting, and `guardTrack`
+  slices `runRoute` at `window._wpIndex`. At **wp_index 0** — a one-waypoint Go-To reports 0
+  for its whole run — that phantom route points AWAY from the feature, so the ladder reads
+  **CLEAR on the next frame** and flashes *"Clear ahead again (13.0 m)"* four seconds later
+  with the boat unmoved, 13 m off the pier. **The 6 s retry fired once instead of five
+  times: the rung destroyed its own mitigation.** No refusal was even required — a lost
+  reply did the same, because the rung read nothing.
+
+  Both commanding rungs now **retract in a `.then`** rather than awaiting: `clearanceGuard()`
+  is synchronous and hands its verdict to a 4 Hz caller, so a rung that awaited would change
+  what the ladder is. **Snapshot-and-restore, not re-ordering** — moving `escapeThrottle`
+  behind the post while `clearance.slowed = false` stayed in front would release the guard's
+  slow-hold with nothing standing in for it.
+
+  `clearance_guard.js` 15z3–15z7. Measured on identical water: **accepted → 1 escape, levels
+  `helm,clear,clear,clear`; refused → 2 escapes, levels `helm,helm,helm,helm`.**
+
+  ⚠⚠ **`escapeCourse` was a constant `null` for the whole of that suite, so NOTHING IN THIS
+  REPO HAD EVER EXECUTED THE RUNG THAT STEERS.** Every earlier helm test exercised the
+  BOXED IN branch.
+
+  ⚠ **Three defects in my own work, all caught by checks disagreeing rather than by reading:**
+  the hold rung's snapshot was taken AFTER the writes it captures (no restore at all); 15z5
+  was green for the wrong reason (`runRoute === null` is also the untouched value, so it
+  passed on a run where the rung never fired); and the async block escaped the fake clock,
+  because the enclosing `finally` restores `Date.now` while an async block is parked on an
+  await — the tell was `helmHoldAt = 1785086974375`.
+
+  ⚠ **STILL OPEN on this rung, filed not fixed:** `escapeThrottle` outlives its EPISODE and
+  lasts the rest of the RUN (the comment at `:2289` says otherwise); the unchecked
+  `commandSpeed("high")` re-send raises a banner that **replaces** the false IN EXTREMIS one
+  without saying the escape failed; and the ACCEPTED path has the same `runRoute` clobber,
+  so it too reads clear one frame later (visible in 15z3's own detail).
+
+* **⚠⚠ 2026-09-22 — NEXT, AND IT IS ALREADY REPRODUCED AGAINST A LIVE CONSOLE: the SIX
+  commands whose answer is never read at all.** Four agents measured them; the evidence is
+  below and it is stronger than the reading that produced it. **Two shapes, and they need
+  OPPOSITE repairs — do not unify them:**
+
+  * **SHAPE A — claim first, then post.** Fix by RETRACTING in a `.then`, **not** by
+    awaiting: `clearanceGuard()` is synchronous and returns a value to a 4 Hz caller
+    (`asv.html:10809`), so a rung cannot await. The amend rung at `:2065` already
+    established the idiom and states it — *"`guardEdgeAt` stays set above, because while the
+    POST is genuinely outstanding the gate is right; the fix is only that it must not
+    outlive a refusal."*
+    * **`:2312` the IN-EXTREMIS ESCAPE rung — HIGH, and the worst thing found this session.**
+      It overwrites `runRoute` with the single escape point **before** the post. `guardTrack`
+      slices `runRoute` at `window._wpIndex`, so with **wp_index 0** — measured as a real
+      state: a 1-waypoint Go-To reports 0 for its *entire* run, a 5-waypoint transit for its
+      first 14.1 s — the phantom route points AWAY from the hazard. **The ladder drops
+      helm→CLEAR on the next frame and announces "Clear ahead again (13.0 m)" 4 s later,
+      with the boat unmoved, 13 m off the pier and 2 kn of set onto it.** The refusal
+      *silences the alarm*. And the 6 s retry that would have saved it (`GUARD_REASSESS_MS`)
+      fires **once instead of five times** — measured against a control that put `runRoute`
+      back each frame. **The rung destroys its own mitigation.**
+      ⚠ **No refusal is even needed**: a lost reply does the same, because the rung reads
+      nothing and all of it happens synchronously before any answer exists.
+    * **`:2220` the guard's HOLD rung — MEDIUM.** `holdUntaken` re-issues after 2 s and
+      `markGuardHeld` never destroys what it cannot replace, so the survey record is
+      self-repairing. What it does cost: `slowLieu = null` at `:2210` kills the
+      slow-in-lieu re-offer while `clearance.slowed` stays true, so **after a refused hold
+      the guard owns the throttle without having taken the way off.**
+
+  * **SHAPE B — clear the drawn plan, then post.** Fix by POSTING FIRST and clearing only
+    past the gate. `doSpawn` at `:10490` already does exactly this and says why.
+    Sites: `:10451` `#b_hold`, `:10227` `#b_stop`, `:9952` the empty upload (weakest — its
+    window is "station-keeping at the end of a commanded motion", not "flying the plan").
+    ⚠ **`renderIntent` makes it worse than a blank chart**: with `runRoute` null it falls
+    back to `mission.waypoints` and prints two FALSE sentences — *"route not held by this
+    page"* and *"this plan was committed before this page was loaded"* — seconds after this
+    page uploaded it.
+    ⚠⚠ **`:10469` `#b_estop` MUST NOT GET THE UNIFORM REPAIR.** `Engine.set_estop`
+    (`asv_console.py:4646`) latches estop, disarms and sets `run="idle"` on the console
+    **and then** raises — so the 409 is precisely the case where the console HAS latched.
+    Measured: state after the 409 was `estop=true, armed=false, run=idle`.
+
+  * **`:10078` `#b_start`** posts unchecked while the other two start sites (`:10202`,
+    `:10385`) both read the reply.
+
+  **FOUND IN PASSING, EACH ITS OWN DEFECT — do not fold them into the above:**
+  * **`escapeThrottle` outlives its EPISODE and lasts the rest of the RUN**, and the code's
+    own comment at `:2289` ("until this episode ends") is **wrong**. The guard's clear branch
+    at `:1979` resets five other per-episode variables and not this one; its only clearers
+    are `setRoleSpeed`, `#b_start` and `#b_stop`. Measured: 55 s of clear water, still true,
+    governor issuing nothing. A successful escape recovered with a Go-To leaves it set too.
+  * The escape rung's unchecked `commandSpeed("high")` leaves `speedWant` set, so
+    `speedReconcile` re-sends and raises **"⚠ THE VESSEL IS NOT TAKING THE SPEED COMMAND"**,
+    which — banners being sticky and last-write-wins — **replaces the false IN EXTREMIS
+    banner without ever saying the escape failed.**
+
+* **⚠ 2026-09-22 — THE PAGE ASKED "DID THE COMMAND LAND?" FOUR WAYS, AND TWO WERE WRONG.**
+  `if(r && r.error)` (3 sites) and `if(!r || r.ok === false || r.error)` (5 sites) both read
+  an answer carrying **neither** field as a command TAKEN. One spelling now: **`took(r)`**,
+  16 call sites, zero hand-written forms left in code.
+
+  **⚠⚠ AND `cmd()` PRODUCED THAT ANSWER TWO WAYS — one of them a defect shipped in
+  `08c353edd` the day before.** The 15 s bound covered only an abort landing BEFORE the
+  response headers. When the console answers and then stalls mid-body, the `AbortError` is
+  raised by `r.json()` — inside `cmd()`'s own try, behind its own catch. **Measured at
+  15005 ms: `{}` returned, "cmd | Return home" filed in the action history as a command
+  TAKEN, operator told nothing.** A bound is only a bound if its own timeout is reportable.
+  An unreadable 2xx is now `sent:true, refused:false`, and the bare `{}` is unproducible.
+
+  **⚠⚠ THREE TEST FIXTURES ANSWERED A BARE `{}` AS SUCCESS** — `guard_resume:206`,
+  `pause_resume:115` and `:359`. That is the answer that cannot be told from a failure, so
+  those suites were calibrated to the WRONG idiom and **every mutation of the two bad
+  spellings survived them.** Fixing the page turned all three red for the first time.
+  **When a wrong idiom survives in a repo with 95 suites, look at what the fixtures answer.**
+
+  ⚠ `measure_tool` 15b3 and `spawn_trail` 10 pinned the gate by one of its *spellings*; both
+  re-anchored on the named test. A check anchored to a spelling makes the repair that
+  removes the spelling look like the regression.
+
+  `notTookSay()` also killed a live falsehood: `resumeRun` printed **"Start was refused
+  (network error)"** for a reply that was never refused, and "She is still paused" about a
+  boat that may be running. `command_result.js` 15-18.
+
+* **⚠⚠ 2026-09-22 — NEXT UP, AND IT IS THE REST OF THE SAME DEFECT: SIX MORE UNCHECKED
+  COMMANDS, two of them on the guard's own rungs.** Found by the adversarial pass over the
+  H18 plan, not by a check. H18 fixed the three functions that command a MOTION and draw a
+  route (`doRTH`, `doGoTo`, `doTransit`). The rest were left deliberately, because they are a
+  DIFFERENT SHAPE and each needs its own reproduction — they are not a mechanical repeat:
+
+  * **`static/asv.html:2312` — the IN-EXTREMIS ESCAPE rung.** `runRoute` and
+    `setPlanIntent("escape", …)` are committed at 2293-4, `planIntent.why` gets "IN EXTREMIS"
+    at 2309, and *then* `cmd("/api/cmd/escape", …)` goes out unchecked, with the ⚠⚠ banner
+    after it. Identical shape, **highest consequence on the page.** Gated on `supervising()`,
+    so the view-only case cannot reach it — but a 409 can.
+  * **`static/asv.html:2220` — the guard's HOLD rung.** `markGuardHeld(c)`, `guardActedAt`,
+    `holdWant` and the "HOLDING" note are all committed around an unchecked
+    `cmd("/api/cmd/hold", …)`. A refused hold leaves the console recording a hold that never
+    happened, **on the rung Eastport put there.**
+  * **`static/asv.html:2065` — the guard's auto-amend.** Unchecked, while the OPERATOR's
+    amend at 10056 *is* checked. (That same block is also the precedent worth copying: it
+    undoes `guardEdgeAt` on refusal.)
+  * **`static/asv.html:10341` `#b_hold`, `:10117` `#b_stop`, `:9842` empty upload — THE
+    INVERSE SHAPE.** These CLEAR `runRoute`, `planIntent`, `runUnsafe`, `guardHeld`,
+    `pauseMark` and the speed state and *then* post unchecked. A refused Hold or Stop
+    **erases the plan the boat is still flying.** Do not fold these in with the others: the
+    repair is the opposite one (restore, not withhold).
+  * **`static/asv.html:9968` `cmd("/api/cmd/start")`** — unchecked, while the other two start
+    sites at 10092 and 10275 both read the reply. One of three is inconsistent.
+
+  `cmd()` now answers `{ok, sent, refused}`, so the discrimination each of these needs
+  already exists; `tests/command_result.js` is the home for them.
+
+* **⚠ 2026-09-22 — A COMMAND THE BOAT NEVER TOOK WAS BEING DRAWN AS A PLAN (H18 — the last
+  of the 38 highs).** `doRTH` posted `/api/cmd/rth` and never looked at the answer, then drew
+  the route home, wrote the Intent card, updated the Mission card and bannered "RTH: routed
+  around nogo zone(s) via N waypoints" — over a boat that was going nowhere.
+
+  Measured against a **real console** (own port, own `--state-dir`): `/api/cmd/rth` answers
+  **409** for `ARM before commanding the boat`, `not connected` and `no home set (no GPS fix
+  yet)`, and the vessel's `behavior` stays `survey` through every one.
+
+  * **The button's gate is not the protection it looks like.** `#b_rth` is disabled unless
+    `canCommand(s) && s.home`, but that is read off a state FRAME and `doRTH` then spends
+    `ensureNogoCovers` — up to the whole **8 s** `NOGO_QUEUE_MAX_MS` bound. The arm, the
+    E-STOP and the vessel link can all go inside that window.
+  * **The end-of-plan chain was worse**: no operator at a button, and `rthChainFailed` — the
+    flag that exists for exactly this — was set for a missing home and an unroutable one but
+    never for a refused command.
+  * **And `setPlanIntent` wipes the guard's per-episode record** (`guardOverride`,
+    `edgeSpentM`, `edgeCount`, `guardActedAt`, `holdWant`). A refused press was spending the
+    operator's own "proceed" and the console's budget for moving their track.
+
+  **⚠⚠ THE ANSWER HAS THREE STATES, NOT TWO, and collapsing them is how the obvious repair
+  introduces a NEW false claim.** `cmd()` now returns `sent` and `refused`:
+
+  | answer | what it is | what may be said |
+  |---|---|---|
+  | `sent:false` | a VIEW-ONLY tab, refused inside `cmd()` before any fetch | **nothing about the boat.** The chain fires in EVERY tab (no `supervising()` test on the fire site), so `!ok → rthChainFailed` would have a view-only tab paint "REFUSED, will hold instead" over a boat the supervising tab was bringing home. It takes its own banner down and stops. |
+  | `refused:true` | the console answered in words (409) | a fact about the vessel — **the only answer that retracts the promise** |
+  | neither | the reply was lost, or the new bound fired | the command may have been carried out; say exactly that, change nothing |
+
+  **⚠ `cmd()` IS NOW BOUNDED** (`CMD_TIMEOUT_MS = 15000`). It was a bare `fetch`, survivable
+  only while every caller fired and forgot — the moment `doRTH` awaits it, a POST that never
+  settles takes that command and everything behind it, for ever, with no banner. **This page
+  had already made that exact mistake once, in `refreshNogo`, and says so in its own words
+  there.** 15 s is ~60× the slowest command measured against a running console (a full sim
+  reboot, `/api/cmd/reset`, at **0.252 s**; everything else under 0.05 s).
+
+  **`doGoTo` and `doTransit` carried the identical statement** and are fixed in the same
+  commit. ⚠ **doTransit's repair is NOT the obvious one**: it drew the route ABOVE the post,
+  and the unroutable branch RETURNS above the post — so "gate the draw on the answer" would
+  have deleted the drawing its own banner calls "highlighted" (`runUnsafe` is the only source
+  of that red). The draw was **duplicated into that branch**, not moved. Nothing tested that
+  branch at all before; `command_result` 11 does now.
+
+  **NEW SUITE `tests/command_result.js`, 17 checks. ⚠ NOTHING IN IT STUBS `cmd()` — it stubs
+  FETCH and runs the page's own `cmd()` on top**, so the three answers are whatever `cmd()`
+  actually produces. The earlier reproduction stubbed `cmd()` and kept "passing" against
+  hand-written `{ok:false}` objects after `cmd()` grew the fields it was testing.
+  **14 mutations, 14 killed — every one by this suite ALONE**, with seven other suites run
+  against each mutant and green throughout. ⚠ **Check 6 had to be rewritten before it meant
+  anything**: it first drove a 409 with an empty reason to kill the `if(r.error)` spelling,
+  but `cmd()` fills a blank reason in, so the two spellings agreed and the mutation survived
+  the check written to kill it. The answer with no `ok` AND no `error` is a **200 whose body
+  will not parse**.
+
+  ⚠ Two eval bundles needed `CMD_TIMEOUT_MS` (`action_history`, `supervisor_page`) — both
+  went red on the unmutated page and **the first sweep's control was red because of it**, so
+  its kills were fiction until they were fixed.
+
+* **⚠ 2026-09-22 — THE SLOW-RADIUS REVERSAL WAS FLOWN AT THE PLAN SPEED in every case but
+  one.** `turnSlowAt` is written by **punch-gap** index and read by **mission-line** index —
+  `turnSeg.from` IS a `mission.lines` index — so the two agreed only for ONE pattern
+  committed onto an EMPTY plan, never re-punched, never reloaded, with no line struck off.
+  Measured end to end against the real governor, all four ways they part:
+
+  * **a second pattern** → gap 0 names line 0, so the boat was slowed at a reversal nobody
+    measured and flown at the plan speed through the one that only fitted at the slow radius
+  * **a reload, or a second console on the same survey** → `turnSlowAt` is a page-local
+    `let`, the saved plan carried no mark at all, so EVERY reversal ran at the plan speed
+    with nothing on screen to say so
+  * **a line struck off** → the flag stayed on the gap number and moved onto a different turn
+
+  It rides on the committed **line** now (`slow_turn_out` — "the reversal OUT of this line",
+  the same direction `lead_out_m` already means and the same index `turnSeg.from` already
+  is), so it is saved with the plan and re-indexed by the same append and splice that move
+  the lines. **Same lesson as `cornerSlowFor` one declaration below it: a set of indices may
+  not outlive the thing it indexes.**
+
+  **And `deleteLineByIndex` CLEARS the flag on the line above a strike** — re-indexing a
+  measurement is not re-taking it, and the new wider reversal across the gap was never
+  measured. That DROPS a slow-down, so it is not conservative in every sense; the answer to
+  wanting the new geometry measured is to re-punch, which is what striking a run has always
+  meant. Raised in review, not by a check.
+
+  `corner_slow.js` 19b–19f drive punch → commit → fly → governor through the page's OWN
+  commit statements and punchOut's OWN write, so a re-base changes what they see; 19 stays
+  as the source pin. **8 mutations, 8 killed, including the whole fix reverted.** ⚠ **19f is
+  the only thing that kills the punched gate** (a DRAWN pattern inheriting the last punch's
+  flags) — all four end-to-end drives commit a punched pattern and stayed green on it.
+
+  ⚠ `tests/survey_order.js`'s strict-mode `commitWorld` needed `turnSlowAt` declared, and
+  `tests/speed_modes.js` 5 needed three REAL line entries (a sparse-array hole is a TypeError
+  in `drawnLines`, reported as a crash).
+
+* **⚠⚠ 2026-09-22 — TWO MORE REGRESSIONS IN MY OWN SHIPPED WORK, both found by the
+  adversarial pass and both worse than what they replaced.**
+
+  * **H12's `indexedRoute()` null became a COMMANDED SPEED.** The patch asserted every
+    caller prints null as "--". One does not: `currentLegLine` → `runLineIdx` stays −1 →
+    `currentActivity` falls through to "between coverage regions" → role **TRANSIT**. So a
+    reloaded supervising page commanded **6.0 kn on coverage lines being surveyed at 3.0,
+    and through reversals the planner fitted at the 1.5 kn turn radius**, with `turnSlowAt`
+    unreachable because the role never equals "turn". `speedGovernor` stands down on it now,
+    beside the four stand-downs it already has. **"Cannot say" must never resolve as the
+    fastest speed.** `guard_resume.js` 18a.
+  * **H07's queue was UNBOUNDED.** `fetchENCBbox` is a bare `fetch` — no timeout, no
+    AbortController — so an extract that never returns took every Go-To, RTH and punch with
+    it, for ever, with no banner. `resetForNewArea` bounds its own wait at 8 s for exactly
+    this reason, and `nogo_readout` 2 exists so a hung fetch stays visible as one. Bounded
+    at the same `NOGO_QUEUE_MAX_MS = 8000`, and past it a waiter **proceeds** rather than
+    refusing — the coverage test is what keeps that answer honest. `nogo_readout.js` 19g,
+    which waits the real 8 s once.
+
+  **4 mutations, 4 killed**, two of them verbatim reproductions of what I shipped. Three
+  eval bundles needed `indexedRoute` or `NOGO_QUEUE_MAX_MS` added.
+
+  **The lesson worth keeping: both regressions were the fix's own null/wait reaching a
+  consumer the patch had not enumerated.** Neither was visible in the suite that owned the
+  fix. When a change introduces a new "unknown" value or a new wait, the question to ask is
+  not "do the readouts handle it" but "what does every consumer DO with it" — and for a
+  console that commands a boat, the ones that command are the ones to check first.
+
+* **2026-09-22 — THE OPERATOR'S MAX DEPTH REFUSED EVERY TURN, AND BLAMED SHALLOW WATER.**
+  `punchOut` built ONE keep-out model at the survey's depth window and handed it to the
+  coverage clip, the reversals, the leads, the region hops and the detour router alike.
+  Three headers already said this was wrong — `nogoDR`'s ("punchOut still layers the
+  operator's full min/max window on top of this floor **for the survey lines themselves**"),
+  the control's tooltip, and `extendLead`'s caller. Measured on a 5–15 m bank with 20–30 m
+  water each side and Max depth 15:
+
+  ```
+  clip   : 5 runs, every end parked at the bank edge        <- correct
+  turns  : 4 reversals REFUSED, "water shallower than 2.3 m"
+  leads  : 0.0 m of the 30 m asked for, all five
+  -> ADD TO PLAN DISABLED
+  ```
+
+  every word of it about charted **20–30 m** water, because `nogoKind` answers "shallower"
+  for any depth exclusion. Two models now: `koCov` carries the window and the CLIP alone
+  reads it; `ko` is the same features at the same floor with **no ceiling**, and it is what
+  everything that NAVIGATES answers to. `dr.min` is reused rather than restated, and with
+  Max depth blank the two builds are identical.
+
+  **⚠⚠ AND THE TEETH ARE THE POINT OF THIS ONE.** The proposed patch shipped with only
+  source checks, and an adversarial pass showed **both halves of the split could then be
+  silently reverted with every suite green** — including the revert that stops Max depth
+  applying to *coverage* at all, which plans the survey straight through the trench. That
+  property is held **today**, incidentally, by `chart_ink` 12b; the patch as proposed would
+  have removed it. So `min_depth_floor.js` 17 drives `punchOut`'s **own model-construction
+  statements**, sliced out of the page and executed — a re-base changes what it sees, which
+  a source check cannot. 17b pins both bindings, and 12b now requires BOTH folds.
+  **5 mutations, 5 killed**, including the two the refuter showed were killed by nothing.
+
+* **2026-09-22 — THE PUNCH KEY ANSWERED TWO QUESTIONS AND GOT BOTH WRONG.** One key served
+  the strike list and the clip memo; H10 and H25 are the two halves, and they compose.
+
+  * **H25 — a gust threw away the operator's strikes.** `patStrikeKey` carried the clip
+    STANDOFF, which grows with the set. The set is published rounded to 2 dp at 4 Hz and
+    moves with the gusts: over one 150 s capture it ran 0.36–0.40 kn, which at a 5 m buffer
+    is a standoff of **6.20–6.62 m — five distinct key terms, the strike key changing four
+    times in six seconds.** Every change makes `activeStruck()` return `[]`. The standoff
+    now lives in `patClipKey()`, **derived from** the strike key so the two cannot drift.
+  * **H10 — the memo did not know the chart had been read.** The scan folds its polygons
+    into the same model, but the key named only `nogo.features`. Measured on a 60×20 m float
+    system: punch 1 clipped with 0 chart areas and gave **4 runs crossing the footprint**;
+    the operator re-commanded, the scan had found the structure, and **the memo hit and
+    served the pre-scan runs back.** A fresh clip gives 8 runs, none crossing.
+
+  `tests/chart_ink.js` 21/21b, `planner_guard_seam.js` 5b — **5 mutations, 5 killed.**
+  ⚠ Check 5b used to read *"patStrikeKey() includes patClipBufM()"* — it pinned the bug as a
+  feature. It asserts the SPLIT now: memo names it, strike does not, clip derives from strike.
+
+* **⚠⚠ AND A REGRESSION IN MY OWN H05, FOUND BY THE ADVERSARIAL PASS AFTER IT SHIPPED
+  (`5e2b7b7cf`).** Two independent refuters found it with live-console evidence.
+  `pause → upload a revised plan → Start` is a **supported** sequence (Upload stays enabled
+  while paused — the page says so — and Start-while-paused routes into `resumeRun`). With
+  the gate widened to plain `paused`, `resumeRun` amends the plan being **abandoned**, the
+  Engine answers 200, the page believes it, splices `runRoute` and says *"backed up NN m so
+  the coverage overlaps"* — then `start()` applies the STAGED plan and discards the
+  amendment. Measured: amend 1/3 → 1/6, Start gives **wp 0/5 while the page draws 6**, and
+  `guardTrack` projects the ladder along that array. That is the H33 chart/vessel divergence
+  re-opened through the resume door.
+
+  `Engine.start` already draws this exact line (`resuming = paused and not plan_staged`);
+  the amend gate now carries the same qualifier, with a refusal that **names the real cause**
+  rather than repeating the run gate's words. `tests/amend_plan.py` 17/17b, **3 mutations,
+  3 killed** — one of them a verbatim reproduction of what I shipped.
+
+* **2026-09-22 — A GO-TO CLICKED DURING THE AUTOMATIC RE-EXTRACT DROVE STRAIGHT AT AN
+  ISLAND.** `refreshNogo` returned at once while one was in flight, so `ensureNogoCovers`
+  and `ensureNogoArea` handed their callers the PREVIOUS box's `nogo.ready` as coverage of
+  water nobody had fetched — and outside the extract the keep-out model is EMPTY, which
+  reads as **clear** rather than as unknown. The console re-extracts by itself once the boat
+  has run 3 km from the last centre, so the window opens several times an hour with nothing
+  on screen. Driven end to end:
+
+  ```
+  during the window : ensureNogoCovers -> true, 0 fetches, plan DIRECT, 0.0 m off the line
+  a second later    : ensureNogoCovers -> true, 1 fetch,  plan ROUTED, 616.7 m detour
+  ```
+
+  Callers **queue** now — wait for the extract in flight, then do your own, so the box the
+  caller asked for is the box that lands. `while`, not `if`: several waiters wake in the
+  same turn. **This also cures H36**, which is the same fault seen from the survey side
+  (`ensureNogoArea` returned ok with the OLD area's features and punchOut clipped against
+  them) — measured against master to confirm, and H36's proposed bounded polling loop is
+  therefore **not** wanted; it would be a second, weaker mechanism for the same thing.
+  `tests/nogo_readout.js` 19–19f.
+
+  **7 mutations, 6 killed, and the 7th is recorded rather than claimed.** Two are worth
+  keeping in mind: *"the deadlock stop dropped"* is caught by the suite **hanging** (the
+  hook scores that TIMED OUT), and *"the finally never settles the waiters"* is caught by a
+  **new guard**, not by a check — see below. The survivor is `&& bboxContains(...)` on the
+  two returns: with the queue in place nothing can reach a state where they disagree, and
+  reverting it alone leaves everything green. Kept as defence in depth, in the same spirit
+  as `edgeAround`'s astern test, and the suite says so in as many words.
+
+  **⚠⚠ AND A SUITE THAT STOPS RUNNING ITS CHECKS WAS EXITING 0.** The checks live in an
+  async IIFE; an await that never settles does not crash node — it runs out of work and the
+  process exits **cleanly, mid-suite, printing no summary**, which a runner reading the exit
+  code scores as PASSED. Found by mutation: dropping `settle()` left three waiters suspended,
+  checks 19–19c never ran, and the mutant came back SURVIVED. `tests/nogo_readout.js` now
+  fails on `process.on("exit")` if the summary was never reached. **Every suite with a
+  trailing async IIFE has this hole** — worth the same guard.
+
+* **2026-09-22 — THE ROC CARD SHOWED VALUES THE SERVER NEVER TOOK.** Two halves, both
+  client-side:
+
+  * **The handlers posted whatever was in the box.** Clear "Off m" and `parseFloat` gives
+    NaN, `JSON.stringify` writes it as `null`, and `set_offset` reads a null field as
+    "absent, keep what you have" — a **deliberate** rule (a config record written before a
+    field existed must not null out a default) — and answers **200**. Nothing changed and
+    nothing was refused. Both handlers now require two finite numbers and say why.
+    `isFinite`, not truthiness: a real **0** offset is a legitimate instruction.
+  * **And `renderRoc` never wrote them back.** A row is rebuilt only when its SIGNATURE
+    (id/kind/status/gps) changes; an ordinary frame takes the live branch, which repainted
+    the dot, the MOVING tag, lat, lon and the HOME radio — **and nothing else**. So the
+    blank box stayed blank, frame after frame, while every RTH recovery point was still 30 m
+    off the Mothership. A clamped `-50` is stored as `0.0` and read as `-50` for ever.
+
+  **New suite `tests/roc_card.js`, 10 checks** — nothing in the repo covered `renderRoc`.
+  It was **red on today's page for exactly the six reported reasons with its four acceptance
+  checks already green**, which is the right way round to start. **6 mutations, 6 killed**;
+  the two that catch an over-eager fix are the acceptance ones (a real 0 refused → 3; a
+  frame overwriting the box being typed into → 7). Advice entry and GUARDS entry added in
+  the same commit.
+
+  ⚠ `set_offset`'s null rule and the `max(0.0, …)` clamp are both correct and deliberate —
+  **do not "fix" them server-side.** The card was the thing lying.
+
+* **2026-09-21 — 24 SUITES COULD NOT BE POINTED AT A SIDECAR, so every mutation run
+  against them was fiction.** A sweep writes its mutants to a copy of `static/asv.html` and
+  points the suite at it with `ASV_HTML`; a suite reading a fixed path never sees them and
+  scores every mutant SURVIVED. Caught three times in two days (`port_slew.js`,
+  `off_track.js`, `turn_geometry.js`), each by a sweep that came back unanimously clean.
+
+  **⚠ AND MY FIRST COUNT WAS WRONG IN BOTH DIRECTIONS.** Grepping each suite for the word
+  gave "21 of 53" — it counted `turn_geometry.js` as covered (the word is there twice, in
+  COMMENTS, about a different file) and missed `buoy_lane.js` (it builds the path from a
+  variable). **The honest measurement was to run them:** point every suite at a 53-byte HTML
+  file and see which stay green. Before: **29 of 53** read the sidecar. After: **52 of 53**.
+  The 53rd is `water_trust.js`, which reads the page and uses it for nothing — its subject
+  is a module, and that is now written in the file so the next audit does not re-derive it.
+
+  **The durable half is `tests/precommit_hook.py` check 8**, which parses every
+  `readFileSync(` CALL rather than grepping the file — a grep is what got this wrong the
+  first time. 2 mutations, 2 killed, including the comment-only shape.
+
+  **⚠ TREAT ANY TEETH TABLE IN THOSE 24 SUITES AS UNVERIFIED UNTIL RE-RUN.** This commit
+  makes re-running them possible; it does not re-run them.
+
+* **2026-09-21 — A PAGE RELOADED MID-RUN MEASURED THE WRONG ARRAY, CONFIDENTLY.**
+  `_wpIndex` counts into the UPLOADED route, whose length the vessel reports back as
+  `wp_total`. `runRoute` is that array only on the page that uploaded it — nothing restores
+  it, `/api/state` carries the index and the total but never the route — and
+  `mission.waypoints` is a **different, shorter** array whenever `routePlan` spliced a
+  detour in. Same instant, 40-waypoint routed plan at waypoint 32, before and after an F5:
+
+  ```
+  open since Upload : 33 of 40   to end 1.62 km · ~26:12   off track   0.0 m
+  after a reload    : 22 of 22   to end   349 m · ~5:40    off track 107.6 m right
+  ```
+
+  with the top-bar pill still reading **32 / 40** beside it, because that one takes the
+  vessel's own numbers. Two waypoint counts on one screen, and the shorter distance is the
+  dangerous one. One helper, `indexedRoute()`, answers which array the index means and
+  returns **null** when the page cannot know; every indexed reader goes through it, and the
+  intent card carries a row saying so rather than a blank that would read as "on track".
+  The degraded upload (no chart model, so Upload sent the drawn plan itself) still reads in
+  full, and so does any page before its first frame — a vessel that has reported no total is
+  not a disagreement. `tests/line_stats.js` 16/16b, `off_track.js` 17/17b,
+  `pause_resume.js` 4b — **7 mutations, 7 killed**. Six eval bundles needed
+  `grab("indexedRoute")` or they are ReferenceErrors, not failures.
+
+  **⚠ AND `lineMark` WAS THE ONE WITH TEETH MISSING.** It reads the DIRECTION the resume
+  backs down a line off the waypoint the boat is steering for — its own comment says
+  "getting this backwards would back the boat up into UNsurveyed water" — and nothing
+  asserted which array it read. That mutation survived until `pause_resume.js` 4b was
+  written. It gives up the BACKTRACK, never the resume.
+
+  **⚠⚠ 21 OF THE 53 SUITES THAT READ `asv.html` HAVE NO `ASV_HTML` OVERRIDE.** Found the
+  same way as `port_slew.js` yesterday: four of these seven mutations first scored SURVIVED
+  because `off_track.js` read the real page while the sweep wrote to a sidecar. `off_track`
+  has one now. **The other twenty are listed by `for f in tests/*.js; do grep -q
+  'static/asv.html' … done` and are a contained job worth doing** — any of them that claims
+  mutation teeth in its header cannot have been tested the way it says.
+
+* **2026-09-21 — THE RESUME'S BACKTRACK WAS DEAD: a PAUSED run could not be amended.**
+  `resumeRun` rewrites the remainder to back the hull down the line BEFORE it presses
+  Start, and the page states that ordering as its own deliberate decision — *"amend_plan
+  needs a RUNNING plan and pause leaves `_running` true while stopping the prop, so the
+  remainder can be rewritten before anything moves."* That premise is about the **link's**
+  flag and it is correct. The gate at the endpoint is the **Engine's**, added later, and
+  the two disagreed about what running means. Measured in-process on a paused boat:
+
+  ```
+  link.amend_plan  -> ACCEPTED
+  Engine.amend     -> REFUSED: the vessel is not running a plan
+  ```
+
+  so the operator's own Resume read *"could not amend the plan … resumed where it lay"* and
+  carried on from wherever the tide had left her, with no overlap. One state was opened and
+  only one — `self.run in ("running", "paused")`. Stopped, idle and station-keeping are
+  still refused in the same words, the link's gate is untouched, and nothing moves until
+  Start. `tests/amend_plan.py` 15/15b/16, **6 mutations, 6 killed**; the over-wide fix
+  (opening "stopped" too) is killed by **16 alone**, which is why 16 exists.
+
+  **⚠ ONE RESIDUAL RISK, RECORDED RATHER THAN BURIED.** `SimVcu` accepts a paused
+  amendment; a REAL VCU link may not, and no hardware was on the bench. If it refuses, the
+  operator is back to today's behavior — a note saying the amendment failed — which is a
+  return to the status quo, not a new hazard. Worth confirming on the water.
+
+  **⚠ AND THE NEW CHECKS SHADOWED AN OLD ONE ON THE FIRST CUT.** Placed in front of check
+  11, they left the boat STOPPED for it, so all four of its malformed-route cases were
+  answered by the RUN gate and 11 stayed green on the wrong refusal entirely — it asked
+  only for "a 409 with words". It names the ROUTE's own sentence now, the new block sits
+  after it and puts the run back for 12, and the mutation that reproduces the ordering is
+  in the suite's teeth table. That is the FOURTH shadowing this one suite has recorded.
+
+* **2026-09-21 — TWO MORE HIGHS ON THE CARDS: a count that could not be reconciled, and a
+  port change that stopped the chart following the boat.**
+
+  * **The AIS card said "94 vessels" over sixty rows**, with the range note underneath
+    reading "whole lake — all contacts". The cap was applied at the row loop alone. And in
+    the same three lines: a contact cut by the CAP fell into the one-update grace sweep —
+    dimmed, stamped `data-miss=1` and titled "no report in this update" while it had
+    reported 3 s ago at 12 kn, showing the range it had when it was nearer, and vanishing
+    on the next poll while still reporting. The cap is taken once now, the headline reads
+    "60 of 94 vessels", and a contact past the cap has its row removed outright: the grace
+    is for a contact the FEED lost. `tests/ais_table.js` 21–22b, **6 mutations, 6 killed**.
+  * **A REFUSED `/api/ports` request latched `portMoving` for the life of the page.** It is
+    set BEFORE the request (deliberately — check 15b), and only `portMoveDone` clears it. A
+    dropped link makes `fetch` REJECT rather than answer `r.ok === false`, so the refusal
+    arm is never reached; the call site is `onchange = (e)=>switchPort(e.target.value)`,
+    fire and forget, and the page installs no `unhandledrejection` handler. The chart stops
+    following the boat, the card sits on "asking the console…", and the picker still shows
+    a port that was never reached. All three entry points catch now.
+    `tests/port_slew.js` 17–17d, **6 mutations, 6 killed**.
+
+  **⚠ AND THE FIRST SWEEP OF THOSE SIX SCORED ALL SIX AS SURVIVED.** `tests/port_slew.js`
+  had **no `ASV_HTML` override**, so every mutant page went to a sidecar the suite never
+  read — while its own header claims thirteen mutations "run against a sidecar copy of the
+  page". Those thirteen cannot have been produced the way it says. The override is in, the
+  header records it, and it is worth checking which other suites claim sidecar teeth
+  without the means to have them.
+
+  **⚠ AND `tests/mission_store.py` CHECK 5 WAS A COIN-TOSS, which is what found all this.**
+  It ran for a wall-clock 3 s and then required more than 50 saves and 50 reads to have
+  happened in it — a property of the MACHINE, not of the console. Three consecutive runs on
+  this box scored `save_ok` 34, 48 and **50** against a floor of `> 50`: it blocked a
+  commit, passed a minute later, and blocked again. It is counted now, not timed — each
+  writer does a fixed 40 saves and the readers run until both are done, so the contention
+  is guaranteed and the save count is exact. Still killed by "the read does not hold the
+  writer lock", the fault it was written for. **This is almost certainly what blocked the
+  earlier commit too** — that run's full output was lost to a truncated capture and I could
+  not name the suite at the time.
+
+  **⚠ AND ONE HARNESS BUG WORTH THE SAME WARNING.** The three port cases first ran through
+  `Promise.all` over ONE vm context, so the last one's state overwrote the other two: every
+  case read the same message and a picker count of 3. Check 17 passed **for the wrong
+  reason** while 17b failed for a reason unrelated to its subject. The detail line is what
+  showed it; the tick would not have.
+
+* **2026-09-21 — FOUR HIGHS PULLED IN FROM `asv_core`, AND THREE MORE FILES ARE NOW ASV-OWNED.**
+  The review found them in `ais_service.py`, `roc_tracks.py` and `static/js/raster.js` — all three
+  VENDORED, so they were fixed in `asv_core` first (tip **`2a0b53d`**, pushed) and PULLED across
+  here under the same **"⚠⚠ ASV OWNS THIS FILE NOW"** header `keepouts.js`, `routing.js` and
+  `core_turns.js` already carry. **⚠ `python tools/vendor.py` IN asv_core WOULD NOW OVERWRITE SIX
+  ASV FILES.** Z-Boat and WorldView were left alone, per Andy 2026-08-31 — the flow is one way.
+
+  * **The boat's own AIS set ranked 0 and lost the ship to the shore relay.** `PRIORITY` is keyed
+    by FEED; `src` carries the ENDPOINT name, so a labeled receiver reports as `nmea-udp-10110`
+    and `PRIORITY.get` answered 0. An aisstream position 9 km away held the vessel while the
+    receiver on deck was reporting. `Registry._rank` falls back to the feed before the first `-`;
+    `src`, `srcs` and `health_name` are untouched. `tests/ais_sources.py` 4e–4g.
+  * **The AISHub poll deferred for ever to a stream delivering nothing.** `_ok` stamps `updated` on
+    every successful CONNECT, and a far end that accepts then hangs up never reaches `_err` —
+    `recv()` returning `b""` leaves the try block NORMALLY. Measured on a real loopback server:
+    **51 accepts, one report ever, connect clock never older than 1.8 s, zero polls in 150 s.**
+    Two clocks now, `updated` and `last_report`. `tests/ais_sources.py` 4h/4h2.
+  * **A dead ROC GPS link reached the card and not the Engine.** Nothing clears a ROC when its feed
+    stops, so the point, `moving` and `closing_kn` all freeze. Card red at `link=lost age 20.0`;
+    `home_intent` — the one thing the Engine pulls every tick — byte-identical to a live link, RTH
+    note still "chasing Mothership (MOVING)" about a ship **40 m from where it said, growing
+    123 m/min**. The chase loop re-targets only when the point MOVES, so a frozen point never
+    trips it. Both the note and the chase say it now, once per outage, and they QUALIFY rather
+    than refuse — a refusal would take the operator's only recovery action away over a 16 s
+    dropout. `moving`/`closable` deliberately unchanged. `tests/roc_tracks.py` 23b–27.
+  * **The routing grid under-approximated at the window boundary**, which is the one direction it
+    must never be wrong in. Grid points span `[x0, x0+(W-1)*cell]` while the cull ran to
+    `x0+W*cell`: a feature just outside was culled AND rounded to −1, one inside past the last
+    row's centre rounded to H, and the dilation had nothing to grow. `legPath` never re-checks a
+    raster-clear leg, so it shipped **three commanded legs whose closest approach was 1.80 m at a
+    3 m buffer.** Both culls padded, the stamp CLAMPS — per SAMPLE. `tests/wreck_clearance.js`
+    22–23b.
+
+  **⚠ TAKING OWNERSHIP OF A FILE TAKES OWNERSHIP OF ITS TESTS, and that cost one real check.**
+  asv_core's suite held that the raster's dilation follows the buffer; with the radius pinned at 1,
+  `wreck_clearance`, `buoy_lane`, `track_edge`, `hold_point`, `turn_channel` and `gate_endpoint`
+  were **all still green** here. That is `wreck_clearance.js` 23b now. Worth assuming the same is
+  true of `keepouts.js`, `routing.js` and `core_turns.js`, which went ASV-owned in August without
+  anyone auditing what asv_core had been guarding for them.
+
+  **⚠ AND `vendor.py --check` HAD BEEN LYING BY OMISSION.** It prints the first differing line of a
+  drifted copy; a Windows console is cp1252, these files are written in em dashes, and that print
+  raised `UnicodeEncodeError` — killing the whole check at the first drifted copy whose sample line
+  contained one. It was hiding **four** drifts, including that **ASV's `ais_service.py` is 219 diff
+  lines ahead of the core** (`STATIC_KEYS`, `_static_from_aisstream`, the ITU-R M.1371 message-5
+  offsets — Andy's 2026-09-02 ask). A `vendor.py` run would have deleted all of it silently. Fixed
+  in asv_core at `2a0b53d`.
+
 * **2026-09-20 — MISSION STATUS CARD: the section heads read as titles.** Andy: *"The section label
   'INTENT - WHAT AND WHY' needs to be same color and size as Mission Status title, but with an underline
   that extends and divides the card for better user recognition. The same for 'History - Last 20'."*
@@ -827,6 +2381,9 @@ if it still cannot); **staggered reversals are a separate follow-up** (see OPEN 
     81.9 m BEHIND the exit and 10 m across - the gate measures the straight gap (82.5 m > 49 m), so no turn is tried and
     a ~173 deg reversal ships unflagged (or red as a hop). punchOut's 2026-09-08 comment records why measuring across was
     rejected then (0 -> 2 red on a harbour plan); with red now refusing, that trade needs measuring on his plans first.
+    ⚠ **MEASURED 2026-09-22, and it is no longer SILENT** - see the block at the head of this handoff. Across his
+    six committed plans a crossing gate pulls in ONE pair of 94, and the Honolulu route shipped 14 joints over 130 deg at
+    a single waypoint. The COUNTING is shipped; **WIDENING THE GATE IS STILL HIS CALL** and the decision input is there.
   * THE ESCAPE IN THE TURN OFF LINE 1 (19:11:50, Honolulu): a turn the punch judged flyable was escaped from 17 s in. Not
     investigated; the recording has the route and the telemetry.
   * A FOLDED DETOUR (nKnotFold) still ships with its fold and a banner - not refused. Not asked about.

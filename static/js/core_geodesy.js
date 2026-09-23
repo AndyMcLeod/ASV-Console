@@ -86,7 +86,7 @@
  * So this module does NOT offer one `distance()` that quietly picks a model. An
  * app migrates onto it by ALIASING its historic name to the explicit one --
  * `const distTo = flatDistanceM` in ASV, `= geodesicDistanceM` in WorldView --
- * which is a rename, not a behaviour change.
+ * which is a rename, not a behavior change.
  *
  * WHICH TO USE:
  *   flat*      Survey patterns, keep-out rasters, Rule 9 lanes -- anything
@@ -122,7 +122,7 @@ export const M_PER_NM = 1852.0;
 export const NM_PER_DEG = 60.0;
 
 /**
- * ASV's flat-earth constant. NOT the ellipsoidal metres-per-degree at any
+ * ASV's flat-earth constant. NOT the ellipsoidal meters-per-degree at any
  * latitude -- a round number that has been in the survey maths since it was a
  * faithful port of surveypattern.cpp, and every keep-out decision in that
  * console is computed with it. A defined constant, not a measurement.
@@ -136,8 +136,8 @@ export const R2D = 180 / Math.PI;
 //  Tangent-plane frames
 // --------------------------------------------------------------------------- //
 
-/** [metres per degree latitude, metres per degree longitude] on WGS84. */
-export function metresPerDegreeEllipsoidal(latDeg) {
+/** [meters per degree latitude, meters per degree longitude] on WGS84. */
+export function metersPerDegreeEllipsoidal(latDeg) {
   const s = Math.sin(latDeg * D2R);
   const w2 = 1 - E2 * s * s;
   const meridian = (A * (1 - E2)) / Math.pow(w2, 1.5);
@@ -151,7 +151,7 @@ export function metresPerDegreeEllipsoidal(latDeg) {
  *
  * THIS IS NOT THE ELLIPSOIDAL FRAME AND MUST NOT BE "CORRECTED" INTO ONE. At
  * Lewes the two disagree by +0.278 % north and -0.131 % east, which is 3.07 m
- * per kilometre of extent -- the same order as the entire keep-out buffer, in
+ * per kilometer of extent -- the same order as the entire keep-out buffer, in
  * the frame the keep-out routing and the Rule 9 lane are computed in.
  */
 export function frameFlat(ref) {
@@ -165,7 +165,7 @@ export function frameFlat(ref) {
 
 /** WorldView's tangent plane: true WGS84 radii at the reference latitude. */
 export function frameEllipsoidal(ref) {
-  const [mLat, mLon] = metresPerDegreeEllipsoidal(ref.lat);
+  const [mLat, mLon] = metersPerDegreeEllipsoidal(ref.lat);
   return makeFrame({
     ref: { lat: ref.lat, lon: ref.lon },
     m_per_deg_lat: mLat,
@@ -175,7 +175,7 @@ export function frameEllipsoidal(ref) {
 }
 
 /**
- * Position -> {e, n} metres in `frame`.
+ * Position -> {e, n} meters in `frame`.
  *
  * Takes loose numbers rather than a contract because this is the hot path --
  * the keep-out raster calls it tens of thousands of times per plan. The Frame
@@ -188,7 +188,7 @@ export function toEN(lat, lon, frame) {
   };
 }
 
-/** {e, n} metres in `frame` -> {lat, lon}. */
+/** {e, n} meters in `frame` -> {lat, lon}. */
 export function fromEN(e, n, frame) {
   return {
     lat: frame.ref.lat + n / frame.m_per_deg_lat,
@@ -458,5 +458,5 @@ export function alignDeg(courseDeg, lineDeg) {
 // --------------------------------------------------------------------------- //
 //  Units
 // --------------------------------------------------------------------------- //
-export const nmFromM = (metres) => metres / M_PER_NM;
+export const nmFromM = (meters) => meters / M_PER_NM;
 export const mFromNm = (nm) => nm * M_PER_NM;

@@ -45,7 +45,7 @@
 // well inside what a boat with a 14.4 m minimum can hold. The advisory alongside it said
 // WIDEN THE LINES, which makes it strictly worse. It is `maxHalfM` now, and punchOut
 // passes Math.max(MAX_HALF_M, spacing * 1.6) - the same 1.6 its own reversal gate uses -
-// so the judgement is made once instead of twice at two different scales. A caller that
+// so the judgment is made once instead of twice at two different scales. A caller that
 // passes nothing still gets 60, which is what the suites do and why they did not move.
 //
 // WHAT DID NOT COME, AND THE AUDIT'S "shared symbol" ROW IS STILL MISLEADING ABOUT IT.
@@ -77,7 +77,7 @@ export { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, SPIRAL_
 // 0.000e+0. Adopting the scaling is a separate decision with its own measurement.
 export const ARC_STEP_M = 3;
 
-// Shorten a survey segment by `m` metres at BOTH ends (settle on-line + leave room for
+// Shorten a survey segment by `m` meters at BOTH ends (settle on-line + leave room for
 // the turn). Leaves it untouched if that would make it too short. THE FLAT METRIC - see
 // the header; this is the one place in the estate where the frame's is the wrong answer.
 export function shortenSeg(a, b, m){ return coreShortenSeg(a, b, m, distTo); }
@@ -111,7 +111,7 @@ export function teardropTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, side){
     clear: (a, b) => legClear(a, b, ref, ko, buf),
     arcStepM: ARC_STEP_M,
     maxHalfM,
-    // ⚠ 'inboard' SWEEPS THE SEMICIRCLE THE OTHER WAY ROUND A CENTRE THAT DOES NOT MOVE,
+    // ⚠ 'inboard' SWEEPS THE SEMICIRCLE THE OTHER WAY ROUND A CENTER THAT DOES NOT MOVE,
     // AND THAT IS NOT A MIRRORED TURN - IT IS THE ARC FOR THE OPPOSITE TRANSITION
     // (established 2026-09-19, see turnJoinable). The center stays midway between the two
     // lines, so reversing the sweep keeps both endpoints and reverses BOTH tangents: the
@@ -228,10 +228,10 @@ export function spiralTurn(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, Ls){
  *
  * The drawn polyline is 3.75 m off the keep-out either way. Sampling it EIGHTEEN TIMES
  * FINER moved the flown track 2.6 m closer to the feature, into the buffer, and the guard
- * held a 645-waypoint survey eleven metres into line 1 of 17.
+ * held a 645-waypoint survey eleven meters into line 1 of 17.
  *
  * The first and last points are not optional - they are where the shape meets the lines -
- * so when the last one crowds its neighbour it is the NEIGHBOUR that goes.
+ * so when the last one crowds its neighbor it is the NEIGHBOR that goes.
  */
 export function thinTrack(pts, minGapM, ref){
   if(!pts || pts.length < 3 || !(minGapM > 0)) return pts;
@@ -252,6 +252,21 @@ export function thinTrack(pts, minGapM, ref){
 }
 
 /** The waypoint spacing floor a shape is built to, for this hull. */
+/**
+ * IS THE EASED RUNG EVEN OFFERED for this settle length and this waypoint spacing?
+ *
+ * ⚠⚠ EXPORTED SO THE READOUT CAN READ THE LADDER'S OWN TEST. The punch has to tell an
+ * operator who asked for EASED and got NONE which of two things happened - the rung was
+ * offered and refused every time (that wants more water), or it was never offered at all
+ * (that wants a finer approach radius). Those have different remedies and the counts alone
+ * cannot tell them apart. A restated copy of this condition in the page is exactly how an
+ * advisory comes to name a cause the code cannot produce.
+ */
+export function easeOffered(easeLs, fly){
+  const gap = trackGapM(fly);
+  return easeLs > 0 && (gap <= 0 || easeLs >= 4 * gap);
+}
+
 export function trackGapM(fly){
   if(fly === false) return 0;
   const o = fly || {};
@@ -264,7 +279,7 @@ export function trackGapM(fly){
  *
  * ⚠ THE PUNCH AND THE GUARD USED TO ANSWER DIFFERENT QUESTIONS ABOUT THE SAME TURN, and
  * that is what stopped a survey dead at New Castle on 2026-09-10. The punch asks whether
- * the drawn POLYLINE clears the keep-outs (`legClear`, sampled every buf/3 metres). The
+ * the drawn POLYLINE clears the keep-outs (`legClear`, sampled every buf/3 meters). The
  * guard asks whether the boat, steering at its own turn rate toward the waypoint it is
  * actually being steered at, stays clear. Those are not the same question, and where they
  * disagree the boat gets a plan it is then stopped for flying.
@@ -272,7 +287,7 @@ export function trackGapM(fly){
  * Measured on Andy's plan: a reversal whose every vertex sat 3.75-4.4 m off a keep-out at a
  * 3 m buffer - legal, clear by 0.75 m, and the punch was right to ship it. The guard's
  * projection over the same waypoints came within 2.9 m and called an entry. The survey held
- * eleven metres short of the end of line 1 of 17, the hold replaced the 645-waypoint plan
+ * eleven meters short of the end of line 1 of 17, the hold replaced the 645-waypoint plan
  * with a single waypoint, and there was no way back.
  *
  * ⚠⚠ AND THE REASON THE TWO DISAGREED IS THE ONE NOBODY WOULD GUESS: the eased turn's
@@ -291,7 +306,7 @@ export function trackGapM(fly){
  * are followable, and pass; so the plan that ships is the plan the guard will let fly.
  *
  * ⚠ THE HORIZON IS THE SHAPE'S OWN LENGTH, not the guard's 45 s. The guard looks 45 s
- * ahead because that is how far it can see; here the question is about a specific manoeuvre
+ * ahead because that is how far it can see; here the question is about a specific maneuver
  * from end to end, and a 45 s cap would silently stop checking a long turn half way round.
  *
  * ⚠ AND IT IS FLOWN IN STILL WATER. The set at plan time is not the set at run time - the
@@ -446,8 +461,7 @@ export function turnWithRetry(E, F, hE, hF, ref, ko, buf, minR, maxHalfM, minRSl
   // not offered at all and the plain arc takes the turn, which is what it would have had
   // before easing existed. Same rule as SPIRAL_MIN_LS_M, measured against the consumer
   // rather than against zero.
-  const easeGap = trackGapM(fly);
-  if(easeLs > 0 && (easeGap <= 0 || easeLs >= 4 * easeGap))
+  if(easeOffered(easeLs, fly))
     tries.push({side: undefined, minR, slow: false, shape: 'eased'});
   tries.push({side: undefined, minR, slow: false, shape: 'arc'},
              {side: undefined, minR, slow: false, shape: 'racetrack'});
@@ -629,7 +643,7 @@ function turnTo(cur, tgt, step){
   const d = ((tgt - cur + 540) % 360) - 180;
   return (cur + clampN(d, -step, step) + 360) % 360;
 }
-/** Distance from an {e,n} point to the polyline EN[lo..hi], in metres. */
+/** Distance from an {e,n} point to the polyline EN[lo..hi], in meters. */
 function polyOff(EN, P, lo, hi){
   let m = Infinity;
   for(let k = Math.max(0, lo); k < Math.min(EN.length - 1, hi); k++){
@@ -683,7 +697,7 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
   let e = EN[0].e, n = EN[0].n, h = azTo(route[0], route[1]);
   let k = 1, prev = EN[0], xi = 0, guard = 0;
   // She starts the plan already up to the first leg's speed; everything after is ramped.
-  let twMs = speedAt(1, 0), travelled = 0;
+  let twMs = speedAt(1, 0), traveled = 0;
   const rampMs = SPEED_RAMP_KN_S * 0.514444 * TRACK_STEP_S;
   // ⚠ THE TICK ORDER IS THE FOLLOWER'S, AND IT IS LOAD-BEARING. `along` and the range to
   // the waypoint are taken BEFORE the step and the leg advance is decided on those, which
@@ -695,7 +709,7 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
   while(k < EN.length && guard < 2e6){
     guard++;
     const tgt = EN[k];
-    const want = speedAt(k, travelled);
+    const want = speedAt(k, traveled);
     twMs += clampN(want - twMs, -rampMs, rampMs);      // the governor's ramp, not a step
     const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
     const distB = Math.hypot(tgt.e - e, tgt.n - n);
@@ -716,12 +730,12 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
     }
     h = turnTo(h, desired, t.rate * TRACK_STEP_S);
     const a = h * D2R;
-    travelled += twMs * TRACK_STEP_S;
+    traveled += twMs * TRACK_STEP_S;
     e += twMs * Math.sin(a) * TRACK_STEP_S;
     n += twMs * Math.cos(a) * TRACK_STEP_S;
     const i = k - 1;
     pts.push({e, n, i});
-    // CHARGED TO BOTH NEIGHBOURING VERTICES, so a corner is measured from both sides -
+    // CHARGED TO BOTH NEIGHBORING VERTICES, so a corner is measured from both sides -
     // the run-in on the leg before it and the run-out on the leg after. A step outside
     // `cornerReachM` of a vertex is not part of that corner and is not charged to it.
     // ⚠ SIZED AT THE PLAN SPEED, NOT THE SPEED SHE HAPPENS TO BE DOING. Sizing it from the
@@ -855,10 +869,10 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
   const lateM = lowMs * SPEED_CMD_LATENCY_S;
   const walkSlowed = () => {
     let legStart = null, lastK = -1;
-    return flownTrack(route, ref, (i, travelled) => {
-      if(i !== lastK){ lastK = i; legStart = travelled; }
+    return flownTrack(route, ref, (i, traveled) => {
+      if(i !== lastK){ lastK = i; legStart = traveled; }
       if(!slowLeg(i)) return planMs;
-      return (travelled - legStart) < lateM ? planMs : lowMs;
+      return (traveled - legStart) < lateM ? planMs : lowMs;
     }, fly, planMs);
   };
   // ⚠⚠ AND IT IS ITERATED, OVER EVERY VERTEX, BECAUSE SLOWING MOVES THE BOAT. The slowed

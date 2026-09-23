@@ -44,7 +44,7 @@
 //   governor: send every frame instead of only on change      -> 6
 //   governor: ignore the clearance override                   -> 7
 //   governor: drop the autonomous-command gate                -> 8, 8b
-//   governor: ignore the per-gap slow-turn flag               -> 5
+//   governor: ignore the committed line's slow-turn flag      -> 5
 //   governor: command a heading as well as a speed            -> 5, 6, 9
 //   governor: write the operator's setting back               -> 14
 //   roleSpeed: fall back to "survey" not the legacy key       -> 4
@@ -137,9 +137,29 @@ var cornerSlowFor = -1;
 // same way it does for the safety override — declared here so the checks below run against
 // the ordinary case, and driven on purpose in the resume checks further down.
 var resumeSlow = false;
+// The helm rung's claim on the throttle: speedGovernor stands down on `escapeThrottle`
+// exactly as it does on `resumeSlow`, so the symbol must exist in this world or the governor
+// is a bare ReferenceError. False here - no escape is commanded - so these checks are the
+// evidence that an ordinary run still governs its own speed as it always did.
+var escapeThrottle = false;
+// ⚠ AND THE DEVIATION'S SETTLE WINDOW (2026-09-22). The governor now refuses to RAISE the
+// speed for EDGE_REASSESS_MS after the clearance guard deviated the plan, so both symbols are
+// read inside speedGovernor. Neither was in this world: the guard `commandedSpeed && ...`
+// short-circuits on every case written before the floor landed, so the whole suite stayed
+// green over a bare ReferenceError waiting for the first check to drive a raise. Check 20 is
+// that check, and it would have failed for the wrong reason without these two lines.
+var guardEdgeAt = 0;
+const EDGE_REASSESS_MS = 2000;
 var S = null, clearance = { slowed: false }, asv = { lat: 0, lon: 0 };
+// ⚠ indexedRoute READS `runRoute` AND `S.wp_total`. This world drives the governor from
+// `mission` alone and its S carries no wp_total, so there is nothing for the drawn plan to
+// disagree with and indexedRoute answers it - which makes every check below the ORDINARY
+// case rather than the reloaded-page one. tests/guard_resume.js 18a owns that one.
+var runRoute = null;
 var sent = [];
-function cmd(path, body) { sent.push({ path, body }); }
+// commandSpeed reads what its command answered (2026-09-22): a want for a command this tab never sent is not a want. A stub returning undefined makes it throw.
+function cmd(path, body) { sent.push({ path, body });
+                           return Promise.resolve({ ok: true, state: {} }); }
 var banners = [];
 function showBanner(m) { banners.push(m); }
 
@@ -159,11 +179,17 @@ eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") +
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
-     grab("commandSpeed") + "\n" + grab("speedReconcile") + "\n" +
+     grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
+     + grab("speedReconcile") + "\n" +
      "function __want(){ return speedWant; }\n" +
      // review #14: the governor acts only in the SUPERVISING tab, and this world is that tab. A view-only one is
      // tests/supervisor_page.js's subject - it holds that the governor assesses and commands nothing.
      "const supervising = () => true;\n" +
+     // ⚠ indexedRoute IS A GOVERNOR STAND-DOWN NOW (2026-09-22): a page that does not hold
+     // the route the vessel's index counts into governs nothing, rather than falling through
+     // to the TRANSIT role. Missing from this bundle it is a bare ReferenceError inside
+     // speedGovernor, which the crash guard reports as ONE failed check rather than as a crash.
+     grab("indexedRoute") + "\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
@@ -249,13 +275,24 @@ console.log("Speed by mode - three settings, and the console governs which one i
   // entirely produced "low" anyway and the check could not tell the two apart. It passed
   // against a governor that had never heard of the flag. The flag has to be the ONLY thing
   // that can produce "low", or this proves nothing.
+  //
+  // ⚠ AND THE FLAG LIVES ON THE COMMITTED LINE SINCE 2026-09-22, not in `turnSlowAt`. It was
+  // written by PUNCH-GAP index and read by MISSION-LINE index; the two agree only for one
+  // pattern committed onto an empty plan, never re-punched, never reloaded, with no line
+  // struck off. `turnSeg.from` IS a mission.lines index, so the flag rides on the line the
+  // reversal leaves - the same direction `lead_out_m` already means.
   const HIGHTURN = { transit: "high", turn: "survey", survey: "survey" };
-  world({ speeds: { ...HIGHTURN } }); inTurn(2); turnSlowAt[2] = true;
+  // three real committed lines, so `mission.lines[2]` is a line and not a hole in a sparse
+  // array - drawnLines maps over them and a hole is a TypeError, reported as a crash
+  const LN = (k) => ({ a: { lat: 43.0 + k * 0.001, lon: -70.5 },
+                       b: { lat: 43.0 + k * 0.001, lon: -70.4 } });
+  world({ speeds: { ...HIGHTURN }, lines: [LN(0), LN(1), LN(2)] }); inTurn(2);
+  mission.lines[2].slow_turn_out = true;
   const got = speedGovernor();
   check("5. a turn that only fitted at the slow radius is FLOWN slow",
         () => got === "low" && sent.length === 1 && sent[0].body.speed === "low",
         "operator's turn speed is '" + HIGHTURN.turn + "'; gap 2 flagged -> commanded " + got);
-  world({ speeds: { ...HIGHTURN } }); inTurn(2);            // same turn, NOT flagged
+  world({ speeds: { ...HIGHTURN }, lines: [LN(0), LN(1), LN(2)] }); inTurn(2);   // NOT flagged
   check("5b. ... and one that did not is flown at the operator's turn speed",
         () => speedGovernor() === "survey",
         "unflagged gap -> " + roleSpeed("turn") + ", the operator's own choice");
@@ -306,13 +343,22 @@ console.log("Speed by mode - three settings, and the console governs which one i
 // 9. THE CONSOLE NEVER STEERS. The whole intervention is a speed; anything commanding a
 // heading, a waypoint or a behaviour from here is out of scope by design.
 {
-  const G = grab("speedGovernor"), CS = grab("commandSpeed") + grab("speedReconcile");
+  // ⚠ AND SINCE 2026-09-22 THERE IS EXACTLY ONE DOOR: sendSpeed. commandSpeed STARTS a
+  // want and speedReconcile RE-SENDS one, and both go through it, so the "a want for a
+  // command this tab never sent is not a want" rule cannot be half-applied. Following
+  // the call one hop further is what keeps this check from passing vacuously on a
+  // governor with no cmd( left in it - the same reason the hop into commandSpeed exists.
+  const G = grab("speedGovernor");
+  const CS = grab("sendSpeed") + grab("commandSpeed") + grab("speedReconcile");
   // Since review #6 the governor commands through commandSpeed(), which the page's speed
   // reconciliation needs to see - so the check follows the call into it rather than passing
   // vacuously on a governor with no cmd( left in it.
   check("9. the governor's only command is a SPEED - it never steers",
         () => !/\bcmd\(/.test(G) && /commandSpeed\(want\)/.test(G)
-              && (CS.match(/cmd\("[^"]+"/g) || []).length >= 2
+              && (CS.match(/cmd\("[^"]+"/g) || []).length >= 1
+              // ...and exactly ONE of the three actually reaches the wire: sendSpeed.
+              && !/cmd\(/.test(grab("commandSpeed"))
+              && !/cmd\(/.test(grab("speedReconcile"))
               && (CS.match(/cmd\("[^"]+"/g) || []).every(c => c === 'cmd("/api/cmd/speed"'),
         "commands issued: " + JSON.stringify([...new Set(CS.match(/cmd\("[^"]+"/g) || [])]));
 }
@@ -527,6 +573,58 @@ console.log("Speed by mode - three settings, and the console governs which one i
   check("19f. every frame asks, right after the governor",
         () => /speedGovernor\(\); speedReconcile\(s, st\);/.test(H),
         "onState: the governor states the want, the reconcile checks the vessel has it");
+}
+
+// ⚠⚠ 20. THE GOVERNOR STANDS ITS SPEED DOWN WHILE A DEVIATION SETTLES.
+//
+// The clearance guard's edge rung answers a hazard by moving a waypoint, and then stands the
+// slow and hold rungs down for EDGE_REASSESS_MS - both of them begin `if(settling) return c;`
+// - because the deviation is supposed to BE the answer. Nothing stood the GOVERNOR down, so
+// anything moving `want` upward inside that window (a turn ending, a line starting, the role
+// changing under the splice) accelerated the boat during the two seconds the safety ladder is
+// deliberately silent, on water the guard had just called foul. And the deviation was
+// certified at the speed she was DOING - guardTrack projects at the measured `twMs`, and turn
+// radius scales with speed - so raising it invalidates the verification of the very track she
+// is now flying.
+//
+// ⚠ COMPUTED FROM `guardEdgeAt`, NOT LATCHED. It expires by itself and cannot stick if the
+// guard stops running, which a latch set by the rung and cleared by another would not.
+{
+  const realNow = Date.now;
+  try {
+    let clock = 1000000;
+    Date.now = () => clock;
+
+    // A raise, with the deviation one second old: HELD at what is already commanded.
+    world(); onTransit(); __setCommanded("survey"); guardEdgeAt = clock - 1000;
+    const held = speedGovernor();
+
+    // ⚠ THE PAIR, AND IT IS NOT OPTIONAL. Without the next two arms a governor that simply
+    // never raised - or one frozen outright while settling - passes the first arm exactly as
+    // the right one does. LOWERING past a hazard is always allowed; that is the direction the
+    // whole ladder moves.
+    // ⚠ AND onLine(), NOT onTransit(). With the transit role the governor WANTS 'high'
+    // too, so `want === commandedSpeed` returns above the floor and the arm reports 'high'
+    // for a reason that has nothing to do with lowering - it passes identically against a
+    // governor frozen solid. On a line the role wants 'survey' (7.0 kn) against a commanded
+    // 'high' (14.0), which is a genuine reduction inside the window.
+    world(); onLine(); __setCommanded("high"); guardEdgeAt = clock - 1000;
+    const lowered = speedGovernor();
+
+    // The same raise with the window expired: it goes.
+    world(); onTransit(); __setCommanded("survey"); guardEdgeAt = clock - (EDGE_REASSESS_MS + 1);
+    const after = speedGovernor();
+
+    check("20. the governor may not RAISE the speed while a deviation is settling - and may "
+          + "still lower it, and raises again the moment the window is out",
+          () => held === "survey" && lowered === "survey" && after === "high",
+          "raise 1 s after the deviation -> " + JSON.stringify(held)
+            + " (the transit role wants 'high'); a LOWER in the same window -> "
+            + JSON.stringify(lowered) + "; the same raise " + (EDGE_REASSESS_MS + 1)
+            + " ms after -> " + JSON.stringify(after) + ". The slow and hold rungs are BOTH "
+            + "standing down here on purpose; a governor that accelerates into that silence "
+            + "is the one part of the ladder still moving, and it is moving the wrong way");
+  } finally { Date.now = realNow; guardEdgeAt = 0; }
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

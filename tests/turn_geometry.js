@@ -91,7 +91,11 @@ const { bbOf } = require("../static/js/geometry.js");
 const { KNOT_STEP_M, KNOT_TURN_DEG, junctionKnot, pruneJunctionKnots } = require("../static/js/passage.js");
 
 const STATIC = path.join(__dirname, "..", "static");
-const H = fs.readFileSync(path.join(STATIC, "asv.html"), "utf8");
+// ⚠ ASV_HTML POINTS THIS AT A SIDECAR, and this suite was counted as HAVING that override
+// by a grep that matched the WORD in the two comments below. It did not have one: every
+// mutant written to a sidecar was scored SURVIVED. Measured the honest way instead - point
+// every suite at a 53-byte page and see which ones stay green (2026-09-21).
+const H = fs.readFileSync(process.env.ASV_HTML || path.join(STATIC, "asv.html"), "utf8");
 
 // Pull a `function NAME(...) { ... }` definition out of a source file by brace matching.
 function grab(src, name) {
@@ -414,7 +418,8 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // Same instrument as asv_core's identity checks, in the only form available across an HTML
 // boundary: the page must IMPORT the module, and must not DEFINE any of the four.
 {
-  const page = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const page = fs.readFileSync(process.env.ASV_HTML
+                               || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const imports = /from\s+"\/static\/js\/turns\.js"/.test(page);
   const redefined = ["arcPts", "minTurnRadiusM", "shortenSeg", "teardropTurn"]
     .filter(n => new RegExp("(^|\\n)\\s*function\\s+" + n + "\\s*\\(").test(page));
@@ -816,10 +821,29 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
         + " m against a 1.0 m approach radius. The spirals are emitted at Ls/8 = 0.50 m and "
         + "the shape is thinned BEFORE legClear and the projection are asked about it");
 
-  // 47. AND THE FLYABILITY TEST IS WHAT TELLS DENSE FROM COARSE. One semicircle, sampled
-  // two ways, with a pile inside the loop. legClear passes both polylines - they are the
-  // same curve. The projection does not: fed 94 waypoints 0.2 m apart it consumes a dozen
-  // per step, steers at a point half way round, and cuts across the middle onto the pile.
+  // 47. AND THE FLYABILITY VERDICT DOES NOT DEPEND ON HOW FINELY THE SAME CURVE WAS DRAWN.
+  // One semicircle, sampled two ways, with a pile inside the loop. legClear passes both
+  // polylines - they are the same curve - and so must the flown-track test.
+  //
+  // ⚠⚠ THIS CHECK USED TO ASSERT THE OPPOSITE, AND IT WAS PINNING A BUG AS A FEATURE.
+  // It required the 0.2 m sampling to come back UNFLYABLE, and its own comment explained
+  // why: the projection 'consumes a dozen [waypoints] per step ... and cuts across the
+  // middle onto the pile'. It did the exact opposite. projectRoute advanced AT MOST ONE
+  // waypoint per integration step while the position advanced twMs*step, so at 0.2 m
+  // spacing the target fell further astern every step, turnToward swung the projection
+  // round toward a point behind it, and the loop it flew was the bug's signature, not the
+  // hull's. Corrected (guard.js consumes every waypoint a step passed), one curve gives
+  // one answer whatever its spacing - which is the property worth pinning.
+  //
+  // ⚠ AND THE FIXTURE'S PREMISE WENT WITH IT: a hull that cannot hold an arc washes out
+  // WIDE, not across the middle, so a pile INSIDE the loop is not what an unflyable turn
+  // hits. Measured on this fixture at 3 kn (R=6 m needs 14.7 deg/s): at 10 deg/s the hull
+  // cannot hold it and the pile inside is still missed, by both samplings.
+  //
+  // ⚠ RESIDUAL, NOT FIXED HERE AND NOT THIS CHECK'S CLAIM: with a pile OUTSIDE the arc at
+  // low turn rates the two samplings can still disagree (measured 3 m off at 10 deg/s:
+  // 0.2 m flyable, 1 m not). That is turnFlyable's own wash-out behaviour, not the
+  // waypoint advance, and it is written up rather than quietly folded in here.
   const R = 6;
   const arcAt = (stepM) => { const out = [], n = Math.max(2, Math.ceil(Math.PI * R / stepM));
     for (let i = 1; i < n; i++) { const a = -Math.PI/2 + Math.PI * (i / n);
@@ -835,13 +859,15 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
   const chordsClear = (pts) => { const P = [E2, ...pts, F2];
     for (let i = 1; i < P.length; i++) if (!legClear(P[i-1], P[i], ref, pile, 3)) return false;
     return true; };
-  check("47. ... and the flyability test is what tells the two apart",
-        okDense === false && okThin === true && chordsClear(dense) && chordsClear(thinned),
+  check("47. ... and the flyability verdict is the SAME however finely that one curve was "
+        + "drawn - sampling is not a fact about the water",
+        okDense === okThin && chordsClear(dense) && chordsClear(thinned),
         "the SAME semicircle: " + dense.length + " waypoints 0.2 m apart -> flyable="
         + okDense + "; thinned to " + thinned.length + " at 1 m -> flyable=" + okThin
         + ". legClear passes both (" + chordsClear(dense) + "/" + chordsClear(thinned)
-        + ") because they are one curve - only the FLOWN track separates them, and the "
-        + "finer sampling is the one that cuts across its own loop");
+        + ") because they are one curve. Before the waypoint advance was fixed these read "
+        + "false/true: the projection steered at a target that fell astern and flew a loop "
+        + "the hull never would");
   V.SPEED_KN = sav.s; V.MAX_TURN_RATE_DEG_S = sav.r; V.VESSEL = sav.v;
 }
 
@@ -896,8 +922,19 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 // spiral is the floor; below it what ships is an arc wearing the word "eased".
 {
   const src = fs.readFileSync(path.join(STATIC, "js", "turns.js"), "utf8");
+  // ⚠ DRIVEN SINCE 2026-09-23, because the rule is now an EXPORTED function rather than
+  // an inline condition - the punch's readout has to read the ladder's own test to tell an
+  // operator who asked for EASED and got none WHICH fault it was, and a restated copy in the
+  // page is how an advisory comes to name a cause the code cannot produce. Driving it beats
+  // matching its text: the pair below is a settle length that CANNOT ramp at a 1 m approach
+  // radius and the same length that CAN at 0.5 m.
+  const { easeOffered } = require("../static/js/turns.js");
   check("49. the eased rung is withheld when the waypoint spacing cannot ramp",
-        /easeLs > 0 && \(easeGap <= 0 \|\| easeLs >= 4 \* easeGap\)/.test(src),
+        easeOffered(2.31, {approachM: 1.0}) === false
+        && easeOffered(2.31, {approachM: 0.5}) === true
+        && easeOffered(0, {approachM: 0.5}) === false
+        && /easeLs > 0 && \(gap <= 0 \|\| easeLs >= 4 \* gap\)/.test(src)
+        && /easeOffered\(easeLs, fly\)/.test(src),
         "a 2.31 m settle length thinned to a 1.0 m approach radius keeps two vertices, "
         + "which is an arc - the plain rung below takes the turn instead, exactly as it "
         + "would have before easing existed");

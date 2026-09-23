@@ -51,6 +51,22 @@
 //   the bar goes out the moment the boat stops                    -> 4
 //   the offer is never rendered at all                            -> 3
 //
+// AND 8 MORE, 2026-09-21, all 8 killed - the hold's retry and the deviation's reply:
+//   a hold the vessel HAS taken is re-sent anyway, on the clock    -> 8d
+//   the refusal branch is dropped (the shipped defect)             -> 21
+//   ...the branch stays, but guardEdgeAt is left ARMED             -> 21
+//   ...the splice happens BEFORE the reply is read                 -> 21
+//   ...the refusal is silent: no banner for the operator           -> 21
+//   ...the budget is spent on a refusal too                        -> 21
+//   TIMID: every reply is treated as a refusal                     -> 22
+//   TIMID: the commit is dropped altogether                        -> 22
+//
+// ⚠ 8d IS HERE AND NOT IN clearance_guard.js FOR A REASON WORTH KEEPING. That suite's cmd
+// stub only RECORDS - S.behavior never becomes "hold" in it - so the "ignores the vessel's
+// answer" mutation SURVIVED there, and only reddened once the case was written in the world
+// where the hold is modelled. A mutation that survives in one suite and dies in another is
+// the suites telling you which one owns the behavior.
+//
 // ⚠ THREE OF THOSE SURVIVED THE FIRST SWEEP, AND ALL THREE ARE THE SAME MISTAKE IN THREE
 // COSTUMES - a check that looked at the code rather than at what the code DID.
 //
@@ -137,11 +153,33 @@ var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = 
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
 var cornerSlow = new Set();
 var cornerSlowFor = -1;
+// ⚠ ALL FOUR, because the edge rung drops the set when it deviates and dropCornerSlow
+// reads every one of them. With two missing the call threw, and the throw took the rest of
+// the rung's statement list with it - the splice landed, the budget never moved, and check 22
+// read `edgeSpentM 0 over 0 deviation(s)`. A missing global in a world is a missing
+// dependency, and the page declares these beside the other two.
+var cornerUnanswered = [];
+var cornerPlanKey = "survey";
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
 var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
+// The helm rung's claim on the throttle. speedGovernor stands down on it exactly as it does
+// on `resumeSlow`, so the symbol has to exist here or the governor is a bare ReferenceError -
+// which the crash guard reports as ONE failed check rather than as a crash. False in this
+// world: no escape is commanded in it, so these checks are the evidence that an ordinary run
+// still governs its own speed exactly as it always did.
+var escapeThrottle = false;
 var clearance = { m: null, kind: null, closing: false, slowed: false, prev: null, info: null };
 var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
+// ⚠ OUT HERE, NOT IN THE BUNDLE, AND THAT IS THE WHOLE POINT. The bundle's `let`s live in
+// the eval's own scope and nothing outside can touch them - a `holdWant = null` in a fixture
+// would have created a SECOND, unread global and the reset would have been a silent no-op.
+// Declared beside guardActedAt, the guard's reference resolves here and the fixtures can
+// actually clear it between episodes.
+var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
+// The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
+// can put them back. `slowLieu` is one of them and is READ before anything writes it.
+var slowLieu = null;
 var planIntent = { why: [] }, notes = [], banners = [], logged = [], violations = null;
 var nogo = { ready: true, frame: null, ko: null, buffer: 5 };
 var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = null;
@@ -162,11 +200,11 @@ function guiConfirm() { confirmAsked++; return Promise.resolve(confirmAnswer); }
 globalThis.window = globalThis;
 globalThis.fetch = (p, o) => {
   try { logged.push(JSON.parse(o.body)); } catch (e) { /* not a logevent */ }
-  return Promise.resolve({ json: () => Promise.resolve({}) });
+  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
 };
 // Commands are RECORDED, not stubbed to nothing, so a check can say WHAT was sent and in
 // what order rather than only that something was. `refuse` drives the refusal branch.
-var sent = [], refuse = null;
+var sent = [], refuse = null, lost = null;
 function cmd(p, b) {
   sent.push({ p, speed: b && b.speed, route: b && b.route });
   // ⚠ THE HOLD IS MODELLED, NOT JUST RECORDED, AND THAT IS WHAT MAKES CHECK 6 REAL. On the
@@ -175,7 +213,24 @@ function cmd(p, b) {
   // command changes nothing the suite can see - the mutation survives and the check is
   // decoration. Here the index really moves, so a late capture really reads the wrong one.
   if (p === "/api/cmd/hold") window._wpIndex = 0;
-  return Promise.resolve(refuse && refuse === p ? { error: "ARM before uploading a plan" } : {});
+  // ⚠ THE SUCCESS FIXTURE USED TO BE A BARE {} - the one answer that has neither
+  // `ok` nor `error`, and therefore the one this suite could not tell from a failure.
+  // That is not a detail: it is WHY the page carried two failure-shaped tests for so
+  // long. The fixtures agreed with the bug, so every mutation of it survived here.
+  // cmd() answers {ok:true, state:{...}} on success and {ok:false, error, sent, refused}
+  // on every failure; a stub that answers anything else is testing a console that does
+  // not exist.
+  // ⚠⚠ TWO SHAPES OF FAILURE, NOT ONE. Until 2026-09-22 this stub could only answer
+  // {refused:true}, so every check in the file reading "a REFUSED command keeps X" was really
+  // testing "a FAILED command keeps X" - and the page's asymmetry, which is the whole point
+  // (`refused` is the vessel's answer; silence is not an answer), had no case anywhere. The
+  // mutation that deletes the lost-reply arm of the edge rung survived a sweep because of it.
+  // `lost` names the path whose reply never comes back.
+  return Promise.resolve(lost && lost === p
+    ? { ok: false, error: "no answer", sent: true, refused: false }
+    : refuse && refuse === p
+    ? { ok: false, error: "ARM before uploading a plan", sent: true, refused: true }
+    : { ok: true, state: {} });
 }
 
 // A minimal DOM, only as wide as the guard bar. renderGuardBar writes text and display, and
@@ -201,7 +256,7 @@ eval([
   // review #14: the guard and the governor act only in the SUPERVISING tab. This world is that tab - a view-only
   // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
   "const supervising = () => true;",
-  grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
+  grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
@@ -215,6 +270,14 @@ eval([
   grabDecl("HELM_DWELL_MS"),
   "let helmHoldAt = 0;",
   grab("helmSettled"),
+  // ⚠ THE HOLD'S OWN RECORD (2026-09-21), and BOTH lines are needed. `holdWant` is READ
+  // (`!!holdWant`) before anything assigns it, so without it the hold rung is a bare
+  // ReferenceError - the same failure HELM_DWELL_MS caused above. SLOW_ANSWER_MS is the
+  // subtler one: `!!holdWant` short-circuits on the FIRST frame of every scenario, so
+  // omitting it leaves checks 5-7 green and reddens only the later ones, for a reason that
+  // has nothing to do with what they test. (`slowLieu` above it is still an implicit global
+  // here: the rung only ever ASSIGNS it in this world, never reads it.)
+  grabDecl("SLOW_ANSWER_MS"),
   // ⚠ THE LAUNCH GRANT (2026-09-19): clearanceGuard calls grantNow() every frame, above
   // every branch. No berth is latched in this world, so it returns null and every check here
   // exercises the OPEN regime - which is exactly what this suite should be testing.
@@ -235,11 +298,25 @@ eval([
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   grab("renderGuardBar"), grab("renderHeldBar"),
-  grab("continueAtLow"), grab("resumeHeldSurvey"), grab("dropHeldSurvey"),
+  // took() is the page's ONE test for "did the command land?", carried across verbatim.
+  // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
+  grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
+  grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
   grab("speedRole"), grab("speedGovernor"),
+  // The one door the escape gives its claim back through (2026-09-22), carried across
+  // verbatim so a change to that rule is a change HERE and not in a copy that drifts.
+  grab("releaseEscapeClaim"),
+  // ⚠ AND THE ONE DOOR THE CORNER SET LEAVES BY (2026-09-22). The edge rung calls it on both
+  // arms - a lost reply and an accepted deviation - so a bundle without it is a bare
+  // ReferenceError INSIDE the rung's `.then`, where the rung's own
+  // `.catch(() => { guardEdgeAt = 0; })` swallows it whole. That is what check 22 was
+  // reading: the amend went out, the throw ate the rest of the statement list, and the
+  // budget, the arming and the saying all silently did not happen. A swallowed
+  // ReferenceError reports as a wrong ANSWER, never as a crash.
+  grab("dropCornerSlow"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
 ].join("\n"));
 var __clr = {};
@@ -281,7 +358,46 @@ function standingIn(sogKn) {
   clearance = { m: 25, kind: "a dock / pier", closing: true, slowed: false, prev: null,
                 info: { kind: "a dock / pier" } };
   guardLevel = "clear"; guardOverride = null; guardHeld = null;
+  // ⚠ THE HOLD RUNG'S PER-EPISODE RECORD GOES BACK TOO. The page clears both where it clears
+  // guardOverride; a fixture that did not would start its episode with the hold already
+  // "acted" and the rung would command nothing - the harness leaking, not the subject.
+  guardActedAt = 0; holdWant = null;
   resumeSlow = false; commandedSpeed = null; edgeSpentM = 999;
+  guardEdgeAt = 0; edgeCount = 0; refuse = null;
+  sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
+}
+
+// ── THE OTHER WATER: a pier east of e = 0, and a route with a corner that fouls it ────
+// ⚠ A SECOND FIXTURE, BECAUSE standingIn CANNOT REACH THE EDGE RUNG AT ALL. It publishes no
+// heading (guardTrack answers null) and it spends the whole deviation budget on purpose
+// (edgeSpentM = 999), which is how the rung stayed undriven by every suite that had the
+// bundle to drive it: tests/track_edge.js owns the deviation but only greps the page's text.
+// The geometry is track_edge check 27's - four waypoints, and the corner that must move is
+// the THIRD, not the leg the boat is on.
+const PIER_E = (() => {
+  const r = [{ e: 0, n: -20 }, { e: 60, n: -20 }, { e: 60, n: 20 }, { e: 0, n: 20 }];
+  return { polys: [{ ring: r, bb: bbOf(r), kind: "a dock / pier" }],
+           lines: [], points: [], marks: [], sys: [], chans: [] };
+})();
+const FOUR = [{ e: -105, n: 0 }, { e: -105, n: 15 }, { e: -7, n: 15 }, { e: -7, n: 80 }];
+function deviating() {
+  mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" },
+              approach_radius_m: 2 };
+  S = { armed: true, estop: false, run: "running", behavior: "survey",
+        status: { cog_deg: 90, sog_kn: 7.0, heading_deg: 90,
+                  env_set_deg: 0, env_set_kn: 0, holding: false, drifting: false } };
+  asv = ll(-120, 0);
+  runLineIdx = -1;
+  runRoute = FOUR.map(w => ll(w.e, w.n));
+  window._wpIndex = 0;
+  nogo = { ready: true, frame: ref, ko: PIER_E, buffer: 5 };
+  __clr = { m: 30, kind: "a dock / pier", info: { kind: "a dock / pier" } };
+  clearance = { m: 30, kind: "a dock / pier", closing: true, slowed: false, prev: null,
+                info: { kind: "a dock / pier" } };
+  guardLevel = "clear"; guardOverride = null; guardHeld = null;
+  guardActedAt = 0; holdWant = null;
+  resumeSlow = false; commandedSpeed = null;
+  edgeSpentM = 0; edgeCount = 0; guardEdgeAt = 0; refuse = null;   // the budget is UNSPENT here
   sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
 }
 
@@ -415,9 +531,30 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         + (stopped2 ? "OFFERED" : "withheld") + "; the capture itself survives ("
         + (survivesUnarmed ? "yes" : "NO") + ") because disarming is not the situation changing");
 
+  // The #b_hold handler, sliced from its own line to the end of its arrow body, so the
+  // check below can ask WHERE its statements sit relative to the gate.
+  const BHOLD = H.slice(H.indexOf('$("#b_hold").onclick'),
+                        H.indexOf("// (Go-To and Set Home are rows"));
   check("8. the offer stands only while she is still holding under the guard's hold",
         () => !!kept && live === kept && stopped === null && cleared === null
-              && /guardHeld=null; cmd\("\/api\/cmd\/hold"/.test(H),
+              // ⚠ ANCHORED ON THE PROPERTY, NOT THE ORDER. This matched
+              // `guardHeld=null; cmd("/api/cmd/hold"` - the clear immediately BEFORE the
+              // post - which stopped being true on 2026-09-22 when the handler moved its
+              // clears PAST the reply (a refused Hold must not wipe the plan she is still
+              // flying). What this check is about is that the operator's OWN Hold clears
+              // the offer BY NAME, because the state cannot tell it from the guard's.
+              // ⚠ The clear is CONDITIONAL now - `if(guardHeld === was.held) guardHeld = null;`
+              // - so that an accepted Hold cannot erase an offer a command made during its
+              // own round trip. The property is unchanged: this button clears the offer BY
+              // NAME, past the gate.
+              // ⚠⚠ THE GATE MUST EXIST BEFORE ITS POSITION MEANS ANYTHING. Written as
+              // `... > BHOLD.indexOf("took(r)")` this passed for the very revert it exists to
+              // catch: delete the gate and the token goes with it, indexOf answers -1, and
+              // every real offset beats -1. A check whose failure mode is "the thing I am
+              // looking for is absent" must say so, not treat absence as a free pass.
+              && /guardHeld\s*=\s*null/.test(BHOLD) && /cmd\("\/api\/cmd\/hold"/.test(BHOLD)
+              && BHOLD.indexOf("took(r)") >= 0
+              && BHOLD.search(/guardHeld\s*=\s*null/) > BHOLD.indexOf("took(r)"),
         "Stop, Start, Upload, RTH, Go-To and a spawn all change run/behavior/holding, so "
         + "each clears this by not matching rather than by remembering to. The operator's "
         + "OWN Hold looks identical from here, so that button clears it by name");
@@ -454,6 +591,35 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         "markGuardHeld called again with behavior already 'hold' -> "
         + (guardHeld ? guardHeld.route.length + " waypoints still held" : "NOTHING HELD")
         + ". A function that gives up has to leave what it found alone");
+
+  // ⚠ 8d IS THE ACCEPTANCE HALF OF THE HOLD RETRY (2026-09-21), and it belongs HERE rather
+  // than beside its sibling in clearance_guard.js because that world's cmd stub only RECORDS
+  // - S.behavior never becomes "hold" there, so every frame in it is the refused case and a
+  // retry that ignored the vessel's answer would survive its mutation run untouched. It did.
+  // Here the hold is MODELLED, so this is the only place the console can be caught re-uploading
+  // a hold over the boat's own hold plan, once a second, for as long as she lies there.
+  {
+    standingIn(6);
+    const first = tryIt(() => clearanceGuard());
+    const sentFirst = sent.map(x => x.p).filter(p => p === "/api/cmd/hold").length;
+    // the vessel takes it, and says so - the same predicate the offer above trusts
+    S = { ...S, behavior: "hold" };
+    sent = [];
+    // far past SLOW_ANSWER_MS: if the retry were judged on the clock alone it would fire here
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60000;
+    tryIt(() => clearanceGuard());
+    tryIt(() => clearanceGuard());
+    Date.now = realNow;
+    const after = sent.map(x => x.p).filter(p => p === "/api/cmd/hold").length;
+    check("8d. ... and a hold the vessel HAS taken is not re-sent - the retry reads her answer, "
+          + "not the clock",
+          () => !first.raised && sentFirst === 1 && after === 0,
+          () => "first frame sent " + sentFirst + " hold(s); two further frames a minute later, "
+              + "with behavior already 'hold', sent " + after
+              + ". A retry gated on the deadline alone would upload a fresh one-waypoint plan "
+              + "over the boat's own hold plan for as long as she lay there");
+  }
 }
 
 // ── 9-15. THE RESUME, DRIVEN ───────────────────────────────────────────────────────
@@ -662,6 +828,107 @@ function finish() {
             + "pause resume takes, released the same one way - a manual role-speed change "
             + "(tests/pause_resume.js 14)");
   resumeSlow = false;
+
+  // ⚠⚠ 18a. AND IT STANDS DOWN WHEN THE PAGE CANNOT SAY WHICH LINE SHE IS ON. `indexedRoute()`
+  // answers null on a page loaded mid-run - it never held `runRoute` and cannot get it back.
+  // Every READOUT prints that as "--" or as a row saying so; the SPEED path must not print
+  // it as a number, and left alone it would, by the quietest route on the page:
+  // currentLegLine answers -1, so `runLineIdx` and `curTurn` stay -1, and currentActivity
+  // falls through to "between coverage regions", whose role is TRANSIT. The governor would
+  // command 6.0 kn on coverage lines being surveyed at 3.0, and through reversals the
+  // planner fitted at the 1.5 kn turn radius - with `turnSlowAt` unreachable because the
+  // role never equals "turn". "Cannot say" must never resolve as the fastest speed.
+  {
+    S.status.holding = false; S.behavior = "survey"; runLineIdx = 0; curTurn = -1;
+    clearance.slowed = false; resumeSlow = false; escapeThrottle = false;
+    const drawn = runRoute.slice();
+    commandedSpeed = null; sent = [];
+    const held = speedGovernor();                       // the page that DID upload
+    const heldSent = sent.filter(x => x.p === "/api/cmd/speed").length;
+    runRoute = null;                                    // ...and the same frame after a reload
+    mission.waypoints = drawn.slice(0, 2);              // a shorter drawn plan
+    S = { ...S, wp_total: drawn.length + 12 };          // ...against a route she is flying
+    commandedSpeed = null; sent = [];
+    const lost = speedGovernor();
+    const lostSent = sent.filter(x => x.p === "/api/cmd/speed").length;
+    runRoute = drawn;
+    check("18a. the governor stands down on a page that does not hold the route the vessel's "
+          + "index counts into - it does not fall through to the TRANSIT speed",
+          () => held !== null && heldSent === 1 && lost === null && lostSent === 0,
+          () => "the uploading page commands '" + held + "' (" + heldSent + " sent); the "
+              + "same frame on a reloaded page -> " + lost + " (" + lostSent + " sent). "
+              + "Without the stand-down it commands the TRANSIT role, because currentLegLine "
+              + "answers -1 and currentActivity reads that as 'between coverage regions'");
+  }
+
+  // ⚠⚠ 18b. AND IT STANDS DOWN FOR THE ESCAPE TOO, WHICH IS THE SAME CLAIM POINTING UP.
+  // The helm rung commands HIGH for steerage authority to beat the set, then sets
+  // `clearance.slowed = false` and nulls `commandedSpeed` - and onState runs
+  // `clearanceGuard(); accumLineTime(); speedGovernor();` in that order, so on the SAME frame
+  // every one of the governor's stand-downs passed and it commanded the ROLE speed
+  // microseconds later. With the shipped defaults that is 6.0 kn followed by 3.0 kn; and
+  // because `speedWant` was overwritten, speedReconcile then RE-SENT the wrong speed every
+  // second for the whole escape. On the next frame `behavior` is "escape", whose activity
+  // role is "transit", so it never recovered - the escape was flown at half the speed the
+  // rung exists to provide, against exactly the set the rung exists to beat.
+  //
+  // ⚠ SETTING `commandedSpeed = "high"` INSTEAD WOULD NOT FIX IT, and that is why the fix is
+  // a stand-down rather than a value: the governor's test is `want !== commandedSpeed`, and
+  // `want` is the role speed - still different, so it would still fire.
+  clearance.slowed = false; commandedSpeed = null; resumeSlow = false;
+  escapeThrottle = true; sent = [];
+  const duringEscape = speedGovernor();
+  const escSent = sent.filter(x => x.p === "/api/cmd/speed");
+  escapeThrottle = false;
+  check("18b. ... and it stands down during an ESCAPE, so the helm rung's HIGH is not taken "
+        + "back by the role speed on the very frame that commanded it",
+        () => duringEscape === null && escSent.length === 0,
+        () => "with the escape's claim set -> " + duringEscape + " (" + escSent.length
+            + " speed command(s) sent: " + JSON.stringify(escSent.map(x => x.speed))
+            + "). Ungated it commands the role speed here, which on the shipped defaults is "
+            + "3.0 kn over the top of a 6.0 kn escape");
+
+  // ⚠⚠ 18c. AND THE STAND-DOWN HAS TO END, WHICH IS THE HALF 18b CANNOT SEE. 18b passes
+  // just as happily if the claim is never handed back at all - and until 2026-09-22 it never
+  // was. `escapeThrottle` outlived its EPISODE and lasted the rest of the RUN: its only
+  // clearers were a Stop, a fresh Start and a speed set by hand, so an operator recovering
+  // from an escape by Go-To or RTH got no governor at all.
+  //
+  // ⚠ AND IT IS NOT ONLY THE ROLE SPEED THAT STOPS. `if(escapeThrottle) return null;` sits
+  // above EVERY decision this function makes, so the flagged-corner slow-down and the
+  // slow-radius turn rule stop firing with it - the two rules that exist precisely because
+  // the hull cannot track those geometries at speed. Measured against this governor: with a
+  // flagged corner ahead, the control commands `low` and the claim commands nothing.
+  //
+  // ⚠ THE PAIR IS THE CHECK. `escSent.length === 0` in 18b is also what an empty fixture
+  // looks like; the send below is what makes it evidence that the GATE was the reason.
+  clearance.slowed = false; commandedSpeed = null; resumeSlow = false;
+  escapeThrottle = true; sent = [];
+  const stillGagged = speedGovernor();
+  const relSaid = releaseEscapeClaim("Go-To replaced it");
+  const afterRelease = speedGovernor();
+  const relSent = sent.filter(x => x.p === "/api/cmd/speed");
+  check("18c. ... and the claim ENDS when the operator commands her somewhere: the governor "
+        + "bids again on the next frame, and the speed actually goes out",
+        () => stillGagged === null && relSaid === true && escapeThrottle === false
+              && afterRelease !== null && relSent.length === 1,
+        () => "gagged -> " + stillGagged + "; released -> " + afterRelease + " with "
+            + relSent.length + " speed command(s) " + JSON.stringify(relSent.map(x => x.speed))
+            + ". Both halves are needed: the gag alone is indistinguishable from a fixture "
+            + "that never sends anything");
+
+  // ⚠ 18d. AND THE HELPER IS SILENT WHEN THERE IS NOTHING TO RELEASE - asserted on the
+  // NOTE, because the flag half of this CANNOT FAIL: `escapeThrottle` is already false, so
+  // "correctly refused" and "nothing happened" are the same observation on it. The note is
+  // the only thing that changes. Without the guard line the console flashes "the escape's
+  // high-speed hold is over" at an operator who never had one, on every speed change.
+  const n0 = notes.length;
+  const noClaim = releaseEscapeClaim("there was no claim");
+  check("18d. ... and releasing a claim that was never made says NOTHING - the flag half of "
+        + "this check cannot fail, so it is the note that is asserted",
+        () => noClaim === false && notes.length === n0,
+        () => "returned " + noClaim + " and flashed " + (notes.length - n0) + " note(s); a "
+            + "helper without its guard would announce a hand-back that never happened");
 }
 
 // ── 19-20. SAID OUT LOUD, BOTH WAYS ROUND ──────────────────────────────────────────
@@ -705,6 +972,171 @@ function finish() {
               + " time(s), remainder " + (yes.kept ? "STILL THERE" : "gone") + ". The plan "
               + "is already gone from the vessel, so this is not a dismiss - it is the "
               + "survey having to be re-planned and run from waypoint one");
+
+    // ── 21-22. A DEVIATION THE VESSEL REFUSED CLAIMS NOTHING ───────────────────────────
+    //
+    // Review #7, 2026-09-21. The edge rung commanded /api/cmd/amend and then spliced runRoute,
+    // spent the budget, wrote "DEVIATED" to the Intent card and flashed the operator - without
+    // reading the reply. `amend` is refused by six gates (not armed, e-stopped, not running a
+    // plan, station-keeping, an empty amendment, a plan with no unflown remainder) and answers
+    // {ok:false, error} on a dropped link, so an operator Pause or flaky Wi-Fi all land there.
+    // Accepted, refused and LOST produced byte-identical console state. Two consequences, and
+    // the second is the dangerous one: guardTrack projects along runRoute, so from then on the
+    // whole ladder assessed a track the boat was not flying (driven at the pier face: console
+    // CLEAR at 11 m off while the plan she was actually holding read hold); and `guardEdgeAt`
+    // stood the slow and hold rungs down under an amendment that never arrived.
+    //
+    // ⚠ THE COMMIT NOW LANDS ON A MICROTASK, so both cases await before reading runRoute. Any
+    // future driven check of this rung must do the same.
+    const deviate = async (refusal, lostPath) => {
+      deviating();
+      const before = runRoute.slice();
+      refuse = refusal || null;
+      lost = lostPath || null;
+      tryIt(() => clearanceGuard());
+      await Promise.resolve(); await Promise.resolve();
+      refuse = null; lost = null;
+      return { before, paths: sent.map(x => x.p), route: runRoute.slice(),
+               spent: edgeSpentM, count: edgeCount, edgeAt: guardEdgeAt,
+               why: planIntent.why.map(w => w.s), notes: notes.slice() };
+    };
+    const no2 = await deviate("/api/cmd/amend");
+    // ...and the gate really is gone: spend the budget so the rung below is the one that acts,
+    // and the very next frame must stop her rather than returning on a stale `settling`.
+    edgeSpentM = 999; guardLevel = "clear"; sent = []; notes = [];
+    asv = ll(-18, 15); window._wpIndex = 2;
+    tryIt(() => clearanceGuard());
+    const after = sent.map(x => x.p);
+    check("21. a REFUSED deviation claims NOTHING - the drawn route is not spliced, the budget "
+          + "is not spent, and the rung it stood down runs on the very next frame",
+          () => no2.paths.includes("/api/cmd/amend")
+                && no2.route.length === no2.before.length
+                && no2.route.every((w, i) => w === no2.before[i])
+                && no2.spent === 0 && no2.count === 0 && no2.edgeAt === 0
+                && !no2.why.some(s => /DEVIATED/.test(s))
+                && /REFUSED/.test(no2.notes.join(" "))
+                && after.includes("/api/cmd/hold"),
+          () => "tried " + JSON.stringify(no2.paths) + "; runRoute " + no2.route.length
+              + " wpts (was " + no2.before.length + "), edgeSpentM " + no2.spent
+              + ", guardEdgeAt " + no2.edgeAt + ", Intent " + JSON.stringify(no2.why)
+              + ", said \"" + (no2.notes[0] || "") + "\"; next frame sent "
+              + JSON.stringify(after) + ". A deviation the vessel refused must not move the "
+              + "chart, must not spend the budget, and must not stand the slow and hold rungs "
+              + "down - the console read CLEAR at 11 m off a pier face doing exactly that");
+    // -- 14b-14c. THE HELD RESUME IS AN UPLOAD, AND THE CORNER SET CANNOT SURVIVE ONE --------
+  // `hold` already uploaded a one-waypoint plan over the survey; this uploads the REMAINDER
+  // over that. The vessel's waypoint numbering restarts at one both times, so every index in
+  // the set names a corner of a plan that no longer exists - and `cornerSlowFor`, keyed on a
+  // length, goes quiet by ITSELF here because a remainder is shorter than the survey it came
+  // from. That silence is why this was invisible: the promise made at upload lapses with
+  // nothing on screen, and the next Upload re-arms the whole mechanism as though it never had.
+  {
+    const armCorners = () => { cornerSlow = new Set([2, 3]); cornerUnanswered = [5];
+                               cornerSlowFor = 99; cornerPlanKey = "survey"; };
+    armCorners();
+    const okR = await resumeFrom();
+    const okSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("14b. resuming the held remainder drops the corner set, and TELLS the operator it "
+          + "has lapsed",
+          () => okSet.slow === 0 && okSet.un === 0 && okSet.key === -1
+                && /CORNER SLOWING HAS LAPSED/.test(okR.banners.join(" ")),
+          () => "2 slowing + 1 unanswered before -> " + okSet.slow + " + " + okSet.un
+              + ", key " + okSet.key + "; "
+              + okR.banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). The "
+              + "length key would fall silent here on its own - a remainder is shorter - so "
+              + "without this the promise lapses with nothing said and the next Upload arms "
+              + "it again as though it never had");
+
+    // ⚠ AND THE PAIR. A REFUSED upload leaves her holding the plan the set was measured on,
+    // so dropping it there throws a live measurement away for nothing - and an unconditional
+    // drop at the top of resumeHeldSurvey passes 14b exactly as the right one does.
+    armCorners();
+    const noR = await resumeFrom({ refuse: "/api/cmd/upload" });
+    const noSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("14c. ... and a REFUSED upload keeps it - she never left the plan it measured",
+          () => noSet.slow === 2 && noSet.un === 1 && noSet.key === 99
+                && !/CORNER SLOWING HAS LAPSED/.test(noR.banners.join(" ")),
+          () => "after a refusal: " + noSet.slow + " slowing + " + noSet.un + " unanswered, "
+              + "key " + noSet.key + ", "
+              + noR.banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). She is "
+              + "put back on station on the very plan those corners index");
+    cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
+  }
+
+  // -- 22b-22c. AND THE RUNG'S OWN CORNER SET, WHICH THE SWEEP FOUND UNCOVERED -------------
+  // ⚠⚠ 21 AND 22 BOTH RAN WITH AN EMPTY SET. They drive this rung harder than anything
+  // else in the suite, and neither could see the drop, so the mutation that simply deletes it
+  // - the exact defect the batch was written to fix - SURVIVED a sweep that reported seven
+  // kills. A check cannot observe a state its fixture never enters.
+  //
+  // ⚠ AND THE LENGTH KEY WOULD NOT HAVE SAVED IT. A deviation that BENDS adds a waypoint,
+  // so the key falls silent; one that MOVES a corner replaces a waypoint and the length does
+  // not change, so the key stays TRUE and the set stays ARMED against a corner that has
+  // physically moved by up to edgeCapM(buf). Both of those are driven here - the accepted
+  // deviation below is a MOVE, which is the case "do nothing" gets wrong.
+  {
+    const armCorners = () => { cornerSlow = new Set([2, 3]); cornerUnanswered = [5];
+                               cornerSlowFor = 99; cornerPlanKey = "survey"; };
+    armCorners();
+    const okD = await deviate(null);
+    const okSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22b. an accepted deviation drops the corner set with the route it re-shaped, and "
+          + "says the promise has lapsed",
+          () => okSet.slow === 0 && okSet.un === 0 && okSet.key === -1
+                && /CORNER SLOWING HAS LAPSED/.test(okD.notes.concat(banners).join(" ")),
+          () => "2 slowing + 1 unanswered before -> " + okSet.slow + " + " + okSet.un
+              + ", key " + okSet.key + ". The via point is a corner cornerSlowPlan never "
+              + "walked and the corners either side of it have new geometry - a mapped flag "
+              + "stale in VALUE where it is right in position");
+
+    armCorners();
+    const noD = await deviate("/api/cmd/amend");
+    const noSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22c. ... and a REFUSED one keeps it - the plan the corners index is the plan she "
+          + "is still flying",
+          () => noSet.slow === 2 && noSet.un === 1 && noSet.key === 99
+                && !/CORNER SLOWING HAS LAPSED/.test(noD.notes.concat(banners).join(" ")),
+          () => "after a refusal: " + noSet.slow + " slowing + " + noSet.un + " unanswered, "
+              + "key " + noSet.key + ". Check 21 already holds that a refusal claims nothing "
+              + "else either - this is the same rule for the one piece of state it was "
+              + "silently still claiming");
+
+    // ⚠ AND THE THIRD ANSWER, WHICH IS THE ONE THE ASYMMETRY EXISTS FOR. `amend` answers
+    // {ok:false, refused:false} when the reply never comes back, and she MAY have taken it.
+    // 21 and 22c both drive a refusal, so between them they say "a failure keeps the set" -
+    // which is the wrong rule stated in a form that looks right. On a MOVE amendment the
+    // length key does not change either, so nothing downstream would catch it.
+    armCorners();
+    const lostD = await deviate(null, "/api/cmd/amend");
+    const lostSet = { slow: cornerSlow.size, un: cornerUnanswered.length, key: cornerSlowFor };
+    check("22d. ... and a LOST reply drops it, because she may have taken the deviation",
+          () => lostSet.slow === 0 && lostSet.un === 0 && lostSet.key === -1
+                && /NOT ACKNOWLEDGED/.test(lostD.notes.join(" ")),
+          () => "after a lost reply: " + lostSet.slow + " slowing + " + lostSet.un
+              + " unanswered, key " + lostSet.key + "; said \""
+              + (lostD.notes[0] || "") + "\". A refusal is the vessel's answer and silence "
+              + "is not one - the console cannot say which route she is flying");
+
+    cornerSlow = new Set(); cornerUnanswered = []; cornerSlowFor = -1;
+  }
+
+  const yes2 = await deviate(null);
+    check("22. ... and an ACCEPTED one still does its whole job - the corner moves, the budget "
+          + "is spent, and both the operator and the Intent card are told",
+          () => yes2.paths.includes("/api/cmd/amend")
+                && yes2.route.length === yes2.before.length
+                && yes2.route.some((w, i) => w !== yes2.before[i])
+                && yes2.spent > 0 && yes2.count === 1 && yes2.edgeAt > 0
+                && yes2.why.some(s => /^DEVIATED/.test(s))
+                && /DEVIATED/.test(yes2.notes.join(" "))
+                && !/REFUSED/.test(yes2.notes.join(" ")),
+          () => "sent " + JSON.stringify(yes2.paths) + ", edgeSpentM " + yes2.spent
+              + " over " + yes2.count + " deviation(s), guardEdgeAt "
+              + (yes2.edgeAt ? "armed" : "NOT ARMED") + ", said \"" + (yes2.notes[0] || "")
+              + "\". Andy asked for this rung on 2026-09-04 - \"forcing slight deviations to "
+              + "prevent holds when there is still plenty of available water\" - and a console "
+              + "made timid about a deviation the vessel ACCEPTED is the wrong fix");
+
     console.log(fails ? "\n" + fails + " CHECK(S) FAILED"
                       : "\nall checks passed (" + ran + ")");
     process.exit(fails ? 1 : 0);

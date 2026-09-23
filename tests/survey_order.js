@@ -192,7 +192,7 @@ check("6. the drawn pattern is already a serpentine that starts at the start cor
 const commitWorld = new Function("\"use strict\";\n"
   + "const mission = {lines: [], waypoints: []}; let planKind = null; const NO_LEAD = {in: 0, out: 0};\n"
   + "let patClip = null, patTransits = [], patLead = [], patRepunchT = null, punchInFlight = null, drawn = [];\n"
-  + "let patRed = [], patJoined = true, patDropped = null;\n"
+  + "let patRed = [], patJoined = true, patDropped = null; let turnSlowAt = {};\n"
   + "const $ = () => ({disabled: false}); const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
@@ -260,7 +260,7 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
 const legWorld = new Function("distTo", "\"use strict\";\n"
   + "let runRoute = null; const mission = {waypoints: [], lines: []}; const window = {_wpIndex: 0};\n"
   + decl(H, /^const LINE_MATCH_M = [^;]*;/m) + "\n" + decl(H, /^let _legLine = [^;]*;/m) + "\n"
-  + grab(H, "currentLegLine")
+  + grab(H, "indexedRoute") + "\n" + grab(H, "currentLegLine")
   + "\nreturn { currentLegLine, set: (route, lines, idx) => { runRoute = route; mission.lines = lines;"
   + " window._wpIndex = idx; _legLine = {key: '', line: -1}; } };")(G.distTo);
 const p0 = at(-50, -50), p1 = at(0, 0), p2 = at(0, 400), p3 = at(40, 420);
@@ -280,7 +280,11 @@ check("10. the pair gate and the margin the technical manual quotes: a reversal 
       + "and a gap under (GAP_LINES + 0.6) spacings, GAP_LINES = 4; every run loses max(2 m, half a spacing) each end",
       () => /const antiParallel = Math\.abs\(\(\(hF-hE\+360\)%360\)-180\) < 50;/.test(punch)
             && /const GAP_LINES = 4, gapSpan = GAP_LINES \+ 0\.6;/.test(punch)
-            && /if\(antiParallel && distTo\(Ap,Bp\) < sp\.spacing\*gapSpan \+ 3 \+ leadSlack\)\{/.test(punch)
+            // ⚠ TWO QUESTIONS SINCE 2026-09-23: the CROSSING decides whether the lines are
+            // neighbours, the SPAN whether a turn can reach between them. One distance had
+            // been standing in for both, which is why a staggered pair shipped as a hop.
+            && /acrossM < sp\.spacing\*gapSpan \+ 3 \+ leadSlack/.test(punch)
+            && /distTo\(Ap,Bp\) <= 2\*turnMaxHalf/.test(punch)
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(punch)
             && /const ro=regionOrder\(runs, ref, sp\.direction, sp\.spacing, legSafe\);/.test(punch),
       "antiParallel < 50; gapSpan 4.6; turnMargin max(2, spacing/2); regionOrder on the kept runs");

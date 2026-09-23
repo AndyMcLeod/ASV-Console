@@ -87,7 +87,11 @@ const { HAZ_UNKNOWN_EXTENT, WRECK_CLEAR_MARGIN_M, blocked, blockedInfo, bufferFl
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
 const { dilateGrid, rasterKeepouts, routeAround, stampSeg } = require("../static/js/passage.js");
-const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
 
 function grab(name) {
   const start = H.indexOf("function " + name + "(");
@@ -379,6 +383,117 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         atHull === true && atOper === false && K.points.length === 1 && K.passed === 0,
         "3.5 m over it passes the hull's 2.3 m floor but not an operator asking for 4 m - " +
         "and the operator's number is the one the rest of the model was built at");
+}
+
+// ── 22-25. THE OVER-APPROXIMATION CONTRACT, AT THE EDGE OF THE SEARCH WINDOW ─────────
+//
+// This suite's own header already states the rule: "BOTH clearance paths honour it: the
+// exact `legClear` check AND the A* occupancy raster. If only the exact check knew, the
+// search would plan through the wreck and the leg would simply fail instead of routing
+// around." routing.js states the other half verbatim - "over-approximates the keep-outs,
+// so a raster-clear shortcut is genuinely clear" - and `legPath` acts on a raster-clear
+// leg with NO re-check. So a cell the raster leaves FREE where `blocked()` refuses is a
+// COMMANDED leg through a keep-out, and that is what the boundary rows were.
+//
+// The grid's own points span [x0, x0+(W-1)*cell] while the window cull ran to x0+W*cell,
+// which opened two DISJOINT holes: a feature just outside was culled AND every sample of
+// it rounded to -1, and one inside the window past the last row's centre rounded to H.
+// Either way the dilation had nothing to grow. Measured on master, 100x100 at 3 m: 100
+// free cells the exact test refuses, the closest 1.50 m from a dock at a 3 m buffer, and
+// `legPath` shipped three commanded legs whose closest approach was 1.80 m.
+{
+  const BW = 100, BH = 100, bcell = 3, bx = 0, by = 0, buf = 3;
+  const quay = (n) => {
+    const pts = [{ e: -60, n }, { e: 400, n }];
+    return { polys: [], lines: [{ pts, bb: bbOf(pts), kind: "a quay" }],
+             points: [], marks: [], sys: [], chans: [] };
+  };
+  // ⚠ THIN, AND ENTIRELY BELOW THE FIRST ROW. A dock whose bbox still overlaps the window
+  // is culled by NEITHER version of the gate, so it could only ever re-test the stamp.
+  const dock = (n, half) => {
+    const ring = [{ e: -60, n: n - half }, { e: 400, n: n - half },
+                  { e: 400, n: n + half }, { e: -60, n: n + half }];
+    return { polys: [{ ring, bb: bbOf(ring), kind: "a dock" }],
+             lines: [], points: [], marks: [], sys: [], chans: [] };
+  };
+  const freeButBlocked = (ko) => {
+    const g = new Uint8Array(BW * BH);
+    rasterKeepouts(g, BW, BH, bx, by, bcell, ko, buf);
+    let free = 0, worst = Infinity;
+    for (let gy = 0; gy < BH; gy++) {
+      for (let gx = 0; gx < BW; gx++) {
+        const p = { e: bx + gx * bcell, n: by + gy * bcell };
+        if (blocked(p, ko, buf) && !g[gy * BW + gx]) {
+          free++;
+          worst = Math.min(worst, Math.abs(p.n - (ko.lines[0] ? ko.lines[0].pts[0].n
+                                                              : ko.polys[0].ring[0].n)));
+        }
+      }
+    }
+    return { free, worst: free ? +worst.toFixed(2) : null };
+  };
+  // a LINE and a POLYGON, because ko.lines and ko.polys are gated by two separate
+  // statements a few lines apart - a fix applied to one of them is the half-fix that ships
+  const lineOut = freeButBlocked(quay(-1.8));
+  const lineTop = freeButBlocked(quay(298.5));
+  const polyOut = freeButBlocked(dock(-3.0, 1));
+  const mid = freeButBlocked(quay(150.0));
+  check("22. a keep-out at the edge of the search window still paints the boundary row - " +
+        "the raster may over-approximate and must never under-approximate",
+        lineOut.free === 0 && polyOut.free === 0,
+        "a quay 1.8 m below the first row left " + lineOut.free + " cell(s) that blocked() " +
+        "refuses (closest " + lineOut.worst + " m at a 3 m buffer); a dock 3 m below it left " +
+        polyOut.free + ". Both were culled before a sample was taken AND rounded to -1 - " +
+        "two gates, and both had to move");
+  check("22b. ... and so does one INSIDE the window, past the last row's centre",
+        lineTop.free === 0,
+        lineTop.free + " cell(s) free (closest " + lineTop.worst + " m). This one was " +
+        "never culled: it was dropped a sample at a time, rounding to gy = H, and the " +
+        "dilation had nothing to grow");
+  check("22c. CONTROL: mid-window, where the raster was always right",
+        mid.free === 0,
+        mid.free + " free cells - if this moves, the fault is in the sweep, not at the edge");
+  // THE ACCEPTANCE HALF. The clamp is per SAMPLE, not per feature: one that dragged distant
+  // geometry onto the boundary would satisfy every line above and refuse the search water
+  // it can plainly use. Asked of stampSeg directly, because the padded cull now stands in
+  // FRONT of that test and shadows it - no keep-out model can reach it with geometry far
+  // enough out to smear.
+  const gFar = new Uint8Array(BW * BH);
+  const farRing = [{ e: 5000, n: 5000 }, { e: 9000, n: 5000 },
+                   { e: 9000, n: 9000 }, { e: 5000, n: 9000 }];
+  rasterKeepouts(gFar, BW, BH, bx, by, bcell,
+                 { polys: [{ ring: farRing, bb: bbOf(farRing), kind: "a landmass" }],
+                   lines: [], points: [], marks: [], sys: [], chans: [] }, buf);
+  const farCells = gFar.reduce((a, b) => a + b, 0);
+  const gSeg = new Uint8Array(BW * BH), gCut = new Uint8Array(BW * BH);
+  stampSeg(gSeg, BW, BH, bx, by, bcell, { e: 180, n: 150 }, { e: 9000, n: 320 }, 4);
+  stampSeg(gCut, BW, BH, bx, by, bcell, { e: 180, n: 150 }, { e: 330, n: 153 }, 4);
+  const farSeg = gSeg.reduce((a, b) => a + b, 0), nearSeg = gCut.reduce((a, b) => a + b, 0);
+  // ⚠ 23b IS HERE BECAUSE TAKING OWNERSHIP OF A FILE TAKES OWNERSHIP OF ITS TESTS.
+  // asv_core's suite catches "the dilation stops following the buffer" ("blocks MORE,
+  // never less"), and that stopped guarding this copy the moment the ASV-OWNS header went
+  // on it. Measured: with `rad` forced to 1, wreck_clearance, buoy_lane, track_edge,
+  // hold_point, turn_channel and gate_endpoint were ALL still green. The raster is what
+  // the A* search walks, so a dilation that does not reach the keep-clear margin lets it
+  // plan inside the very buffer legClear will then refuse.
+  const gNarrow = new Uint8Array(BW * BH), gWide = new Uint8Array(BW * BH);
+  const mid2 = quay(150.0);
+  rasterKeepouts(gNarrow, BW, BH, bx, by, bcell, mid2, 3);
+  rasterKeepouts(gWide, BW, BH, bx, by, bcell, mid2, 30);
+  const nCells = gNarrow.reduce((a, b) => a + b, 0), wCells = gWide.reduce((a, b) => a + b, 0);
+  check("23b. a WIDER keep-clear buffer blocks strictly more cells - the dilation follows " +
+        "the buffer, it is not a constant",
+        wCells > nCells * 2,
+        "3 m -> " + nCells + " cells, 30 m -> " + wCells + ". With the radius pinned at 1, " +
+        "every ASV suite that touches the raster stayed green: this is the check asv_core " +
+        "used to keep for us");
+  check("23. ... and nothing distant is dragged onto the edge: a landmass 5 km out paints " +
+        "nothing, and a segment running 9 km past the grid paints no more than one that " +
+        "stops at its edge",
+        farCells === 0 && farSeg <= nearSeg,
+        "landmass " + farCells + " cells; segment far " + farSeg + " vs near " + nearSeg +
+        " - without the per-sample bound the far half clamps onto cells up the edge the " +
+        "segment never visits (measured on this fixture: 88)");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

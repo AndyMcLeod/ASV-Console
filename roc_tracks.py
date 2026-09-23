@@ -1,4 +1,41 @@
 # ============================================================================
+# ⚠⚠ ASV OWNS THIS FILE NOW (2026-09-21). DO NOT RE-VENDOR IT.
+#
+# Andy, 2026-08-31: "stop updating other projects. We concentrate only on ASV
+# Console moving forward. There may be components of other projects that we
+# pull over." The flow is ONE WAY: asv_core is a place to pull FROM, never a
+# place this repo writes back to. The vendor header below is kept for
+# PROVENANCE -- it records where this body came from -- and its instruction is
+# now wrong for this repo, in the same dangerous way it was already wrong for
+# static/js/keepouts.js, routing.js and core_turns.js:
+#
+#   ⚠ RUNNING `python tools/vendor.py` IN THE asv_core REPO WOULD OVERWRITE
+#     THIS FILE. If a `--check` there reports this copy as DRIFTED, that is
+#     correct and expected: it has drifted, on purpose, and here is the whole
+#     of it.
+#
+#       1. `home_intent` and `active_home` carry `link` and `age_s`
+#          (2026-09-21). Nothing in this module clears a ROC when its feed
+#          stops -- GpsFeed.run swallows the error and retries every 3 s for
+#          ever -- so the operator's CARD went red while the one thing the
+#          Engine pulls every tick was byte-identical to a live link: 20 s dead,
+#          the same point, `moving` still true, and the RTH note still reading
+#          "chasing Mothership (MOVING)" about a ship 40 m from where it said.
+#          `moving`/`closable` are deliberately unchanged -- a steaming ship
+#          with a dead link is still steaming. Fixed in asv_core at 2a0b53d and
+#          pulled across; covered by tests/roc_tracks.py there and by the RTH
+#          note checks here.
+#
+# ⚠⚠ AND THAT CHECK HAD BEEN LYING BY OMISSION UNTIL 2026-09-21. `vendor.py
+# --check` prints the first differing line of a drifted copy; a Windows console
+# is cp1252, these files are written in em dashes, and the print raised
+# UnicodeEncodeError -- so the whole check died at the FIRST drifted copy whose
+# sample line happened to contain one, and the run looked finished. It was
+# hiding four drifts. Fixed in asv_core (2a0b53d); mentioned here because a
+# green vendor check is the only thing standing between this file and being
+# silently overwritten.
+# ============================================================================
+# ============================================================================
 # VENDORED FROM asv_core -- DO NOT EDIT THIS COPY.
 #
 #   source : asv_core/roc_tracks.py
@@ -707,8 +744,14 @@ class RocTracker:
     # -- read ------------------------------------------------------------------ #
     def active_home(self):
         """The selected ROC's current arrival point, or None. Called by the Engine
-        every tick, so it must be cheap and never raise."""
+        every tick, so it must be cheap and never raise.
+
+        ⚠ `link`/`age_s` ARE HERE FOR THE SAME REASON THEY ARE IN `home_intent`, and
+        deliberately so even though both consoles now pull `home_intent` instead and
+        this has no live caller. The two readers are near-identical, and an omission
+        left in one of them is how the next person copies it back into the other."""
         with self._lock:
+            now = time.monotonic()
             r = self._rocs.get(self._home_id)
             if not r:
                 return None
@@ -717,19 +760,44 @@ class RocTracker:
                 return None
             return {"lat": ap[0], "lon": ap[1], "roc_id": r.id, "name": r.name,
                     "kind": r.kind, "moving": r.is_moving(),
+                    "link": r.link_state(now),
+                    "age_s": None if r.updated_at is None else round(now - r.updated_at, 1),
                     "closing_kn": round(r.closing_kn(), 2), "closable": r.closable()}
 
     def home_intent(self):
         """The console's HOME intent, resolved every tick by the Engine. None when
         no ROC is selected as HOME. `point` is the selected ROC's current arrival
-        point (None if it has no fix yet). `moving` marks a steaming ship."""
+        point (None if it has no fix yet). `moving` marks a steaming ship.
+
+        ⚠ IT CARRIES THE LINK STATE, AND IT USED NOT TO. Nothing here clears a ROC
+        when its feed stops: GpsFeed.run swallows the error and retries every 3 s
+        for ever, `lat`/`lon` keep their last value, `is_moving()` stays True on
+        `gps_attached`, and `arrival_point()` keeps answering. So the card the
+        operator is looking at went red — `link_state` works and `to_dict` ships
+        both fields — while the ONE thing the Engine pulls every tick was
+        byte-identical to a live link. Measured with the NMEA feed cut at the
+        socket: 20 s dead, the same `point`, `moving` still true, and the RTH note
+        still reading "chasing Mothership (MOVING)" about a ship 40 m from where it
+        says she is, growing at 123 m/min. The chase loop cannot rescue it either —
+        it re-targets only when the point MOVES, and a frozen point never does.
+
+        ⚠ AND `moving`/`closable` ARE DELIBERATELY UNCHANGED. A steaming ship with a
+        dead link is still steaming; keying those off the link would silently re-word
+        the MOVING tag and the overtake warning, which are claims about the SHIP.
+        What was missing is the age of the evidence, so that is what was added — the
+        consumer qualifies rather than refusing, because a 16 s dropout on a link
+        that reconnects every 3 s must not take away the operator's recovery action.
+        """
         with self._lock:
+            now = time.monotonic()
             r = self._rocs.get(self._home_id)
             if not r:
                 return None
             ap = r.arrival_point()
             return {"roc_id": r.id, "name": r.name, "kind": r.kind,
                     "moving": r.is_moving(),
+                    "link": r.link_state(now),
+                    "age_s": None if r.updated_at is None else round(now - r.updated_at, 1),
                     "closing_kn": round(r.closing_kn(), 2), "closable": r.closable(),
                     "point": None if ap is None else {"lat": ap[0], "lon": ap[1]}}
 

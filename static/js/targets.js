@@ -6,14 +6,14 @@
 //
 // CPA is the closest the two vessels will come if BOTH hold their present course and
 // speed; TCPA is how long until that happens. They are the two numbers every collision
-// judgement is built on, and the console had neither.
+// judgment is built on, and the console had neither.
 //
-// ⚠ "RECALCULATE AFTER A MANOEUVRE" IS NOT A FEATURE HERE - IT IS THE CONSEQUENCE OF
+// ⚠ "RECALCULATE AFTER A MANEUVER" IS NOT A FEATURE HERE - IT IS THE CONSEQUENCE OF
 // THESE BEING PURE FUNCTIONS OF THE PRESENT KINEMATICS. There is no stored CPA to go
 // stale and no event to miss: `cpa()` reads the positions and velocities it is handed at
-// the moment it is called, so the answer follows a manoeuvre by EITHER vessel the instant
+// the moment it is called, so the answer follows a maneuver by EITHER vessel the instant
 // the next position report lands. The alternative - computing once and updating on a
-// detected "manoeuvre" - needs a manoeuvre detector, and a missed detection there is a
+// detected "maneuver" - needs a maneuver detector, and a missed detection there is a
 // stale CPA that reads as authoritative. This way the number cannot be older than the
 // data it came from.
 //
@@ -24,7 +24,7 @@
 
 import { planeFrame } from "./geodesy.js";
 
-/** Knots to metres per second. */
+/** Knots to meters per second. */
 export const KN_TO_MS = 0.514444;
 
 /**
@@ -38,7 +38,7 @@ export const KN_TO_MS = 0.514444;
 export const MIN_REL_SPEED_MS = 0.05;      // ~0.1 kn
 
 /**
- * Course-and-speed vector in metres per second, east/north.
+ * Course-and-speed vector in meters per second, east/north.
  *
  * Course over GROUND, not heading: CPA is about where the hull is going, and a vessel
  * crabbing in a cross-set has a heading that points somewhere it is not travelling. Where
@@ -90,16 +90,16 @@ export function cpa(own, target) {
 }
 
 /**
- * The hull's on-chart footprint in metres, from whatever AIS gave us.
+ * The hull's on-chart footprint in meters, from whatever AIS gave us.
  *
  * AIS dimensions are referenced to the GNSS ANTENNA, not to the hull: A forward to the
  * bow, B aft to the stern, C to port, D to starboard. So the antenna - which is where the
  * reported lat/lon IS - sits at (C, A) within an (C+D) x (A+B) box, and on a 300 m ship
- * with the bridge aft that offset is most of the hull. Drawing the box centred on the
+ * with the bridge aft that offset is most of the hull. Drawing the box centerd on the
  * position would put a container ship's bow 100 m from where it really is.
  *
  * Returns null when nothing was broadcast, so the caller can fall back to a fixed glyph
- * rather than draw a vessel one metre long.
+ * rather than draw a vessel one meter long.
  */
 export function hullBox(v) {
   const d = v && v.dim;
@@ -111,7 +111,7 @@ export function hullBox(v) {
   const B = beam || (len ? len / 6 : 0);
   if (!(L > 0 && B > 0)) return null;
   // Where the reported position sits inside that box. Without the parts, assume the
-  // antenna is amidships - which is what a centred glyph has always silently assumed.
+  // antenna is amidships - which is what a centerd glyph has always silently assumed.
   const fwd = d && d.a ? d.a : L / 2;          // antenna -> bow
   const port = d && d.c ? d.c : B / 2;         // antenna -> port side
   return { lengthM: L, beamM: B, toBowM: fwd, toSternM: L - fwd,

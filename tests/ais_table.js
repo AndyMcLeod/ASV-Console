@@ -254,6 +254,29 @@ check("6c. ...and a contact that reports again is un-dimmed in the same pass",
         () => "after 1 miss " + JSON.stringify(afterOne) + ", after 2 gone=" + afterTwo.gone);
 }
 
+// ⚠⚠ 6e. AND AN EMPTY UPDATE IS EVERY CONTACT MISSING AT ONCE. The per-contact grace 6d
+// drives was unreachable for it: `if(!rows.length){ body.textContent = ""; return; }` sat
+// ABOVE the sweep, so one empty snapshot wiped the whole body instantly - scroll position,
+// selection and all - while a single missing contact got a dimmed row and an update of grace.
+// The feeder empties the list on ANY throw, so one bad poll did it. That is the rest of what
+// was reported: "The entire AIS traffic card blinks and resets data with each update."
+// ⚠ 6d IS THE PAIR. It proves what the sweep DOES; this proves the empty path reaches it.
+// Neither is worth much alone: a gate that lets an empty update through to a sweep that did
+// not hold would still blink, and a sweep that holds but is never reached is dead code.
+{
+  const R = RENDER.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const gated = /if\(!rows\.length && !holding\)\{ body\.textContent = ""; return; \}/.test(R);
+  const shows = /table\.style\.display = \(rows\.length \|\| holding\)/.test(R);
+  const bare = /if\(!rows\.length\)\{ body\.textContent = ""; return; \}/.test(R);
+  check("6e. an EMPTY update falls through to the grace sweep instead of wiping the body - "
+        + "and the table stays visible while rows are held, or the grace would be invisible",
+        () => gated && shows && !bare,
+        () => "empty-path return gated on held rows: " + gated
+            + "; table visible while holding: " + shows
+            + "; the old unconditional wipe still present: " + bare
+            + " (asserted on comment-stripped source)");
+}
+
 // 7. BEHAVIOURAL. Writing an identical string to a text node still collapses a selection
 // inside it, so the guard is not an optimisation - it is the reason a selection survives a
 // poll where nothing about that row changed.
@@ -522,6 +545,96 @@ check("8. the row template provides the marker and name spans the patch writes t
         "a listener attached per repaint leaks one handler per sort click");
 }
 
+
+// ── 21-22. THE ROW CAP: what the headline counts, and who falls into the grace sweep ──
+//
+// The table draws at most AIS_MAX_ROWS rows. The cap used to be applied at the forEach
+// alone, which left two faults in the same three lines.
+//
+// 21 - THE COUNT. The status line read `${rows.length} vessels` over sixty rows, with the
+// range note underneath reading "whole lake - all contacts". Driven on the 94-contact feed
+// the page's own comment cites from Lewes: "94 vessels · Lake Erie", sixty rows drawn, and
+// nothing anywhere saying 60 of 94. A count the operator cannot reconcile with what they
+// can see reads as a fault in the feed.
+{
+  // The headline expression itself, lifted out rather than retyped - a check that retyped
+  // it would keep passing with the page's copy deleted.
+  const at = RENDER.indexOf("stMain=(shown.length < rows.length");
+  const end = RENDER.indexOf("stNote=", at);
+  const src = at < 0 ? "" : RENDER.slice(at, end).replace(/^stMain=/, "").replace(/;\s*$/, "");
+  const headline = (nShown, nRows) => {
+    if (!src) return null;
+    return new Function("shown", "rows", "aisAreaLabel",
+                        "return " + src)({ length: nShown }, { length: nRows },
+                                         () => "Lake Erie");
+  };
+  const capped = headline(60, 94), uncapped = headline(55, 55), one = headline(1, 1);
+  check("21. the AIS headline counts the rows the operator can SEE, and says so when the "
+        + "table is capped",
+        () => capped === "60 of 94 vessels · Lake Erie"
+              && uncapped === "55 vessels · Lake Erie"
+              && one === "1 vessel · Lake Erie",
+        () => "94 in the feed -> \"" + capped + "\"; 55 -> \"" + uncapped + "\"; 1 -> \""
+            + one + "\". It read \"94 vessels\" over sixty rows, with the range note "
+            + "underneath saying \"whole lake - all contacts\"");
+  check("21b. ... and the cap is applied ONCE, so the count and the rows cannot disagree",
+        () => /const AIS_MAX_ROWS = 60;/.test(RENDER)
+              && /const shown = rows\.slice\(0, AIS_MAX_ROWS\);/.test(RENDER)
+              && /shown\.forEach\(\(r, i\) =>/.test(RENDER)
+              && !/rows\.slice\(0, 60\)/.test(RENDER),
+        "two slices is how the headline and the table came to be counting different things");
+}
+
+// 22 - THE FALSE "NO REPORT". `existing` is built from the DOM and emptied only by the
+// forEach, so a ship that had a row last poll and merely steamed out to rank 61st fell into
+// the grace sweep: dimmed to 0.45, stamped data-miss=1, and titled "no report in this
+// update" - with its LAST numbers frozen under a label asserting the opposite of the truth.
+// Driven on the same feed: the contact reported 3 s ago at 12 kn, its row still showed
+// 7.2 nm while it was at 17 nm, and on the next poll - still reporting - it vanished.
+//
+// ⚠ DRIVEN, LIKE 6d, because this is a loop over live state and a source grep passes just
+// as happily with the rows left in `existing`.
+{
+  const at = RENDER.indexOf("for(const r of rows.slice(AIS_MAX_ROWS)){");
+  check("22. a contact CUT BY THE CAP is dropped from the grace sweep, not dimmed as "
+        + "missing",
+        () => {
+          if (at < 0) return false;
+          let k = RENDER.indexOf("{", at), depth = 0, end = -1;
+          for (;;) { const c = RENDER[k];
+            if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
+          const cut = new Function("rows", "existing", "AIS_MAX_ROWS", RENDER.slice(at, end));
+          const mk = () => ({ dataset: {}, style: {}, title: "VESSEL 30 · passenger",
+                              gone: false, remove() { this.gone = true; } });
+          const kept = mk(), dropped = mk();
+          const rows = [{ v: { mmsi: 111 } }, { v: { mmsi: 222 } }];
+          const existing = new Map([["111", kept], ["222", dropped]]);
+          cut(rows, existing, 1);                       // cap of 1: row 222 is cut
+          // the cut row is GONE and out of `existing`, so the sweep below never sees it;
+          // the kept one is untouched and still there for the sweep to judge
+          return dropped.gone === true && existing.has("222") === false
+                 && kept.gone === false && existing.has("111") === true
+                 && kept.style.opacity === undefined && dropped.dataset.miss === undefined;
+        },
+        "it reported in THIS update - it is simply not in the top rows. Left in `existing` "
+        + "it was dimmed and told the operator it had stopped reporting, with stale numbers "
+        + "underneath, and removed on the NEXT poll while still reporting");
+  check("22b. ... and a feed at or under the cap never enters that loop at all",
+        () => {
+          if (at < 0) return false;
+          let k = RENDER.indexOf("{", at), depth = 0, end = -1;
+          for (;;) { const c = RENDER[k];
+            if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) { end = k + 1; break; } } k++; }
+          const cut = new Function("rows", "existing", "AIS_MAX_ROWS", RENDER.slice(at, end));
+          const tr = { dataset: {}, style: {}, title: "x", gone: false,
+                       remove() { this.gone = true; } };
+          const existing = new Map([["111", tr]]);
+          cut([{ v: { mmsi: 111 } }], existing, 60);
+          return tr.gone === false && existing.has("111") === true;
+        },
+        "the ordinary case is every feed Andy has ever run: below the cap this must be a "
+        + "no-op, or 6-6d's grace is gone with it");
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

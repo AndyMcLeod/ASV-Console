@@ -55,7 +55,7 @@ export const DELEGATES_TO_CORE = Object.freeze(
 // prefers aliases precisely because a wrapper is an adapter layer that can drift. It is not
 // possible here: the core takes loose (lat, lon) numbers, this console has always passed
 // {lat, lon} POINTS, and there are 118 call sites between the three. Rewriting them all
-// would make the diff enormous and the "no behaviour change" claim far harder to check than
+// would make the diff enormous and the "no behavior change" claim far harder to check than
 // the three one-line adapters below. Measured: distTo 84 -> 80 ns/call, azTo 116 -> 111,
 // atDA 26 -> 53. The atDA doubling is 27 ns on 16 call sites, none of them a raster.
 export function azTo(a, b){ return flatBearingDeg(a.lat, a.lon, b.lat, b.lon); }
@@ -86,7 +86,7 @@ export function atDA(p, dist, az){ return flatOffset(p.lat, p.lon, dist, az); }
 export function trueDistTo(a, b){ return geodesicDistanceM(a.lat, a.lon, b.lat, b.lon); }
 export function trueAzTo(a, b){ return geodesicBearingDeg(a.lat, a.lon, b.lat, b.lon); }
 
-// Local ENU about a reference point: metres east / north. The survey and routing maths
+// Local ENU about a reference point: meters east / north. The survey and routing maths
 // works in this frame, because a flat plane is exact enough over a survey area and the
 // trigonometry stays readable.
 //
@@ -118,7 +118,7 @@ export function trueAzTo(a, b){ return geodesicBearingDeg(a.lat, a.lon, b.lat, b
 // NOT the same number: IEEE-754 multiplication is not associative, so `(a*b)*c` and
 // `a*(b*c)` can differ in the last bits. That is nothing on its own, but this is the frame
 // the keep-out routing and the Rule 9 lane are computed in, and a move whose whole claim is
-// "no behaviour change" should not spend its credibility on a tidier line. Carrying the
+// "no behavior change" should not spend its credibility on a tidier line. Carrying the
 // scale as a Frame value IS that hoist, made deliberate — it is exactly the 3.7e-9 m the
 // core's differential reports against these three functions. That number is the reason to
 // leave the expressions alone, not a debt: there is no refactor pending (see above).
@@ -145,14 +145,14 @@ export function llEN(lat, lon, ref){
 // functions differing only in that one argument, and this is the side that moves.
 //
 // ⚠ IT DELEGATES TO THE FUNCTIONS ABOVE RATHER THAN HOISTING THE SCALE, AND THAT IS THE
-// WHOLE POINT. WorldView's tangentFrame computes `metresPerDegree` ONCE and closes over it;
+// WHOLE POINT. WorldView's tangentFrame computes `metersPerDegree` ONCE and closes over it;
 // doing the same here would be the hoist this file has always warned about — `(a*b)*c`
 // against `a*(b*c)`, about 4 nanometres of easting. Calling `toEN`/`fromEN` per invocation
 // keeps the arithmetic character-for-character what it has always been, which is what makes
 // the adoption of the shared bodies a rename rather than a change of answer: measured
 // 0.000e+0 m across 156 vertices and a mixed feature set. The hoist is available and
 // measured (it changes nothing anyone can observe, and buys nothing either — see the
-// cancelled Frame refactor), so it is not taken.
+// canceled Frame refactor), so it is not taken.
 //
 // ⚠ A FRAME IS ALSO A REF, AND THAT IS WHAT MAKES THE MIGRATION SAFE. It carries `lat` and
 // `lon` as well as the two closures, so every function in this console that already takes a
@@ -177,11 +177,11 @@ export function llEN(lat, lon, ref){
 // consoles handed the shared bodies DIFFERENT functions -- flat here, Vincenty there, a
 // steady 0.278 % apart. Measured, that changed 92 of 20,000 escape-ring keep/drop decisions
 // and 3.0 % of best-first orderings, and every fixture still agreed at 0.000e+0 m because
-// the gap only decides anything within metres of a threshold. Carrying the metric on the
+// the gap only decides anything within meters of a threshold. Carrying the metric on the
 // frame is what made that divergence VISIBLE and then fixable. It is not scaffolding to be
 // tidied away because the two values happen to match today.
 //
-// ⚠ THE PLANE AND THE METRIC NOW DISAGREE BY 0.278 %, ON PURPOSE. A point placed r metres
+// ⚠ THE PLANE AND THE METRIC NOW DISAGREE BY 0.278 %, ON PURPOSE. A point placed r meters
 // out through `fromEN` measures 0.9972*r by `distTo`. That is fine everywhere the router
 // uses it -- see the note on `trueDistTo` above; all three uses are heuristics and no
 // clearance bound goes through them. It would NOT be fine to give `toEN`/`fromEN` the

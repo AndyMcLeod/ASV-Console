@@ -408,7 +408,11 @@ check("11. no ground track means no predicted entry — and the next tick will s
 
 // ── 12-13. THE PAGE WIRING ──────────────────────────────────────────────────────────
 {
-  const H = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+  const H = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   const fn = H.slice(H.indexOf("function clearanceGuard("), H.indexOf("// --- THE SPEED GOVERNOR"));
   const code = fn.replace(/^[^\n]*\/\/[^\n]*$/gm, (l) => l.replace(/\/\/.*$/, ""));
   check("12. every rung commands something different, and only the last one steers",

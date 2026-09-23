@@ -145,14 +145,31 @@ check("5. punchOut clips the coverage at the standoff, not at the bare buffer",
             && /const clipBuf = patClipBufM\(\);/.test(H),
       "the clip call reads `clipBuf`, and `clipBuf` is patClipBufM() - the bare `buffer` "
         + "there is what made a 5 m plan legal in a 2 kn set");
-check("5b. ... and the clip MEMO names it, so a set change cannot be served a stale clip",
+// ⚠ 5b MOVED WITH THE MECHANISM (2026-09-22), AND IT IS THE SAME PROPERTY. It used to read
+// "patStrikeKey() includes patClipBufM()". That was true, and it was the bug: the set is
+// published rounded to 2 dp at 4 Hz and moves with the gusts, so over one 150 s capture the
+// standoff ran 6.20-6.62 m at a 5 m buffer - FIVE distinct key terms, the strike key changing
+// four times in six seconds - and every change silently discarded every run the operator had
+// struck off. The standoff belongs to the CLIP, which must not be reused across a set change,
+// and not to the STRIKE, which only asks whether the run the operator clicked still exists.
+// Asserted three ways: the memo key names it, the strike key does NOT, and the memo key is
+// DERIVED from the strike key so the two cannot come to name different inputs.
+check("5b. ... and the CLIP MEMO names it while the STRIKE key does not - a set change "
+      + "cannot be served a stale clip, and a gust cannot throw away a strike",
       () => {
-        const i = H.indexOf("function patStrikeKey(){");
-        const body = H.slice(i, H.indexOf("\n}", i));
-        return /patClipBufM\(\)\.toFixed\(/.test(body);
+        const si = H.indexOf("function patStrikeKey(){");
+        const strike = H.slice(si, H.indexOf("\n}", si));
+        const ci = H.indexOf("function patClipKey(){");
+        const clip = H.slice(ci, H.indexOf("\n", ci));
+        return /patClipBufM\(\)\.toFixed\(/.test(clip)
+            && !/patClipBufM\(/.test(strike)
+            && /patStrikeKey\(\)/.test(clip)
+            && /const clipKey = patClipKey\(\);/.test(H);
       },
-      "patStrikeKey() includes patClipBufM(); without it two punches at the same buffer in "
-        + "different sets share one memo, and the second gets the first's runs");
+      "the memo reads patClipKey(), which is patStrikeKey() plus the standoff. Without the "
+        + "standoff, two punches at the same buffer in different sets share one memo and the "
+        + "second gets the first's runs; WITH it in the strike key, a gust discards the "
+        + "operator's strikes every couple of seconds");
 check("6. the page READS the guard's function rather than re-deriving it",
       () => {
         const i = H.indexOf("function patClipBufM(){");

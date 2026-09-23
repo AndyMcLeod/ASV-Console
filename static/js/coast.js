@@ -8,7 +8,7 @@
 //
 // THE MEASUREMENT THAT MOTIVATES IT. In his own session log (asv_20260903-170505.jsonl) the
 // boat reached 1.74 m from its hold point at 6.07 kn. A 1,380 kg hull at 6.07 kn carries
-// 6,728 J; at the ~1 kn this manoeuvre aims to arrive at, 172 J. The point of a drift-in is
+// 6,728 J; at the ~1 kn this maneuver aims to arrive at, 172 J. The point of a drift-in is
 // not elegance, it is that FORTY TIMES less energy arrives at the pier.
 //
 // ⚠ THIS MODULE COMMANDS NOTHING AND READS NO PAGE STATE - the guard.js / hold.js rule. It
@@ -28,7 +28,7 @@
 // engine-governed speed changes (a ramp's distance goes as v0², so halving from 14 kn would
 // cost four times halving from 7). tests/coast.js check 3 is exactly that discrimination.
 //
-// ⚠⚠ THE LAW IS WRONG WHERE IT MATTERS MOST, AND THAT IS WHY THE MANOEUVRE IS BUILT TO
+// ⚠⚠ THE LAW IS WRONG WHERE IT MATTERS MOST, AND THAT IS WHY THE MANEUVER IS BUILT TO
 // UNDERSHOOT. Below about a knot real hull resistance goes viscous (~v^1.83), and this
 // vessel's own fuel curve (burn ∝ v^3.5) implies resistance ∝ v^2.5 - semi-displacement,
 // not clean quadratic. So the two halves of the same hull's physics disagree about the
@@ -58,19 +58,19 @@ import { HOLD_S } from "./guard.js";
 const D2R = Math.PI / 180;
 
 /**
- * The speed the manoeuvre aims to be down to when it reaches the hold point, m/s.
+ * The speed the maneuver aims to be down to when it reaches the hold point, m/s.
  *
  * ⚠ A POLICY NUMBER, NAMED AS ONE - the same honesty NARROW_MAX_M carries. Physics does not
  * pick it; two practical ends bracket it. Slower is gentler but the quadratic tail is
  * merciless (coasting a DriX to 0.2 kn takes 105 m and five and a half minutes, which is not
- * an approach, it is an abdication). Faster stops being a drift-in. Half a metre per second
+ * an approach, it is an abdication). Faster stops being a drift-in. Half a meter per second
  * - a walking pace, about a knot - keeps the coast under a minute and still lands the
- * ~40x energy cut this whole manoeuvre exists for.
+ * ~40x energy cut this whole maneuver exists for.
  */
 export const COAST_ARRIVE_MS = 0.5;
 
 /** Fractional uncertainty on Lc. The fleet's own estimates span 21-52 m about a ~35 m
- *  centre; a third is that bracket rounded outward, not a comfortable margin. */
+ *  center; a third is that bracket rounded outward, not a comfortable margin. */
 export const COAST_LC_TOL = 1 / 3;
 
 /** Fractional uncertainty on the set. The sim's gust envelope is 1 ± 0.22·1.5 = ±33%, and
@@ -139,7 +139,7 @@ export function coastRun(v0, v1, lc) {
  * water's motion over the ground and it arrives STOPPED. In slack water there is nothing to
  * cancel and the floor `COAST_ARRIVE_MS` applies instead.
  *
- * That is also why a stronger set makes this manoeuvre BETTER, not worse: the release range
+ * That is also why a stronger set makes this maneuver BETTER, not worse: the release range
  * shrinks because the set is doing the braking, and the arrival ground speed goes to zero
  * exactly (measured, DriX: 0.33 kn set -> release 40.6 m, arrive 0.64 kn; 2 kn set ->
  * release 6.8 m, arrive 0.00 kn).
@@ -170,8 +170,8 @@ export function solveCoast(o) {
   const hE = Math.sin(hr), hN = Math.cos(hr);
 
   // The set as a vector, and its component ALONG the approach. A set on the nose (negative
-  // along-track) brakes the boat and is cancelled exactly at v1 = -alongSet, arriving dead
-  // stopped over the ground. A following set cannot be cancelled by coasting at all, so the
+  // along-track) brakes the boat and is canceled exactly at v1 = -alongSet, arriving dead
+  // stopped over the ground. A following set cannot be canceled by coasting at all, so the
   // floor applies and the arrival carries it.
   const sr = (o.setDeg || 0) * D2R;
   const sE = setMs * Math.sin(sr), sN = setMs * Math.cos(sr);
@@ -218,7 +218,28 @@ export function solveCoast(o) {
   // where the handover is expected to fall, and how far that could slide either way.
   const slackM = run.m * COAST_LC_TOL + setMs * run.s * COAST_SET_TOL;
   const releaseM = nominalM;
-  const release = { e: H.e - uE * releaseM, n: H.n - uN * releaseM };
+  // ⚠⚠ THE RELEASE RANGE HAS TO FIT ON THE LEG THE VESSEL LATCHES ON. The only number that
+  // crosses to the boat is the scalar `groundM`, and the vessel arms the drift-in on the LAST
+  // LEG ONLY - `_wp_index == len(_plan) - 1 and dist_b <= _coast_from_m`. So a release range
+  // longer than that leg is already satisfied the instant she enters it: the prop stops at
+  // the leg's START, not `groundM` out, and she arrives at v0*exp(-leg/Lc) rather than at the
+  // speed this function quoted. Measured on the DriX: a 10 m last leg against a 49.7 m
+  // release turns a 0.98 kn / 175 J arrival into 2.98 kn / 1622 J - and the banner still said
+  // one knot. Refused in the idiom COAST_MAX_S already uses, because a coast that cannot be
+  // flown as solved is not a coast.
+  if (o.legM != null && releaseM > o.legM) {
+    return { ok: false, release: null, hdg,
+             why: "the release range (" + releaseM.toFixed(0) + " m) is longer than the final "
+                  + "leg (" + o.legM.toFixed(0) + " m) - the prop would stop at the leg's "
+                  + "start and she would arrive with way still on" };
+  }
+  // ⚠⚠ AND THE WALK STARTS WHERE THE PROP ACTUALLY STOPS, WHICH IS NOT ALONG `u`. The latch
+  // is RANGE TO THE LAST WAYPOINT on a boat the line-follower is holding ON the route, so the
+  // release point is `releaseM` back along the APPROACH. Stepping back along the ground track
+  // agrees only when the set is dead ahead or dead astern: a 1 kn beam set puts the two 28 m
+  // apart and a 2 kn one 60 m, so the water being checked was not the water she passes
+  // through - and the one number the vessel acts on was solved against it.
+  const release = { e: H.e - hE * releaseM, n: H.n - hN * releaseM };
   const band = { shortM: Math.max(0, nominalM - slackM), longM: nominalM + slackM, slackM };
 
   // The ground velocity she carries at the nominal stop: her remaining way plus the set.
@@ -233,7 +254,13 @@ export function solveCoast(o) {
   const steps = Math.max(2, Math.ceil(walkM / COAST_STEP_M));
   for (let i = 0; i <= steps; i++) {
     const d = (walkM * i) / steps;
-    if (blocked({ e: release.e + uE * d, n: release.n + uN * d }, ko, buf)) {
+    // IN to the berth she is still STEERED - crabbing down the cleared approach the router
+    // gave her - and only PAST it, with the way off, is she set bodily. So the run in follows
+    // the heading and only the overshoot follows the ground track.
+    const q = d <= releaseM
+      ? { e: release.e + hE * d, n: release.n + hN * d }
+      : { e: H.e + uE * (d - releaseM), n: H.n + uN * (d - releaseM) };
+    if (blocked(q, ko, buf)) {
       return { ok: false, release, hdg,
                why: (i === 0 ? "the release point itself is in a keep-out"
                              : "the drift track runs into a keep-out " + d.toFixed(0)
@@ -254,7 +281,7 @@ export function solveCoast(o) {
 /**
  * Is a coast worth flying at all here?
  *
- * ⚠ THE COAST IS AN OPTIMISATION IN BENIGN CONDITIONS, NEVER A MANOEUVRE OF LAST RESORT.
+ * ⚠ THE COAST IS AN OPTIMISATION IN BENIGN CONDITIONS, NEVER A MANEUVER OF LAST RESORT.
  * It is flown only while the look-ahead ladder says `clear`, and the first rung above that
  * ends it - see the caller. That single rule is what keeps guard.js untouched by this
  * feature: the ladder's hold/helm split is decided by a SECOND projection made with the

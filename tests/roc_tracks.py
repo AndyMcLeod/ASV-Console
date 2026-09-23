@@ -390,5 +390,97 @@ check("23. the emitted fields keep NMEA's fixed widths (ddmm.mmmm / dddmm.mmmm)"
       lambda: (" | ".join(WIDTHS)) if WIDTHS
       else "zero-padded even when minutes < 10, which the round-trip cannot detect")
 
+# ── 23b. ...AND THE INTENT HAS TO CARRY IT IN THE FIRST PLACE ─────────────────────────
+# The console half below is worth nothing if `home_intent` never ships the fields. Driven
+# against THIS repo's copy of the module, not the core's: the two are the same body today
+# and this is what notices if that stops being true.
+_t = R.RocTracker(config_path=os.devnull)
+_hid = _t.add("ship", "Mothership")
+_t.feed(_hid, 43.07, -70.71, cog=90.0, sog=4.0, source="gps")
+_t.confirm(_hid)
+_t.select_home(_hid)
+_live = _t.home_intent()
+with _t._lock:
+    _t._rocs[_hid].updated_at -= (R.LOST_S + 5.0)
+_dead = _t.home_intent()
+check("23b. home_intent carries the LINK STATE and the age of its evidence, not just the card",
+      lambda: _live.get("link") == "ok" and _live.get("age_s") is not None
+      and _dead.get("link") == "lost" and (_dead.get("age_s") or 0) >= R.LOST_S,
+      lambda: "live link=%s age=%s / %.0f s later link=%s age=%s"
+              % (_live.get("link"), _live.get("age_s"), R.LOST_S + 5.0,
+                 _dead.get("link"), _dead.get("age_s")))
+check("23c. ... and the POINT and the MOVING tag are deliberately unchanged by it",
+      lambda: _dead["point"] == _live["point"] and _dead["moving"] is True,
+      "a steaming ship with a dead link is still steaming - what was missing is the age "
+      "of the evidence, not the claim about the ship")
+
+# ── 24-27. THE LINK STATE HAS TO REACH THE ENGINE, NOT JUST THE CARD ──────────────────
+#
+# Nothing in roc_tracks clears a ROC when its NMEA feed stops: GpsFeed.run swallows the
+# error and retries every 3 s for ever, so `lat`/`lon` keep their last value, is_moving()
+# stays true on `gps_attached`, and arrival_point() keeps answering. link_state() works and
+# to_dict ships it, so the operator's CARD went red - while `home_intent`, the ONE thing
+# the Engine pulls every tick (`set_home_provider(ROC.home_intent)`), was byte-identical to
+# a live link. Measured: 20 s dead, the same point, `moving` still true, and the RTH note
+# still reading "chasing Mothership (MOVING)" about a ship 40 m from where it said and
+# drifting 123 m/min. The chase loop cannot rescue it either - it re-targets only when the
+# point MOVES, and a frozen point never does, so it falls silent at exactly the moment it
+# stops meaning anything.
+#
+# ⚠ THE SHIPPED BRANCH IS READ, NOT RE-IMPLEMENTED. `_rth_note` below is what the console
+# should produce and is used for the wording half; the source greps beside it pin that the
+# console's own branch is that one. A suite running only its own copy of the logic would
+# stay green with the console's copy deleted.
+_APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+_SRC = open(os.path.join(_APP, "asv_console.py"), encoding="utf-8").read()
+_RTH = _SRC[_SRC.index('chase = ""'):_SRC.index('note = "Return-to-Home:')]
+_CHASE = _SRC[_SRC.index("elif self._rth_follow and intent"):
+              _SRC.index("tgt = intent[" + chr(34) + "point" + chr(34) + "]")]
+
+_INTENT = {"roc_id": "ship-1", "name": "Mothership", "kind": "ship", "moving": True,
+           "link": "ok", "age_s": 0.0, "closing_kn": 4.5, "closable": True,
+           "point": {"lat": 38.79, "lon": -75.16}}
+
+
+def _rth_note(link, age):
+    intent = dict(_INTENT, link=link, age_s=age)
+    chase = ""
+    if intent["moving"]:
+        chase = " (MOVING)" if intent.get("closable", True) else ""
+        if intent.get("link") == "lost":
+            chase += (" - WARNING: the ROC's GPS LINK IS LOST (%s s old), so this is "
+                      "where she WAS, not where she is" % intent.get("age_s"))
+    return "Return-to-Home: %s %s%s," % ("chasing" if intent["moving"] else "returning to",
+                                         intent["name"] or "the ROC", chase)
+
+
+check("24. the RTH note qualifies a moving home whose GPS LINK IS LOST",
+      lambda: 'intent.get("link") == "lost"' in _RTH
+      and "GPS LINK IS LOST" in _RTH and "where she WAS" in _RTH,
+      lambda: "the branch reads: " + " ".join(_RTH.split())[-130:])
+check("25. ... and says nothing extra while the link is good - a warning on every RTH is "
+      "a warning nobody reads",
+      lambda: "LINK IS LOST" not in _rth_note("ok", 0.4)
+      and "LINK IS LOST" in _rth_note("lost", 20.0)
+      and "20.0 s old" in _rth_note("lost", 20.0),
+      lambda: 'live: "%s" | dead: "%s"' % (_rth_note("ok", 0.4)[-30:],
+                                           _rth_note("lost", 20.0)[-72:]))
+
+# 26-27. THE CHASE LOOP. The link can die AFTER the note was written, and a frozen point
+# never trips the `moved` test that re-targets, so the command-time warning is not enough.
+check("26. the CHASE says it too, once per outage rather than once a tick",
+      lambda: 'intent.get("link") == "lost"' in _CHASE
+      and "if not self._rth_lost_link" in _CHASE
+      and "self._rth_lost_link = True" in _CHASE
+      and "self._rth_lost_link = False" in _CHASE,
+      lambda: "a link that reconnects every 3 s would otherwise fill the operator's log, "
+              "and the latch has to CLEAR when the link comes back or it says it once ever")
+check("27. ... and it QUALIFIES rather than refusing - the chase is not stopped and no "
+      "command is withheld",
+      lambda: "raise" not in _CHASE and "self._rth_follow = False" not in _CHASE
+      and "self.note" in _CHASE,
+      lambda: "a refusal here would take away the operator's only recovery action over a "
+              "16-second dropout on a link that reconnects every 3 s")
+
 print("\n" + ("%d CHECK(S) FAILED" % fails if fails else "all checks passed"))
 sys.exit(1 if fails else 0)

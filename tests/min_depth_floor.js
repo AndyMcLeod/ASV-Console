@@ -134,6 +134,23 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
               && /\$\("#sp_mindepth"\)\.onchange\s*=\s*\(\)=>setMinDepth/.test(code),
         "two controls, one value - the trap this console keeps re-learning");
 
+  // ⚠⚠ 6c. AND THE BUFFER HAS A FLOOR AT ITS WRITERS TOO, NOT ONLY ON THE LOAD PATH. The
+  // hull's planning.nogo_buffer_m was applied on mission load and on vessel switch - and by
+  // NEITHER of the two functions that write nogo.buffer when the operator types a number.
+  //
+  // A zero buffer does not merely narrow the model, it DELETES TWO THIRDS OF IT. `blocked`
+  // tests lines and points with a strict `< buf`, and a shoreline, an obstruction line, an
+  // r=0 pile and a channel buoy carry no extent of their own: at buf = 0 not one of them can
+  // refuse anything, and timeToEntry goes silent on all of them too. Polygons still block,
+  // so the Nogo row goes on counting zones while a whole CLASS of keep-out has stopped
+  // existing - a console that looks armed and is not.
+  check("6c. the BUFFER floor is enforced by BOTH of its writers, so the model can never be "
+        + "built with a zero buffer however the operator types it",
+        () => /v\s*=\s*bufferFloor\(/.test(noComments(grab(H, "setBuffer")))
+              && /nogo\.buffer\s*=\s*bufferFloor\(/.test(noComments(grab(H, "applyNogoControls"))),
+        "setBuffer and applyNogoControls both go through bufferFloor - a floor enforced by "
+        + "one of two writers is not a floor");
+
   check("7. the survey MAX depth is still a coverage-only control",
         () => /\$\("#sp_maxdepth"\)\.onchange\s*=\s*\(\)=>\{\s*patClip=null/.test(code)
               && !/setMinDepth\(\$\("#sp_maxdepth"\)/.test(code),
@@ -263,6 +280,114 @@ check("3. an unset operator floor leaves the hull's exactly as it was",
               && writes === 1 && /applyWaterOffset\(water\);\s*updateWaterUI\(water\)/.test(code),
         () => writes + " assignment(s) to sea.waterOffset in the page (want 1, inside applyWaterOffset)");
 }
+
+
+// ── 17. THE CEILING IS A COVERAGE WINDOW, AND IT REACHES THE CLIP ONLY ───────────────
+//
+// This suite's own header states the rule and names the check that guards half of it:
+// "MAX DEPTH IS NOT ENFORCED HERE... punchOut still layers the full min/max window on top
+// of this floor FOR THE SURVEY LINES THEMSELVES. Check 5 is the one that would go red if
+// someone finished the job by wiring max through." That sentence was true of the shared
+// model and FALSE of punchOut, which built ONE model at the operator's window and handed it
+// to the clip, the turns, the leads, the region hops and the detour router alike.
+//
+// Measured on a 5-15 m bank with 20-30 m water each side and Max depth 15: the clip parks
+// every run end at the bank edge, correctly - and then all four reversals come back "no
+// flyable turn", every lead is cut from the 30 m asked for to 0.0 m, and ADD TO PLAN is
+// disabled. All of it said about charted 20-30 m water, under the label "water shallower
+// than 2.3 m", because nogoKind answers that for ANY depth exclusion.
+//
+// ⚠⚠ DRIVEN THROUGH punchOut'S OWN MODEL STATEMENTS, sliced out of the page and executed.
+// Not a restatement: the `dr` each consumer receives is whatever the page hands it, so a
+// half-revert - rebasing either model onto the other - changes what this check sees. Two
+// source checks alone could not do that, and the first cut of this fix shipped with only
+// source checks: BOTH halves of the split could then be silently reverted with every suite
+// green, including one revert (the clip rebased onto the ceiling-free model) that stops the
+// operator's Max depth applying to coverage at all.
+{
+  const G = require("../static/js/geodesy.js");
+  const K = require("../static/js/keepouts.js");
+  const T = require("../static/js/turns.js");
+  const F = G.planeFrame({ lat: 43.0, lon: -70.5 });
+  const P = (e, n) => F.fromEN(e, n);
+  const ring = (e0, e1, n0, n1) =>
+    [[P(e0, n0), P(e1, n0), P(e1, n1), P(e0, n1), P(e0, n0)].map(p => [p.lon, p.lat])];
+  const area = (name, e0, e1, n0, n1, d1, d2) => ({
+    role: "depth_area", cls: "Depth_Area", name, props: { DRVAL1: d1, DRVAL2: d2 },
+    geometry: { type: "Polygon", coordinates: ring(e0, e1, n0, n1) } });
+  const feats = [area("bank 5-15 m", -210, 210, -700, 700, 5, 15),
+                 area("deep 20-30 m E", 210, 900, -700, 700, 20, 30),
+                 area("deep 20-30 m W", -900, -210, -700, 700, 20, 30)];
+  const enf = { land: true, depth: true, haz: true, area: false };
+  const OPTS = { minDepthM: 2.3, wreckRadiusM: 3, bufferM: 3, waterOffsetM: 0 };
+  // chart.js's wrapper, which the fix does not touch
+  const buildKeepouts = (r, e, d, f) =>
+    K.buildKeepouts(r, f, { ...OPTS, depthRange: d, enforce: e });
+  const clipLine = new Function("llEN", "blocked", "azTo", "distTo", "atDA",
+    grab(H, "clipLine") + "\n" + grab(H, "extendLead") + "\nreturn {clipLine, extendLead};")(
+      G.llEN, K.blocked, G.azTo, G.distTo, G.atDA);
+  // punchOut's OWN model statements, lifted verbatim
+  const PO = grab(H, "punchOut").split("\n");
+  const stmts = PO.filter(l => /buildKeepouts\(|^\s*const ko(Clip|Turn)\s*=/.test(l)
+                               && !/^\s*\/\//.test(l));
+  const dr = { min: Math.max(2.3, 5), max: 15 };        // panel: Min 5, Max 15
+  const M = new Function("buildKeepouts", "foldChartInk", "ref", "enf", "dr", "nogo",
+                         "chanExcl", "turnExcl",
+    stmts.join("\n") + "\nreturn {ko, koClip, koTurn};")(
+      buildKeepouts, () => 0, F, enf, dr, { features: feats }, [], []);
+  const buffer = 3;
+  const lines = []; for (let i = 0; i < 5; i++) lines.push([P(-500, i * 20), P(500, i * 20)]);
+  let clipped = [];
+  lines.forEach(l => clipLine.clipLine(l[0], l[1], F, M.koClip, buffer).forEach(s => clipped.push(s)));
+  clipped = clipped.map((s, i) => (i % 2 ? [s[1], s[0]] : s));     // a lawnmower: alternate
+  // the coverage must STILL stop at the bank edge: that is the operator's window working
+  const en = (p) => G.llEN(p.lat, p.lon, F);
+  const widest = clipped.reduce((a, s) => Math.max(a, Math.abs(en(s[0]).e),
+                                                      Math.abs(en(s[1]).e)), 0);
+  // ...and the reversals between those runs must be FLYABLE through the deep water beside it
+  const fly = { spdKey: "survey", approachM: 1 };
+  let red = 0, built = 0;
+  for (let k = 0; k < clipped.length - 1; k++) {
+    const t = T.turnWithRetry(clipped[k][1], clipped[k + 1][0],
+                              G.azTo(clipped[k][0], clipped[k][1]),
+                              G.azTo(clipped[k + 1][0], clipped[k + 1][1]),
+                              F, M.koTurn, buffer, 5, 60, 2.5, 0, fly);
+    if (t && t.pts && t.pts.length) built++; else red++;
+  }
+  const leads = clipped.map(s =>
+    clipLine.extendLead(s[1], s[0], 30, F, M.koTurn, buffer).m);
+  check("17. the operator's Max depth clips the COVERAGE and does not refuse the turns and "
+        + "leads through the deep water beside it",
+        () => clipped.length === 5 && widest < 215 && widest > 195
+              && red === 0 && built === 4 && leads.every(m => m > 29),
+        () => clipped.length + " runs, widest end " + widest.toFixed(0) + " m from centre "
+            + "(the bank edge is 210 m, so the ceiling IS clipping coverage); turns built "
+            + built + ", refused " + red + "; leads bought "
+            + leads.map(m => m.toFixed(0)).join("/") + " m of the 30 asked for. Before the "
+            + "split: 4 refused, 0 built, every lead 0.0 m, all reported as \"water "
+            + "shallower than 2.3 m\" about charted 20-30 m water");
+}
+
+// 17b. AND THE TWO MODELS STAY BOUND TO THEIR OWN CONSUMERS. 17 drives the behaviour; this
+// pins WHICH model each consumer spreads, because a half-revert is one identifier and the
+// behavioural fixture cannot tell a rename from a re-base in every direction. The pair is
+// the point: the ceiling must reach the clip (or Max depth stops applying to coverage at
+// all - the survey is then planned straight through the trench) and must NOT reach the
+// turns (or this finding is back).
+check("17b. ... and each model is bound to its own consumer: koClip spreads koCov, koTurn "
+      + "spreads the ceiling-free ko",
+      () => {
+        const po = grab(H, "punchOut");
+        return /const koCov=buildKeepouts\(ref, enf, dr, nogo\.features\);/.test(po)
+            && /const ko=buildKeepouts\(ref, enf, \{min: dr\.min, max: 0\}, nogo\.features\);/.test(po)
+            && /const koClip = chanExcl\.length \? \{\.\.\.koCov, polys:\[\.\.\.koCov\.polys, \.\.\.chanExcl\]\} : koCov;/.test(po)
+            && /const koTurn = turnExcl\.length \? \{\.\.\.ko, polys:\[\.\.\.ko\.polys, \.\.\.turnExcl\]\} : ko;/.test(po)
+            && /foldChartInk\(koCov, ref\);/.test(po) && /foldChartInk\(ko, ref\);/.test(po);
+      },
+      "both builds, both spreads and both chart folds are pinned. Rebasing koClip onto `ko` "
+        + "stops the operator's Max depth applying to coverage at all; rebasing koTurn onto "
+        + "koCov restores this finding - and neither is visible in a suite that only checks "
+        + "the identifiers exist");
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
 process.exit(fails ? 1 : 0);

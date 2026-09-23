@@ -498,6 +498,208 @@ else:
         import shutil as _sh
         _sh.rmtree(_d, ignore_errors=True)
 
+
+# ── 12: A PARTLY-FAILED EXTRACT IS NEVER CACHED ────────────────────────────────────────
+#
+# ⚠⚠ THE DEFECT THIS PINS WAS ALREADY ON DISK. Every per-layer job answered [] on any
+# network or service error, which is indistinguishable from "this layer has no features
+# here", and the assembled dict was written to the cache with no success accounting, no TTL
+# and no revalidation - so one bad minute became the chart for that bbox for ever. Measured
+# in the operator's own cache: an extract holding 1591 features, 806 of them depth, and ZERO
+# land / shoreline / dock, against its neighbour 80 m west over the same south/east/north
+# edges holding 252 structures. Land does not vanish over 80 m.
+#
+# ⚠ AND IT COULD NOT BE SEEN FROM THE CLIENT. `band` is still set on a partial extract, so
+# "we have chart data" is TRUE, the Nogo row reads healthy, and Go-To / RTH / punch-out
+# route across a shoreline that is simply not in the model. A refusal was indistinguishable
+# from success - the one failure shape this console's whole design argues against.
+#
+# Hermetic: the network is replaced outright, so this asserts the CACHING RULE and touches
+# no service and no real cache file.
+_d = tempfile.mkdtemp(prefix="asv_enc_partial_")
+_sav = (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids, A._enc_query_by_ids,
+        A._enc_query, A._enc_pick_band)
+try:
+    A.ENC_DIR = _d
+    # ⚠ THE BAND PICK IS A NETWORK CALL TOO, and leaving it real made the first draft of
+    # this block PASS FOR THE WRONG REASON: `_enc_pick_band` answered None (offline), the
+    # function returned "no ENC coverage here" before reaching the assembly at all, and
+    # "no cache was written" was true because nothing had been fetched. Stub everything the
+    # path touches, then assert - and reset the circuit breaker between phases, because a
+    # failed fetch arms a 30 s cooldown that would silently skip the next one.
+    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
+    A._enc_query_by_ids = lambda b, lid, ids, **k: [
+        {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]
+    A._enc_query = lambda b, lid, bx, **k: {"features": []}
+
+    BBOX = (-30.0, 20.0, -29.99, 20.01)          # mid-ocean: no real cache can exist
+    CACHE = os.path.join(_d, "features_v5_%s.json" % A._bbox_key(BBOX))
+
+    # (a) ONE layer fails: nothing may be written, and the caller is told which.
+    def _ids_one_fails(band, lid, bbox, **k):
+        if lid == 1:
+            raise OSError("simulated upstream failure")
+        return [1]
+    A._enc_query_ids = _ids_one_fails
+    A._enc_down_until = 0.0
+    part = A.fetch_enc_features(BBOX)
+    check("12. a partly-failed extract is NOT cached - a transient failure cannot become "
+          "the permanent truth about that water",
+          lambda: not os.path.exists(CACHE),
+          "cache file written: %s" % os.path.exists(CACHE))
+    check("12b. ... and the response says which layers were lost, so a caller can refuse "
+          "to trust it as a keep-out source",
+          lambda: bool(part.get("partial")) and "LNDARE" in (part.get("partial") or [])
+                  and not part.get("complete"),
+          "partial=%s complete=%s" % (part.get("partial"), part.get("complete")))
+
+    # (b) ACCEPTANCE: every layer succeeds -> it caches exactly as it always did.
+    A._enc_query_ids = lambda band, lid, bbox, **k: [1]
+    A._enc_down_until = 0.0
+    good = A.fetch_enc_features(BBOX)
+    check("12c. ACCEPTANCE: a COMPLETE extract still caches - the refusal is about "
+          "failure, not about caching",
+          lambda: os.path.exists(CACHE) and good.get("complete") is True
+                  and not good.get("partial"),
+          "cached=%s complete=%s partial=%s"
+          % (os.path.exists(CACHE), good.get("complete"), good.get("partial")))
+
+    # (c) AND AN EMPTY LAYER IS NOT A FAILED ONE - the distinction the bug could not make.
+    if os.path.exists(CACHE):
+        os.remove(CACHE)
+    A._enc_query_ids = lambda band, lid, bbox, **k: ([] if lid == 1 else [1])
+    A._enc_down_until = 0.0
+    empty = A.fetch_enc_features(BBOX)
+    check("12d. an EMPTY layer is not a failed one: genuinely nothing there still caches",
+          lambda: os.path.exists(CACHE) and empty.get("complete") is True
+                  and not empty.get("partial"),
+          "cached=%s partial=%s - [] from the service and [] from a dead socket were the "
+          "SAME VALUE before this" % (os.path.exists(CACHE), empty.get("partial")))
+
+    # ⚠⚠ 12e. AN ARCGIS ERROR PAYLOAD IS NOT AN EMPTY LAYER. The REST service reports its own
+    # faults as HTTP 200 with {"error": {...}} and no objectIds - which parses perfectly and
+    # fell straight through `_enc_query_ids`'s `or []`, so a refusal reached the caller
+    # wearing the exact shape of "there is nothing of this class here". That is the hole the
+    # `ok` flag exists to see, and it could not see it until this raised.
+    if os.path.exists(CACHE):
+        os.remove(CACHE)
+    (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
+     A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
+    A.ENC_DIR = _d
+    A._enc_pick_band = lambda bbox: "enc_harbour"
+    A._enc_layer_map = lambda band, timeout=20.0: {"LNDARE": 1, "DEPARE": 2}
+    A._enc_query_by_ids = lambda b, lid, ids, **k: [
+        {"geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {}}]
+    A._enc_query = lambda b, lid, bx, **k: {"features": []}
+
+    class _R200:                       # HTTP 200 carrying an ArcGIS error body
+        def __init__(s, payload): s._p = json.dumps(payload).encode()
+        def read(s): return s._p
+        def __enter__(s): return s
+        def __exit__(s, *a): return False
+    _savurl = A.urllib.request.urlopen
+    try:
+        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+            {"error": {"code": 500, "message": "Unable to complete operation."}})
+        raised = False
+        try:
+            A._enc_query_ids("enc_harbour", 1, (-30.0, 20.0, -29.99, 20.01))
+        except ValueError as e:
+            raised = "Unable to complete" in str(e)
+        check("12e. an ArcGIS error body served as HTTP 200 RAISES rather than reading as an "
+              "empty layer - which is the only way the extract's ok flag can see it",
+              lambda: raised,
+              "the 200-with-an-error-payload path: raised=%s (it returned [] before, "
+              "indistinguishable from 'nothing of this class here')" % raised)
+    finally:
+        A.urllib.request.urlopen = _savurl
+
+    # ⚠⚠ 12f. AND A LAYER MAP THE SERVICE REFUSED IS NEVER CACHED. `_enc_layer_map`'s file
+    # carries no version and no TTL, so caching an empty map makes one bad minute at NOAA the
+    # permanent truth about the whole band: every later extract reads it back, builds no jobs,
+    # and the console has no ENC there for ever.
+    A._enc_layer_map = _sav[1]                              # the REAL one, for this check
+    try:
+        A.urllib.request.urlopen = lambda req, timeout=None: _R200(
+            {"error": {"code": 500, "message": "Unable to complete operation."}})
+        A._enc_layermaps.clear()
+        lm = A._enc_layer_map("enc_harbour")
+        lmpath = os.path.join(_d, "enc_harbour", "_layers.json")
+        check("12f. a layer map the service refused is NOT cached, so the band comes back the "
+              "moment the service does",
+              lambda: lm == {} and not os.path.exists(lmpath),
+              "map=%s, _layers.json written=%s" % (lm, os.path.exists(lmpath)))
+    finally:
+        A.urllib.request.urlopen = _savurl
+        A._enc_layermaps.clear()
+finally:
+    (A.ENC_DIR, A._enc_layer_map, A._enc_query_ids,
+     A._enc_query_by_ids, A._enc_query, A._enc_pick_band) = _sav
+    A._enc_down_until = 0.0
+    import shutil as _sh2
+    _sh2.rmtree(_d, ignore_errors=True)
+
+# ⚠⚠ 13. A BIG RESPONSE MUST NOT HOLD THE GIL, BECAUSE THE CONTROL LOOP IS IN THIS PROCESS.
+# `json.dumps` is ONE C call that never yields. Measured on real cached extracts with a 4 Hz
+# thread running beside it: a 10.6 MB extract stalled that thread for 0.52 s and a 165 MB one
+# for 8.56 s. For those 8.5 seconds the telemetry loop does not run, which means the
+# clearance ladder does not run - the guard is not slow, it is ABSENT.
+# `JSONEncoder().iterencode` is the pure-Python encoder and yields between fragments; the
+# same measurement gives 0.26 s and 0.28 s, so the tick keeps its cadence.
+#
+# ⚠ BOTH HALVES, because either alone passes for the wrong reason. The bytes must be
+# IDENTICAL to json.dumps - this is a wire format, not a rendering - and the yielding must
+# actually HAPPEN, which is asserted by driving a 4 Hz thread across a real encode. A source
+# grep for `iterencode` would be satisfied by a call whose result was thrown away.
+#
+# ⚠ AND IT COSTS ~4x WALL TIME ON THE REQUEST (0.54 -> 2.03 s on the ordinary extract). That
+# is the trade, and it is the right way round: a chart fetch happens on an area change, a
+# guard blackout happens at the one moment nobody can afford it.
+import threading as _th13
+
+_big = {"features": [{"role": "depth_area", "cls": "DEPARE",
+                      "props": {"DRVAL1": i * 0.1, "OBJNAM": "cell %d" % i},
+                      "geometry": {"type": "Polygon",
+                                   "coordinates": [[[i * 1e-5, i * 1e-5]] * 40]}}
+                     for i in range(12000)]}
+
+def _worst_gap(fn):
+    gaps, stop = [], _th13.Event()
+
+    def _tick():
+        last = time.perf_counter()
+        while not stop.is_set():
+            time.sleep(0.25)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    t = _th13.Thread(target=_tick, daemon=True)
+    t.start()
+    time.sleep(0.4)
+    out = fn()
+    time.sleep(0.2)
+    stop.set()
+    t.join(timeout=2)
+    return out, (max(gaps) if gaps else 0.0)
+
+_b_yield, _gap_yield = _worst_gap(lambda: A._json_body_yielding(_big))
+_b_dumps, _gap_dumps = _worst_gap(lambda: json.dumps(_big).encode("utf-8"))
+check("13. a large response goes through the YIELDING encoder, so the 4 Hz control loop "
+      "keeps ticking - and its bytes are identical to json.dumps",
+      lambda: _b_yield == _b_dumps and _gap_yield <= max(0.6, _gap_dumps),
+      "%d bytes both ways; worst 4 Hz gap %.2f s yielding vs %.2f s with json.dumps "
+      "(on a real 165 MB extract: 0.28 s vs 8.56 s)"
+      % (len(_b_yield), _gap_yield, _gap_dumps))
+
+_enc_src = open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read()
+_fn = _enc_src[_enc_src.index("def _serve_enc"):]
+_fn = _fn[:_fn.index("def _serve_chartinfo")]
+check("13b. ... and /api/enc actually uses it - a helper nothing calls is a comment",
+      lambda: "_json_body_yielding(data)" in _fn and "json.dumps(data)" not in _fn,
+      "the ENC route is the one that serves those extracts")
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else ("\nall checks passed (%d)" % ran))
 sys.exit(1 if fails else 0)

@@ -24,14 +24,14 @@
 //      stream every few seconds near a structure. `holdClearM` is the radius of the disc
 //      around the hold point that is clear of the keep-out model at the operator's buffer -
 //      and it is what lets the boat's own re-approach be honest. Inside that disc a straight
-//      chord back to the centre is clear by construction (every point of a disc is in the
+//      chord back to the center is clear by construction (every point of a disc is in the
 //      disc), so the boat may drive it direct. Beyond it the boat cannot know, so it takes
 //      the way off and the console supplies a ROUTED re-approach through the same planner
 //      every other commanded motion uses.
 //
 // ⚠ THE SNAP MARGIN IS `buf + holdR`, NOT `buf`. A point that is merely unblocked can sit
 // exactly on the buffer edge, and a hold there alarms the moment the tide moves it ten
-// centimetres. The whole disc the boat is allowed to wander has to be clear, or the hold
+// centimeters. The whole disc the boat is allowed to wander has to be clear, or the hold
 // point is only clear on paper.
 //
 // ⚠ NOTHING HERE COMMANDS ANYTHING, and nothing here reads page state. Pure functions of a
@@ -70,7 +70,7 @@ export function holdMarginM(setMs = 0, opts = {}) {
 }
 
 /**
- * How much a candidate offset direction is favoured for sitting DOWN-SET of the hazard.
+ * How much a candidate offset direction is favored for sitting DOWN-SET of the hazard.
  *
  * ⚠ THIS IS A PREFERENCE, NEVER A RULE - every candidate it chooses between has already
  * satisfied the margin. Expressed as a fraction of the required margin so it can tip a near
@@ -94,7 +94,7 @@ export function snapCapM(buf) { return Math.max(150, buf * 20); }
 /**
  * The nearest water to `p` that a boat can actually be ASKED TO HOLD IN.
  *
- * ⚠ "NOT BLOCKED" WAS THE OLD TEST AND IT WAS NOT ENOUGH. A point one centimetre outside
+ * ⚠ "NOT BLOCKED" WAS THE OLD TEST AND IT WAS NOT ENOUGH. A point one centimeter outside
  * the buffer passes `blocked()` and is a strike waiting for the first gust; Eastport's HOME
  * passed it with 1.47 m of clear water and the boat drove there at 6 kn. The test is now the
  * WORKING MARGIN (`need`): the water the set moves the boat through before anything can

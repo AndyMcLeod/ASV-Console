@@ -302,6 +302,34 @@ try:
     api(port, "/api/cmd/estop", {"on": False})
     wait_link_estop(port, False)                     # the telemetry frame, not the POST
     st_rel, tel_rel = state(port), status(port)
+    # ⚠⚠ AND IT CLEARS THE PAUSE. `SimVcu.estop` was the only one of the three halts that
+    # left `_paused` set - stop() and set_neutral() both clear it - so a boat E-STOPPED while
+    # PAUSED came back reading `run = "paused"` the moment the latch was released. The page
+    # routes Start into its RESUME path on exactly that word, so the operator was offered a
+    # resume, and a resume posts a backtrack amendment, for a pause the E-STOP had ended.
+    # ⚠ SEEDED PAUSED FIRST, or this cannot fail: an idle boat reads not-paused anyway, so
+    # "correctly cleared" and "never set" are the same observation. The seed is the check.
+    api(port, "/api/cmd/arm", {"on": True})
+    api(port, "/api/cmd/goto", {"lat": s0["lat_deg"] + 0.002, "lon": s0["lon_deg"]})
+    time.sleep(1.0)
+    api(port, "/api/cmd/pause", {})
+    time.sleep(0.5)
+    st_paused = status(port)
+    api(port, "/api/cmd/estop", {"on": True})
+    time.sleep(0.6)
+    st_latched = status(port)
+    api(port, "/api/cmd/estop", {"on": False})
+    wait_link_estop(port, False)
+    st_after = state(port)
+    check("11z. an E-STOP ENDS a pause: the latch clears the paused flag, so a released boat "
+          "is not offered a Resume for a pause that no longer exists",
+          bool(st_paused.get("paused")) is True
+          and bool(st_latched.get("paused")) is False
+          and st_after.get("run") != "paused",
+          "paused before the latch=%s, during=%s; after release run=%s (the page routes Start "
+          "into resumeRun on run == 'paused')"
+          % (st_paused.get("paused"), st_latched.get("paused"), st_after.get("run")))
+
     check("11. releasing leaves the vessel SAFE — it clears the latch but does NOT re-arm or resume",
           lambda: st_rel.get("estop") is False and tel_rel.get("estop") is False
           and st_rel.get("armed") is False and st_rel.get("autonomy") == "safe"

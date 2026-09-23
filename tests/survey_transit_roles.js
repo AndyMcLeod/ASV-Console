@@ -107,7 +107,7 @@ eval([
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("reversalScaleM"), grab("isReversalGap"),
-  grab("currentLegLine"), grab("accumLineTime"),
+  grab("indexedRoute"), grab("currentLegLine"), grab("accumLineTime"),
   // linePhase splits a committed line into lead-in / coverage / lead-out; currentActivity
   // asks it before reporting coverage. The fixtures here carry no lead, so every line is
   // all coverage and the answer is the one it always was — which is the point: adding the

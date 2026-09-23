@@ -100,6 +100,11 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 },
 var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" } };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, lineActual = [];
 var S = null, asv = null, runRoute = null, pauseMark = null, resumeSlow = false;
+// The helm rung's claim on the throttle (escapeThrottle): speedGovernor stands down on it
+// exactly as it does on `resumeSlow`, so the symbol must exist in this world or the
+// governor is a bare ReferenceError. False here - no escape is commanded - so these checks
+// are the evidence that an ordinary run still governs its own speed as it always did.
+var escapeThrottle = false;
 var clearance = { slowed: false };
 var commandedSpeed = null;
 globalThis.window = globalThis;
@@ -107,16 +112,35 @@ function fmtDist(m) { return Math.round(m) + " m"; }
 // The governor issues real commands. Recorded rather than stubbed to nothing, so the checks
 // below can say WHAT was commanded instead of only that something was.
 var sent = [];
-function cmd(p, b) { sent.push({ p, speed: b && b.speed }); return Promise.resolve({}); }
+// ⚠ THE SUCCESS FIXTURE USED TO BE A BARE {} - the one answer that has neither
+// `ok` nor `error`, and therefore the one this suite could not tell from a failure.
+// That is not a detail: it is WHY the page carried two failure-shaped tests for so
+// long. The fixtures agreed with the bug, so every mutation of it survived here.
+// cmd() answers {ok:true, state:{...}} on success and {ok:false, error, sent, refused}
+// on every failure; a stub that answers anything else is testing a console that does
+// not exist.
+function cmd(p, b) { sent.push({ p, speed: b && b.speed });
+                     return Promise.resolve({ ok: true, state: {} }); }
 
 // The rest of the world resumeRun touches. Recorded where a check needs to read it back,
 // inert where it does not — but never absent, because a missing global turns a mutation's
 // red check into a dead run.
 var planIntent = { why: [] }, notes = [];
 function flashNote(m) { notes.push(m); }
+// ⚠ AND showBanner, BECAUSE dropCornerSlow FENCES ITS OWN SAYING. Its three assignments
+// come first and cannot throw; the flashNote and showBanner that follow sit in a try/catch, so
+// that a page without a banner bar cannot take the edge rung's `.catch` down with it. In a
+// world with no showBanner that fence swallows the whole announcement - the set would clear,
+// the operator would be told nothing, and a check asserting the banner would fail for a
+// reason that has nothing to do with the page.
+var banners = [];
+// The corner set, at MODULE scope so the fixtures can actually arm it - see the bundle below.
+var cornerSlow = new Set(), cornerUnanswered = [], cornerSlowFor = -1, cornerPlanKey = "survey";
+function showBanner(m) { banners.push(m); }
 function updateMissionCard() {}
 function render() {}
-globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({}) });
+globalThis.fetch = () => Promise.resolve({ ok: true, status: 200,
+                                           json: () => Promise.resolve({ ok: true }) });
 // THE REAL keep-out check, not a stub: check 12 is about the console asking the chart, and
 // a stub would make it a test of the stub. `nogo` is swapped between an empty model and a
 // blocking one to drive both branches.
@@ -129,27 +153,38 @@ eval([
   // markPause DELEGATES to lineMark, which the clearance guard's hold takes as well
   // (tests/guard_resume.js) - one implementation of "which line, how far along, which way",
   // because a second copy is a copy no mutation has ever been run against.
-  grab("resumeBackM"), grab("alongLineM"), grab("lineMark"), grab("markPause"),
+  grab("resumeBackM"), grab("alongLineM"), grab("indexedRoute"), grab("lineMark"), grab("markPause"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("resumePointOn"), grab("backtrackClear"),
   grab("roleSpeed"), grab("roleSpeedMS"), grab("linePhase"), grab("currentActivity"),
+  // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8). currentActivity() returns role "depart"
   // while a grant stands, so `grant` must exist here or speedRole() - which every governor
   // check in this file goes through - is a bare ReferenceError. Null in this world: no berth
-  // is latched, so the classifier answers exactly as it always did and these checks are the
+  // is latched, so the classifier answers exactly as it always did, and these checks are the
   // evidence that the OPEN regime is unchanged.
   "let grant = null;",
-  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
+  grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"),
+  grab("sendSpeed"), grab("commandSpeed"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
-  // speedGovernor also reads the JUNCTION corner set since 2026-09-19
-  // (tests/corner_slow.js): an empty one here, so this world governs exactly as it did.
-  "let cornerSlow = new Set();",
-  "let cornerSlowFor = -1;",
-  grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
+  // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and
+  // resumeRun now DROPS it (2026-09-22): the amended tail begins at a rejoin point the
+  // measurement never walked. dropCornerSlow reads all four, so the door comes across too.
+  // ⚠⚠ THE FOUR ARE DECLARED OUT AT MODULE SCOPE, NOT IN THIS BUNDLE, AND THAT IS THE
+  // WHOLE POINT. A `let` inside a direct eval lives in the eval's own scope and nothing
+  // outside can reach it - so a fixture writing `cornerSlow = new Set([2,3])` out there in
+  // sloppy mode creates a SECOND, unread global and the subject never sees it. Driven that
+  // way, checks 12f-12h all read back their own untouched fixture: two of them failed, and
+  // 12g PASSED, reporting "the set survived a refusal" about a set nothing had ever
+  // referred to. guard_resume records the same trap about holdWant.
+  grab("dropCornerSlow"),
+  // took() is the page's ONE test for "did the command land?" - carried across rather
+  // than restated, so a change to it is a change here.
+  grab("took"), grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
   "function __resumeSlow(){ return resumeSlow; }",
@@ -228,6 +263,34 @@ console.log("A paused survey leaves a hole, and the resume has to close it:");
   runLineIdx = 0; S = { behavior: "goto", run: "running", status: {} };
   const raised3 = tryMark();
   const offSurvey = pauseMark;
+  // ⚠ 4b. AND THERE IS NO MARK WHEN THIS PAGE DOES NOT HOLD THE ROUTE THE INDEX COUNTS
+  // INTO. lineMark reads the DIRECTION along the line off the waypoint the boat is steering
+  // for - its own comment says "getting this backwards would back the boat up into
+  // UNsurveyed water" - and `_wpIndex` counts into the UPLOADED route, which a page loaded
+  // mid-run does not hold. `mission.waypoints` is a different, shorter array whenever
+  // ⚠ AT THIS SCOPE, not inside the upload block: a `const` declared in there is invisible
+  // to the checks below, which is how a fixture ends up reading its own untouched default.
+  var covered = null, routedAfterCover = null;
+  // routePlan spliced a detour in, so the waypoint at that index is some other corner
+  // entirely. Refusing the mark gives up the BACKTRACK, never the resume: check 12 already
+  // holds that a resume without a mark still runs, from where she lies.
+  runLineIdx = 0; S = { behavior: "survey", run: "running", status: {}, wp_total: 40 };
+  runRoute = null;                              // reloaded: the drawn plan and nothing else
+  mission.waypoints = [LINE_E.a, LINE_E.b];     // ...2 waypoints against her 40
+  asv = ll(150, 0); window._wpIndex = 1;
+  const raised4 = tryMark();
+  const noRoute = pauseMark;
+  S = { behavior: "survey", run: "running", status: {}, wp_total: 2 };   // degraded: ONE array
+  const raised5 = tryMark();
+  const degraded = pauseMark;
+  check("4b. ... nor when the page does not hold the route the vessel's index counts into "
+        + "- but a DEGRADED upload, where the drawn plan IS that route, still marks",
+        () => noRoute === null && !raised4 && !!degraded && !raised5,
+        () => "reload (2 drawn vs wp_total 40) -> " + (noRoute ? "MARKED" : "no mark")
+            + "; degraded upload (2 vs 2) -> " + (degraded ? "marked" : "NO MARK")
+            + ". The direction is read off the waypoint she is steering for, and on a "
+            + "reloaded page that index names a corner of a different array");
+
   check("4. ... and there is NO mark when she was not on a coverage line",
         () => offLine === null && offSurvey === null && !raised2 && !raised3,
         "mid-turn, on the approach, or on a Go-To there is no line to back down, and "
@@ -331,8 +394,15 @@ async function drive(ko) {
 function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                      if (p === "/api/cmd/amend") globalThis.__lastRoute = b && b.route;
                      // 12c: a command the console must NOT assume worked (review #6)
-                     if (p === globalThis.__failPath) return Promise.resolve({ ok: false, error: "simulated refusal" });
-                     return Promise.resolve({}); }
+                     if (p === globalThis.__failPath)
+                       // ⚠ TWO SHAPES OF FAILURE, NOT ONE. cmd() answers {refused:true} when the
+                       // VESSEL said no and {refused:false} when the reply never came back,
+                       // and the page's rules differ between them - 12g against 12h. A stub
+                       // with only the refused shape cannot tell those two checks apart.
+                       return Promise.resolve(globalThis.__refuseAmend === false
+                         ? { ok: false, error: "no answer", sent: true, refused: false }
+                         : { ok: false, error: "simulated refusal", sent: true, refused: true });
+                     return Promise.resolve({ ok: true, state: {} }); }
 
 (async () => {
   const back = 12 * 7.71;
@@ -406,6 +476,73 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
         () => "sent " + JSON.stringify(refusedLow.sent.map(x => x.p)) + "; note: "
               + (refusedLow.notes.find(n => /Resume/.test(n)) || "none"));
   __setResumeSlow(false);
+
+  // -- 12f-12h. THE CORNER SET DIES WITH THE ROUTE IT INDEXED -----------------------------
+  // The amended tail begins at a REJOIN POINT cornerSlowPlan never walked, and inserting it
+  // changes the geometry of the corner either side of it. Every index in the set names a
+  // corner of a plan the vessel is no longer flying, and speedGovernor is asked again on the
+  // very next state frame - so the console would command LOW at a waypoint that has moved, or
+  // stay at the survey speed through one that has not. The page's own rule, from the upload:
+  // a slow command at the wrong waypoint is worse than none.
+  //
+  // ⚠ AND THE SAYING IS HALF THE BEHAVIOR. The operator was PROMISED corner slowing when
+  // they uploaded. A plan whose backtrack lengthens it would fall silent on the length key by
+  // itself, with nothing on screen - which is the same wrong outcome arrived at quietly.
+  const armCorners = () => {
+    cornerSlow = new Set([2, 3]); cornerUnanswered = [4];
+    cornerSlowFor = 99; cornerPlanKey = "survey";
+  };
+  const cornersNow = () => ({ slow: cornerSlow.size, un: cornerUnanswered.length,
+                              key: cornerSlowFor });
+
+  armCorners();
+  const okDrop = await drive();
+  const afterOk = cornersNow();
+  check("12f. an ACCEPTED resume drops the corner set with the route it indexed, and says so",
+        () => afterOk.slow === 0 && afterOk.un === 0 && afterOk.key === -1
+              && /CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "2 slowing + 1 unanswered before -> " + afterOk.slow + " + " + afterOk.un
+            + ", key " + afterOk.key + "; banners: "
+            + (banners.filter(b => /CORNER/.test(b)).length) + ". The rejoin point is a "
+            + "corner the measurement never walked and it moves the two either side of it");
+
+  // ⚠ THE ARM THAT MAKES THE OTHER TWO MEAN SOMETHING. A refusal establishes she is still
+  // flying the plan the corners were measured on, so a console that drops the set here has
+  // thrown away a live measurement for nothing - and an unconditional drop at the top of
+  // resumeRun passes 12f and 12h identically.
+  armCorners();
+  banners = [];
+  globalThis.__failPath = "/api/cmd/amend";
+  globalThis.__refuseAmend = true;
+  await drive();
+  globalThis.__failPath = null; globalThis.__refuseAmend = false;
+  const afterRefused = cornersNow();
+  check("12g. ... and a REFUSED amendment keeps it - she is still flying the plan it measured",
+        () => afterRefused.slow === 2 && afterRefused.un === 1 && afterRefused.key === 99
+              && !/CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "after a refusal: " + afterRefused.slow + " slowing + " + afterRefused.un
+            + " unanswered, key " + afterRefused.key + ", "
+            + banners.filter(b => /CORNER/.test(b)).length + " lapse banner(s). The vessel "
+            + "said no, so nothing about the route she is flying changed");
+  __setResumeSlow(false);
+
+  // A LOST reply establishes nothing - she may have taken the amendment.
+  armCorners();
+  banners = [];
+  globalThis.__failPath = "/api/cmd/amend";
+  globalThis.__refuseAmend = false;
+  await drive();
+  globalThis.__failPath = null;
+  const afterLost = cornersNow();
+  check("12h. ... and a LOST one drops it, because the console cannot say which route she is on",
+        () => afterLost.slow === 0 && afterLost.un === 0 && afterLost.key === -1
+              && /CORNER SLOWING HAS LAPSED/.test(banners.join(" ")),
+        () => "after a lost reply: " + afterLost.slow + " slowing + " + afterLost.un
+            + " unanswered, key " + afterLost.key + ". Same asymmetry the upload and the "
+            + "edge rung both keep - `refused` is an answer, silence is not");
+  __setResumeSlow(false);
+  banners = [];
+
   {
     const fnotes = [];
     const flashNote = (m) => fnotes.push(m);
@@ -417,6 +554,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const supervising = () => true;
     const SUPERVISOR_ANY = ["/api/cmd/stop", "/api/cmd/pause", "/api/cmd/estop"];
     const CLIENT_ID = "test-tab";      // cmd() sends the tab's own name; without it every call reads as a throw
+    // cmd() bounds its own fetch (2026-09-22). The VALUE is read off the page rather than
+    // restated, so a change there is a change here - but it is DECLARED here, because a
+    // `const` inside a direct eval stays in that eval's own scope and the cmd() below is
+    // built by a different eval, which would not see it.
+    const CMD_TIMEOUT_MS = +(/const CMD_TIMEOUT_MS = (\d+);/.exec(grabDecl("CMD_TIMEOUT_MS")) || [])[1];
     // eslint-disable-next-line no-eval
     const cmdLabel = eval("(" + grab("cmdLabel") + ")");
     let fetch = () => Promise.reject(new Error("socket hang up"));
@@ -452,7 +594,22 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     let mission = { waypoints: [{ lat: 43.08, lon: -70.71 }, { lat: 43.09, lon: -70.71 }] };
     let nogo = { ready: false, busy: false, band: null, note: "nogo not loaded" };
     let runRoute = null, planIntent = null, runUnsafe = [], answer = false, asked = null;
-    const cmd = (p, b) => { calls.push({ p, b }); return Promise.resolve({ ok: true, state: {} }); };
+    // ⚠ AN ANSWER THIS FIXTURE CAN CHOOSE. doUpload reads its reply since 2026-09-22, so
+    // "what the console said" is part of this world now. The three shapes are the three the
+    // page distinguishes: taken, REFUSED in words, and a reply that was lost.
+    let reply = null;   // null = taken
+    const cmd = (p, b) => { calls.push({ p, b });
+      if(reply === "refuse") return Promise.resolve(
+        {ok: false, error: "the vessel is running a plan - Hold or Stop it first",
+         sent: true, refused: true});
+      if(reply === "lost") return Promise.resolve(
+        {ok: false, error: "network error", sent: true, refused: false});
+      // ⚠ A COMMAND GIVEN WHILE THIS ONE IS OUT. The clearance guard commands the boat at
+      // 4 Hz throughout the round trip, and this upload followed a routing that can take
+      // seconds - so a guard deviation or an escape landing inside the window is ordinary,
+      // not exotic. It installs a picture, which is what setPlanIntent means.
+      if(reply === "race"){ runRoute = [{lat: 9, lon: 9}]; setPlanIntent("escape"); }
+      return Promise.resolve({ ok: true, state: {} }); };
     const flashNote = (m) => unotes.push(m), showBanner = (m) => banners.push(m);
     const render = () => {}, setViolations = () => {}, clearViolation = () => {};
     // doUpload measures where the HULL goes at every corner of the routed plan since
@@ -479,12 +636,37 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     let uploadBusy = false; const busySeq = [];
     const applyCmdState = () => busySeq.push(uploadBusy);
     const legReasons = () => [], kindsSummary = () => "", holdClearAt = () => 12;
-    const setPlanIntent = (kind) => { planIntent = { kind, why: [] }; };
+    // ⚠ THE GENERATION LIVES WHERE THE PAGE PUTS IT - inside setPlanIntent, which is
+    // called at every site that installs a NEW commanded route and at neither that amends
+    // one. doUpload fences its draw on it now ("the draw may not overtake a command given
+    // since"), so a stub that bumped it elsewhere would test a different rule.
+    let planGen = 0;
+    const setPlanIntent = (kind) => { planGen++; planIntent = { kind, why: [] }; };
+    // The page's ONE success test and its operator wording, carried across verbatim so a
+    // change to either is a change HERE rather than in a copy that can drift.
+    // eslint-disable-next-line no-eval
+    const took = eval("(" + grab("took") + ")");
+    // eslint-disable-next-line no-eval
+    const notTookSay = eval("(" + grab("notTookSay") + ")");
     let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan
-    const routePlan = (start, wps) => ({ route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
+    const routePlan = (start, wps) => (routedAfterCover = covered !== null, { route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
                                                    .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
                                           unroutable: [], degraded: !nogo.ready });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
+    // ⚠ RECORDS, DOES NOT SWALLOW (2026-09-22). doUpload now covers the water the plan will
+    // use before it routes, the way every other commanded motion does. A stub that just
+    // returned would be satisfied by a doUpload that covered the SURVEY alone - which is
+    // precisely the defect, since the approach starts wherever the boat is lying. So the
+    // points are kept and check 1p reads them.
+    // ⚠⚠ AND IT RESOLVES ASYNCHRONOUSLY, ON PURPOSE. A stub that set `covered` before
+    // returning made the AWAIT invisible: dropping `await` in doUpload leaves the scan pending
+    // while routePlan runs against the un-extended model - the fix doing nothing at all - and
+    // that mutation SURVIVED a sweep until this stub started resolving on a later tick.
+    // `routedAfterCover` is what actually pins the ordering.
+    const ensureNogoCovers = (pts) => Promise.resolve().then(() => {
+      covered = (pts || []).map(p => ({lat: p.lat, lon: p.lon}));
+      return true;
+    });
     // ⚠ THE LAUNCH GRANT (2026-09-19). doUpload now certifies the departure before it sends
     // - see certifyDeparture and DEPARTURE_PARADIGM.md R5-R7. In THIS world no berth is ever
     // latched, so certifyDeparture returns {none:true} at its first line and the upload path is
@@ -507,7 +689,19 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
-                                  runRoute = null; setup(); await doUpload(); await Promise.resolve(); };
+                                  runRoute = null;
+                                  // Every run starts from TAKEN unless its own setup says
+                                  // otherwise: an answer leaking from the previous case is
+                                  // how a check passes for the wrong reason.
+                                  reply = null;
+                                  // ⚠⚠ AND THE COVER RECORDER, for the same reason and found the
+                                  // same way. These persisted across runs, so check 1p read a
+                                  // value an EARLIER upload had written and the "cover is not
+                                  // awaited" mutation SURVIVED twice - the check could not
+                                  // fail, because what it asserted was already true before
+                                  // the code under test ran.
+                                  covered = null; routedAfterCover = null;
+                                  setup(); await doUpload(); await Promise.resolve(); };
 
     await up(() => { asv = null; nogo = { ready: true, band: "enc_harbour" }; });
     check("1c. Upload with no position fix is refused in words, and nothing is sent",
@@ -554,6 +748,98 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && banners.length === 0,
           () => "sent=" + JSON.stringify(calls.map((c) => [c.p, c.b && c.b.route && c.b.route.length])));
     delete S.route_max_wpts;
+  // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
+  // took the plan, so the upload is real - but the operator or the guard has commanded her
+  // somewhere in the meantime, and that command owns the picture. Drawing the survey over it
+  // would put the chart back to a plan she is no longer flying, with the clearance ladder
+  // projected along it.
+  // ⚠ THE PAIR: 1k's accepted case is this same world WITHOUT the mid-flight command, and
+  // it draws. Without that twin, "did not draw" here is indistinguishable from "never ran".
+  await up(() => { nogo.ready = true; reply = "race"; });
+  const raced = runRoute, racedSaid = banners.join(" | ");
+  check("1n. ... and an upload the vessel TOOK does not redraw over a command given while it "
+        + "was going out - it says the chart is not the plan aboard",
+        () => raced !== null && raced.length === 1 && raced[0].lat === 9
+              && /THE CHART IS NOT SHOWING THE UPLOADED PLAN/.test(racedSaid),
+        () => "after the race the chart holds " + (raced ? raced.length + " wpt" : "null")
+            + " (the command given since, not the upload), and the operator was "
+            + (/THE CHART IS NOT SHOWING/.test(racedSaid) ? "told" : "TOLD NOTHING"));
+
+  // ⚠⚠ 1k-1m. NOTHING THE VESSEL DID NOT TAKE IS DRAWN. doUpload installed the route,
+  // the Intent card and its generation SEVENTY LINES IN FRONT of a post it never read - the
+  // claim-then-post shape the commanded-answer commits closed for Go-To, RTH and Transit, at
+  // the one commanded motion they did not reach. Engine.upload refuses for six ordinary
+  // reasons, two of them everyday operator mistakes: "ARM before uploading a plan" and "the
+  // vessel is running a plan - Hold or Stop it first".
+  //
+  // ⚠ AND THIS IS THE WORST SITE ON THE PAGE FOR IT: guardTrack slices `runRoute` at the
+  // VESSEL's own wp_index to project the whole clearance ladder, and markGuardHeld banks it
+  // as the remainder a later resume really uploads. A drawn plan she is not flying is not a
+  // cosmetic problem here.
+  //
+  // ⚠ THE PAIR IS THE CHECK. `runRoute === null` is also the fixture's own starting value -
+  // `up()` nulls it before every run - so "correctly not drawn" and "nothing happened" are
+  // the same observation on the refused case alone. The ACCEPTED case is what makes it
+  // evidence, and it is the same world but for the answer.
+  await up(() => { nogo.ready = true; reply = null; });
+  // -- 1p. THE APPROACH IS PLANNED OVER WATER THE CHART WAS READ FOR ----------------------
+  // ⚠⚠ THE ASYMMETRY IS THE FINDING. Go-To covers [boat, target], RTH covers [boat, home],
+  // Transit covers [boat, ...transit] - every commanded motion covers the water it is about to
+  // use, and every one of them puts the BOAT in the box. Upload covered nothing, and it is the
+  // one that routes an approach from wherever the boat happens to be lying.
+  //
+  // It inherited the PUNCH's model, whose chart-ink scan box is encBbox(120 + lead) - the
+  // survey's own water, which does not contain the boat. So the survey legs were planned
+  // against the ENC *and* the structures read off the chart image, while the approach was
+  // planned against the ENC alone; an unpublished pier between the boat and the survey was
+  // invisible to it, and the clearance guard reads the same model, so it was blind there too.
+  // Unscanned water reads as CLEAR, not as unknown - ensureNogoArea says so in those words -
+  // so there was no banner, and there could not have been one: nothing knew it had not looked.
+  //
+  // The fixture's boat is at 43.07 and its two waypoints at 43.08 / 43.09, so "three points,
+  // first one the boat" is the whole assertion. `covered` is null until doUpload calls out.
+  check("1p. Upload covers the water the plan will USE - the boat AND every waypoint, not "
+        + "just the survey",
+        () => Array.isArray(covered) && covered.length === 3
+              && Math.abs(covered[0].lat - 43.07) < 1e-9
+              && Math.abs(covered[2].lat - 43.09) < 1e-9
+              && routedAfterCover === true,
+        () => "covered " + (covered ? covered.length : "null") + " point(s)"
+            + (covered && covered.length
+                ? " from " + covered[0].lat.toFixed(2) + " to "
+                  + covered[covered.length - 1].lat.toFixed(2)
+                  + "; first is " + (Math.abs(covered[0].lat - 43.07) < 1e-9
+                      ? "THE BOAT" : "NOT the boat")
+                : "")
+            + "; routed AFTER the cover: " + routedAfterCover
+            + ". The approach is the one leg that starts where the boat is, and it was the one "
+            + "leg nothing had scanned the chart image for. The ordering half matters as much: "
+            + "an un-awaited cover leaves routePlan running on the model it was trying to "
+            + "extend, which is the fix present and doing nothing");
+
+  const drew = runRoute, drewGen = planGen;
+  await up(() => { nogo.ready = true; reply = "refuse"; });
+  const refusedRoute = runRoute, refusedSaid = banners.join(" | "), refusedSent = calls.length;
+  check("1k. an accepted Upload draws the routed plan; a REFUSED one draws nothing and says "
+        + "so in the console's own words",
+        () => drew !== null && drew.length >= 2 && drewGen > 0
+              && refusedRoute === null && refusedSent === 1
+              && /UPLOAD REFUSED/.test(refusedSaid)
+              && /still on the plan she had/.test(refusedSaid),
+        () => "accepted -> " + (drew ? drew.length + " wpt drawn" : "NOTHING")
+            + "; refused -> " + (refusedRoute ? "DREW IT ANYWAY" : "nothing drawn")
+            + ", posted " + refusedSent + ", said " + JSON.stringify(refusedSaid.slice(0, 90)));
+
+  // 1l. AND A LOST REPLY IS NOT A REFUSAL. It may say nothing about the vessel at all, so it
+  // names the readout that can settle it rather than asserting she is still on her old plan.
+  await up(() => { nogo.ready = true; reply = "lost"; });
+  const lostSaid = banners.join(" | ");
+  check("1m. ... and a LOST reply says the console cannot tell, never that she refused",
+        () => runRoute === null && /UPLOAD NOT ACKNOWLEDGED/.test(lostSaid)
+              && /cannot tell whether she received it/.test(lostSaid)
+              && !/NOTHING WAS UPLOADED/.test(lostSaid),
+        () => JSON.stringify(lostSaid.slice(0, 140)));
+
   }
   {
     const els = { "#confirm": { style: {} }, "#confirmTtl": {}, "#confirmMsg": {}, "#confirmYes": {}, "#confirmNo": {} };
@@ -607,10 +893,36 @@ function finish(){
         () => /if\(resumeSlow\)\{ resumeSlow = false;/.test(setRole),
         "touching any of the three role selectors is the operator taking the speed back — "
         + "including selecting 'low' itself, which is them owning the choice");
-  check("15. ... and a stop or a fresh start does not carry it into the next run",
-        () => /pauseMark = null; resumeSlow = false; commandedSpeed = null;\r?\n?\s*cmd\("\/api\/cmd\/stop"\)/.test(H)
-              && /pauseMark = null; resumeSlow = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
-        "the hold belongs to the run it was given about");
+  // ⚠ BOTH HOLDS, NOT JUST THE LOW ONE. The guard's escape claims the throttle UPWARD
+  // (`escapeThrottle`) the same way a resume holds it DOWN, and a claim that outlives its own
+  // run is the same defect in either direction - so a Stop and a fresh Start must release
+  // both. Pinned on `resumeSlow` alone, this regex could not have noticed the second one
+  // arriving beside it, which is the whole reason it is spelled out rather than loosened.
+  // The #b_stop handler, sliced to the next handler, so the check can ask where its
+  // clears sit relative to the gate rather than which line follows which.
+  const BSTOP = H.slice(H.indexOf('$("#b_stop").onclick'),
+                        H.indexOf('$("#b_rth").onclick'));
+  check("15. ... and a stop or a fresh start carries NEITHER throttle hold into the next run",
+        // ⚠ ANCHORED ON THE PROPERTY, NOT THE ORDER. This matched the four clears
+        // IMMEDIATELY FOLLOWED BY the stop post; on 2026-09-22 they moved PAST the reply,
+        // because a Stop the vessel refused must not wipe the plan she is still flying -
+        // and `escapeThrottle` above all, since releasing the governor's gag mid-escape
+        // is the opposite of what that rung commanded. What this check is about is that
+        // BOTH throttle holds are dropped together on the stop path.
+        // ⚠ EACH CLEAR IS CONDITIONAL NOW - `if(escapeThrottle === was.throttle)
+        // escapeThrottle = false;` - so that an ACCEPTED Stop cannot erase a hold the guard
+        // set during its own round trip, which would un-gag the governor mid-escape. The
+        // property is unchanged: all four are dropped on the stop path, past the gate.
+        // ⚠⚠ THE GATE MUST EXIST BEFORE ITS POSITION MEANS ANYTHING. `at > indexOf(...)`
+        // passed for the revert it exists to catch, because a deleted gate makes indexOf
+        // answer -1 and every real offset beats -1.
+        () => BSTOP.indexOf("took(r)") >= 0
+              && ["pauseMark", "resumeSlow", "escapeThrottle", "commandedSpeed"].every((k) => {
+                const at = BSTOP.search(new RegExp(k + "\\s*=\\s*(null|false)"));
+                return at >= 0 && at > BSTOP.indexOf("took(r)");
+              })
+              && /pauseMark = null; resumeSlow = false; escapeThrottle = false; commandedSpeed = null; speedWant = null;\s*\/\/ a FRESH run/.test(H),
+        "the low-speed hold AND the escape's high-speed hold both belong to the run they were given about");
   resumeSlow = false;
 }
 

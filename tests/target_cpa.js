@@ -169,7 +169,11 @@ console.log("CPA / TCPA — the closest two vessels will come, and when:");
 
 // ── 10-11. THE PAGE WIRING — where the maths was right and the readout was not ──────
 {
-  const RAW = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+// ASV_HTML points this at a SIDECAR copy for a mutation run - without it a sweep writes
+// its mutants to a file this suite never reads and scores every one as SURVIVED (audited
+// 2026-09-21: 21 of the 53 suites reading this page had no override).
+  const RAW = fs.readFileSync(process.env.ASV_HTML
+                || path.join(__dirname, "..", "static", "asv.html"), "utf8");
   // ⚠ CODE ONLY. Both of these checks failed on their first run against the FIXED source,
   // because the fix carries a comment explaining the bug - and the comment names
   // `asv.sog` and `fmtDist(c.cpaM/1000)`, which is exactly what the check was grepping

@@ -14,6 +14,30 @@
 const path = require("path");
 const pptxgen = require("pptxgenjs");
 const icons = require("./deck_icons.json");
+const fs = require("fs");
+
+// COUNTED, NOT QUOTED. This deck stated "~11,700 lines across 6 source files" and "30 suites"
+// for six weeks after both stopped being true - by 2026-09-23 the tree was 28,675 lines across
+// 21 files and 96 suites. A number a reader does not ACT on should not be typed into a
+// document at all; it should be worked out by the build, so it cannot drift from the thing it
+// describes. The sprint figures below are different: they are DATED, and they stay.
+const REPO = path.join(__dirname, "..");
+const SRC_FILES = [path.join(REPO, "asv_console.py"), path.join(REPO, "static", "asv.html")]
+  .concat(fs.readdirSync(path.join(REPO, "static", "js"))
+            .filter(f => f.endsWith(".js"))
+            .map(f => path.join(REPO, "static", "js", f)));
+// Counted the way `wc -l` counts: the NEWLINES. Splitting on the line ending yields a
+// trailing empty element for a file that ends with one, which made this 21 lines heavy
+// across 21 files - a derived number nobody was ever going to check again.
+const srcLines = SRC_FILES.reduce((n, f) => {
+  const t = fs.readFileSync(f, "utf8");
+  const lines = t.split(/\r?\n/).length;
+  return n + (t.endsWith("\n") ? lines - 1 : lines);
+}, 0);
+const srcFiles = SRC_FILES.length;
+const suiteCount = fs.readdirSync(path.join(REPO, "tests"))
+                     .filter(f => /\.(js|py)$/.test(f)).length;
+const fmtN = n => n.toLocaleString("en-US");
 
 const OUT = path.join(__dirname, "..", "docs", "ASV-Console-Programming-by-Conversation.pptx");
 
@@ -79,9 +103,9 @@ function note(s, t) { s.addNotes(t); }
   ], { x: 0.6, y: 1.55, w: 6.5, h: 5.3, fontFace: BODY, fontSize: 14, color: INK, margin: 0, valign: "top" });
 
   const tiles = [
-    ["~11,700", "lines across 6 source files\n(one server file, one UI page)"],
+    [fmtN(srcLines), "lines across " + srcFiles + " source files\n(one server file, one UI page, shared modules)"],
     ["109", "commits in 14 days\n(2026-07-22 \u2192 08-05)"],
-    ["30 / 415", "regression suites / assertions,\nall run by the pre-commit hook"],
+    [String(suiteCount), "regression suites,\nevery one run by the pre-commit hook"],
     ["4 + 3", "generated Word manuals +\nvessel profiles (data, not code)"],
   ];
   tiles.forEach(([big, small], i) => {
@@ -230,7 +254,7 @@ function note(s, t) { s.addNotes(t); }
     ["4  Safety envelope", "SAFE/arm gating; refusals on the real path (reset, spawn, vessel switch under way); a standing sanitization rule — the sibling console's identity never enters code."],
     ["5  Deferred parameters", "Vessel profiles as data files; the MarineTraffic AIS source held pending account details — \u201Cwhich service, one redacted sample response\u201D before a line is written."],
     ["6  Deliverable", "Single-file server + one page; four generated Word manuals (quick start, operations, technical, development) rebuilt in the same commit as the change they document."],
-    ["7  Verification", "30 suites / 415 assertions run by the pre-commit hook; suites verified by mutation; live checks against a real browser, real Word, a real server's stderr."],
+    ["7  Verification", suiteCount + " suites run by the pre-commit hook; suites verified by mutation; live checks against a real browser, real Word, a real server's stderr."],
   ];
   const tbl = rows.map(([a, b]) => ([
     { text: a, options: { bold: true, color: DEEP, fontFace: BODY, fontSize: 12 } },
@@ -334,7 +358,7 @@ function note(s, t) { s.addNotes(t); }
     ["Shore-station UI (chart + controls windows, draggable/resizable cards, survey editor, readouts)", 20, 40, 70],
     ["AIS subsystem (websocket service, registry, range filtering, error surfacing, patched table)", 6, 12, 24],
     ["Ancillary services (tides & water-level trust, GPS sim, ROC / moving HOME, recorder + playback)", 6, 12, 22],
-    ["Test infrastructure (30 suites / 415 assertions, mutation verification, real-console harnesses, hook)", 15, 30, 60],
+    ["Test infrastructure (" + suiteCount + " suites, mutation verification, real-console harnesses, hook)", 15, 30, 60],
     ["Documentation pipeline (docx generator, four manuals, three READMEs)", 8, 15, 28],
     ["Hardening & defect discovery (route audits, dropped-connection family, live cross-checks)", 6, 14, 28],
   ];
@@ -433,7 +457,7 @@ function note(s, t) { s.addNotes(t); }
   s.addText("CONCLUSIONS", { x: 0.9, y: 0.5, w: 11.5, h: 0.35, fontFace: BODY, fontSize: 12, color: "7E97AB", charSpacing: 2, bold: true, margin: 0 });
   s.addText("What four instruments and one console argue", { x: 0.9, y: 0.85, w: 11.5, h: 0.7, fontFace: HDR, fontSize: 30, bold: true, color: "FFFFFF", margin: 0 });
   const items = [
-    ["comments", "The division of labor holds, at 10\u00D7 the scale", "The expert brings the what, the why, and the distrust; the agent brings the how and the discovery. It held for a relay board, and it held for an 11,700-line C2 console."],
+    ["comments", "The division of labor holds, at 10\u00D7 the scale", "The expert brings the what, the why, and the distrust; the agent brings the how and the discovery. It held for a relay board, and it held for a C2 console of " + fmtN(srcLines) + " lines."],
     ["clipboard", "The DES schema removes correction turns — only those", "Discovery is not a specification gap. The seven slots front-load everything the expert already knows; what remains is what nobody could have known until the artifact ran."],
     ["flask", "Verification is the slot that earns its keep", "Every device in the series carried a reading that was present, plausible, and wrong. At console scale, slot 7 industrializes into mutation-verified suites and 'something entitled to refuse you.'"],
     ["ship", "For the practitioner, the ratio is not the point", "An order of magnitude for a professional; for a non-programmer, the difference between a working operational tool and none at all."],
