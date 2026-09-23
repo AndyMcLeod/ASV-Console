@@ -1750,11 +1750,28 @@ function renderHeldBar(bar, g){
   const left = Math.max(0, g.route.length - g.idx);
   bar.className = "guardbar";      // amber: the console has intervened and is waiting for an answer
   bar.style.display = "block";
-  $("#gb_rung").textContent = "SURVEY HELD — LOITERING";
+  // ⚠⚠ WHICH RUNG STOPPED HER IS NOT A DETAIL. This bar was written for the hold, and
+  // every word of it was true there: she stopped where she was, a few meters off her own
+  // line. After the ESCAPE she was STEERED - driven clear at the vessel's high speed and left
+  // station-keeping somewhere she has never surveyed - and "the console stopped the survey
+  // and is station-keeping" would describe a boat that is not the one in front of the
+  // operator. Derived from `behavior` rather than remembered on the record, like the offer
+  // itself: the two must never be able to disagree.
+  const steered = !!(S && S.behavior === "escape");
+  const offM = (steered && asv && g.at) ? distTo({lat: asv.lat, lon: asv.lon}, g.at) : null;
+  $("#gb_rung").textContent = steered ? "SURVEY HELD — STEERED CLEAR"
+                                     : "SURVEY HELD — LOITERING";
   $("#gb_why").textContent =
-    "the console stopped the survey"
+    (steered ? "the console took the helm" : "the console stopped the survey")
     + (g.clearM != null ? " " + g.clearM.toFixed(1) + " m off " + (g.kind || "a keep-out") : "")
-    + " and is station-keeping · " + left + " waypoint" + (left === 1 ? "" : "s")
+    + (steered
+       ? " and steered clear"
+         // HOW FAR SHE WAS DRIVEN, which is the thing the operator could not find out at all:
+         // it decides whether resuming is a short run back or a long one.
+         + (offM != null ? ", " + fmtDist(offM) + " from where she left the line" : "")
+         + " · "
+       : " and is station-keeping · ")
+    + left + " waypoint" + (left === 1 ? "" : "s")
     + " unflown" + (g.mark ? ", on line " + lineNo(g.mark.line) : "");
   $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
   $("#gb_low").style.display     = "";
@@ -2442,6 +2459,17 @@ function markGuardHeld(c){
  */
 function guardHeldOffer(){
   if(!guardHeld) return null;
+  // ⚠⚠ TWO QUESTIONS, AND THEY USED TO BE ONE STATEMENT. "Is this record still about the
+  // boat in front of the operator?" and "should it be offered on THIS frame?" are different,
+  // and answering them together is what made the escape destroy the survey it had just taken:
+  // the single gate below nulled the record on every frame whose state did not match, so an
+  // escape - which is a state that does not match - spent it. A "not yet" has to be able to
+  // answer null without ANSWERING FOR EVER. The armed/estop line at the bottom has always
+  // made that distinction; this is the same shape one question earlier.
+  const st = (S && S.status) || {};
+  const running = !!(S && S.run === "running");
+  const onHold = running && S.behavior === "hold";
+  const onEsc = running && S.behavior === "escape";
   // ⚠ IT DOES NOT WAIT FOR `holding`, AND THAT ONE WORD COST A SURVEY. A hold command
   // uploads a one-waypoint plan and STARTS it; the vessel only reports `holding` once it has
   // ARRIVED at that point. On Andy's console, 2026-09-10, the hold was commanded at 12:39:00
@@ -2452,7 +2480,17 @@ function guardHeldOffer(){
   //
   // `run === "running" && behavior === "hold"` is the state the whole way through, arriving
   // or arrived, which is the state the offer is actually about.
-  if(!(S && S.run === "running" && S.behavior === "hold")){ guardHeld = null; return null; }
+  if(!onHold && !onEsc){ guardHeld = null; return null; }
+  // ⚠⚠ AND AN ESCAPE IS NOT OVER UNTIL SHE IS ON STATION. The bar tests this offer FIRST,
+  // above the R15 stand-down, above a standing grant and above every rung - so an offer that
+  // stood while she was still being steered would paint "SURVEY HELD - LOITERING" over the
+  // red IN EXTREMIS bar, on the frames the operator most needs it. `holding` is the vessel's
+  // own word for "arrived and station-keeping", and until it is true this returns null
+  // WITHOUT spending the record: the escape is still a maneuver and the helm rung owns the
+  // bar. The hold rung needs no such clause and must not have one - its own comment records
+  // that waiting for `holding` there cost a survey, because a hold reports `behavior` "hold"
+  // five seconds before it reports `holding` and the ladder had already let go.
+  if(onEsc && !st.holding) return null;
   return (S.armed && !S.estop) ? guardHeld : null;
 }
 /**
@@ -3042,12 +3080,34 @@ function clearanceGuard(){
                      // `commanded` is.
                      throttle: escapeThrottle,
                      override: guardOverride, spentM: edgeSpentM, count: edgeCount,
-                     actedAt: guardActedAt, want: holdWant};
+                     actedAt: guardActedAt, want: holdWant,
+                     // ⚠ AND THE HELD SURVEY IS PART OF THE CLAIM, for the same reason
+                     // everything else here is: `markGuardHeld` below overwrites it, and a
+                     // refused escape must leave the record that was standing before this
+                     // rung ran. The hold rung's `heldBefore.kept` is the same line for the
+                     // same reason.
+                     kept: guardHeld};
     clearance.slowed = false; commandedSpeed = null;
     escapeThrottle = true;                      // the governor may not bid until this episode ends
     commandSpeed("high");                       // steerage authority to beat the set
     // Captured with the route, like every other commanded motion - so the Intent card can
     // say why the boat is where it is, not just that it moved.
+    // ⚠⚠ KEEP THE SURVEY BEFORE THE ESCAPE REPLACES IT - one line, and its absence cost
+    // a survey on the water. Andy, 2026-09-23, mid-incident: *"the asv ran away from shore
+    // without an option for user to refuse the change or return to survey. there is no
+    // provided option to correct this issue."*
+    //
+    // The hold rung two hundred lines up has done this since 2026-09-10 and says why: the
+    // command uploads a one-waypoint route OVER the survey, so the moment it lands the
+    // vessel's plan IS that one point and the unflown remainder exists nowhere but this
+    // console. That was written about the hold. It is just as true of the escape, which
+    // overwrites `runRoute` on the very next line - and the escape is the rung that also
+    // drives her a long way off, so it is the one where re-flying from waypoint one costs
+    // most. The operator was left with no way back at all.
+    //
+    // ⚠ IT MUST BE ABOVE THE OVERWRITE, not merely before the POST. `markGuardHeld` reads
+    // `runRoute` and `window._wpIndex`, and one line down both describe the escape.
+    markGuardHeld(c);
     runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
     setPlanIntent("escape", null, runRoute);
     // ⚠⚠ SAY WHAT WAS MEASURED, NOT WHAT IT LOOKS LIKE. Andy, 2026-09-19: *"a cause the
@@ -3145,6 +3205,11 @@ function clearanceGuard(){
       // commanded motion, and the episode it was clearing is still running.
       guardOverride = heldEsc.override; edgeSpentM = heldEsc.spentM; edgeCount = heldEsc.count;
       guardActedAt = heldEsc.actedAt; holdWant = heldEsc.want;
+      // ⚠ AND THE SURVEY GOES BACK TOO. A refused escape did not replace her plan, so
+      // there is no remainder to hand back and offering one would be a bar about a boat that
+      // is still surveying. Restored rather than nulled, because an EARLIER rung in this same
+      // episode may have captured one - the hold rung's restore makes the same distinction.
+      guardHeld = heldEsc.kept;
       const say = notTookSay(r, "IN EXTREMIS ESCAPE");
       // ⚠⚠ THE SUFFIX FOLLOWS THE ANSWER, NOT THE FAILURE - the same fault #b_stop and
       // #b_start already had fixed, in the one banner the operator acts on. "THE HELM WAS
@@ -12023,6 +12088,55 @@ async function resumeHeldSurvey(){
     note = "it was not on a coverage line when the console stopped it, so there was nothing "
          + "to back down";
   }
+  // ⚠⚠ THE WAY BACK IS NOT THE WAY SHE CAME, once the rung that kept this record was the
+  // ESCAPE. After a hold she is where she stopped, a few meters off her own line, and the
+  // backtrack above is the whole question. After an escape she has been driven a long way off
+  // at the vessel's HIGH speed - and the first leg of the remainder runs from wherever that
+  // left her, back toward a waypoint chosen before any of this happened, which is back toward
+  // the thing she was steered off. NOTHING CERTIFIED THAT LEG. The backtrack test above
+  // covers the few meters down the line; it has never covered the run-in to it.
+  //
+  // ⚠ AND IT ROUTES RATHER THAN REFUSING, because "no" is what the operator already had.
+  // planNogoRoute is the same planner Go-To flies and the same one the punch-out uses, so the
+  // way in is ENC-aware by construction; only where it cannot find one at all does this stop,
+  // and then it says which keep-out and leaves her station-keeping with the remainder intact.
+  const backFrom = asv ? {lat: asv.lat, lon: asv.lon} : g.at;
+  const firstWp = tail[0];
+  let inNote = null;
+  if(firstWp && !backtrackClear(backFrom, firstWp)){
+    const pin = planNogoRoute(backFrom, firstWp, holdOpts());
+    if(pin.error){
+      showBanner("⚠ CANNOT RESUME FROM HERE - " + pin.error + ". The boat is still "
+        + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
+        + "and re-plan.");
+      render(); return;
+    }
+    // ⚠ A RELOCATED TARGET IS A DIFFERENT COMMAND. holdTarget MOVES a target that sits in
+    // a keep-out, so `pin.route` would end somewhere other than the waypoint - and prepending
+    // it would drive her at the original anyway, which is the one place this must not send
+    // her. The punch-out is supposed to make this unreachable; if it is reached, say so.
+    if(pin.heldOff){
+      showBanner("⚠ CANNOT RESUME FROM HERE - the first unflown waypoint is itself inside "
+        + (g.kind || "a keep-out") + ", so the way in cannot be certified. The boat is still "
+        + "station-keeping and the remainder is still held; Stop and re-plan the survey.");
+      render(); return;
+    }
+    if(pin.degraded){
+      inNote = "the keep-out model is not loaded, so the way back in was NOT certified";
+    } else {
+      // The router's route EXCLUDES the start and ENDS at the target (kr.route.slice(1)), and
+      // `tail[0]` is that target already - so only the detour waypoints go in front of it. A
+      // direct answer is a single point and prepends nothing, which is correct: she drives
+      // straight there.
+      const via = pin.route.slice(0, -1);
+      if(via.length) tail.unshift(...via);
+      inNote = "routed " + fmtDist(distTo(backFrom, firstWp)) + " back to the line"
+             + (via.length ? " via " + via.length + " waypoint" + (via.length === 1 ? "" : "s")
+                             + " clear of " + (g.kind || "the keep-out")
+                           : " direct - the leg is clear");
+    }
+  }
+  if(inNote) note = note ? note + "; " + inNote : inNote;
   guardOverride = {t: Date.now(), level: "hold", clearM: g.clearM, slow: true};
   clearance.slowed = false;
   resumeSlow = true; commandedSpeed = null;
@@ -12058,6 +12172,18 @@ async function resumeHeldSurvey(){
   }
   // The drawn route is the plan the vessel is flying, indexed by the same `wp_index` - the
   // upload restarted that index at zero, so the route it counts into has to be the tail.
+  // ⚠⚠ AND THE ESCAPE'S CLAIM ENDS HERE, on a motion the vessel TOOK. escapeThrottle is
+  // released by "a manual speed change, a fresh run or a Stop, and a commanded motion the
+  // vessel TOOK - and by nothing else", and this resume was none of them, so the claim
+  // outlived the episode that made it. The Mission card says in its own words that it "holds
+  // until you command her somewhere" - and re-uploading the survey and starting it IS
+  // commanding her somewhere, so leaving it set makes the console's own sentence false about
+  // the boat in front of the operator.
+  //
+  // ⚠ AFTER took(up), NOT BEFORE, and for the reason doGoTo states at its own release: a
+  // claim may only be ended by a motion that actually landed. Before the reply this would
+  // un-gag the governor in the middle of an escape.
+  releaseEscapeClaim("you resumed the survey");
   runRoute = tail; runUnsafe = [];
   // ⚠⚠ AND THE VESSEL'S WAYPOINT NUMBERING HAS RESTARTED AT ONE. This is an UPLOAD, not
   // an amendment: every index in the corner set now names a different corner of a different

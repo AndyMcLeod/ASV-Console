@@ -379,10 +379,17 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
  * Andy, 2026-09-04: *"Investigate forcing slight deviations in a given track to prevent
  * holds when there is still plenty of available water away from the nogo."*
  *
- * A hold is an expensive answer to a near miss. It stops the survey, it CANNOT BE RESUMED
- * (a hold replaces the vessel's plan with a single-waypoint route, and the console's only
- * way back is to re-upload the run from waypoint one), and beside a structure it hands a
- * stopped hull to the tide. Where the predicted path clips a keep-out but there is open
+ * A hold is an expensive answer to a near miss. It stops the survey, it costs the operator
+ * a decision to get it back, and beside a structure it hands a stopped hull to the tide.
+ *
+ * ⚠ THIS USED TO SAY THE HOLD "CANNOT BE RESUMED ... the console's only way back is to
+ * re-upload the run from waypoint one", and that was true when it was written. It stopped
+ * being true on 2026-09-10, when the hold rung began banking the unflown remainder before
+ * the one-waypoint route replaces it (markGuardHeld / guardHeldOffer in the page), and it
+ * stopped being true of the ESCAPE on 2026-09-23 for the same reason. The argument this
+ * paragraph is making survives intact - a hold is still expensive, and a deviation that
+ * needs no operator at all is still the better answer - but the reason had gone stale, and a
+ * stale reason in a comment this long is how the next person learns something false. Where the predicted path clips a keep-out but there is open
  * water alongside, the seamanlike answer is to go a little wide - so this searches for the
  * SMALLEST amendment to the track that puts the whole predicted path clear, and returns a
  * point the caller can splice into the running plan.
@@ -738,6 +745,62 @@ export function restoreVel(vel, drift, restoreMs) {
  * Returns null when nothing improves matters - and the caller must treat that as its own
  * answer, not as "no action needed".
  */
+/**
+ * WHERE THE ESCAPE STOPS - the first point on the verified track that the drift cannot reach
+ * the keep-out from at all.
+ *
+ * Andy, 2026-09-23, mid-incident, with a survey abandoned on the water: *"the asv ran away
+ * from shore without an option for user to refuse the change or return to survey."*
+ *
+ * ⚠⚠ THE SCORING HORIZON WAS BEING SPENT AS A DRIVING DISTANCE, and that is the whole of it.
+ * `run` above is how long each candidate heading is PROJECTED for - the length of the safety
+ * argument - and the escape point was `p + v * run`, i.e. the far end of the proof. Nothing
+ * ever asked how far she actually needed to go. MEASURED on the geometry the guard suites
+ * already use (13 m off a pier buffer, 2 kn setting onto it, escape at 6 kn):
+ *
+ *     the console drove her                       92.5 m
+ *     she stopped rating in extremis at            8.0 m   (drift-only entry 20.5 s)
+ *     the drift could not reach her at all past   33.5 m
+ *
+ * So she was driven 2.8x further than "completely clear", at the vessel's HIGH speed, away
+ * from the water she was surveying - which is what the report above is describing.
+ *
+ * ⚠⚠ AND THE STOPPING RULE IS NOT "THE CONDITION STOPPED HOLDING". That point is 8 m here,
+ * and it is a knife edge: 20.5 s against a HELM_S of 20. She would be left LOITERING on the
+ * boundary of the rung that put her there, in the set that caused it, for as long as the
+ * operator takes to answer. The rule is the stronger one - the drift-only projection does not
+ * enter WITHIN THE WHOLE HORIZON - so the margin is a horizon of water rather than a constant
+ * somebody chose. That is what makes the point a place she can SIT, which is what
+ * Engine.escape does with it.
+ *
+ * ⚠ IT WALKS THE TRACK, NOT THE HEADING. The ground track is `v` = drift + speed*dir, and with
+ * any cross set that is a different line from the heading. Only the track was verified, so
+ * only the track may be stopped on. MEASURED: with a cross set the two answers differ by more
+ * than 100 m.
+ *
+ * ⚠ AND IT ONLY EVER SHORTENS. The search, the scoring and the refusal are untouched above, so
+ * WHICH heading wins does not change and a boxed-in boat is still boxed in. When no point on
+ * the track satisfies the rule this answers null and the escape keeps the full run it has
+ * always had - the cap can make a verified escape shorter, never absent, and never longer.
+ * MEASURED across six geometries: it shortens the long ones (92.5 -> 33.9, 95.6 -> 49.4) and
+ * declines to touch the ones that are already short (23.1, 46.2, 53.3 m all unchanged).
+ */
+function escapeStop(p, v, run, drift, ko, buf, horizon, step) {
+  for (let t = step; t <= run + 1e-9; t += step) {
+    const q = { e: p.e + v.e * t, n: p.n + v.n * t };
+    // Inside the buffer is never a stopping point, however briefly the track passes through
+    // it: the INSIDE branch above exists precisely because she may start there, and stopping
+    // her on the way out is the defect that branch's own comment records being measured once
+    // already - "ended a late exit a few meters outside the buffer, holding in the set that
+    // put it there". A point the drift cannot reach is the opposite of that, but the buffer
+    // test stays regardless, because `timeToEntry` answers about ENTERING and a point already
+    // inside has nothing left to enter - it would read as clear.
+    if (blocked(q, ko, buf)) continue;
+    if (timeToEntry(q, drift, ko, buf, horizon, step) == null) return q;
+  }
+  return null;
+}
+
 export function escapeCourse(p, drift, ko, buf, speedMs, opts = {}) {
   const horizon = opts.horizonS ?? HORIZON_S;
   const step = opts.stepS ?? STEP_S;
@@ -803,11 +866,49 @@ export function escapeCourse(p, drift, ko, buf, speedMs, opts = {}) {
             || (Math.abs(survived - best.survived) < 1e-9
                 && (worst > best.worst + 1e-6
                     || (Math.abs(worst - best.worst) <= 1e-6 && gain > best.gain)))))) {
-      best = { hdg, survived, worst, gain, clear, to };
+      // `v` and `run` ride along because the cap below walks this same track, and
+      // re-deriving them from `hdg` outside the loop would be a second chance to get the
+      // crab wrong.
+      best = { hdg, survived, worst, gain, clear, to, v, run };
     }
   }
   // Refusing is a real answer here. If every heading enters within the horizon, the boat is
   // boxed in and a confident-looking escape would be a lie; the caller alarms and leaves the
   // helm to the operator, who can see things this model cannot.
-  return best && best.clear ? best : null;
+  //
+  // ⚠ AND THE CAP IS BELO⚠ THIS TEST, NOT ABOVE IT. Shortening is a question about an escape
+  // that EXISTS; asking it first would put a stopping point on a track the search had already
+  // rejected, and the refusal above is the one answer this change may not alter.
+  if (!(best && best.clear)) return null;
+  // ⚠⚠ AND IT DOES NOT APPLY FROM INSIDE THE BUFFER, which is not caution - it is a decision
+  // this file already made against a defect it already measured, and the cap does not get to
+  // re-open it with an argument. The INSIDE branch above sets `run = tOut + horizon` precisely
+  // so the point is "a whole horizon of clear water past the buffer, not a few meters", after
+  // an earlier design "ended a late exit a few meters outside the buffer, holding in the set
+  // that put it there". tests/in_extremis.js 10h asserts that property directly.
+  //
+  // MEASURED, 2026-09-23, 2 m off a face in a 2 kn set: capping there cut the escape from
+  // 95.6 m to 49.4 m and HALVED 10h's own measure, 45.0 s of clear water past the edge down to
+  // 22.5 s. The drift rule was satisfied at that point and 10h was not, so the two properties
+  // genuinely disagree, and the one with a measurement behind it wins.
+  //
+  // ⚠ AND THE DISAGREEMENT RUNS BOTH WAYS, which is worth writing down rather than fixing
+  // here. In 10h's OWN geometry the uncapped point passes 10h at 45.1 s while the drift
+  // carries her back into the buffer in 23.0 s - so "a horizon of clear water past the edge"
+  // is measured against the ESCAPE's ground speed and can certify a point the set reclaims in
+  // half a horizon. That is a weakness in the inside branch's proxy, not in this cap, and it
+  // wants its own change with its own evidence.
+  //
+  // The operator's report was a boat SURVEYING - outside any buffer - driven 92.5 m offshore.
+  // That is this branch, and this is where the cap belongs.
+  const stop = inside ? null
+                      : escapeStop(p, best.v, best.run, drift, ko, buf, horizon, step);
+  best.fullTo = best.to;                    // where it would have sent her, for the record
+  if (stop) best.to = stop;
+  best.capped = !!stop;
+  // The distance she is about to be driven, so the banner can say it. Nothing on the page
+  // told the operator how far the escape would take her, and that is half of what the report
+  // "ran away from shore" is about - the other half being that it was too far.
+  best.m = Math.hypot(best.to.e - p.e, best.to.n - p.n);
+  return best;
 }

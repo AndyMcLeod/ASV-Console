@@ -165,8 +165,16 @@ function grab(src, name) {
 // red for a comment that mentioned the call, and 16c reported a defect as still present
 // when only its obituary was. Strip first, then match.
 const codeOnly = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
-let fails = 0;
+// ⚠⚠ AND A COUNT, WHICH THIS SUITE DID NOT HAVE. It printed "all checks passed" with no
+// number, so a check that stopped being reached - an early return, a block that threw before
+// its checks, a rename that orphaned a whole section - would have been invisible: the suite
+// says the same words for 67 checks and for 3. Every other suite in this repo prints its
+// count for that reason, and one of them went twenty commits reporting nothing at all because
+// it did not compile. The count is not decoration; it is the only thing that can notice a
+// check disappearing.
+let fails = 0, ran = 0;
 function check(name, cond, detail) {
+  ran++;
   let ok = false, err = "";
   try { ok = (typeof cond === "function") ? !!cond() : !!cond; }
   catch (e) { ok = false; err = " THREW " + (e && e.message ? e.message : e); }
@@ -653,7 +661,17 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let banners = [];
   const showBanner = (m) => banners.push(m), setViolations = () => {}, renderGuardBar = () => {};
   const updateMissionCard = () => {}, render = () => {}, holdClearAt = () => 12;
-  const markGuardHeld = () => {}, guardHeldOffer = () => null, guardOverrideOk = () => false;
+  // ⚠⚠ A SPY, NOT A NO-OP, SINCE 2026-09-23. The escape rung now banks the survey's unflown
+  // remainder before it overwrites the plan - the thing the hold rung has done since
+  // 2026-09-10 and the escape rung never did, which is what left a live survey with no way
+  // back. What matters here is not WHAT it captured (guard_resume drives the real function
+  // against the real record) but WHEN: one line later `runRoute` is the single escape
+  // waypoint, and a capture taken then banks the escape instead of the survey. So the spy
+  // records the route it SAW, and 15z12 asserts that was still the survey.
+  const markSaw = [];
+  const markGuardHeld = () => { markSaw.push(runRoute ? runRoute.length : 0);
+                                guardHeld = { spy: true }; };
+  const guardHeldOffer = () => null, guardOverrideOk = () => false;
   let roleKey = "survey", speedWant = null;          // 15p switches the CONFIGURED role speed
   const roleSpeed = () => roleKey, speedRole = () => "survey";
   const ref = planeFrame({ lat: 43.07, lon: -70.76 });
@@ -1207,13 +1225,29 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // ⚠⚠ AND 15z8 EXISTS BECAUSE TWO OF THOSE TWELVE SURVIVED THE FIRST SWEEP. Both were about
   // the guard's per-episode record, and both were invisible while the fixture left it at its
   // defaults: "restored" and "never touched" look identical until you seed it.
-  const escRun = async (frames, refuse, standing) => {
+  // A record that was standing BEFORE the rung ran, so "restored" and "never touched" are
+  // distinguishable - the same reason the episode fields below are seeded with odd values.
+  const HELD_BEFORE = { route: [{ lat: 9, lon: 9 }], idx: 0, spy: "before" };
+  const escRun = async (frames, refuse, standing, survey) => {
     escCourse = { to: { e: 0, n: -60 }, hdg: 180 };
     setRefuse(refuse ? "/api/cmd/escape" : null, refuse);
     // ⚠ `standing` SEEDS A CLAIM THAT IS ALREADY THERE, which is the only way to tell a
     // retraction that restores its OWN snapshot from one that writes `false` over whatever
     // it finds. With the default false the two are the same observation.
-    runRoute = null; escapeThrottle = !!standing;
+    // ⚠ A SURVEY FOR THE RUNG TO TAKE AWAY. With `runRoute` null there is nothing to
+    // capture and markGuardHeld's own guard returns early, so every escape driven here used
+    // to exercise the capture not at all. `held` seeds a record that was ALREADY standing,
+    // which is the only way to tell a refusal that RESTORES from one that writes null.
+    // Straight north, THROUGH the wall - the same geometry the straight-line projection
+    // has, because `guardTrack` follows the route when there is one and a survey pointing
+    // anywhere else would stop the rung rating `helm` at all. The first draft seeded
+    // lat/lon 1,1 and the escape never fired: the check reported the capture was never
+    // called, which was true, and for a reason that had nothing to do with the capture.
+    runRoute = survey ? [ref.fromEN(0, 10), ref.fromEN(0, 20), ref.fromEN(0, 30)] : null;
+    window._wpIndex = survey ? 1 : 0;
+    guardHeld = survey ? HELD_BEFORE : null;
+    markSaw.length = 0;
+    escapeThrottle = !!standing;
     // ⚠ SEEDED WITH DISTINCTIVE VALUES so the RESTORE is observable at all. These are what
     // setPlanIntent clears on the way in ("a new commanded motion is a new decision"), and a
     // refused motion is not a new commanded motion - but left at their defaults, "restored"
@@ -1242,7 +1276,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
       seen.push(clearance.level);                 // the level THIS frame read
       await Promise.resolve(); await Promise.resolve();   // let the .then retract
     }
-    return { sent: sent.slice(), seen, said: banners.join(" | "),
+    return { sent: sent.slice(), seen, said: banners.join(" | "), markSaw: markSaw.slice(),
+             held: guardHeld,
              // The NOTES as well as the banners: the release branch speaks through flashNote,
              // and what it promises about the throttle is a different claim from the alarm.
              noted: notes.join(" | "),
@@ -1440,6 +1475,34 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   };
   const okHold = await holdRun(null);
   const noHold = await holdRun("refused");
+  // ⚠⚠ THE ESCAPE KEEPS THE SURVEY TOO (2026-09-23). Andy, mid-incident: *"the asv ran
+  // away from shore without an option for user to refuse the change or return to survey.
+  // there is no provided option to correct this issue."* The hold rung has banked the unflown
+  // remainder since 2026-09-10 - its own comment says the command "uploads a one-waypoint
+  // plan over theirs" and that afterwards the survey exists nowhere but the console. All of
+  // that is just as true of the escape, which overwrites `runRoute` on the very next line,
+  // and the escape is also the rung that drives her a long way off - so it was the rung where
+  // re-flying from waypoint one cost most, and the only one with no way back at all.
+  const keptEsc = await escRun(F, null, false, true);
+  rcheck("15z12. an ACCEPTED escape banks the survey before it overwrites the plan",
+         keptEsc.markSaw.length >= 1 && keptEsc.markSaw[0] === 3
+         && keptEsc.held && keptEsc.held.spy === true,
+         "the capture saw a route of " + (keptEsc.markSaw[0] === undefined ? "NOTHING - it was "
+           + "never called" : keptEsc.markSaw[0] + " waypoints") + " - the SURVEY. One line "
+           + "later `runRoute` is the single escape waypoint, and a capture taken then banks "
+           + "the escape instead of the survey");
+
+  const refEsc = await escRun(F, "refused", false, true);
+  rcheck("15z13. ... and a REFUSED escape gives back the record it found, rather than nulling it",
+         refEsc.held === HELD_BEFORE,
+         "after the refusal the record is "
+           + (refEsc.held === HELD_BEFORE ? "the one that was standing before the rung ran"
+              : refEsc.held ? "the rung's OWN capture - about a plan the vessel never took"
+              : "NULL - an earlier rung's capture in this same episode was spent by a command "
+                + "that did not land")
+           + ". A refused escape did not replace her plan, so there is no remainder to hand "
+           + "back; 15z8 is the same argument for the episode record");
+
   rcheck("15z7. a REFUSED hold frees the rung to act again next frame, and an accepted one does "
         + "not",
         okHold.sent.includes("/api/cmd/hold") && okHold.actedAt !== 0
@@ -1563,13 +1626,14 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 10;                // the retraction block's own, 15z4b/15z10/15z11 included
+const RAN_FLOOR = 12;                // the retraction block's own, 15z4b/15z10-13 included
 Promise.resolve(globalThis.__guardRetract).then((n) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n
                 + " of " + RAN_FLOOR + " checks ran");
     fails++;
   }
-  console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
+  console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
+                    : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
 });

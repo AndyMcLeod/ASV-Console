@@ -66,7 +66,31 @@ written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-23 — **THE LAUNCH GRANT IS MERGED TO MASTER**; the review branch `fix/criticals` follows below)
+## ⇒ START HERE (handoff refreshed 2026-09-23 — **A LIVE ESCAPE INCIDENT, AND THE THREE THINGS IT ASKED FOR**; the launch grant and the review branch follow below)
+
+### ⇒ THE LIVE INCIDENT OF 2026-09-23
+
+Andy, mid-run, with the boat still moving:
+
+> *"during live test the asv ran away from shore without an option for user to refuse the change or return to survey. there is no provided option to correct this issue. the incident is live."*
+
+The clearance guard went in extremis, rung 4 took the helm, and `/api/cmd/escape` drove her clear at the vessel's HIGH speed and left her loitering. He held her; the survey was gone. **Three separate defects, two now fixed and one deliberately not.**
+
+**1. THE ESCAPE HAD NO LENGTH** (`static/js/guard.js`). The escape point was `p + v * run`, and `run` is the SCORING horizon — the length of the safety argument, spent as a driving distance. Nothing ever asked how far she needed to go. MEASURED on the suites' own geometry (13 m off a pier buffer, 2 kn setting on, escaping at 6 kn): **driven 92.5 m; out of extremis at 8.0 m; beyond the drift's reach entirely at 33.5 m** — 2.8x further than "completely clear". `escapeStop()` now walks the SAME already-verified track and stops where the drift cannot reach the keep-out inside the whole horizon. ⚠ Not where the condition stops holding (8 m is a knife edge she would LOITER on), and not a constant in meters. ⚠⚠ **It does not apply from INSIDE the buffer** — capping there halved check 10h's own margin (45.0 s of clear water down to 22.5), and 10h was written against a defect measured on the water. Search, scoring and the BOXED IN refusal are untouched, so which heading wins never changes. `tests/in_extremis.js` 26 ⇒ **33**, and **7 mutations, 7 killed, 0 survived, 0 skipped**.
+
+**2. THE ESCAPE BANKED NOTHING** (`static/asv.html`). The HOLD rung has kept the unflown remainder since 2026-09-10; the HELM rung kept nothing, and `guardHeldOffer` then SPENT what the hold had banked — its gate admitted only `behavior === "hold"` and nulled the record on anything else, an escape included. So the one rung that both takes the survey away AND drives her a long way from it was the only one with no way back. Five parts: the capture in rung 4 **above the overwrite**; `kept:` on the `heldEsc` snapshot so a refusal restores it; the offer's gate **split into two questions** (is this still her boat / should it be offered THIS frame) so "not yet" stops meaning "never"; `releaseEscapeClaim` on resume; and the run-in certified with `planNogoRoute`. ⚠ The offer waits for `holding` on the escape arm **only** — the hold arm must NOT, and its own comment records why (that word cost a survey once already). `guard_resume` 39 ⇒ **47**, `clearance_guard` 65 ⇒ **67**, and **10 mutations, 10 killed, 0 survived, 0 skipped**.
+
+**3. "REFUSE THE ESCAPE" IS NOT BUILT, AND THAT IS THE FINDING.** The four rungs are mutually exclusive by level (`if(a.level === "edge"/"slow"/"hold"/"helm")`), so standing the helm's ACTION down commands **nothing at all** — the console would watch her be set in. R15's stand-down is safe only because `standDownEnd()` calls `/api/cmd/stop` FIRST. And **no telemetry field reports RC or manual control** ("autonomous-only by design"), so the console cannot verify the operator has her. A bare refusal button is a disabled safety with a countdown on it. `guardOverrideOk()` already nulls the override at level `helm` on purpose. **The cap may make this moot** — an escape that stops as soon as she is genuinely clear is not one you would need to refuse. **ANDY'S CALL.**
+
+**FILED, NOT FIXED** (both pre-existing, both found by measuring):
+
+* ⚠ **`in_extremis.js` check 10h's property is a proxy that can certify an unsafe point.** In its own geometry it PASSES at 45.1 s of "clear water past the edge" while the drift carries her back into the buffer in **23.0 s** — because it is measured against the ESCAPE's ground speed, not the set's. That is why the cap was scoped to the outside branch rather than allowed to overrule it. Wants its own change with its own evidence.
+* ⚠ **`in_extremis.js`'s standard escape fixture is not in extremis** — `P` with `SET_ON` is a 24.5 s drift entry against a `HELM_S` of 20. Checks 8 and 8b are unaffected (they ask the SEARCH a question, fair from anywhere), but anything testing the RUNG must use `pEx` (12 m north, 13.0 s) or it measures the code somewhere it is never called. Cost two wrong drafts of 8c-8i before it was noticed.
+
+**ALSO IN THIS COMMIT:** `clearance_guard.js` had **no check count at all** — it printed "all checks passed" for 67 checks and would have printed the same for 3, so a section that stopped being reached was invisible; it now counts. And `guard.js`'s `edgeAround` comment still claimed a hold "CANNOT BE RESUMED ... the console's only way back is to re-upload the run from waypoint one", which stopped being true on 2026-09-10 and stopped being true of the escape today.
+
+**STILL OWED:** the launch grant's LIVE CHECK (below, needs a SERVER RESTART); and **this work has had no live check either** — every number above is from the suites and from driven measurement, not from the water.
+
 
 > ⚠⚠ **THE LAUNCH GRANT WAS MERGED INTO MASTER ON 2026-09-23**, at Andy's word. Both
 > branches had rewritten this section wholesale, so both are kept: the grant's handoff

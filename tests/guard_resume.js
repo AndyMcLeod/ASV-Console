@@ -196,6 +196,28 @@ function setViolations(v) { violations = v; }
 function updateMissionCard() {}
 function render() {}
 function holdClearAt() { return 12.3; }
+
+// ⚠⚠ THE ROUTER, STUBBED AND STEERABLE. resumeHeldSurvey certifies the run-in with the same
+// planner Go-To flies (2026-09-23): after an ESCAPE she is not beside her line any more, and
+// the first leg of the remainder runs from wherever the escape left her back toward a waypoint
+// chosen before any of it happened. Without this symbol the resume threw inside the handler -
+// which 12a caught, because 12a exists for the identical fault one layer down (legClear
+// dereferencing a frame that was not there).
+//
+// ⚠ THE DEFAULT MIRRORS THE REAL CONTRACT and the branches are driven by name, so a check
+// that wants a refusal asks for one rather than building a geometry that happens to produce
+// it. The real planNogoRoute returns `kr.route.slice(1)` - the start point EXCLUDED, the
+// target LAST - and answers {degraded:true} with no model. Get that wrong here and the checks
+// below would agree with a resume that prepends the wrong waypoints.
+let pinNext = null, pinCalls = [];
+function holdOpts() { return {}; }
+function planNogoRoute(from, to) {
+  pinCalls.push({ from, to });
+  if (pinNext) return pinNext;
+  if (!nogo.ready || !nogo.ko || !nogo.frame)
+    return { route: [{ lat: to.lat, lon: to.lon }], direct: true, degraded: true };
+  return { route: [{ lat: to.lat, lon: to.lon }], direct: true, routed: false };
+}
 function guiConfirm() { confirmAsked++; return Promise.resolve(confirmAnswer); }
 globalThis.window = globalThis;
 globalThis.fetch = (p, o) => {
@@ -507,9 +529,14 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   S.run = "stopped";
   const stopped = guardHeldOffer();
   const cleared = guardHeld;
-  // and a behavior change is the other way the situation stops being this one: an RTH, a
-  // Go-To or an escape is a different command, and the survey it captured is not what the
-  // boat is doing any more.
+  // and a behavior change is the other way the situation stops being this one: an RTH or a
+  // Go-To is a different command, and the survey it captured is not what the boat is doing
+  // any more.
+  // ⚠⚠ THE ESCAPE USED TO BE IN THAT LIST AND IS NOT ANY MORE (2026-09-23). It was the one
+  // member of it that had taken the survey away WITHOUT the operator asking for anything, so
+  // "a different command" was never true of it - nobody commanded it. Clearing the record
+  // there is what left a live survey with no way back; see 8d0-8d1 below, and the escape rung
+  // in the page. RTH and Go-To are still exactly as they were, which is what 8b0 pins.
   standingIn(6); tryIt(() => clearanceGuard());
   S.behavior = "hold"; S.status.holding = true;
   const held2 = guardHeldOffer();
@@ -622,13 +649,75 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   }
 }
 
+// ── 8d. THE ESCAPE KEEPS THE SURVEY TOO ──
+// Andy, 2026-09-23, mid-incident: *"the asv ran away from shore without an option for user to
+// refuse the change or return to survey. there is no provided option to correct this issue."*
+//
+// ⚠⚠ THE HOLD RUNG BANKED THE REMAINDER AND THE ESCAPE RUNG BANKED NOTHING, and the offer
+// then SPENT what was banked: its gate nulled the record on any state that did not read
+// `behavior === "hold"`, and an escape is such a state. So the one rung that both takes the
+// survey away AND drives her a long way from it was the one rung with no way back.
+{
+  standingIn(6); tryIt(() => clearanceGuard());
+  const kept = guardHeld;
+  // She is being STEERED. The bar tests this offer above every rung, so an offer standing
+  // here would paint "SURVEY HELD" over the red IN EXTREMIS bar on the frames that matter.
+  S.behavior = "escape"; S.status.holding = false;
+  const midEscape = guardHeldOffer();
+  const survived = guardHeld;
+  // ... and once the vessel says she has arrived, it stands.
+  S.status.holding = true;
+  const onStation = guardHeldOffer();
+  check("8d0. an escape no longer spends the survey it has just taken away",
+        () => !!kept && onStation === kept,
+        "the capture survives the escape and is offered once she is on station"
+          + (onStation === kept ? "" : " - IT WAS SPENT")
+          + ". Before this the gate read `behavior === \"hold\"` alone, so an escape cleared "
+          + "it on the very next frame and the remainder existed nowhere at all");
+  check("8d1. ... and 'not yet' is not 'never': withheld while she steers, NOT destroyed",
+        () => midEscape === null && survived === kept,
+        "mid-escape the offer is " + (midEscape ? "UP - over the top of IN EXTREMIS" : "withheld")
+          + " and the record is " + (survived === kept ? "intact" : "GONE")
+          + ". Two questions - is this still the boat in front of the operator, and should it "
+          + "be offered on THIS frame - that used to be one statement");
+  // THE CONTROL, and it is what stops 8d0 reading as "nothing clears the offer any more":
+  // a commanded motion still spends it, exactly as 8b0 pins for RTH.
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "goto"; S.status.holding = true;
+  const onGoto = guardHeldOffer();
+  check("8d2. ... and a COMMANDED motion still spends it - the escape is the exception, not the rule",
+        () => onGoto === null && guardHeld === null,
+        "behavior 'goto' -> " + (onGoto ? "STILL OFFERED" : "cleared")
+          + ". The escape is the one motion nobody asked for, which is why it alone keeps the "
+          + "record; a Go-To is the operator commanding her somewhere else");
+  // And the bar has to say which rung it was, because the two situations do not look alike.
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "escape"; S.status.holding = true; asv = ll(0, -90);
+  tryIt(() => renderGuardBar(null, clearance));
+  const rung = EL["#gb_rung"].textContent, why = EL["#gb_why"].textContent;
+  check("8d3. ... and the bar says she was STEERED clear, not stopped where she stood",
+        () => /STEERED CLEAR/.test(rung) && /took the helm/.test(why)
+              && !/is station-keeping/.test(why) && /from where she left the line/.test(why),
+        "the bar reads \"" + rung + " — " + why + "\" - after an escape "
+          + "\"the console stopped the survey and is station-keeping\" would describe a boat "
+          + "that is not the one in front of the operator, and the distance she was driven is "
+          + "what decides whether resuming is a short run back or a long one");
+}
+
 // ── 9-15. THE RESUME, DRIVEN ───────────────────────────────────────────────────────
 async function resumeFrom(opts) {
   opts = opts || {};
   standingIn(6);
   tryIt(() => clearanceGuard());                  // the real rung makes the real capture
-  S.behavior = "hold"; S.status.holding = true; S.run = "running";
-  asv = ll(0, 0);
+  // ⚠ AFTER AN ESCAPE SHE IS NOT WHERE SHE STOPPED. The hold leaves her a few meters off
+  // her own line; the escape DRIVES her clear at the vessel's high speed and leaves her
+  // station-keeping somewhere she has never surveyed - so the run-in to the remainder is a
+  // different leg entirely, and `escapeThrottle` is standing when it starts.
+  S.behavior = opts.escape ? "escape" : "hold";
+  S.status.holding = true; S.run = "running";
+  asv = opts.escape ? ll(0, -90) : ll(0, 0);
+  escapeThrottle = !!opts.escape;
+  pinNext = opts.pin || null; pinCalls = [];
   if (opts.ko) nogo = { ...nogo, ko: opts.ko };
   if (opts.noModel) nogo = { ...nogo, ready: false, frame: null, ko: null };
   refuse = opts.refuse || null;
@@ -755,6 +844,60 @@ async function resumeFrom(opts) {
               && noLow.paths.lastIndexOf("/api/cmd/hold") > noLow.paths.indexOf("/api/cmd/speed")
               && noLow.banners.some(b => /COULD NOT RESUME/.test(b)) && !!guardHeld,
         () => JSON.stringify(noLow.paths) + "; offer still up: " + !!guardHeld);
+  // ── 15e-15h. RESUMING FROM AN ESCAPE ──
+  // ⚠⚠ THE ESCAPE'S CLAIM ON THE THROTTLE OUTLIVED ITS EPISODE. escapeThrottle is released
+  // by "a manual speed change, a fresh run or a Stop, and a commanded motion the vessel TOOK -
+  // and by nothing else", and this resume was none of those. The Mission card says in its own
+  // words that the claim "holds until you command her somewhere"; re-uploading the survey and
+  // starting it IS commanding her somewhere, so leaving it set made that sentence false.
+  const esc = await resumeFrom({ escape: true });
+  check("15e. resuming the survey ends the escape's claim on the throttle",
+        () => esc.paths.includes("/api/cmd/start") && escapeThrottle === false,
+        () => "escapeThrottle " + escapeThrottle + " after a resume that reached "
+            + JSON.stringify(esc.paths.slice(-2)) + " - and it was TRUE going in, which is "
+            + "what makes this an observation rather than a default");
+
+  // ⚠⚠ THE WAY BACK IS NOT THE WAY SHE CAME. The backtrack test covers the few meters down
+  // her own line. After an escape the first leg of the remainder runs from wherever the escape
+  // left her - here 90 m off - back toward a waypoint chosen before any of it happened, which
+  // is back toward the thing she was steered off. Nothing certified that leg.
+  const wallKo = { polys: [PIER.polys[0],
+                   (() => { const q = [{ e: -60, n: -70 }, { e: 60, n: -70 },
+                                       { e: 60, n: -50 }, { e: -60, n: -50 }];
+                            return { ring: q, bb: bbOf(q), kind: "land" }; })()],
+                   lines: [], points: [], marks: [], sys: [], chans: [] };
+  const via = ll(-150, -60);
+  const routed = await resumeFrom({ escape: true, ko: wallKo,
+                                    pin: { route: [via, ll(-92.5, 0)], routed: true } });
+  const rRte = (routed.up && routed.up.route) || [];
+  check("15f. ... so the run-in is routed with the same planner Go-To flies",
+        () => pinCalls.length === 1 && rRte.length > 0
+              && Math.abs(rRte[0].lat - via.lat) < 1e-9 && Math.abs(rRte[0].lon - via.lon) < 1e-9,
+        () => "the router was asked " + pinCalls.length + " time(s) and its detour waypoint is "
+            + "first in the uploaded route of " + rRte.length + " - before this the remainder "
+            + "went up untouched and she drove the direct line back through " + "the wall");
+
+  // ⚠ AND WHERE THERE IS NO WAY IN, IT SAYS SO AND KEEPS THE REMAINDER. A refusal that also
+  // threw the survey away would be the original defect again, one step further on.
+  const noWay = await resumeFrom({ escape: true, ko: wallKo,
+                                   pin: { error: "no clear route to the target — every path "
+                                                 + "crosses land" } });
+  check("15g. ... and where it cannot find one, the resume REFUSES and the remainder stands",
+        () => !noWay.paths.includes("/api/cmd/upload")
+              && noWay.banners.some(b => /CANNOT RESUME FROM HERE/.test(b)) && !!guardHeld,
+        () => "sent " + JSON.stringify(noWay.paths) + "; offer still up: " + !!guardHeld
+            + " - she stays station-keeping with the survey still held, which is the whole "
+            + "point of having kept it");
+
+  // ⚠ AND A CLEAR LEG IS NOT ROUTED AT ALL - the pairing that stops 15b passing for a
+  // resume that routes everything, including the hold case it must leave alone.
+  const plain = await resumeFrom();
+  check("15h. ... and a hold resume, still beside her own line, asks no router at all",
+        () => pinCalls.length === 0 && plain.paths.includes("/api/cmd/start"),
+        () => "the router was asked " + pinCalls.length + " time(s) on a hold resume - the "
+            + "run-in certification is for the leg an ESCAPE creates, and a boat that never "
+            + "moved does not need one");
+
   finish();
 })();
 

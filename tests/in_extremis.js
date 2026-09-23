@@ -255,6 +255,116 @@ check("7. a point already inside the buffer reports zero seconds, not 'no entry'
         },
         "a heading clear through the water but set into the pier is not a way out");
 
+  // ⚠⚠ HOW FAR IT DRIVES HER, which had no check at all until the day it mattered.
+  // Andy, 2026-09-23, mid-incident: *"the asv ran away from shore."* The escape point was
+  // `p + v * run`, and `run` is the SCORING HORIZON - the length of the safety argument, spent
+  // as a driving distance. Nothing ever asked how far she needed to go.
+  //
+  // ⚠⚠ AND THE WHOLE SUITE STAYED GREEN WHEN THAT CHANGED. Capping the escape moved this
+  // geometry from 92.5 m to 33.9 m and all 26 checks passed, because not one of them asserted
+  // anything about the distance. That is what these are for, and it is why "the suite is
+  // green" is never evidence that a behaviour is covered.
+  //
+  // ⚠ AND THEY ARE DRIVEN FROM AN IN-EXTREMIS STATE, WHICH `P` IS NOT. With SET_ON the
+  // drift reaches the buffer from P in 24.5 s, against a HELM_S of 20 - so the helm rung never
+  // fires there and the cap would be being measured somewhere it is never called. 8 and 8b are
+  // unaffected: they ask the SEARCH whether a clear heading exists, which is a fair question
+  // from anywhere. `pEx` is 12 m north of P, a 13.0 s entry, which is the real thing.
+  const pEx = { e: 0, n: 12 };
+  const escCap = G.escapeCourse(pEx, SET_ON, W, BUF, kn6);
+  const tEx = G.timeToEntry(pEx, SET_ON, W, BUF, G.HORIZON_S);
+  const far = (q, from) => (q ? Math.hypot(q.e - from.e, q.n - from.n) : null);
+  const mm = (v) => (v == null ? "none" : v.toFixed(1) + " m");
+
+  check("8c. the escape stops where it has to, not at the far end of its own proof",
+        () => escCap && escCap.capped === true
+              && far(escCap.to, pEx) < far(escCap.fullTo, pEx) * 0.5
+              && tEx != null && tEx <= G.HELM_S,       // the fixture is genuinely in extremis
+        "in extremis at " + secs(tEx) + "; driven " + mm(far(escCap && escCap.to, pEx))
+          + " of the " + mm(far(escCap && escCap.fullTo, pEx)) + " the search projected - and "
+          + "all three fields are new, so this cannot pass on the code before the cap: there "
+          + "was no `fullTo`, no `capped` and no `m`");
+
+  // ⚠ THE ACCEPTANCE CASE FOR THE RULE, and why the stopping point is not the cheaper one.
+  // She does not transit this point, she SITS at it - Engine.escape station-keeps there and
+  // waits for the operator. "The in-extremis condition stopped holding" is a knife edge to be
+  // left loitering on, in the set that caused it: it reads barely over HELM_S, by definition.
+  // This is the stronger property, and its margin is a horizon of water rather than a constant
+  // somebody picked.
+  const tThere = escCap ? G.timeToEntry(escCap.to, SET_ON, W, BUF, G.HORIZON_S) : 0;
+  check("8d. ... at a point the drift cannot reach at all, which is what makes it a place to SIT",
+        // THE CONTROL IS THE SECOND CLAUSE: the same question at the boat's own position must
+        // answer differently, or this is a model saying "never" everywhere and the first
+        // clause is measuring nothing at all.
+        () => escCap && tThere == null && tEx != null,
+        "at the escape point the set never reaches her inside the " + G.HORIZON_S + " s horizon"
+          + (tThere == null ? "" : " (IT DOES, in " + secs(tThere) + ")")
+          + "; at the boat it reaches her in " + secs(tEx));
+
+  // ⚠⚠ IT WALKS THE TRACK, NOT THE HEADING, and with any cross set those are different
+  // lines. Only the track was verified by the search, so only the track may be stopped on -
+  // walking the heading would stop her somewhere nothing was ever projected.
+  const CROSS = { e: 1.03, n: 1.03 };
+  const escX = G.escapeCourse(pEx, CROSS, W, BUF, kn6);
+  const tX = G.timeToEntry(pEx, CROSS, W, BUF, G.HORIZON_S);
+  const offAxis = escX
+    ? Math.abs((escX.to.e - pEx.e) * Math.cos(escX.hdg * Math.PI / 180)
+               - (escX.to.n - pEx.n) * Math.sin(escX.hdg * Math.PI / 180))
+    : null;
+  check("8e. ... and it stops on the TRACK, not on the heading - with a cross set they differ",
+        () => escX && escX.capped === true && offAxis > 1
+              && tX != null && tX <= G.HELM_S,
+        "in extremis at " + secs(tX) + "; the escape point lies " + mm(offAxis)
+          + " off the heading ray - zero would mean the walk followed the heading and stopped "
+          + "somewhere the search never projected");
+
+  // ⚠ THE REFUSAL, PAIRED WITH 8c's ACCEPTANCE. A cap that fired every time would pass 8c
+  // and still be wrong: where no point on the track answers the rule, the escape keeps the run
+  // it has always had. It may shorten a verified escape or do nothing, and never lengthen one.
+  const escNo = G.escapeCourse(P, { e: 0, n: 4 * 0.514444 }, W, BUF, kn6);
+  check("8f. ... and where no point on the track answers the rule, the full run stands",
+        () => escNo && escNo.capped === false && escNo.to === escNo.fullTo,
+        "a 4 kn set: nowhere on the track is past the drift's reach, so the escape keeps its "
+          + mm(far(escNo && escNo.to, P)) + " - 8c is this same assertion with the other answer");
+
+  // ⚠⚠ AND IT NEVER APPLIES FROM INSIDE THE BUFFER, which is not caution: 10h below asserts
+  // the inside branch's own answer - "a whole horizon of clear water past the buffer, not a few
+  // meters" - written after an earlier design "ended a late exit a few meters outside the
+  // buffer, holding in the set that put it there". MEASURED 2026-09-23: capping from 2 m off a
+  // face cut 95.6 m to 49.4 m and HALVED 10h's own measure, 45.0 s of clear water down to
+  // 22.5 s. Two properties that genuinely disagree, and the one with a measurement wins.
+  const escIn = G.escapeCourse({ e: 0, n: 28 }, SET_ON, W, BUF, kn6);
+  check("8g. ... and never from INSIDE the buffer, where 10h's horizon of clear water rules",
+        () => escIn && escIn.capped === false,
+        "from inside, the escape keeps its full " + mm(far(escIn && escIn.to, { e: 0, n: 28 }))
+          + " - the cap is an OUTSIDE-branch rule and 10h is what it must not weaken");
+
+  // ⚠ THE SEARCH IS UNTOUCHED, which is what makes the rest safe to ship: the cap runs after
+  // the winner is chosen and moves only where she stops. If it ever changed WHICH heading wins,
+  // every check above would be measuring a different escape.
+  check("8h. ... and the SEARCH is untouched: the uncapped point is still a whole horizon out",
+        () => {
+          if (!escCap) return false;
+          const a = escCap.hdg * Math.PI / 180;
+          const v = { e: SET_ON.e + kn6 * Math.sin(a), n: SET_ON.n + kn6 * Math.cos(a) };
+          return Math.abs(far(escCap.fullTo, pEx) - Math.hypot(v.e, v.n) * G.HORIZON_S) < 0.5;
+        },
+        "fullTo is " + mm(far(escCap && escCap.fullTo, pEx)) + ", still " + G.HORIZON_S
+          + " s of the scored track - the cap moved `to`, not the search");
+
+  // ⚠⚠ AND A TOKEN ESCAPE IS UNREACHABLE BY CONSTRUCTION, which is why there is no floor
+  // constant here and why one would be the wrong shape. The rung fires while the drift enters
+  // within HELM_S; the cap stops only where it does not enter within HORIZON_S. HELM_S is the
+  // stricter, so from any state the rung can fire in she must be carried from "reached in under
+  // 20 s" to "not reached in 45" - a real distance, not a nominal one. A floor in meters would
+  // be a second, weaker statement of the same thing, needing re-tuning per hull and buffer.
+  // MEASURED across four in-extremis fixtures in this geometry: 29.8, 33.9, 37.0, 40.1 m.
+  check("8i. ... and it cannot answer a real in-extremis state with a token move",
+        () => escCap && tEx != null && tEx <= G.HELM_S && escCap.m > 10,
+        "in extremis at " + secs(tEx) + " (HELM_S is " + G.HELM_S + " s), and the cap still "
+          + "drove her " + mm(escCap && escCap.m) + " - the rung's threshold is stricter than "
+          + "the cap's, so no state the rung fires in can pass a token escape");
+
   // Three walls, only south open: the answer is the one open side, not the least-bad wall.
   const rings = [[{ e: -400, n: 30 }, { e: 400, n: 30 }, { e: 400, n: 400 }, { e: -400, n: 400 }],
                  [{ e: 30, n: -400 }, { e: 400, n: -400 }, { e: 400, n: 400 }, { e: 30, n: 400 }],
