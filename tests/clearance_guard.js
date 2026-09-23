@@ -478,11 +478,20 @@ const G = grab(H, "clearanceGuard");
 //   16  "IT NEVER STEERS" IS NO LONGER TRUE, ON INSTRUCTION - but only at the last rung,
 //       and only when stopping provably would not answer. 16b is the guard that keeps that
 //       narrow.
+// ⚠⚠ STRIPPED, AND THIS CHECK IS THE THIRD IN THIS FILE TO NEED IT. The two absence
+// clauses below are satisfied by the CODE and broken by any COMMENT that merely names the
+// old gate - which is what a comment explaining WHY guardTrack bails on `st.holding` does.
+// The header records the other two: 15e went red for a comment that mentioned the call, and
+// 16c reported a defect as still present when only its obituary was. An absence check that
+// reads comments cannot tell a fix from its own explanation.
+const G14 = codeOnly(G);
 check("14. the guard acts whenever the console HAS authority — armed and not e-stopped — " +
       "and not only while a plan is running",
-      () => /const act = !!\(S && S\.armed && !S\.estop\)/.test(G)
-            && !/run === "running"/.test(G) && !/st\.holding/.test(G),
-      "the old gate excluded a station-keeping boat, which is the case that was reported");
+      () => /const act = !!\(S && S\.armed && !S\.estop\)/.test(G14)
+            && !/run === "running"/.test(G14) && !/st\.holding/.test(G14),
+      "the old gate excluded a station-keeping boat, which is the case that was reported; "
+      + "asserted on the code with comments stripped, so an explanation of the old gate "
+      + "cannot fail it");
 check("15. the release is the COUNTERFACTUAL, not a distance margin — it asks whether the " +
       "speed being restored would trigger it again",
       // ⚠ THE RULE ITSELF LIVES IN guard.js AND IS TESTED THERE (in_extremis 11b/11c). This
@@ -1166,10 +1175,13 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // ⚠⚠ AND 15z8 EXISTS BECAUSE TWO OF THOSE TWELVE SURVIVED THE FIRST SWEEP. Both were about
   // the guard's per-episode record, and both were invisible while the fixture left it at its
   // defaults: "restored" and "never touched" look identical until you seed it.
-  const escRun = async (frames, refuse) => {
+  const escRun = async (frames, refuse, standing) => {
     escCourse = { to: { e: 0, n: -60 }, hdg: 180 };
     setRefuse(refuse ? "/api/cmd/escape" : null, refuse);
-    runRoute = null; escapeThrottle = false;
+    // ⚠ `standing` SEEDS A CLAIM THAT IS ALREADY THERE, which is the only way to tell a
+    // retraction that restores its OWN snapshot from one that writes `false` over whatever
+    // it finds. With the default false the two are the same observation.
+    runRoute = null; escapeThrottle = !!standing;
     // ⚠ SEEDED WITH DISTINCTIVE VALUES so the RESTORE is observable at all. These are what
     // setPlanIntent clears on the way in ("a new commanded motion is a new decision"), and a
     // refused motion is not a new commanded motion - but left at their defaults, "restored"
@@ -1337,6 +1349,46 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
             + "; escapeThrottle " + escapeThrottle + " (released, because nobody is escaping)"
             + "; the operator's later route " + (runRoute === lastPut
               ? "left alone" : "OVERWRITTEN by the retraction"));
+
+    // ⚠⚠ 15z10. A LOST REPLY IS NOT A REFUSAL, AND THE CLAIM STANDS. `took(r)` is
+    // `r && r.ok`, so refused, lost, timed-out and unreadable all fell through the same gate
+    // into one retraction - and `escapeThrottle = false` ran for all of them. Releasing on a
+    // lost reply is the ONE thing that takes the escape's speed back off her: the guard's
+    // clear branch fires a few frames into every accepted escape (15z4b) and nulls
+    // `commandedSpeed`, so with the gag gone the governor commands the transit role over the
+    // top of the rung's HIGH - silently, because this line goes round releaseEscapeClaim.
+    // ⚠ THE PAIR IS 15z9 ABOVE: the same fixture, the same frames, REFUSED, asserts the
+    // claim is released. Without that twin "kept" here is indistinguishable from "the rung
+    // never ran". The fixture has supported a lost answer since it was written and NO CHECK
+    // HAD EVER CALLED IT - the commonest not-took there is had never reached this rung.
+    const lostEsc = await escRun(F, "lost");
+    rcheck("15z10. a LOST escape KEEPS the throttle claim and says the console cannot tell - "
+          + "only a REFUSAL is a fact about the vessel",
+          lostEsc.throttle === true
+          && /NOT ACKNOWLEDGED/.test(lostEsc.said)
+          && /cannot say whether the helm was taken/.test(lostEsc.said)
+          && !/THE HELM WAS NOT TAKEN/.test(lostEsc.said),
+          "claim after a lost reply: " + (lostEsc.throttle ? "STANDS" : "RELEASED")
+            + "; the banner "
+            + (/THE HELM WAS NOT TAKEN/.test(lostEsc.said)
+               ? "still asserts the helm was not taken, one clause after saying it cannot tell"
+               : "asserts nothing about the vessel after the ignorance clause"));
+
+    // ⚠⚠ 15z11. AND A RETRACTION RETRACTS ITS OWN CLAIM, NOT WHATEVER IT FINDS. The door
+    // is HOLDING: once she station-keeps at the escape point guardTrack bails on
+    // `st.holding`, the phantom stops being projected, the honest drift projection returns,
+    // the level reads helm again and `firstOfEpisode` posts a SECOND escape HELM_DWELL_MS
+    // later - 1.5 s, not 6. A refused or lost #2 then wrote `false` over the claim #1 had
+    // TAKEN. The restore reads the snapshot now.
+    // ⚠ THE PAIR IS 15z9 AGAIN: identical but for the seed, so this cannot pass because
+    // nothing was released - 15z9 proves a release still happens when the claim was nobody's.
+    const overEsc = await escRun(F, "refused", true);
+    rcheck("15z11. ... and a refused escape does not end a claim an EARLIER accepted one made "
+          + "- the retraction restores what it held, it does not write false",
+          overEsc.throttle === true,
+          "a claim standing before the refused post: "
+            + (overEsc.throttle ? "survived" : "DESTROYED by a post that never made it")
+            + " (15z9 is the same run with no claim standing, and there the release fires)");
   }
 
   // 15z7. THE HOLD RUNG, same rule, less state. What a refusal costs here is not mainly the
@@ -1479,7 +1531,7 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 8;                 // the retraction block's own, 15z4b included
+const RAN_FLOOR = 10;                // the retraction block's own, 15z4b/15z10/15z11 included
 Promise.resolve(globalThis.__guardRetract).then((n) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n

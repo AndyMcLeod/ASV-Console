@@ -386,8 +386,56 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
   new sentence honest rather than universal: `data_routes` 8 drives it and would fail a gate
   that answered every refusal with the E-STOP words. 1 mutation, killed.
 
-* **⚠ 2026-09-22 — FILED, WITH EVIDENCE, NOT FIXED — BOTH AT `asv.html:2405`, the escape's
-  retraction arm.**
+* **⚠⚠ 2026-09-22 — THE ESCAPE'S RETRACTION: ONE LINE WAS TWO DEFECTS (shipped).
+  Both of the items filed here are fixed.**
+
+  * `took(r)` is `r && r.ok`, so a REFUSAL, a LOST reply, a 15 s timeout and an unreadable
+    2xx all fell through one gate into one retraction — and `escapeThrottle = false` ran for
+    all of them.
+  * **A LOST REPLY IS NOT A REFUSAL, and releasing on one is the ONE thing that takes the
+    escape's speed back off her.** The guard's clear branch fires a few frames into every
+    ACCEPTED escape (15z4b measured it, boat unmoved 13 m off a pier) and nulls
+    `commandedSpeed`; with the gag gone the governor commands `roleSpeed("transit")` over the
+    rung's HIGH — silently, because that line went round `releaseEscapeClaim`. And it buys
+    nothing: during an escape `currentActivity` returns role "transit" and `atCorner` needs
+    `S.wp_total === cornerSlowFor` while an escape route is ONE waypoint, so **neither
+    hull-limit rule the gag stands down can fire during an escape at all.**
+  * ⚠ **THE COST OF KEEPING IT, UNSOFTENED and written at the site.** If the post really was
+    lost and she never got it, she runs the survey with the governor gagged — where those
+    two rules ARE live — and **`speedReconcile` carries the HIGH across a link outage**:
+    `commandSpeed("high")` set `speedWant`, nothing overwrites it while gagged, and it
+    re-sends for as long as she reports armed and running. So "lost to a 40 s outage, she
+    never got it" does not merely fail to slow her; **it drives her to HIGH the instant the
+    link returns.** A reader who finds a hull driven into a corner at HIGH after a link drop
+    should look at the release and at `speedReconcile`. The other horn is worse in the way
+    that matters: it is SILENT, and it fires on the boat that TOOK the command.
+  * **AND IT WROTE `false` OVER WHATEVER CLAIM IT FOUND, not over its own.** The door is
+    HOLDING, not the re-approach: once she station-keeps at the escape point `guardTrack`
+    bails on `st.holding`, the phantom stops being projected, the honest drift projection
+    returns, the level reads helm again and `firstOfEpisode` posts a SECOND escape
+    **HELM_DWELL_MS later — 1.5 s, not 6** — and a refused OR lost #2 ended #1's claim. The
+    retraction restores `heldEsc.throttle` now, and `escapeThrottle &&` stops a late answer
+    resurrecting a claim on a stopped boat.
+  * **THE BANNER FOLLOWS THE ANSWER.** It appended *"THE HELM WAS NOT TAKEN ... and nothing is
+    steering her off it"* to all three answers, one clause after `notTookSay` had written *"the
+    console cannot tell whether she received it"*. The helper did its job and the next
+    concatenation undid it. The `say ||` fallback is gone too: that arm is unreachable (every
+    rung sits behind `act`, which includes `supervising()`).
+  * **4 mutations, 4 killed, 0 skipped**, and they DISCRIMINATE: R2 (follows the answer but
+    still writes `false`) kills only 15z11; R3 (banner unconditional) kills only 15z10. New
+    checks `clearance_guard` 15z10/15z11 — ⚠ **the fixture had supported a lost answer since
+    it was written and NO CHECK HAD EVER CALLED IT**, so the commonest not-took there is had
+    never reached this rung.
+  * ⚠ **AND CHECK 14 WAS READING COMMENTS AS CODE** — the third in that file to do it. It
+    asserts the guard's gate no longer names `st.holding`, on the RAW function, so a comment
+    explaining why `guardTrack` bails on it turned it red with the code unchanged. It strips
+    first now, which is what the file's own header has told it to do since 15e and 16c.
+  * **RESIDUE, knowingly left:** out-of-order resolution — a refusal for post #1 arriving
+    after post #2 has claimed writes #1's snapshot over #2's live claim. Bounded by the
+    command timeout and by the six doors that end a claim in one press.
+
+* **⚠ 2026-09-22 — ~~FILED, WITH EVIDENCE, NOT FIXED~~ — BOTH NOW FIXED, above. Kept for
+  the evidence.**
 
   1. **A LOST REPLY RELEASES THE CLAIM, AND THE BANNER CONTRADICTS ITSELF.** Driven (the
      fixture already supported `"lost"`; **no check had ever called it**). What the operator

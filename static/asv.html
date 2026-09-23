@@ -2406,6 +2406,16 @@ function clearanceGuard(){
     // nothing standing in for it, and the governor would speed her back up beside the pier.
     const heldEsc = {route: runRoute, unsafe: runUnsafe, intent: planIntent, gen: planGen,
                      slowed: clearance.slowed, commanded: commandedSpeed,
+                     // ⚠ THE CLAIM STANDING BEFORE THIS POST, WHICH IS NOT ALWAYS NOBODY'S. An
+                     // escape the vessel TOOK earlier in this episode left its claim here:
+                     // she station-keeps at the escape point, `guardTrack` bails on
+                     // `st.holding` so the phantom stops being projected and the honest drift
+                     // projection returns, the level reads helm again, and `firstOfEpisode`
+                     // posts a SECOND escape HELM_DWELL_MS later - 1.5 s, not 6. Writing
+                     // `false` on THAT one's refusal ended a claim the boat had taken.
+                     // Captured ABOVE the `escapeThrottle = true` below, for the same reason
+                     // `commanded` is.
+                     throttle: escapeThrottle,
                      override: guardOverride, spentM: edgeSpentM, count: edgeCount,
                      actedAt: guardActedAt, want: holdWant};
     clearance.slowed = false; commandedSpeed = null;
@@ -2468,16 +2478,68 @@ function clearanceGuard(){
         planGen = heldEsc.gen;                  // the picture is back: so is its generation
       }
       clearance.slowed = heldEsc.slowed; commandedSpeed = heldEsc.commanded;
-      escapeThrottle = false;                     // the governor may bid again: nobody is escaping
+      // ⚠⚠ THE RELEASE FOLLOWS THE ANSWER, AND IT RETRACTS ONLY WHAT THIS POST CLAIMED.
+      // Unconditional, this one statement was two defects.
+      //
+      // ⚠ A LOST REPLY IS NOT A REFUSAL, and releasing on one is the ONE thing that takes
+      // the escape's speed back off her. The guard's clear branch fires a few frames into
+      // every ACCEPTED escape - the rung's phantom route reads clear by construction - and
+      // nulls `commandedSpeed` unconditionally; with the gag gone the governor commands
+      // `roleSpeed("transit")`, which defaults to the survey key, 3.0 kn against the 6.0 the
+      // rung chose to beat the set. That is the defect MEASURED at this flag's declaration,
+      // and it would happen silently, because this line goes round releaseEscapeClaim and
+      // the note it prints. It buys nothing in exchange: during an escape `currentActivity`
+      // returns role "transit" so the slow-radius turn rule is unreachable, and `atCorner`
+      // needs `S.wp_total === cornerSlowFor` while an escape route is ONE waypoint - so
+      // neither hull-limit rule this gag stands down can fire at all.
+      //
+      // ⚠⚠ AND THE COST OF KEEPING IT IS REAL AND IS NOT SOFTENED. If the post was lost
+      // and she never received it, she runs the survey with the governor gagged - where
+      // those two rules ARE live - and worse, `speedReconcile` carries the HIGH across a
+      // link outage: `commandSpeed("high")` set `speedWant`, nothing overwrites it while
+      // gagged, and it re-sends for as long as she reports armed and running. So "lost to a
+      // 40 s outage, she never got it" does not merely fail to slow her; it drives her to
+      // HIGH the instant the link returns. A reader who finds a hull driven into a corner at
+      // HIGH after a link drop should look here and at speedReconcile.
+      //
+      // The other horn is worse in the way that matters: it is SILENT, and it fires on the
+      // boat that TOOK the command. This one is loud on every surface - the level stays
+      // helm, the rung re-posts at the re-solve, the banner re-raises, the Mission card
+      // names the claim - and six doors end it in one press.
+      //
+      // ⚠ AND `heldEsc.throttle`, NOT `false` - see the snapshot above.
+      // ⚠ AND IT NEVER RESURRECTS ONE: `escapeThrottle &&` stands the restore down when
+      // something else has already ended the claim, so a late answer cannot put a claim back
+      // on a stopped boat.
+      // ⚠⚠ ONE STATEMENT, AND IT FENCES NOTHING ELSE. The alarm, the picture, the
+      // slow-hold and the per-episode record are all outside it - a fence written one level
+      // up is what made a refused escape go SILENT, which is what 15z9 pins.
+      if(escapeThrottle && r && r.refused) escapeThrottle = heldEsc.throttle;
       // ⚠ setPlanIntent cleared the guard's per-episode record on the way in - "a new
       // commanded motion is a new decision". A motion the vessel refused is not a new
       // commanded motion, and the episode it was clearing is still running.
       guardOverride = heldEsc.override; edgeSpentM = heldEsc.spentM; edgeCount = heldEsc.count;
       guardActedAt = heldEsc.actedAt; holdWant = heldEsc.want;
       const say = notTookSay(r, "IN EXTREMIS ESCAPE");
-      showBanner((say || "IN EXTREMIS ESCAPE was not sent from this tab")
-        + " — THE HELM WAS NOT TAKEN: " + driftSay + ", and nothing is steering her off "
-        + "it. TAKE MANUAL CONTROL.");
+      // ⚠⚠ THE SUFFIX FOLLOWS THE ANSWER, NOT THE FAILURE - the same fault #b_stop and
+      // #b_start already had fixed, in the one banner the operator acts on. "THE HELM WAS
+      // NOT TAKEN" and "nothing is steering her off it" are facts about the VESSEL, and only
+      // a REFUSAL is a fact about the vessel. Appended to a lost reply they contradicted the
+      // clause immediately before them, which `notTookSay` had just written: "the console
+      // cannot tell whether she received it". The helper did its job and the very next
+      // concatenation undid it.
+      // ⚠ NOTHING AFTER THE IGNORANCE CLAUSE CLAIMS ANYTHING ABOUT THE BOAT: a projection
+      // this console computed, this console's own state, and this code's own next action.
+      // ⚠ AND `say` IS NEVER NULL HERE. The view-only arm cannot reach this rung - every
+      // rung sits behind `act`, which includes `supervising()`, and supHolder cannot change
+      // inside one synchronous frame - so the old `||` fallback was an unreachable sentence
+      // that claimed the helm was not taken on a boat this tab had never commanded.
+      if(say) showBanner(say + (r && r.refused
+        ? " — THE HELM WAS NOT TAKEN: " + driftSay + ", and nothing is steering her off "
+          + "it. TAKE MANUAL CONTROL."
+        : " — so the console cannot say whether the helm was taken: " + driftSay
+          + ". The escape's HIGH-SPEED claim STANDS until you end it, and the console "
+          + "commands the escape again while she reads in extremis. TAKE MANUAL CONTROL."));
       render();
     });
     showBanner("⚠⚠ IN EXTREMIS — " + driftSay
