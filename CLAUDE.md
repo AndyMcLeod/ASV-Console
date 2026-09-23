@@ -89,7 +89,16 @@ The clearance guard went in extremis, rung 4 took the helm, and `/api/cmd/escape
 
 **ALSO IN THIS COMMIT:** `clearance_guard.js` had **no check count at all** — it printed "all checks passed" for 67 checks and would have printed the same for 3, so a section that stopped being reached was invisible; it now counts. And `guard.js`'s `edgeAround` comment still claimed a hold "CANNOT BE RESUMED ... the console's only way back is to re-upload the run from waypoint one", which stopped being true on 2026-09-10 and stopped being true of the escape today.
 
-**STILL OWED:** the launch grant's LIVE CHECK (below, needs a SERVER RESTART); and **this work has had no live check either** — every number above is from the suites and from driven measurement, not from the water.
+**AND THEN THE REFUTER FLEET FOUND THREE DEFECTS IN THAT COMMIT** (`6c24661ed8`), all three verified against the source and all three now fixed:
+
+* ⚠⚠ **THE AMBER BAR OUTRANKED THE RED ONE.** `renderGuardBar` tests the held offer FIRST, above every rung. She arrives at the escape point and reports `holding`; `guardTrack` bails on exactly that flag (:1874), so the phantom one-waypoint projection stops, the honest drift-only projection returns, and the level rates `helm` AGAIN — with the rung's own comment putting the SECOND escape one HELM_DWELL later. For those frames the operator read "SURVEY HELD — LOITERING" on the exact frames the console was deciding to drive her off at high speed again. Now `if(held && !(a && a.level === "helm"))` — deferred, not spent.
+* ⚠⚠ **A LOST REPLY WAS TREATED AS A REFUSAL.** Six lines above it, `escapeThrottle` is restored only `if(r && r.refused)` because a boat that never answered may HAVE the escape. `guardHeld = heldEsc.kept` was unconditional, so for the one boat that DID escape and could not say so, the remainder was thrown away. Two halves of one retraction disagreeing about the same silence.
+* ⚠⚠ **THE RESUME SPENT ITS OWN RECORD HALFWAY THROUGH.** It PAUSES before it uploads (review #6), so `run` reads "paused" for four round trips; `guardHeldOffer` matches neither arm on a paused boat and nulled the record — after which all three abort banners promised "the remainder is still held" about nothing. `heldResuming` now holds it, cleared in a `finally`, and doubles as the one-at-a-time gate.
+
+⚠⚠ **AND TWO OF THOSE WERE INVISIBLE TO THE CHECKS THAT SHOULD HAVE SEEN THEM.** `guard_resume`'s `cmd` stub RECORDED the pause without modeling it, so `run` stayed "running" for the whole resume and check 15b's "the offer stays up" was a statement about an untouched variable. And it applied vessel-side effects SYNCHRONOUSLY, which closed the very window the one-at-a-time gate exists for — that mutation SURVIVED twice before the harness was made faithful (state lands in the reply, one guard tick per round trip). **The fidelity of a stub is a safety property.** Sweep now 5/5.
+
+**STILL OWED:** the launch grant's live check; and this work's own — the CAP is verified live (real browser, module as served, 92.5 m → 33.9 m from a 13.0 s in-extremis state), but the capture/offer/resume chain is driven checks and mutation only.
+
 
 
 > ⚠⚠ **THE LAUNCH GRANT WAS MERGED INTO MASTER ON 2026-09-23**, at Andy's word. Both

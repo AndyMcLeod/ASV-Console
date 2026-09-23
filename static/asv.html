@@ -1681,7 +1681,21 @@ function renderGuardBar(a, c){
   // both vanished within a frame of the survey being stopped, leaving nothing on screen to
   // say the run was over. The offer outlives the rung that caused it.
   const held = guardHeldOffer();
-  if(held) return renderHeldBar(bar, held);
+  // ⚠⚠ EXCEPT WHILE THE CONSOLE IS ABOUT TO STEER, and that window is not hypothetical.
+  // She arrives at the escape point and reports `holding`; `guardTrack` bails on exactly that
+  // flag (:1874), so the phantom one-waypoint projection stops and the honest drift-only
+  // projection comes back - and the level rates `helm` AGAIN. The rung's own heldEsc comment
+  // records the consequence as measured: `firstOfEpisode` posts a SECOND escape one HELM_DWELL
+  // later, 1.5 s rather than 6. For those six frames at 4 Hz this offer is up, it is tested
+  // FIRST - above the R15 stand-down, above a standing grant, above every rung - and it
+  // returned before the level was ever consulted. So the operator read an amber "SURVEY HELD -
+  // LOITERING" box on the exact frames the console was deciding to drive her off at HIGH speed
+  // again, and the red bar that would have said so never drew.
+  //
+  // ⚠ THE RECORD IS NOT SPENT BY THIS, only the drawing deferred: `guardHeldOffer()` is
+  // still called above, so the survey survives and the offer returns the moment the ladder
+  // comes off helm. An intervention in progress owns this bar; the way back can wait a beat.
+  if(held && !(a && a.level === "helm")) return renderHeldBar(bar, held);
   // ⚠⚠ R15 - THE STAND-DOWN OUTRANKS EVERY RUNG ON THIS BAR, `clear` and `blind` included,
   // and that ordering is the whole of it. standDownEnd() has just STOPPED her, so she reports
   // no course over the ground and the ladder reads BLIND - and on that frame the one thing
@@ -2433,6 +2447,16 @@ let guardOverride = null;
  * {route, idx, mark, at, kind, clearM, t}
  */
 let guardHeld = null;
+// ⚠⚠ THE RESUME SPENDS THIS RECORD ITSELF, AND USED TO SPEND IT HALFWAY THROUGH.
+// resumeHeldSurvey PAUSES before it uploads (review #6 - an upload to a station-keeping boat
+// releases her at the transit role's speed), so `run` reads "paused" for the length of its own
+// four round trips. `guardHeldOffer` runs at 4 Hz throughout, matches neither "hold" nor
+// "escape" on a paused boat, and nulls the record - after which all three of the resume's
+// abort banners promise "the remainder is still held; try again" about a remainder that no
+// longer exists, and the bar behind them is empty. The resume holds it instead, for exactly
+// as long as it is the one spending it, and clears the flag in a `finally` so a throw cannot
+// strand the record either.
+let heldResuming = false;
 function markGuardHeld(c){
   // ⚠ IT NEVER CLEARS WHAT IT CANNOT REPLACE. This began with `guardHeld = null` on entry,
   // and on 2026-09-10 that threw away a 645-waypoint survey: the hold rung fired THREE times
@@ -2480,7 +2504,13 @@ function guardHeldOffer(){
   //
   // `run === "running" && behavior === "hold"` is the state the whole way through, arriving
   // or arrived, which is the state the offer is actually about.
-  if(!onHold && !onEsc){ guardHeld = null; return null; }
+  if(!onHold && !onEsc){
+    // ⚠ NOT WHILE THE RESUME IS SPENDING IT - see heldResuming. The paused boat in the
+    // middle of resumeHeldSurvey's own sequence is not a situation that has changed; it is
+    // this function's caller, two statements in.
+    if(heldResuming) return null;
+    guardHeld = null; return null;
+  }
   // ⚠⚠ AND AN ESCAPE IS NOT OVER UNTIL SHE IS ON STATION. The bar tests this offer FIRST,
   // above the R15 stand-down, above a standing grant and above every rung - so an offer that
   // stood while she was still being steered would paint "SURVEY HELD - LOITERING" over the
@@ -3209,7 +3239,16 @@ function clearanceGuard(){
       // there is no remainder to hand back and offering one would be a bar about a boat that
       // is still surveying. Restored rather than nulled, because an EARLIER rung in this same
       // episode may have captured one - the hold rung's restore makes the same distinction.
-      guardHeld = heldEsc.kept;
+      // ⚠ AND ONLY ON A REFUSAL - a lost reply is not a refusal, which is the rule this
+      // whole retraction is built on and the one line that broke it. Six lines up,
+      // `escapeThrottle` is restored only `if(... r && r.refused)`, precisely because a boat
+      // that never answered may HAVE the escape and its claims must stand. This line said the
+      // opposite about the survey: on a lost reply it handed back the record that was standing
+      // BEFORE the rung ran - so for the one boat that did escape and could not say so, the
+      // remainder was thrown away and the offer never appeared. The two halves of the same
+      // retraction disagreed about the same unknown, and this one guessed in the direction
+      // that loses the survey.
+      if(r && r.refused) guardHeld = heldEsc.kept;
       const say = notTookSay(r, "IN EXTREMIS ESCAPE");
       // ⚠⚠ THE SUFFIX FOLLOWS THE ANSWER, NOT THE FAILURE - the same fault #b_stop and
       // #b_start already had fixed, in the one banner the operator acts on. "THE HELM WAS
@@ -12060,6 +12099,18 @@ function continueAtLow(){
  * second, and the button reads as broken rather than as refused.
  */
 async function resumeHeldSurvey(){
+  // ⚠⚠ ONE AT A TIME, AND IT OWNS THE RECORD WHILE IT RUNS. Four awaited round trips with a
+  // 4 Hz guard underneath them is long enough for a second press, and long enough for the
+  // guard's own helm rung to fire again - the rung's comment puts the second escape of an
+  // episode 1.5 s after the first. A second entry here would pause an already-paused boat and
+  // upload a second remainder over the first.
+  if(heldResuming) return;
+  if(!guardHeldOffer()) return;
+  heldResuming = true;
+  try { return await resumeHeldRun(); }
+  finally { heldResuming = false; }
+}
+async function resumeHeldRun(){
   const g = guardHeldOffer(); if(!g) return;
   const back = resumeBackM();
   const L = g.mark ? (mission.lines || [])[g.mark.line] : null;

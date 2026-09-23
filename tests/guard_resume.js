@@ -162,6 +162,15 @@ var cornerUnanswered = [];
 var cornerPlanKey = "survey";
 var S = null, asv = null, runRoute = null, runUnsafe = [], pauseMark = null;
 var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld = null;
+// ⚠ MODULE SCOPE, NOT THE EVAL BUNDLE. A `let` inside the bundle makes a SECOND
+// global that the fixtures below write and the subject never reads - which is how 12g once
+// passed while reporting on a set nothing referred to. resumeHeldSurvey owns this record
+// across its own pause/upload/speed/start, because a paused boat matches neither arm of
+// guardHeldOffer and the record would otherwise be spent halfway through the resume.
+var heldResuming = false;
+// Whether the modelled guard ticks between the resume's commands. Off by default so the
+// non-resume fixtures are unchanged; resumeFrom turns it on.
+var tickGuard = false;
 // The helm rung's claim on the throttle. speedGovernor stands down on it exactly as it does
 // on `resumeSlow`, so the symbol has to exist here or the governor is a bare ReferenceError -
 // which the crash guard reports as ONE failed check rather than as a crash. False in this
@@ -227,6 +236,20 @@ globalThis.fetch = (p, o) => {
 // Commands are RECORDED, not stubbed to nothing, so a check can say WHAT was sent and in
 // what order rather than only that something was. `refuse` drives the refusal branch.
 var sent = [], refuse = null, lost = null;
+// ⚠ THE VESSEL'S SIDE OF A COMMAND LANDS AFTER THE REPLY, which is what makes the
+// one-at-a-time gate measurable. The page awaits each command; the run state it then reads
+// comes from a LATER telemetry frame. Applying it synchronously inside cmd() meant a second
+// press could never see the live offer the first press had not yet spent - the harness was
+// preventing the very race the gate exists for, and the mutation that removes the gate
+// survived because of it. One guard tick per reply models the 4 Hz loop underneath.
+function applyReply(p, pr) {
+  return pr.then((r) => {
+    if (p === "/api/cmd/pause") S.run = "paused";
+    if (p === "/api/cmd/start") S.run = "running";
+    if (tickGuard) guardHeldOffer();
+    return r;
+  });
+}
 function cmd(p, b) {
   sent.push({ p, speed: b && b.speed, route: b && b.route });
   // ⚠ THE HOLD IS MODELLED, NOT JUST RECORDED, AND THAT IS WHAT MAKES CHECK 6 REAL. On the
@@ -235,6 +258,23 @@ function cmd(p, b) {
   // command changes nothing the suite can see - the mutation survives and the check is
   // decoration. Here the index really moves, so a late capture really reads the wrong one.
   if (p === "/api/cmd/hold") window._wpIndex = 0;
+  // ⚠⚠ AND THE PAUSE IS MODELLED TOO, for exactly the reason the hold is - and its absence
+  // made check 15b decoration. On the vessel `pause` sets run to "paused", and
+  // resumeHeldSurvey pauses FIRST (review #6). guardHeldOffer matches neither "hold" nor
+  // "escape" on a paused boat, so the 4 Hz guard underneath the resume's four round trips
+  // spent the very record the resume was handing back - after which its abort banners promise
+  // "the remainder is still held" about nothing at all. With a stub that only RECORDED the
+  // pause, `run` stayed "running" for the whole sequence and no check could see it.
+  // ⚠⚠ AND THE VESSEL REPORTS IT ON A LATER FRAME, NOT ON THE CALL - so these land in
+  // the `.then` below rather than here. Written synchronously they closed a window that is
+  // open in the real console: between `heldResuming = true` and the pause actually taking
+  // effect, `run` still reads "running" and a second press still sees a live offer. With a
+  // synchronous model the one-at-a-time gate was UNTESTABLE - its mutation survived because
+  // the harness had already made the thing it prevents impossible.
+  // ⚠ AND THE GUARD DOES NOT STOP WHILE THE CONSOLE AWAITS. One tick per round trip is the
+  // cheapest faithful model of a 4 Hz loop running under four awaited commands: it is what
+  // turns "the offer stays up" from a statement about an untouched variable into a statement
+  // about a variable something else had a chance to spend.
   // ⚠ THE SUCCESS FIXTURE USED TO BE A BARE {} - the one answer that has neither
   // `ok` nor `error`, and therefore the one this suite could not tell from a failure.
   // That is not a detail: it is WHY the page carried two failure-shaped tests for so
@@ -248,11 +288,11 @@ function cmd(p, b) {
   // (`refused` is the vessel's answer; silence is not an answer), had no case anywhere. The
   // mutation that deletes the lost-reply arm of the edge rung survived a sweep because of it.
   // `lost` names the path whose reply never comes back.
-  return Promise.resolve(lost && lost === p
+  return applyReply(p, Promise.resolve(lost && lost === p
     ? { ok: false, error: "no answer", sent: true, refused: false }
     : refuse && refuse === p
     ? { ok: false, error: "ARM before uploading a plan", sent: true, refused: true }
-    : { ok: true, state: {} });
+    : { ok: true, state: {} }));
 }
 
 // A minimal DOM, only as wide as the guard bar. renderGuardBar writes text and display, and
@@ -323,6 +363,7 @@ eval([
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
+  grab("resumeHeldRun"),
   grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
@@ -690,6 +731,32 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         "behavior 'goto' -> " + (onGoto ? "STILL OFFERED" : "cleared")
           + ". The escape is the one motion nobody asked for, which is why it alone keeps the "
           + "record; a Go-To is the operator commanding her somewhere else");
+  // ⚠⚠ AND IT MUST NOT OUTRANK A LIVE INTERVENTION, which is the one thing this bar's
+  // position makes easy to get wrong. It is tested FIRST in renderGuardBar - above the R15
+  // stand-down, above a standing grant, above every rung - so while she sits at the escape
+  // point it drew over the top of the red one. That window is not hypothetical: `guardTrack`
+  // bails on `st.holding`, so the phantom one-waypoint projection stops the moment she
+  // arrives, the honest drift-only projection returns, the level rates `helm` AGAIN, and the
+  // rung's own comment puts the SECOND escape of an episode one HELM_DWELL later. The
+  // operator would have been reading "SURVEY HELD — LOITERING" on the exact frames the
+  // console was deciding to drive her off at high speed again.
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "escape"; S.status.holding = true; asv = ll(0, -90);
+  tryIt(() => renderGuardBar({ level: "helm", why: "the drift alone enters" }, clearance));
+  const atHelm = EL["#gb_rung"].textContent;
+  const keptThrough = guardHeld;
+  // ... and the moment the ladder comes off helm it is offered again, from the same record.
+  tryIt(() => renderGuardBar({ level: "slow", why: "x" }, clearance));
+  const offHelm = EL["#gb_rung"].textContent;
+  check("8d4. ... and it never outranks a live HELM rung — the red bar owns those frames",
+        () => /HELM/.test(atHelm) && !/SURVEY HELD/.test(atHelm)
+              && /SURVEY HELD/.test(offHelm)
+              // ⚠ DEFERRED, NOT SPENT: the survey has to survive the frames it is not drawn on
+              && !!keptThrough && guardHeld === keptThrough,
+        "at helm the bar reads \"" + atHelm + "\" and one rung down \"" + offHelm
+          + "\", with the record " + (guardHeld ? "intact" : "SPENT")
+          + " throughout — an intervention in progress owns this bar, and the way back waits");
+
   // And the bar has to say which rung it was, because the two situations do not look alike.
   standingIn(6); tryIt(() => clearanceGuard());
   S.behavior = "escape"; S.status.holding = true; asv = ll(0, -90);
@@ -718,6 +785,7 @@ async function resumeFrom(opts) {
   asv = opts.escape ? ll(0, -90) : ll(0, 0);
   escapeThrottle = !!opts.escape;
   pinNext = opts.pin || null; pinCalls = [];
+  tickGuard = false;
   if (opts.ko) nogo = { ...nogo, ko: opts.ko };
   if (opts.noModel) nogo = { ...nogo, ready: false, frame: null, ko: null };
   refuse = opts.refuse || null;
@@ -729,7 +797,12 @@ async function resumeFrom(opts) {
   // the run before a single FAIL line prints, which a runner reading stdout scores as
   // SURVIVED. A harness that cannot survive the fault it tests for cannot report it.
   let raised = null;
+  // ⚠ ARMED ONLY ACROSS THE SUBJECT, not across the fixture's own setup. standingIn()
+  // drives the real hold rung, which posts /api/cmd/hold - and a guard tick on THAT command
+  // would run before the capture exists.
+  tickGuard = true;
   try { await resumeHeldSurvey(); } catch(e) { raised = e.message; }
+  finally { tickGuard = false; }
   refuse = null;
   const up = sent.find(x => x.p === "/api/cmd/upload");
   return { paths: sent.map(x => x.p), sent, up, notes, banners, logged, ov, before, raised };
@@ -897,6 +970,31 @@ async function resumeFrom(opts) {
         () => "the router was asked " + pinCalls.length + " time(s) on a hold resume - the "
             + "run-in certification is for the leg an ESCAPE creates, and a boat that never "
             + "moved does not need one");
+
+  // ⚠⚠ ONE AT A TIME, AND THE WINDOW IS FOUR AWAITED ROUND TRIPS WIDE. A second press
+  // - or the guard's own helm rung firing again, which the escape rung puts 1.5 s after the
+  // first - would pause an already-paused boat and upload a SECOND copy of the remainder over
+  // the first, with two interleaved sequences racing to set runRoute. The flag that stops the
+  // resume spending its own record does double duty here.
+  //
+  // ⚠ THIS CHECK EXISTS BECAUSE THE MUTATION SURVIVED. The re-entrancy guard was written
+  // with the rest of the fix and nothing tested it, so removing it changed no result - which
+  // by this repo's own rule means the guard was either wrong or unmeasured. It was unmeasured.
+  standingIn(6); tryIt(() => clearanceGuard());
+  S.behavior = "hold"; S.status.holding = true; S.run = "running";
+  asv = ll(0, 0); sent = []; notes = []; banners = []; pinCalls = [];
+  tickGuard = true;
+  const firstPress = resumeHeldSurvey();          // not awaited: it is mid-flight
+  const secondPress = resumeHeldSurvey();         // ... and this lands on top of it
+  await firstPress; await secondPress;
+  tickGuard = false;
+  const uploads = sent.filter(x => x.p === "/api/cmd/upload").length;
+  const pauses = sent.filter(x => x.p === "/api/cmd/pause").length;
+  check("15i. two presses run ONE resume, not two racing sequences",
+        () => uploads === 1 && pauses === 1,
+        "the pair sent " + pauses + " pause(s) and " + uploads + " upload(s) - without the "
+          + "one-at-a-time gate the second press pauses an already-paused boat and uploads a "
+          + "second copy of the remainder over the first, both races writing runRoute");
 
   finish();
 })();

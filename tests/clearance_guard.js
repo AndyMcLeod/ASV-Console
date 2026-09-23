@@ -1503,6 +1503,27 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
            + ". A refused escape did not replace her plan, so there is no remainder to hand "
            + "back; 15z8 is the same argument for the episode record");
 
+  // ⚠⚠ AND A LOST REPLY IS NOT A REFUSAL, which is the rule this whole retraction is built
+  // on. Six lines above the restore, `escapeThrottle` is put back only `if(... r && r.refused)`
+  // - a boat that never answered may HAVE the escape, so its claims must stand. The survey
+  // record was restored unconditionally, which said the opposite about the same unknown: for
+  // the one boat that DID escape and could not say so, the remainder was handed back to what
+  // stood before the rung ran, and the offer never appeared. Two halves of one retraction
+  // disagreeing about the same silence, and this half guessed the way that loses the survey.
+  const lostKept = await escRun(F, "lost", false, true);
+  rcheck("15z14. ... and a LOST escape KEEPS the capture — she may have it, so the survey stands",
+         lostKept.held && lostKept.held.spy === true,
+         "after a lost reply the record is "
+           + (lostKept.held && lostKept.held.spy === true
+              ? "the rung's own capture - she may be flying the escape, and the remainder is "
+                + "the only copy of the survey that exists"
+              : lostKept.held === HELD_BEFORE
+                ? "what stood BEFORE the rung ran - restored as though the escape had been "
+                  + "refused, which a silence does not say"
+                : "NULL")
+           + ". 15z13 is the same fixture REFUSED, where restoring is right; 15z10 is this "
+           + "same silence keeping the throttle claim for the identical reason");
+
   rcheck("15z7. a REFUSED hold frees the rung to act again next frame, and an accepted one does "
         + "not",
         okHold.sent.includes("/api/cmd/hold") && okHold.actedAt !== 0
@@ -1626,7 +1647,7 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
-const RAN_FLOOR = 12;                // the retraction block's own, 15z4b/15z10-13 included
+const RAN_FLOOR = 13;                // the retraction block's own, 15z4b/15z10-14 included
 Promise.resolve(globalThis.__guardRetract).then((n) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n
