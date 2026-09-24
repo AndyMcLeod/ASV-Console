@@ -3747,6 +3747,8 @@ let patClip = null;                            // Punch-Out result: the RUNS, le
 // ⚠ EVERY READ MUST TOLERATE A MISSING ENTRY. patClip is assigned from several places and
 // an un-punched commit has no leads at all; `patLead[k] || NO_LEAD` everywhere.
 let patLead = [];
+let patTrim = [];                              // per run {in,out}: meters pulled back off the CLIP at that end to fit a turn (parallel to patClip)
+const TRIM_MAX_M = 60;                         // the most either end gives for one reversal - see punchOut's trim rung
 const NO_LEAD = {in:0, out:0};
 let patUnsafe = [];                            // transits with no clear route (flagged red)
 // ONE ENTRY PER RED JOIN, pushed in the same statement as its patUnsafe pair: {run, turn, why, by, a, b} - the join
@@ -5931,7 +5933,9 @@ function runMid(seg){ return {lat:(seg[0].lat+seg[1].lat)/2, lon:(seg[0].lon+seg
  * which is exactly what makes the fault invisible in the ordinary case - while an
  * asymmetric one (a different lead-in and lead-out, or either end trimmed by the chart)
  * shifts it by half the difference and the strike silently stops applying, or applies to
- * the wrong run. Coverage midpoints on both sides, always.
+ * the wrong run. Coverage midpoints on both sides, always - with a turn-water trim put back
+ * (patIdentSeg), since a trim moves the coverage midpoint by half of itself and the strike
+ * was matched on the CLIP.
  */
 function patCoverSeg(k){
   const seg = patClip && patClip[k]; if(!seg) return null;
@@ -5946,7 +5950,19 @@ function patCoverSeg(k){
   return [at(t0), at(t1)];
 }
 /** Midpoint of run `k`'s COVERAGE - the value a strike is stored and matched as. */
-function patCoverMid(k){ const s = patCoverSeg(k); return s ? runMid(s) : null; }
+/**
+ * The run's IDENTITY segment: its coverage with any turn-water trim (patTrim) put back -
+ * i.e. the CLIP run, which is what keptRuns matches a strike against. A trim moves the
+ * coverage midpoint by half of itself (11.5 m for a 23 m trim), so a strike stored off the
+ * coverage would silently stop applying on the very re-punch it asked for.
+ */
+function patIdentSeg(k){
+  const cov = patCoverSeg(k); if(!cov) return null;
+  const T = patTrim[k]; if(!T || (!T.in && !T.out) || !(distTo(cov[0], cov[1]) > 0)) return cov;
+  const outA = azTo(cov[1], cov[0]), outB = azTo(cov[0], cov[1]);   // outward at each end
+  return [T.in > 0 ? atDA(cov[0], T.in, outA) : cov[0], T.out > 0 ? atDA(cov[1], T.out, outB) : cov[1]];
+}
+function patCoverMid(k){ const s = patIdentSeg(k); return s ? runMid(s) : null; }
 /** Total lead meters actually applied across the punched runs. */
 function patLeadTotal(){ return patLead.reduce((a,L)=>a + (L?(L.in||0)+(L.out||0):0), 0); }
 
@@ -5964,6 +5980,12 @@ function runWithLeads(k, li, lo){
   const outA = azTo(cov[1], cov[0]), outB = azTo(cov[0], cov[1]);   // outward at each end
   return [li > 0 ? atDA(cov[0], li, outA) : cov[0],
           lo > 0 ? atDA(cov[1], lo, outB) : cov[1]];
+}
+/** Run `seg` with `m` meters taken off its END (the b end); untouched if under 1 m would be left. */
+function trimEnd(seg, m){
+  const len = distTo(seg[0], seg[1]);
+  if(!(m > 0) || !(len - m >= 1)) return seg;
+  return [seg[0], atDA(seg[1], m, azTo(seg[1], seg[0]))];
 }
 // ⚠ THE LEAD GIVES WAY TO THE TURN, NOT THE OTHER WAY ROUND (Andy, 2026-09-08). What each
 // rung multiplies BOTH leads by. Scaling rather than picking one end is what makes it
@@ -6576,7 +6598,7 @@ function updatePatReadout(){
   }
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
-  patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patRoutes=[]; patTransits=[]; $("#encbanner").style.display="none";
+  patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
   // scheduled for it — a timer left running would re-punch a pattern that no longer
   // exists and end in a render against state this just cleared.
@@ -8961,6 +8983,7 @@ async function punchOut(){
     // reason (a channel the operator chose not to survey) rather than a navigation one.
     const wantIn = leadInM(), wantOut = leadOutM();
     patLead = patClip.map(()=>({in:0, out:0}));
+    patTrim = patClip.map(()=>({in:0, out:0}));   // nothing pulled back yet - the trim rung below writes it
     let nLeadCut = 0;
     const leadWant = (wantIn + wantOut) * patClip.length;
     if(wantIn > 0 || wantOut > 0){
@@ -8993,6 +9016,9 @@ async function punchOut(){
     // same reason every other dropped thing is: it is a setting the operator asked for and
     // did not get, and a settling distance they believe they have is worse than none.
     let nLeadGave=0;
+    // Reversals whose LINE ENDS had to be pulled back before a turn would fit, and the most
+    // either end gave. Coverage the operator drew and is not getting, so it is said.
+    let nTrim=0, trimMaxM=0;
     // How many of the RED legs are refused reversals rather than blocked transits. They are
     // two different faults with two different remedies, and until 2026-09-08 the banner
     // called both of them the first one — see its branch below.
@@ -9109,6 +9135,38 @@ async function punchOut(){
             patClip[k+1] = sK1; patLead[k+1] = {in: li, out: patLead[k+1].out||0};
             Ap = sK[1]; Bp = sK1[0]; t = t2; nLeadGave++;
             break;
+          }
+        }
+        // ⚠⚠ AND WHEN THE LEAD HAS NOTHING LEFT TO GIVE, THE COVERAGE ENDS DO - ONE METER AT A
+        // TIME. Andy, 2026-09-24: "identify this type situation and incrementally shorten each
+        // line on the threat side by 1 m until the failure disappears." Only a keep-out answers
+        // to this - `nogo` (every loop the boat could fly enters one) or `track` (the hull, flown
+        // along the loop, enters the buffer); a skewed or degenerate pair is not short of water,
+        // it is not a reversal. Both runs give at the TURN end only, equally, and the FIRST step
+        // that flies is the one kept, so the survey loses the least that buys a flyable turn. Any
+        // lead on that end goes first: the ladder above already tried it at zero, so that costs
+        // nothing that could have worked. Bounded by TRIM_MAX_M and by a third of the shorter
+        // run's coverage - past that the pair is refused exactly as before, and punchRefusal says
+        // what is left to do. What was pulled back is recorded in patTrim (the run's identity
+        // for a strike stays the CLIP - see patIdentSeg) and counted for the banner.
+        if(!t.pts && (t.why==="nogo" || t.why==="track")){
+          const base0 = runWithLeads(k, patLead[k].in||0, 0), base1 = runWithLeads(k+1, 0, patLead[k+1].out||0);
+          const cov0 = patCoverSeg(k), cov1 = patCoverSeg(k+1);
+          if(base0 && base1 && cov0 && cov1){
+            const cap = Math.min(TRIM_MAX_M, Math.floor(Math.min(distTo(cov0[0],cov0[1]), distTo(cov1[0],cov1[1]))/3));
+            for(let s=1; s<=cap; s++){
+              const sK = trimEnd(base0, s), sK1 = trimEnd([base1[1], base1[0]], s).reverse();
+              const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+                                       minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
+              if(!t2.pts) continue;
+              // Written together: patLead[k] and patTrim[k] describe patClip[k] and nothing else.
+              patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0, out: 0};
+              patClip[k+1] = sK1; patLead[k+1] = {in: 0, out: patLead[k+1].out||0};
+              patTrim[k]   = {in: (patTrim[k]||NO_LEAD).in||0, out: s};
+              patTrim[k+1] = {in: s, out: (patTrim[k+1]||NO_LEAD).out||0};
+              Ap = sK[1]; Bp = sK1[0]; t = t2; nTrim++; trimMaxM = Math.max(trimMaxM, s);
+              break;
+            }
           }
         }
         if(t.pts){ via=t.pts;
@@ -9281,6 +9339,10 @@ async function punchOut(){
         `(+${patLeadTotal().toFixed(0)} m of ${leadWant.toFixed(0)} m asked, run only — not coverage)`+
         (nLeadCut?`, ${nLeadCut} run(s) cut short of the full lead by the chart`:``)+
         (nLeadGave?`, ${nLeadGave} reversal(s) had the lead shortened to fit the turn water`:``):``)+
+      // THE PULLED-BACK ENDS ARE COVERAGE THE OPERATOR DREW AND IS NOT GETTING, so they are
+      // named like every other dropped meter - with the worst case, because "up to 23 m" is
+      // what makes a trimmed line recognizable on the chart.
+      (nTrim?`, ${nTrim} reversal(s) had both line ends pulled back (up to ${trimMaxM} m) to fit the turn water`:``)+
       // STRUCK RUNS ARE NAMED WHERE THE OTHER DROPPED COVERAGE IS NAMED. Coverage that
       // leaves the plan is said out loud whatever took it — the depth window, the hull's
       // minimum line, or the operator's own hand — or a thin survey reads as a chart

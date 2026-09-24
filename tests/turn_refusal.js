@@ -17,6 +17,12 @@
 // update and one click on the chart later, the refusal had lifted and Add to plan committed the pattern UN-punched:
 // 23 lines through the piers with no turns at all. The drop is recorded (patDropped) and refused like the rest.
 //
+// AND THE TRIM RUNG (checks 15-15d, Andy 2026-09-24): when every rung and the lead give-way still refuse a reversal
+// for a keep-out, punchOut pulls both line ends back at the turn end a meter at a time until a turn flies (patTrim,
+// TRIM_MAX_M). The refusal world's pier therefore reaches 100 m into the runs now - past the cap - so checks 1-4 still
+// refuse; the old 10 m-overreach pier is FINGER_NEAR, the rung's acceptance case. 15b asks the punch's own ladder one
+// meter longer than what shipped and expects the refusal back: 1 m steps, first that flies, nothing more.
+//
 // DRIVEN: the page's own punchOut, punchRefusal, commitPattern, resetPattern and updatePatReadout, over the console's
 // real modules (geodesy, units, state, turns, passage, chart) and a keep-out model the REAL chart.js buildKeepouts makes
 // from an ENC-shaped dock feature - so the refusal comes from the real turn ladder, not from a fixture that says so.
@@ -133,11 +139,13 @@ function dock(x0, x1, y0, y1) {
   const ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]].map(([x, y]) => { const p = at(x, y); return [p.lon, p.lat]; });
   return { role: "dock", cls: "PONTON", props: {}, geometry: { type: "Polygon", coordinates: [ring] } };
 }
-const FINGER = () => dock(24.5, 25.5, 185, 240);       // between runs 3 and 4, across their north ends
+const FINGER = () => dock(24.5, 25.5, 100, 240);       // between runs 3 and 4, 100 m down past their north ends: past TRIM_MAX_M
+const FINGER_NEAR = () => dock(24.5, 25.5, 185, 240);  // the same pier 10 m into the run ends - what the trim rung fixes
 const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m east of the pattern
 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
+  "patIdentSeg", "trimEnd",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
   // clip standoff and from patClipKey. Missing from this list it is a bare ReferenceError
   // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash -
@@ -147,7 +155,7 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
-  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m];
+  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -175,7 +183,7 @@ function makeWorld(opts) {
     + " regionOrder, routeAround} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
     + PAGE_DECLS.map(decl).join("\n") + "\n"
-    + "let pat = {A:null, B:null, C:null, align:0}, patDrag = null, patMoveLast = null, patClip = null, patLead = [];\n"
+    + "let pat = {A:null, B:null, C:null, align:0}, patDrag = null, patMoveLast = null, patClip = null, patLead = [], patTrim = [];\n"
     + "let patUnsafe = [], patRed = [], patJoined = false, patDropped = null, patRoutes = [], patTransits = [];\n"
     + "let turnSlowAt = {};\n"
     + "let patStruck = [], patStruckKey = null, patSel = null, patClipMemo = null, patRepunchT = null;\n"
@@ -201,9 +209,16 @@ function makeWorld(opts) {
     + "const committedPatternInfo = () => null; const restoreStruckRuns = () => false;\n"
     + "const rebuildNogo = () => { nogo.builtOffset = sea.waterOffset; };   // the model's own rebuild is not under test\n"
     + PAGE_FUNCS.map(grab).join("\n")
+    // The ladder exactly as punchOut asks it, over the model punchOut builds (a dock has no channel and no chart ink,
+    // so koTurn is `ko`). turnMaxHalf is punchOut's own expression with GAP_LINES = 4.
+    + "\nfunction askTurn(E, F, hE, hF){ const sp = currentPattern(); const dr = depthRange();"
+    + " const ko = buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, dr.min), max: 0}, nogo.features);"
+    + " const half = Math.max(MAX_HALF_M, sp.spacing*4.6/2 + 2);"
+    + " return turnWithRetry(E, F, hE, hF, nogo.frame, ko, nogo.buffer, minTurnRadiusM(roleSpeed('turn')), half,"
+    + " minTurnRadiusM('low'), easeLsM(), {spdKey: roleSpeed('turn'), approachM: 1}); }"
     + "\nreturn { $, log, mission, punchOut, punchRefusal, commitPattern, updatePatReadout, resetPattern,"
-    + " strikeSelectedRun, flushRepunch, patCoverMid,"
-    + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT}),"
+    + " strikeSelectedRun, flushRepunch, patCoverMid, patCoverSeg, askTurn,"
+    + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT, patLead, patTrim}),"
     + " water: (m) => applyWaterOffset({ok: true, offset_m: m, stations: [{dist_km: 2}]}),"
     + " setPat: (A, B, Cc) => { pat = {A, B, C: Cc, align: 0}; },"
     + " select: (m) => { patSel = m; },"
@@ -514,6 +529,74 @@ const redList = (w) => redOf(w.get().patRed);
         () => "refused after the tide: " + !!refBare + "; banner: " + bareBanner.slice(0, 60) + "; committed "
               + bare.mission.lines.length + " lines");
   S.sea.waterOffset = 0;
+
+  // ── 15. THE TRIM RUNG (Andy, 2026-09-24): "incrementally shorten each line on the threat side by 1 m until the
+  // failure disappears". The pier that used to be checks 1-4's refusal reaches 10 m down past the north ends of runs 3
+  // and 4. Pulling both ends back frees the turn water; the rung does it a meter at a time and keeps the FIRST step that
+  // flies. So the check re-asks the ladder ONE METER LONGER than what shipped, through the punch's own model, and expects
+  // a refusal there - the trim is minimal, not merely sufficient - and asks it AT what shipped as the control.
+  // makeWorld writes the SHARED S.nogo (features included), so each world is punched before the next is made - two
+  // made together would both punch against whichever pier was set last.
+  const clean = makeWorld({ features: [FAR()] });
+  await safely(() => clean.punchOut());
+  const r15c = clean.get();
+  const near = makeWorld({ features: [FINGER_NEAR()] });
+  const p15 = await safely(() => near.punchOut());
+  const r15 = near.get();
+  const hint15 = near.$("#sp_hint").textContent;   // the punch's own summary - updatePatReadout rewrites it
+  near.updatePatReadout();
+  const ref15 = near.punchRefusal();
+  const northOf = (seg) => Math.max(FRAME.toEN(seg[0]).n, FRAME.toEN(seg[1]).n);
+  const southOf = (seg) => Math.min(FRAME.toEN(seg[0]).n, FRAME.toEN(seg[1]).n);
+  const trim = (k) => (r15.patTrim && r15.patTrim[k]) || { in: 0, out: 0 };
+  const s15 = trim(2).out;
+  const same = (a, b) => Math.abs(a - b) < 0.05;
+  const untouched = [0, 1, 4].every((k) => r15.patClip && r15c.patClip && same(northOf(r15.patClip[k]), northOf(r15c.patClip[k]))
+                                          && same(southOf(r15.patClip[k]), southOf(r15c.patClip[k])) && !trim(k).in && !trim(k).out);
+  const hE15 = r15.patClip ? G.azTo(r15.patClip[2][0], r15.patClip[2][1]) : 0;
+  const hF15 = r15.patClip ? G.azTo(r15.patClip[3][0], r15.patClip[3][1]) : 0;
+  const longer = r15.patClip ? [G.atDA(r15.patClip[2][1], 1, hE15), G.atDA(r15.patClip[3][0], 1, G.azTo(r15.patClip[3][1], r15.patClip[3][0]))] : null;
+  const askShipped = r15.patClip ? near.askTurn(r15.patClip[2][1], r15.patClip[3][0], hE15, hF15) : {};
+  const askLonger = longer ? near.askTurn(longer[0], longer[1], hE15, hF15) : {};
+  check("15. a pier 10 m into the north ends of runs 3 and 4: the turn is refused on every rung, then both ends are pulled "
+        + "back a meter at a time until it flies - equal trims at the turn end only, the south ends and the other runs "
+        + "untouched, nothing red, four turns, Add to plan enabled, and the punch summary names it",
+        () => !p15.err && ref15 === null && r15.patRed.length === 0 && turnsIn(near) === 4 && r15.patClip.length === 5
+              && s15 >= 1 && trim(3).in === s15 && trim(2).in === 0 && trim(3).out === 0 && untouched
+              && Math.abs(northOf(r15.patClip[2]) - (northOf(r15c.patClip[2]) - s15)) < 0.3
+              && Math.abs(northOf(r15.patClip[3]) - (northOf(r15c.patClip[3]) - s15)) < 0.3
+              && same(southOf(r15.patClip[2]), southOf(r15c.patClip[2])) && same(southOf(r15.patClip[3]), southOf(r15c.patClip[3]))
+              && near.$("#sp_add").disabled === false
+              && hint15.includes("1 reversal(s) had both line ends pulled back (up to " + s15 + " m) to fit the turn water"),
+        () => (p15.err ? "punch threw: " + p15.err.message + "; " : "") + "trims run3=" + JSON.stringify(trim(2)) + " run4="
+              + JSON.stringify(trim(3)) + "; north ends " + (r15.patClip ? northOf(r15.patClip[2]).toFixed(1) + "/" + northOf(r15.patClip[3]).toFixed(1) : "-")
+              + " vs clean " + (r15c.patClip ? northOf(r15c.patClip[2]).toFixed(1) : "-") + "; red: " + redList(near)
+              + "; refusal " + (ref15 ? ref15.short : "none") + "; hint: " + hint15.slice(0, 160));
+  check("15b. ... and the trim is MINIMAL: the same ladder, through the punch's own model, refuses the pair one meter "
+        + "longer than what shipped, and flies it at what shipped (the control)",
+        () => !!askShipped.pts && !askLonger.pts,
+        () => "at shipped: " + (askShipped.pts ? askShipped.kind : "REFUSED " + askShipped.why) + "; one meter longer: "
+              + (askLonger.pts ? "FLIES (" + askLonger.kind + ")" : "refused " + askLonger.why));
+  // The refusal world (checks 1-4) is the same pier reaching 100 m into the runs: past TRIM_MAX_M, so the rung gives up
+  // and the pair stays red - and it gives NOTHING when it gives up, or the plan would lose coverage for no turn.
+  check("15c. past the cap the pair is still refused (checks 1-4) and NO end was pulled back for it",
+        () => r1.patRed.length === 1 && r1.patTrim && r1.patTrim.length === 5 && r1.patTrim.every((T) => !T.in && !T.out),
+        () => "trims: " + JSON.stringify(r1.patTrim));
+  // ── 15d. A STRIKE STILL FINDS A TRIMMED RUN. The strike list holds CLIP midpoints (keptRuns), so the midpoint that
+  // names run 3 must not move when its north end is pulled back - while the LINES card's coverage (patCoverSeg) must.
+  const id3 = near.patCoverMid(2), cov3 = near.patCoverSeg(2);
+  const idN = FRAME.toEN(id3).n, covN = northOf(cov3);
+  near.select({ ...id3, length: 190 });
+  const struck15 = near.strikeSelectedRun();
+  const f15 = await safely(() => near.flushRepunch());
+  const g15 = near.get();
+  check("15d. run 3's identity midpoint stays the CLIP's (y 100) while its coverage ends short - and striking it by that "
+        + "midpoint applies on the re-punch: four runs left, nothing red",
+        () => Math.abs(idN - 100) < 0.6 && Math.abs(covN - (195 - s15)) < 0.3
+              && struck15 && !f15.err && g15.patClip.length === 4 && g15.patRed.length === 0,
+        () => "identity y=" + idN.toFixed(1) + ", coverage north y=" + covN.toFixed(1) + " (trim " + s15 + "); "
+              + (f15.err ? "re-punch threw: " + f15.err.message + "; " : "") + (g15.patClip || []).length + " runs after the strike; red: "
+              + redList(near));
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

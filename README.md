@@ -926,6 +926,16 @@ diagnosable (`tests/frame_health.js`).
    console punched before the feature existed, so a lead can never be the reason a plan has
    an unflyable turn.
 
+   *And when the lead has nothing left to give, the line ends do.* A reversal a keep-out still
+   refuses on every rung (every loop the boat could fly enters it, or the hull flown along the
+   loop enters the buffer) has **both** line ends pulled back at the turn end, one meter at a
+   time, the whole ladder retried at each step, until a turn flies — the first step that does
+   is the one kept, so the survey loses the least that buys a flyable turn. Capped at 60 m and
+   a third of the shorter run; past that the pair is red and Add to plan is refused as before.
+   The banner says so (`N reversal(s) had both line ends pulled back (up to 23 m) to fit the
+   turn water`), the LINES table shows the coverage as trimmed, and a strike still finds the run
+   by the midpoint it was drawn with (`tests/turn_refusal.js` 15–15d).
+
    *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
    coverage and adds a `lead m` column beside it — the `plan` column times the whole run,
    because `actual` is clocked over the whole run — and the survey card's **Line len**

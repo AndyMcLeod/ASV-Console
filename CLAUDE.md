@@ -66,7 +66,17 @@ written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-23 — **THE ERIE RTH INCIDENT: A HOME 500 km AWAY**; the drawImage regression, the escape incident, the launch grant and the review branch follow below)
+## ⇒ START HERE (handoff refreshed 2026-09-24 — **THE PUNCH TRIMS ITS OWN UNFLYABLE TURNS**; the Erie RTH incident, the drawImage regression, the escape incident, the launch grant and the review branch follow below)
+
+### ⚠ THE TRIM RUNG (Andy, 2026-09-24): "the punch out function leaves an incapable turn ... identify this type situation and incrementally shorten each line on the threat side by 1 m until the failure disappears ... the punch out should see this prior to presentation to the user"
+
+His screen: `ADD TO PLAN REFUSED — 1 reversal(s) have NO FLYABLE TURN (runs 5—6): every loop the boat could fly enters water shallower than 2.0 m`. **Now, inside `punchOut`, after the turn ladder AND the lead give-way have refused a pair for a keep-out (`why` nogo or track), both runs give at the TURN end one meter at a time → the whole ladder re-asked at each step → the FIRST step that flies is kept.** Capped at `TRIM_MAX_M` (60) and a third of the shorter run's coverage; past that the pair is red and Add to plan refuses exactly as before. Recorded per run in **`patTrim`** (parallel to `patClip`/`patLead`), counted into the punch hint (`N reversal(s) had both line ends pulled back (up to 15 m) to fit the turn water`).
+
+* ⚠ **A run's identity for a strike is the CLIP midpoint, not the coverage's.** `keptRuns` matches struck midpoints against the clip runs (1 m tolerance) and a 15 m trim moves the coverage midpoint 7.5 m — so `patCoverMid` now goes through `patIdentSeg` (coverage with the trim put back). `patCoverSeg` stays the trimmed coverage (the LINES card's truth). Mutation M3 (identity follows the trim) is what a strike on a trimmed run silently failing looks like: check 15d.
+* **`tests/turn_refusal.js` 15—15d**, driven through the real punch: the old 10 m-overreach pier (`FINGER_NEAR`) now trims 15 m off runs 3 and 4 at the north end only, racetrack flies at what shipped, and **15b re-asks the punch's own ladder one meter longer and gets the refusal back** (1 m steps, minimal). The refusal world's pier (`FINGER`) now reaches 100 m into the runs — past the cap — so checks 1—4 still refuse, and 15c pins that a refused pair gives NOTHING. **5 sidecar mutations, 5 killed** (rung off → 15/15b; start from the cap → 15b; identity follows the trim → 15d; no cap → 1/15c; one run gives → 15).
+* ⚠ `makeWorld` in that suite writes the SHARED `S.nogo`: punch a world before making the next, or both punch against the last pier set (15 failed that way first).
+* NOT changed: which pairs get a turn attempted (the gates), the ladder's order, `punchRefusal`'s remedies. A refused pair that trimming cannot fix reads as before.
+
 
 ### ⚠⚠ SECOND PASS, THE SAME EVENING — "You didn't fix anything. Same behavior" / "figure out why the initial spawn and all requested spawns don't work and leaves home in Delaware"
 

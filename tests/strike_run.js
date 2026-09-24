@@ -148,9 +148,13 @@ eval(grab("keptRuns"));
 // every midpoint that identifies a run has to come off the coverage half. Real bodies for
 // the same reason as the three above - these are the exact functions the strike path calls.
 let patLead = [];
+// A turn-water trim (punchOut's trim rung, 2026-09-24) moves the coverage midpoint, and the
+// midpoint that names a run for a strike is the CLIP's: patCoverMid reads patTrim through
+// patIdentSeg. Empty here - this suite never trims - but the real body must find the name.
+let patTrim = [];
 const NO_LEAD = { in: 0, out: 0 };
 // eslint-disable-next-line no-eval
-eval(grab("patCoverSeg") + "\n" + grab("patCoverMid") + "\n" + grab("dropStruckFromPunch"));
+eval(grab("patCoverSeg") + "\n" + grab("patIdentSeg") + "\n" + grab("patCoverMid") + "\n" + grab("dropStruckFromPunch"));
 
 const P = (lat, lon) => ({ lat, lon });
 // A tidy east-west serpentine at ~43 N: five runs, 200 m apart, 1 km long.
@@ -612,7 +616,7 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
         patClip.length + " runs, " + patLead.length + " leads: "
         + patLead.map(l => l.in + "/" + l.out).join(" ")
         + " (was 40/5 40/5 40/5 12/60 0/0 — index 2 removed)");
-  patStruck = []; patStruckKey = null; patClip = null; patLead = [];
+  patStruck = []; patStruckKey = null; patClip = null; patLead = []; patTrim = [];
 }
 
 // ── 25. DELETE BELONGS TO A FOCUSED FIELD FIRST ────────────────────────────────────
