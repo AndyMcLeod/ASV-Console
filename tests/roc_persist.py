@@ -132,12 +132,27 @@ check("3. HOME survives the cap even when it is the oldest ROC of all",
 check("3b. ... by displacing the OLDEST kept entry, not the newest "
       "(the newest is what the operator just placed)",
       lambda: names(p2) == ["HOME_ONE", "later3", "later4"], lambda: str(names(p2)))
-check("4. ... and home_id is still pointed at it after a restart, so Return-to-Home "
-      "goes where it went before",
-      lambda: saved2.get("home_id") == hid
-      and R.RocTracker(config_path=p2).snapshot().get("home_id") == hid,
-      lambda: "saved=%s reloaded=%s" % (saved2.get("home_id"),
-                                        R.RocTracker(config_path=p2).snapshot().get("home_id")))
+# ⚠⚠ 4 USED TO ASSERT THE OPPOSITE - "home_id is still pointed at it after a restart, so
+# Return-to-Home goes where it went before" - and that promise is what put home 500 km from the
+# boat at Erie on 2026-09-23: an Aug demo's Mothership, restored as HOME at every boot, planted
+# over the first fix, and no spawn could shift it. The ROC survives (3, 3b); the SELECTION is
+# the operator's to make again in this session, from where the boat actually is.
+check("4. ... but the SELECTION does not: the file names no home and a fresh tracker "
+      "selects none - a restart re-arms home at the first fix, not at last week's ship",
+      lambda: "home_id" not in saved2
+      and R.RocTracker(config_path=p2).snapshot().get("home_id") is None,
+      lambda: "saved home_id=%s reloaded=%s" % (saved2.get("home_id", "<absent>"),
+                                                R.RocTracker(config_path=p2).snapshot().get("home_id")))
+# 4b. THE FILE HIS CONSOLE HAD: an older build's file that still carries "home_id". It loads the
+# ROC and ignores the selection - the operator does not have to edit it to boot with a true home.
+p2b = fresh("legacy_home.json")
+with open(p2b, "w", encoding="utf-8") as f:
+    json.dump({"rocs": [{"id": "ship-1", "name": "Mothership", "kind": "ship", "status": "active",
+                         "lat": 38.8, "lon": -75.1}], "home_id": "ship-1"}, f)
+snap2b = R.RocTracker(config_path=p2b).snapshot()
+check("4b. an old file that still names a home_id loads the ROC and selects NOTHING",
+      lambda: [r["id"] for r in snap2b["rocs"]] == ["ship-1"] and snap2b.get("home_id") is None,
+      lambda: "rocs=%s home_id=%s" % ([r["id"] for r in snap2b["rocs"]], snap2b.get("home_id")))
 
 # ---- the cap, on the way IN (self-heal) ---------------------------------- #
 # THE CASE THAT WAS ACTUALLY REPORTED: a file already holding 198 entries, written by a

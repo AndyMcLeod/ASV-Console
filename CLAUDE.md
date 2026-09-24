@@ -68,6 +68,17 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-09-23 — **THE ERIE RTH INCIDENT: A HOME 500 km AWAY**; the drawImage regression, the escape incident, the launch grant and the review branch follow below)
 
+### ⚠⚠ SECOND PASS, THE SAME EVENING — "You didn't fix anything. Same behavior" / "figure out why the initial spawn and all requested spawns don't work and leaves home in Delaware"
+
+**The first pass (below) fixed the consequences and left the cause.** Reproduced on a throwaway console booted on his `roc_config.json`: home at boot `38.7997,-75.1 src=ship-1` with the boat at Erie; `/api/cmd/spawn` at Erie → 200, and 4 s later home was STILL `38.7998,-75.1 src=ship-1`. Two writers, neither touched by the first pass:
+
+* **`RocTracker._load` RESTORED `home_id` from the file at every boot** — so the initial spawn's first-fix seed lost to `home_intent()` on the first frame, every time the console started. Now `_load` leaves `_home_id = None` (the ROCs themselves still load; the key in an old file is read only to keep that ROC through the persistence cap) and `_save_locked` no longer writes the key. **HOME is a session fact.** `roc_persist.py` 4 used to assert the opposite ("home_id is still pointed at it after a restart, so Return-to-Home goes where it went before") — flipped, with 4b loading the incident's exact file shape.
+* **`Engine.reset()` nulled `home` but never released the ROC** — the next tick re-read `home_intent()` and re-planted the ship. Now `set_home_provider(fn, release=ROC.clear_home)` and `reset()` calls the release **BEFORE `connect()`** (so no frame between the new link and the nulling can plant it) and nulls `home_source` with `home`.
+
+`home_spawn.py` now BOOTS on that file (an active, static Mothership in the Gulf of Maine with `home_id` at it): 1b the initial spawn (home 0 m from the first fix, 272 km from the ship, `home_source` None, `roc.home_id` None, the ship still on the card), 8b the CONTROL (select the ship → home goes to it), 8c a requested spawn releases it (home at the spawn point). **3 mutations, 3 killed by the check written for each** (restore-on-load → 4b + 1b; no release in reset → 8c; write the key again → 4). `run_link_control.py` 9d (a mid-session clear_home) still holds.
+
+⚠⚠ **OPERATOR ACTIONS on the live console:** restart the server from a tree at or after this commit (`asv.html` is snapshotted at boot; `build` vs `build_on_disk` in `/api/state` says which you are running). Nothing in `roc_config.json` needs editing any more — its `home_id` is ignored, and the Mothership card is still there to select when the ship really is nearby. **If the behavior is STILL the same after a restart, the console is being launched from a directory that is not `D:\Claude\ASV`** — `build` in `/api/state` is the check.
+
 ### ⚠⚠ "END OF GOTO RTH SETTING AND THE RTH BUTTON STILL DO NOT WORK" (Erie PA, evening of 2026-09-23)
 
 **The server never received an RTH.** Not from the chain, not from the button, in either session. `/api/state` on his console read `pos 42.1394,-80.0893` and **`home 38.8112,-75.1000` — Lewes, Delaware Bay, ~500 km away.**
@@ -85,7 +96,7 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 **4 mutations, 4 killed, 0 skipped** — each by the check written for it, F3 only after the harness fix above (before it, F3 went red by crash, and the runner correctly refused to count that).
 
-⚠⚠ **OPERATOR ACTIONS on the live console, in this order:** restart the server (the hung extraction dies with it, and `asv.html` is snapshotted at boot); **Set Home** where she is; and in `roc_config.json` set `"home_id": null` or remove the Mothership, or every boot re-plants Delaware.
+⚠ *(superseded by the second pass above — `roc_config.json` no longer needs editing; the rest stands)* ⚠⚠ **OPERATOR ACTIONS on the live console, in this order:** restart the server (the hung extraction dies with it, and `asv.html` is snapshotted at boot); **Set Home** where she is; and in `roc_config.json` set `"home_id": null` or remove the Mothership, or every boot re-plants Delaware.
 
 ⚠ **OPEN:** who wrote `roc_config.json` on Sep 20 21:21. It has the Aug 1 demo shape. If a review-era harness launched the console without `--state-dir` and wrote its demo into the live tree, that is [[tests-must-not-write-app-state]] and wants finding. Also: `home_source` is not in `SessionLogger.SALIENT`, so the moment a ROC-home is orphaned leaves no snapshot — worth adding.
 

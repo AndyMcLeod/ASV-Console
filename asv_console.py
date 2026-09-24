@@ -4120,6 +4120,7 @@ class Engine:
         # point, and for a ship (Mothership) it moves every tick, so a running RTH
         # re-targets the boat at it. Injected in main() - see set_home_provider.
         self.home_provider = None      # callable -> {roc_id,name,kind,moving,point} | None
+        self.home_release = None       # callable: drop the ROC that owns HOME (reset / spawn)
         self.home_source = None        # None (first fix / manual) | the active ROC id
         self._rth_follow = False       # True while RTH is chasing a moving home
         self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
@@ -4263,9 +4264,12 @@ class Engine:
         block that commands the link, so the telemetry loop drops any frame it read before it."""
         self._cmd_gen += 1
 
-    def set_home_provider(self, fn):
-        """Inject the ROC tracker's home_intent getter (see main())."""
+    def set_home_provider(self, fn, release=None):
+        """Inject the ROC tracker's home_intent getter (see main()) and the call that
+        RELEASES its home selection. reset() needs the second: a spawn that nulls `home`
+        while a ROC still owns it is undone on the next tick."""
         self.home_provider = fn
+        self.home_release = release
 
     def set_armed(self, on):
         with self._lock:
@@ -4892,8 +4896,9 @@ class Engine:
     def reset(self, spawn=None):
         """Simulator power-cycle: a clean slate as if the boat were shut down and
         restarted. Brings up a FRESH SimVcu (energy full, back at the spawn point,
-        no plan) and returns the console to SAFE / idle with no home. Home re-arms
-        automatically on the next fix. SIM ONLY - a real boat can't be teleported and
+        no plan) and returns the console to SAFE / idle with no home - a ROC that owned
+        it is released, so home re-arms on the next fix AT THE SPAWN POINT. SIM ONLY - a
+        real boat can't be teleported and
         its battery/fuel can't be refilled from the console, so refuse honestly.
         `spawn` = {"lat":..,"lon":..} brings the boat up THERE instead of at the active
         vessel's configured spawn (click-to-spawn); everything else is identical, so
@@ -4902,11 +4907,22 @@ class Engine:
             mode = self._mode
         self._require(mode == "sim", "Reset is a simulator-only convenience - a real "
                       "boat can't be teleported to spawn or have its energy refilled.")
+        # ⚠⚠ RELEASE THE ROC THAT OWNS HOME, AND DO IT BEFORE THE NEW LINK'S FIRST FRAME.
+        # Nulling `home` below was never enough: _run re-reads home_intent() every tick and a
+        # ROC still selected re-planted ITS point on the very next frame - so every spawn Andy
+        # asked for at Erie brought the boat up there and home stayed 500 km away, at the
+        # Mothership's Aug position. The release goes first so no frame between connect() and
+        # the block below can plant it; home_source is nulled with home so the else branch in
+        # _run has nothing to announce and the first-fix seed fires on the spawn point. The file
+        # is not read for home either - see RocTracker._load.
+        if self.home_release is not None:
+            self.home_release()
         # A fresh sim link IS the power-cycle: new SimVcu (full energy, spawn
         # position) + SAFE state. connect() takes its own lock, so call it unlocked.
         self.connect("sim", self._host, self._port, "tcp", spawn=spawn)
         with self._lock:
             self.home = None
+            self.home_source = None
             # ⚠ THE ONE DOCUMENTED EXCEPTION to "identity is read back off the link". This is a
             # power-cycle onto a FRESH link that holds no plan at all, so there is nothing to
             # read: connect() cleared `plan_uploaded`, and Start is gated on it.
@@ -7181,7 +7197,7 @@ def main():
     # Return-to-Home against a MOVING recovery point can be exercised with no hardware.
     # Nothing auto-seeds - the operator places ROCs by clicking the chart and confirms
     # them. On a real link, ROCs are added/fed from the card or the API.
-    ENGINE.set_home_provider(ROC.home_intent)
+    ENGINE.set_home_provider(ROC.home_intent, release=ROC.clear_home)
     if args.sim:
         ROC.start_sim()
         atexit.register(ROC.stop)

@@ -627,18 +627,27 @@ class RocTracker:
                 self._seq = max(self._seq, int(rid.rsplit("-", 1)[1]))
             except (IndexError, ValueError):
                 pass
-        self._home_id = data.get("home_id") if data.get("home_id") in self._rocs else None
+        # ⚠⚠ HOME IS A SESSION FACT, NOT A PERSISTED ONE (Erie, 2026-09-23). This line used
+        # to restore `home_id` from the file, and home_intent() then planted that ROC's position
+        # as HOME on the first frame of EVERY boot: an Aug demo's Mothership record at 38.8 N
+        # off Delaware stood in for home at Erie, 500 km away, and no spawn could shift it. The
+        # ROCs themselves still load - the operator's cards are theirs to keep - but which of
+        # them owns HOME is decided by the operator in THIS session, over a first fix that is
+        # where the boat actually is. Old files still carry the key; it is read above only to
+        # keep the ROC it names through the cap, never to select it.
+        self._home_id = None
 
     def _save_locked(self):
         # ONLY the most recent ROC_PERSIST_MAX reach the file. The live registry is left
         # alone - removing a ROC the operator is still using because they placed a fourth
         # would be a surprise mid-session; the cap is a property of what SURVIVES.
         keep = self._persist_keep(list(self._rocs.values()), self._home_id, key=lambda r: r.id)
-        home = self._home_id if any(r.id == self._home_id for r in keep) else None
+        # No `home_id` in the file: a key that is written and never honored is a promise the
+        # operator reads and the console breaks (see _load). The HOME ROC still survives the
+        # cap above, so it is there to select again after a restart.
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump({"rocs": [r.to_config() for r in keep],
-                           "home_id": home}, f, indent=2)
+                json.dump({"rocs": [r.to_config() for r in keep]}, f, indent=2)
         except OSError:
             pass
 

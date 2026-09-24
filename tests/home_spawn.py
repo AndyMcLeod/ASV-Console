@@ -196,6 +196,18 @@ port = free_port()
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 from console_state import ConsoleState  # noqa: E402
 STATE = ConsoleState()
+# ⚠⚠ A PERSISTED ROC HOME - THE SHAPE THAT PUT HOME 500 km FROM THE BOAT (Erie, 2026-09-23).
+# roc_config.json from an Aug demo held an active Mothership at 38.8 N off Delaware with
+# "home_id" pointed at it. Every boot restored the selection, home_intent() planted the ship's
+# position as home on the first frame, and reset() nulled `home` without releasing the ROC, so
+# the next tick planted it again: neither the initial spawn nor any requested one could put home
+# where the boat was. This console boots on exactly that file, with the ship parked in the Gulf
+# of Maine - hundreds of km from any vessel's spawn - and static. 1b is the boot, 8b/8c the spawn.
+SHIP = (44.5, -68.0)
+with open(STATE.path("roc_config.json"), "w", encoding="utf-8") as f:
+    json.dump({"rocs": [{"id": "ship-1", "name": "Mothership", "kind": "ship", "status": "active",
+                         "lat": SHIP[0], "lon": SHIP[1], "heading": 0, "speed_kn": 0}],
+               "home_id": "ship-1"}, f)
 
 srvlog = tempfile.TemporaryFile(mode="w+")
 proc = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
@@ -217,6 +229,23 @@ try:
         raise SystemExit(1)
 
     here = (st0["lat_deg"], st0["lon_deg"])
+
+    # 1b. THE INITIAL SPAWN: home is the boat's first fix, NOT the ROC the file names. Before
+    # 2026-09-23 this read home at the ship while the boat sat somewhere else entirely, and the
+    # snapshot said so: roc.home_id "ship-1", home_source "ship-1".
+    st = wait_for(port, lambda s: s.get("home") is not None, limit=20)
+    hm = st.get("home") or {}
+    check("1b. BOOT with a persisted ROC home: home is the FIRST FIX, no ROC owns it, and the "
+          "ship itself is still on the card",
+          lambda: bool(hm) and dist_m((hm["lat"], hm["lon"]), here) < 150
+          and dist_m((hm["lat"], hm["lon"]), SHIP) > 100000
+          and st.get("home_source") is None and (st.get("roc") or {}).get("home_id") is None
+          and any(r.get("id") == "ship-1" for r in (st.get("roc") or {}).get("rocs") or []),
+          lambda: "home %s: %.0f m from the boat, %.0f km from the ship; home_source=%s "
+                  "roc.home_id=%s" % (json.dumps(hm),
+                                      dist_m((hm["lat"], hm["lon"]), here) if hm else -1,
+                                      dist_m((hm["lat"], hm["lon"]), SHIP) / 1000 if hm else -1,
+                                      st.get("home_source"), (st.get("roc") or {}).get("home_id")))
 
     # 2. TWO SOURCES FOR ONE FIELD, and both need pinning - which is why this is now four
     # checks. Until 2026-08-08 a supplied position was DISCARDED and check 2 asserted
@@ -391,6 +420,38 @@ try:
           lambda: "home %.0f m from the spawn point, %.0f m from the OLD home"
                   % (dist_m((st["home"]["lat"], st["home"]["lon"]), target),
                      dist_m((st["home"]["lat"], st["home"]["lon"]), home)))
+
+    # 8b-8c. A REQUESTED SPAWN WHILE A ROC OWNS HOME. 8b is the CONTROL: the operator selects
+    # the ship and home really goes to it - or 8c is a statement about a home that was never
+    # anywhere else. Then a spawn: before 2026-09-23 reset() nulled `home` and the still-selected
+    # ship re-planted its point on the next tick, so the boat came up where the operator clicked
+    # and home stayed with the ship.
+    boot1 = st.get("boot_id")
+    cmd(port, "/api/roc", {"op": "select_home", "id": "ship-1"})
+    st = wait_for(port, lambda s: s.get("home_source") == "ship-1" and s.get("home") is not None,
+                  limit=15)
+    hm = st.get("home") or {}
+    check("8b. (control) the ship selected as HOME takes it - home goes to the ship",
+          lambda: st.get("home_source") == "ship-1" and bool(hm)
+          and dist_m((hm["lat"], hm["lon"]), SHIP) < 2000,
+          lambda: "home_source=%s home=%s" % (st.get("home_source"), json.dumps(hm)))
+    target2 = (target[0] + 0.009, target[1])          # ~1.0 km north of the last spawn
+    cmd(port, "/api/cmd/spawn", {"lat": target2[0], "lon": target2[1]})
+    st = wait_for(port, lambda s: s.get("boot_id") not in (None, boot1)
+                  and s.get("home") is not None and s.get("home_source") is None, limit=30)
+    hm = st.get("home") or {}
+    check("8c. a spawn RELEASES the ROC that owned home: home re-arms at the SPAWN POINT, "
+          "no ROC owns it, and the ship is still on the card",
+          lambda: st.get("boot_id") not in (None, boot1) and bool(hm)
+          and dist_m((hm["lat"], hm["lon"]), target2) < 150
+          and dist_m((hm["lat"], hm["lon"]), SHIP) > 100000
+          and st.get("home_source") is None and (st.get("roc") or {}).get("home_id") is None
+          and any(r.get("id") == "ship-1" for r in (st.get("roc") or {}).get("rocs") or []),
+          lambda: "home %s: %.0f m from the spawn point, %.0f km from the ship; home_source=%s "
+                  "roc.home_id=%s" % (json.dumps(hm),
+                                      dist_m((hm["lat"], hm["lon"]), target2) if hm else -1,
+                                      dist_m((hm["lat"], hm["lon"]), SHIP) / 1000 if hm else -1,
+                                      st.get("home_source"), (st.get("roc") or {}).get("home_id")))
 
     # 9-10. THE FIX, each half caught on its own. Before it, both of these "succeeded"
     # and set home from the dead boat's fix.
