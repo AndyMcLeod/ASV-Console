@@ -66,7 +66,24 @@ written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-23 — **A LIVE ESCAPE INCIDENT, AND THE THREE THINGS IT ASKED FOR**; the launch grant and the review branch follow below)
+## ⇒ START HERE (handoff refreshed 2026-09-23 — **A REGRESSION FROM THE REVIEW, FOUND ON THE WATER**; the escape incident, the launch grant and the review branch follow below)
+
+### ⚠⚠ "RTH WORKED FROM ANY STATE BEFORE THE POLISH. YOU BROKE SOME THINGS."
+
+Andy, 2026-09-23, on his live console (master, `dd64f0c858`): *"the sim is refusing to acknowledge RTH command while running a GOTO."* He was right that the review broke it, and wrong only about where: **the sim took the RTH.** The page could not say so.
+
+**THE CAUSE** — `2c90bc0341` (2026-09-22, the page-hang fix) moved the ENC layer onto a cached offscreen canvas, `drawENCCached`, sized from `viewSize()` = `mapEl.clientWidth/clientHeight`. That is **0x0 whenever the map has no layout**: a minimized or background chart window, a hidden pane, the first frame before layout. The layer sized its canvas to 0x0 and called `ctx.drawImage(encLayer, 0, 0)`, and the browser's rule is unforgiving: *InvalidStateError - a canvas element with a width or height of 0*. Thrown on EVERY frame from `render()`: `onState` failed **465 telemetry frames in a row** (the CONSOLE FAULT line in the History card), so the page went blind — and `doRTH` ends in `render()`, so the handler died as an *Uncaught (in promise)* right after its post had landed. Before the cache, `drawENC` drew straight to the main context and a 0x0 view just drew nothing.
+
+**PROVEN, not inferred:** `/api/cmd/rth` mid-goto answers 200 `{"ok":true}` and `behavior` flips `goto → rth`, at the API and from the real button in a healthy tab; the browser console carried the exact error and both stacks.
+
+**THE FIX** (`static/asv.html`, `drawENCCached`): `if(!(w > 0 && h > 0)) return;` above the key — nothing to draw into means don't size, don't cache, don't draw, and the next real frame is an honest miss. `tests/enc_cache.js` 8 ⇒ **9**, and check 9 drives **all three degenerate views** (0x0, 0x600, 800x0) because the first draft drove only 0x0 and a width-only guard survived it. **4 mutations, 4 killed, 0 skipped.** The harness's fake `drawImage` never throws, so the check installs the browser's own rule for its own duration — without that it passed on the broken code.
+
+⚠⚠ **THIS IS ON `fix/criticals`, NOT ON MASTER, AND HIS CONSOLE IS ON MASTER.** Two things have to happen and a reload does neither: **merge**, then **restart the server** — `asv.html` is snapshotted at boot (`build` vs `build_on_disk` in `/api/state`). Until then the workaround is simply **keep the chart window visible and un-minimized**, so the map has a size.
+
+⚠ **FILED, NOT FIXED:** the CLASS this belongs to. Every command handler ends in `render()` and none is caught, so any throw in the draw path after a post lands leaves the operator with a landed command and no acknowledgement — the shape of [[async-command-must-be-caught]]. This instance is closed at its root; the class is not.
+
+**AND WHAT THE REVIEW'S OWN GUARD MISSED:** `eb6b0029e6` (review #29, "A page that stops responding leaves evidence") is what wrote the CONSOLE FAULT line — it reported this defect faithfully, 465 times, into a History card nobody was reading while the boat was moving. Evidence that only lands in a card is evidence for the post-mortem, not for the operator.
+
 
 ### ⇒ THE LIVE INCIDENT OF 2026-09-23
 

@@ -198,5 +198,50 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
           + "not fire there. That is the trap this file records three times over");
 }
 
+// ⚠⚠ 9. A VIEW WITH NO SIZE (2026-09-23). viewSize() is mapEl.clientWidth/clientHeight,
+// which is 0x0 whenever the map has no layout - a minimized or background window, a hidden
+// pane, the first frame before layout. This layer sized its canvas to that and then blitted
+// it, and the browser's rule for drawImage is unforgiving: a source canvas with a width or
+// height of 0 is an InvalidStateError. Thrown on EVERY frame, that made the page blind - 465
+// telemetry frames failed in a row on the console this was found on - and killed any command
+// handler that ends in render() right after its post had landed. Andy saw it as the sim
+// "refusing to acknowledge" an RTH the vessel had in fact taken.
+//
+// ⚠ THE FAKE drawImage ABOVE NEVER THROWS, so against it this check would pass on the broken
+// code and prove nothing. For the length of this block it is replaced with the browser's own
+// rule, and that is what lets the check go red when the guard is absent.
+{
+  const lenient = ctx.drawImage;
+  ctx.drawImage = (src) => {
+    if (!(src && src.width > 0 && src.height > 0))
+      throw new Error("InvalidStateError: The image argument is a canvas element with a width or height of 0.");
+    blits++;
+  };
+  encLayer = null; encLayerSrc = null; encLayerKey = "";
+  reset();
+  // ⚠ THREE DEGENERATE VIEWS, NOT ONE. Driven only at 0x0, this check passed a guard that
+  // tested the width alone - the mutation survived - and a window collapsed to zero HEIGHT
+  // with a real width would still have thrown. Each axis is its own refusal case.
+  let threw = null, blitsAtZero = 0, cachedZero = false;
+  for (const [dw, dh] of [[0, 0], [0, 600], [800, 0]]) {
+    encLayer = null; encLayerSrc = null; encLayerKey = ""; reset();
+    try { drawENCCached(toScreen, dw, dh, o); } catch (e) { threw = threw || (dw + "x" + dh + ": " + e.message); }
+    blitsAtZero += blits;
+    cachedZero = cachedZero || (!!encLayer && !(encLayer.width > 0 && encLayer.height > 0));
+  }
+  // THE ACCEPTANCE CASE: the same layer, given a real view, still draws - a guard that made
+  // every draw a no-op would pass the refusal above and fail here.
+  reset();
+  let threwReal = null;
+  try { drawENCCached(toScreen, 800, 600, o); } catch (e) { threwReal = e.message; }
+  const blitsReal = blits;
+  check("9. a view with NO SIZE draws nothing and throws nothing - the cache is never sized 0x0",
+        threw === null && blitsAtZero === 0 && !cachedZero && threwReal === null && blitsReal === 1,
+        "0x0: " + (threw ? "THREW " + threw.slice(0, 60) : "no throw") + ", " + blitsAtZero
+          + " blit(s), cache " + (cachedZero ? "SIZED 0x0" : (encLayer ? "sized for the real view" : "untouched"))
+          + "; then 800x600: " + (threwReal ? "THREW" : "drew") + " with " + blitsReal + " blit(s)");
+  ctx.drawImage = lenient;
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

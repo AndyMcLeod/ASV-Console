@@ -6959,6 +6959,19 @@ function encLayerKeyNow(w, h, o){
 }
 function drawENCCached(toScreen, w, h, o){
   if(!sea.enc.features.length) return;
+  // ⚠⚠ A VIEW WITH NO SIZE HAS NOTHING TO DRAW INTO, AND SIZING THE CACHE TO IT THROWS.
+  // viewSize() is mapEl.clientWidth/clientHeight, which is 0x0 whenever the map has no layout
+  // - a minimized or background window, a hidden pane, the first frame before layout. Before
+  // this layer existed (2c90bc0341, 2026-09-22) drawENC drew straight to the main context and
+  // a 0x0 view simply drew nothing. With the cache, that view sized `encLayer` to 0x0 and the
+  // `drawImage` below threw InvalidStateError - "a canvas element with a width or height of
+  // 0" - on EVERY frame: onState failed 465 telemetry frames in a row, the page went blind, and
+  // any command handler that ends in render() died right after its post had landed. Andy, on
+  // the water, 2026-09-23: *"the sim is refusing to acknowledge RTH command while running a
+  // GOTO"* - the vessel TOOK the RTH; the page could not process the frame that said so.
+  // ⚠ NOT CACHED EITHER. Returning before the key is computed means the next frame with a
+  // real size is an honest miss rather than a hit on a layer that was never drawn.
+  if(!(w > 0 && h > 0)) return;
   const key = encLayerKeyNow(w, h, o);
   if(!(encLayer && encLayerSrc === sea.enc && encLayerKey === key)){
     if(!encLayer) encLayer = document.createElement("canvas");
