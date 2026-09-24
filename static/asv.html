@@ -887,7 +887,7 @@ import { scanChart, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
-         teardropTurn, turnWithRetry } from "/static/js/turns.js";
+         teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
@@ -1215,6 +1215,28 @@ function roleSpeed(role){
 }
 // ... and in m/s, which is what every duration estimate on this page actually wants.
 function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.survey) * 0.514444; }
+// Is the leg a->b one of the committed survey lines, either way round (the same match currentLegLine makes).
+function legIsLine(a, b){
+  return (mission.lines || []).some(L => (distTo(a, L.a) <= LINE_MATCH_M && distTo(b, L.b) <= LINE_MATCH_M)
+                                      || (distTo(a, L.b) <= LINE_MATCH_M && distTo(b, L.a) <= LINE_MATCH_M));
+}
+/**
+ * THE SPEED KEY THE RUN WILL COMMAND ON EACH LEG of a route about to be uploaded, for cornerSlowPlan's
+ * `keyAt` (2026-09-24). Mirrors currentActivity's roles for the flown run: a generated join (either end is
+ * a `turn` waypoint of the plan - routePlan copies lat/lon exactly, so the plan's own points match by key)
+ * is flown at the TURN speed, a leg that IS a committed line at the SURVEY speed, everything else - the
+ * routed approach, a region hop, a detour - at the TRANSIT speed. Before this every corner was judged at
+ * the fastest of the three, which flagged 3 kn survey turns as unflyable at 6 kn.
+ */
+function routeSpeedKeys(route){
+  const turnPts = new Set();
+  (mission.waypoints || []).forEach(p => { if(p.turn) turnPts.add(p.lat + "," + p.lon); });
+  const isTurn = p => !!p && (p.turn || turnPts.has(p.lat + "," + p.lon));
+  return i => { const a = route[i-1], b = route[i]; if(!a || !b) return null;
+    if(isTurn(a) || isTurn(b)) return roleSpeed("turn");
+    if(legIsLine(a, b)) return roleSpeed("survey");
+    return roleSpeed("transit"); };
+}
 // --- LEAD-IN / LEAD-OUT: the RUN is longer than the COVERAGE ---------------------- //
 // Andy, 2026-09-08: "implement lead in and lead out extensions to survey lines ... They
 // are meant to extend lines to accommodate settling of vessel steering onto path and
@@ -5987,6 +6009,44 @@ function trimEnd(seg, m){
   if(!(m > 0) || !(len - m >= 1)) return seg;
   return [seg[0], atDA(seg[1], m, azTo(seg[1], seg[0]))];
 }
+const JUDGE_RUN_M = 30;                         // the run-in / run-out the join is walked with
+/**
+ * ⚠⚠ THE JOIN IS JUDGED BY THE WALK THAT WILL JUDGE IT AT UPLOAD (Andy, 2026-09-24: "The whole point of
+ * the punchout is to generate usable lines with safe turns WITHOUT user intervention. The punch out does
+ * not seem to be taking into account ALL the buffers.") The ladder's own test (turnFlyable) projects the
+ * guard's hull along the turn; doUpload then walks the whole route with flownTrack and cornerSlowPlan,
+ * a different follower with a throttle ramp and a late slow command, and six corners of a punch this
+ * console had just certified came back "take the hull inside the 3 m buffer EVEN AT THE LOW SPEED".
+ * So every turn the ladder returns is walked here exactly as that upload will walk it - onto E at the
+ * survey speed, across the join at the TURN speed, off F at the survey speed - and only a join the walk
+ * accepts is presented. One that breaches at the turn speed is walked again with the join at LOW: clean,
+ * and the turn ships marked `slow` (the run commands low there, exactly as it does for a turn the ladder
+ * could only fit at the slow radius); still breaching, and the join is refused as `track` - which the
+ * trim rung answers by pulling the line ends back another meter and asking again. `t` is returned
+ * untouched when it is already a refusal, or when either run is too short to walk onto.
+ */
+function judgeJoin(runK, runK1, t, ref, ko, buf, fly){
+  if(!t || !t.pts || !t.pts.length) return t;
+  const E = runK[1], F = runK1[0];
+  const back = Math.min(JUDGE_RUN_M, distTo(runK[0], runK[1])), fwd = Math.min(JUDGE_RUN_M, distTo(runK1[0], runK1[1]));
+  if(!(back > 0.5) || !(fwd > 0.5)) return t;
+  const local = [atDA(E, back, azTo(E, runK[0])), E, ...t.pts, F, atDA(F, fwd, azTo(F, runK1[1]))];
+  const ms = key => (V.SPEED_KN[key] || V.SPEED_KN.survey || 3) * 0.514444;
+  const survMs = ms(roleSpeed("survey")), n = local.length;
+  // The corner window the upload's walk uses: sized by the plan's fastest role speed (doUpload's planKey).
+  const capMs = Math.max(...SPEED_ROLES.map(r => ms(roleSpeed(r))));
+  const at = joinMs => i => (i === 1 || i === n - 1) ? survMs : joinMs;
+  const joinKey = t.slow ? "low" : roleSpeed("turn");     // a slow-radius turn is flown at low already
+  if(!joinBreaches(local, ref, ko, buf, at(ms(joinKey)), fly, capMs).length) return t;
+  // THE LOW RETRY IS FLOWN AS THE UPLOAD'S SECOND PASS FLIES IT: the slow command is withheld for
+  // SPEED_CMD_LATENCY_S of travel into each join leg and the throttle ramps from the turn speed - a
+  // retry that assumed low from the leg's first meter would accept a join cornerSlowPlan then refuses.
+  const lateM = ms("low") * SPEED_CMD_LATENCY_S, turnMs = ms(joinKey), lowMs = ms("low");
+  const late = (i, traveled, legStart) => (i === 1 || i === n - 1) ? survMs
+                                         : ((traveled - legStart) < lateM ? turnMs : lowMs);
+  if(joinKey !== "low" && !joinBreaches(local, ref, ko, buf, late, fly, capMs).length) return {...t, slow: true};
+  return {why: "track", seg: [E, F]};
+}
 // ⚠ THE LEAD GIVES WAY TO THE TURN, NOT THE OTHER WAY ROUND (Andy, 2026-09-08). What each
 // rung multiplies BOTH leads by. Scaling rather than picking one end is what makes it
 // monotone in the quantity that actually matters: with the turn built from the two poses,
@@ -9105,7 +9165,11 @@ async function punchOut(){
         // approach radius is the identical expression guardTrack uses, because the two
         // must be the same number or the punch and the guard are back to disagreeing.
         const fly = {spdKey: roleSpeed("turn"), approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
-        let t = turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
+        // ⚠ EVERY ANSWER THE LADDER GIVES GOES THROUGH judgeJoin - here and at both rungs below - or
+        // one door presents a join the upload's walk will refuse.
+        let t = judgeJoin(patClip[k], patClip[k+1],
+                          turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
+                          ref, koTurn, buffer, fly);
         // ⚠⚠ AND WHEN EVERY RUNG IS REFUSED, THE LEAD GIVES WAY BEFORE THE TURN DOES.
         // Andy's call, 2026-09-08: "Cap the lead at what the turn water allows."
         //
@@ -9127,8 +9191,9 @@ async function punchOut(){
             const sK = runWithLeads(k, patLead[k].in||0, lo);
             const sK1 = runWithLeads(k+1, li, patLead[k+1].out||0);
             if(!sK || !sK1) break;
-            const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
-                                     minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
+            const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+                                                        minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
+                                 ref, koTurn, buffer, fly);
             if(!t2.pts) continue;
             // Written together, because patLead[k] describes patClip[k] and nothing else.
             patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0,   out: lo};
@@ -9156,8 +9221,9 @@ async function punchOut(){
             const cap = Math.min(TRIM_MAX_M, Math.floor(Math.min(distTo(cov0[0],cov0[1]), distTo(cov1[0],cov1[1]))/3));
             for(let s=1; s<=cap; s++){
               const sK = trimEnd(base0, s), sK1 = trimEnd([base1[1], base1[0]], s).reverse();
-              const t2 = turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
-                                       minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly);
+              const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+                                                          minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
+                                   ref, koTurn, buffer, fly);
               if(!t2.pts) continue;
               // Written together: patLead[k] and patTrim[k] describe patClip[k] and nothing else.
               patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0, out: 0};
@@ -11769,12 +11835,19 @@ async function doUpload(){
     // her in it, because the set is keyed by the `wp_index` the vessel reports and that
     // indexes the uploaded route. So: walk [boat, ...route], then subtract one.
     const walkRoute = [{lat: asv.lat, lon: asv.lon}, ...plan.route];
+    // ⚠ AT THE SPEED EACH LEG IS COMMANDED, not at `planKey` everywhere (2026-09-24, see routeSpeedKeys):
+    // planKey stays the CAP the walk steps at and the key a leg falls back to.
     const raw = await cornerSlowPlan(walkRoute, nogo.frame, nogo.ko, nogo.buffer || 0, planKey, "low",
-                              {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)});
+                              {approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)},
+                              routeSpeedKeys(walkRoute));
     cs = {slow: raw.slow.map(i => i - 1).filter(i => i >= 0),
           unanswered: raw.unanswered.map(i => i - 1).filter(i => i >= 0)}
          || cs;
-    csKey = planKey;
+    // The banner reads "at <csKey> the hull would round them ...": what was judged is each leg's own
+    // commanded speed, and saying `high` about a survey turn walked at 3 kn would name a cause the walk
+    // did not measure.
+    csKey = "the speed the run commands there (transit " + roleSpeed("transit") + ", survey "
+          + roleSpeed("survey") + ", turn " + roleSpeed("turn") + ")";
   } catch(e) {
     cs = {slow: [], unanswered: []};
     // ⚠ RECORDED, NOT SAID - because its own sentence is "The plan is uploaded and routed

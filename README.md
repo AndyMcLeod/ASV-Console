@@ -936,6 +936,21 @@ diagnosable (`tests/frame_health.js`).
    turn water`), the LINES table shows the coverage as trimmed, and a strike still finds the run
    by the midpoint it was drawn with (`tests/turn_refusal.js` 15–15d).
 
+   *And the join is judged by the walk that will judge it at Upload.* Upload walks the whole
+   routed plan with the follower model and flags corners the hull would round inside the
+   buffer (`cornerSlowPlan`); until 2026-09-24 it walked every corner at the plan's **fastest**
+   speed, so a 3 m arc the punch had built for 3 kn was walked at 6 kn and six corners of a
+   certified punch came back "inside the 3 m buffer EVEN AT THE LOW SPEED". Now the walk takes
+   the speed the run will command on each leg — transit onto the plan, survey along a line,
+   turn across a join (`routeSpeedKeys`) — and Punch Out asks that same walk of every join
+   before presenting it: onto the line end at the survey speed, across the join at the turn
+   speed, then with the join at LOW flown exactly as Upload's second pass flies it (the slow
+   command withheld for the console's own latency, then ramped). A join that clears only at
+   low ships marked `slow`, so the run commands low there; one that clears at neither is
+   refused as `track` and the line ends are pulled back another meter. What Punch Out
+   presents is what Upload accepts (`tests/turn_refusal.js` 16–17b, `tests/corner_slow.js`
+   14b–14c).
+
    *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
    coverage and adds a `lead m` column beside it — the `plan` column times the whole run,
    because `actual` is clocked over the whole run — and the survey card's **Line len**

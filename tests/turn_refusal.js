@@ -145,7 +145,7 @@ const FAR = () => dock(124.5, 125.5, 185, 240);         // the same pier, 100 m 
 
 const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLines", "boundaryActive", "clipLine",
   "patStrikeKey", "activeStruck", "keptRuns", "runMid", "extendLead", "runWithLeads", "patCoverSeg", "patCoverMid",
-  "patIdentSeg", "trimEnd",
+  "patIdentSeg", "trimEnd", "judgeJoin",
   // patClipBufM IS THE PLANNER/GUARD SEAM (2026-09-19) and punchOut calls it twice - for the
   // clip standoff and from patClipKey. Missing from this list it is a bare ReferenceError
   // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash -
@@ -155,7 +155,7 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
-  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m];
+  /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m];
 
 function makeWorld(opts) {
   const o = opts || {};
@@ -168,11 +168,12 @@ function makeWorld(opts) {
   const document = { activeElement: null, createElement: (t) => fakeEl(t), createTextNode: (t) => ({ textContent: t }) };
   const log = { banners: [], notes: [], saves: 0, violations: [] };
   const turnWithRetry = o.turnWithRetry ? o.turnWithRetry(T.turnWithRetry) : T.turnWithRetry;
+  const joinBreaches = o.joinBreaches ? o.joinBreaches(T.joinBreaches) : T.joinBreaches;
   // eslint-disable-next-line no-new-func
-  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry",
+  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry", "joinBreaches",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
-    + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg} = T;\n"
+    + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg, SPEED_CMD_LATENCY_S} = T;\n"
     // ⚠ THE REVERSAL GATE MEASURES THE CROSSING (2026-09-23), so the punch calls
     // acrossTrackM. This suite RUNS punchOut, and without the symbol the call was a bare
     // ReferenceError that punchOut's OWN catch swallowed - reported as "5 runs, 0 turns
@@ -216,16 +217,24 @@ function makeWorld(opts) {
     + " const half = Math.max(MAX_HALF_M, sp.spacing*4.6/2 + 2);"
     + " return turnWithRetry(E, F, hE, hF, nogo.frame, ko, nogo.buffer, minTurnRadiusM(roleSpeed('turn')), half,"
     + " minTurnRadiusM('low'), easeLsM(), {spdKey: roleSpeed('turn'), approachM: 1}); }"
+    // The same ladder judged as punchOut judges it - onto E, across the join, off F, with the upload's walk.
+    + "\nfunction askJoin(runK, runK1){ const dr = depthRange();"
+    + " const ko = buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, dr.min), max: 0}, nogo.features);"
+    + " const fly = {spdKey: roleSpeed('turn'), approachM: 1};"
+    + " const t = askTurn(runK[1], runK1[0], azTo(runK[0], runK[1]), azTo(runK1[0], runK1[1]));"
+    + " return judgeJoin(runK, runK1, t, nogo.frame, ko, nogo.buffer, fly); }"
+    + "\nfunction model(){ const dr = depthRange();"
+    + " return buildKeepouts(nogo.frame, nogo.enf, {min: Math.max(V.NOGO_MIN_DEPTH_M, dr.min), max: 0}, nogo.features); }"
     + "\nreturn { $, log, mission, punchOut, punchRefusal, commitPattern, updatePatReadout, resetPattern,"
-    + " strikeSelectedRun, flushRepunch, patCoverMid, patCoverSeg, askTurn,"
-    + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT, patLead, patTrim}),"
+    + " strikeSelectedRun, flushRepunch, patCoverMid, patCoverSeg, askTurn, askJoin, model,"
+    + " get: () => ({pat, patClip, patRed, patJoined, patDropped, patTransits, patUnsafe, patRepunchT, patLead, patTrim, turnSlowAt}),"
     + " water: (m) => applyWaterOffset({ok: true, offset_m: m, stations: [{dist_km: 2}]}),"
     + " setPat: (A, B, Cc) => { pat = {A, B, C: Cc, align: 0}; },"
     + " select: (m) => { patSel = m; },"
     + " clearClip: () => { patClip = null; },"
     + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
     + " pending: () => { patRepunchT = setTimeout(() => {}, 0); } };")(
-    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry);
+    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry, joinBreaches);
   // The vessel and the chart, as the page holds them.
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
   S.V.MAX_TURN_RATE_DEG_S = o.turnRate || 60;
@@ -555,9 +564,12 @@ const redList = (w) => redOf(w.get().patRed);
                                           && same(southOf(r15.patClip[k]), southOf(r15c.patClip[k])) && !trim(k).in && !trim(k).out);
   const hE15 = r15.patClip ? G.azTo(r15.patClip[2][0], r15.patClip[2][1]) : 0;
   const hF15 = r15.patClip ? G.azTo(r15.patClip[3][0], r15.patClip[3][1]) : 0;
-  const longer = r15.patClip ? [G.atDA(r15.patClip[2][1], 1, hE15), G.atDA(r15.patClip[3][0], 1, G.azTo(r15.patClip[3][1], r15.patClip[3][0]))] : null;
-  const askShipped = r15.patClip ? near.askTurn(r15.patClip[2][1], r15.patClip[3][0], hE15, hF15) : {};
-  const askLonger = longer ? near.askTurn(longer[0], longer[1], hE15, hF15) : {};
+  // Through askJoin - the ladder AND the walk that judges it (judgeJoin) - because the judge can be what
+  // moved the trim the last meter, and a ladder-only re-ask would then fly a pair the punch refused.
+  const run3L = r15.patClip ? [r15.patClip[2][0], G.atDA(r15.patClip[2][1], 1, hE15)] : null;
+  const run4L = r15.patClip ? [G.atDA(r15.patClip[3][0], 1, G.azTo(r15.patClip[3][1], r15.patClip[3][0])), r15.patClip[3][1]] : null;
+  const askShipped = r15.patClip ? near.askJoin(r15.patClip[2], r15.patClip[3]) : {};
+  const askLonger = run3L ? near.askJoin(run3L, run4L) : {};
   check("15. a pier 10 m into the north ends of runs 3 and 4: the turn is refused on every rung, then both ends are pulled "
         + "back a meter at a time until it flies - equal trims at the turn end only, the south ends and the other runs "
         + "untouched, nothing red, four turns, Add to plan enabled, and the punch summary names it",
@@ -582,6 +594,21 @@ const redList = (w) => redOf(w.get().patRed);
   check("15c. past the cap the pair is still refused (checks 1-4) and NO end was pulled back for it",
         () => r1.patRed.length === 1 && r1.patTrim && r1.patTrim.length === 5 && r1.patTrim.every((T) => !T.in && !T.out),
         () => "trims: " + JSON.stringify(r1.patTrim));
+  // ── 16. WHAT THE PUNCH PRESENTS, THE UPLOAD ACCEPTS (2026-09-24). The route this punch would commit - runs
+  // and joins in order, the join points flagged `turn` as commitPattern flags them - walked by the upload's own
+  // cornerSlowPlan over the punch's model at the speeds the run commands (this world's roles all resolve to
+  // survey, 3 kn): no corner unanswered, none even to slow. Before judgeJoin the ladder alone certified the
+  // joins and the upload's walk then flagged six of Andy's as breaching "EVEN AT THE LOW SPEED".
+  const walk16 = [];
+  r15.patClip.forEach((seg, k) => { walk16.push(seg[0], seg[1]);
+    (r15.patTransits[k] || []).forEach((p) => walk16.push({ lat: p.lat, lon: p.lon, turn: true })); });
+  const keyAt16 = () => "survey";                 // every role resolves to survey in this world (3 kn)
+  const cs16 = await T.cornerSlowPlan(walk16, FRAME, near.model(), 3, "high", "low", { approachM: 1 }, keyAt16);
+  check("16. the route this punch presents, walked by the upload's own cornerSlowPlan at the commanded speeds: "
+        + "no corner unanswered and none to slow",
+        () => walk16.length >= 12 && cs16.unanswered.length === 0 && cs16.slow.length === 0,
+        () => walk16.length + " route points; slow=[" + cs16.slow + "] unanswered=[" + cs16.unanswered + "]");
+
   // ── 15d. A STRIKE STILL FINDS A TRIMMED RUN. The strike list holds CLIP midpoints (keptRuns), so the midpoint that
   // names run 3 must not move when its north end is pulled back - while the LINES card's coverage (patCoverSeg) must.
   const id3 = near.patCoverMid(2), cov3 = near.patCoverSeg(2);
@@ -597,6 +624,47 @@ const redList = (w) => redOf(w.get().patRed);
         () => "identity y=" + idN.toFixed(1) + ", coverage north y=" + covN.toFixed(1) + " (trim " + s15 + "); "
               + (f15.err ? "re-punch threw: " + f15.err.message + "; " : "") + (g15.patClip || []).length + " runs after the strike; red: "
               + redList(near));
+
+  // ── 17. THE JUDGE IS WIRED, AND ITS LOW RETRY IS THE UPLOAD'S (2026-09-24). The real walk agrees with the
+  // ladder in every world this suite has - which is what 16 says and is the point - so the WIRING is pinned with
+  // a stand-in walk handed to the world: one that refuses any join flown faster than low and accepts it at low.
+  // Every join must then ship marked `slow` (the run commands low there), nothing red, and the walk must have been
+  // asked with the upload's own corner window - the plan's fastest speed (high, 6 kn here), never the turn speed.
+  const lowMs17 = 1.5 * 0.514444, seen17 = { caps: [], calls: 0, lateSeen: false };
+  const stub17 = () => (local, ref, ko, buf, msAt, fly, cap) => {
+    seen17.calls++; seen17.caps.push(cap);
+    // the leg into the first join vertex (2): at the turn speed it refuses; the late-low profile is what
+    // pass 2 flies, so a retry that is low from the leg's first meter must NOT pass (traveled 0 -> still turn ms)
+    const atStart = msAt(2, 0, 0), later = msAt(2, 50, 0);
+    if (atStart > lowMs17 + 0.01 && later <= lowMs17 + 0.01) seen17.lateSeen = true;
+    return (later > lowMs17 + 0.01) ? [2] : [];
+  };
+  const w17 = makeWorld({ features: [FAR()], joinBreaches: stub17 });
+  w17.mission.speeds = { transit: "high" };   // the fastest role is HIGH (6 kn): the corner window the upload sizes by
+  const p17 = await safely(() => w17.punchOut());
+  const r17 = w17.get();
+  check("17. every join the ladder built goes through the judge: refused at the turn speed and accepted at low by "
+        + "the stand-in, all four ship marked slow, nothing red - and the judge asked with the plan's fastest speed "
+        + "as the corner window, and flew the retry late",
+        () => !p17.err && r17.patRed.length === 0 && turnsIn(w17) === 4
+              && [0, 1, 2, 3].every((k) => r17.turnSlowAt[k] === true) && seen17.calls >= 8
+              && seen17.caps.every((c) => Math.abs(c - 6.0 * 0.514444) < 1e-6) && seen17.lateSeen,
+        () => (p17.err ? "punch threw: " + p17.err.message + "; " : "") + "slowAt=" + JSON.stringify(r17.turnSlowAt)
+              + " red=" + r17.patRed.length + " calls=" + seen17.calls + " caps=" + [...new Set(seen17.caps.map((c) => c.toFixed(3)))]
+              + " late=" + seen17.lateSeen);
+  // 17b. A JOIN THE WALK REFUSES AT LOW TOO is refused as `track`, the trim rung gets its turn (and cannot
+  // help - the stand-in refuses whatever the ends are), and the pair is red with the trim given back.
+  const w17b = makeWorld({ features: [FAR()], joinBreaches: () => () => [2] });
+  const p17b = await safely(() => w17b.punchOut());
+  const r17b = w17b.get();
+  const ref17b = w17b.punchRefusal();
+  check("17b. a join the walk refuses at low as well is red as `track`, named as the hull entering the buffer "
+        + "along the loop, and no end was pulled back for it",
+        () => !p17b.err && r17b.patRed.length === 4 && r17b.patRed.every((r) => r.turn && r.why === "track")
+              && !!ref17b && /flown along it at the TURN speed, enters the buffer/.test(ref17b.text)
+              && r17b.patTrim.every((T) => !T.in && !T.out),
+        () => (p17b.err ? "punch threw: " + p17b.err.message + "; " : "") + "red: " + redList(w17b)
+              + "; trims " + JSON.stringify(r17b.patTrim) + "; refusal " + (ref17b ? ref17b.short : "none"));
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

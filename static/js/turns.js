@@ -809,6 +809,64 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
  *  setting the server passes straight to the vessel - so the caller hands it in, the same
  *  way guardTrack and punchOut's flyability check both already do. Omitting it models a
  *  boat that is not the one being sent. */
+/**
+ * DOES THE FLOWN CORNER AT VERTEX `i` ENTER THE BUFFER. One body, two askers: cornerSlowPlan
+ * over a whole plan at Upload, and joinBreaches over ONE join at Punch Out (2026-09-24) - so
+ * the turn the punch presents is judged by the walk the upload will run over it, not by a
+ * second model that agrees with it most of the time.
+ */
+function cornerBreaches(walk, EN, i, ko, buf){
+  const c = walk.corner[i];
+  if(!c || !(c.dev > 0)) return false;
+  // THE SCREEN, AND IT IS `blocked` RATHER THAN `clearanceM` FOR A MEASURED REASON.
+  // Both answer the triangle inequality - nothing within `buf + reach` of the vertex
+  // means nothing within `buf` of any point the corner reaches - but `blocked` rejects
+  // on a bounding box and returns the moment it finds one thing, where `clearanceM`
+  // walks every ring to the end to report a distance nobody reads. Measured on Andy's
+  // Honolulu model (1044 zones): 18.9 s of screening became 0.4 s.
+  if(!blocked(EN[i], ko, buf + c.reach)) return false;
+  // ⚠ EVERY STEP OF THE CORNER, AND NOT `legClear`'s RATE - THAT WAS TRIED AND IT LOST
+  // A REAL DETECTION. Stepping the exact test at `max(2, buf/2)` like legClear does moved
+  // route vertex 332 of Andy's Honolulu plan from `unanswered` to `slow` - from "slowing
+  // does not answer this" to "slowing does" - when at the low speed it still lies 4.91 m
+  // off a keep-out inside a 5 m buffer. legClear's rate is for a straight LEG, where the
+  // clearance varies slowly; a corner excursion is a tight arc whose closest approach is
+  // a point, and two or three samples across it step over the apex. The main-thread cost
+  // that rate was buying is answered by yielding instead - see this function's header.
+  for(let j = c.from; j <= c.to; j++){
+    const p = walk.pts[j];
+    if(Math.hypot(p.e - EN[i].e, p.n - EN[i].n) > c.reach) continue;   // not this corner
+    if(blocked(p, ko, buf)) return true;
+  }
+  return false;
+}
+
+/**
+ * THE UPLOAD'S CORNER JUDGE, ASKED OF ONE JOIN AT PUNCH TIME. `local` is [run-in, E, ...turn,
+ * F, run-out]; `msAt(i, traveled, legStart)` is the through-water target (m/s) for the leg INTO
+ * vertex i - the survey speed onto E and off F, the turn speed (or low) across the join; it is
+ * given the distance traveled and where the leg began so a caller can withhold a slow command
+ * exactly as cornerSlowPlan's second pass does (see judgeJoin). Returns the local
+ * vertex indices whose flown corner enters `buf` of `ko`: empty means the walk cornerSlowPlan
+ * runs at Upload accepts this join at these speeds. Pure and synchronous - a join is a dozen
+ * points - so punchOut can ask it inside its own ladders.
+ */
+export function joinBreaches(local, ref, ko, buf, msAt, fly, capMs){
+  if(!local || local.length < 3 || !ko) return [];
+  const EN = local.map(p => ref.toEN(p));
+  // ⚠ THE CORNER WINDOW IS SIZED BY `capMs` (cornerReachM), and the upload sizes it by the plan's
+  // FASTEST speed whatever the leg is commanded at. The caller passes that same cap, or the judge
+  // counts less of the neighboring legs as the corner than the walk it stands in for.
+  let cap = capMs || 0; for(let i = 1; i < local.length; i++) cap = Math.max(cap, msAt(i, 0, 0) || 0);
+  let legStart = 0, lastK = -1;
+  const walk = flownTrack(local, ref, (i, traveled) => {
+    if(i !== lastK){ lastK = i; legStart = traveled; }
+    return msAt(i, traveled, legStart); }, fly, cap);
+  const out = [];
+  for(let i = 1; i < local.length - 1; i++) if(cornerBreaches(walk, EN, i, ko, buf)) out.push(i);
+  return out;
+}
+
 const CORNERS_PER_SLICE = 40;
 /** How many times the slowed walk may be re-taken after growing the set. Each pass can
  *  only ADD corners, so it settles; three is enough for every recorded plan (the Honolulu
@@ -816,40 +874,25 @@ const CORNERS_PER_SLICE = 40;
  *  unanswered, which is the conservative end. */
 const ITER_CAP = 3;
 const breathe = () => new Promise(r => setTimeout(r, 0));
-export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
+export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, keyAt){
   const out = {slow: [], unanswered: [], dev: {}};
   if(!route || route.length < 3 || !ko) return out;
   const kn = k => (V.SPEED_KN && V.SPEED_KN[k]) || 3.0;
   const planMs = kn(planKey) * 0.514444, lowMs = kn(lowKey || "low") * 0.514444;
+  // ⚠ THE SPEED THE LEG IS COMMANDED AT (2026-09-24). `keyAt(i)` names the speed key for the
+  // leg INTO vertex i - the caller knows the roles (a committed survey line, a generated join,
+  // a transit) and the governor commands them - so a survey turn is judged at the TURN speed
+  // it will be flown at, not at the fastest speed the plan holds anywhere. Judged at `planKey`
+  // (the fastest), a 3 m arc the punch built for 3 kn was walked at 6 kn, and a low-speed
+  // retry that cannot shed 6 kn inside an arc came back "unanswered" on a turn the run would
+  // never enter above 3 kn. Andy's screen, 2026-09-24: six such corners, all inside joins the
+  // punch had just certified. With no keyAt every leg is `planKey`, exactly as before.
+  const planMsAt = i => (keyAt ? kn(keyAt(i) || planKey) : kn(planKey)) * 0.514444;
   const EN = route.map(p => ref.toEN(p));
 
-  const breaches = (walk, i) => {
-    const c = walk.corner[i];
-    if(!c || !(c.dev > 0)) return false;
-    // THE SCREEN, AND IT IS `blocked` RATHER THAN `clearanceM` FOR A MEASURED REASON.
-    // Both answer the triangle inequality - nothing within `buf + reach` of the vertex
-    // means nothing within `buf` of any point the corner reaches - but `blocked` rejects
-    // on a bounding box and returns the moment it finds one thing, where `clearanceM`
-    // walks every ring to the end to report a distance nobody reads. Measured on Andy's
-    // Honolulu model (1044 zones): 18.9 s of screening became 0.4 s.
-    if(!blocked(EN[i], ko, buf + c.reach)) return false;
-    // ⚠ EVERY STEP OF THE CORNER, AND NOT `legClear`'s RATE - THAT WAS TRIED AND IT LOST
-    // A REAL DETECTION. Stepping the exact test at `max(2, buf/2)` like legClear does moved
-    // route vertex 332 of Andy's Honolulu plan from `unanswered` to `slow` - from "slowing
-    // does not answer this" to "slowing does" - when at the low speed it still lies 4.91 m
-    // off a keep-out inside a 5 m buffer. legClear's rate is for a straight LEG, where the
-    // clearance varies slowly; a corner excursion is a tight arc whose closest approach is
-    // a point, and two or three samples across it step over the apex. The main-thread cost
-    // that rate was buying is answered by yielding instead - see this function's header.
-    for(let j = c.from; j <= c.to; j++){
-      const p = walk.pts[j];
-      if(Math.hypot(p.e - EN[i].e, p.n - EN[i].n) > c.reach) continue;   // not this corner
-      if(blocked(p, ko, buf)) return true;
-    }
-    return false;
-  };
+  const breaches = (walk, i) => cornerBreaches(walk, EN, i, ko, buf);
 
-  const pass1 = flownTrack(route, ref, () => planMs, fly, planMs);
+  const pass1 = flownTrack(route, ref, (i) => planMsAt(i), fly, planMs);
   const slow = new Set();
   for(let i = 1; i < route.length - 1; i++){
     const c = pass1.corner[i];
@@ -871,8 +914,8 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly){
     let legStart = null, lastK = -1;
     return flownTrack(route, ref, (i, traveled) => {
       if(i !== lastK){ lastK = i; legStart = traveled; }
-      if(!slowLeg(i)) return planMs;
-      return (traveled - legStart) < lateM ? planMs : lowMs;
+      if(!slowLeg(i)) return planMsAt(i);
+      return (traveled - legStart) < lateM ? planMsAt(i) : lowMs;
     }, fly, planMs);
   };
   // ⚠⚠ AND IT IS ITERATED, OVER EVERY VERTEX, BECAUSE SLOWING MOVES THE BOAT. The slowed

@@ -334,6 +334,52 @@ function boxKo(e0, n0, e1, n1) {
   check("14. the screen is monotone: closing the wall can only ever turn the flag ON",
         () => monotone && flipped >= 1,
         "160 wall positions from 12.0 m to 4.0 m, " + flipped + " transition(s), no flag ever lost");
+
+  // 14b. THE SPEED THE LEG IS COMMANDED AT (2026-09-24). `keyAt(i)` names the speed key for the leg INTO
+  // each vertex. Same wall as 11 (survey breaches, low clears): told the corner's two legs are already LOW the
+  // walk flags nothing - there is nothing to slow; told they are HIGH it flags the corner. With no keyAt it is
+  // the call 11 made (planKey everywhere) and answers as 11 did - that is the legacy control.
+  const cornerLegs = (key, rest) => (i) => (i === CORNER_I || i === CORNER_I + 1) ? key : rest;
+  // At the SURVEY cap, as 11 is: planKey also sizes the corner window (cornerReachM), and this fixture's
+  // out-leg runs into the wall, so a wider window drags the out-leg into vertex 2's corner. CORNER_I is
+  // the question; vertex 3 sits inside the box and is unanswered whatever the speeds are.
+  const legsLow = await cornerSlowPlan(route, F, ko, BUF, "survey", "low", undefined, cornerLegs("low", "survey"));
+  const legsHigh = await cornerSlowPlan(route, F, ko, BUF, "survey", "low", undefined, cornerLegs("high", "survey"));
+  const legsNone = await cornerSlowPlan(route, F, ko, BUF, "survey", "low", undefined, undefined);
+  check("14b. keyAt: a corner whose legs the run commands at LOW is not flagged, the same corner at HIGH is, and "
+        + "with no keyAt the walk is the one 11 made",
+        () => !legsLow.slow.includes(CORNER_I) && !legsLow.unanswered.includes(CORNER_I)
+              && (legsHigh.slow.includes(CORNER_I) || legsHigh.unanswered.includes(CORNER_I))
+              && legsNone.slow.includes(CORNER_I) && !legsNone.unanswered.includes(CORNER_I),
+        "low legs: slow=[" + legsLow.slow + "] un=[" + legsLow.unanswered + "]; high legs: slow=[" + legsHigh.slow
+          + "] un=[" + legsHigh.unanswered + "]; no keyAt: slow=[" + legsNone.slow + "]");
+  // 14c. THE PAGE'S OWN keyAt, driven: routeSpeedKeys reads the plan's turn points and the committed lines and
+  // answers the governor's roles - transit onto the first line, survey along it, turn into and out of a join -
+  // and doUpload hands it to cornerSlowPlan (the source pin, same style as 18 below).
+  {
+    const mission = { lines: [{ a: ll(0, 0), b: ll(0, 100) }, { a: ll(10, 100), b: ll(10, 0) }], waypoints: [] };
+    const tpt = { ...ll(5, 105), turn: true };
+    mission.waypoints = [ll(0, 0), ll(0, 100), tpt, ll(10, 100)];
+    const LINE_MATCH_M = 5;
+    const roleSpeed = (r) => r;
+    // the page's own bodies, brace-matched out of the source. Read HERE: `H` below is declared later in this
+    // same IIFE scope, so it is in its temporal dead zone at this point.
+    const HH = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
+    const grabFn = (name) => { const s = HH.indexOf("function " + name + "("); if (s < 0) throw new Error("no " + name);
+      let k = HH.indexOf("{", s), d = 0; for (;;) { const c = HH[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
+      return HH.slice(s, k + 1); };
+    // eslint-disable-next-line no-new-func
+    const keysOf = new Function("mission", "LINE_MATCH_M", "distTo", "roleSpeed",
+      grabFn("legIsLine") + "\n" + grabFn("routeSpeedKeys") + "\nreturn routeSpeedKeys;")(mission, LINE_MATCH_M, distTo, roleSpeed);
+    const walk = [ll(-30, -20), ll(0, 0), ll(0, 100), { lat: tpt.lat, lon: tpt.lon }, ll(10, 100), ll(10, 0)];
+    const keyAt = keysOf(walk);
+    const got = [1, 2, 3, 4, 5].map(keyAt).join(",");
+    check("14c. routeSpeedKeys: transit onto the line, survey along it, turn into and out of the join, survey down "
+          + "the next line - and doUpload hands it to cornerSlowPlan",
+          () => got === "transit,survey,turn,turn,survey" && HH.indexOf("routeSpeedKeys(walkRoute)") > 0
+                && HH.indexOf("routeSpeedKeys(walkRoute)") < HH.indexOf("cs = {slow: raw.slow"),
+          "keys " + got + "; wired=" + (HH.indexOf("routeSpeedKeys(walkRoute)") > 0));
+  }
 }
 
 console.log("\n-- 15-16: the corner window, and what it is for --");
@@ -723,7 +769,8 @@ await (async () => {
            && /const lateM = lowMs \* SPEED_CMD_LATENCY_S;/.test(SRC)
            // ⚠ "traveled", since the 2026-09-23 American-English sweep - the variable moved
            // with the prose. The property this pins is unchanged.
-           && /\(traveled - legStart\) < lateM \? planMs : lowMs/.test(SRC),
+           // ... and `planMsAt(i)` since keyAt (2026-09-24): the leg's own commanded speed is what is withheld.
+           && /\(traveled - legStart\) < lateM \? planMsAt\(i\) : lowMs/.test(SRC),
         "SPEED_CMD_LATENCY_S = " + SPEED_CMD_LATENCY_S + " s, withheld by distance traveled"
           + " into the leg rather than by tick count, so it holds at any speed");
 

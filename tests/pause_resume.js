@@ -629,6 +629,10 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const V = { VESSEL: { hull: { loa_m: 1.9 } },
                 SPEED_KN: { low: 1.5, survey: 3.0, high: 6.0 } };
     const roleSpeed = () => "survey";
+    // The per-leg speed keys doUpload hands cornerSlowPlan (2026-09-24). Null for every leg
+    // here: these are two-point fixtures with no committed lines, and null is the planKey
+    // fallback - the real body is driven in tests/corner_slow.js 14c.
+    const routeSpeedKeys = () => () => null;
     let cornerSlow = new Set(), cornerUnanswered = [], cornerPlanKey = "survey";
     // doUpload disables the Upload button for as long as it is measuring corners and
     // restores it in a finally, so the world needs the command-state applier. Recorded
