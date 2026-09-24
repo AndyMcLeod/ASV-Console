@@ -7392,6 +7392,29 @@ async function doSetHome(ll){
 // that chain (the RTH button hands us a click Event, which has no .chained), and it exists
 // so a REFUSED chain can retract the "rth" the readouts are promising - the boat stays at
 // its endpoint, and the cards must say that rather than keep advertising a return home.
+// ⚠⚠ A HOME 500 km AWAY IS NOT A RETURN, AND THE CONSOLE MUST SAY SO RATHER THAN TRY.
+// Andy, 2026-09-23, Erie PA: *"end of goto RTH setting and the RT button still do not work."*
+// The server had never received an RTH. His home was 38.81 N 75.10 W - a simulated
+// Mothership ROC off Delaware, selected as home in roc_config.json, planted at every boot -
+// and doRTH did exactly what it is written to do: ensureNogoCovers([boat, home]) built a box
+// from Erie to Delaware Bay, unioned it with the operating area, and asked /api/enc for a
+// 420 x 375 km extraction. Nothing on either side had a size limit. doRTH sat on that await
+// with no banner, no error and no post - the chain fired once and never again - and the chart
+// page went unresponsive on the result. Reproduced on his vessel at his hold point with his
+// stale home: 15 s later still "Extracting ENC nogo boundaries...", holding.
+//
+// The operating area is a 10 km box (NOGO_RADIUS_M). A return home ten times that is
+// already a voyage the console cannot certify the water for; beyond it the honest answer is
+// a refusal that names the distance, so the operator sets home where she actually is.
+const RTH_MAX_M = 10 * NOGO_RADIUS_M;
+function rthTooFar(fromLL, homeLL){
+  if(!fromLL || !homeLL) return null;
+  const m = distTo(fromLL, homeLL);
+  // Meters, and only meters: the banner formats them with fmtDist, which honors the
+  // operator's km / NM toggle. A `km` field here was a hand-rolled conversion beside the
+  // formatter, and tests/units_toggle.js 9 exists to refuse exactly that.
+  return m > RTH_MAX_M ? {m} : null;
+}
 async function doRTH(opts){
   const chained = !!(opts && opts.chained === true);
   const wasGen = planGen;             // see doGoTo: taken at the press, not at the post
@@ -7406,6 +7429,16 @@ async function doRTH(opts){
     }
     else if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");
     return;
+  }
+  // ⚠ ABOVE ensureNogoCovers, which is the line that would otherwise extract half a state.
+  const far = rthTooFar({lat:asv.lat,lon:asv.lon}, S.home);
+  if(far){
+    if(chained) rthChainFailed = true;
+    showBanner("RTH refused: home is " + fmtDist(far.m) + " away, "
+      + fmtDist(RTH_MAX_M) + " is as far as the console will certify a return. "
+      + "Set Home where she is, or pick a home within range.");
+    flashNote("RTH refused: home is " + fmtDist(far.m) + " away.");
+    updateMissionCard(); render(); return;
   }
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");

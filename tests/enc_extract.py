@@ -119,6 +119,15 @@ def get(port, path, timeout=8):
             return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
+    except OSError as e:
+        # ⚠⚠ A REQUEST THAT NEVER RETURNS IS AN ANSWER, NOT A CRASH. With the span cap
+        # mutated away, the 5-degree box in check 2d went to the extractor and hung past this
+        # timeout - which is the very defect 2d exists for - and the suite CRASHED on the
+        # TimeoutError instead of failing 2d. A runner reading stdout scores that as SURVIVED.
+        # Both shapes land here: the connect-phase URLError and the read-phase bare
+        # TimeoutError are subclasses of OSError. 598 is not a code the server sends, so no
+        # check can mistake it for one.
+        return 598, {"error": "no answer within %ss: %s" % (timeout, e)}
 
 
 print("ENC extract — the routing chart's source route, and the deduplicated twins under it:")
@@ -197,6 +206,19 @@ try:
           lambda: get(port, "/api/chartinfo?bbox=1,2,3")[1].get("error", "")
           .startswith("usage: /api/chartinfo?"),
           lambda: get(port, "/api/chartinfo?bbox=1,2,3")[1].get("error", "")[:40])
+
+    # ⚠⚠ 2d. A BOX THE SIZE OF A STATE IS REFUSED, NOT EXTRACTED (2026-09-23). The page asked
+    # for exactly this box - Erie to Delaware Bay, 5.05 x 3.38 degrees - because a stale home
+    # sat 500 km from the boat, and this handler passed it straight to the extractor. The
+    # request never returned; the operator's chart page stopped responding on it. Refused in
+    # words, with a DIFFERENT message from the usage string - so 2 above cannot stand in for
+    # this, and a cap that fell back to the generic 400 would fail here.
+    big = get(port, "/api/enc?bbox=-80.14981,38.80850,-75.09646,42.18433&min_depth=1")
+    check("2d. a bbox spanning 5 degrees is a 400 that names the span and the cap",
+          lambda: big[0] == 400 and "spans" in (big[1].get("error") or "")
+                  and "degrees" in (big[1].get("error") or ""),
+          lambda: "%d: %s" % (big[0], (big[1].get("error") or "")[:110]))
+    # THE ACCEPTANCE CASE is check 3 below - the operating-area box still comes back 200.
 
     # 3-4. THE CACHE ANSWERS. Mid-ocean, so the sentinel band proves provenance; the
     # response is the cache plus EXACTLY the two per-request fields (shallow, min_depth).

@@ -278,6 +278,10 @@ const PRELUDE = [
   "const updateMissionCard = () => { out.card++; };",
   "const buoyageNote = () => ''; const heldOffWhy = () => 'it is a dock / pier';",
   "const fmtDist = (m) => Math.round(m) + ' m';",
+  // doRTH now asks rthTooFar() before it routes (2026-09-23), and that needs a distance. The
+  // page's distTo is an import from geodesy.js, which a new Function cannot reach; this is
+  // the same flat-earth meters geodesy uses, so a far fixture here would refuse for real.
+  "const distTo = (a, b) => Math.hypot((b.lat - a.lat) * 111320, (b.lon - a.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));",
   "const legReasons = (u) => u.map(() => ({kind:'land'}));",
   "const kindsSummary = () => 'land';",
   "const setViolation = () => {}; const setViolations = () => { out.violations++; };",
@@ -395,6 +399,8 @@ function world(opts) {
                            PRELUDE + "\n"
                            + grabDecl("SUPERVISOR_ANY") + "\n"
                            + grabDecl("CMD_TIMEOUT_MS") + "\n"
+                           + grabDecl("NOGO_RADIUS_M") + "\n" + grabDecl("RTH_MAX_M") + "\n"
+                           + grab("rthTooFar") + "\n"
                            // took() and notTookSay() are the page's ONE success test and
                            // its operator wording. They come across verbatim, so a change
                            // to either is a change here rather than a copy that can drift.

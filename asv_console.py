@@ -583,6 +583,10 @@ def too_many_wpts(n, limit, what="route"):
 
 
 NOGO_BUFFER_DEFAULT_M = 3.0
+# The most /api/enc will extract in one request, degrees on a side (~1.5 deg is ~165 km N-S).
+# The page's operating area is a 10 km box; a return home ten times that is refused on the
+# page before it gets here. This is the server's own floor under any caller. See _serve_enc.
+ENC_MAX_SPAN_DEG = 1.5
 UNDER_KEEL_CLEARANCE_M = 0.9
 # Minimum navigable water depth (m) for the active vessel = draft + under-keel
 # clearance. Water shallower than this is nogo. The client reads it via /api/vessel
@@ -5088,6 +5092,18 @@ class Engine:
                         if intent["point"] is not None:
                             self.home = intent["point"]
                     else:
+                        # ⚠⚠ A HOME THAT WAS A ROC DOES NOT OUTLIVE THE ROC. This cleared the
+                        # SOURCE and kept the POINT, so when the Mothership went away the home it
+                        # had been dragging along stayed exactly where the ship last was - 38.81 N
+                        # off Delaware - and nothing ever moved it: the first-fix seed below only
+                        # fires while home is None. Andy then spent an evening at Erie with a home
+                        # 500 km away and an RTH that could not say why it did nothing. Nulling it
+                        # here lets that seed re-plant home at the PRESENT fix on this same frame,
+                        # which is the only home that is still true once the ship is not.
+                        if self.home_source is not None:
+                            self.home = None
+                            self.note = ("Home was following a ROC that is no longer selected - "
+                                         "home is now the present position.")
                         self.home_source = None
                     # feed the vessel fix to the water-level link (drives station
                     # selection + refetch); computer clock is implicit (date=latest)
@@ -5720,6 +5736,19 @@ class Handler(BaseHTTPRequestHandler):
             min_depth = float(q.get("min_depth", ["0"])[0])
         except (KeyError, ValueError, IndexError):
             return self._send(400, json.dumps({"error": "usage: /api/enc?bbox=W,S,E,N&min_depth=X"}))
+        # ⚠⚠ A BOX THE SIZE OF A STATE IS REFUSED, NOT EXTRACTED. The page asked for
+        # bbox=-80.15,38.81,-75.10,42.18 - 5.05 x 3.38 degrees, Erie to Delaware Bay - because a
+        # stale home sat 500 km from the boat, and this handler passed it straight to
+        # fetch_enc_features. The operating area the page works in is a 10 km box; nothing the
+        # console does legitimately needs more than a few of those. Refused in words so the
+        # caller (and the operator reading its banner) learns WHY, instead of a request that
+        # never returns and a chart page that stops responding on it.
+        span_w, span_h = abs(bbox[2] - bbox[0]), abs(bbox[3] - bbox[1])
+        if span_w > ENC_MAX_SPAN_DEG or span_h > ENC_MAX_SPAN_DEG:
+            return self._send(400, json.dumps({"error": (
+                "the requested area spans %.2f x %.2f degrees; the console extracts at most "
+                "%.1f degrees on a side (about %d km) - set home nearer, or transit in legs"
+                % (span_w, span_h, ENC_MAX_SPAN_DEG, int(ENC_MAX_SPAN_DEG * 111)))}))
         try:
             data = fetch_enc_features(bbox, min_depth)
         except Exception as e:  # never take the server down on a chart fetch

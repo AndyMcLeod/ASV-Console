@@ -383,6 +383,39 @@ try:
           and dist_m((st["home"]["lat"], st["home"]["lon"]), spawn0) < 150,
           lambda: "home=%s" % (json.dumps(st.get("home")),))
 
+    # ⚠⚠ 9d. A HOME THAT WAS A ROC DOES NOT OUTLIVE THE ROC (2026-09-23). The Engine cleared
+    # `home_source` when the selected ROC went away and KEPT `home`, so a Mothership selected as
+    # home in roc_config.json left its last position - 38.81 N off Delaware - standing as home
+    # for the rest of the day, 500 km from where Andy was working at Erie. The first-fix seed
+    # only fires while home is None, so nothing ever moved it, and RTH asked for a 420 x 375 km
+    # ENC extraction before it would post. Driven the whole way through the real /api/roc.
+    far = (38.8112, -75.1)
+    added = api(port, "/api/roc", {"op": "add", "kind": "ship", "name": "Mothership-T",
+                                   "lat": far[0], "lon": far[1]})
+    rid = added.get("id")
+    # A new ROC is STAGED, and "Only an ACTIVE (confirmed) ROC may be HOME" - so it is confirmed
+    # first, exactly as the operator's card requires. The control clause of the check caught
+    # this fixture arriving unconfirmed: home never followed, and "after clear_home the home is
+    # at the boat" was a statement about a home that had never been anywhere else.
+    api(port, "/api/roc", {"op": "confirm", "id": rid})
+    api(port, "/api/roc", {"op": "select_home", "id": rid})
+    st = wait_for(port, lambda s: s.get("home_source") == rid and s.get("home") is not None, limit=15)
+    followed = (st.get("home_source") == rid and st.get("home") is not None
+                and dist_m((st["home"]["lat"], st["home"]["lon"]), far) < 2000)
+    api(port, "/api/roc", {"op": "clear_home"})
+    st2 = wait_for(port, lambda s: s.get("home_source") is None and s.get("home") is not None
+                                    and dist_m((s["home"]["lat"], s["home"]["lon"]), far) > 100000,
+                   limit=15)
+    check("9d. a home that WAS a ROC does not outlive the ROC - it re-arms at the present fix",
+          # THE FIRST CLAUSE IS THE CONTROL: home really did follow the ship first, or the
+          # clause after it is a statement about a home that was never anywhere else.
+          lambda: followed and st2.get("home_source") is None and st2.get("home") is not None
+                  and dist_m((st2["home"]["lat"], st2["home"]["lon"]), spawn0) < 150,
+          lambda: "followed the ship: %s; after clear_home: home=%s src=%s (%.0f m from the boat)"
+                  % (followed, json.dumps(st2.get("home")), st2.get("home_source"),
+                     dist_m((st2["home"]["lat"], st2["home"]["lon"]), spawn0) if st2.get("home") else -1))
+    api(port, "/api/roc", {"op": "remove", "id": rid})    # leave the registry as it was found
+
     # ---- DISCONNECT ---------------------------------------------------------------- #
     cmd(port, "/api/disconnect")
     r = cmd(port, "/api/cmd/pause")

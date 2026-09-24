@@ -66,7 +66,29 @@ written.
 maintainer has to be able to find it — which is why the check above filters by source
 extension. Don't "finish the job" by scrubbing the maintainer notes.
 
-## ⇒ START HERE (handoff refreshed 2026-09-23 — **A REGRESSION FROM THE REVIEW, FOUND ON THE WATER**; the escape incident, the launch grant and the review branch follow below)
+## ⇒ START HERE (handoff refreshed 2026-09-23 — **THE ERIE RTH INCIDENT: A HOME 500 km AWAY**; the drawImage regression, the escape incident, the launch grant and the review branch follow below)
+
+### ⚠⚠ "END OF GOTO RTH SETTING AND THE RTH BUTTON STILL DO NOT WORK" (Erie PA, evening of 2026-09-23)
+
+**The server never received an RTH.** Not from the chain, not from the button, in either session. `/api/state` on his console read `pos 42.1394,-80.0893` and **`home 38.8112,-75.1000` — Lewes, Delaware Bay, ~500 km away.**
+
+**HOW THE HOME GOT THERE** (all from the recording — `home` is SALIENT, so every change of it is snapshotted): `roc_config.json` in his tree (untracked operator state, mtime Sep 20 21:21) holds `ship-1 "Mothership", kind ship, status active, 1.5 kn, at 38.8 -75.1` with **`"home_id": "ship-1"`**. The tracker loads it at every boot and `home_intent()` plants its position as home on the first frame. `/api/cmd/spawn` DOES re-arm home — it calls `reset(spawn=...)`, which nulls `self.home` — but the still-selected Mothership re-plants Delaware on the next tick. Later the ROC drops out of the active list, and the Engine's `else` branch cleared `home_source` but **kept the point**: first-fix seeding only fires while home is None, so nothing ever moved it. **Andy: "why is the focus on ROC instead of home spawning" — spawn re-arming already exists; the orphaned point was the defect.**
+
+**WHY RTH THEN DID NOTHING**: `doRTH` → `ensureNogoCovers([boat, home])` → a bbox from Erie to Delaware Bay, unioned with the operating area → `/api/enc?bbox=-80.150,38.809,-75.096,42.184` — **5.05 x 3.38 degrees, ~160,000 km²** — and neither `refreshNogo` nor `_serve_enc` had any size limit. `doRTH` sat on that await for good: no post, no banner, no error (the page has no rejection handler), the chain fired once and never again, and the chart page went unresponsive on the result. Reproduced on his vessel at his hold point with his stale home: 15 s later still "Extracting ENC nogo boundaries…", holding.
+
+**FOUR FIXES** (`1af0389025` → this commit):
+
+* **`doRTH` refuses a far home in words** — `rthTooFar()` above `ensureNogoCovers`, `RTH_MAX_M = 10 x NOGO_RADIUS_M` (50 km): *"RTH refused: home is 562 km away, 50 km is as far as the console will certify a return. Set Home where she is"*. `end_action.js` 37 (the kernel, driven: near allowed, Lewes refused at 562 km) and 37b (the PLACEMENT — a refusal below the await still hangs first).
+* **`_serve_enc` refuses a state-sized box** — `ENC_MAX_SPAN_DEG = 1.5` (~165 km), a 400 naming the span and the cap. `enc_extract.py` 2d, driven with his exact box.
+* **A home that WAS a ROC does not outlive the ROC** — the `else` branch nulls home when `home_source` was set, so first-fix seeding re-plants it at the present fix on the same frame. `run_link_control.py` 9d, driven through the real `/api/roc` (add → **confirm** → select_home → clear_home); its control clause caught the first fixture arriving unconfirmed — "Only an ACTIVE (confirmed) ROC may be HOME".
+* **`enc_extract.py`'s `get()` answers a timeout as 598** instead of crashing the suite — with the cap mutated away, 2d's request hung and the suite CRASHED, which a runner scores as SURVIVED. Both timeout shapes are `OSError`.
+
+**4 mutations, 4 killed, 0 skipped** — each by the check written for it, F3 only after the harness fix above (before it, F3 went red by crash, and the runner correctly refused to count that).
+
+⚠⚠ **OPERATOR ACTIONS on the live console, in this order:** restart the server (the hung extraction dies with it, and `asv.html` is snapshotted at boot); **Set Home** where she is; and in `roc_config.json` set `"home_id": null` or remove the Mothership, or every boot re-plants Delaware.
+
+⚠ **OPEN:** who wrote `roc_config.json` on Sep 20 21:21. It has the Aug 1 demo shape. If a review-era harness launched the console without `--state-dir` and wrote its demo into the live tree, that is [[tests-must-not-write-app-state]] and wants finding. Also: `home_source` is not in `SessionLogger.SALIENT`, so the moment a ROC-home is orphaned leaves no snapshot — worth adding.
+
 
 ### ⚠⚠ "RTH WORKED FROM ANY STATE BEFORE THE POLISH. YOU BROKE SOME THINGS."
 

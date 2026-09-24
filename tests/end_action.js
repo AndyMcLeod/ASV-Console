@@ -626,5 +626,39 @@ check("16. ... and a stopped boat does not re-arm anything either",
           + "reads is source-anchored");
 }
 
+// ⚠⚠ A HOME 500 km AWAY (2026-09-23). Andy at Erie: "end of goto RTH setting and the RT
+// button still do not work." The server never received an RTH. His home was a Mothership ROC
+// off Delaware, planted at every boot, and doRTH asked for a 420 x 375 km ENC extraction
+// before it would post - and sat on it, silently, for good. The chain fired once and never
+// again; the chart page stopped responding on the result. Two checks: the KERNEL, driven,
+// and its PLACEMENT - because a refusal written below ensureNogoCovers is no refusal at all.
+{
+  // distTo is an IMPORT in the page (geodesy.js). This suite already binds it at module
+  // scope from the same module, and a sloppy-mode eval hoists `function rthTooFar` to that
+  // scope - so the kernel sees the real distTo with nothing injected. (A `var` injected
+  // here collided with that binding: "Identifier distTo has already been declared".)
+  // `const` inside a direct eval is scoped to the eval; the detail strings below read these
+  // two, so they are re-declared as var, which a sloppy eval hoists to this scope.
+  const asVar = (s) => s.replace(/^const /, "var ");
+  eval(asVar(grabDecl("NOGO_RADIUS_M")) + "\n" + asVar(grabDecl("RTH_MAX_M")) + "\n" + grab("rthTooFar"));
+  const erie = { lat: 42.1394, lon: -80.0892 };
+  const near = { lat: 42.1373, lon: -80.0874 };          // his spawn point, ~270 m off
+  const lewes = { lat: 38.8112, lon: -75.1000 };         // his actual home that evening
+  const nearAns = rthTooFar(erie, near), farAns = rthTooFar(erie, lewes);
+  check("37. a home within range is not refused, and one 500 km away is - with the distance said",
+        nearAns === null && !!farAns && farAns.m > 400000 && farAns.m < 600000,
+        "near -> " + (nearAns ? "REFUSED" : "allowed") + "; Lewes -> "
+          + (farAns ? "refused at " + Math.round(farAns.m / 1000) + " km" : "ALLOWED")
+          + " (RTH_MAX_M " + RTH_MAX_M + " = 10 x NOGO_RADIUS_M " + NOGO_RADIUS_M + ")");
+  // ⚠ AND IT MUST BE ASKED BEFORE THE EXTRACTION. The source order is the whole defect:
+  // a call below ensureNogoCovers would still hang on the 160,000 km2 box first.
+  const src = grab("doRTH");
+  const iFar = src.indexOf("rthTooFar("), iCov = src.indexOf("ensureNogoCovers(");
+  check("37b. ... and doRTH asks it BEFORE ensureNogoCovers - a refusal below the await hangs first",
+        iFar >= 0 && iCov >= 0 && iFar < iCov,
+        "rthTooFar at " + iFar + ", ensureNogoCovers at " + iCov
+          + (iFar < 0 ? " - the call is MISSING" : iFar < iCov ? " - asked first" : " - asked TOO LATE"));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);
