@@ -1720,7 +1720,9 @@ still applied (indicative), and a **manual override always is** — it is your o
 **And how old it is.** The water level, the weather and the surface current each carry their
 **age**. The WATER LVL row reads `+0.19 m · 11 min`, timed from the station's own observation
 (a live level is normally 5–17 minutes old); the wind row gives the age of its oldest buoy
-report; and the current, which is recomputed every minute, shows an age once it is more than
+report — a buoy whose last report is over 2 hours old is left out of the blend while a fresher
+one is in reach (when none is, they are all used and the note says so), and the buoys are polled
+every 10 minutes; and the current, which is recomputed every minute, shows an age once it is more than
 5 minutes old. A water level **older than 25 minutes is not applied to charted depths** — it is
 shown ghosted with its age, and routing falls back to chart datum, as for a remote one. The
 monitors behind these readings no longer stop on an error: a failed update is named in the

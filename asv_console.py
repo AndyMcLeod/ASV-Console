@@ -2621,6 +2621,7 @@ def ndbc_station_url(station_id):
     return NDBC_PAGE_URL % sid if sid else None
 NDBC_OBS_URL = "https://www.ndbc.noaa.gov/data/realtime2/%s.txt"
 ENV_K = 3                      # IDW: blend up to this many nearest stations
+ENV_STALE_S = 2 * 3600         # a buoy report older than this is left out while a fresher one is in reach
 ENV_MAX_KM = 120.0             # ignore buoys farther than this
 ENV_IDW_POWER = 2.0
 _ENV_UA = {"User-Agent": "asv-console/1.0 (+sim environmental data)"}
@@ -2757,6 +2758,19 @@ def fetch_environment(lat, lon):
             if rec:
                 obs.append((d, s["id"], rec))
     obs.sort(key=lambda t: t[0])
+    # ⚠ A LAGGING BUOY DOES NOT DATE THE BLEND (Andy, 2026-09-24: "the mission card wind entry is
+    # more than an hour out of date. it should be the most recent data"). Every reachable buoy's LATEST
+    # row went into the blend whatever its time, and the blend is honestly dated by its oldest input -
+    # so one station whose last report was seven hours old made the card read 7 h 23 min while the
+    # buoys beside it had reported within the hour. A report older than ENV_STALE_S is left out while
+    # anything fresher is in reach (hourly stations pass: an hour plus the poll is under two); when
+    # nothing fresher is, they are all used - a six-hour wind beats none - and the note says so.
+    now_t = time.time()
+    fresh = [(d, sid, r) for d, sid, r in obs
+             if _ndbc_epoch(r) is not None and now_t - _ndbc_epoch(r) <= ENV_STALE_S]
+    all_stale = bool(obs) and not fresh
+    if fresh:
+        obs = fresh
     # --- wind: IDW the nearest ENV_K stations reporting WDIR+WSPD (as vectors) ---
     windset = [(d, sid, r) for d, sid, r in obs
                if r.get("WDIR") is not None and r.get("WSPD") is not None][:ENV_K]
@@ -2803,7 +2817,8 @@ def fetch_environment(lat, lon):
         return {"ok": False, "source": "none",
                 "note": "buoys reachable but reporting no wind/wave right now"}
     src = "derived" if (derived and not (sea and not sea["derived"])) else "buoy"
-    note = "NDBC buoys" + (" (sea state estimated from wind)" if derived else "")
+    note = ("NDBC buoys" + (" (sea state estimated from wind)" if derived else "")
+            + (" - every report in reach is older than %d h" % (ENV_STALE_S // 3600) if all_stale else ""))
     # WHICH BUOYS, WITH DISTANCES. wind/sea each already carry their own id list, but an
     # id alone cannot say how much a station contributed, and the fourth browser window
     # has to name the PRIMARY (nearest reporting) and disclose the blend behind it - the
@@ -2821,13 +2836,13 @@ def fetch_environment(lat, lon):
 
 class EnvMonitor:
     """SIM-ONLY ambient environment. Locates the nearest NDBC buoys on the vessel
-    fix (IDW-interpolated), refreshing every 20 min / on a >5 km move / on demand.
+    fix (IDW-interpolated), refreshing every 10 min / on a >5 km move / on demand.
     SimVcu reads `field()` each tick for the wind + wave vectors it pushes the boat
     with. A manual override (set any of wind/sea by hand) and an enable toggle make
     it easy to demo the effect or run a deterministic (calm) sim. `snapshot()` rides
     Engine.state() as `env`."""
 
-    POLL_S = 1200.0
+    POLL_S = 600.0                   # 10 min: a buoy's new row is on the card within it (was 20)
 
     def __init__(self):
         self._lock = threading.Lock()

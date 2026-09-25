@@ -255,6 +255,31 @@ try:
           lambda: env.get("ok") and env.get("obs_t") == oldest,
           "obs_t=%s, oldest row %s; stations %s" % (env.get("obs_t"), oldest, [x["id"] for x in env.get("stations", [])]))
 
+    # 6b. A LAGGING BUOY IS LEFT OUT while fresher ones are in reach (2026-09-24, Andy's "7 h 23 min" wind): the
+    # nearest station's last row is seven hours old, the two beside it reported within the hour.
+    obs_rows["PSBM1"] = row(7 * 60 + 23)
+    env_b = A.fetch_environment(44.9, -66.98)
+    oldest_fresh = calendar.timegm(time.strptime(obs_rows["ATGM1"], "%Y %m %d %H %M"))
+    check("6b. a buoy whose last report is 7 h old is left out of the blend while two fresher ones are in reach - the "
+          "reading is dated by the fresher pair and names only them",
+          lambda: env_b.get("ok") and env_b.get("obs_t") == oldest_fresh
+          and sorted(x["id"] for x in env_b.get("stations", [])) == ["44027", "ATGM1"]
+          and "older than" not in (env_b.get("note") or ""),
+          "obs_t=%s (fresh oldest %s); stations %s; note %r" % (env_b.get("obs_t"), oldest_fresh,
+                                                              [x["id"] for x in env_b.get("stations", [])], env_b.get("note")))
+    # 6c. When EVERY report in reach is that old they are still used - a six-hour wind beats none - dated by the
+    # oldest, and the note says so.
+    obs_rows.update({"44027": row(5 * 60), "ATGM1": row(6 * 60)})
+    env_c = A.fetch_environment(44.9, -66.98)
+    oldest_all = calendar.timegm(time.strptime(obs_rows["PSBM1"], "%Y %m %d %H %M"))
+    check("6c. ... and when every report in reach is that old they are all used, dated by the oldest, and the note "
+          "says so",
+          lambda: env_c.get("ok") and env_c.get("obs_t") == oldest_all and len(env_c.get("stations", [])) == 3
+          and "older than 2 h" in (env_c.get("note") or ""),
+          "obs_t=%s (oldest %s); %d stations; note %r" % (env_c.get("obs_t"), oldest_all,
+                                                      len(env_c.get("stations", [])), env_c.get("note")))
+    obs_rows.update({"44027": row(20), "PSBM1": row(50), "ATGM1": row(35)})   # back to 6's rows for what follows
+
     wfeed = {"mode": "good"}
 
     def fake_env(lat, lon):

@@ -13308,7 +13308,7 @@ function updateEnvUI(env, st){
   $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
   const ageTip = (!simOff && typeof env.age_s==="number")
-    ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend)." : "";
+    ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend). A buoy whose last report is over 2 h old is left out while a fresher one is in reach." : "";
   if(vw) setTip(vw, "Ambient wind pushing the sim boat (nearest NOAA buoy, IDW). Sim only." + ageTip + monitorErrTxt(env));
   const vs=$("#v_sea");
   if(vs) setTip(vs, "Sea state (sig. wave height / period / direction) pushing the sim boat. "
