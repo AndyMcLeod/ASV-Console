@@ -5225,8 +5225,9 @@ let rthChained=false;              // one-shot: End-of-Plan RTH has been chained
 let rthChainFailed=false;          // ... and it was REFUSED (no home / nogo) - stop promising an RTH
 let runLineIdx=-1;                 // coverage line the ASV is CURRENTLY running (-1 = none / turning / transit)
 let turnSeg=[], curTurn=-1, lastRunLine=-1;   // recorded turns [{from,to,sec}]; open turn index; last line run
+let hopSeg=[], curHop=-1, approachSec=0, rthSec=0;   // TRANSITS: hops between regions [{from,to,sec}], the open one; the approach and the RTH, clocked
 function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; loggedLines=false;
-  turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; lineStatsKey=lineSetKey(); }
+  turnSeg=[]; curTurn=-1; lastRunLine=-1; runLineIdx=-1; hopSeg=[]; curHop=-1; approachSec=0; rthSec=0; lineStatsKey=lineSetKey(); }
 /**
  * ⚠⚠ THE PER-LINE TIMES BELONG TO A LINE SET, NOT TO A RUN STATE, AND THAT WAS THE BUG.
  *
@@ -5299,7 +5300,7 @@ function syncLineStats(){
   if(k === lineStatsKey) return false;
   lineStatsKey = k;
   lineActual = mission.lines.map(()=>0);
-  turnSeg = []; curTurn = -1; lastRunLine = -1; runLineIdx = -1;
+  turnSeg = []; curTurn = -1; lastRunLine = -1; runLineIdx = -1; hopSeg = []; curHop = -1; approachSec = 0; rthSec = 0;
   return true;
 }
 // fold a heading difference to [0,90]: 0 = parallel, 90 = perpendicular (a line runs
@@ -5386,6 +5387,7 @@ function accumLineTime(){
       if(moving && aligned && xte<=XTE_TOL){
         runLineIdx=seqLine; lineActual[seqLine]+=dt;
         if(curTurn>=0){ turnSeg[curTurn].to=seqLine; curTurn=-1; }   // the open turn led INTO this line
+        if(curHop>=0){ hopSeg[curHop].to=seqLine; curHop=-1; }       // ... or the open hop did
         lastRunLine=seqLine;
       }
     } else if(lastRunLine>=0 && isReversalGap(lastRunLine) && nearestEndpointM()<=turnZoneM()){
@@ -5406,9 +5408,19 @@ function accumLineTime(){
       // A turn that ends without a line was not a reversal. It keeps its `to:-1` and the
       // table already draws that as "k→·".
       curTurn = -1;
+    } else {
+      // TRANSIT TIME (Andy, 2026-09-25: "data for lines and turns but not transits within a mission"). Not
+      // on a line and not in a reversal: the approach to the first line (no line run yet), or a hop to the
+      // next coverage region (a line was run, and the next is not a reversal away). A hop is timed like a
+      // turn - a record opened on the first frame off the line and closed by the line it leads into - and
+      // the approach as one running total, so the card can put an ACTUAL beside every transit's plan.
+      if(lastRunLine < 0) approachSec += dt;
+      else { if(curHop<0){ curHop=hopSeg.length; hopSeg.push({from:lastRunLine, to:-1, sec:0}); }
+             hopSeg[curHop].sec += dt; }
     }
-    // else: approach / inter-region transit -> neither line nor turn
   }
+  // The return home is the last transit, and it is not a survey run: clocked whenever the RTH is under way.
+  if(dt>0 && S.run==="running" && S.behavior==="rth") rthSec += dt;
   lineClock = (S.run==="running") ? now : null;
 }
 // --- ACTIVITY: surveying is not the same thing as being on a survey ---------------- //
@@ -5560,7 +5572,7 @@ function logGuardChange(){                      // every 2 s: the guard bar, whe
 function logLinesTick(){                        // every 30 s while running: the LINES table + run-time readouts
   if(!(S && S.run === "running") || !mission.lines.length) return;
   const txt = id => { const el = $(id); return el ? (el.textContent || "").replace(/\s+/g, " ").trim() : ""; };
-  logClient("lines", {lines: buildLineTable(), turns: buildTurnTable(), runtime: txt("#v_runtime"),
+  logClient("lines", {lines: buildLineTable(), turns: buildTurnTable(), transits: buildHopTable(), runtime: txt("#v_runtime"),
                       survey: txt("#v_surveydur"), approach: txt("#v_approach"), wpt: txt("#v_wpt"),
                       mission: txt("#v_mission")});
 }
@@ -5591,6 +5603,25 @@ function buildLineTable(){ const spd=roleSpeedMS("survey");   // the lead is flo
     return {line:k+1, drawn:lineNo(k), len_m:Math.round(run - lead), lead_m:Math.round(lead),
             plan_s:Math.round(spd>0?run/spd:0), actual_s:Math.round(lineActual[k]||0)}; }); }
 function buildTurnTable(){ return turnSeg.map((t,i)=>({turn:i+1, from:t.from+1, to:(t.to>=0?t.to+1:null), sec:Math.round(t.sec)})); }
+/** The committed route between line k's end and line k+1's start - the plan's own via points (a routed hop's
+ *  detour), matched by the exact coordinates commitPattern wrote; none when the hop is a straight leg. */
+function hopVia(k){
+  const L = mission.lines, W = mission.waypoints || [];
+  const same = (p, q) => p && q && Math.abs(p.lat - q.lat) < 1e-9 && Math.abs(p.lon - q.lon) < 1e-9;
+  const i = W.findIndex(p => same(p, L[k].b)), j = W.findIndex(p => same(p, L[k+1].a));
+  return (i >= 0 && j > i) ? W.slice(i+1, j) : [];
+}
+/** THE TRANSITS between lines (2026-09-25): every gap that is not a reversal - the hop to the next coverage region -
+ *  with the committed route between the two line ends measured for a plan at the TRANSIT speed (these legs are flown
+ *  at it, Andy 2026-09-05), and the clocked actual from hopSeg. Same shape as the turn table, plus the meters. */
+function buildHopTable(){
+  const L = mission.lines, spd = roleSpeedMS("transit"), out = [];
+  for(let k=0;k<L.length-1;k++){ if(isReversalGap(k)) continue;
+    const m = routeLenM(L[k].b, [...hopVia(k), L[k+1].a]);
+    const sec = hopSeg.filter(h => h.from === k).reduce((a,h)=>a+h.sec, 0);
+    out.push({hop: out.length+1, from: k+1, to: k+2, m: Math.round(m), plan_s: spd>0 ? Math.round(m/spd) : 0, sec: Math.round(sec)}); }
+  return out;
+}
 // --- transit-to-survey + RTH-home estimates (Lines card; Andy's ask 2026-08-10) ------- //
 // ENC-ROUTED, deliberately. The vessel card's #v_approach is a straight-line estimate with
 // a comment admitting the real approach is routed at Upload - and at this console's home
@@ -5658,7 +5689,7 @@ function scheduleTransitEst(){
     renderLineTable();                       // paint the fresh answer
   }, 0);
 }
-function transitRowHtml(label, est, spd, spdKey){
+function transitRowHtml(label, est, spd, spdKey, actualS){
   // One row of honest text: routed time (distance), "direct" when un-modeled, the
   // planner's own refusal when it refused, "--" when an input is missing.
   // NAMES ITS SPEED, because the table it sits in is headed with a different one: these
@@ -5670,7 +5701,9 @@ function transitRowHtml(label, est, spd, spdKey){
   else if(est.err) txt = `<span class="warn" style="color:#d9958f">unroutable — ${est.err}</span>`;
   else { const t = (spd>0) ? fmtMS(Math.round(est.m/spd)) : "--";
     txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
-  return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}</div>`;
+  // ... and the ACTUAL beside it once the leg has been flown (the approach and the RTH are clocked in accumLineTime).
+  const act = actualS > 0 ? ` <span style="color:#e8d9a0">· actual ${fmtMS(Math.round(actualS))}</span>` : "";
+  return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}${act}</div>`;
 }
 // ⚠ PATCHED IN PLACE, NOT REBUILT (review #20, 2026-09-15). renderLineTable runs on every telemetry frame, and it
 // assigned the whole body's innerHTML each time: four times a second the table was destroyed and re-parsed - a
@@ -5686,7 +5719,7 @@ function transitRowHtml(label, est, spd, spdKey){
 let _lineTableShape = null, _lineTableCells = {};
 function setHtmlIfChanged(node, html){ if(node && node._html !== html){ node.innerHTML = html; node._html = html; } }
 function setStyleIfChanged(node, prop, v){ if(node && node["_st_"+prop] !== v){ node.style[prop] = v; node["_st_"+prop] = v; } }
-function lineTableSkeleton(lines, anyLead, tt, total){
+function lineTableSkeleton(lines, anyLead, tt, total, ht){
   const cell="padding:1px 7px;text-align:right", head="padding:1px 7px;color:var(--ink-faint)";
   const rows = lines.map(r=>
     `<tr id="lt_r${r.i}"${r.tip ? ` title="${r.tip}"` : ""}><td style="${cell}"><span id="lt_r${r.i}_mark" style="color:#39c0ff"></span>${r.i+1}</td><td style="${cell}">${r.len}</td>`+
@@ -5706,6 +5739,15 @@ function lineTableSkeleton(lines, anyLead, tt, total){
     html+=`<div style="color:var(--ink-faint);margin-top:7px">turns</div>`+
       `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">actual</td></tr>${trs}`+
       `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td id="lt_tsum" style="${cell}"></td></tr></table>`;
+  }
+  // TRANSITS - the hops between coverage regions, planned from the committed route at the transit speed and
+  // clocked like the turns (2026-09-25). Absent from a single-region plan, like the turns from a one-line one.
+  if(ht && ht.length){
+    const hrs=ht.map((r,j)=>`<tr id="lt_h${j}"><td style="${cell}"><span id="lt_h${j}_mark">→</span>${r.hop}</td>`+
+      `<td id="lt_h${j}_lbl" style="${cell};color:var(--ink-faint)"></td><td style="${cell}">${r.m}</td><td id="lt_h${j}_plan" style="${cell}"></td><td id="lt_h${j}_sec" style="${cell}"></td></tr>`).join("");
+    html+=`<div style="color:var(--ink-faint);margin-top:7px">transits <span id="lt_hspeed"></span></div>`+
+      `<table style="border-collapse:collapse;margin-top:3px"><tr><td style="${head}">#</td><td style="${head}">lines</td><td style="${head}">m</td><td style="${head}">plan</td><td style="${head}">actual</td></tr>${hrs}`+
+      `<tr style="border-top:1px solid #24506a;color:var(--ink)"><td style="${cell}">Σ</td><td style="${cell}"></td><td style="${cell}">${ht.reduce((a,r)=>a+r.m,0)}</td><td id="lt_hsum_plan" style="${cell}"></td><td id="lt_hsum_act" style="${cell}"></td></tr></table>`;
   }
   return html + `<div id="lt_rth"></div>`;
 }
@@ -5738,11 +5780,11 @@ function renderLineTable(){
       tip: parts.length > 1
         ? `Line ${i+1} is cut by a keep-out into ${parts.length} parts: ${parts.map(r=>r.len_m+" m").join(" + ")}, with ${gaps.map(g=>g+" m").join(" and ")} between them.` : ""};
   });
-  const tt=buildTurnTable();
-  const shape = JSON.stringify([lines.map(r=>[r.len, r.tip, r.lead]), anyLead, tt.length]);
+  const tt=buildTurnTable(), ht=buildHopTable();
+  const shape = JSON.stringify([lines.map(r=>[r.len, r.tip, r.lead]), anyLead, tt.length, ht.map(h=>[h.from, h.to, h.m])]);
   if(shape !== _lineTableShape){
     el.innerHTML = lineTableSkeleton(lines, anyLead, tt,
-                                     {len: t.reduce((a,r)=>a+r.len_m,0), lead: t.reduce((a,r)=>a+r.lead_m,0)});
+                                     {len: t.reduce((a,r)=>a+r.len_m,0), lead: t.reduce((a,r)=>a+r.lead_m,0)}, ht);
     _lineTableShape = shape;
     _lineTableCells = {};
     for(const n of el.querySelectorAll("[id]")) _lineTableCells[n.id] = n;
@@ -5755,7 +5797,7 @@ function renderLineTable(){
   // that is 7.0 kn where the boat will actually run 14.0, so both figures read DOUBLE.
   const trSpd=roleSpeedMS("transit");
   setCellText(q("lt_speed"), roleSpeed("survey")+" speed");
-  setHtmlIfChanged(q("lt_transit"), transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit")));
+  setHtmlIfChanged(q("lt_transit"), transitRowHtml("transit → L1:", transitEst.transit, trSpd, roleSpeed("transit"), approachSec));
   for(const r of lines){
     setStyleIfChanged(q("lt_r"+r.i), "background", r.active ? "rgba(63,192,255,.14)" : "");
     setCellText(q("lt_r"+r.i+"_mark"), r.active ? "▸" : "");                 // ▸ line under way
@@ -5776,13 +5818,27 @@ function renderLineTable(){
     setStyleIfChanged(q("lt_t"+j+"_sec"), "color", r.sec ? "#e8d9a0" : "var(--ink-faint)");
   });
   if(tt.length){ const TT=tt.reduce((a,r)=>a+r.sec,0); setCellText(q("lt_tsum"), TT ? fmtMS(TT) : "--"); }
+  // the hops: plan re-timed on the transit speed every frame (a speed change moves it), the actual as clocked
+  ht.forEach((h,j)=>{
+    const on = curHop>=0 && hopSeg[curHop] && hopSeg[curHop].from === h.from-1;     // → hop under way
+    setStyleIfChanged(q("lt_h"+j), "background", on ? "rgba(63,192,255,.14)" : "");
+    setStyleIfChanged(q("lt_h"+j+"_mark"), "color", on ? "#39c0ff" : "");
+    setCellText(q("lt_h"+j+"_lbl"), `${no(h.from)}→${no(h.to)}`);
+    setCellText(q("lt_h"+j+"_plan"), fmtMS(h.plan_s));
+    setCellText(q("lt_h"+j+"_sec"), h.sec ? fmtMS(h.sec) : "--");
+    setStyleIfChanged(q("lt_h"+j+"_sec"), "color", h.sec ? "#e8d9a0" : "var(--ink-faint)");
+  });
+  if(ht.length){ setCellText(q("lt_hspeed"), "@ " + roleSpeed("transit"));
+    setCellText(q("lt_hsum_plan"), fmtMS(ht.reduce((a,r)=>a+r.plan_s,0)));
+    const HT=ht.reduce((a,r)=>a+r.sec,0); setCellText(q("lt_hsum_act"), HT ? fmtMS(HT) : "--"); }
   const lastLine=lineCount();                    // the DRAWN line the return leaves from (review #18)
-  setHtmlIfChanged(q("lt_rth"), transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit")));
+  setHtmlIfChanged(q("lt_rth"), transitRowHtml(`RTH L${lastLine} → home:`, transitEst.rth, trSpd, roleSpeed("transit"), rthSec));
 }
 function logLineTable(reason){ if(!mission.lines.length) return;
-  const lines=buildLineTable(), turns=buildTurnTable();
+  const lines=buildLineTable(), turns=buildTurnTable(), transits=buildHopTable();
   fetch("/api/logevent",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, speeds:mission.speeds, lines, turns,
+    body:JSON.stringify({kind:"survey_lines", data:{reason, speed:mission.speed, speeds:mission.speeds, lines, turns, transits,
+      approach_s:Math.round(approachSec), rth_s:Math.round(rthSec), total_transit_s:transits.reduce((a,r)=>a+r.sec,0),
       total_len_m:lines.reduce((a,r)=>a+r.len_m,0), total_plan_s:lines.reduce((a,r)=>a+r.plan_s,0),
       total_actual_s:lines.reduce((a,r)=>a+r.actual_s,0),
       total_turn_s:turns.reduce((a,r)=>a+r.sec,0)}})}).catch(()=>{});

@@ -681,7 +681,10 @@ diagnosable (`tests/frame_health.js`).
    **The Lines card (`LINES`).** A per-survey-line table: each line's length, its
    planned time at the plan speed, and the actual time once flown (actuals accrue
    while the survey runs and land in the session log, with the turns timed as their
-   own components). **A line is the line you drew**: when Punch Out cuts one around a
+   own components — and, since 2026-09-25, the **transits** too: every gap between
+   lines that is not a reversal, the hop to the next coverage region, has its own row
+   with the committed route's meters, a plan at the transit speed and the clocked actual,
+   and the transit and RTH rows carry their actuals once flown). **A line is the line you drew**: when Punch Out cuts one around a
    keep-out, it stays one row, read as its parts with the gap between them
    (`833 + 1115 (392 m gap)`), and the chart's labels, the turn table, the survey
    card's line count and spacing, and every "line N of M" count it the same way. Above and below the table sit the **transit and RTH rows**:

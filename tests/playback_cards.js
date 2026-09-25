@@ -86,7 +86,7 @@ const EVENTS = [
   { t: t0 + 6, kind: "command", path: "/api/cmd/arm", body: { on: true }, code: 200 },
   { t: t0 + 7, kind: "client:activity", activity: "surveying", detail: "on coverage line 1 of 7", behavior: "survey", line: 1 },
   { t: t0 + 8, kind: "client:guard", shown: true, cls: "guardbar blind", text: "GUARD BLIND 96.8 m off a keep-out" },
-  { t: t0 + 9, kind: "client:lines", lines: [{ len_m: 100, plan_s: 60, actual_s: 30 }], turns: [], runtime: "1:00 · 2:00 left · 33%", survey: "5m @ survey", approach: "1m @ high", wpt: "3 / 40" },
+  { t: t0 + 9, kind: "client:lines", lines: [{ len_m: 100, plan_s: 60, actual_s: 30 }], turns: [], transits: [{ hop: 1, from: 2, to: 3, m: 653, plan_s: 211, sec: 20 }], runtime: "1:00 · 2:00 left · 33%", survey: "5m @ survey", approach: "1m @ high", wpt: "3 / 40" },
   { t: t0 + 10, kind: "ais", count: 2, vessels: [{ mmsi: 1, name: "TUG ONE", lat: 43.07, lon: -70.70, cog: 90, sog: 4.0 }, { mmsi: 2, name: "FERRY", lat: 43.06, lon: -70.71, cog: 270, sog: 8.5 }] },
   { t: t0 + 20, kind: "client:nogo", text: "1310 zones · floor 2.0 m · +10 chart", cls: "warn", ready: true },
   { t: t0 + 21, kind: "client:history", what: "cmd", text: "Arm" },
@@ -143,11 +143,12 @@ check("2. cardsAt at the end of the run: wind, sea, set, water, current, comms, 
 
 // 3. MID-RUN: the earlier values, and only the history so far. The AIS snapshot (t0+10) is 5 s old here: fresh.
 const cMid = R.cardsAt(t0 + 15);
-check("3. cardsAt mid-run: the EARLIER nogo readout and wind, only the History rows so far, the LINES tick's run-time, "
-      + "and the AIS snapshot still fresh",
+check("3. cardsAt mid-run: the EARLIER nogo readout and wind, only the History rows so far, the LINES tick's run-time and "
+      + "its transit (none at the end, where the run-end table has none), and the AIS snapshot still fresh",
       () => cMid.wind === "6.9 kn @ 300° · 10 min" && cMid.nogo === "1300 zones · floor 2.0 m" && cMid.nogoCls === ""
             && cMid.history.length === 1 && cMid.history[0].text.startsWith("Nogo established")
             && cMid.runtime === "1:00 · 2:00 left · 33%" && cMid.survey === "5m @ survey"
+            && cMid.transits.length === 1 && cMid.transits[0].sec === 20 && cEnd.transits.length === 0
             && Array.isArray(cMid.ais) && cMid.ais.length === 2 && cMid.ais[0].name === "TUG ONE",
       () => JSON.stringify({ wind: cMid.wind, nogo: cMid.nogo, hist: cMid.history.length, runtime: cMid.runtime, ais: cMid.ais && cMid.ais.length }));
 
@@ -174,6 +175,7 @@ const noMarkup = IDS.filter((id) => !H.includes('id="' + id + '"'));
 const noWrite = IDS.filter((id) => !applySrc.includes('$("#' + id + '")'));
 check("6. the DOM contract: every card id is in the markup and written by applyAt; render draws ROC markers and AIS contacts",
       () => noMarkup.length === 0 && noWrite.length === 0 && /cards\.roc/.test(renderSrc) && /cards\.ais/.test(renderSrc)
+            && /c\.transits/.test(applySrc)
             && /cardsAt\(absT\)/.test(renderSrc),
       () => "missing markup: " + (noMarkup.join(",") || "none") + "; not written: " + (noWrite.join(",") || "none"));
 

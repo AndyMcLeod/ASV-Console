@@ -61,7 +61,7 @@ function world() {
     const HISTORY_MAX = 20, HISTORY_KEY = "k";
     let actionLog = [];
     const lsSet = () => {}; const renderHistory = () => {};
-    const buildLineTable = () => [{ len_m: 100, plan_s: 60, actual_s: 30 }]; const buildTurnTable = () => [];
+    const buildLineTable = () => [{ len_m: 100, plan_s: 60, actual_s: 30 }]; const buildTurnTable = () => []; const buildHopTable = () => [];
     ${decl(/^let lastNogoLogged = null;/m)}
     ${decl(/^let lastGuardLogged = "";/m)}
     ${["logClient", "updateNogoUI", "recordAction", "historyText", "logGuardChange", "logLinesTick"].map(grab).join("\n")}

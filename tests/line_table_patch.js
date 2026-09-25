@@ -145,16 +145,20 @@ const page = eval("(function(){ \"use strict\";\n"
   + grabFrom(UNITS, "fmtMS") + "\n"
   + "let mission = { lines: [], waypoints: [], speeds: {} }, S = {}, asv = null, runLineIdx = -1, curTurn = -1, turnSeg = [],"
   + " lineActual = [], transitEst = { transit: null, rth: null };\n"
+  // the TRANSITS (2026-09-25): the hop records, the open one, the approach and RTH clocks
+  + "let hopSeg = [], curHop = -1, approachSec = 0, rthSec = 0;\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
   + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n" + decl(/^let _drawnLines = [^;]*;/m) + "\n"
   + decl(/^let _lineTableShape = [^;]*;/m) + "\n"
   + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "roleSpeed", "roleSpeedMS",
      "setCellText", "setHtmlIfChanged", "setStyleIfChanged", "transitRowHtml", "lineTableSkeleton", "buildLineTable",
-     "buildTurnTable", "renderLineTable"].map(grab).join("\n")
+     "buildTurnTable", "reversalScaleM", "isReversalGap", "routeLenM", "hopVia", "buildHopTable", "renderLineTable"].map(grab).join("\n")
   + "\nreturn { renderLineTable,"
   + " set: (o) => { if ('lines' in o) mission.lines = o.lines; if ('run' in o) runLineIdx = o.run; if ('speeds' in o) mission.speeds = o.speeds;"
   + "   if ('actual' in o) lineActual = o.actual; if ('turns' in o) turnSeg = o.turns; if ('curTurn' in o) curTurn = o.curTurn;"
-  + "   if ('S' in o) S = o.S; if ('est' in o) transitEst = o.est; },"
+  + "   if ('S' in o) S = o.S; if ('est' in o) transitEst = o.est;"
+  + "   if ('hops' in o) hopSeg = o.hops; if ('curHop' in o) curHop = o.curHop; if ('approach' in o) approachSec = o.approach;"
+  + "   if ('rth' in o) rthSec = o.rth; if ('wps' in o) mission.waypoints = o.wps; },"
   + " turns: () => turnSeg, actual: () => lineActual }; })()");
 const frames = (n) => { for (let i = 0; i < n; i++) page.renderLineTable(); };
 
@@ -315,6 +319,33 @@ check("9. every cell the patcher writes is one the build made - none left blank 
             && /RTH L3 → home:/.test(cell("lt_rth").innerHTML),
       () => "blank or missing: " + (blank.join(", ") || "none") + "; turn labels '" + cell("lt_t0_lbl").textContent
             + "', '" + cell("lt_t1_lbl").textContent + "'");
+
+// 10. THE TRANSITS (2026-09-25). A second coverage region 600 m north: the gap from line 4 to line 5 is not a
+// reversal, so the table grows a transits section - built ONCE with the shape - whose row carries the committed
+// route's meters through the plan's detour point, a plan at the transit speed and the clocked actual, lit while the
+// hop is under way; and the transit / RTH rows carry their actuals once flown.
+const FAR = [{ a: P(0, 600), b: P(300, 600) }];
+const VIA = P(150, 300);
+page.set({ lines: LINES.concat(FAR), wps: [LINES[3].b, VIA, FAR[0].a, FAR[0].b], run: -1, curTurn: -1, turns: [],
+           hops: [{ from: 3, to: -1, sec: 45 }], curHop: 0, approach: 61, rth: 0 });
+let s10 = snap();
+page.renderLineTable();
+const b10 = since(s10);
+s10 = snap(); frames(3); const q10 = since(s10);
+const viaM = Math.round(G.distTo(LINES[3].b, VIA) + G.distTo(VIA, FAR[0].a));
+check("10. a second region 600 m north: the transits table is built once with the row L3→L4 (drawn-line numbers: the split middle line is ONE line) through the plan's detour "
+      + "point at the transit speed, its clocked actual lit as the hop under way, quiet frames write nothing, and the "
+      + "transit row carries its actual",
+      () => b10.body === 1 && body.nodes["lt_h0_lbl"] && cell("lt_h0_lbl").textContent === "3→4"
+            && cell("lt_h0_sec").textContent === "0:45" && cell("lt_hsum_act").textContent === "0:45"
+            && /^\d+:\d\d$/.test(cell("lt_h0_plan").textContent) && cell("lt_h0_plan").textContent !== "0:00"
+            && new RegExp("<td[^>]*>" + viaM + "</td>").test(body.innerHTML) && /^@ (low|survey|high|transit)$/.test(cell("lt_hspeed").textContent)
+            && cell("lt_h0").style.background !== "" && q10.body === 0 && q10.text === 0 && q10.html === 0
+            && /actual 1:01/.test(cell("lt_transit").innerHTML) && !/actual/.test(cell("lt_rth").innerHTML),
+      () => "builds " + b10.body + "; row '" + cell("lt_h0_lbl").textContent + "' plan " + cell("lt_h0_plan").textContent
+            + " actual " + cell("lt_h0_sec").textContent + " (" + viaM + " m in body: " + new RegExp("<td[^>]*>" + viaM + "</td>").test(body.innerHTML)
+            + "); quiet frames body/text/html " + q10.body + "/" + q10.text + "/" + q10.html + "; transit row: "
+            + cell("lt_transit").innerHTML.replace(/<[^>]+>/g, "").slice(0, 60));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

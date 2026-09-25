@@ -403,6 +403,7 @@ function cardsAt(absT){
     intent: act ? (String(act.activity || "").toUpperCase() + (act.detail ? " — " + act.detail : "")) : "",
     guard: guard && guard.shown ? (guard.text || "") : "", guardCls: guard && guard.shown ? (guard.cls || "") : "",
     lines: lines && Array.isArray(lines.lines) ? lines.lines : [], turns: lines && Array.isArray(lines.turns) ? lines.turns : [],
+    transits: lines && Array.isArray(lines.transits) ? lines.transits : [],
     ais: (ais && (absT - ais.t) <= AIS_STALE_S) ? (ais.vessels || []) : null,
     roc: (s && s.roc && Array.isArray(s.roc.rocs)) ? s.roc.rocs.filter(r => r && r.lat!=null && r.lon!=null) : [],
     history: hist,
@@ -586,7 +587,8 @@ function applyAt(ptv){
   $("#m_intent").textContent = c.intent;
   const gb = $("#m_guard"); gb.textContent = c.guard; gb.className = "vnote gb " + String(c.guardCls || "").replace("guardbar","").trim();
   $("#l_count").textContent = c.lines.length ? c.lines.length + " line(s)" : "";
-  $("#l_table").innerHTML = c.lines.length ? "<table>" + c.lines.map((L,i)=>`<tr><td>L${i+1}</td><td>${Math.round(L.len_m||0)} m</td><td>${fmtDur(L.plan_s||0)}</td><td>${L.actual_s? fmtDur(L.actual_s) : "--"}</td></tr>`).join("") + "</table>" : "—";
+  $("#l_table").innerHTML = (c.lines.length ? "<table>" + c.lines.map((L,i)=>`<tr><td>L${i+1}</td><td>${Math.round(L.len_m||0)} m</td><td>${fmtDur(L.plan_s||0)}</td><td>${L.actual_s? fmtDur(L.actual_s) : "--"}</td></tr>`).join("") + "</table>" : "—")
+    + (c.transits.length ? "<div style=\"margin-top:4px;color:var(--ink-faint)\">transits</div><table>" + c.transits.map(h=>`<tr><td>L${h.from}→L${h.to}</td><td>${Math.round(h.m||0)} m</td><td>${fmtDur(h.plan_s||0)}</td><td>${h.sec? fmtDur(h.sec) : "--"}</td></tr>`).join("") + "</table>" : "");
   $("#a_count").textContent = c.ais ? c.ais.length + " contact(s)" : "";
   $("#a_list").innerHTML = c.ais && c.ais.length ? c.ais.slice(0,12).map(v=>`<div>${escapeHtml(v.name||v.mmsi||"?")} · ${v.sog!=null? (+v.sog).toFixed(1)+" kn":"--"} @ ${dirTxt(v.cog)}</div>`).join("") : (c.ais ? "no contacts" : "—");
   $("#h_list").innerHTML = c.history.length ? c.history.map(h=>`<div><span class="tt">${fmtDur(h.t-T0)}</span>${escapeHtml(h.text||"")}</div>`).join("") : "—";

@@ -94,6 +94,8 @@ const page = eval("(function(){ \"use strict\";\n"
   + " fmtDist = world.fmtDist, fmtMS = world.fmtMS, roleSpeed = world.roleSpeed, roleSpeedMS = world.roleSpeedMS,"
   + " scheduleTransitEst = world.scheduleTransitEst, transitRowHtml = world.transitRowHtml;\n"
   + "let mission = { lines: [], waypoints: [] }, S = {}, asv = null, runLineIdx = -1, curTurn = -1, turnSeg = [],"
+  // the TRANSITS (2026-09-25): renderLineTable builds their table from buildHopTable
+  + " hopSeg = [], curHop = -1, approachSec = 0, rthSec = 0,"
   + " lineActual = [], transitEst = { transit: null, rth: null };\n"
   + "const linePhase = () => ({ phase: 'coverage' });\n"
   // R8: currentActivity() returns role "depart" while a launch grant stands, so the symbol
@@ -104,7 +106,8 @@ const page = eval("(function(){ \"use strict\";\n"
   + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n" + decl(/^let _drawnLines = [^;]*;/m) + "\n"
   + decl(/^let _lineTableShape = [^;]*;/m) + "\n"
   + ["lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount", "linePartTxt", "setCellText", "setHtmlIfChanged", "setStyleIfChanged",
-     "lineTableSkeleton", "buildLineTable", "buildTurnTable", "renderLineTable", "committedPatternInfo", "currentActivity"].map(grab).join("\n")
+     "lineTableSkeleton", "buildLineTable", "buildTurnTable", "reversalScaleM", "isReversalGap", "routeLenM", "hopVia", "buildHopTable",
+     "renderLineTable", "committedPatternInfo", "currentActivity"].map(grab).join("\n")
   + "\nreturn { drawnLines, lineNo, lineCount, linePartTxt, linePartContinues, buildLineTable, renderLineTable,"
   + " committedPatternInfo, currentActivity,"
   + " set: (o) => { if ('lines' in o) mission.lines = o.lines; if ('run' in o) runLineIdx = o.run;"
