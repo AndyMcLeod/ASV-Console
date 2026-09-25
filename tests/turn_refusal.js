@@ -173,7 +173,7 @@ function makeWorld(opts) {
   const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry", "joinBreaches",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
-    + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg, SPEED_CMD_LATENCY_S} = T;\n"
+    + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg, SPEED_CMD_LATENCY_S, easeOffered} = T;\n"
     // ⚠ THE REVERSAL GATE MEASURES THE CROSSING (2026-09-23), so the punch calls
     // acrossTrackM. This suite RUNS punchOut, and without the symbol the call was a bare
     // ReferenceError that punchOut's OWN catch swallowed - reported as "5 runs, 0 turns
@@ -579,7 +579,7 @@ const redList = (w) => redOf(w.get().patRed);
               && Math.abs(northOf(r15.patClip[3]) - (northOf(r15c.patClip[3]) - s15)) < 0.3
               && same(southOf(r15.patClip[2]), southOf(r15c.patClip[2])) && same(southOf(r15.patClip[3]), southOf(r15c.patClip[3]))
               && near.$("#sp_add").disabled === false
-              && hint15.includes("1 reversal(s) had both line ends pulled back (up to " + s15 + " m) to fit the turn water"),
+              && hint15.includes("1 reversal(s) had line ends pulled back (up to " + s15 + " m) to fit the turn water"),
         () => (p15.err ? "punch threw: " + p15.err.message + "; " : "") + "trims run3=" + JSON.stringify(trim(2)) + " run4="
               + JSON.stringify(trim(3)) + "; north ends " + (r15.patClip ? northOf(r15.patClip[2]).toFixed(1) + "/" + northOf(r15.patClip[3]).toFixed(1) : "-")
               + " vs clean " + (r15c.patClip ? northOf(r15c.patClip[2]).toFixed(1) : "-") + "; red: " + redList(near)
@@ -665,6 +665,49 @@ const redList = (w) => redOf(w.get().patRed);
               && r17b.patTrim.every((T) => !T.in && !T.out),
         () => (p17b.err ? "punch threw: " + p17b.err.message + "; " : "") + "red: " + redList(w17b)
               + "; trims " + JSON.stringify(r17b.patTrim) + "; refusal " + (ref17b ? ref17b.short : "none"));
+
+  // ── 18. THE FAR END GIVES FIRST (2026-09-24, over a red pair at Salamander Point). A dock across run 3 at
+  // y 160 ends it 38 m short of run 4's north end - a stagger INSIDE the reversal gate (past ~50 m the pair is
+  // a hop, an older class) - and a dock across its south end makes run 3 94 m long, so its own cap (a third,
+  // 31 m) is BELOW the stagger. A third dock beyond run 4's north end leaves no water past run 4 for a loop:
+  // every loop between the staggered ends turns around beyond F, in dock B, refused. Equal trims cannot fix it
+  // (18b re-asks the punch's own ladder-and-judge at every equal trim up to run 3's cap and gets the refusal
+  // back every time). The rung pulls run 4's start back the stagger first - the stub run 3 never had - and the
+  // pair flies with run 3 giving little or nothing.
+  const DOCK_A = () => dock(19, 21, 160, 200), DOCK_S = () => dock(19, 21, -40, 60), DOCK_B = () => dock(25, 35, 200, 240);
+  const w18 = makeWorld({ features: [DOCK_A(), DOCK_S(), DOCK_B()] });
+  const p18 = await safely(() => w18.punchOut());
+  const r18 = w18.get();
+  const hint18 = w18.$("#sp_hint").textContent;
+  const t18 = (k) => (r18.patTrim && r18.patTrim[k]) || { in: 0, out: 0 };
+  const stag18 = r18.patClip ? Math.abs(FRAME.toEN(r18.patClip[3][0]).n - FRAME.toEN(r18.patClip[2][1]).n) : -1;
+  let equalFlies = null, cap3 = -1;
+  if (r18.patClip && r18.patClip.length === 5) {
+    cap3 = Math.floor((G.distTo(r18.patClip[2][0], r18.patClip[2][1]) + t18(2).out + t18(2).in) / 3);
+    // the CONTROL: equal trims, through the punch's own ladder and judge, from the untrimmed ends
+    const e3 = [r18.patClip[2][0], G.atDA(r18.patClip[2][1], t18(2).out, G.azTo(r18.patClip[2][0], r18.patClip[2][1]))];
+    const s4 = [G.atDA(r18.patClip[3][0], t18(3).in, G.azTo(r18.patClip[3][1], r18.patClip[3][0])), r18.patClip[3][1]];
+    for (let s = 0; s <= cap3 && equalFlies === null; s++) {
+      const a = [e3[0], G.atDA(e3[1], s, G.azTo(e3[1], e3[0]))], b = [G.atDA(s4[0], s, G.azTo(s4[0], s4[1])), s4[1]];
+      if (w18.askJoin(a, b).pts) equalFlies = s;
+    }
+  }
+  check("18. a pair whose far end reaches 38 m past a 94 m run, with no water beyond it: run 4's start gives the "
+        + "stagger first (more than run 3's whole cap), run 3 little or nothing - the pair flies, no red turn, "
+        + "and the hint says so",
+        () => !p18.err && r18.patClip.length === 5 && !r18.patRed.some((r) => r.turn)
+              && !!(r18.patTransits[2] && r18.patTransits[2].length)
+              && t18(3).in >= 32 && t18(2).out <= 12 && (t18(3).in - t18(2).out) >= 30 && (t18(3).in - t18(2).out) <= 39
+              && cap3 >= 25 && cap3 < 38 && Math.abs(stag18) < 6
+              && /had line ends pulled back \(up to \d+ m\)/.test(hint18),
+        () => (p18.err ? "punch threw: " + p18.err.message + "; " : "") + "trims run3=" + JSON.stringify(t18(2)) + " run4="
+              + JSON.stringify(t18(3)) + "; ends now level within " + stag18.toFixed(2) + " m; red: " + redList(w18)
+              + "; hint: " + hint18.slice(0, 120));
+  check("18b. ... and equal trims alone could not have: the punch's own ladder and judge refuse every equal trim from "
+        + "0 up to run 3's own cap (the control for the far-end-first rule)",
+        () => equalFlies === null && cap3 >= 25,
+        () => (equalFlies === null ? "refused at every equal trim 0-" + cap3 + " m" : "FLEW at an equal trim of " + equalFlies + " m")
+              + " (run 3's cap " + cap3 + ")");
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

@@ -9218,9 +9218,36 @@ async function punchOut(){
           const base0 = runWithLeads(k, patLead[k].in||0, 0), base1 = runWithLeads(k+1, 0, patLead[k+1].out||0);
           const cov0 = patCoverSeg(k), cov1 = patCoverSeg(k+1);
           if(base0 && base1 && cov0 && cov1){
-            const cap = Math.min(TRIM_MAX_M, Math.floor(Math.min(distTo(cov0[0],cov0[1]), distTo(cov1[0],cov1[1]))/3));
-            for(let s=1; s<=cap; s++){
-              const sK = trimEnd(base0, s), sK1 = trimEnd([base1[1], base1[0]], s).reverse();
+            // ⚠⚠ THE FAR END GIVES FIRST (Andy, 2026-09-24, over a red pair at Salamander Point: "a slightly
+            // curved path from runs 5-6 where the vertex is away from the shallows would resolve the issue").
+            // The chart clips neighbors to different extents, so one run's end reaches PAST the other's - and
+            // every loop the ladder can build turns around beyond the FURTHER end, which is exactly where the
+            // shallows that clipped it are. Equal trims cannot fix that: the far end stays the far end, and the
+            // shorter run runs out of trim first. MEASURED over the real New Castle ENC: a pair staggered 38 m
+            // was refused at every equal trim and flew a racetrack the moment the far end alone had given 40 m.
+            // So the run whose end reaches further along the pair's own direction gives first, up to the
+            // stagger - the coverage it gives up is the stub the other run never had - and only then do both
+            // give equally. The loop's apex thereby moves back to the shorter run's level, over water the survey
+            // itself uses, instead of beyond the clip into what clipped it. Each run keeps its own cap (a third
+            // of its coverage, TRIM_MAX_M plus its share of the stagger), and the first step that flies is kept.
+            const eE = llEN(base0[1].lat, base0[1].lon, ref), eF = llEN(base1[0].lat, base1[0].lon, ref);
+            const hx = Math.sin(hE*Math.PI/180), hy = Math.cos(hE*Math.PI/180);
+            const fAhead = (eF.e - eE.e)*hx + (eF.n - eE.n)*hy;     // > 0: F reaches past E along E's own run
+            // Under half a meter the ends are LEVEL - the clip leaves floating-point crumbs, not a far end.
+            const stag = Math.abs(fAhead) < 0.5 ? 0 : Math.abs(fAhead), farNext = fAhead > 0;
+            const len0 = distTo(cov0[0], cov0[1]), len1 = distTo(cov1[0], cov1[1]);
+            // The far run may give its whole stub, down to a remainder the hull can still survey: that
+            // stub is coverage the pair cannot turn at whatever else happens to it. The equal phase on
+            // top is bounded by a third of what is left, and by TRIM_MAX_M.
+            const share0 = farNext ? 0 : stag, share1 = farNext ? stag : 0, keep = Math.max(minLine, 10);
+            const cap0 = Math.min(Math.max(0, len0 - keep), share0 + Math.min(TRIM_MAX_M, Math.floor(Math.max(0, len0 - share0)/3)));
+            const cap1 = Math.min(Math.max(0, len1 - keep), share1 + Math.min(TRIM_MAX_M, Math.floor(Math.max(0, len1 - share1)/3)));
+            for(let s=1; s<=TRIM_MAX_M + stag; s++){
+              const far = Math.min(s, stag), both = Math.max(0, s - stag);
+              const tr0 = both + (farNext ? 0 : far), tr1 = both + (farNext ? far : 0);
+              if(tr0 > cap0 || tr1 > cap1) break;
+              const sK = tr0 > 0 ? trimEnd(base0, tr0) : base0;
+              const sK1 = tr1 > 0 ? trimEnd([base1[1], base1[0]], tr1).reverse() : base1;
               const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
                                                           minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
                                    ref, koTurn, buffer, fly);
@@ -9228,9 +9255,9 @@ async function punchOut(){
               // Written together: patLead[k] and patTrim[k] describe patClip[k] and nothing else.
               patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0, out: 0};
               patClip[k+1] = sK1; patLead[k+1] = {in: 0, out: patLead[k+1].out||0};
-              patTrim[k]   = {in: (patTrim[k]||NO_LEAD).in||0, out: s};
-              patTrim[k+1] = {in: s, out: (patTrim[k+1]||NO_LEAD).out||0};
-              Ap = sK[1]; Bp = sK1[0]; t = t2; nTrim++; trimMaxM = Math.max(trimMaxM, s);
+              patTrim[k]   = {in: (patTrim[k]||NO_LEAD).in||0, out: tr0};
+              patTrim[k+1] = {in: tr1, out: (patTrim[k+1]||NO_LEAD).out||0};
+              Ap = sK[1]; Bp = sK1[0]; t = t2; nTrim++; trimMaxM = Math.max(trimMaxM, tr0, tr1);
               break;
             }
           }
@@ -9408,7 +9435,7 @@ async function punchOut(){
       // THE PULLED-BACK ENDS ARE COVERAGE THE OPERATOR DREW AND IS NOT GETTING, so they are
       // named like every other dropped meter - with the worst case, because "up to 23 m" is
       // what makes a trimmed line recognizable on the chart.
-      (nTrim?`, ${nTrim} reversal(s) had both line ends pulled back (up to ${trimMaxM} m) to fit the turn water`:``)+
+      (nTrim?`, ${nTrim} reversal(s) had line ends pulled back (up to ${Math.round(trimMaxM)} m) to fit the turn water`:``)+
       // STRUCK RUNS ARE NAMED WHERE THE OTHER DROPPED COVERAGE IS NAMED. Coverage that
       // leaves the plan is said out loud whatever took it — the depth window, the hull's
       // minimum line, or the operator's own hand — or a thin survey reads as a chart

@@ -930,8 +930,14 @@ diagnosable (`tests/frame_health.js`).
    refuses on every rung (every loop the boat could fly enters it, or the hull flown along the
    loop enters the buffer) has **both** line ends pulled back at the turn end, one meter at a
    time, the whole ladder retried at each step, until a turn flies — the first step that does
-   is the one kept, so the survey loses the least that buys a flyable turn. Capped at 60 m and
-   a third of the shorter run; past that the pair is red and Add to plan is refused as before.
+   is the one kept, so the survey loses the least that buys a flyable turn. When the chart has
+   clipped the two runs to different extents, every loop turns around beyond the *further* end
+   — in the very shallows that clipped it — so the run whose end reaches past the other gives
+   first, up to the stagger (the stub its neighbor never had), and only then do both give
+   equally: the loop's apex moves back to the shorter run's level, over the survey's own water.
+   The far run may give its whole stub (down to a remainder the hull can still survey), since
+   that is coverage the pair could not turn at anyway; the equal phase on top is capped at 60 m
+   and a third of what is left. Past that the pair is red and Add to plan is refused as before.
    The banner says so (`N reversal(s) had both line ends pulled back (up to 23 m) to fit the
    turn water`), the LINES table shows the coverage as trimmed, and a strike still finds the run
    by the midpoint it was drawn with (`tests/turn_refusal.js` 15–15d).
