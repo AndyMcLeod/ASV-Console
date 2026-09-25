@@ -68,6 +68,8 @@ extension. Don't "finish the job" by scrubbing the maintainer notes.
 
 ## ⇒ START HERE (handoff refreshed 2026-09-24 — **THE PUNCH TRIMS ITS OWN UNFLYABLE TURNS, AND JUDGES ITS JOINS WITH THE UPLOAD'S OWN WALK**; the Erie RTH incident, the drawImage regression, the escape incident, the launch grant and the review branch follow below)
 
+**CONFIRMED LIVE 2026-09-25 on his console: "it works"** — the trim rung, the far-end-first rule and the one-judge join over his New Castle survey (`75d5161a2c`), and the wind card showing the newest rows NDBC had (verified against the buoys' own files: 44074 at 00:56 UTC, 70 min behind at the source itself).
+
 ### ⚠ A LAGGING BUOY NO LONGER DATES THE WIND (Andy, 2026-09-24: "the mission card wind entry is more than an hour out of date. it should be the most recent data")
 
 The Mission card read `15.8 kn @ 30° · 7 h 23 min`: `fetch_environment` blended every reachable buoy's LATEST realtime2 row whatever its time and the reading is honestly dated by its oldest input (review #13) — one station seven hours behind dated the whole blend. Now a report older than **`ENV_STALE_S` (2 h)** is left out while a fresher one is in reach (hourly stations pass); when none is fresher they are all used and the note says `every report in reach is older than 2 h`. `EnvMonitor.POLL_S` 20 —> 10 min. `reading_age.py` 6b/6c; 3 mutations, 3 killed. An hourly station plus a 10 min poll can still read ~70 min — that IS the most recent data.
