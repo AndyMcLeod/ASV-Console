@@ -288,6 +288,10 @@ const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in th
 // midpoint branch, and ensureChartInk is stubbed - the chart read is chart_ink.js's subject.
 var asv = null;
 async function ensureChartInk() { return true; }
+// updateNogoUI posts the readout into the session log on change (2026-09-25, playback's cards); the post
+// itself is tests/page_log_posts.js's subject - here it must merely find its names.
+var lastNogoLogged = null;
+function logClient() {}
 // ⚠ NOGO_QUEUE_MAX_MS bounds the queue wait. READ from the page, not retyped, so a suite
 // that believes a different bound than the page uses cannot happen - and declared OUT HERE
 // as well as inside the bundle, because a `const` in a direct eval stays in the eval's own

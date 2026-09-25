@@ -54,6 +54,13 @@
   .vrow .v{color:var(--ink);text-align:right;}
   .vrow .v.ok{color:var(--ok);} .vrow .v.warn{color:var(--warn);} .vrow .v.bad{color:var(--bad);}
   .vrow .v.auto{color:var(--track);}
+  /* every card at the cursor (2026-09-25): the vessel card and the ones below it scroll as one column */
+  .cards{position:absolute;top:110px;left:14px;width:236px;bottom:96px;z-index:5;overflow:auto;display:flex;flex-direction:column;gap:8px;}
+  .cards .vcard{position:static;width:auto;flex:none;}
+  .vnote.gb{color:var(--warn);}
+  .ltab,.hist{font-family:var(--mono);font-size:10.5px;color:var(--ink);}
+  .ltab table{border-collapse:collapse;width:100%;} .ltab td{padding:1px 4px 1px 0;border-top:1px solid var(--line);}
+  .hist div{padding:2px 0;border-top:1px solid var(--line);} .hist .tt{color:var(--ink-faint);margin-right:6px;}
   .vnote{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--ink-dim);line-height:1.45;
     border-top:1px solid rgba(34,50,63,.5);padding-top:7px;min-height:14px;}
 
@@ -120,6 +127,7 @@
     <button class="ctl small on" id="t_events" title="Show the event timeline">EVTS</button>
   </div>
 
+  <div class="cards">
   <div class="vcard">
     <h3>Vessel <span id="v_clock" style="color:var(--ink-faint);font-weight:400;">—</span></h3>
     <div class="vrow"><span class="l">Position</span><span class="v" id="v_pos">—</span></div>
@@ -130,6 +138,35 @@
     <div class="vrow"><span class="l">Behavior</span><span class="v" id="v_beh">—</span></div>
     <div class="vrow"><span class="l">Waypoint</span><span class="v" id="v_wp">—</span></div>
     <div class="vnote" id="v_note"></div>
+  </div>
+  <div class="vcard">
+    <h3>Mission</h3>
+    <div class="vrow"><span class="l">Wind</span><span class="v" id="m_wind">—</span></div>
+    <div class="vrow"><span class="l">Sea</span><span class="v" id="m_sea">—</span></div>
+    <div class="vrow"><span class="l">Set / crab</span><span class="v" id="m_set">—</span></div>
+    <div class="vrow"><span class="l">Current</span><span class="v" id="m_current">—</span></div>
+    <div class="vrow"><span class="l">Water lvl</span><span class="v" id="m_water">—</span></div>
+    <div class="vrow"><span class="l">Nogo</span><span class="v" id="m_nogo">—</span></div>
+    <div class="vrow"><span class="l">Comms</span><span class="v" id="m_comms">—</span></div>
+    <div class="vrow"><span class="l">Run time</span><span class="v" id="m_runtime">—</span></div>
+    <div class="vrow"><span class="l">Survey</span><span class="v" id="m_survey">—</span></div>
+    <div class="vrow"><span class="l">Approach</span><span class="v" id="m_approach">—</span></div>
+    <div class="vrow"><span class="l">Supervisor</span><span class="v" id="m_super">—</span></div>
+    <div class="vnote" id="m_intent"></div>
+    <div class="vnote gb" id="m_guard"></div>
+  </div>
+  <div class="vcard">
+    <h3>Lines <span id="l_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <div class="ltab" id="l_table">—</div>
+  </div>
+  <div class="vcard">
+    <h3>AIS <span id="a_count" style="color:var(--ink-faint);font-weight:400;"></span></h3>
+    <div class="ltab" id="a_list">—</div>
+  </div>
+  <div class="vcard">
+    <h3>History</h3>
+    <div class="hist" id="h_list">—</div>
+  </div>
   </div>
 
   <div class="events" id="events">
@@ -196,6 +233,8 @@ let EVENTS = [];      // every log record, in order
 let FIXES = [];       // {t,lat,lon,hdg,sog,batt,batt_pct,batt_state} - the track
 let STATES = [];      // full state snapshots {t, ...}
 let MARKS = [];       // timeline rows (commands + state transitions) {t,cls,lab,det,tag,ev}
+let AIS = [];         // {t, vessels, count} - the traffic the operator saw (the `ais` records)
+let CLIENT = {};      // the page's own card data by kind (client:* records): nogo, history, guard, lines, activity ...
 let T0 = 0, T1 = 0, DUR = 0;
 let pt = 0;           // playback cursor (seconds since T0)
 let playing = false, speed = 1, lastRAF = 0;
@@ -247,7 +286,8 @@ async function loadLog(name){
 }
 
 function parseSession(){
-  FIXES = []; STATES = []; MARKS = [];
+  FIXES = []; STATES = []; MARKS = []; AIS = []; CLIENT = {};
+  let lastStateKey = null;
   let mode = "—";
   for(const e of EVENTS){
     const t = e.t || 0;
@@ -257,8 +297,11 @@ function parseSession(){
       if(st.lat_deg!=null && st.lon_deg!=null)
         FIXES.push({t, lat:st.lat_deg, lon:st.lon_deg, hdg:st.heading_deg, sog:st.sog_kn,
                     batt:st.battery_v, batt_pct:st.battery_pct, batt_state:s.status.battery_state});
-      MARKS.push({t, cls:"state", lab: (s.autonomy||s.run||"state").toUpperCase(),
-                  det: s.note || "", tag: s.behavior, ev:e});
+      // A ROW ONLY ON A TRANSITION. The recorder writes a full snapshot every ten seconds now (playback's
+      // cards read them), and most say exactly what the last one said - a sample, not an event.
+      const lab = (s.autonomy||s.run||"state").toUpperCase(), det = s.note || "", key = lab + "|" + det + "|" + (s.behavior||"");
+      if(key !== lastStateKey){ lastStateKey = key;
+        MARKS.push({t, cls:"state", lab, det, tag: s.behavior, ev:e}); }
       if(s.mode) mode = s.mode;
     } else if(e.kind === "telemetry"){
       const st = e.status || {};
@@ -287,12 +330,83 @@ function parseSession(){
       MARKS.push({t, cls:"state", lab:"SESSION START", det:(e.argv||[]).join(" "), ev:e});
     } else if(e.kind === "session_end"){
       MARKS.push({t, cls:"state", lab:"SESSION END", det:"", ev:e});
+    } else if(e.kind === "ais"){
+      AIS.push({t, vessels: e.vessels || [], count: e.count});
+      MARKS.push({t, cls:"misc", lab:"AIS", det:(e.count!=null? e.count : (e.vessels||[]).length) + " contact(s)", ev:e});
+    } else if(typeof e.kind === "string" && e.kind.startsWith("client:")){
+      const ck = e.kind.slice(7);
+      (CLIENT[ck] = CLIENT[ck] || []).push({t, e});
+      MARKS.push({t, cls:"misc", lab: ck.toUpperCase().replace(/_/g," "), det: summarize(e), ev:e});
+    } else if(e.kind){
+      // EVERY OTHER KIND IS ON THE TIMELINE (2026-09-25): spawn, log_quiet / log_resume, supervisor_*,
+      // storage_*, loop_fault / loop_recovered, logs_compressed, ais_service_exit ... A replay rendered 7
+      // kinds of ~20 and silently dropped the rest; a kind added tomorrow lands here without a branch.
+      MARKS.push({t, cls:"misc", lab: String(e.kind).toUpperCase().replace(/_/g," "), det: summarize(e), ev:e});
     }
   }
   FIXES.sort((a,b)=>a.t-b.t); STATES.sort((a,b)=>a.t-b.t); MARKS.sort((a,b)=>a.t-b.t);
   const ts = EVENTS.map(e=>e.t||0).filter(Boolean);
   T0 = ts.length? Math.min(...ts) : 0; T1 = ts.length? Math.max(...ts) : 0; DUR = Math.max(0.001, T1-T0);
   window._mode = mode;
+}
+
+
+// ---- every card at the cursor (2026-09-25) --------------------------------- //
+// A one-line digest of a record for the timeline: its own fields, minus the bookkeeping, first four.
+function summarize(e){
+  if(e && typeof e.text === "string") return e.text.slice(0, 140);
+  if(e && typeof e.detail === "string") return (e.activity ? e.activity + " — " : "") + e.detail.slice(0, 120);
+  const skip = new Set(["t","iso","kind","state","status","vessels","lines","turns","data","area"]);
+  const parts = [];
+  for(const k of Object.keys(e||{})){ if(skip.has(k)) continue; let v = e[k];
+    if(v==null) continue; if(typeof v === "object") v = Array.isArray(v) ? v.length + " items" : "{…}";
+    v = String(v); if(v.length > 60) v = v.slice(0,57) + "…"; parts.push(k + "=" + v); if(parts.length >= 4) break; }
+  return parts.join(" · ");
+}
+function lastBefore(arr, absT){ let r=null; for(const x of arr||[]){ if(x.t > absT) break; r = x; } return r; }
+function dirTxt(d){ return d==null ? "—" : ((Math.round(d)%360+360)%360)+"°"; }
+function fmtAgeS(s){ if(s==null) return ""; s=Math.round(s); return s<60 ? " · "+s+" s" : s<3600 ? " · "+Math.round(s/60)+" min" : " · "+(s/3600).toFixed(1)+" h"; }
+function fmtWind(env){ const w = env && env.wind; if(!env || env.enabled===false) return env ? "off" : "—";
+  return w && w.speed_kn!=null ? w.speed_kn + " kn @ " + dirTxt(w.dir_from_deg) + fmtAgeS(env.age_s) : (env.ok ? "calm" : (env.note || "—")); }
+function fmtSea(env){ const s = env && env.sea; return s && s.hs_m!=null ? (+s.hs_m).toFixed(2)+" m / "+(s.tp_s!=null? s.tp_s+"s":"?")+" @ "+dirTxt(s.dir_from_deg)+(s.derived?" ~":"") : "—"; }
+function fmtSet(st){ const set = st && st.env_set_kn, sd = st && st.env_set_deg, crab = st && st.crab_deg;
+  return (set!=null && set>0.01) ? (+set).toFixed(2)+" kn @ "+dirTxt(sd)+(crab!=null?" · crab "+(crab>=0?"+":"")+(+crab).toFixed(0)+"°":"") : "—"; }
+function fmtCurrent(c){ if(!c) return "—"; if(!c.ok) return c.note ? "-- ("+String(c.note).slice(0,60)+")" : "--";
+  const kn = c.speed_kn!=null ? c.speed_kn : c.set_kn; return kn!=null ? (+kn).toFixed(2)+" kn @ "+dirTxt(c.dir_deg!=null?c.dir_deg:c.set_deg)+fmtAgeS(c.age_s) : "--"; }
+function fmtWater(w){ if(!w) return "—"; if(!w.ok) return w.note ? "-- ("+String(w.note).slice(0,50)+")" : "--";
+  const m = w.offset_m; return (m!=null ? (m>=0?"+":"")+(+m).toFixed(2)+" m" : "--") + (w.name ? " · "+w.name : "") + (w.data_kind==="predicted" ? " (predicted)" : "") + fmtAgeS(w.age_s); }
+function fmtComms(c){ if(!c) return "—"; return String(c.mode || "none").toUpperCase() + " · " + (c.signal_pct!=null ? c.signal_pct+"%" : (c.ok ? "OK" : "--")) + ((c.detail || c.note) ? " · " + String(c.detail || c.note).slice(0,60) : ""); }
+function fmtSuper(s){ if(!s) return "—"; return s.holder ? "tab " + String(s.holder).slice(0,8) + (s.stale ? " (stale)" : "") + " · " + (s.tabs||0) + " tab(s)" : "none · " + (s.tabs||0) + " tab(s)"; }
+
+// EVERYTHING THE CARDS SHOW AT THE CURSOR, resolved once: the last full state snapshot at or before `absT`
+// (wind, sea, water, current, comms, ROCs, supervisor), the page's own card data (client:* records) at or
+// before it, the traffic snapshot if it is recent enough to still be the traffic (AIS_STALE_S), and the
+// History rows up to it, newest first. Pure - applyAt writes it to the DOM and render draws from it.
+const AIS_STALE_S = 60;
+function cardsAt(absT){
+  const s = lastStateAt(absT) || null;
+  const st = (s && s.status) || {};
+  const pick = k => { const r = lastBefore(CLIENT[k], absT); return r ? r.e : null; };
+  // the LINES card: the tick (`lines`, every 30 s while running) or the run-end table (`survey_lines`), whichever
+  // is the later at the cursor - the run-end table carries the final actuals
+  const lt = lastBefore(CLIENT.lines, absT), ls = lastBefore(CLIENT.survey_lines, absT);
+  const linesRec = (lt && ls) ? (ls.t >= lt.t ? ls : lt) : (lt || ls);
+  const nogo = pick("nogo"), guard = pick("guard"), lines = linesRec ? linesRec.e : null, act = pick("activity");
+  const ais = lastBefore(AIS, absT);
+  const hist = (CLIENT.history || []).filter(r => r.t <= absT).slice(-20).reverse().map(r => ({t: r.t, what: r.e.what, text: r.e.text}));
+  return {
+    wind: fmtWind(s && s.env), sea: fmtSea(s && s.env), set: fmtSet(st), current: fmtCurrent(s && s.current),
+    water: fmtWater(s && s.water), comms: fmtComms(s && s.comms), super: fmtSuper(s && s.supervisor),
+    nogo: nogo ? (nogo.text || "—") : "—", nogoCls: nogo ? (nogo.cls || "") : "",
+    runtime: lines && lines.runtime ? lines.runtime : "—", survey: lines && lines.survey ? lines.survey : "—",
+    approach: lines && lines.approach ? lines.approach : "—",
+    intent: act ? (String(act.activity || "").toUpperCase() + (act.detail ? " — " + act.detail : "")) : "",
+    guard: guard && guard.shown ? (guard.text || "") : "", guardCls: guard && guard.shown ? (guard.cls || "") : "",
+    lines: lines && Array.isArray(lines.lines) ? lines.lines : [], turns: lines && Array.isArray(lines.turns) ? lines.turns : [],
+    ais: (ais && (absT - ais.t) <= AIS_STALE_S) ? (ais.vessels || []) : null,
+    roc: (s && s.roc && Array.isArray(s.roc.rocs)) ? s.roc.rocs.filter(r => r && r.lat!=null && r.lon!=null) : [],
+    history: hist,
+  };
 }
 
 function updateMeta(name){
@@ -414,6 +528,17 @@ function render(){
     ctx.beginPath(); ctx.arc(h.x,h.y,5,0,2*Math.PI); ctx.fill(); ctx.stroke();
     ctx.fillStyle="#3fbf6b"; ctx.font="bold 11px Consolas,monospace"; ctx.fillText("H", h.x+7, h.y-5); }
 
+  // ROC markers and the traffic the operator saw, at the cursor (2026-09-25)
+  const cards = cardsAt(absT);
+  for(const r of cards.roc){ const p=toScreen(r.lat,r.lon);
+    ctx.fillStyle="#e0b050"; ctx.strokeStyle="#0a141c"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.rect(p.x-5,p.y-5,10,10); ctx.fill(); ctx.stroke();
+    ctx.font="10px Consolas,monospace"; ctx.fillStyle="#e0b050"; ctx.fillText(r.name||r.id||"ROC", p.x+8, p.y-6); }
+  for(const v of (cards.ais||[])){ if(v.lat==null||v.lon==null) continue; const p=toScreen(v.lat,v.lon);
+    const a=((v.cog!=null?v.cog:(v.heading||0))-90)*Math.PI/180;
+    ctx.beginPath(); ctx.moveTo(p.x+Math.cos(a)*8, p.y+Math.sin(a)*8);
+    ctx.lineTo(p.x+Math.cos(a+2.5)*6, p.y+Math.sin(a+2.5)*6); ctx.lineTo(p.x+Math.cos(a-2.5)*6, p.y+Math.sin(a-2.5)*6); ctx.closePath();
+    ctx.fillStyle="rgba(120,190,255,0.85)"; ctx.fill(); ctx.strokeStyle="#0a141c"; ctx.lineWidth=1; ctx.stroke(); }
   // boat marker (interpolated)
   const boat = fixAt(absT);
   if(boat){ const s=toScreen(boat.lat,boat.lon);
@@ -452,6 +577,19 @@ function applyAt(ptv){
   $("#v_beh").textContent = s? [s.behavior,s.completion].filter(Boolean).join(" · ").toUpperCase() : "—";
   $("#v_wp").textContent = wpTot? `${wpIdx} / ${wpTot}` : "—";
   $("#v_note").textContent = s? (s.note||"") : "";
+  const c = cardsAt(absT);
+  $("#m_wind").textContent = c.wind; $("#m_sea").textContent = c.sea; $("#m_set").textContent = c.set;
+  $("#m_current").textContent = c.current; $("#m_water").textContent = c.water;
+  const ng = $("#m_nogo"); ng.textContent = c.nogo; ng.className = "v " + (c.nogoCls === "warn" ? "warn" : "");
+  $("#m_comms").textContent = c.comms; $("#m_runtime").textContent = c.runtime;
+  $("#m_survey").textContent = c.survey; $("#m_approach").textContent = c.approach; $("#m_super").textContent = c.super;
+  $("#m_intent").textContent = c.intent;
+  const gb = $("#m_guard"); gb.textContent = c.guard; gb.className = "vnote gb " + String(c.guardCls || "").replace("guardbar","").trim();
+  $("#l_count").textContent = c.lines.length ? c.lines.length + " line(s)" : "";
+  $("#l_table").innerHTML = c.lines.length ? "<table>" + c.lines.map((L,i)=>`<tr><td>L${i+1}</td><td>${Math.round(L.len_m||0)} m</td><td>${fmtDur(L.plan_s||0)}</td><td>${L.actual_s? fmtDur(L.actual_s) : "--"}</td></tr>`).join("") + "</table>" : "—";
+  $("#a_count").textContent = c.ais ? c.ais.length + " contact(s)" : "";
+  $("#a_list").innerHTML = c.ais && c.ais.length ? c.ais.slice(0,12).map(v=>`<div>${escapeHtml(v.name||v.mmsi||"?")} · ${v.sog!=null? (+v.sog).toFixed(1)+" kn":"--"} @ ${dirTxt(v.cog)}</div>`).join("") : (c.ais ? "no contacts" : "—");
+  $("#h_list").innerHTML = c.history.length ? c.history.map(h=>`<div><span class="tt">${fmtDur(h.t-T0)}</span>${escapeHtml(h.text||"")}</div>`).join("") : "—";
 
   $("#t_now").textContent = fmtDur(pt);
   const wall = boat? new Date((absT)*1000) : (s? new Date(s.t*1000):null);

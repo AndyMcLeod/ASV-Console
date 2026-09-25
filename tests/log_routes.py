@@ -191,6 +191,16 @@ try:
           lambda: len(recs) == 1 and recs[0].get("line") == 3 and recs[0].get("hdg") == 271.5,
           lambda: json.dumps(recs[0] if recs else None)[:80])
 
+    # 2b. A FULL SNAPSHOT ON THE CLOCK (2026-09-25). Playback populates every card from the last full `state`
+    # record at its cursor, and between two salient transitions there used to be none for as long as a run:
+    # this console sits at spawn with nothing salient changing, and still writes one every STATE_FULL_INTERVAL.
+    n_full0 = len([r for r in read_session(spath) if r.get("kind") == "state"])
+    time.sleep(22)
+    n_full1 = len([r for r in read_session(spath) if r.get("kind") == "state"])
+    check("2b. with nothing salient changing, full state snapshots keep coming - at least two more in 22 s (every "
+          "10 s), so a replay's cards never read an hour-old wind",
+          lambda: n_full1 - n_full0 >= 2, "%d -> %d full snapshots" % (n_full0, n_full1))
+
     # 3. THE FIX. Before it, this exact body was a TypeError that dropped the connection
     # (raises out of api()) and killed the thread. Now: answered, recorded, renamed.
     try:

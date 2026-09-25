@@ -815,6 +815,8 @@ def _redact(body):
 
 LOG_QUIET_AFTER_S = 600.0        # sim boat home and idle this long -> the recording goes quiet (see SessionLogger)
 LOG_QUIET_HOME_M = 25.0          # "home" for that rule: within this of the home point
+AIS_LOG_INTERVAL_S = 10.0        # the contacts the page polls go into the log at most this often
+_ais_log_t = [0.0]
 
 
 class SessionLogger:
@@ -829,6 +831,7 @@ class SessionLogger:
                "autonomy", "behavior", "completion", "wp_index", "wp_total",
                "note", "home", "berth")
     STATE_MIN_INTERVAL = 1.0        # s: cap the between-transition motion trace
+    STATE_FULL_INTERVAL = 10.0      # s: a FULL snapshot at least this often, salient or not (playback's cards)
     # `speed_key` rides the motion trace, not just the salient snapshots, so a playback
     # can put COMMANDED speed alongside the speed actually made good. (A live speed change
     # is salient anyway - it sets `note`, which is in SALIENT above - but the trace is what
@@ -854,6 +857,7 @@ class SessionLogger:
         self.enabled = bool(enabled)
         self._last_salient = None
         self._last_state_t = 0.0
+        self._last_full_t = 0.0
         if self.enabled:
             try:
                 os.makedirs(log_dir, exist_ok=True)
@@ -903,9 +907,15 @@ class SessionLogger:
         except Exception:
             return
         now = time.time()
-        if salient != self._last_salient:
+        # ⚠ A FULL SNAPSHOT AT LEAST EVERY STATE_FULL_INTERVAL, salient or not (2026-09-25). Playback
+        # populates every card - wind, sea, water, current, comms, ROCs, supervisor - from the last full
+        # snapshot at its cursor, and between two salient transitions there used to be none for as long
+        # as a run: a replay read the wind the boat launched in all the way home. Ten seconds is the
+        # cards' own cadence; the file grows for it, and Andy said that is all right.
+        if salient != self._last_salient or (now - self._last_full_t) >= self.STATE_FULL_INTERVAL:
             self._last_salient = salient
             self._last_state_t = now
+            self._last_full_t = now
             self._write("state", {"state": event})
         elif (now - self._last_state_t) >= self.STATE_MIN_INTERVAL:
             self._last_state_t = now
@@ -5813,6 +5823,12 @@ class Handler(BaseHTTPRequestHandler):
                 if nearest is not None:
                     area["nearest_km"] = round(nearest, 1)
             area["shown"] = len(vs)
+            # THE CONTACTS INTO THE SESSION LOG (2026-09-25), so a replay can draw the traffic the operator
+            # saw: at most one `ais` record every AIS_LOG_INTERVAL_S whatever the page's polling, and none
+            # while the recording is quiet (the page keeps polling while the boat sits at home).
+            if LOG is not None and not LOG.quiet and (time.time() - _ais_log_t[0]) >= AIS_LOG_INTERVAL_S:
+                _ais_log_t[0] = time.time()
+                LOG.event("ais", count=len(vs), area=area, vessels=vs[:80])
             data["area"] = area
             self._send(200, json.dumps(data), "application/json")
         except Exception as e:

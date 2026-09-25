@@ -145,6 +145,9 @@ function makeWorld(store) {
     decl(/^const CMD_TIMEOUT_MS = [^;]*;/m),
     grab("lsGet"), grab("lsSet"), grab("lsDel"), grab("setCellText"),
     HIST_DECLS,
+    // recordAction posts a NEW row into the session log (2026-09-25, playback's History card); the post is
+    // tests/page_log_posts.js's subject - here it must merely find its name.
+    "const logClient = () => {};",
     ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory"].map(grab).join("\n"),
     LOAD_CALL,
     grab("cmd").replace(/^function cmd/, "async function cmd"), grab("cmdLabel"), decl(/^let noteTimer = [^;]*;/m),

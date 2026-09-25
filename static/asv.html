@@ -955,6 +955,7 @@ function recordAction(kind, label, answer){
     if(actionLog.length > HISTORY_MAX) actionLog.length = HISTORY_MAX; changed = {op: "new"}; }
   lsSet(HISTORY_KEY, actionLog);
   renderHistory(changed);
+  if(changed.op === "new") logClient("history", {what: kind, text: historyText(actionLog[0])});   // a repeat merges, and is not re-posted
 }
 function historyText(a){ return a.label + (a.answer ? " — " + a.answer : ""); }
 function fillHistoryRow(row, a){
@@ -5536,6 +5537,33 @@ function currentActivity(){
 //
 // CHANGE-ONLY, like every other aux stream the recorder carries: a per-tick record would
 // be thousands of identical rows and would bury the transitions that matter.
+// ⚠ ONE DOOR FOR THE PAGE'S OWN CARD DATA INTO THE SESSION LOG (Andy, 2026-09-25: "playback should have all
+// data in the log that a real mission generates ... populate all the cards with all the data collected
+// during the run"). What the server publishes (wind, sea, water, current, comms, ROCs) rides its full state
+// snapshots; what only THIS page knows - the nogo readout, the History rows, the guard bar, the LINES table
+// and the run-time readouts - is posted from here, on CHANGE or on a slow tick, never per frame. playback.html
+// resolves each at its cursor.
+function logClient(kind, data){
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind, data})}).catch(()=>{});
+}
+let lastGuardLogged = "";                       // the hidden key: a bar hidden at page start is not a change
+function logGuardChange(){                      // every 2 s: the guard bar, when it changes
+  const bar = $("#guardBar"); if(!bar) return;
+  const text = (bar.textContent || "").replace(/\s+/g, " ").trim();
+  const shown = bar.style.display !== "none" && !!text;
+  const key = shown ? bar.className + "|" + text : "";
+  if(key === lastGuardLogged) return;
+  lastGuardLogged = key;
+  logClient("guard", {shown, cls: shown ? bar.className : "", text: shown ? text.slice(0, 400) : ""});
+}
+function logLinesTick(){                        // every 30 s while running: the LINES table + run-time readouts
+  if(!(S && S.run === "running") || !mission.lines.length) return;
+  const txt = id => { const el = $(id); return el ? (el.textContent || "").replace(/\s+/g, " ").trim() : ""; };
+  logClient("lines", {lines: buildLineTable(), turns: buildTurnTable(), runtime: txt("#v_runtime"),
+                      survey: txt("#v_surveydur"), approach: txt("#v_approach"), wpt: txt("#v_wpt"),
+                      mission: txt("#v_mission")});
+}
 let lastActivity = null;
 function logActivityChange(){
   const a = currentActivity();
@@ -7367,6 +7395,7 @@ function nogoReadout(){
     cls: inkN ? "warn" : "",
     title: "Chart read (ENC band " + band + "): " + brk + "." + pastTxt + inkTxt + why};
 }
+let lastNogoLogged = null;
 function updateNogoUI(){
   const btn=$("#nogoBtn");
   if(btn){ btn.classList.toggle("on", nogoShow && nogo.ready); btn.disabled = false; }
@@ -7374,6 +7403,7 @@ function updateNogoUI(){
   const r = nogoReadout();
   el.textContent = r.text; setTip(el, r.title);
   el.className = "vv " + r.cls;                 // .vv.warn is defined after .vrow .vv, so it wins
+  if(r.text !== lastNogoLogged){ lastNogoLogged = r.text; logClient("nogo", {text: r.text, cls: r.cls, ready: !!nogo.ready}); }
 }
             // how far from centerline toward the stbd edge (0.5 = ¼ width in from the edge)
 // SCRATCH ONLY. The two lane stages set this; channelLaneRoute resets it on entry and
@@ -13196,6 +13226,8 @@ function connect(){
   es.addEventListener("tick", ()=>{ supervisorStreamed(); supervisorReport(); });
   es.onerror = ()=>{ $("#dot").className="dot lost"; supervisorStreamLost(); };
   setInterval(consoleHealth, 1000);
+  setInterval(logGuardChange, 2000);              // the guard bar into the log, on change (playback's cards)
+  setInterval(logLinesTick, 30000);               // the LINES table + run-time readouts, while running
 }
 // HOW OLD A READING IS, for the water, weather and current rows (review #13): whole minutes, then hours. The
 // spaces inside an age do not break, so a narrow card row wraps before the age and not through it - the wind

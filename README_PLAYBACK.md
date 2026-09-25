@@ -36,6 +36,8 @@ python asv_console.py --sim            # (or a real --vcu session)
 | **Boat marker** | The vessel (yellow) at the cursor time, its **position interpolated** between telemetry samples and a heading stick. Follows the cursor smoothly during play. |
 | **Plan overlay** | The **planned survey lines**, **survey-area boundary**, and the **uploaded / commanded route** — reconstructed from the command stream, so they appear/update exactly when they were sent. `H` marks the home point. Toggle with **PLAN**. |
 | **Vessel card** (left) | State at the cursor: position, heading, SOG, battery, autonomy, behaviour, waypoint x/N, and the console note. |
+| **Mission card** | Wind, sea, set/crab, current, water level, the nogo readout, comms, run time, survey and approach estimates, the supervising tab, the Intent line and the guard bar — each as the live console showed it at the cursor. |
+| **Lines / AIS / History cards** | The per-line plan-vs-actual table, the AIS contacts in range (also drawn on the chart, with ROC markers), and the History rows up to the cursor, newest first. |
 | **Event timeline** (centre-left) | Every **command / setting / action** (ARM, UPLOAD, START, STOP, E-STOP, Go-To/Hold/RTH/Transit, plan edits, comms/water settings…) and every **state transition**, in time order. A **rejected (409) command is shown in red** with its reason. The current event highlights and auto-scrolls as playback advances; **click any row to jump to it**. Toggle with **EVTS**. |
 | **Session pills** (top) | Mode (sim / real), total duration, command count, telemetry-fix count. |
 
@@ -65,6 +67,14 @@ the cursor time `t`:
 - **Track / boat** — every `state` and `telemetry` record that carries a GPS fix
   becomes a point; the boat position at `t` is **linearly interpolated** between
   the two bracketing fixes for smooth motion, and the track is every fix up to `t`.
+- **Every card** — the recorder writes a full `state` snapshot at least every 10 s (wind, sea,
+  water, current, comms, ROCs, supervisor ride it), `ais` records with the contacts the page
+  polled, and the page posts its own card data as `client:*` records on change (`nogo`,
+  `history`, `guard`, `activity`, `lines` every 30 s while running, `survey_lines` at the
+  end). `cardsAt(t)` resolves each from the **last record at or before `t`**; an AIS snapshot
+  older than 60 s is no longer shown as traffic. **Every other kind** in the file — `spawn`,
+  `log_quiet` / `log_resume`, `supervisor_*`, `storage_*`, `loop_fault`, page stalls, guard
+  events … — lands on the event timeline with a one-line digest, so nothing recorded is dropped.
 - **Vessel state** — the **last full `state` snapshot** at or before `t` supplies
   armed / run / autonomy / behaviour / completion / note / home; waypoint index
   comes from the latest `state`/`telemetry` sample.

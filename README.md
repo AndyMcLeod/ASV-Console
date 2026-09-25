@@ -154,6 +154,14 @@ be segmented into "these pings are coverage on line 7" and "these were acquired 
 there" without re-deriving the classification from the track. One classifier, one answer:
 anything that needs it reads `currentActivity()` rather than deciding for itself.
 
+**And the recording carries every card.** A full `state` snapshot is written at least every
+10 s (wind, sea, water level, current, comms, ROCs, the supervising tab), the AIS contacts the
+page polls go in as `ais` records, and the page posts what only it knows — the nogo readout,
+History rows, the guard bar, the LINES table and run-time readouts — on change. Playback
+(`/playback`) resolves all of it at its cursor and puts every other record kind on its
+timeline, so a replay populates the same cards the operator watched. The files are larger for
+it, by design.
+
 **And the recording goes quiet when there is nothing to record.** In the simulator, once the
 boat has been home and idle for ten minutes (holding or stopped within 25 m of the home point),
 the routine stream — state, telemetry, the page's activity and health rows — stops,
