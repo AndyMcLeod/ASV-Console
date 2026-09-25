@@ -154,6 +154,16 @@ be segmented into "these pings are coverage on line 7" and "these were acquired 
 there" without re-deriving the classification from the track. One classifier, one answer:
 anything that needs it reads `currentActivity()` rather than deciding for itself.
 
+**And the recording goes quiet when there is nothing to record.** In the simulator, once the
+boat has been home and idle for ten minutes (holding or stopped within 25 m of the home point),
+the routine stream — state, telemetry, the page's activity and health rows — stops,
+with one `log_quiet` record saying so; commands and lifecycle events still land. Planning a
+mission (a plan saved with lines, or uploaded) or commanding the boat (Start, Go-To, RTH,
+Transit) writes `log_resume` and the stream is back. The simulation itself keeps running and
+the console stays ready; it is the file the rule is about. A real vessel's record never
+pauses. `/api/state` carries `log_quiet`; `--log-quiet-s` shortens the wait for a harness
+(`tests/log_quiet.py`).
+
 **Intent — what, why, and what next.** The bottom section of the **Mission Status** card,
 answering the question a moving track raises: *why is it doing that?* Three parts, updated
 every telemetry frame. It was its own draggable pop-out behind an `INTENT` chip until

@@ -813,6 +813,10 @@ def _redact(body):
     return body
 
 
+LOG_QUIET_AFTER_S = 600.0        # sim boat home and idle this long -> the recording goes quiet (see SessionLogger)
+LOG_QUIET_HOME_M = 25.0          # "home" for that rule: within this of the home point
+
+
 class SessionLogger:
     # top-level state fields whose change marks a "salient" transition worth a
     # full snapshot (vs. a routine motion sample between transitions).
@@ -832,8 +836,18 @@ class SessionLogger:
     TELEM_FIELDS = ("lat_deg", "lon_deg", "heading_deg", "cog_deg", "sog_kn", "speed_key",
                     "battery_v", "battery_pct", "battery_state", "holding", "laps")
 
-    def __init__(self, enabled=True, log_dir=LOG_DIR):
+    def __init__(self, enabled=True, log_dir=LOG_DIR, quiet_after_s=LOG_QUIET_AFTER_S):
         self._lock = threading.Lock()
+        # ⚠ QUIET (Andy, 2026-09-25: "once the model is complete and the ASV is back home, wait 10 minutes
+        # and stop the simulation so the file does not grow with useless information. Do not log again until
+        # a new mission is planned"). A sim boat holding at home writes a telemetry line a second all night
+        # for nothing. Engine._log_quiet_watch calls quiet_on() once she has been home and idle for
+        # `quiet_after_s`; the routine stream (state, telemetry, the page's client events) then stops and
+        # ONE record says so, commands and lifecycle events still land, and wake() - a plan uploaded or
+        # saved, any commanded motion - resumes it with a record of its own. The simulation itself keeps
+        # running: the console stays ready, and it is the FILE the rule is about. Sim only, by the caller.
+        self.quiet = False
+        self.quiet_after_s = float(quiet_after_s)
         self._f = None
         self.path = None
         self.session_id = None
@@ -882,7 +896,7 @@ class SessionLogger:
     def state(self, event):
         """Record a state snapshot: full on any salient transition, else a
         throttled slim motion sample. Called on every Engine state publish."""
-        if not self.enabled or self._f is None:
+        if not self.enabled or self._f is None or self.quiet:
             return
         try:
             salient = tuple(event.get(k) for k in self.SALIENT)
@@ -901,6 +915,23 @@ class SessionLogger:
                 "wp_index": event.get("wp_index"),
                 "status": {k: st.get(k) for k in self.TELEM_FIELDS if k in st},
             })
+
+    def quiet_on(self, reason):
+        """Stop the routine stream until wake(). One record marks the pause so a reader of the file
+        knows the silence is deliberate and what ends it."""
+        if self.quiet or not self.enabled:
+            return
+        self._write("log_quiet", {"reason": reason,
+                                  "resumes": "when a mission is planned or saved, or the boat is commanded"})
+        self.quiet = True
+
+    def wake(self, reason):
+        """Resume the routine stream. The first frame after the pause is a full snapshot again."""
+        if not self.quiet:
+            return
+        self.quiet = False
+        self._last_salient = None
+        self._write("log_resume", {"reason": reason})
 
     def close(self):
         with self._lock:
@@ -4136,6 +4167,7 @@ class Engine:
         # re-targets the boat at it. Injected in main() - see set_home_provider.
         self.home_provider = None      # callable -> {roc_id,name,kind,moving,point} | None
         self.home_release = None       # callable: drop the ROC that owns HOME (reset / spawn)
+        self._idle_home_since = None   # when the SIM boat was last seen arriving home and idle (log quiet rule)
         self.home_source = None        # None (first fix / manual) | the active ROC id
         self._rth_follow = False       # True while RTH is chasing a moving home
         self._rth_last_target = None   # last arrival point issued to the link (drift throttle)
@@ -4372,6 +4404,7 @@ class Engine:
                              m.get("approach_radius_m", WP_APPROACH_M), completion=completion,
                              hold_clear_m=hold_clear_m, name="survey")
             self.plan_uploaded = True
+            self._log_wake("plan uploaded")
             if link.plan_staged:
                 # The run in progress keeps its own completion and waypoint count until Start;
                 # the staged plan carries its own completion in its own dict, so there is
@@ -4501,6 +4534,7 @@ class Engine:
             link.start()
             self.run = "running"
             self._commanded()
+            self._log_wake("start")
             # ⚠⚠ THE RUN'S IDENTITY IS THE LOADED PLAN'S, read back AFTER link.start() has
             # applied any staged plan. Not remembered from the upload, and not derived from
             # `plan_staged`: `_apply_plan`'s first line is `self._staged = None`, and it runs
@@ -4581,6 +4615,7 @@ class Engine:
             self.wp_total = len(route)
             self.wp_index = 0
             self.run = "running"
+            self._log_wake("route: " + str(behavior))
             if not continuing:
                 self.run_seq += 1          # a re-approach is this motion still running, not another one
             # ⚠⚠ AND THE LAST FRAME'S `holding` IS NOW A FACT ABOUT WHERE SHE WAS. Dropping
@@ -5020,6 +5055,42 @@ class Engine:
     LOOP_FAULT_CLEAR_TICKS = 8          # 2 s of clean ticks at 4 Hz
     LOOP_FAULT_SITES_MAX = 8            # distinct sites printed per episode; the count keeps counting
 
+    def _log_wake(self, reason):
+        """A mission planned or the boat commanded: the recording resumes AND the home-and-idle clock
+        restarts, so a plan saved by a boat still sitting at home buys a fresh LOG_QUIET_AFTER_S before it
+        goes quiet again. Without the restart a clock already past the delay re-quieted the log on the
+        very next frame - one `log_resume` record with nothing after it (tests/log_quiet.py 4)."""
+        self._idle_home_since = None
+        if LOG is not None:
+            LOG.wake(reason)
+
+    def _log_quiet_watch(self, telem):
+        """⚠ THE RECORDING GOES QUIET ONCE THE SIM BOAT IS HOME AND IDLE (Andy, 2026-09-25). Sim only -
+        a real vessel's record never pauses. Home (within LOG_QUIET_HOME_M of the home point), not under
+        way (idle, stopped, or holding) for LOG.quiet_after_s -> SessionLogger.quiet_on().
+        Leaving home or getting under way resets the clock; a plan uploaded or saved, or any commanded
+        motion, wakes the log (see the wake() callers). The boat keeps simulating throughout."""
+        if LOG is None or self._mode != "sim" or not self.home:
+            self._idle_home_since = None
+            return
+        lat, lon = telem.get("lat_deg"), telem.get("lon_deg")
+        if lat is None or lon is None:
+            return
+        # Under way = a run in progress that is not holding. Not a speed test: a boat station-keeping in
+        # wind reads over half a knot all the while she holds, and a stopped one drifts - "home" (the
+        # distance test below) is what says whether either has left.
+        under_way = self.run == "running" and not telem.get("holding")
+        at_home = _haversine_km(lat, lon, self.home["lat"], self.home["lon"]) * 1000.0 <= LOG_QUIET_HOME_M
+        if under_way or not at_home:
+            self._idle_home_since = None
+            return
+        now = time.time()
+        if self._idle_home_since is None:
+            self._idle_home_since = now
+            return
+        if now - self._idle_home_since >= LOG.quiet_after_s and not LOG.quiet:
+            LOG.quiet_on("sim boat home and idle for %d s" % int(LOG.quiet_after_s))
+
     def _run(self):
         while not self._stop.is_set():
             try:
@@ -5151,6 +5222,8 @@ class Engine:
                         # first fix = launch/home point - only when no ROC owns HOME
                         if self.home is None and self.home_source is None:
                             self.home = {"lat": telem["lat_deg"], "lon": telem["lon_deg"]}
+                        # the recording goes quiet once the sim boat has been home and idle a while
+                        self._log_quiet_watch(telem)
                     self.wp_index = telem.get("wp_index", self.wp_index)
                     self.wp_total = telem.get("wp_total", self.wp_total)
                     # reflect the boat's reported run state (e.g. survey completed)
@@ -5308,6 +5381,7 @@ class Engine:
             "route_max_wpts": ROUTE_MAX_WPTS,          # a longer route is refused whole (review #9)
             # a fault the telemetry loop survived: {error, count, since}, or None (review #12)
             "loop_fault": dict(lf) if lf else None,
+            "log_quiet": bool(LOG is not None and LOG.quiet),
             # The loop publishes a frame on EVERY tick while a link exists, healthy or lost, so frames
             # that stop while this is true mean the console stopped - the page says TELEMETRY STALE.
             "streaming": self._link is not None,
@@ -5818,7 +5892,9 @@ class Handler(BaseHTTPRequestHandler):
         # a supervising tab reports in every SUPERVISOR_BEAT_S, and thirty records a minute of "a tab is still here"
         # would bury the record the operator actually reads. What MATTERS about supervision - a tab taking the post,
         # taking over, letting it go, going quiet, coming back - is written by the registry itself, as events.
-        if LOG is not None and self.path not in LOG_QUIET_POSTS:
+        # ... and while the recording is quiet the page's event posts do not land as commands either - the
+        # activity row every 30 s arriving as `command /api/logevent` is the same growth by another door.
+        if LOG is not None and self.path not in LOG_QUIET_POSTS and not (LOG.quiet and self.path == "/api/logevent"):
             LOG.command(self.path, body, code,
                         obj.get("error") if isinstance(obj, dict) else None)
         self._send(code, json.dumps(obj))
@@ -5829,6 +5905,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/mission":
             try:
                 rev = save_mission(body)
+                # A plan with lines or waypoints being saved IS a mission being planned (the log quiet rule).
+                if body.get("lines") or body.get("waypoints"):
+                    ENGINE._log_wake("mission planned")
             except PlanRefused as e:
                 return 400, {"error": str(e)}
             except PlanConflict as e:
@@ -5855,7 +5934,9 @@ class Handler(BaseHTTPRequestHandler):
             # session log should swallow an odd field name, not reject the operator's
             # event over it - and the flat record shape stays intact for playback.
             data = {(k + "_" if k in ("kind", "self") else k): v for k, v in data.items()}
-            if LOG is not None:
+            # ... but not while the recording is quiet: the page's activity and health rows every
+            # 30 s are exactly the growth the quiet rule stops. Answered 200 either way.
+            if LOG is not None and not LOG.quiet:
                 LOG.event("client:" + kind, **data)
             return 200, {"ok": True}
         if path == "/api/vessel":
@@ -7103,6 +7184,10 @@ def main():
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
     ap.add_argument("--no-log", action="store_true",
                     help="disable the session recorder (logs/*.jsonl for future playback)")
+    ap.add_argument("--log-quiet-s", type=float, default=LOG_QUIET_AFTER_S, metavar="S",
+                    help="in the sim, the recording goes quiet once the boat has been home and idle this "
+                         "long (default %d s) and resumes when a mission is planned or the boat is commanded; "
+                         "a harness shortens it" % int(LOG_QUIET_AFTER_S))
     ap.add_argument("--no-log-compress", action="store_true",
                     help="leave session recordings older than %d days as they are. By default they are gzipped in "
                          "place - the same record, listed and played back under the same name, readable with any gzip "
@@ -7218,7 +7303,7 @@ def main():
         atexit.register(ROC.stop)
     # log_dir PASSED, not defaulted: the default was bound when the class was defined, before
     # --state-dir could move LOG_DIR (review #16).
-    LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR)
+    LOG = SessionLogger(enabled=not args.no_log, log_dir=LOG_DIR, quiet_after_s=args.log_quiet_s)
     STORAGE.start()                               # sizes of logs/ and charts/, and a warning when a drive runs low
     SUPERVISION.start()                           # says when the supervising tab stops reporting (review #14)
     if LOG.enabled:
