@@ -94,6 +94,7 @@ function grabDecl(name) {
 const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 } };
 var mission, runRoute = null, asv = null, S = null;
 var runLineIdx = -1, turnSeg = [], curTurn = -1, lastRunLine = -1;
+var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - written by accumLineTime, read by currentActivity
 var lineActual = [], lineClock = null, lineStatsKey = null;
 var clearance = { slowed: false }, commandedSpeedSent = [];
 function cmd(p, b) { commandedSpeedSent.push(b && b.speed); }
@@ -107,7 +108,7 @@ eval([
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("reversalScaleM"), grab("isReversalGap"),
-  grab("indexedRoute"), grab("currentLegLine"), grab("accumLineTime"),
+  grab("indexedRoute"), grab("currentLegLine"), grab("onLineM"), grab("accumLineTime"),
   // linePhase splits a committed line into lead-in / coverage / lead-out; currentActivity
   // asks it before reporting coverage. The fixtures here carry no lead, so every line is
   // all coverage and the answer is the one it always was — which is the point: adding the
@@ -446,6 +447,60 @@ plan();
               + "ends against a " + __matchM() + " m tolerance → lines "
               + foundCov.join(", ") + ". This is why the RUN ends are what is committed.");
   mission.waypoints = LINES.flatMap(([a, b]) => [cp(a), cp(b)]);
+
+  // ⚠ A REMAINDER OF A LINE IS THAT LINE (2026-09-25). A resume - after a pause, a guard hold or the
+  // AIS return - rejoins part-way down the line, so the running leg begins ON the line and ends at its
+  // end. Neither endpoint pair matched, the leg read as a turn "between lines", and the rest of the
+  // coverage was flown at the TURN speed (measured live: 300 m of a line at 4.0 kn after an AIS return).
+  {
+    const [a0, b0] = LINES[2];
+    const at = (p, q, t) => ({ lat: p.lat + (q.lat - p.lat) * t, lon: p.lon + (q.lon - p.lon) * t });
+    const rejoin = at(a0, b0, 0.4);                        // 60 m down a 150 m line
+    const wps = LINES.flatMap(([a, b]) => [cp(a), cp(b)]);
+    // ⚠ EACH CALL GETS A ROUTE OF ITS OWN LENGTH. currentLegLine memoizes on (index, route length,
+    // line count) in a binding the eval owns, so three calls at index 5 over ten waypoints would read
+    // the first one's answer back - which is how the two CONTROLS below first "matched".
+    const pad = (n) => Array.from({ length: n }, () => wps[9]);
+    mission.waypoints = [wps[0], wps[1], wps[2], wps[3], rejoin, cp(b0), ...wps.slice(6), ...pad(1)];
+    window._wpIndex = 5; _legLine = { key: "", line: -1 };
+    const found = currentLegLine();
+    check("15f. a leg that begins part-way down a line and ends at its end - a RESUMED remainder - is that line",
+          () => found === 2,
+          () => "rejoin 60 m down line 3, leg 5 → line " + (found + 1)
+              + " (-1 would fly the rest of the coverage as a turn, at the turn speed)");
+    // the CONTROLS: beside the line is not on it (the lines here run east-west, so beside is NORTH),
+    // and a turn's tangent vertex 8 m short of the RUN line's start - outside the 5 m endpoint match, and
+    // outside the remainder rule's along-track window - is not a remainder either
+    const Lr = mission.lines[2], lenR = distTo(Lr.a, Lr.b);
+    const beside = { lat: rejoin.lat + 12 / M_PER_DEG_LAT, lon: rejoin.lon };
+    mission.waypoints = [wps[0], wps[1], wps[2], wps[3], beside, cp(b0), ...wps.slice(6), ...pad(2)];
+    _legLine = { key: "", line: -1 };
+    const off = currentLegLine();
+    mission.waypoints = [wps[0], wps[1], wps[2], wps[3], at(Lr.a, Lr.b, -8 / lenR), cp(b0), ...wps.slice(6), ...pad(3)];
+    _legLine = { key: "", line: -1 };
+    const tangent = currentLegLine();
+    check("15g. ... and a leg that begins 12 m BESIDE the line, or 8 m short of its start (a turn's last vertex), is not",
+          () => off === -1 && tangent === -1,
+          () => "beside → " + off + ", 8 m short → " + tangent);
+    mission.waypoints = LINES.flatMap(([a, b]) => [cp(a), cp(b)]);
+
+    // ⚠ AND THE SWING ONTO IT IS A TURN. At the rejoin point she arrives heading the WRONG WAY (the run-in
+    // came back down the line) and reverses onto it: her leg is the line by sequence, the hull is not
+    // aligned, and until this those frames read "between coverage regions" - the governor commanded the
+    // TRANSIT speed into a 180 (13.7 kn, measured live). Driven through the real accumLineTime.
+    mission.waypoints = [wps[0], wps[1], wps[2], wps[3], rejoin, cp(b0), ...wps.slice(6), ...pad(4)];
+    _legLine = { key: "", line: -1 }; lastRunLine = 2; curTurn = -1; turnSeg = [];
+    const dn2 = Math.round((a0.lat - LAT0) * M_PER_DEG_LAT);   // the line's own northing (LINES[2] is the 120 m line)
+    const az = azTo(a0, b0);
+    const swing = tick(dn2, 60, (az + 90) % 360, 5);        // at the rejoin point, swinging round across the line
+    const swingAct = currentActivity().detail;
+    const onIt = tick(dn2, 62, az, 5);                       // two meters on, aligned
+    check("15h. arriving at the rejoin point across the line, the swing onto it is a TURN (turn speed), and once aligned it is the line",
+          () => swing === "turn" && /turning onto line 3/.test(swingAct) && onIt === "survey",
+          () => "swinging: " + swing + " (" + swingAct + "); aligned: " + onIt
+              + " - a 'transit' while swinging is the governor commanding the fastest speed into a reversal");
+    mission.waypoints = LINES.flatMap(([a, b]) => [cp(a), cp(b)]);
+  }
 }
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));

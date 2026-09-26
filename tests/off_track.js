@@ -122,7 +122,7 @@ eval(grabDecl("LINE_MATCH_M") + "\n" + grabDecl("_legLine") + "\n" +
      // the DRAWN-LINE numbering the "of: line N" label now goes through (review #18) - the page's own
      grab("lineSetKey") + "\n" + grabDecl("LINE_PART_OFFSET_M") + "\n" + grabDecl("_drawnLines") + "\n" + grab("linePartContinues") + "\n" +
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
-     grab("indexedRoute") + "\n" + grab("currentLegLine") + "\n" + grab("offTrack") + "\n" +
+     grab("indexedRoute") + "\n" + grab("currentLegLine") + "\n" + grab("onLineM") + "\n" + grab("offTrack") + "\n" +
      "function __resetLegMemo(){ _legLine = {key:'', line:-1}; }");
 
 let fails = 0;

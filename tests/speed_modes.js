@@ -128,6 +128,7 @@ function check(name, cond, detail) {
 // ---- the page's world, as the governor reads it ------------------------------------- //
 V.SPEED_KN = { low: 4.0, survey: 7.0, high: 14.0 };
 var mission, runLineIdx = -1, curTurn = -1, turnSeg = [], turnSlowAt = {}, lastRunLine = -1;
+var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - read by currentActivity every frame
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 (tests/corner_slow.js).
 // Declared here for the same reason turnSlowAt is: this suite evals the function's source
 // into its own scope, so every global it names has to exist in that scope.

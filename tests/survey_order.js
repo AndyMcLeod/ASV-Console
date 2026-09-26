@@ -257,12 +257,12 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
 
 // 9. what counts as a line while it runs
 // eslint-disable-next-line no-new-func
-const legWorld = new Function("distTo", "\"use strict\";\n"
+const legWorld = new Function("distTo", "llEN", "\"use strict\";\n"
   + "let runRoute = null; const mission = {waypoints: [], lines: []}; const window = {_wpIndex: 0};\n"
   + decl(H, /^const LINE_MATCH_M = [^;]*;/m) + "\n" + decl(H, /^let _legLine = [^;]*;/m) + "\n"
-  + grab(H, "indexedRoute") + "\n" + grab(H, "currentLegLine")
+  + grab(H, "indexedRoute") + "\n" + grab(H, "currentLegLine") + "\n" + grab(H, "onLineM")   // the remainder rule (2026-09-25)
   + "\nreturn { currentLegLine, set: (route, lines, idx) => { runRoute = route; mission.lines = lines;"
-  + " window._wpIndex = idx; _legLine = {key: '', line: -1}; } };")(G.distTo);
+  + " window._wpIndex = idx; _legLine = {key: '', line: -1}; } };")(G.distTo, G.llEN);
 const p0 = at(-50, -50), p1 = at(0, 0), p2 = at(0, 400), p3 = at(40, 420);
 const L1 = { a: p1, b: p2 };
 const legAt = (route, idx, lines) => { legWorld.set(route, lines || [L1], idx); return legWorld.currentLegLine(); };

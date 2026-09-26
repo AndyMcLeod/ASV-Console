@@ -250,7 +250,10 @@ const near = (v, w, tol) => Math.abs(v - w) <= (tol || 0.05);
           + clearanceM({ e: 5000, n: 5000 }, KO)
           + " and the page passes CLEAR_CAP_M");
   check("6b. ... and the page passes its own constant rather than taking the default",
-        () => /const CLEAR_CAP_M = 400;/.test(H) && /clearanceM\(p, nogo\.ko, CLEAR_CAP_M\)/.test(H),
+        // `ko` is nogo.ko plus whatever the caller folds in (the AIS contacts, 2026-09-25) - the same
+        // constant, measured against the model the guard acts on
+        () => /const CLEAR_CAP_M = 400;/.test(H) && /clearanceM\(p, ko, CLEAR_CAP_M\)/.test(H)
+              && /const ko = \(extra && extra\.length\) \? \{\.\.\.nogo\.ko, polys: \[\.\.\.nogo\.ko\.polys, \.\.\.extra\]\} : nogo\.ko;/.test(H),
         "so the cost of the guard is a decision in the page, visible beside the tick");
 }
 
@@ -637,6 +640,15 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let planIntent = { why: [] }, sent = [], notes = [];
   const guardAssess = G4.assess, groundVel = G4.groundVel, restoreVel = G4.restoreVel;
   const edgeCapM = G4.edgeCapM, edgeText = G4.edgeText, GUARD_HORIZON_S = G4.HORIZON_S;
+  // THE AIS KEEP-OUTS (2026-09-25): clearanceGuard builds the contacts' model every frame and asks the
+  // return tick above every branch, so the names must exist. No contacts live here, and the poll is
+  // always fresh - an EMPTY model, never a STALE one - so every check in this file is the charted
+  // world it always was (tests/ais_avoid.js is where a contact stands).
+  const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+  let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
+  let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
+  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000;
+  const logClient = () => {}, heldResuming = false;
   // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
   // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could
   // ever be posted, so nothing in this repo had ever executed the rung that steers the boat.
@@ -723,6 +735,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "standDownEnd") + NL2 + grab(H, "helmStoodDown") + NL2
                      + grab(H, "endGrant") + NL2
                      + grab(H, "commandSpeed") + NL2
+                     // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
+                     + grab(H, "aisGuardWanted") + NL2 + grab(H, "aisKeepoutsNow") + NL2
+                     + grab(H, "aisNearestKind") + NL2 + grab(H, "aisAvoidOpen") + NL2
+                     + grab(H, "aisReturnTick") + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");

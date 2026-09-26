@@ -130,6 +130,7 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 } };
 var mission = { lines: [], speeds: { transit: "high", turn: "low", survey: "survey" },
                 lead_mode: "m", lead_in: 0, lead_out: 0 };
 var lineActual = [], runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
+var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - written by accumLineTime, read by currentActivity
 var S = null, asv = null;
 var patClip = null, patLead = [];
 const NO_LEAD = { in: 0, out: 0 };

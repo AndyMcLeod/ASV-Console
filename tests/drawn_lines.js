@@ -203,17 +203,18 @@ check("8. the chart's labels, the turn table, the line tip, the held-survey bar 
   // see a single regression.
   const raw = (code.match(/g\.mark\.line \+ 1/g) || []);
   const viaHelper = (code.match(/lineNo\(g\.mark\.line\)/g) || []).length;
-  // the held bar (1727) plus resumeHeldSurvey's note, banner and session log
+  // the held bar (1727) plus resumeHeldSurvey's note, banner and session log - and, since 2026-09-25,
+  // the AIS return's own record (aisReturnTick)
   const logSite = /line: g\.mark \? lineNo\(g\.mark\.line\) : null/.test(code);
   check("every 'line N' the HELD resume states goes through lineNo(), like the pause resume "
         + "beside it",
-        () => raw.length === 0 && viaHelper === 4 && logSite,
+        () => raw.length === 0 && viaHelper === 5 && logSite,
         () => raw.length
                 ? raw.length + " raw segment-index conversion(s) left: " + raw.join(", ")
                   + " - the note, the banner and the session log each name a line the chart "
                   + "does not have"
-                : viaHelper + " site(s) through lineNo (the held bar, and the note, "
-                  + "banner and session log of the held resume); the log names the drawn "
+                : viaHelper + " site(s) through lineNo (the held bar, the note, "
+                  + "banner and session log of the held resume, and the AIS return's record); the log names the drawn "
                   + "line: " + logSite);
 }
 

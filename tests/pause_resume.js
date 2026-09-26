@@ -99,6 +99,7 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 },
             VESSEL: { hull: { loa_m: 7.71, beam_m: 2.4 } } };
 var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" } };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, lineActual = [];
+var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - read by currentActivity every frame
 var S = null, asv = null, runRoute = null, pauseMark = null, resumeSlow = false;
 // The helm rung's claim on the throttle (escapeThrottle): speedGovernor stands down on it
 // exactly as it does on `resumeSlow`, so the symbol must exist in this world or the

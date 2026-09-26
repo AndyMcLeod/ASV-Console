@@ -106,6 +106,7 @@ const { distTo } = require("../static/js/geodesy.js");
 let mission = { lines: [], waypoints: [], arrival_radius_m: 2 };
 let lineActual = [], lineClock = null, loggedLines = false;
 let turnSeg = [], curTurn = -1, lastRunLine = -1, runLineIdx = -1;
+let lineSwing = -1;   // the line she is swinging onto (2026-09-25) - written by accumLineTime each frame
 let lineStatsKey = null;
 let runElapsed = 0, runClock = null, runTotalM = 0, runTotalKey = null;
 // review #23: the clock times the COMMANDED MOTION, and the job is kept beside it. Declared here, not beside the

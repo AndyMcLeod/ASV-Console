@@ -73,6 +73,7 @@ const W = new Function("G", `"use strict";
   let clockNow = 0; const performance = { now: () => clockNow * 1000 };
   let lineActual = [], lineClock = null, loggedLines = false;
   let turnSeg = [], curTurn = -1, lastRunLine = -1, runLineIdx = -1;
+  let lineSwing = -1;                                    // the line she is swinging onto (2026-09-25)
   let hopSeg = [], curHop = -1, approachSec = 0, rthSec = 0;
   let lineStatsKey = null;
   let runElapsed = 0, runClock = null, runTotalM = 0, runTotalKey = null, runSeq = null, jobElapsed = 0, jobClock = null, runMotions = 0;

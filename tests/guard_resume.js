@@ -150,6 +150,7 @@ const V = { SPEED_KN: { low: 4.0, survey: 7.0, high: 14.0 },
 var mission = { lines: [], waypoints: [], speeds: { transit: "high", turn: "low", survey: "survey" },
                 approach_radius_m: 2 };
 var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1, turnSlowAt = [];
+var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - read by currentActivity every frame
 // speedGovernor also reads the JUNCTION corner set since 2026-09-19 - see speed_modes.js.
 var cornerSlow = new Set();
 var cornerSlowFor = -1;
@@ -186,6 +187,15 @@ var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
 // actually clear it between episodes.
 var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
+// THE AIS KEEP-OUTS (2026-09-25). clearanceGuard builds the contacts' model every frame and asks the
+// return tick above every branch, so the names must exist or the guard is a bare ReferenceError. No
+// contacts live in this world - the model is empty and every check here is the charted world it always
+// was. `aisPolledAt` is a poll that is always fresh: an EMPTY model, never a STALE one, so the blind
+// banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
+var aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
+var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
+const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { clearanceM } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
 var slowLieu = null;
@@ -359,6 +369,10 @@ eval([
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
+  // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
+  grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),
+  grab("aisReturnTick"), grab("logClient"),
+  grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
   grab("renderGuardBar"), grab("renderHeldBar"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).

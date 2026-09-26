@@ -420,6 +420,26 @@ within the hull, and on a 295 m ship with the bridge aft, centring the box would
 stem 77 m from where it actually is. Zoomed out, where a 300 m ship is seven pixels, it
 falls back to the standard glyph.
 
+**Contacts are keep-outs (2026-09-25).** Every AIS contact near the boat is a keep-out the
+clearance guard steers clear of, exactly as it does a pier: the **hull she broadcasts** (or
+**20 m x 8 m** about her antenna where she broadcasts none), oriented by her heading, with the
+vessel's own keep-clear buffer around it and **no other margin**. While she is under way the
+keep-out is **dead-reckoned** between polls and **swept** over the guard's look-ahead — the
+water she will occupy within the next 45 s — so a contact crossing ahead holds the boat
+before her track and one bearing down reads in extremis while there is still water to escape
+in. The contacts are polled whenever the console is armed, **layer or no layer**, and drawn in
+the keep-out red whenever the guard has them (dashed where it is the sweep). They reach the
+**guard's model only**: the punch, the router and the plan never see a contact, so **a ship
+crossing the survey area reconfigures nothing**. After a contact has stopped or steered the
+boat off a survey line, the console **brings her back itself** once the contact is clear of
+the line for 4 s: it rejoins **100 m back down the line** over water already run, so the
+coverage overlaps, and carries on — with none of the operator's resume latches (no LOW
+hold, no override). A contact that **stops on the line** never clears it: the boat holds, the
+guard bar says what she is holding for, and resuming or dropping the remainder is the
+operator's as before. A feed that stops answering is an **empty model that says so** — a
+banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
+`koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
+
 **CPA and TCPA** — the closest the two vessels will come on present course and speed, and
 how long until that happens — are shown for every contact with a track. They are recomputed
 from the live kinematics every time they are read, so a **manoeuvre by either vessel is
@@ -1668,6 +1688,17 @@ diagnosable (`tests/frame_health.js`).
    operator, the guard's own bar keeps the unflown remainder and offers **RESUME SURVEY AT
    LOW SPEED**, which goes back down the line exactly as this one does - see the clearance
    guard's ladder above. Pause is the operator's hole; that one is the console's.
+
+   **And after an AIS contact, the console resumes it itself** (2026-09-25). A survey stopped
+   or steered clear for a contact comes back on its own once the contact is clear of the line,
+   100 m back down it over water already run — see the AIS layer above. The operator's
+   RESUME on the bar still works the whole time, and either spends the held remainder.
+   Two things every resume needed and now has: **a remainder of a line is that line** — the
+   leg from the rejoin point to the line's end used to match no line, so the rest of the
+   coverage was flown and timed as a turn — and **the swing onto a line is a turn**: while
+   the vessel is steering for a line's end and the hull is not yet on it (the reversal at a
+   rejoin point, a hop arriving at an angle), the governor flies the turn speed, not the
+   transit speed.
 
 **Session recording (for a future playback mode).** Every run is recorded
 automatically to `logs/asv_<timestamp>.jsonl` — one JSON event per line: every

@@ -394,6 +394,7 @@ check("16. ... and a stopped boat does not re-arm anything either",
        [grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("lineSetKey"), grab("linePartContinues"),
         grab("drawnLines"), grab("lineNo"), grab("lineCount"), grab("linePartTxt")].join("\n"));
   var runLineIdx = -1, curTurn = -1, turnSeg = [], lastRunLine = -1;
+  var lineSwing = -1;   // the line she is swinging onto (2026-09-25) - read by currentActivity every frame
   // A real position rather than null: currentActivity asks linePhase where on the line the
   // boat is, and a null boat would answer "coverage" for the trivial reason that it cannot
   // measure. These lines carry no lead, so the answer is coverage on the real reason.

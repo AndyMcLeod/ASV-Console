@@ -530,8 +530,10 @@ check("10b. hold_clear_m is NEVER inflated and never reads the filtered model - 
   + "construction in asv_console.py: an inflated one is a lie the boat acts on");
 
 check("10c. escapeCourse is asked of the TRUE model, so an escape never steers toward a granted feature",
-  () => /escapeCourse\(p, drift, nogo\.ko,/.test(HC),
-  "escapeCourse(p, drift, nogo.ko, ...) - the unfiltered model. Handed koG it could steer the "
+  () => /escapeCourse\(p, drift, koAll,/.test(HC)
+        && /const koAll = aisKo\.length \? \{\.\.\.nogo\.ko, polys: \[\.\.\.nogo\.ko\.polys, \.\.\.aisKo\]\} : nogo\.ko;/.test(HC),
+  "escapeCourse(p, drift, koAll, ...) - the unfiltered model plus the AIS contacts (2026-09-25), never "
+  + "koG. Handed koG it could steer the "
   + "boat confidently into the launch pier, because the pier would not be in the world it "
   + "was searching");
 
