@@ -257,7 +257,7 @@ check("12. a refused REVERSAL that falls to routing stays out of the channel " +
       + "(2026-09-25) - keep ko",
       () => P.includes("const koHere = (antiParallel && !twoWaters) ? koTurn : ko;") &&
             P.includes("routeAround(Ap,Bp,ref,koHere,buffer)") &&
-            /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, buffer, \{lane:false\}\)/.test(P));
+            /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, hopBuf, \{lane:false\}\)/.test(P));   // hopBuf (2026-09-26): the standoff, or the buffer it fell back to
 // 12b. ⚠ AND THAT CALL NO LONGER RIDES THE RULE 9 LANE (2026-08-31). It is a hop between
 // two lines of a SURVEY PATTERN, and Andy: "while running various survey patterns the rule
 // should not be considered." The CALL stays, because the three stages after the lane -

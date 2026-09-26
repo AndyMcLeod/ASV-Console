@@ -3856,10 +3856,21 @@ class SimVcu(VcuLink):
         # --- ENVIRONMENTAL FORCING (SIM ONLY) --------------------------------- #
         # Wind on the projected windage silhouette + a wave drift set + an oscillatory
         # wave yaw. The net pushes the boat off course so the line-follower steers
-        # continuously (a steady crab + a slight weave). Active only while deployed
-        # (running / holding / paused, not stopped or e-stopped) and only when enabled;
+        # continuously (a steady crab + a slight weave). Only when enabled;
         # calm/disabled -> None -> today's clean tracking exactly.
-        env = ENV.field() if (self._running and not self._estop) else None
+        #
+        # ⚠⚠ THE LEEWAY IS REPORTED WHENEVER IT IS BLOWING, AND APPLIED ONLY WHILE DEPLOYED
+        # (running / holding / paused, not stopped or e-stopped). Until 2026-09-26 the field
+        # itself was gated on `_running`, so a boat that had not been started published
+        # env_set_kn = 0.00 in a 21 kn wind - the same POSITIVE CLAIM OF SLACK WATER the
+        # stream half below was cured of, at the one moment the planner asks: punchOut clips
+        # its coverage at guardStandoffM(buffer, set) at COMMAND time, with the boat idle.
+        # His 09:38 New Castle mission: every punch clipped at the bare 3 m, the set read
+        # 1.75 kn the instant she started, the guard's standoff became 19.5 m, and four line
+        # ends fired the helm rung. `deployed` gates the yaw, the motion and the position
+        # integration exactly as `_running` did; the REPORT is no longer gated.
+        deployed = self._running and not self._estop
+        env = ENV.field()
         drift_e = drift_n = set_kn = 0.0
         set_dir = None
         rel_w = beam = 0.0
@@ -3899,6 +3910,9 @@ class SimVcu(VcuLink):
             if fmag > 0.01:                                  # terminal leeway from quadratic hull drag
                 vdr = min(LEEWAY_CAP_MS, math.sqrt(fmag / (0.5 * RHO_WATER * HULL_CD * HULL_A_LAT)))
                 drift_e, drift_n = vdr * fe / fmag, vdr * fn / fmag
+        # THE MOTION - weathervane yaw, wave yaw, pitch and roll - only while deployed. A
+        # boat lying stopped at a berth reports the set above and does none of this.
+        if env and deployed:
             yaw = 0.0                                        # weathervane + oscillatory wave yaw
             if ws > 0.05:
                 lat_f = -math.sin(hb) * fe + math.cos(hb) * fn
@@ -3946,9 +3960,17 @@ class SimVcu(VcuLink):
         # goes 3 kn over the ground with no force on it at all. She is in the stream whether
         # or not the operator has pressed Start. The POSITION integration below stays gated
         # exactly as it was, so a stopped sim boat still does not wander.
+        #
+        # ⚠ AND THE LEEWAY HALF STAYED GATED FOR THREE MORE WEEKS. The wind block above kept
+        # `env = ENV.field() if running else None` after this was written, so at a berth with
+        # no readable stream (New Castle, 2026-09-26: "gomofs frames are not hourly") the whole
+        # set still read 0.00 - see the wind block for what that cost. `deployed` now gates the
+        # INTEGRATION of both halves here and the REPORT of neither.
         set_e, set_n = drift_e + cur_e, drift_n + cur_n
-        if self._running and not self._estop:
+        if deployed:
             drift_e, drift_n = set_e, set_n
+        else:
+            drift_e = drift_n = 0.0          # reported (set_kn below), never integrated
         # THE CARD SAYS "SET", SO IT MUST REPORT THE WHOLE SET. Reported from the summed
         # ground drift - leeway plus stream - rather than from the wind/wave force alone,
         # which is what it used to show under a label that promises more than that.

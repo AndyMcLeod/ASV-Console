@@ -151,6 +151,7 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   // inside the punch, which surfaces as "0 runs, 0 turns built" rather than as a crash -
   // and it caught patClipKey the same way the day the strike/clip split landed.
   "patClipBufM", "patClipKey",
+  "makesWayKey", "slowestMakingWayKey", "setMsNow",     // the speed a turn is flown at (2026-09-26)
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
   "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];

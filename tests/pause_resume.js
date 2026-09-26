@@ -147,6 +147,8 @@ globalThis.fetch = () => Promise.resolve({ ok: true, status: 200,
 // blocking one to drive both branches.
 const { legClear, buildKeepouts } = require("../static/js/chart.js");
 var nogo = { ready: true, frame: null, ko: { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
+// the resume asks setMsNow() for the set now running (2026-09-26): the page's own groundVel
+const { groundVel, guardStandoffM } = require("../static/js/guard.js");
 
 // eslint-disable-next-line no-eval
 eval([
@@ -170,6 +172,8 @@ eval([
   "let grant = null;",
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"),
   grab("sendSpeed"), grab("commandSpeed"),
+  grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the resume at the slowest speed that makes way (2026-09-26)
+  grab("patClipBufM"),                                                     // the standoff the upload routes its transits at (2026-09-26)
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and

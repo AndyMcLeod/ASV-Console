@@ -201,12 +201,52 @@ check("5c. ... and it is the DEPTH of the entry that separates them, not just th
 // set down onto a pier. Its ground track and its drift track are the SAME track - there is
 // no way on to take off - so `hold` is not merely insufficient, it is what it is already
 // doing.
-check("6. a STOPPED boat being set onto it is HELM — 'stop' is already what it is doing",
+//
+// ⚠ AND SINCE 2026-09-26 SHE IS JUDGED IN THE SAME WINDOW AS A BOAT MAKING WAY: the drift
+// reaching within half the buffer inside HELM_S. `P` is 24 s from the buffer, which is no longer
+// in extremis for anyone - 6c holds the other side of that line. The fixture is 12 m north of
+// P, where the drift reaches the half-buffer in 15 s.
+const P_STOP = { e: 0, n: 12 };
+check("6. a STOPPED boat being set onto it, inside the decision window, is HELM — 'stop' is already what it is doing",
       () => {
-        const a = G.assess(P, SET_ON, SET_ON, W, BUF);
-        return a.level === "helm" && Math.abs(a.tEntry - a.tEntryDrift) < 1e-9;
+        const a = G.assess(P_STOP, SET_ON, SET_ON, W, BUF);
+        return a.level === "helm" && Math.abs(a.tEntry - a.tEntryDrift) < 1e-9
+               && a.tEntryDriftNear != null && a.tEntryDriftNear <= G.HELM_S && !a.canStop;
       },
-      "ground track and drift track are the same track — the Eastport loop");
+      (() => { const a = G.assess(P_STOP, SET_ON, SET_ON, W, BUF);
+        return "ground track and drift track are the same track " + "—" + " the Eastport loop; "
+          + "within half the buffer in " + secs(a.tEntryDriftNear); })());
+
+// ──── 6c. AND OUTSIDE THAT WINDOW A STOPPED BOAT IS HOLDING, NOT ESCAPING ────────────────────
+// His 09:38 New Castle record, 10:45:41 and 10:45:59: the escape stopped her where the drift
+// could not reach the buffer inside the whole 45 s horizon, she held there by drifting 2 m and
+// driving back, and 18 s later - 38.5 m off, the drift 44 s from the buffer - the rung read
+// "no way on ... the drift alone reaches it in 44 s" and escaped her AGAIN from the point it had
+// chosen for her to sit at. The reach test was the whole horizon for a stopped boat and HELM_S
+// for a moving one, so the escape's stopping rule (a horizon of water) was that rung's own
+// boundary. Asked at the escape's sitting point plus two seconds of drift:
+check("6c. a STOPPED boat the drift reaches only BEYOND the decision window is HOLD, not helm — the escape's own sitting point, after 2 m of wander",
+      () => {
+        const esc = G.escapeCourse(P_STOP, SET_ON, W, BUF, 6 * 0.514444);
+        if (!esc) return false;
+        const sat = { e: esc.to.e + SET_ON.e * 2, n: esc.to.n + SET_ON.n * 2 };
+        const a = G.assess(sat, SET_ON, SET_ON, W, BUF);
+        return a.level === "hold" && a.tEntryDrift != null && a.tEntryDrift > G.HELM_S
+               && a.tEntryDrift <= G.HORIZON_S && /no way on/.test(a.why) && !a.canStop
+               && G.assess(esc.to, SET_ON, SET_ON, W, BUF).level === "clear"    // the point itself
+               // and the whole band between the window and the horizon reads hold, not only
+               // its far edge: a 40 s window for the stopped boat survived every check but this
+               && G.assess({ e: 0, n: 25 - 30 * SET_ON.n }, SET_ON, SET_ON, W, BUF).level === "hold";
+      },
+      (() => {
+        const esc = G.escapeCourse(P_STOP, SET_ON, W, BUF, 6 * 0.514444);
+        if (!esc) return "no escape found";
+        const sat = { e: esc.to.e + SET_ON.e * 2, n: esc.to.n + SET_ON.n * 2 };
+        const a = G.assess(sat, SET_ON, SET_ON, W, BUF);
+        return "sitting " + (30 - sat.n).toFixed(1) + " m off the face, the drift " + secs(a.tEntryDrift)
+          + " from the buffer: " + a.level + " " + "—" + " \"" + a.why + "\". Before this it read helm, and "
+          + "the console escaped her again from the point it had just chosen";
+      })());
 
 // ── 6b. AND THE REASON IT GIVES IS WHAT IT MEASURED ─────────────────────────────────
 // Andy, 2026-09-19: *"a cause the banner asserts that the code hasn't established."* The
@@ -218,7 +258,7 @@ check("6. a STOPPED boat being set onto it is HELM — 'stop' is already what it
 check("6b. the reason quotes the measurement, and never asserts which way the water sets",
       () => {
         const a = G.assess(P, G.groundVel(0, 6), SET_ON, wall(18), BUF);   // stopping is an option
-        const b = G.assess(P, SET_ON, SET_ON, W, BUF);                     // nothing to stop
+        const b = G.assess(P_STOP, SET_ON, SET_ON, W, BUF);                // nothing to stop
         const bad = /set onto|setting onto|being set/i;
         return a.level === "helm" && b.level === "helm"
                && !bad.test(a.why) && !bad.test(b.why)
@@ -228,7 +268,7 @@ check("6b. the reason quotes the measurement, and never asserts which way the wa
       },
       (() => {
         const a = G.assess(P, G.groundVel(0, 6), SET_ON, wall(18), BUF);
-        const b = G.assess(P, SET_ON, SET_ON, W, BUF);
+        const b = G.assess(P_STOP, SET_ON, SET_ON, W, BUF);
         return "stoppable: \"" + a.why + "\" | stopped: \"" + b.why + "\"";
       })());
 
@@ -528,12 +568,14 @@ check("11. no ground track means no predicted entry — and the next tick will s
   check("12. every rung commands something different, and only the last one steers",
         // commandSpeed() since review #6 - it sends /api/cmd/speed and remembers the key the
         // console reconciles against (tests/speed_modes.js 9 and 19)
-        () => /commandSpeed\("low"\)/.test(code)
+        // ... and since 2026-09-26 the key is the slowest speed that still MAKES WAY in the set
+        // (slowKeyFor): LOW below the set stood the live check still for 24 minutes
+        () => /commandSpeed\(key\)/.test(code) && /slowKeyFor\(/.test(code) && !/commandSpeed\("low"\)/.test(code)
               && /cmd\("\/api\/cmd\/hold"/.test(code)
               && /cmd\("\/api\/cmd\/escape"/.test(code)
               && !/cmd\("\/api\/cmd\/goto"/.test(code)
               && code.indexOf('cmd("/api/cmd/escape"') > code.indexOf('a.level === "helm"'),
-        "slow -> speed low, hold -> hold, helm -> escape - a dedicated behaviour, not a " +
+        "slow -> the slowest speed that makes way (low in calm water), hold -> hold, helm -> escape - a dedicated behaviour, not a " +
         "Go-To, so its arrival can never re-chain the end-of-plan RTH (tests/end_action.js 5b/16b)");
   check("13. a refused escape ALARMS and hands the helm back rather than falling through",
         () => /BOXED IN/.test(fn) && /TAKE MANUAL CONTROL/.test(fn),

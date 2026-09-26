@@ -227,11 +227,11 @@ const ENF = { land: true, depth: true, haz: true, area: false };
   check("6b. ... and a pure transit still asks for it — the rule is not switched off",
         // `line` is the drawn transit with its LAST vertex held off any keep-out (holdTarget,
         // 2026-09-03) - the keepRightAll=true that this check guards is unchanged by that.
-        () => /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, (?:transit|line), true\)/.test(H),
+        () => /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, (?:transit|line), true, patClipBufM\(\)\)/.test(H),   // + the guard's standoff (2026-09-26)
         "the drawn-transit behaviour passes keepRightAll=true");
   const PO = grab(H, "punchOut");
   check("7. a SURVEY pattern's inter-line hop does not ride the lane",
-        () => /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, buffer, \{lane:false\}\)/.test(PO),
+        () => /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, hopBuf, \{lane:false\}\)/.test(PO),   // hopBuf: the standoff or the buffer it fell back to (2026-09-26)
         "Andy: 'while running various survey patterns the rule should not be considered'");
   check("7b. ... nor does a SEARCH pattern's",
         () => /channelLaneRoute\(\[A,\.\.\.via,B\], ref, ko, buf, \{lane:false\}\)/.test(H),

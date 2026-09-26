@@ -248,9 +248,9 @@ const routePlan = grab(PJ, "routePlan"), upload = grab(H, "doUpload");
 check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg 0 - the approach - unless the whole "
       + "route is a transit, and sends positions only",
       () => /const wps = mission\.waypoints \|\| \[\];/.test(upload)
-            && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps\);/.test(upload)
+            && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\);/.test(upload)   // at the guard's standoff (2026-09-26)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
-            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, buf\)/.test(routePlan)
+            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, transit \? want : buf\)/.test(routePlan)
             && /if\(keepRightAll \|\| i===0\)\{/.test(routePlan)
             && /out\.push\(\{lat:seg\[k\]\.lat, lon:seg\[k\]\.lon\}\)/.test(routePlan),
       "routePlan(fix, wps); lane on i===0; {lat, lon} out");

@@ -330,11 +330,12 @@ console.log("LEAD-IN / LEAD-OUT — the run is longer than the coverage:");
   // A lead is not coverage; it is the water that CONNECTS coverage to a turn, which is
   // exactly what koTurn models. koClip would refuse a lead for a SURVEY reason (a channel
   // the operator chose not to survey) rather than a navigation one.
-  check("15. the lead is clipped against koTurn — the water the turn it leads into uses",
-        () => /extendLead\(seg\[0\], seg\[1\], wantIn,\s*ref, koTurn, buffer\)/.test(punch)
-              && /extendLead\(seg\[1\], seg\[0\], wantOut, ref, koTurn, buffer\)/.test(punch),
-        "both ends, koTurn — and note the SECOND call is aimed from b back toward a, so "
-        + "the lead-out extends the far way");
+  check("15. the lead is clipped against koTurn, at the guard's standoff — the water the turn it leads into uses, at the distance the guard will hold her to",
+        () => /extendLead\(seg\[0\], seg\[1\], wantIn,\s*ref, koTurn, clipBuf\)/.test(punch)
+              && /extendLead\(seg\[1\], seg\[0\], wantOut, ref, koTurn, clipBuf\)/.test(punch),
+        "both ends, koTurn at clipBuf (2026-09-26: a lead certified at the bare buffer stuck out "
+        + "past the clipped end into the helm rung's band) — and note the SECOND call is aimed "
+        + "from b back toward a, so the lead-out extends the far way");
 
   // ⚠ THE PAD. Outside the fetched extract the keep-out model is EMPTY, which reads as
   // "clear" rather than as "unknown" - so a lead longer than the pad is certified over

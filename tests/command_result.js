@@ -406,6 +406,12 @@ function world(opts) {
                            // to either is a change here rather than a copy that can drift.
                            + grab("took") + "\n" + grab("notTookSay") + "\n"
                            + grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
+                           // the resume at the slowest speed that makes way (2026-09-26)
+                           + grab("slowestMakingWayKey") + "\n" + grab("slowKeyFor") + "\n" + grab("setMsNow") + "\n"
+                           + 'const makesWayKey = (k) => k;' + "\n"       // no V in this world: calm water, the key as asked
+                           // the standoff RTH / Go-To route at (2026-09-26): the guard's own seam number
+                           // (this world has neither require nor nogo: the standoff IS the buffer here, 2026-09-26)
+                           + 'const patClipBufM = () => 0;' + "\n"
                            + grabDecl("SPEED_RESEND_MS") + "\n"
                            + grab("speedReconcile") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"

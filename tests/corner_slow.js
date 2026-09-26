@@ -524,6 +524,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("isReversalGap"), grabFn("currentLegLine"), grabFn("accumLineTime"),
     grabFn("alongLineM"), grabFn("linePhase"), grabFn("currentActivity"), grabFn("speedRole"),
     grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("sendSpeed"), grabFn("commandSpeed"),
+    grabFn("slowestMakingWayKey"), grabFn("setMsNow"), grabFn("makesWayKey"),   // the floor under every command (2026-09-26)
     grabFn("speedGovernor"),
     grabFn("deleteLineByIndex"),
     "function __commit(lines, patClip, patLead, transits){\n" + COMMIT + "\n}",

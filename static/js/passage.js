@@ -375,7 +375,14 @@ export function planNogoRoute(from, to, opts){
   if(ht.error) return ht;
   to = ht.to;
   const heldOff = ht.heldOff, holdClear = ht.holdClear;
-  const leg = legPath(from, to, ref, ko, buf);
+  // THE GUARD'S STANDOFF FIRST (2026-09-26), the buffer only where the water will not allow
+  // it - and then SAID (`insideStandoff`). A transit legal at the bare buffer in a set is the
+  // helm rung waiting: his 09:38 approach, and the live check's escape 9.9 m off Fort Point
+  // on a detour routed at 3 m in a 1.75 kn set. `standoffM` is the planner/guard seam's own
+  // number (patClipBufM in the page); calm water leaves it equal to the buffer.
+  const want = (opts && opts.standoffM > buf + 0.05) ? opts.standoffM : buf;
+  let leg = legPath(from, to, ref, ko, want), insideStandoff = false;
+  if(!leg && want > buf){ leg = legPath(from, to, ref, ko, buf); insideStandoff = !!leg; }
   if(!leg){ const fb=firstBlockAlong(from, to, ref, ko, buf);
     return {error:"no clear route to the target — every path crosses "+(fb?fb.info.kind:"a nogo zone"),
             reason:{mode:"boxed", info:fb?fb.info:null, at:fb?fb.at:null, target:to}}; }
@@ -392,7 +399,7 @@ export function planNogoRoute(from, to, opts){
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
   return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial,
-          heldOff, holdClear};
+          heldOff, holdClear, insideStandoff, standoffM: want};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -400,16 +407,28 @@ export function planNogoRoute(from, to, opts){
 // keeps to the starboard side of any channel (Rule 9); survey-line legs are left
 // on their planned track. `keepRightAll` (pure-transit routes) keeps every leg
 // starboard. Returns the full routed list + any legs that couldn't be routed.
-export function routePlan(start, wps, keepRightAll){
+/**
+ * `standoffM` (2026-09-26): the TRANSIT legs - every leg on a pure transit (keepRightAll), the
+ * approach to the first waypoint otherwise - are routed at the guard's standoff first and at
+ * the buffer only where the water will not allow it, counted in `insideStandoff` so the page
+ * can say so. The legs BETWEEN a plan's waypoints keep the buffer: they are the punch's own
+ * geometry, already built at the standoff where it matters (lines, leads, turns, and the hops
+ * the same way as here), and re-routing a turn arc at the standoff it was built to would
+ * mangle it.
+ */
+export function routePlan(start, wps, keepRightAll, standoffM){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
   // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
   // report only whichever leg happened to be last.
-  let lane = false, partial = false;
+  let lane = false, partial = false, insideStandoff = 0;
+  const want = (standoffM > buf + 0.05) ? standoffM : buf;
   wps.forEach((wp, i)=>{
-    const leg = legPath(prev, wp, ref, ko, buf);
+    const transit = keepRightAll || i===0;                      // the legs the page routes itself
+    let leg = legPath(prev, wp, ref, ko, transit ? want : buf);  // the standoff first (2026-09-26)
+    if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, ko, buf); if(leg) insideStandoff++; }
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
     let seg = [prev, ...leg];                       // prev … wp
     // Rule 9 keep-right applies to a TRANSIT: the approach out (leg 0), and every
@@ -437,5 +456,5 @@ export function routePlan(start, wps, keepRightAll){
   });
   // A plan is only fully laned if EVERY laned leg was: one partial leg makes the plan
   // partial, the same way one laned leg makes it laned.
-  return {route: out, unroutable, lane, partial};
+  return {route: out, unroutable, lane, partial, insideStandoff, standoffM: want};
 }

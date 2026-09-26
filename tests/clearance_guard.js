@@ -458,10 +458,10 @@ check("12. a reversal with no turn on ANY rung is flagged unsafe, not shipped st
         + body.length + " chars of branch read)");
 }
 check("13. punchOut climbs the ladder rather than making one attempt",
-      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly\)/.test(PO) &&
-            /const minTurnRSlow = minTurnRadiusM\("low"\)/.test(PO) &&
+      () => /turnWithRetry\(Ap, Bp, hE, hF, ref, koTurn, clipBuf, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly\)/.test(PO) &&
+            /const minTurnRSlow = minTurnRadiusM\(makesWayKey\("low"\)\)/.test(PO) &&   // at the speed she can fly it (2026-09-26)
             /const easeLs = easeLsM\(\);/.test(PO) &&
-            /const fly = \{spdKey: roleSpeed\("turn"\), approachM: Math\.max\(0\.5, \+\(mission\.approach_radius_m\) \|\| 1\)\};/.test(PO),
+            /const fly = \{spdKey: makesWayKey\(roleSpeed\("turn"\)\), approachM: Math\.max\(0\.5, \+\(mission\.approach_radius_m\) \|\| 1\)\};/.test(PO),
       "the slow radius, the eased spiral length AND the hull that has to fly the shape are "
       + "all derived from the vessel model beside the plan radius — easeLs is 0 unless the "
       + "operator asked and the hull can, and `fly` carries the APPROACH RADIUS, which has to "
@@ -715,6 +715,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
                      + grab(H, "helmSettled") + NL2
                      + grab(H, "sendSpeed") + NL2 + grab(H, "commandSpeed") + NL2
+                     // the slow-down that MAKES WAY (2026-09-26): asked by rung 2 and the hold's lieu
+                     + grab(H, "slowestMakingWayKey") + NL2 + grab(H, "slowKeyFor") + NL2
+                     + grab(H, "setMsNow") + NL2 + grab(H, "makesWayKey") + NL2
                      // ⚠ THE LAUNCH GRANT (2026-09-19). clearanceGuard asks grantNow() on EVERY
                      // frame, above every branch, so a bundle without it is a bare ReferenceError on
                      // the first frame. In THIS world no berth is ever latched, so grantNow returns
@@ -872,12 +875,13 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     if (key !== undefined) status.speed_key = key;
     S = { armed: true, estop: false, run: "running", behavior: "survey", status };
     globalThis.window = globalThis; window._wpIndex = 0;
-    clearance = { m: n0 - 5, kind: "a dock / pier", slowed: clearance.slowed, prev: null, info: null };
+    clearance = { m: n0 - 5, kind: "a dock / pier", slowed: clearance.slowed, prev: null, info: null,
+                  slowKey: clearance.slowKey, slowRefusedAt: clearance.slowRefusedAt };   // carried as updateClearance carries them
     sent = []; notes = [];
     guard();
     return { sent: sent.slice(), notes: notes.slice(), level: clearance.level };
   };
-  const fresh = () => { guardLevel = "clear"; clearance = { ...clearance, slowed: false };
+  const fresh = () => { guardLevel = "clear"; clearance = { ...clearance, slowed: false, slowKey: null, slowRefusedAt: 0 };
     slowLieu = null; clearHoldAt = 0; clearAlarmAt = 0; planIntent = { why: [] };
     // ⚠ THE HELM DWELL RESETS WITH EVERYTHING ELSE (2026-09-19). Left armed, one
     // scenario's in-extremis frame would let the NEXT scenario's first frame steer the boat,
@@ -1043,6 +1047,75 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
           + ". Before the fix the hold went out once and the console commanded nothing again "
           + "for the whole episode. g2 is the other half: a retry every frame would hammer the "
           + "link and is not what SLOW_ANSWER_MS is for");
+
+    // ── 15s1-15s4. THE SLOW-DOWN HAS TO MAKE WAY ────────────────────────────────────────
+    //
+    // Andy, 2026-09-26, "what's holding up?" - the live check of the mission review. The rung
+    // read "a keep-out ahead in 43 s" on the approach and commanded LOW; the Z-Boat's LOW is
+    // 1.5 kn and the set was 1.75 kn, so she was set backward at 0.39 kn over the ground for
+    // 24 minutes at waypoint 0. His 09:38 record has the same thing seven times at 10:05: every
+    // PROCEED on that approach was pressed with the SOG reading 0.25 kn. A slow-down below the
+    // set is a stall, so the rung takes the slowest speed that still exceeds it by
+    // SLOW_MAKES_WAY_KN, and says so when there is nothing to take off.
+    //
+    // 100 m off at 6 kn: entry in ~31 s under way, past the hold time -> the SLOW rung. The
+    // set in this world runs ONTO the wall (env_set_deg 0), and at 2 kn it reaches the buffer
+    // in 92 s - outside the 45 s look-ahead - so the drift-only track reads clear and the
+    // level is `slow`, not helm. This world's table: low 1.5, survey 6, high 12.
+    fresh();
+    const mw1 = step(0, 100, 6.0, "high", 0, 2.0);          // running high, a 2 kn set: low cannot make way
+    check("15s1. in a set the LOW speed cannot make way against, the SLOW rung commands the slowest "
+          + "speed that does (survey here), and says why",
+          mw1.level === "slow" && mw1.sent.includes("/api/cmd/speed:survey")
+          && !mw1.sent.includes("/api/cmd/speed:low")
+          && /SLOWED to survey/.test(mw1.notes.join(" ")) && /low would not make way/.test(mw1.notes.join(" ")),
+          "100 m off at 6 kn in a 2 kn set, running high: level " + mw1.level + ", sent "
+          + JSON.stringify(mw1.sent) + " - low (1.5 kn) is below the 2 kn set plus the 0.5 kn "
+          + "she must keep over the ground, survey (6 kn) is the slowest that clears it");
+    fresh();
+    const mw2 = step(0, 100, 6.0, "high", 0, 0);            // calm water: low, as it always was
+    check("15s2. ... and in calm water it is still LOW, to the letter",
+          mw2.level === "slow" && mw2.sent.includes("/api/cmd/speed:low") && !mw2.sent.includes("/api/cmd/speed:survey"),
+          "the same frame with no set: " + JSON.stringify(mw2.sent));
+    fresh();
+    const mw3 = step(0, 100, 6.0, "survey", 0, 2.0);        // already at the slowest that makes way
+    check("15s3. ... and a boat already AT the slowest speed that makes way is commanded nothing",
+          mw3.level === "slow" && !mw3.sent.some(x => /cmd\/speed/.test(x)),
+          "running survey in the 2 kn set: " + JSON.stringify(mw3.sent) + " - there is nothing slower to take off that would still make way");
+    fresh();
+    const mw4 = step(0, 100, 6.0, "low", 0, 2.0);           // already BELOW it: not slowed, and told
+    const mw4b = step(500, 99, 6.0, "low", 0, 2.0);         // ... and told ONCE, not every frame
+    check("15s4. ... and one already BELOW it is NOT slowed further and is told, once, that nothing is being taken off",
+          mw4.level === "slow" && !mw4.sent.some(x => /cmd\/speed/.test(x))
+          && /NOT slowed/.test(mw4.notes.join(" ")) && /makes way/.test(mw4.notes.join(" "))
+          && !mw4b.notes.some(n => /NOT slowed/.test(n)),
+          "running low in the 2 kn set: sent " + JSON.stringify(mw4.sent) + ", notes " + JSON.stringify(mw4.notes)
+          + "; the next frame's notes " + JSON.stringify(mw4b.notes) + ". Before this the rung commanded low, "
+          + "which is exactly the stall");
+
+    // ── 15s6-15s7. THE MARGIN, AND THE HOLD RUNG'S OWN SLOW-DOWN ──────────────────────────────
+    // Two mutations survived 15s1-15s4: the half-knot margin dropped (a speed EQUAL to the set
+    // read as making way), and the hold rung's slow-in-lieu still asking for low regardless.
+    fresh();
+    const m1 = step(0, 100, 6.0, "high", 0, 1.2);          // a 1.2 kn set: low (1.5 kn) exceeds it by 0.3, not by the half knot
+    check("15s6. ... and the half knot is a MARGIN over the set, not a tie: a set just under the low speed still floors the slow-down at survey",
+          m1.level === "slow" && m1.sent.includes("/api/cmd/speed:survey") && !m1.sent.includes("/api/cmd/speed:low"),
+          "a 1.2 kn set against a 1.5 kn low: " + JSON.stringify(m1.sent) + " - at 0.3 kn over the set she would make "
+            + "0.3 kn over the ground with the set dead ahead, and that is not making way");
+    fresh();
+    const m2 = step(0, 100, 12.0, "high", 0, 2.0);         // 12 kn: entry in ~15 s -> HOLD; at survey it is ~23 s -> the lieu answers
+    check("15s7. ... and the hold rung's slow-in-lieu is offered at the speed that makes way, never at a low the set would stand still",
+          m2.level === "hold" && m2.sent.includes("/api/cmd/speed:survey") && !m2.sent.includes("/api/cmd/speed:low")
+          && !held(m2) && /SLOWED to survey rather than stopping/.test(m2.notes.join(" ")),
+          "100 m off at 12 kn in a 2 kn set: " + JSON.stringify(m2.sent) + ", " + JSON.stringify(m2.notes.slice(0, 1))
+            + " - the drift-only track is clear so the lieu applies, and it asks for survey (6 kn here), the slowest that makes way");
+
+    fresh();
+    const m3 = step(0, 45, 12.0, "high", 0, 2.0);          // 12 kn, 45 m: entry ~10 s -> HOLD; at survey still ~10 s: the lieu does NOT answer
+    check("15s8. ... and the lieu's counterfactual is asked at THAT speed too: where survey does not answer it, the boat is held, not slowed to a low she cannot fly",
+          m3.level === "hold" && held(m3) && !m3.sent.some(x => /cmd\/speed/.test(x)),
+          "45 m off at 12 kn in a 2 kn set: " + JSON.stringify(m3.sent) + " - asked at low's speed the counterfactual would read 22 s and offer a "
+            + "slow-down the set stands still; asked at survey's it reads 10 s, so the hold is the honest rung");
 
     // ── 15u. THE RUNG ACTS ON THE LEVEL, NOT ON A RISING EDGE ────────────────────────────
     //

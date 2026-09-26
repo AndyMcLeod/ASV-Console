@@ -322,6 +322,7 @@ eval([
   grab("grantTick"), grab("stopAtBerth"), grab("standDownEnd"),
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
+  grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),

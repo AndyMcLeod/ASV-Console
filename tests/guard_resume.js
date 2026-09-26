@@ -208,7 +208,7 @@ var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = nu
 // The guard's own imports, REAL - the rungs are only worth driving against the real assess.
 // The real assess, counting the frames that asked it to SEARCH for a deviation (check 23 reads the count).
 const guardAssess = (p, v, d, ko, buf, o) => { if (o && o.edge) searchCount++; return G.assess(p, v, d, ko, buf, o); },
-      groundVel = G.groundVel, restoreVel = G.restoreVel,
+      groundVel = G.groundVel, restoreVel = G.restoreVel, guardStandoffM = G.guardStandoffM,
       edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S;
 function escapeCourse() { return null; }        // the helm rung is in_extremis's suite
 
@@ -372,6 +372,8 @@ eval([
   grab("grantTick"), grab("stopAtBerth"), grab("standDownEnd"),
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
+  grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
+  grab("patClipBufM"),                                                     // the standoff the resume's run-in is routed at (2026-09-26)
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),

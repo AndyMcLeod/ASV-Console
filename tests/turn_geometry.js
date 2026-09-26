@@ -372,7 +372,7 @@ console.log("Survey turn geometry — every reversal ends on the next line, at a
 {
   const P = grab(H, "punchOut");
   check("27. punchOut prunes the routed via's junction seams and reports a survivor",
-        P.includes("pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, buffer)") &&
+        P.includes("pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, hopBuf)") &&   // hopBuf (2026-09-26): the standoff, or the buffer it fell back to
         P.includes("patTransits.push(via); patRoutes.push([Ap,...via,Bp]);") &&
         /junctionKnot\(patClip\[k\]\[0\], Ap, via\[0\]\|\|Bp\)[\s\S]{0,220}?nNoTurn\+\+/.test(P));
 }

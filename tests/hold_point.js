@@ -337,7 +337,7 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         () => /const hp = plan\.route\[plan\.route\.length-1\]/.test(goTo)
               && /cmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(goTo)
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
-              && /planNogoRoute\([^)]*holdOpts\(\)\)/.test(goTo),
+              && /planNogoRoute\([^;]*holdOpts\(\), standoffM: patClipBufM\(\)\}\)/.test(goTo),   // the hold options plus the guard's standoff (2026-09-26)
         "a Go-To that names the pier as its target would hold ON the pier");
   // The #b_hold handler in full, so the check reads the property rather than a distance.
   const BH = PAGE.indexOf('$("#b_hold").onclick');

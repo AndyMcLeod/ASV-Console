@@ -1220,6 +1220,67 @@ function roleSpeed(role){
 }
 // ... and in m/s, which is what every duration estimate on this page actually wants.
 function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.survey) * 0.514444; }
+
+/**
+ * THE SLOWEST SPEED THAT STILL MAKES WAY in the set now running, or null with no speed table.
+ *
+ * Andy, 2026-09-26, "what's holding up?" — the live check of the mission review, on the
+ * throwaway console: the guard's SLOW rung read "a keep-out ahead in 43 s" on the approach and
+ * commanded LOW, and the Z-Boat's LOW is 1.5 kn in a 1.75 kn set. She was set backward at
+ * 0.39 kn over the ground with a 125° crab, 24 minutes at waypoint 0 of 142, the card
+ * reading "~169 min to the end". His 09:38 record has the same thing seven times over at
+ * 10:05-10:06: every PROCEED he pressed on that approach was pressed with the SOG reading
+ * 0.25 kn. "Taking the way off" BELOW the set is not slowing, it is surrendering the track:
+ * she can no longer make good her route, so the entry the rung slowed for never comes and
+ * never goes, and the run stands still until somebody presses something.
+ *
+ * So a slow-down is only an answer at a speed that still exceeds the set by SLOW_MAKES_WAY_KN
+ * — the worst case, the set dead ahead, then leaves that much over the ground. The roles are
+ * asked slowest first. In calm water this is "low", as it always was; a boat with no speed
+ * table at all gets null and the callers fall back to "low", as they always did.
+ */
+function slowestMakingWayKey(driftMs){
+  const SLOW_MAKES_WAY_KN = 0.5;
+  if(!V.SPEED_KN) return null;
+  const need = (driftMs > 0 ? driftMs : 0) + SLOW_MAKES_WAY_KN * 0.514444;
+  for(const k of ["low", "survey", "high"]){
+    const kn = V.SPEED_KN[k];
+    if(kn != null && kn * 0.514444 > need) return k;
+  }
+  return null;
+}
+/**
+ * The slow-down the SLOW rung may command from `runningKey`: the slowest speed that makes way,
+ * if it is slower than the one she runs. null means "there is nothing to take off" — she is
+ * already at that speed, or already BELOW it — and the rung says which rather than commanding
+ * a speed below the set (see slowestMakingWayKey).
+ */
+function slowKeyFor(driftMs, runningKey){
+  const k = slowestMakingWayKey(driftMs);
+  if(!k) return null;
+  const run = V.SPEED_KN[runningKey];
+  return (run != null && V.SPEED_KN[k] >= run) ? null : k;
+}
+/** The set now running, m/s, from the vessel's own report (0 while unknown - no telemetry is calm). */
+function setMsNow(){
+  const st = (typeof S !== "undefined" && S && S.status) || {};
+  const kn = +st.env_set_kn;
+  return (st.env_set_deg != null && kn > 0) ? kn * 0.514444 : 0;
+}
+/**
+ * THE FLOOR UNDER EVERY COMMANDED SPEED (2026-09-26, the third live run): `key`, or the slowest
+ * speed that makes way when that is faster. The governor's TURN role is LOW, and a turn flown
+ * at 1.5 kn in a 1.75 kn set does not turn - she stood at the first line's end with the role
+ * classifier flapping turn / line and the governor flapping low / survey once a second, SOG
+ * 0.5 kn, for as long as anyone cared to watch. commandSpeed applies this to everything it is
+ * asked (the governor, the corner slow, the slow rung's own answer, every resume) and says so
+ * once per asked key; the punch asks it for the speed a turn will actually be flown at, so the
+ * radius it builds is the radius she flies. Calm water: the key, untouched.
+ */
+function makesWayKey(key){
+  const floor = slowestMakingWayKey(setMsNow());
+  return (floor && V.SPEED_KN && V.SPEED_KN[key] != null && V.SPEED_KN[floor] > V.SPEED_KN[key]) ? floor : key;
+}
 // Is the leg a->b one of the committed survey lines, either way round (the same match currentLegLine makes).
 function legIsLine(a, b){
   return (mission.lines || []).some(L => (distTo(a, L.a) <= LINE_MATCH_M && distTo(b, L.b) <= LINE_MATCH_M)
@@ -1665,6 +1726,7 @@ function updateClearance(extra){
   // runs on every telemetry frame.
   const info = m <= buf ? blockedInfo(p, ko, buf + 0.01) : null;
   clearance = {m, kind: info ? info.kind : null, closing, slowed: clearance.slowed,
+               slowKey: clearance.slowKey, slowRefusedAt: clearance.slowRefusedAt,
                prev: keep, info};
   return clearance;
 }
@@ -3015,10 +3077,31 @@ function clearanceGuard(){
     // THE BOAT'S OWN SPEED, where the vessel reports it (review #6): a role CONFIGURED low says
     // nothing about a boat actually running faster - a lost command, a resume, a transit.
     const runningKey = (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole());
-    if(!clearance.slowed && runningKey !== "low"){
-      clearance.slowed = true;
-      commandSpeed("low");
-      flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low.");
+    if(!clearance.slowed){
+      // THE SLOWEST SPEED THAT STILL MAKES WAY (2026-09-26), never a speed below the set: LOW
+      // under a 1.75 kn set stood the live check still for 24 minutes at waypoint 0, and his
+      // 09:38 record shows seven PROCEEDs pressed at 0.25 kn over the ground - see slowKeyFor.
+      const driftMs = drift ? Math.hypot(drift.e, drift.n) : 0;
+      const setTxt = (st.env_set_kn != null ? (+st.env_set_kn).toFixed(2) : "?") + " kn set";
+      const key = slowKeyFor(driftMs, runningKey);
+      if(key){
+        clearance.slowed = true; clearance.slowKey = key;
+        commandSpeed(key);
+        flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to " + key
+          + (key !== "low" ? " (low would not make way against the " + setTxt + ")" : "") + ".");
+      } else {
+        // Nothing to take off: she is at the slowest speed that makes way, or already below it.
+        // Said once a minute rather than commanded silently - a boat below the set is standing
+        // still, and the operator should know the rung is NOT what is holding her.
+        const making = slowestMakingWayKey(driftMs);
+        const below = !!(making && V.SPEED_KN[runningKey] != null && V.SPEED_KN[making] > V.SPEED_KN[runningKey]);
+        if(below && Date.now() - (clearance.slowRefusedAt || 0) > 60000){
+          clearance.slowRefusedAt = Date.now();
+          flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — NOT slowed: " + runningKey
+            + " is already below the speed that makes way against the " + setTxt + " (" + making
+            + " is the slowest that does), so there is nothing to take off.");
+        }
+      }
     }
     return c;
   }
@@ -3069,16 +3152,22 @@ function clearanceGuard(){
     // being offered as an answer to being set on. Recorded rather than removed, and
     // recorded rather than claimed as covered.
     if(trk && !clearance.slowed && vel){
-      const lowMs = (V.SPEED_KN.low || 0) * 0.514444;
+      // At the slowest speed that still makes way (2026-09-26, slowKeyFor) - a slow-down below
+      // the set answers nothing, it stands her still in front of the same feature.
+      const lieuKey = slowKeyFor(drift ? Math.hypot(drift.e, drift.n) : 0,
+                                 (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole()));
+      const lowMs = lieuKey ? (V.SPEED_KN[lieuKey] || 0) * 0.514444 : 0;
       if(lowMs > 0 && lowMs < trk.twMs){
         const atLow = guardAssess(p, restoreVel(vel, drift, lowMs), drift, koAll, buf,
                                   {...trk, twMs: lowMs, edge: false});
         if(atLow.level !== "hold" && atLow.level !== "helm"){
           clearance.slowed = true;
-          slowLieu = {at: Date.now(), sog: st.sog_kn != null ? st.sog_kn : null};
-          commandSpeed("low");
-          flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to low rather "
-                    + "than stopping: at low speed the track stays clear (" + atLow.level + ").");
+          clearance.slowKey = lieuKey;
+          slowLieu = {at: Date.now(), sog: st.sog_kn != null ? st.sog_kn : null, key: lieuKey};
+          commandSpeed(lieuKey);
+          flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to " + lieuKey + " rather "
+                    + "than stopping: at that speed the track stays clear (" + atLow.level + ")"
+                    + (lieuKey !== "low" ? " — low would not make way against the set" : "") + ".");
           if(planIntent) planIntent.why.push({t:"warn", s:"SLOWED instead of holding — the "
             + "projected track entered " + (c.kind||"a keep-out") + " at the plan speed and is "
             + "clear at low, so the way came off rather than the run stopping"});
@@ -3100,11 +3189,11 @@ function clearanceGuard(){
     // to `slow` and the run goes on - which is the whole point of the rung above.
     let lieuFailed = null;
     if(!escalated && slowLieu && clearance.slowed){
-      const lowMs = (V.SPEED_KN.low || 0) * 0.514444;
+      const lowMs = (V.SPEED_KN[slowLieu.key || "low"] || 0) * 0.514444;
       const stillAnswers = !!(trk && vel && lowMs > 0) && ["hold", "helm"].indexOf(
         guardAssess(p, restoreVel(vel, drift, lowMs), drift, koAll, buf,
                     {...trk, twMs: lowMs, edge: false}).level) < 0;
-      const taken = typeof st.speed_key === "string" ? st.speed_key === "low"
+      const taken = typeof st.speed_key === "string" ? st.speed_key === (slowLieu.key || "low")
                   : (st.sog_kn != null && slowLieu.sog != null && st.sog_kn <= slowLieu.sog - 0.2);
       if(!stillAnswers) lieuFailed = "slowing no longer answers it from here";
       else if(!taken && Date.now() - slowLieu.at > SLOW_ANSWER_MS)
@@ -3508,8 +3597,16 @@ function sendSpeed(key){
     return r;
   });
 }
-function commandSpeed(key){
-  speedWant = {key: key, at: Date.now(), sends: 1, told: false};
+function commandSpeed(asked){
+  // FLOORED at the slowest speed that makes way (makesWayKey, 2026-09-26), and said once per
+  // asked key: a speed below the set is not a speed, it is a stall with the throttle open.
+  const key = makesWayKey(asked);
+  if(key !== asked && !(speedWant && speedWant.asked === asked && speedWant.key === key)){
+    const st = (typeof S !== "undefined" && S && S.status) || {};
+    flashNote("Speed " + asked + " cannot make way against the "
+      + (st.env_set_kn != null ? (+st.env_set_kn).toFixed(2) : "?") + " kn set " + "—" + " commanding " + key + " instead.");
+  }
+  speedWant = {key: key, asked: asked, at: Date.now(), sends: 1, told: false};
   return sendSpeed(key);
 }
 function speedReconcile(s, st){
@@ -3776,7 +3873,7 @@ function renderIntent(){
         ? "> " + CLEAR_CAP_M + " m"
         : clearance.m.toFixed(1) + " m" + (clearance.kind ? " to " + clearance.kind : "")
           + (clearance.closing ? " · CLOSING" : "") + (clearance.slowed ? " · SLOWED" : "")
-          + (resumeSlow ? " · LOW (resumed)" : ""),
+          + (resumeSlow ? " · slow (resumed)" : ""),
       tight ? "#d9958f" : (clearance.m < cbuf*3 ? "#e8b46a" : "var(--ink)"));
   }
   // SPEED, IN THREE LAYERS, because "6.8 kn" on its own answers none of the questions the
@@ -3802,7 +3899,7 @@ function renderIntent(){
   if(clearance.slowed)
     html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
   else if(resumeSlow)
-    html += row("for", "RESUMED AFTER A PAUSE — held at low until you change the speed", "#e8b46a");
+    html += row("for", "RESUMED AFTER A PAUSE — held slow until you change the speed", "#e8b46a");
   else
     html += row("for", spRole.toUpperCase() + " — " + act.detail,
                 spRole === "survey" ? "#7fd6a0" : (spRole === "turn" ? "#e8c07a" : "var(--ink)"));
@@ -7678,7 +7775,7 @@ async function doGoTo(target){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, holdOpts());
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: patClipBufM()});
   if(plan.error){
     setViolation(plan.reason);
     const tip = (plan.reason && plan.reason.mode==="target")
@@ -7714,7 +7811,7 @@ async function doGoTo(target){
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
-  else if(plan.routed || note) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
+  else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -7812,7 +7909,7 @@ async function doRTH(opts){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, holdOpts());
+  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: patClipBufM()});
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -7866,7 +7963,7 @@ async function doRTH(opts){
   const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
-  else if(plan.routed || note) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+".");
+  else if(plan.routed || note || plan.insideStandoff) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -8020,7 +8117,7 @@ async function doTransit(){
     flashNote("Transit refused: "+ht.error); return;
   }
   const line = [...transit.slice(0,-1), ht.to];
-  const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true);   // pure transit: keep right (Rule 9)
+  const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true, patClipBufM());   // pure transit: keep right (Rule 9), at the guard's standoff where the water allows
   plan.heldOff = ht.heldOff; plan.holdClear = ht.holdClear;
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
@@ -9243,6 +9340,16 @@ async function punchOut(){
       // set, the standoff a line needs so the helm rung cannot fire on it is wider than the
       // operator's buffer, and it is the GUARD that owns the relationship. Calm water leaves
       // this exactly equal to `buffer`, so nothing about a no-weather plan moves.
+      //
+      // ⚠⚠ AND SINCE 2026-09-26 THE LEADS AND THE TURNS ARE JUDGED AT IT TOO - extendLead,
+      // every turnWithRetry, every judgeJoin and the red-join diagnostic below read `clipBuf`.
+      // MEASURED on his 09:38 New Castle plans against the real extract: 26 of 56 line ends and
+      // 91 of 207 turn legs sat inside the 19.5 m the guard demanded once the 1.75 kn set was
+      // running, and a fly-through of the uploaded route at that set read helm 115 times in the
+      // turns against 28 on the lines. A line clipped at the standoff whose reversal loops
+      // outboard to the bare buffer is the helm rung waiting at every shoreward end - the
+      // seam's promise ("not on a line") was kept and the boat was escaped from the turn.
+      // Transits keep the plain buffer (legSafe, the hops), and the guard covers them.
       clipped = []; src.forEach(l=>clipLine(l[0],l[1],ref,koClip,clipBuf).forEach(s=>clipped.push(s)));
       patClipMemo = clipKey ? {key: clipKey, runs: clipped.map(s=>[s[0], s[1]])} : null;
     }
@@ -9259,6 +9366,14 @@ async function punchOut(){
       const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,buffer/2)));
       for(let i=0;i<=n;i++){ const t=i/n;
         if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, koTurn, buffer)) return false; }
+      return true; };
+    // The same walk at the guard's standoff (2026-09-26): a straight hop legal at the buffer
+    // in a set is the helm rung waiting, so a hop is flown straight only when it clears the
+    // standoff too, and is routed at the standoff first otherwise - see the hop block.
+    const legSafeAt=(a,b,bufX)=>{ const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
+      const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L/Math.max(2,bufX/2)));
+      for(let i=0;i<=n;i++){ const t=i/n;
+        if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, koTurn, bufX)) return false; }
       return true; };
     // HOW MUCH OF THE STRAIGHT JOIN LIES IN A CHARTED KEEP-OUT ITSELF (2026-09-25): walked a meter at a time at
     // the escape's own 0.5 m hard margin, so a widthless shoreline counts and the operator's buffer does not -
@@ -9298,7 +9413,7 @@ async function punchOut(){
     // v/omega, so the radius every generated reversal is built at belongs to the speed
     // that reversal is FLOWN at - and a slower turn is a tighter one that reaches less
     // far outboard, which is the clearance the wharf incident was short of.
-    const minTurnR = minTurnRadiusM(roleSpeed("turn"));
+    const minTurnR = minTurnRadiusM(makesWayKey(roleSpeed("turn")));   // the speed the turn is FLOWN at (2026-09-26)
     // ⚠ HOW WIDE A GAP STILL COUNTS AS A REVERSAL, IN LINE SPACINGS — AND THE STRIKE-OFF
     // WORK IS WHAT FORCED THIS OPEN.
     //
@@ -9385,8 +9500,11 @@ async function punchOut(){
     const leadWant = (wantIn + wantOut) * patClip.length;
     if(wantIn > 0 || wantOut > 0){
       patClip = patClip.map((seg,k)=>{
-        const gi = extendLead(seg[0], seg[1], wantIn,  ref, koTurn, buffer);
-        const go = extendLead(seg[1], seg[0], wantOut, ref, koTurn, buffer);
+        // At `clipBuf`, the guard's standoff: a lead is flown at the survey speed as part of the
+        // line, and one certified at the bare buffer sticks out past the clipped end into the
+        // helm rung's band (2026-09-26).
+        const gi = extendLead(seg[0], seg[1], wantIn,  ref, koTurn, clipBuf);
+        const go = extendLead(seg[1], seg[0], wantOut, ref, koTurn, clipBuf);
         patLead[k] = {in: gi.m, out: go.m};
         if(gi.m < wantIn - 0.5 || go.m < wantOut - 0.5) nLeadCut++;
         return [gi.p, go.p];
@@ -9396,7 +9514,7 @@ async function punchOut(){
     // nNoTurn is the total; the three beside it are WHY, because the banner used to
     // assert a cause it had never measured (see the nNoTurn branch below).
     let nSemi=0, nTear=0, nRace=0, nNoTurn=0, maxOutboard=0; const turnBlocks=[];
-    let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0, nTurnTrack=0;
+    let nTurnNogo=0, nTurnSkew=0, nTurnDegen=0, nKnotFold=0, nTurnTrack=0, nHopInside=0;
     // ⚠⚠ THE STAGGERED REVERSAL, WHICH USED TO SHIP SAYING NOTHING. A pair whose runs
     // genuinely reverse but whose ends are further apart than the gate is judged a HOP: no
     // turn is attempted and a straight leg ships, which asks the hull to reverse on the spot.
@@ -9431,7 +9549,7 @@ async function punchOut(){
     let nEased=0, easedWpts=0;
     // The radius at the slow speed - the second lever Andy named. Computed here beside
     // minTurnR so the two are read from the same vessel model in the same breath.
-    const minTurnRSlow = minTurnRadiusM("low");
+    const minTurnRSlow = minTurnRadiusM(makesWayKey("low"));            // a slow rung she cannot make way at is no rung
     // The EASED reversal's spiral length. 0 unless the operator asked for easing AND this
     // vessel declares a steering settle time — and 0 makes turnWithRetry's ladder exactly
     // the ladder it was before easing existed, with no rung added at all.
@@ -9519,12 +9637,12 @@ async function punchOut(){
         // projection whether each candidate shape is flyable - see turnFlyable. The
         // approach radius is the identical expression guardTrack uses, because the two
         // must be the same number or the punch and the guard are back to disagreeing.
-        const fly = {spdKey: roleSpeed("turn"), approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
+        const fly = {spdKey: makesWayKey(roleSpeed("turn")), approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
         // ⚠ EVERY ANSWER THE LADDER GIVES GOES THROUGH judgeJoin - here and at both rungs below - or
         // one door presents a join the upload's walk will refuse.
         let t = judgeJoin(patClip[k], patClip[k+1],
-                          turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, buffer, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
-                          ref, koTurn, buffer, fly);
+                          turnWithRetry(Ap, Bp, hE, hF, ref, koTurn, clipBuf, minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
+                          ref, koTurn, clipBuf, fly);
         // ⚠⚠ AND WHEN EVERY RUNG IS REFUSED, THE LEAD GIVES WAY BEFORE THE TURN DOES.
         // Andy's call, 2026-09-08: "Cap the lead at what the turn water allows."
         //
@@ -9546,9 +9664,9 @@ async function punchOut(){
             const sK = runWithLeads(k, patLead[k].in||0, lo);
             const sK1 = runWithLeads(k+1, li, patLead[k+1].out||0);
             if(!sK || !sK1) break;
-            const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+            const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, clipBuf,
                                                         minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
-                                 ref, koTurn, buffer, fly);
+                                 ref, koTurn, clipBuf, fly);
             if(!t2.pts) continue;
             // Written together, because patLead[k] describes patClip[k] and nothing else.
             patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0,   out: lo};
@@ -9603,9 +9721,9 @@ async function punchOut(){
               if(tr0 > cap0 || tr1 > cap1) break;
               const sK = tr0 > 0 ? trimEnd(base0, tr0) : base0;
               const sK1 = tr1 > 0 ? trimEnd([base1[1], base1[0]], tr1).reverse() : base1;
-              const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, buffer,
+              const t2 = judgeJoin(sK, sK1, turnWithRetry(sK[1], sK1[0], hE, hF, ref, koTurn, clipBuf,
                                                           minTurnR, turnMaxHalf, minTurnRSlow, easeLs, fly),
-                                   ref, koTurn, buffer, fly);
+                                   ref, koTurn, clipBuf, fly);
               if(!t2.pts) continue;
               // Written together: patLead[k] and patTrim[k] describe patClip[k] and nothing else.
               patClip[k] = sK;   patLead[k]   = {in: patLead[k].in||0, out: 0};
@@ -9636,7 +9754,7 @@ async function punchOut(){
           if(t.why==="skew") nTurnSkew++; else if(t.why==="nogo") nTurnNogo++;
           else if(t.why==="track") nTurnTrack++; else nTurnDegen++;
           if(t.why==="nogo" && t.seg){                // name WHAT refused the loop
-            const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, buffer);
+            const fb=firstBlockAlong(t.seg[0], t.seg[1], ref, koTurn, clipBuf);
             if(fb){ turnBlocks.push({mode:"leg", info:fb.info, at:fb.at});
                     refusedBy = fb.info ? fb.info.kind : null; } } }
       }
@@ -9680,20 +9798,33 @@ async function punchOut(){
         const along=Math.abs((eB.e-eA.e)*ux + (eB.n-eA.n)*uy);
         nStagger++; if(along>maxStagger) maxStagger=along;
       }
-      if(legSafe(Ap,Bp)){ patTransits.push([]); continue; }
-      const around=routeAround(Ap,Bp,ref,koHere,buffer);
+      // THE HOP AT THE GUARD'S STANDOFF FIRST (2026-09-26), the buffer only where the water will
+      // not allow it - counted (nHopInside) and said on the card, because a hop legal at the bare
+      // buffer in a set is where the helm rung fires next. Calm water leaves clipBuf == buffer
+      // and this block is skipped whole.
+      let around=null, hopBuf=buffer, wantedStandoff=false;
+      if(clipBuf > buffer + 0.05 && !(legSafe(Ap,Bp) && legSafeAt(Ap,Bp,clipBuf))){
+        wantedStandoff = true;
+        around=routeAround(Ap,Bp,ref,koHere,clipBuf);
+        if(around){ hopBuf=clipBuf; wantedStandoff=false; }
+      }
+      if(!around){
+        if(legSafe(Ap,Bp)){ if(wantedStandoff) nHopInside++; patTransits.push([]); continue; }
+        around=routeAround(Ap,Bp,ref,koHere,buffer);
+        if(around && wantedStandoff) nHopInside++;
+      }
       if(around){
         // ⚠ NO RULE 9 ON A PATTERN'S OWN INTER-LINE HOP (Andy, 2026-08-31: "while running
         // various survey patterns the rule should not be considered"). `lane:false` still
         // runs the smooth / gate / prune pipeline, which this call needs for the knot
         // prune below and for the per-leg keep-out re-check - dropping the call to drop
         // the lane would trade a safety check for a legal correction.
-        const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, buffer, {lane:false}).route;
+        const kr=channelLaneRoute([Ap,...around,Bp], ref, koHere, hopBuf, {lane:false}).route;
         // The route meets the survey line AT Ap/Bp and the line's heading is outside
         // it, so channelLaneRoute's knot prune (interior corners) cannot unfold a
         // reversal folded at the junction - the seam that sent wpt 551 (176° in
         // 4.5 m) to the boat. Measure it with the line context only this loop holds.
-        const via=pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, buffer);
+        const via=pruneJunctionKnots(patClip[k][0], Ap, kr.slice(1,-1), Bp, patClip[k+1][1], ref, koHere, hopBuf);
         // a fold an obstacle genuinely forces cannot be pruned away; count it as a
         // reversal with no clear turn (it is one) instead of shipping it silently
         const inKnot=junctionKnot(patClip[k][0], Ap, via[0]||Bp);
@@ -9734,7 +9865,7 @@ async function punchOut(){
     // at all. Both are the operator's call to make (widen the lines, or slow down), so
     // quote the actual numbers rather than just reporting the symptom.
     const spdKey = roleSpeed("turn");     // the advisory is about the TURN radius
-    const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM("low");
+    const needSpacing = 2*minTurnR, lowSpacing = 2*minTurnRadiusM(makesWayKey("low"));
     // WIDENING ONLY HELPS WHEN THE SPACING IS THE PROBLEM. Below 2*minTurnR the
     // reversals are teardrops, and widening turns them back into semicircles that
     // reach less far outboard. At or above it there is nothing to widen towards, and
@@ -9772,7 +9903,7 @@ async function punchOut(){
       // slack, or accept the standoff.
       (clipBuf > buffer + 0.05
         ? `, clipped at ${clipBuf.toFixed(1)} m not ${buffer} m: a ${setKnNow.toFixed(2)} kn set `+
-          `needs that standoff for the guard to leave the lines alone (${GUARD_HELM_S} s of drift `+
+          `needs that standoff for the guard to leave the lines, leads and turns alone (${GUARD_HELM_S} s of drift `+
           `plus half the buffer)`
         : "")+
       // THE LEAD IS QUOTED AS RUN, NOT AS COVERAGE, and says so. Every other number on
@@ -9844,6 +9975,7 @@ async function punchOut(){
       (nTwoWaters?`, ${nTwoWaters} pair(s) of runs on different waters (land between their ends) joined by a routed transit, not a turn`:``)+
       (nChanTurn?`, ${nChanTurn} missing turn(s) refused by a navigation channel`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+
+      (nHopInside?`, ${nHopInside} hop(s) inside the ${clipBuf.toFixed(1)} m standoff (no route at that clearance) — the guard will slow or hold her there`:``)+
       (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found (red; Upload tries again)`:``)+
       (chanExcl.length?`, ${chanExcl.length} channel(s) excluded (survey spans across)`:``)+
       (!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
@@ -10767,7 +10899,7 @@ function recalcCommittedForSpeed(){
   // and the plan looks exactly the same on the chart. The line spacing is derivable, so
   // say so rather than letting it be discovered on the water.
   const ci = committedPatternInfo();
-  const need = 2 * minTurnRadiusM(roleSpeed("turn"));   // the TURN speed sets the radius
+  const need = 2 * minTurnRadiusM(makesWayKey(roleSpeed("turn")));   // the TURN speed - as flown - sets the radius
   if(ci && ci.spacing != null && ci.spacing < need){
     showBanner(SPEED_WARN_PREFIX + roleSpeed("turn") + ": the committed plan's " + ci.spacing.toFixed(1)
       + " m spacing is inside the " + need.toFixed(1) + " m a plain reversal needs at this speed. "
@@ -10934,7 +11066,7 @@ async function reapproachIfSetOff(s, st){
   if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
   reapproachBusy = true; reapproachAt = Date.now();
   try{
-    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, holdOpts());
+    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, {...holdOpts(), standoffM: patClipBufM()});
     if(plan.error){
       setViolation(plan.reason);
       showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and NO clear route back — holding where it is with the way off. "+plan.error);
@@ -12030,7 +12162,7 @@ async function doUpload(){
         + "have NOT been checked against the chart, and the clearance guard has no model to watch "
         + "the track with. Waiting until the NOGO row shows a zone count routes them properly.",
         {always: true})) return;
-    const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps);          // degraded: the waypoints as they are
+    const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM());          // degraded: the waypoints as they are
     // ⚠ THE WIDEST WINDOW ON THE PAGE IS THE `guiConfirm` ABOVE THIS LINE. It is unbounded
     // operator time, so the telemetry frame the Upload button's own gate was drawn from can
     // be minutes old - which is how "ARM before uploading a plan" and "clear E-STOP first"
@@ -12095,7 +12227,7 @@ async function doUpload(){
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
-  const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps);
+  const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM());
   if(routeTooLong(plan.route.length)) return;         // the approach and the detours count too
   // ⚠⚠ NOTHING IS DRAWN UNTIL THE VESSEL HAS TAKEN IT. Two lines here used to install the
   // route, the Intent card, its generation and the unsafe legs SEVENTY LINES IN FRONT OF A
@@ -12238,8 +12370,10 @@ async function doUpload(){
     // the gate, where it is true.
     csErr = (e && e.message) || e;
   }
-  if(added > 0)
-    showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey).");
+  if(added > 0 || plan.insideStandoff)
+    showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey)."
+      + (plan.insideStandoff ? " ⚠ " + plan.insideStandoff + " transit leg(s) run inside the guard's " + (+plan.standoffM).toFixed(1)
+         + " m standoff (no route at that clearance) — expect the guard to slow or hold her there." : ""));
   // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the
   // operator did not ask for it, and a corner slowing does NOT answer is a plan defect they
   // can still do something about - move the waypoint, widen the spacing, lower the speed.
@@ -12487,10 +12621,13 @@ async function resumeRun(){
   // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6). Start used to follow a LOW it never
   // checked: refused or lost, the boat resumed at its old speed while this said LOW, and
   // resumeSlow kept the governor from ever correcting it.
-  const slowed = await commandSpeed("low");
+  // The slowest speed that still makes way in the set now running (2026-09-26, slowKeyFor):
+  // a resume at LOW below the set would leave her set backward off the line she is resuming.
+  const resumeKey = slowestMakingWayKey(setMsNow()) || "low";
+  const slowed = await commandSpeed(resumeKey);
   if(!took(slowed)){
     resumeSlow = false;
-    flashNote("Resume stopped — the vessel did not take LOW (" + ((slowed && slowed.error) || "no answer")
+    flashNote("Resume stopped — the vessel did not take " + resumeKey.toUpperCase() + " (" + ((slowed && slowed.error) || "no answer")
               + "). She is still paused; press Resume again.");
     return;
   }
@@ -12627,7 +12764,7 @@ function continueAtLow(){
   guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null, slow: true};
   clearance.slowed = false;                 // the throttle passes from the ladder to the operator
   resumeSlow = true; commandedSpeed = null;
-  commandSpeed("low");                      // reconciled against the vessel's speed_key every frame
+  commandSpeed(slowestMakingWayKey(setMsNow()) || "low");   // the slowest that makes way; reconciled against speed_key every frame
   logGuardLow("slow_continue", c.m, c.kind, null);
   if(planIntent) planIntent.why.push({t:"warn", s:"OPERATOR OVERRIDE at "
     + (c.m != null ? c.m.toFixed(1) + " m" : "unknown range") + " from " + (c.kind || "a keep-out")
@@ -12723,7 +12860,7 @@ async function resumeHeldRun(opts){
   const firstWp = tail[0];
   let inNote = null;
   if(firstWp && !backtrackClear(backFrom, firstWp)){
-    const pin = planNogoRoute(backFrom, firstWp, holdOpts());
+    const pin = planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM()});
     if(pin.error){
       showBanner("⚠ CANNOT RESUME FROM HERE - " + pin.error + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
@@ -12817,7 +12954,7 @@ async function resumeHeldRun(opts){
   dropCornerSlow("the held remainder was re-uploaded as a new plan of " + tail.length
                  + " waypoint(s) and the vessel's waypoint numbering restarted at one");
   if(planIntent) planIntent.route = tail.length;
-  const slowed = await commandSpeed("low");
+  const slowed = await commandSpeed(slowestMakingWayKey(setMsNow()) || "low");   // the slowest that makes way (2026-09-26)
   const lowOk = took(slowed);
   const started = lowOk ? await cmd("/api/cmd/start") : null;
   if(!took(started)){

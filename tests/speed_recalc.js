@@ -140,6 +140,7 @@ eval(
      // a page that had stopped honouring the roles at all.
      grabDecl("SPEED_ROLES") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+     grab("slowestMakingWayKey") + "\n" + grab("setMsNow") + "\n" + grab("makesWayKey") + "\n" +   // the speed a turn is flown at (2026-09-26)
      // The banner's prefix, GRABBED so check 5b tests the page's real coupling: the warning
      // and the branch that clears it share this one string, and they did not until the
      // rename to "Turn speed" broke the clear and this suite caught it.

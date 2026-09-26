@@ -180,6 +180,8 @@ eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") +
      grab("drawnLines") + "\n" + grab("lineNo") + "\n" + grab("lineCount") + "\n" + grab("linePartTxt") + "\n" +
      grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
      grabDecl("SPEED_RESEND_MS") + "\n" + grabDecl("speedWant") + "\n" +
+     // the floor under every command (2026-09-26): the slowest speed that makes way in the set
+     grab("slowestMakingWayKey") + "\n" + grab("setMsNow") + "\n" + grab("makesWayKey") + "\n" +
      grab("sendSpeed") + "\n" + grab("commandSpeed") + "\n"
      + grab("speedReconcile") + "\n" +
      "function __want(){ return speedWant; }\n" +
@@ -370,8 +372,9 @@ console.log("Speed by mode - three settings, and the console governs which one i
 {
   const PO = grab("punchOut"), RC = grab("recalcCommittedForSpeed");
   check("10. every turn radius is derived from the TURN speed, not the survey speed",
-        () => /const minTurnR = minTurnRadiusM\(roleSpeed\("turn"\)\)/.test(PO) &&
-              /minTurnRadiusM\(roleSpeed\("turn"\)\)/.test(RC) &&
+        // ... as FLOWN: makesWayKey floors the turn key at the slowest speed that makes way (2026-09-26)
+        () => /const minTurnR = minTurnRadiusM\(makesWayKey\(roleSpeed\("turn"\)\)\)/.test(PO) &&
+              /minTurnRadiusM\(makesWayKey\(roleSpeed\("turn"\)\)\)/.test(RC) &&
               !/minTurnRadiusM\(mission\.speed/.test(H),
         "punchOut builds them and recalcCommittedForSpeed re-checks them; both read the turn role");
 }
@@ -626,6 +629,37 @@ console.log("Speed by mode - three settings, and the console governs which one i
             + "standing down here on purpose; a governor that accelerates into that silence "
             + "is the one part of the ladder still moving, and it is moving the wrong way");
   } finally { Date.now = realNow; guardEdgeAt = 0; }
+}
+
+// ── 20. THE FLOOR UNDER EVERY COMMAND (2026-09-26, the third live run) ────────────────────────
+// The approach at the standoff went through, and she stood at the first line's end with this
+// governor commanding low / survey once a second: the TURN role is LOW, and a turn at 1.5 kn
+// in a 1.75 kn set does not turn. commandSpeed now floors whatever it is asked at the slowest
+// speed that makes way (makesWayKey), remembers what was asked, and says so once per asked key.
+var __floorNotes = [];
+function flashNote(m) { __floorNotes.push(m); }
+{
+  S = { armed: true, estop: false, run: "running", behavior: "survey",
+        status: { speed_key: "high", env_set_kn: 5.0, env_set_deg: 0, sog_kn: 6.0, cog_deg: 0, heading_deg: 0 } };   // this world's low is 4 kn
+  sent = []; __floorNotes = [];
+  commandSpeed("low");
+  const f1 = { sent: sent.map(x => x.body && x.body.speed), notes: __floorNotes.slice(), want: __want() };
+  commandSpeed("low");                                      // the same asked key again: no second note
+  const f2 = { notes: __floorNotes.slice() };
+  S = { ...S, status: { ...S.status, env_set_kn: 0 } };
+  sent = []; __floorNotes = [];
+  commandSpeed("low");                                      // calm water: low, to the letter
+  const f3 = { sent: sent.map(x => x.body && x.body.speed), want: __want() };
+  check("21. commandSpeed floors a key below the set - the governor's turn low, the corner slow, a resume - at the "
+        + "slowest speed that makes way, remembers what was asked, says so once, and leaves calm water alone",
+        () => f1.sent.includes("survey") && !f1.sent.includes("low")
+              && f1.want && f1.want.key === "survey" && f1.want.asked === "low"
+              && /cannot make way/.test(f1.notes.join(" ")) && /commanding survey/.test(f1.notes.join(" "))
+              && f2.notes.length === 1
+              && f3.sent.includes("low") && f3.want && f3.want.key === "low",
+        "asked low (4 kn here) in a 5 kn set: sent " + JSON.stringify(f1.sent) + ", want " + JSON.stringify(f1.want && { key: f1.want.key, asked: f1.want.asked })
+          + ", said " + JSON.stringify(f1.notes) + "; asked again: notes " + f2.notes.length
+          + "; calm: sent " + JSON.stringify(f3.sent));
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");

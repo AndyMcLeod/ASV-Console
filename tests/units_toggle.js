@@ -253,6 +253,7 @@ check("10. a REAL readout follows the toggle — recalcCommittedForSpeed prints 
     eval(
          grabDecl("SPEED_ROLES") + "\n" +
          grab("roleSpeed") + "\n" + grab("roleSpeedMS") + "\n" +
+         grab("slowestMakingWayKey") + "\n" + grab("setMsNow") + "\n" + grab("makesWayKey") + "\n" +   // the speed a turn is flown at (2026-09-26)
          grabDecl("SPEED_WARN_PREFIX") + "\n" +
          grab("committedPatternInfo") + "\n" +
          // committedPatternInfo counts DRAWN lines (review #18) - the page's own numbering, not a stub

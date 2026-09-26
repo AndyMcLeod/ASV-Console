@@ -1134,7 +1134,9 @@ diagnosable (`tests/frame_health.js`).
 
    - **clear** — nothing within the look-ahead. Show the number, command nothing.
    - **edge** — entry predicted, but a few meters of deviation clears it. Go a little wide.
-   - **slow** — entry predicted, and taking the way off would avoid it. Buy time.
+   - **slow** — entry predicted, and taking the way off would avoid it. Buy time — at the
+     slowest speed that still *makes way* against the set (since 2026-09-26: LOW below the
+     set is a stall, not a slow-down; the live check stood 24 minutes at waypoint 0 on it).
    - **hold** — the same, but close enough that slowing alone is no longer enough.
    - **helm** — entry predicted, **and** stopping would not answer it. The console steers.
 
@@ -1200,15 +1202,62 @@ diagnosable (`tests/frame_health.js`).
 
    **It costs coverage, so the card says so** — the standoff used, the buffer it replaced
    and the set that caused it. A thin survey with no explanation reads as a chart problem.
-   And it is **the coverage lines only**: turns reach outboard past the line ends and
-   transits go where the router sends them, and both still answer to the plain buffer. A
-   plan clipped this way cannot have the helm rung fire *on a line* in that set; it can
-   still fire in a turn, on a transit, or if the set rises afterwards.
+   It applies to **the coverage lines, the leads and the turns** — the turns since
+   2026-09-26, when the 09:38 New Castle record showed the promise *"not on a line"* kept
+   and the boat escaped from the turn at the end of it. Measured against the real extract,
+   26 of 56 line ends and 91 of 207 turn legs of that plan sat inside the 19.5 m the guard
+   demanded once the 1.75 kn set was running, and a fly-through of the uploaded route at
+   that set read helm 115 times in the turns against 28 on the lines. The reversal ladder,
+   the lead give and the trim rung now judge at the standoff, so a shoreward reversal that
+   would loop into the guard's band is trimmed back until it flies clear. Transits still go
+   where the router sends them at the plain buffer, and the guard covers them. A plan built
+   this way cannot have the helm rung fire on a line, a lead or a turn in that set; it can
+   still fire on a transit, or if the set rises afterwards.
 
-   **Except where stopping is not a different state.** A boat with no way on — station-keeping
-   at the end of a run, engines stopped, being set down onto a pier — has a drift track that
-   *is* its ground track, so "take the way off" is not insufficient, it is what she is already
-   doing. That case skips both questions and goes to the helm exactly as it always did.
+   **And the set the planner reads is the set she will see.** The simulated leeway used to
+   be published only while the boat was deployed, so a console planning at the berth read
+   *0.00 kn* — a positive claim of slack water — clipped every survey at the bare buffer,
+   and met a 19.5 m standoff the moment she started. The set is now reported whenever it
+   is blowing and applied (yaw, motion, position) only while deployed: an idle boat reports
+   the leeway it would suffer and does not wander on it.
+
+   **And a boat with no way on is judged in the same window.** A boat station-keeping at
+   the end of a run, engines stopped, being set down onto a pier, has a drift track that
+   *is* its ground track, so "take the way off" is no answer for her. She used to go to the
+   helm on *reach* alone — the drift entering anywhere inside the 45 s look-ahead — which
+   made the escape's own stopping rule (a whole horizon of water) the boundary of the rung
+   that judged her afterwards: on 2026-09-26 she was escaped, held by drifting 2 m and
+   driving back, and escaped again 18 s later from the point the console had just chosen.
+   She is now in extremis exactly when a moving boat would be — the drift within half the
+   buffer inside 20 s — and reads *hold* further out than that, which is what she is doing;
+   the sitting point is 25 s of drift inside that rung rather than on its edge.
+
+   **And a slow-down has to make way.** The live check of all this found the last piece: on
+   the approach the SLOW rung read *"a keep-out ahead in 43 s"* and commanded LOW, and the
+   Z-Boat's LOW is 1.5 kn in a 1.75 kn set — she was set backward at 0.39 kn over the ground
+   with a 125° crab, 24 minutes at waypoint 0. The 09:38 record has the same thing seven times
+   over: every PROCEED on that approach was pressed with the SOG reading 0.25 kn. Taking the
+   way off *below* the set is surrendering the track, so the slow rung, the hold rung's
+   slow-in-lieu and every resume now take the **slowest speed that still exceeds the set** by
+   half a knot (survey here), say why, and say when there is nothing slower to take off.
+
+   **And a transit tries the standoff first.** The second live run escaped from the
+   *approach*: a detour routed at the bare 3 m buffer ran 9.9 m off Fort Point in the same
+   set, and that is the helm rung's band. The approach, a Go-To, RTH, the transit line and
+   the punch's own hops are now routed at the guard's standoff where the water allows it and
+   at the buffer only where it does not — counted and said on the card and in the banner
+   ("N transit leg(s) run inside the guard's 19.5 m standoff — expect the guard to slow or
+   hold her there"), so a hug is a stated decision rather than a surprise. The legs between a
+   plan's own waypoints keep the buffer: they are the punch's geometry, already built at the
+   standoff where it matters.
+
+   **And the floor is under every command.** The third live run cleared the approach and then
+   stood at the first line's end: the TURN role's speed is LOW, a turn at 1.5 kn in a 1.75 kn
+   set does not turn, and the governor flapped low / survey once a second while the role
+   classifier flapped turn / line. So `commandSpeed` floors whatever it is asked — the
+   governor's turn speed, the corner slow, every resume — at the slowest speed that makes
+   way, says so once per asked key, and the punch builds its turns at the speed they will
+   actually be flown so the radius it draws is the radius she flies. Calm water is untouched.
 
    **And the banner says what was measured.** It used to read *"IN EXTREMIS — being set onto
    a dock / pier"*, which the console had never established: it measures that the drift-only

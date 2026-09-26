@@ -22,8 +22,11 @@ THE ENV CONTRACTS (read from EnvMonitor, asserted live):
     default sim tracks clean, and losing it would put phantom drift under every test
     that assumes calm water). Asserting the snapshot alone would repeat the estop
     lesson: every console flag can look right while the boat never hears.
-  * env is applied ONLY while running and not e-stopped - the disabled/idle boat's set
-    stays zero.
+  * env is REPORTED whenever it is enabled and blowing - the idle boat publishes the
+    leeway it would suffer, because that is the number the planner clips its coverage
+    at (2026-09-26: it published 0.00, a positive claim of slack water, and every punch
+    that morning clipped at the bare buffer) - and APPLIED only while running and not
+    e-stopped: the idle boat does not wander; disabled -> zero.
 
 THE WATERLEVEL CONTRACTS:
   * manual_offset FLOAT sets the override: snapshot source "manual", ok true, offset_m
@@ -178,15 +181,25 @@ try:
     if not up:
         raise SystemExit(1)
 
-    # 2-4. THE PHYSICS SEAM. A manual 25 kn wind + enabled monitor + a RUNNING boat ->
-    # the sim publishes a nonzero environmental set; disable -> back to calm. Idle
-    # first: env applies only while running, so the idle set must be zero even enabled.
+    # 2-4. THE PHYSICS SEAM. A manual 25 kn wind + enabled monitor -> the sim PUBLISHES the
+    # set it would impose, started or not (2026-09-26: an idle boat used to publish 0.00 - a
+    # positive claim of slack water - and punchOut clipped every survey at the bare buffer on
+    # it, then the guard demanded 19.5 m the moment she started); a RUNNING boat is actually
+    # carried by it; disable -> back to calm. Idle first.
     cmd(port, "/api/env", {"enabled": True, "wind_kn": 25.0, "wind_from": 270.0})
-    st = state(port)
-    check("2. enabled + manual wind on an IDLE boat: the set stays zero - env is applied "
-          "only to a running boat",
-          lambda: not (st["status"].get("env_set_kn") or 0),
+    st = wait_for(port, lambda s: (s["status"].get("env_set_kn") or 0) > 0.1, limit=20)
+    check("2. enabled + manual wind on an IDLE boat: the set is REPORTED - the leeway the "
+          "wind would impose, which is what the planner clips its coverage at",
+          lambda: (st["status"].get("env_set_kn") or 0) > 0.1,
           lambda: "env_set_kn=%s" % st["status"].get("env_set_kn"))
+    p0 = (st["status"].get("lat_deg"), st["status"].get("lon_deg"), st["status"].get("heading_deg"))
+    time.sleep(2.0)
+    st = state(port)
+    p1 = (st["status"].get("lat_deg"), st["status"].get("lon_deg"), st["status"].get("heading_deg"))
+    check("2b. ... and she does not WANDER or weathervane on it while idle: reported, never "
+          "integrated",
+          lambda: p0 == p1 and (st["status"].get("env_set_kn") or 0) > 0.1,
+          lambda: "lat/lon/hdg %s -> %s over 2 s, set %s" % (p0, p1, st["status"].get("env_set_kn")))
 
     cmd(port, "/api/cmd/arm", {"on": True})
     cmd(port, "/api/cmd/speed", {"speed": "survey"})

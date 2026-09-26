@@ -124,6 +124,20 @@ export const HORIZON_S = 45;
  *   the same thing to someone working to 3 m and someone working to 20. A drift track that
  *   grazes the OUTSIDE of the buffer still clears the FEATURE by nearly the whole buffer.
  *
+ * ⇒ AND THE SAME TWO QUESTIONS ARE ASKED OF A BOAT WITH NO WAY ON (2026-09-26). She used to
+ *   be in extremis on REACH alone - the drift entering anywhere inside the 45 s look-ahead -
+ *   on the argument that stopping is a different state only for a boat that is moving. True,
+ *   and beside the point: what the window measures is DECISION time, and a hull drifting at
+ *   1.7 kn has the same 20 s to put the helm over as one making way. MEASURED in his 09:38
+ *   New Castle record: the escape stopped her where the drift could not reach the buffer
+ *   inside the whole horizon - by construction, 45 s out - and she held there by drifting 2 m
+ *   and driving back; 18 s later, 38.5 m off, the reach test read "44 s" and the console
+ *   escaped her AGAIN, from its own sitting point (10:45:41 and 10:45:59). The rung now takes
+ *   the helm at HELM_S from within half the buffer whichever way she is moving, and a stopped
+ *   boat further out than that reads `hold` - what she is doing. The escape's stopping rule
+ *   (a whole horizon of water) is unchanged, so the sitting point is HORIZON_S - HELM_S = 25 s
+ *   of drift INSIDE the rung that judges it, rather than on its boundary.
+ *
  * ⚠ THE DWELL IS NOT HERE, AND THAT IS DELIBERATE. `assess` is a pure function of one
  * frame and stays one; a dwell needs history, and history belongs where the console ACTS,
  * beside `releaseSettled`. See HELM_DWELL_MS in static/asv.html: the bar alarms on the
@@ -623,21 +637,38 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
   // Re-walked at the tighter standoff and the shorter horizon. Cheap: the walk stops at the
   // first blocked step, and this horizon is under half the other one.
   const tDriftNear = timeToEntry(p, drift, ko, helmBuf, helmS, opts.stepS);
-  // ⚠⚠ AND THE RELAXATION ONLY APPLIES WHERE STOPPING IS A DIFFERENT STATE FROM THIS ONE.
-  // The whole argument above is "taking the way off buys a decision's worth of time" - and
-  // that argument is VOID for a boat which has no way on. Its ground track IS its drift
-  // track: `hold` is not merely insufficient, it is what the boat is already doing, and
-  // softening the rung would leave the console commanding a stop to a vessel that is
-  // stopped while the water carries it in. That is the Eastport loop
-  // (tests/in_extremis.js 6), and it is the reason this line exists rather than a tidier
-  // version of the two tests above.
+  // ⚠⚠ ONE WINDOW FOR BOTH WAYS OF BEING CARRIED IN. Until 2026-09-26 a boat with no way on
+  // was in extremis on REACH alone - the drift entering anywhere inside the whole look-ahead -
+  // on the argument that "taking the way off buys time" is void for her: her ground track IS
+  // her drift track and `hold` is what she is already doing (the Eastport loop,
+  // tests/in_extremis.js 6). True, and it argued for the wrong thing. What the window measures
+  // is DECISION time, and a hull drifting at 1.7 kn has the same 20 s to put the helm over as
+  // one making way. The exemption made the escape's own stopping rule (the drift cannot reach
+  // the buffer inside the whole horizon) the BOUNDARY of the rung that judges a sitting boat:
+  // in his 09:38 New Castle record she was escaped, held by drifting 2 m and driving back, and
+  // escaped AGAIN 18 s later from 38.5 m off - "the drift alone reaches it in 44 s". So the
+  // same two questions are asked whichever way she moves, and a stopped boat the drift reaches
+  // only beyond the window reads `hold` below - what she is doing, said in her own terms - with
+  // the helm taken inside HELM_S from within half the buffer, exactly as for a boat making way
+  // (tests/in_extremis.js 6, 6c).
   //
-  // The predicate is the one `guardTrack` already uses for the same judgment - is there
-  // any through-water speed at all - so the two cannot drift apart in meaning.
+  // `canStop` still decides the SENTENCE and the answer on offer: there is no way to take off
+  // a boat that has none. The predicate is the one `guardTrack` already uses for the same
+  // judgment - is there any through-water speed at all - so the two cannot drift apart.
   const twMs = Math.hypot(vel.e - drift.e, vel.n - drift.n);
   const canStop = twMs > STOPPABLE_MS;
-  const inExtremis = tDrift != null && (canStop ? tDriftNear != null : true);
+  const inExtremis = tDrift != null && tDriftNear != null;
   if (!inExtremis) {
+    if (!canStop && tDrift != null) {
+      // No way on: a deviation or a slow-down is not a different state from this one, and
+      // `hold` is the honest name for what she is doing. The page's hold rung station-keeps
+      // a boat that is merely drifting and leaves one that already holds where she is.
+      return { level: "hold", tEntry, tEntryDrift: tDrift, tEntryDriftNear: null, canStop,
+               onPlan, edge: null,
+               why: "no way on to take off — the drift alone reaches it in "
+                    + tDrift.toFixed(0) + " s, more than the " + helmS + " s a decision "
+                    + "needs, so holding still answers it" };
+    }
     // ⚠ THE DEVIATION IS TRIED ONLY HERE, AND THE PLACEMENT IS THE SAFETY ARGUMENT. This
     // branch is the one where stopping would work - so anything gentler than stopping is a
     // strict improvement, and nothing about the in-extremis rung below is touched. Where
@@ -676,7 +707,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
   // stop". Collapsing them would put the console back to asserting a cause it had not
   // established, one rung down from where it was doing it before.
   return { level: "helm", tEntry, tEntryDrift: tDrift, tEntryDriftNear: tDriftNear,
-           helmBufM: canStop ? helmBuf : buf, canStop, onPlan, edge: null,
+           helmBufM: helmBuf, canStop, onPlan, edge: null,
            // ⚠ `tDriftNear` IS FORMATTED THROUGH A NULL GUARD, and that is not defensive
            // clutter: when the stricter test was removed as a MUTATION this line threw, and
            // a suite that dies before printing a FAIL scores that mutation as SURVIVED in
@@ -689,8 +720,9 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
                + " m of it — under the " + helmS + " s a decision needs, so stopping does "
                + "not answer it"
              : "entry in " + tEntry.toFixed(0) + " s with no way on to take off — the drift "
-               + "alone reaches it in " + tDrift.toFixed(0) + " s, and stopping is already "
-               + "what she is doing" };
+               + "alone reaches within " + helmBuf.toFixed(1) + " m of it in "
+               + (tDriftNear == null ? "—" : tDriftNear.toFixed(0)) + " s, under the "
+               + helmS + " s a decision needs, and stopping is already what she is doing" };
 }
 
 /**
