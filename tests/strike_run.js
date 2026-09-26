@@ -371,7 +371,8 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
           // the summary expression, so turning that expression's condition to `false` left every
           // string in place while the operator was told nothing. Check 16 above records this
           // exact lesson about nGapTurn; both fragments repeated it.
-          () => /if\(antiParallel\)\{/.test(code)
+          // `&& !twoWaters` since 2026-09-25: a pair with land between its ends is a hop, not a staggered reversal
+          () => /if\(antiParallel && !twoWaters\)\{/.test(code)
                 && /nStagger\+\+;/.test(code)
                 && /if\(along>maxStagger\) maxStagger=along;/.test(code)
                 && /\(nStagger\?`, \$\{nStagger\} staggered reversal/.test(code)
@@ -384,7 +385,7 @@ console.log("Striking a punched run off — the gap has to be real, and rebuilt 
     // A `continue`, a `return`, a `push` or an assignment to any of the route arrays inside
     // this block turns an observation into a routing change, which is the decision that was
     // deliberately NOT taken here.
-    const blk = (code.match(/if\(antiParallel\)\{[\s\S]*?\n      \}/) || [""])[0];
+    const blk = (code.match(/if\(antiParallel && !twoWaters\)\{[\s\S]*?\n      \}/) || [""])[0];
     check("16g. ... and the counting block only OBSERVES - it moves no route",
           () => blk.length > 0
                 && !/\b(continue|return)\b/.test(blk)

@@ -622,6 +622,17 @@ put to **sleep** is the lapse — when it wakes it says how long it was gone and
 just come back from a silence of its own cannot take supervision on that report
 (`tests/supervisor.py`, `tests/supervisor_page.js`).
 
+**Two waters are not a reversal (2026-09-25).** When the chart splits a line into runs on both
+sides of a land mass, Punch Out's order finishes one side and crosses to the other, and the join
+between the last run on one side and the first on the other used to be judged a *reversal* by
+geometry alone — neighboring lines, opposite headings, ends within the turn ladder's span. The
+ladder was then asked for a loop that could only cross the land, and the pair went red with its
+straight join drawn straight over the land (a Fort Point survey, on the console). Now a join with
+**more than a spacing's worth of charted keep-out on it** is a **region hop**: routed round, at the
+transit speed, counted in the punch's readout as "pair(s) of runs on different waters", and never
+refused as a turn. A join that merely grazes a shore, or crosses a finger pier, keeps its turn
+ladder and its trim; a navigation channel between two runs keeps the turn-water rule's own remedy.
+
 **Ask the chart what a line is.** Right-click a line → **What is this line?** and the console
 names the layer it belongs to: a committed survey line (yellow, with its number, length and
 heading), the uploaded route (green, the only green), the **pattern preview** (cyan, *not in the

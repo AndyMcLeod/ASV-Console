@@ -709,6 +709,43 @@ const redList = (w) => redOf(w.get().patRed);
         () => (equalFlies === null ? "refused at every equal trim 0-" + cap3 + " m" : "FLEW at an equal trim of " + equalFlies + " m")
               + " (run 3's cap " + cap3 + ")");
 
+  // ── 19. TWO WATERS ARE NOT A REVERSAL (Andy, 2026-09-25: "No flyable turn should not cross land or nogo") ─────────────────
+  // A wall 30 m thick across all four lines, 40 m up: each line is clipped into a south run (0..37 m) and a north
+  // run (73..100 m). Region order runs the south cell as a serpentine - run 4 exits heading SOUTH at the box edge -
+  // and enters the north cell at line 1's north run heading NORTH: anti-parallel, 30 m across, 79 m apart, inside
+  // the ladder's span, with 30 m of wall on the join between them. That is the shape of the red join drawn straight
+  // across Fort Point on his console: every loop the ladder could build crossed the land, and the pair went red.
+  // Now more than a spacing's worth of feature ON the join makes the pair a region hop, routed round the wall's end.
+  // Checks 1-4 are the control: a meter of finger pier on the join is not two waters, and that pair stays refused.
+  const WALL = () => dock(-10, 50, 40, 70);
+  const two = makeWorld({ features: [WALL()] });
+  two.setPat(at(0, 0), at(35, 100), at(10, 0));            // four lines x = 0 .. 30, 100 m long
+  const p19 = await safely(() => two.punchOut());
+  const r19 = two.get();
+  const runs19 = (r19.patClip || []).length;
+  const c19 = r19.patClip || [];
+  const joinM = (c19[3] && c19[4]) ? G.distTo(c19[3][1], c19[4][0]) : null;
+  const hop19 = r19.patTransits[3] || [];
+  const span19 = 2 * Math.max(T.MAX_HALF_M, 10 * 4.6 / 2 + 2);
+  check("19. a wall across the pattern: the south serpentine's last run reverses onto the north cell across 30 m of "
+        + "land - a pair the reversal gate admits (anti-parallel, a few spacings across, inside the ladder's span) - and "
+        + "it is joined by a ROUTED TRANSIT round the wall, not refused as a red reversal; Add to plan is not refused",
+        () => !p19.err && r19.patJoined && runs19 === 8 && joinM != null && joinM <= span19
+              && hop19.length >= 1 && !r19.patRed.some((r) => r.turn) && two.punchRefusal() === null
+              && /1 pair\(s\) of runs on different waters/.test(two.$("#sp_hint").textContent),
+        () => (p19.err ? "punch threw: " + p19.err.message + "; " : "") + runs19 + " runs; join 4→5 "
+              + (joinM == null ? "?" : joinM.toFixed(0) + " m against a " + span19.toFixed(0) + " m span")
+              + "; transit of " + hop19.length + " via point(s); red: " + redList(two) + "; refusal "
+              + (two.punchRefusal() ? two.punchRefusal().short : "none") + "; hint: "
+              + two.$("#sp_hint").textContent.slice(0, 200));
+  check("19b. ... and the transit round the wall never crosses it: every leg of the route is clear of the keep-out at "
+        + "the buffer",
+        () => { if (!c19[3] || !c19[4] || !hop19.length) return false;
+                const ko = two.model(); const pts = [c19[3][1], ...hop19, c19[4][0]];
+                for (let i = 1; i < pts.length; i++) if (!C.legClear(pts[i - 1], pts[i], FRAME, ko, 3)) return false;
+                return true; },
+        () => hop19.length + " via point(s): " + hop19.map(xy).join(" > "));
+
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);

@@ -9244,6 +9244,17 @@ async function punchOut(){
       for(let i=0;i<=n;i++){ const t=i/n;
         if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, koTurn, buffer)) return false; }
       return true; };
+    // HOW MUCH OF THE STRAIGHT JOIN LIES IN A CHARTED KEEP-OUT ITSELF (2026-09-25): walked a meter at a time at
+    // the escape's own 0.5 m hard margin, so a widthless shoreline counts and the operator's buffer does not -
+    // the length of FEATURE between two run ends, not the water short of it. Against `ko`, not `koTurn`: a
+    // navigation channel between two runs is the turn-water rule's case and keeps its own remedy. See the
+    // reversal gate in the pair loop.
+    const HOP_HARD_M = 0.5;
+    const landBetweenM=(a,b)=>{ const ae=llEN(a.lat,a.lon,ref), be=llEN(b.lat,b.lon,ref);
+      const L=Math.hypot(be.e-ae.e,be.n-ae.n), n=Math.max(1,Math.ceil(L)); let m=0;
+      for(let i=0;i<=n;i++){ const t=i/n;
+        if(blocked({e:ae.e+(be.e-ae.e)*t,n:ae.n+(be.n-ae.n)*t}, ko, HOP_HARD_M)) m+=L/n; }
+      return m; };
     // ⚠ THE STRIKE-OFF FILTER, AND THIS IS THE ONLY PLACE IT CAN GO. After the chart has
     // clipped, so a struck run is the run the operator SAW and clicked — WorldView's
     // reverted build filtered above the clip, where 16 pattern lines become 45 clipped
@@ -9379,6 +9390,10 @@ async function punchOut(){
     // told. `maxStagger` is the along-track offset of the worst one, because "82 m back down
     // a line 10 m across" is what makes it recognisable on the chart.
     let nStagger=0, maxStagger=0;
+    // Pairs of runs on DIFFERENT WATERS - more than a spacing's worth of keep-out on the straight join between
+    // their ends - joined by a routed transit rather than asked for a turn (2026-09-25). Said, like every other
+    // join the operator did not draw.
+    let nTwoWaters=0;
     // The ladder's outcomes, counted so the banner can SAY what it had to do rather than
     // silently handing back a turn that is not where the operator expects it.
     let nTurnInboard=0, nTurnSlow=0, nGapTurn=0; turnSlowAt={};
@@ -9431,9 +9446,23 @@ async function punchOut(){
       // 0 unroutable to 2. A threshold that carries the allowance is a no-op when the
       // allowance is zero, which is every plan that does not use the feature.
       const leadSlack = Math.max(wantIn, wantOut);
+      // ⚠⚠ TWO WATERS ARE NOT A REVERSAL (Andy, 2026-09-25, a red join drawn straight across Fort Point:
+      // "No flyable turn should not cross land or nogo"). The chart clipped one line into a cove and the open
+      // sea; region order sequenced the cove's last run onto the sea's first; by every test the gate below makes
+      // the two are neighbors - anti-parallel, a spacing across, ends within the ladder's span - so the ladder
+      // was asked for a loop, every loop entered the land, and the pair went RED with its straight join drawn
+      // over the fort. The refusal branch is written for the other case and says so ("the straight line IS
+      // clear - it is the loop the boat flies instead of it that is not"). When more than a spacing's worth of
+      // FEATURE lies on the join itself - the land is between the ends, not beside them - the pair is a region
+      // hop and is joined like one: routed round, at the transit speed. A join that merely grazes a shore or
+      // crosses a finger pier keeps its ladder (the inboard rung, the trim; tests/turn_refusal.js 1-4 is that
+      // case, a meter of pier on the join), and a channel never diverts.
+      const landM = antiParallel ? landBetweenM(Ap, Bp) : 0;
+      const twoWaters = landM > Math.max(2*buffer, sp.spacing);
+      if(twoWaters) nTwoWaters++;
       // A REVERSAL and everything standing in for one answers to koTurn (the turn
       // water rule); only a genuine region-hop transit may use the channel (ko).
-      const koHere = antiParallel ? koTurn : ko;
+      const koHere = (antiParallel && !twoWaters) ? koTurn : ko;
       // What refused a reversal, for patRed: turnWithRetry's reason (the FIRST rung's - see its header) and, when a
       // keep-out took it, that keep-out's kind.
       let via=null, reversalRefused=false, refusedWhy=null, refusedBy=null;
@@ -9464,7 +9493,7 @@ async function punchOut(){
       // spacing across and 66 m of stagger, ends 67 m apart against a 120 m span - and ZERO
       // that this admits and the ladder cannot span. That last number is the safety.
       const acrossM = acrossTrackM(Ap, Bp, hE, ref);
-      if(antiParallel && acrossM < sp.spacing*gapSpan + 3 + leadSlack
+      if(antiParallel && !twoWaters && acrossM < sp.spacing*gapSpan + 3 + leadSlack
                       && distTo(Ap,Bp) <= 2*turnMaxHalf){
         // THE LADDER, not one attempt: outboard, then INBOARD (away from whatever refused
         // it), then both again at the slow-speed radius. See turnWithRetry's header for
@@ -9626,7 +9655,7 @@ async function punchOut(){
       // is a staggered reversal whichever arm takes it - straight leg, routeAround or red -
       // and counting it in one arm would report a number that depends on the water rather
       // than on the geometry. Nothing below this line changes; this only observes.
-      if(antiParallel){
+      if(antiParallel && !twoWaters){
         // llEN takes (lat, lon, ref) and returns an ABSOLUTE point in the plane, not a
         // delta, so the offset is the difference of the two - a first cut passed
         // `llEN(Ap, Bp, ref)`, which reads Bp as a longitude and is meaningless.
@@ -9796,6 +9825,7 @@ async function punchOut(){
       (nStagger?`, ${nStagger} staggered reversal(s) judged as hops (the next line starts up `+
         `to ${Math.round(maxStagger)} m back along the one before it, so NO turn is generated `+
         `and the boat reverses at a point)`:``)+
+      (nTwoWaters?`, ${nTwoWaters} pair(s) of runs on different waters (land between their ends) joined by a routed transit, not a turn`:``)+
       (nChanTurn?`, ${nChanTurn} missing turn(s) refused by a navigation channel`:``)+
       (nRoute?`, ${nRoute} routed around obstacles`:``)+
       (nUnsafeLeg?`, ${nUnsafeLeg} hop(s) with no way round found (red; Upload tries again)`:``)+

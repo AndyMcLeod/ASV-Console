@@ -253,8 +253,9 @@ check("10. punchOut hands the TURNS koTurn, and derives it from the CLIPPED line
 check("11. punchOut's legSafe (serpentine adjacency + the reversal straight hop) walks koTurn",
       () => /const legSafe=[\s\S]{0,500}?koTurn, buffer\)\) return false/.test(P));
 check("12. a refused REVERSAL that falls to routing stays out of the channel " +
-      "(koHere = antiParallel ? koTurn : ko), while region hops keep ko",
-      () => P.includes("const koHere = antiParallel ? koTurn : ko;") &&
+      "(koHere = (antiParallel && !twoWaters) ? koTurn : ko), while region hops - a pair on two waters among them "
+      + "(2026-09-25) - keep ko",
+      () => P.includes("const koHere = (antiParallel && !twoWaters) ? koTurn : ko;") &&
             P.includes("routeAround(Ap,Bp,ref,koHere,buffer)") &&
             /channelLaneRoute\(\[Ap,\.\.\.around,Bp\], ref, koHere, buffer, \{lane:false\}\)/.test(P));
 // 12b. ⚠ AND THAT CALL NO LONGER RIDES THE RULE 9 LANE (2026-08-31). It is a hop between
