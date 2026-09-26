@@ -598,6 +598,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   let clearance = { m: 25, kind: "a dock / pier", slowed: false, prev: null, info: null };
   let guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
   let guardEdgeAt = 0, edgeSpentM = 1e9, edgeCount = 0, guardOverride = null, guardHeld = null;
+  let edgeSearchAt = 0;                                  // when the deviation SEARCH last ran (2026-09-26)
   let clearHoldAt = 0, commandedSpeed = null, resumeSlow = false, slowLieu = null;
   let helmHoldAt = 0;
   // THE HOLD'S OWN RECORD (2026-09-21). It is READ before anything writes it, so a bundle

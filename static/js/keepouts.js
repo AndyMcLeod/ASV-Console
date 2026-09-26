@@ -724,23 +724,120 @@ export function buildKeepouts(frame, feats, opts = {}) {
   };
 }
 
+// ---- A ROW-BAND INDEX FOR BIG RINGS (2026-09-26) ----------------------------------------------
+//
+// Andy: "The current instance of ASV Console has frozen. This has happened the last few times."
+// MEASURED on his New Castle chart at the boat's recorded position: the land and shallow-water
+// rings there run to 5,000-9,000 vertices each, their bounding boxes cover the whole harbor, and
+// every point test below walked every edge of every one of them. One point test cost ~0.3 ms;
+// the guard's deviation search samples ~5,000 points a frame and cost 4.6 s; the page ran it on
+// every frame and froze for 123 s.
+//
+// A ring (or polyline) of RING_INDEX_MIN_VERTS or more vertices gets, on first use, an index of
+// its edges by horizontal BAND of northing. Point-in-polygon needs only the edges that straddle
+// the point's northing - all of them live in the point's own band - and the nearest-edge search
+// walks bands outward from the point and stops when a band cannot hold anything nearer than the
+// best edge found. Smaller features walk their edges exactly as before, so nothing changes for a
+// pier, a wreck or a test fixture; for the big rings the answers are IDENTICAL (the same crossing
+// test on the same edges, the same dSeg on every edge that could be within the cap) and
+// tests/keepout_index.js holds the two side by side over thousands of points. The index lives in
+// a WeakMap keyed by the ring array, so a model rebuilt with new arrays indexes itself afresh and
+// nothing here writes on a feature object.
+export const RING_INDEX_MIN_VERTS = 256;
+export const RING_INDEX_BANDS = 128;
+const RING_INDEX = new WeakMap();
+function bandIndex(pts, closed) {
+  const n = pts.length;
+  let y0 = Infinity, y1 = -Infinity;
+  for (const q of pts) { if (q.n < y0) y0 = q.n; if (q.n > y1) y1 = q.n; }
+  const h = Math.max(1, (y1 - y0) / RING_INDEX_BANDS);
+  const R = Math.max(1, Math.floor((y1 - y0) / h) + 1);
+  const rows = [];
+  for (let r = 0; r < R; r++) rows.push([]);
+  // edge k is (pts[k-1], pts[k]) around a closed ring - the same k pinp's `j = i++` walk visits -
+  // and (pts[k], pts[k+1]) along an open line
+  const m = closed ? n : n - 1;
+  for (let k = 0; k < m; k++) {
+    const a = closed ? pts[(k + n - 1) % n] : pts[k], bq = closed ? pts[k] : pts[k + 1];
+    let r0 = Math.floor((Math.min(a.n, bq.n) - y0) / h), r1 = Math.floor((Math.max(a.n, bq.n) - y0) / h);
+    if (r0 < 0) r0 = 0;
+    if (r1 > R - 1) r1 = R - 1;
+    for (let r = r0; r <= r1; r++) rows[r].push(k);
+  }
+  return { y0, h, rows };
+}
+function indexFor(pts, closed) {
+  if (!pts || pts.length < RING_INDEX_MIN_VERTS) return null;
+  let idx = RING_INDEX.get(pts);
+  if (!idx) { idx = bandIndex(pts, closed); RING_INDEX.set(pts, idx); }
+  return idx;
+}
+/** Has this ring / polyline been indexed? (tests: the big ones are, the small ones never are) */
+export function ringIndexed(pts) { return RING_INDEX.has(pts); }
+/** pinp, through the index where there is one: the crossing test over the edges in the point's band. */
+function ringInside(p, ring) {
+  const idx = indexFor(ring, true);
+  if (!idx) return pinp(p, ring);
+  const r = Math.floor((p.n - idx.y0) / idx.h);
+  if (r < 0 || r >= idx.rows.length) return false;     // no edge straddles a northing outside the ring's span
+  const n = ring.length;
+  let inside = false;
+  for (const k of idx.rows[r]) {
+    const xi = ring[k].e, yi = ring[k].n, j = (k + n - 1) % n, xj = ring[j].e, yj = ring[j].n;
+    if (((yi > p.n) !== (yj > p.n)) && (p.e < (xj - xi) * (p.n - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+/**
+ * The distance from `p` to the nearest edge of a ring (closed) or polyline (open), or `cap` when
+ * no edge is nearer. Through the index where there is one: bands outward from the point's, each
+ * edge first rejected by its own bounding box, stopping when the next band's nearest possible
+ * edge is no nearer than the best so far.
+ */
+function ringDist(p, pts, closed, cap) {
+  let best = cap;
+  const n = pts.length;
+  const idx = indexFor(pts, closed);
+  if (!idx) {
+    if (closed) { for (let i = 0, j = n - 1; i < n; j = i++) { const d = dSeg(p, pts[j], pts[i]); if (d < best) best = d; } }
+    else { for (let i = 1; i < n; i++) { const d = dSeg(p, pts[i - 1], pts[i]); if (d < best) best = d; } }
+    return best;
+  }
+  const R = idx.rows.length, rc = Math.floor((p.n - idx.y0) / idx.h);
+  for (let d = 0; ; d++) {
+    const lo = rc - d, hi = rc + d;
+    if (lo < 0 && hi >= R) break;
+    // a band d away cannot hold an edge nearer than (d - 1) band heights
+    if (d > 0 && (d - 1) * idx.h >= best) break;
+    for (let s = 0; s < (d === 0 ? 1 : 2); s++) {
+      const r = s === 0 ? lo : hi;
+      if (r < 0 || r >= R) continue;
+      for (const k of idx.rows[r]) {
+        const a = closed ? pts[(k + n - 1) % n] : pts[k], bq = closed ? pts[k] : pts[k + 1];
+        if (a.e > p.e + best && bq.e > p.e + best) continue;
+        if (a.e < p.e - best && bq.e < p.e - best) continue;
+        if (a.n > p.n + best && bq.n > p.n + best) continue;
+        if (a.n < p.n - best && bq.n < p.n - best) continue;
+        const dd = dSeg(p, a, bq);
+        if (dd < best) best = dd;
+      }
+    }
+  }
+  return best;
+}
+
 /** Is this point (frame meters) inside a keep-out, or within `buf` of one? */
 export function blocked(p, ko, buf) {
   for (const poly of ko.polys) {
     if (!inBB(p, poly.bb, buf)) continue;
-    if (pinp(p, poly.ring)) return true;
+    if (ringInside(p, poly.ring)) return true;
     // The EDGE test is not redundant with the inside test: it is what gives a
     // shoreline its keep-clear margin from the water side.
-    const rg = poly.ring;
-    for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
-      if (dSeg(p, rg[j], rg[i]) < buf) return true;
-    }
+    if (ringDist(p, poly.ring, true, buf) < buf) return true;
   }
   for (const ln of ko.lines) {
     if (!inBB(p, ln.bb, buf)) continue;
-    for (let i = 1; i < ln.pts.length; i++) {
-      if (dSeg(p, ln.pts[i - 1], ln.pts[i]) < buf) return true;
-    }
+    if (ringDist(p, ln.pts, false, buf) < buf) return true;
   }
   // R is the hazard's OWN extent plus the buffer as the clearance margin.
   for (const pt of ko.points) {
@@ -768,19 +865,12 @@ export function clearanceM(p, ko, cap = 500) {
   let best = cap;
   for (const poly of ko.polys) {
     if (!inBB(p, poly.bb, best)) continue;
-    if (pinp(p, poly.ring)) return 0;
-    const rg = poly.ring;
-    for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
-      const d = dSeg(p, rg[j], rg[i]);
-      if (d < best) best = d;
-    }
+    if (ringInside(p, poly.ring)) return 0;
+    best = ringDist(p, poly.ring, true, best);
   }
   for (const ln of ko.lines) {
     if (!inBB(p, ln.bb, best)) continue;
-    for (let i = 1; i < ln.pts.length; i++) {
-      const d = dSeg(p, ln.pts[i - 1], ln.pts[i]);
-      if (d < best) best = d;
-    }
+    best = ringDist(p, ln.pts, false, best);
   }
   // Measured from the hazard's OWN EDGE, matching `blocked`'s `buf + pt.r` test: a wreck
   // with a 20 m extent, 21 m away, is 1 m clear and not 21. Clamped at 0 rather than
@@ -821,19 +911,12 @@ export function featureClearanceM(p, f, cap = 500) {
 export function blockedInfo(p, ko, buf) {
   for (const poly of ko.polys) {
     if (!inBB(p, poly.bb, buf)) continue;
-    if (pinp(p, poly.ring)) return { kind: poly.kind, type: 'poly', ring: poly.ring };
-    const rg = poly.ring;
-    for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
-      if (dSeg(p, rg[j], rg[i]) < buf) return { kind: poly.kind, type: 'poly', ring: poly.ring };
-    }
+    if (ringInside(p, poly.ring)) return { kind: poly.kind, type: 'poly', ring: poly.ring };
+    if (ringDist(p, poly.ring, true, buf) < buf) return { kind: poly.kind, type: 'poly', ring: poly.ring };
   }
   for (const ln of ko.lines) {
     if (!inBB(p, ln.bb, buf)) continue;
-    for (let i = 1; i < ln.pts.length; i++) {
-      if (dSeg(p, ln.pts[i - 1], ln.pts[i]) < buf) {
-        return { kind: ln.kind, type: 'line', pts: ln.pts };
-      }
-    }
+    if (ringDist(p, ln.pts, false, buf) < buf) return { kind: ln.kind, type: 'line', pts: ln.pts };
   }
   for (const pt of ko.points) {
     const R = buf + (pt.r || 0);

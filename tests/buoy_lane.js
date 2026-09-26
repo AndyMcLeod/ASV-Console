@@ -147,7 +147,10 @@ function grabDecl(name) {
 }
 
 // Geometry helpers + the whole route-search cluster - all in static/asv.html here.
-const HELPERS = ["blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
+// THE RING INDEX (2026-09-26): blocked / clearanceM / blockedInfo answer through ringInside and
+// ringDist now, so a world that lifts their bodies has to lift those and the index they share.
+const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist",
+                 "blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  "blockedInfo", "firstBlockAlong", "gateLegClear",
                  "smoothTrack", "systemCenterline", "extendCenterline",
@@ -178,7 +181,10 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
        // the line above: it was `hw * 2.5`, which on a 150 m half-width captured traffic
        // 225 m beyond the buoy line and laned a leg that had already left the channel. A
        // copy restated here could never have caught that.
-       + grabDecl("LANE_CAPTURE_STANDOFF_M") + "\n" +
+       + grabDecl("LANE_CAPTURE_STANDOFF_M") + "\n"
+       // the ring index's threshold, band count and WeakMap (2026-09-26) - read from the module
+       + grabDecl("RING_INDEX_MIN_VERTS") + "\n" + grabDecl("RING_INDEX_BANDS") + "\n"
+       + grabDecl("RING_INDEX") + "\n" +
      // `laneUsed` became `sea.laneUsed` when Rule 9 moved to passage.js, so the eval'd
      // bodies below write into the SHARED state object rather than a local of their own -
      // which is what lets the checks below read back what the router actually did.

@@ -1451,6 +1451,7 @@ function setPlanIntent(kind, plan, route){
   // reason - a fresh plan has not been deviated at all yet. `guardActedAt` and `holdWant` are
   // the hold rung's own per-episode record, and they go with it.
   guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
+  edgeSearchAt = 0;                    // ... and the deviation search is due again (2026-09-26)
   planIntent = {kind: kind, at: Date.now(), route: (route||[]).length,
                 why: [], target: null, unsafe: 0, degraded: !!(plan && plan.degraded),
                 heldOff: (plan && plan.heldOff) || null,
@@ -2454,6 +2455,9 @@ const GUARD_REASSESS_MS = 6000;     // while steering, re-solve the escape this 
 // the frame budget the chart is drawn in.
 const EDGE_REASSESS_MS = 2000;
 let guardEdgeAt = 0, edgeSpentM = 0, edgeCount = 0;
+// WHEN THE DEVIATION SEARCH LAST RAN, found or not (2026-09-26) - see wantEdge. `guardEdgeAt` above
+// clocks a deviation the rung COMMANDED; this clocks the search itself.
+let edgeSearchAt = 0;
 // THE OPERATOR'S "PROCEED". Not a switch and not a mode - a record of one decision, taken
 // while looking at one situation, and it lapses on its own three ways (see guardOverrideOk).
 // {t, level, clearM, slow}. `slow` is the CAUTIOUS half of it: the console stops stopping
@@ -2763,7 +2767,18 @@ function clearanceGuard(){
   const reachM = buf + GUARD_HORIZON_S * (vel ? Math.hypot(vel.e, vel.n) : 0);
   const aisNear = aisKo.length > 0
     && clearanceM(p, {polys: aisKo, lines: [], points: []}, reachM) < reachM;
-  const wantEdge = !settling && !gNow && !aisNear && edgeSpentM < edgeCapM(buf);
+  // ⚠⚠ THE SEARCH ITSELF IS ON THE CLOCK, NOT ONLY ITS ANSWER (2026-09-26). `settling` clocks a deviation the
+  // rung commanded; a search that found NOTHING was never clocked, so the next frame ran it again, and the
+  // next. MEASURED on his New Castle chart at the boat's recorded position in the session that froze: one
+  // search cost 4.6 s (~5,000 sample points, each walked through land and shallow rings of 5,000-9,000
+  // vertices) and answered "hold, no deviation" - which the page then asked again at 4 Hz for as long as
+  // the level read slow or hold: 2-6 s stalls, then 123 s frozen, then the hold went out with the stall.
+  // keepouts.js's ring index takes that search to ~0.1 s; this takes the repetition out: one search per
+  // EDGE_REASSESS_MS, and between them the ladder answers from the plain assessment, which is the answer
+  // the search had already failed to improve on.
+  const searchDue = Date.now() - edgeSearchAt >= EDGE_REASSESS_MS;
+  const wantEdge = !settling && !gNow && !aisNear && searchDue && edgeSpentM < edgeCapM(buf);
+  if(wantEdge) edgeSearchAt = Date.now();
   // ⚠⚠ NO COURSE IS BLIND, NOT CLEAR, AND IT USED TO READ CLEAR (2026-09-19, stage 0 of the
   // departure work). `groundVel(null, sog)` returns null (guard.js) whenever the vessel
   // reports `cog_deg: null` - which is exactly what a STOPPED boat reports - so the guard
@@ -2876,6 +2891,7 @@ function clearanceGuard(){
         // console's own budget for moving their track resets with it - and so does the hold
         // rung's record of having acted, or the next episode would find the latch already set.
         guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
+        edgeSearchAt = 0;                  // a new episode gets its search on its first frame
         renderGuardBar(null, c);
       }
       setViolations(release ? [] : (c.info ? [{mode:"leg", info:c.info,

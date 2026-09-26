@@ -1218,6 +1218,19 @@ diagnosable (`tests/frame_health.js`).
    false at every port in the record and what moves the boat there is the wind and wave
    forcing.
 
+   **The guard is cheap enough to run at 4 Hz on a real harbor chart (2026-09-26).** The
+   console froze on the water three sessions running: 2 to 6 s stalls whenever the guard read
+   *slow* or *hold*, then 123 s solid. Measured on the New Castle chart at the boat's recorded
+   position, one deviation search cost 4.6 s — some 5,000 sample points, each walked through
+   every edge of land and shallow-water rings 5,000 to 9,000 vertices long — it answered
+   "no deviation", and the page asked it again on the very next frame, because only a
+   deviation that was *commanded* had ever been put on the 2 s clock. Two changes: the
+   keep-out model indexes any ring or shoreline of 256 vertices or more by horizontal band on
+   first use, so a point test touches only the edges near it (identical answers, proved side by
+   side over 24,500 asks in `tests/keepout_index.js`; that search is now 0.1 s), and the search
+   itself runs at most once per `EDGE_REASSESS_MS`, found or not. A slower machine made the
+   stalls longer, but the work was the page's own.
+
    **The ladder is asymmetric: fast to protect, slow to release.** It slows on the frame it
    sees the trouble; it hands the throttle back only once the water has read clear for four
    seconds. One frame's opinion used to be enough, and on 2026-09-10 that put **36 speed

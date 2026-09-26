@@ -131,6 +131,8 @@ var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
 // actually clear it between episodes.
 var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
+var edgeSearchAt = 0;                                   // when the deviation SEARCH last ran (2026-09-26)
+var searchCount = 0;                                    // how many times the ladder asked for the search (check 23)
 // THE AIS KEEP-OUTS (2026-09-25). clearanceGuard builds the contacts' model every frame and asks the
 // return tick above every branch, so the names must exist or the guard is a bare ReferenceError. No
 // contacts live in this world - the model is empty and every check here is the charted world it always
@@ -148,7 +150,9 @@ var nogo = { ready: true, frame: null, ko: null, buffer: 5 };
 var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = null;
 
 // The guard's own imports, REAL - the rungs are only worth driving against the real assess.
-const guardAssess = G.assess, groundVel = G.groundVel, restoreVel = G.restoreVel,
+// The real assess, counting the frames that asked it to SEARCH for a deviation (check 23 reads the count).
+const guardAssess = (p, v, d, ko, buf, o) => { if (o && o.edge) searchCount++; return G.assess(p, v, d, ko, buf, o); },
+      groundVel = G.groundVel, restoreVel = G.restoreVel,
       edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S;
 // THE ESCAPE, STUBBED AND STEERABLE: it records the MODEL it was handed (the check that the contacts
 // reach the helm rung) and answers whatever `escFake` says, so the rung can be driven past its search.

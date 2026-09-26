@@ -187,6 +187,8 @@ var guardLevel = "clear", clearAlarmAt = 0, guardActedAt = 0, guardEscapeAt = 0;
 // actually clear it between episodes.
 var holdWant = null;
 var guardEdgeAt = 0, edgeSpentM = 999, edgeCount = 0;   // 999: the deviation budget is spent
+var edgeSearchAt = 0;                                   // when the deviation SEARCH last ran (2026-09-26)
+var searchCount = 0;                                    // how many times the ladder asked for the search (check 23)
 // THE AIS KEEP-OUTS (2026-09-25). clearanceGuard builds the contacts' model every frame and asks the
 // return tick above every branch, so the names must exist or the guard is a bare ReferenceError. No
 // contacts live in this world - the model is empty and every check here is the charted world it always
@@ -204,7 +206,9 @@ var nogo = { ready: true, frame: null, ko: null, buffer: 5 };
 var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = null;
 
 // The guard's own imports, REAL - the rungs are only worth driving against the real assess.
-const guardAssess = G.assess, groundVel = G.groundVel, restoreVel = G.restoreVel,
+// The real assess, counting the frames that asked it to SEARCH for a deviation (check 23 reads the count).
+const guardAssess = (p, v, d, ko, buf, o) => { if (o && o.edge) searchCount++; return G.assess(p, v, d, ko, buf, o); },
+      groundVel = G.groundVel, restoreVel = G.restoreVel,
       edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S;
 function escapeCourse() { return null; }        // the helm rung is in_extremis's suite
 
@@ -440,7 +444,7 @@ function standingIn(sogKn) {
   // "acted" and the rung would command nothing - the harness leaking, not the subject.
   guardActedAt = 0; holdWant = null;
   resumeSlow = false; commandedSpeed = null; edgeSpentM = 999;
-  guardEdgeAt = 0; edgeCount = 0; refuse = null;
+  guardEdgeAt = 0; edgeCount = 0; refuse = null; edgeSearchAt = 0;
   sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
 }
 
@@ -475,6 +479,7 @@ function deviating() {
   guardActedAt = 0; holdWant = null;
   resumeSlow = false; commandedSpeed = null;
   edgeSpentM = 0; edgeCount = 0; guardEdgeAt = 0; refuse = null;   // the budget is UNSPENT here
+  edgeSearchAt = 0;                                                 // ... and the search is due (2026-09-26)
   sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
 }
 
@@ -1391,6 +1396,34 @@ function finish() {
               + "\". Andy asked for this rung on 2026-09-04 - \"forcing slight deviations to "
               + "prevent holds when there is still plenty of available water\" - and a console "
               + "made timid about a deviation the vessel ACCEPTED is the wrong fix");
+
+  // ── 23. THE DEVIATION SEARCH IS ON THE CLOCK, NOT ONLY ITS ANSWER (2026-09-26) ─────────────────────
+  // Andy: "The current instance of ASV Console has frozen. This has happened the last few times." A search that
+  // found nothing was never clocked, so the next frame ran it again - at 4.6 s a search on his chart, that was
+  // the page frozen for as long as the level read slow or hold. Here: the deviating() route into a block 60 m
+  // deep, which no deviation inside the 15 m cap can answer. Three frames in one instant must ask for the
+  // search ONCE; a frame EDGE_REASSESS_MS later may ask again.
+  {
+    deviating();
+    const r = [{ e: -60, n: -15 }, { e: 60, n: -15 }, { e: 60, n: 45 }, { e: -60, n: 45 }];
+    nogo = { ready: true, frame: ref, ko: { polys: [{ ring: r, bb: bbOf(r), kind: "a dock / pier" }],
+                                             lines: [], points: [], marks: [], sys: [], chans: [] }, buffer: 5 };
+    edgeSearchAt = 0; searchCount = 0; sent = [];
+    const realNow = Date.now; let clock = realNow(); Date.now = () => clock;
+    let f1, l1, s1, s3, s4;
+    try {
+      f1 = tryIt(() => clearanceGuard()); s1 = searchCount; l1 = clearance.level;
+      tryIt(() => clearanceGuard()); tryIt(() => clearanceGuard()); s3 = searchCount;
+      clock += 2100; tryIt(() => clearanceGuard()); s4 = searchCount;
+    } finally { Date.now = realNow; }
+    check("23. a deviation search that finds nothing is not run again on the next frame: one search, none for "
+          + "EDGE_REASSESS_MS, then one more - and the ladder still answers between them",
+          () => !f1.raised && l1 !== "edge" && l1 !== "clear" && l1 !== "blind" && s1 === 1 && s3 === 1 && s4 === 2
+                && !sent.map(x => x.p).includes("/api/cmd/amend"),
+          () => (f1.raised ? "RAISED " + f1.raised + "; " : "") + "level " + l1 + "; searches after frame 1: " + s1
+              + ", after three frames in one instant: " + s3 + ", after a frame 2.1 s later: " + s4 + "; sent "
+              + JSON.stringify(sent.map(x => x.p)));
+  }
 
     console.log(fails ? "\n" + fails + " CHECK(S) FAILED"
                       : "\nall checks passed (" + ran + ")");
