@@ -738,7 +738,8 @@ diagnosable (`tests/frame_health.js`).
    **The chart menu + the measuring tool (right-click).** Right-clicking the chart
    opens the **point commands** — its header names the position you clicked:
    **Measure distance**, **Go-To here**, **Set Home here**, **Spawn here**,
-   **Copy position**. Go-To, Set Home and Spawn are **no longer on the command bar**;
+   **Copy position** — and, only while a run is PAUSED, **Resume from here** (see
+   *Resume from here* under the run controls). Go-To, Set Home and Spawn are **no longer on the command bar**;
    each was a two-step control (arm a button, then click the chart) and the menu
    already carries the point. It is a shortcut past the arming *step*, never past the
    arm *gate*: every row asks the console's own predicate — `canCommand()` (armed, no
@@ -1751,6 +1752,29 @@ diagnosable (`tests/frame_health.js`).
    out; the Intent card and the clearance chip both say the hold is on. A pause off a
    coverage line — mid-turn, on the approach, between regions — gets the low speed but no
    backtrack, because there is no line to back down.
+
+   **Resume from here** (2026-09-26) picks the survey up at a point *you* choose. While the run
+   is paused — and only then — the chart's right-click menu carries **Resume from here**:
+   right-click a committed survey line and the click is snapped to the nearest point ON that
+   line (within the same 14 pixels *What is this line?* uses), the key beside the row naming
+   the line and how far along it the point is. Choosing it routes the vessel to that point
+   with the same planner Go-To flies, at the guard's standoff, and then runs the line **in the
+   direction the plan runs it**, then the rest of the plan from there — a line still ahead
+   skips what lay between, a line already flown is run again from the point. The direction is
+   read off the route aboard, never assumed, so a line the route does not run is refused in
+   words (a resumed remainder holds only the lines still to fly). The remainder is **amended**
+   while still paused, exactly as the pause resume does. **The speed is the governor's, not a
+   LOW hold:** the transit to the point is flown at the transit speed and the line at the survey
+   speed, as after Upload and Start — the pause resume holds LOW because it backs a drifted
+   boat a few meters down her own line, whereas this is a chosen re-entry whose way in can be
+   long (on the live check the LOW it first shipped with crawled at 0.85 kn over the ground
+   against a 0.76 kn set, seven minutes for 200 m). Select LOW yourself if you want the survey
+   slow; a LOW hold you had already set stands. A way in the router cannot find, or a point the
+   keep-out model would hold the vessel off, refuses before anything is sent; a boat paused
+   **on a hold** (the guard held her, or she was holding at a Go-To point) is refused in words,
+   because a held plan cannot be amended — that survey's remainder is the guard bar's RESUME
+   to spend; and a run that stopped being paused during the routing — an escape, a Resume
+   in another tab — sends nothing, because the plan it would amend is no longer the one she is on.
 
    **Every speed the console commands is checked against the speed the vessel reports**
    (`commandSpeed` / `speedReconcile`): re-sent after a second of disagreement, with a banner

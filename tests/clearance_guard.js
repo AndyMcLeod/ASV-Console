@@ -1051,7 +1051,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
     // ── 15s1-15s4. THE SLOW-DOWN HAS TO MAKE WAY ────────────────────────────────────────
     //
     // Andy, 2026-09-26, "what's holding up?" - the live check of the mission review. The rung
-    // read "a keep-out ahead in 43 s" on the approach and commanded LOW; the Z-Boat's LOW is
+    // read "a keep-out ahead in 43 s" on the approach and commanded LOW; the small-class boat's LOW is
     // 1.5 kn and the set was 1.75 kn, so she was set backward at 0.39 kn over the ground for
     // 24 minutes at waypoint 0. His 09:38 record has the same thing seven times at 10:05: every
     // PROCEED on that approach was pressed with the SOG reading 0.25 kn. A slow-down below the

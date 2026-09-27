@@ -381,12 +381,17 @@ function menu(opts) {
   ["#cmPos", "#cmMeasureLbl", "#cmMeasureK", "#cmClearK"].forEach(id => mk(id));
   mk("#cmClear", { kid: D["#cmClearK"] });
   mk("#cmGoto", { kid: mk("#cmGotoK") });
+  mk("#cmResume", { kid: mk("#cmResumeK") });   // RESUME FROM HERE (2026-09-26): shown only while paused
   mk("#cmHome", { kid: mk("#cmHomeK") });
   mk("#cmSpawn", { kid: mk("#cmSpawnK") });
   mk("#cmMeasure", { kid: D["#cmMeasureK"] });
   mk("#cmCopy", { kid: mk("#cmCopyK") });
   const G = {
     cmenuEl: El({ w: 210, h: 190 }), menuLL: null, acted: [],
+    // RESUME FROM HERE (2026-09-26): what gateResumeHere reads besides the state - a fix, the vessel's
+    // waypoint index, and its two lookups (the snap and the leg search), STEERED by a check rather than
+    // computed; the real ones are pause_resume.js 18-19k's subject.
+    asv: { lat: 40, lon: -75 }, window: { _wpIndex: 0 }, hitNext: null, legNext: null,
     S: Object.assign({}, STATE_OK, opts.state || {}),
     mode: opts.mode || "pan", measures: opts.measures || [], measPend: opts.measPend || null,
     innerWidth: opts.vw || 1200, innerHeight: opts.vh || 800,
@@ -408,6 +413,10 @@ function menu(opts) {
     "const supervising = () => true;" +
     grab("linkConnected") + grab("canCommand") + grab("canSpawn") + grab("canSetHome") +
     grab("chartMenuOpen") + grab("closeChartMenu") + grab("cmGate") + grab("openChartMenu") + grab("cmRow") +
+    // RESUME FROM HERE (2026-09-26): openChartMenu shows, hides and gates the row through gateResumeHere
+    "const resumeHereAt = () => G.hitNext; const legOfLine = () => G.legNext; const indexedRoute = () => [];" +
+    "const lineNo = (k) => k + 1; const fmtDist = (m) => Math.round(m) + ' m';" +
+    grab("alongAsRun") + grab("gateResumeHere") +
     "G.openChartMenu=openChartMenu; G.closeChartMenu=closeChartMenu;" +
     "G.chartMenuOpen=chartMenuOpen; G.cmRow=cmRow; G.cmGate=cmGate;" +
     // Run a SHIPPED source line inside this scope. A direct eval() here sees the local
@@ -567,6 +576,42 @@ check("20 the Measure row reads the LIVE mode, so it is both arm and disarm",
 
 // Derived from the HTML, so a row added tomorrow is covered the day it is added - the same
 // rule the pre-commit hook now follows for tests/.
+// ── 21b-21d. RESUME FROM HERE IS A ROW OF A PAUSED RUN (2026-09-26) ────────────────────
+// Andy: "a right click option that appears on the drop down menu only if the mission is in pause status".
+// Every other row is gated and stays visible; this one is SHOWN only while paused, and then gated like
+// the rest - live only when the click is on a survey line the route aboard runs, with the key naming the
+// line and how far along it the point is, measured from the end she STARTS at.
+{
+  const hit = { line: 2, to: { lat: 40, lon: -75 }, along: 220, len: 400, acrossM: 3 };
+  const legFwd = { j: 3, end: {}, fwd: 1 }, legRev = { j: 3, end: {}, fwd: -1 };
+  const on = (state, hitNext, legNext, asv) => {
+    const G = menu({ state }); G.hitNext = hitNext; G.legNext = legNext;
+    if (asv !== undefined) G.asv = asv;
+    G.openChartMenu(10, 10, { lat: 40, lon: -75 }); return G;
+  };
+  const shown = (G) => G.D["#cmResume"].style.display !== "none";
+  const key = (G) => G.D["#cmResumeK"].textContent;
+  const running = on({ run: "running" }, hit, legFwd), idle = on({}, hit, legFwd);
+  const paused = on({ run: "paused" }, hit, legFwd), offLine = on({ run: "paused" }, null, null);
+  const notRun = on({ run: "paused" }, hit, null), unarmed = on({ run: "paused", armed: false }, hit, legFwd);
+  const noFix = on({ run: "paused" }, hit, legFwd, null), rev = on({ run: "paused" }, hit, legRev);
+  const held = on({ run: "paused", status: { holding: true } }, hit, legFwd);   // paused ON A HOLD: the plan aboard is the hold point
+  check("21b Resume from here is SHOWN only while the run is paused - hidden, not grayed, for a running or an idle boat",
+        () => !shown(running) && !shown(idle) && shown(paused) && shown(offLine),
+        () => "running: " + shown(running) + ", idle: " + shown(idle) + ", paused: " + shown(paused) + ", paused off a line: " + shown(offLine));
+  check("21c ... and while paused it is gated like every other row, the reason beside it: live on a line the route runs, with the line and the distance along it in the key",
+        () => !rowOff(paused, "#cmResume") && key(paused) === "220 m along L3"
+              && rowOff(offLine, "#cmResume") && key(offLine) === "click a survey line"
+              && rowOff(notRun, "#cmResume") && key(notRun) === "not in the plan aboard"
+              && rowOff(unarmed, "#cmResume") && key(unarmed) === "arm first"
+              && rowOff(noFix, "#cmResume") && key(noFix) === "no fix"
+              && rowOff(held, "#cmResume") && key(held) === "holding - resume from the bar",
+        () => "on a line: '" + key(paused) + "'; off a line: '" + key(offLine) + "'; not in the route: '" + key(notRun)
+              + "'; unarmed: '" + key(unarmed) + "'; no fix: '" + key(noFix) + "'; paused on a hold: '" + key(held) + "'");
+  check("21d ... measured from the end she STARTS at: a line the route runs b->a reads 180 m along, not 220",
+        () => !rowOff(rev, "#cmResume") && key(rev) === "180 m along L3",
+        () => "'" + key(rev) + "'");
+}
 const ROW_IDS = [...H.matchAll(/<div class="cmi" id="(cm\w+)"/g)].map(m => m[1]);
 check("21 every row in the menu markup has a handler wired", () => ROW_IDS.length >= 5 &&
   ROW_IDS.every(id => H.includes('cmRow("#' + id + '"')),

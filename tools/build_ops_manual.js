@@ -351,11 +351,12 @@ c.push(B("`Start` — begins the run. Needs armed, a plan uploaded, no E-STOP. I
 c.push(B("Monitor — waypoint progress, the RUN block, the track, energy, and the water."));
 c.push(H2("11.3  Pause, Stop, E-STOP"));
 c.push(TBL(["Control", "Does", "Recover by"], [
-  ["`Pause`", "Holds position, keeps the next waypoint active. A vessel that was station-keeping goes back to it when resumed.", "`Start` resumes"],
+  ["`Pause`", "Holds position, keeps the next waypoint active. A vessel that was station-keeping goes back to it when resumed.", "`Start` resumes; or right-click a survey line → RESUME FROM HERE"],
   ["`Stop`", "Aborts the run and reverts to the first waypoint", "Re-Upload and Start"],
   ["`E-STOP`", "Latches a command-side motor cut and force-disarms", "Clear E-STOP, then re-arm"],
 ], [1300, 5060, 3000]));
 c.push(P("Stop, E-STOP and a disarm each end station-keeping along with the run: nothing the console does afterwards will set the vessel moving again until you command it. Start on a plan that has already run to its end runs it again from its first waypoint."));
+c.push(P("RESUME FROM HERE. While the run is paused — and only then — the chart's right-click menu offers RESUME FROM HERE. Right-click a survey line at the point you want the survey picked up from: the click snaps to the line, the row names the line and how far along it the point is, and choosing it routes the vessel to that point and runs the line in the direction the plan runs it, then the rest of the plan. A line still ahead skips what lay between; a line already flown is run again from that point. The speed is the governor's: the transit to the point at the transit speed, the line at the survey speed, as after Upload and Start - select LOW yourself if you want the survey slow. If the console cannot route a way in, or the point is one the keep-out model would hold the vessel off, it refuses before anything is sent and says why; a vessel paused while station-keeping (the guard held it, or it was holding at a Go-To point) is refused too, because a held plan cannot be amended - use RESUME SURVEY on the guard bar; and if the run stopped being paused while it was routing, it sends nothing."));
 c.push(H2("11.4  What you should be watching"));
 c.push(B("THE WATER, first. Everything below is secondary to that."));
 c.push(B("The RUN block's status line and percent — the fastest read on whether the run is progressing."));
@@ -494,7 +495,7 @@ c.push(TBL(["Button", "Does"], [
   ["`SRC`", "Chart source and survey confidence"],
   ["`CLR`", "Clear the displayed track"],
   ["`?`", "Quick start card"],
-  ["right-click", "Chart menu at that point — measure, Go-To here, Set Home, Spawn here, copy position (4.1)"],
+  ["right-click", "Chart menu at that point — measure, Go-To here, Set Home, Spawn here, copy position (4.1); while the run is paused, RESUME FROM HERE (11.3)"],
   ["`Esc`", "Close the chart menu; then the half-drawn measurement; then all measurements; then the tool"],
 ], [2100, 7260]));
 

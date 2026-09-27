@@ -212,17 +212,20 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             && /routeAround\(Ap,Bp,ref,koHere,clipBuf\)/.test(H)
             && /routeAround\(Ap,Bp,ref,koHere,buffer\)/.test(H)
             && /nHopInside\+\+/.test(H) && /hop\(s\) inside the \$\{clipBuf\.toFixed\(1\)\} m standoff/.test(H)
-            // and the transits the page routes itself: the approach, RTH, Go-To, the transit line
+            // and the transits the page routes itself: the approach, RTH, Go-To, the transit line - and,
+            // since 2026-09-26 (the fifth planNogoRoute site), the resume-from-here way in (resumeFromHere)
             && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\)/g) || []).length === 2
             && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\)/.test(H)
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 4
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 5
+            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}\)/.test(H)
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(H)
             && /legSafe=\(a,b\)=>\{[\s\S]{0,400}?blocked\(\{[^}]*\}, koTurn, buffer\)/.test(H),
       "extendLead (both ends), every turnWithRetry (the first rung, the lead give, the trim "
         + "rung), every judgeJoin and the red-join diagnostic read `clipBuf`; a hop is flown "
         + "straight only when legSafeAt clears the standoff, routed at clipBuf first and at the "
-        + "buffer only as the fallback (nHopInside, said on the card); the approach, RTH, Go-To "
-        + "and the transit line carry patClipBufM() into routePlan / planNogoRoute. A plan built "
+        + "buffer only as the fallback (nHopInside, said on the card); the approach, RTH, Go-To, "
+        + "the transit line and the resume-from-here way in carry patClipBufM() into routePlan / "
+        + "planNogoRoute. A plan built "
         + "this way cannot have the helm rung fire on a line, a lead, a turn or a hop the water "
         + "had room for; where it had not, the card says so, and the guard covers it");
 

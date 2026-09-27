@@ -149,6 +149,25 @@ const { legClear, buildKeepouts } = require("../static/js/chart.js");
 var nogo = { ready: true, frame: null, ko: { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
 // the resume asks setMsNow() for the set now running (2026-09-26): the page's own groundVel
 const { groundVel, guardStandoffM } = require("../static/js/guard.js");
+// RESUME FROM HERE (2026-09-26): the chart's scale for the snap reach (IDENTIFY_PX = 14 px at zoom 15 and
+// this latitude is ~49 m - wide enough that a click between the fixture's two lines, 60 m apart, has BOTH in
+// reach, which is the only shape where "nearest" and "first in reach" differ; identify_layer 5b's lesson),
+// and the router the way in is planned by - STUBBED AND STEERABLE, mirroring
+// guard_resume.js's: the real planNogoRoute returns kr.route.slice(1) (the start EXCLUDED, the target
+// LAST) and {degraded:true} with no model. `coverHook` lets a check change the world DURING the resume's
+// awaits, which is the only way to drive its "still paused?" re-ask.
+var center = { lat: 43.07, lon: -70.76 }, zoom = 15;
+var pinNext = null, pinCalls = [], coverHook = null;
+function holdOpts() { return {}; }
+function heldOffWhy(h) { return "the point sits inside " + ((h && h.kind) || "a keep-out"); }
+function takeDownBanner() {}
+function ensureNogoCovers() { if (coverHook) coverHook(); return Promise.resolve(); }
+function planNogoRoute(from, to) {
+  pinCalls.push({ from, to });
+  if (pinNext) return pinNext;
+  if (!nogo.ready || !nogo.ko || !nogo.frame) return { route: [{ lat: to.lat, lon: to.lon }], direct: true, degraded: true };
+  return { route: [{ lat: to.lat, lon: to.lon }], direct: true, routed: false };
+}
 
 // eslint-disable-next-line no-eval
 eval([
@@ -174,6 +193,9 @@ eval([
   grab("sendSpeed"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the resume at the slowest speed that makes way (2026-09-26)
   grab("patClipBufM"),                                                     // the standoff the upload routes its transits at (2026-09-26)
+  // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
+  grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"),
+  grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and
@@ -864,6 +886,211 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     check("1g. guiConfirm's `always` shows the dialog in the simulator, where it otherwise answers yes by itself",
           () => plain === true && shown && said === false,
           () => "plain=" + plain + " shown=" + shown + " answered=" + said);
+  }
+  // ── 18-19k. RESUME FROM HERE (Andy, 2026-09-26) ────────────────────────────────────
+  // "'Resume from here' mode after pause. This is a right click option that appears on the drop down menu
+  // only if the mission is in pause status. The user clicks on a survey line at a specific point and the
+  // ASV moves in the direction of path planning once it transits/goto that point." DRIVEN, like 9-12: the
+  // real snap, the real leg search and the real resume over the two-line fixture, and what they SENT.
+  // (The row itself - shown only while paused, gated like the rest - is measure_tool.js 22.)
+  {
+    const ROUTE     = [LINE_E.a, LINE_E.b, LINE_W.a, LINE_W.b];   // line 1 east, a reversal, line 2 WEST (a->b)
+    const ROUTE_REV = [LINE_E.a, LINE_E.b, LINE_W.b, LINE_W.a];   // the same lines, line 2 flown b->a (EAST)
+    const logged = [];
+    globalThis.fetch = (p, o) => { try { logged.push(JSON.parse(o.body)); } catch (e) { /* not a logevent */ }
+                                   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) }); };
+    const world = (route, wpIndex, at) => {
+      mission = { lines: [LINE_E, LINE_W], waypoints: route.slice(),
+                  speeds: { transit: "high", turn: "low", survey: "survey" } };
+      S = { behavior: "survey", run: "paused", armed: true, estop: false, status: {} };
+      runLineIdx = -1; runRoute = route.slice(); window._wpIndex = wpIndex;
+      asv = at; __setPauseMark({ line: 0, along: 150, fwd: 1, at: ll(150, 0), t: 0 });
+      nogo = { ready: true, frame: ref, ko: { polys: [], lines: [], points: [], marks: [] }, buffer: 3 };
+      sent = []; notes = []; banners = []; planIntent = { why: [] }; logged.length = 0;
+      pinNext = null; pinCalls = []; coverHook = null; globalThis.__lastRoute = null; globalThis.__failPath = null;
+      cornerSlow = new Set([2]); cornerSlowFor = 4; __setResumeSlow(false);
+    };
+    const wpAt = (i) => (globalThis.__lastRoute || [])[i];
+    const near = (p, q) => !!p && !!q && distTo(p, q) < 0.5;
+    const paths = () => sent.map(x => x.p);
+    const speedSent = () => (sent.find(x => x.p === "/api/cmd/speed") || {}).speed;
+
+    // 18. THE SNAP
+    world(ROUTE, 1, ll(150, 25));
+    const h1 = resumeHereAt(ll(250, 10));          // 10 m north of line 1, 250 m along it
+    const h2 = resumeHereAt(ll(250, 200));         // 140 m from either line: out of reach
+    const h3 = resumeHereAt(ll(250, 35));          // 35 m from line 1 and 25 m from line 2 (n=60), BOTH in reach: the NEARER wins, not the first
+    const h4 = resumeHereAt(ll(-15, 5));           // beyond line 1's start, within reach: snaps to the start
+    check("18. the click is snapped to the nearest committed line within the identify reach - the point ON the line goes, not the click",
+          () => !!h1 && h1.line === 0 && Math.abs(h1.along - 250) < 0.5 && near(h1.to, ll(250, 0)) && Math.abs(h1.acrossM - 10) < 0.5
+                && h2 === null
+                && !!h3 && h3.line === 1 && Math.abs(along(LINE_W, h3.to) - 150) < 0.5      // line 2 starts at e=400: 250 is 150 along it
+                && !!h4 && h4.line === 0 && h4.along < 0.01 && near(h4.to, LINE_E.a),
+          () => "10 m off line 1 at 250 m: " + (h1 ? "L" + (h1.line + 1) + ", " + h1.along.toFixed(1) + " m along, " + h1.acrossM.toFixed(1) + " m off" : "null")
+                + "; 140 m off both: " + (h2 ? "HIT" : "null") + "; 25 m off line 2 and 35 off line 1: " + (h3 ? "L" + (h3.line + 1) : "null")
+                + "; 15 m beyond the start: " + (h4 ? h4.along.toFixed(1) + " m along" : "null"));
+
+    // 18b. THE DIRECTION, OFF THE ROUTE
+    const legE = legOfLine(ROUTE, 0, 1), legW = legOfLine(ROUTE, 1, 1), legRev = legOfLine(ROUTE_REV, 1, 1);
+    const legFlown = legOfLine(ROUTE, 0, 3);                                        // steering for line 2's end: line 1 is behind her
+    const legRem = legOfLine([ll(150, 0), LINE_E.b, LINE_W.a, LINE_W.b], 0, 1);     // a rejoin leg from 150 m along line 1 to its end
+    const legNone = legOfLine([LINE_E.a, ll(400, 30), LINE_W.b], 1, 1);             // a route that runs neither end of line 2
+    check("18b. ... and the direction is read off the ROUTE, never assumed: the same committed line reads +1 when the route runs it a->b and -1 when b->a; a REMAINDER of a line is that line; a line behind her answers its flown leg; a line the route does not run answers null",
+          () => !!legE && legE.fwd === 1 && legE.j === 1 && !!legW && legW.fwd === 1 && legW.j === 3
+                && !!legRev && legRev.fwd === -1 && legRev.j === 3 && near(legRev.end, LINE_W.a)
+                && !!legRem && legRem.fwd === 1 && legRem.j === 1
+                && !!legFlown && legFlown.j === 1 && legNone === null,
+          () => "line 1: " + JSON.stringify(legE && { j: legE.j, fwd: legE.fwd }) + "; line 2 a->b: " + JSON.stringify(legW && { j: legW.j, fwd: legW.fwd })
+                + "; line 2 b->a: " + JSON.stringify(legRev && { j: legRev.j, fwd: legRev.fwd }) + "; a remainder: " + JSON.stringify(legRem && { j: legRem.j, fwd: legRem.fwd })
+                + "; flown: " + JSON.stringify(legFlown && { j: legFlown.j }) + "; not run: " + legNone);
+
+    // 19. THE RESUME, DRIVEN
+    world(ROUTE, 1, ll(150, 25));                  // paused 25 m off line 1, steering for its end
+    await resumeFromHere(ll(250, 10));             // the operator points 250 m along line 1
+    const p19 = paths(), r19 = globalThis.__lastRoute || [];
+    // ⚠ NO LOW LATCH, AND NO SPEED COMMAND AT ALL - the governor's throttle (the transit role on the way in, the
+    // survey speed on the line), and resumeSlow left as the operator had it. The pause resume holds LOW because it
+    // backs a drifted boat a few meters down her own line; this is a chosen re-entry, and on the live check the LOW
+    // it first shipped with crawled at 0.85 kn over the ground against a 0.76 kn set, 7 minutes for 200 m.
+    check("19. Resume from here AMENDS the paused plan - the chosen point first, the line's end next, the whole rest of the plan behind it - then Start, with NO speed command (the governor has the throttle); the drawn route follows; the mark is spent",
+          () => p19.includes("/api/cmd/amend") && !p19.includes("/api/cmd/upload") && !p19.includes("/api/cmd/speed")
+                && p19.indexOf("/api/cmd/amend") < p19.indexOf("/api/cmd/start")
+                && r19.length === 4 && near(r19[0], ll(250, 0)) && near(r19[1], LINE_E.b) && near(r19[2], LINE_W.a) && near(r19[3], LINE_W.b)
+                && runRoute.length === 5 && near(runRoute[0], LINE_E.a) && near(runRoute[1], ll(250, 0))
+                && __resumeSlow() === false && pauseMark === null
+                && pinCalls.length === 1 && near(pinCalls[0].to, ll(250, 0)) && near(pinCalls[0].from, ll(150, 25)),
+          () => "sent " + JSON.stringify(p19) + " (speed '" + speedSent() + "'); the amendment is " + r19.length + " waypoints starting "
+                + (r19[0] ? along(LINE_E, r19[0]).toFixed(1) + " m along line 1" : "nowhere") + "; the drawn route went to " + runRoute.length
+                + "; the way in was asked for from " + (pinCalls[0] ? "the boat" : "nowhere") + "; mark " + JSON.stringify(pauseMark));
+    __setResumeSlow(false);
+
+    // 19b. THE DIRECTION IS THE ROUTE'S, on the line flown b->a
+    world(ROUTE_REV, 1, ll(150, 25));
+    await resumeFromHere(ll(250, 70));             // 10 m north of line 2, which this route runs EAST (b->a)
+    check("19b. ... and she runs the line the way the PLAN runs it: on a line the route flies b->a the next waypoint is L.a, and the note measures from the end she starts at",
+          () => (globalThis.__lastRoute || []).length === 2 && near(wpAt(0), ll(250, 60)) && near(wpAt(1), LINE_W.a) && !near(wpAt(1), LINE_W.b)
+                && /250 m along it/.test(notes.join(" ")) && /line 2/.test(notes.join(" ")),
+          () => "the amendment: " + JSON.stringify((globalThis.__lastRoute || []).map(p => [Math.round(along(LINE_W, p)), Math.round(distTo(p, LINE_W.a))]))
+                + " [along line 2 from a, distance to a]; said " + JSON.stringify(notes.slice(-1)));
+    __setResumeSlow(false);
+
+    // 19c. A LINE AHEAD: what lay between is skipped
+    world(ROUTE, 1, ll(150, 25));
+    await resumeFromHere(ll(250, 70));             // line 2, while she was steering for line 1's end
+    check("19c. a point on a line still AHEAD picks the plan up there - the rest of line 1 and the reversal are skipped, not flown first",
+          () => (globalThis.__lastRoute || []).length === 2 && near(wpAt(0), ll(250, 60)) && near(wpAt(1), LINE_W.b)
+                && runRoute.length === 3 && near(runRoute[0], LINE_E.a),
+          () => "the amendment: " + (globalThis.__lastRoute || []).length + " waypoints, the drawn route " + runRoute.length);
+    __setResumeSlow(false);
+
+    // 19d. A LINE BEHIND: run again from the point
+    world(ROUTE, 3, ll(50, 60));                   // steering for line 2's end: line 1 is flown
+    await resumeFromHere(ll(250, 10));
+    check("19d. a point on a line already FLOWN runs it again from there, then everything after it, with the flown prefix kept in the drawn route",
+          () => (globalThis.__lastRoute || []).length === 4 && near(wpAt(0), ll(250, 0)) && near(wpAt(1), LINE_E.b) && near(wpAt(3), LINE_W.b)
+                && runRoute.length === 7 && near(runRoute[2], LINE_W.a) && near(runRoute[3], ll(250, 0)),
+          () => "the amendment: " + (globalThis.__lastRoute || []).length + " waypoints, the drawn route " + runRoute.length);
+    __setResumeSlow(false);
+
+    // 19e. THE WAY IN IS ROUTED, and its refusals refuse BEFORE anything is sent
+    world(ROUTE, 1, ll(150, 25));
+    pinNext = { route: [ll(180, 40), ll(220, 30), ll(250, 0)], routed: true };
+    await resumeFromHere(ll(250, 10));
+    const viaRoute = globalThis.__lastRoute || [], viaSent = paths(), viaNote = notes.join(" ");
+    world(ROUTE, 1, ll(150, 25));
+    pinNext = { error: "no clear route to the target " + '—' + " every path crosses a wharf", reason: {} };
+    await resumeFromHere(ll(250, 10));
+    const boxedSent = paths(), boxedSaid = banners.join(" "), boxedRun = S.run, boxedSlow = __resumeSlow();
+    world(ROUTE, 1, ll(150, 25));
+    pinNext = { route: [ll(240, 4)], heldOff: { kind: "a shoal", m: 4 }, holdClear: 4 };
+    await resumeFromHere(ll(250, 10));
+    const heldSent = paths(), heldSaid = banners.join(" ");
+    world(ROUTE, 1, ll(150, 25));
+    nogo = { ready: false, frame: null, ko: null, buffer: 3 };
+    await resumeFromHere(ll(250, 10));
+    const degRoute = globalThis.__lastRoute || [], degNote = notes.join(" ");
+    check("19e. the way in is ROUTED by the planner Go-To flies: its detour goes in front of the point; no route at all, or a point the model holds off, refuses with nothing sent and her still paused; no model goes direct and says NOT certified",
+          () => viaRoute.length === 6 && near(viaRoute[0], ll(180, 40)) && near(viaRoute[1], ll(220, 30)) && near(viaRoute[2], ll(250, 0)) && near(viaRoute[3], LINE_E.b)
+                && viaSent.includes("/api/cmd/amend") && /via 2 waypoints/.test(viaNote)
+                && boxedSent.length === 0 && /CANNOT RESUME FROM THERE/.test(boxedSaid) && /wharf/.test(boxedSaid) && boxedRun === "paused" && boxedSlow === false
+                && heldSent.length === 0 && /CANNOT RESUME FROM THERE/.test(heldSaid) && /shoal/.test(heldSaid)
+                && degRoute.length === 4 && near(degRoute[0], ll(250, 0)) && /NOT certified/.test(degNote),
+          () => "routed: " + viaRoute.length + " waypoints, said " + JSON.stringify(viaNote.match(/via \d+ waypoints?/) || null)
+                + "; boxed: sent " + JSON.stringify(boxedSent) + ", run " + boxedRun + ", " + JSON.stringify(boxedSaid.slice(0, 60))
+                + "; held off: sent " + JSON.stringify(heldSent) + "; no model: " + degRoute.length + " waypoints, " + JSON.stringify(degNote.match(/NOT certified[^)]*\)/) || null));
+    __setResumeSlow(false);
+
+    // 19f. NO LONGER PAUSED WHEN THE ROUTING COMES BACK
+    world(ROUTE, 1, ll(150, 25));
+    coverHook = () => { S.run = "running"; };     // an escape, or a Resume in another tab, during the extract
+    await resumeFromHere(ll(250, 10));
+    check("19f. a run that stopped being paused while the way in was being routed gets NOTHING - the amend gate aboard admits a running plan, and this one would amend a plan she is no longer on",
+          () => paths().length === 0 && /NOT RESUMED FROM THERE/.test(banners.join(" ")) && /no longer paused/.test(banners.join(" ")),
+          () => "sent " + JSON.stringify(paths()) + "; " + JSON.stringify(banners.slice(-1)));
+
+    // 19g. THE END OF THE LINE IS THE END
+    world(ROUTE, 1, ll(150, 25));
+    await resumeFromHere(ll(398, 3));              // 2 m short of line 1's end, 3 m off it
+    check("19g. a point within LINE_MATCH_M of the end she runs toward IS that end: the end goes first, no leg of a couple of meters in front of it",
+          () => (globalThis.__lastRoute || []).length === 3 && near(wpAt(0), LINE_E.b) && near(wpAt(1), LINE_W.a),
+          () => "the amendment: " + JSON.stringify((globalThis.__lastRoute || []).map(p => Math.round(along(LINE_E, p)))) + " m along line 1");
+    __setResumeSlow(false);
+
+    // 19h. REFUSED KEEPS THE CORNER SET; LOST DROPS IT (resumeRun's asymmetry, 12g / 12h)
+    world(ROUTE, 1, ll(150, 25));
+    globalThis.__failPath = "/api/cmd/amend"; globalThis.__refuseAmend = true;
+    await resumeFromHere(ll(250, 10));
+    const refKept = cornerSlow.size, refSaid = banners.join(" "), refSent = paths(), refSlow = __resumeSlow();
+    world(ROUTE, 1, ll(150, 25));
+    globalThis.__failPath = "/api/cmd/amend"; globalThis.__refuseAmend = false;
+    await resumeFromHere(ll(250, 10));
+    const lostKept = cornerSlow.size, lostSaid = banners.join(" ");
+    globalThis.__failPath = null; globalThis.__refuseAmend = true;
+    check("19h. a REFUSED amendment keeps the corner set and says refused, with no Start behind it; a LOST one drops the set and says the console cannot tell",
+          () => refKept === 1 && /REFUSED/.test(refSaid) && !refSent.includes("/api/cmd/start") && refSlow === false
+                && lostKept === 0 && /MAY NOT HAVE LANDED/.test(lostSaid),
+          () => "refused: set " + refKept + ", sent " + JSON.stringify(refSent) + "; lost: set " + lostKept + ", " + JSON.stringify(lostSaid.slice(0, 50)));
+
+    // 19j. A LOW HOLD THE OPERATOR HAD SET STANDS - nothing here touches it either way
+    world(ROUTE, 1, ll(150, 25)); __setResumeSlow(true);
+    await resumeFromHere(ll(250, 10));
+    check("19j. a LOW hold the operator had already set STANDS across this resume - it is their standing instruction, and the note says the speed follows once it is released",
+          () => __resumeSlow() === true && paths().includes("/api/cmd/start") && !paths().includes("/api/cmd/speed")
+                && /once your LOW hold is released/.test(notes.join(" ")),
+          () => "resumeSlow " + __resumeSlow() + ", sent " + JSON.stringify(paths()) + ", said " + JSON.stringify(notes.slice(-1)));
+    __setResumeSlow(false);
+
+    // 19i. A LINE THE ROUTE DOES NOT RUN, A RUN THAT IS NOT PAUSED, AND A BOAT PAUSED ON A HOLD
+    world([LINE_E.a, ll(400, 30), LINE_W.b], 1, ll(150, 25));   // the route aboard runs neither end of line 2
+    await resumeFromHere(ll(250, 70));
+    const notRunSent = paths(), notRunSaid = banners.join(" ");
+    world(ROUTE, 1, ll(150, 25)); S.run = "running";
+    await resumeFromHere(ll(250, 10));
+    const runningSent = paths(), runningSaid = notes.join(" ");
+    world(ROUTE, 1, ll(150, 25)); S.status = { holding: true };     // paused ON A HOLD: the plan aboard is the hold point
+    await resumeFromHere(ll(250, 10));
+    const holdSent = paths(), holdSaid = notes.join(" ");
+    check("19i. a line the route aboard does not run is REFUSED in words rather than run a->b on a guess; a run that is not paused, and a boat paused ON A HOLD, are refused before the snap",
+          () => notRunSent.length === 0 && /does not run line 2/.test(notRunSaid)
+                && runningSent.length === 0 && /needs a PAUSED run/.test(runningSaid)
+                && holdSent.length === 0 && pinCalls.length === 0 && /paused on a hold/.test(holdSaid) && /RESUME SURVEY on the guard bar/.test(holdSaid),
+          () => "not in the route: sent " + JSON.stringify(notRunSent) + ", " + JSON.stringify(notRunSaid.slice(0, 70))
+                + "; running: sent " + JSON.stringify(runningSent) + ", " + JSON.stringify(runningSaid.slice(0, 50))
+                + "; holding: sent " + JSON.stringify(holdSent) + ", " + JSON.stringify(holdSaid.slice(0, 60)));
+
+    // 19k. SAID AND LOGGED
+    world(ROUTE, 1, ll(150, 25));
+    await resumeFromHere(ll(250, 10));
+    const ev = logged.find(e => e && e.kind === "resume");
+    check("19k. what it did is said out loud, on the Intent card, and in the session log - as a resume, from a point, with the line, the distances and whose throttle it is",
+          () => /Resumed from the point you chose on line 1 \(250 m along it\)/.test(notes.join(" "))
+                && /transit speed and the line at the survey speed/.test(notes.join(" ")) && /select LOW if you want it slow/.test(notes.join(" "))
+                && planIntent.why.some(w => /RESUMED FROM A CHOSEN POINT/.test(w.s) && /governor has the throttle/.test(w.s))
+                && !!ev && ev.data && ev.data.from_point === true && ev.data.line === 1 && ev.data.along_m === 250
+                && ev.data.transit_m === Math.round(distTo(ll(150, 25), ll(250, 0))) && ev.data.via === 0 && ev.data.certified === true,
+          () => "said " + JSON.stringify(notes.slice(-1)) + "; logged " + JSON.stringify(ev && ev.data));
+    __setResumeSlow(false);
+    cornerSlow = new Set(); cornerSlowFor = -1;
   }
   finish();
 })();

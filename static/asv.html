@@ -317,6 +317,11 @@
     <div class="cmi" id="cmClear"><span>Clear measurements</span><span class="cmk" id="cmClearK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmGoto"><span>Go-To here</span><span class="cmk" id="cmGotoK"></span></div>
+    <!-- RESUME FROM HERE (Andy, 2026-09-26): shown ONLY while the run is paused. The click is snapped
+         to the nearest committed survey line; the vessel is routed to that point and carries on down
+         the line the way the plan runs it, then the rest of the plan. gateResumeHere() shows, hides
+         and gates it on every open; the key names the line and how far along it the point is. -->
+    <div class="cmi" id="cmResume" style="display:none"><span>Resume from here</span><span class="cmk" id="cmResumeK"></span></div>
     <!-- Sets HOME at the CLICKED POINT (Andy, 2026-08-08 - this row read "at vessel" for
          one commit, when set_home still discarded a supplied position). RTH drives to
          HOME, so doSetHome() tests the point against the keep-out model first and WARNS
@@ -1226,7 +1231,7 @@ function roleSpeedMS(role){ return (V.SPEED_KN[roleSpeed(role)] || V.SPEED_KN.su
  *
  * Andy, 2026-09-26, "what's holding up?" — the live check of the mission review, on the
  * throwaway console: the guard's SLOW rung read "a keep-out ahead in 43 s" on the approach and
- * commanded LOW, and the Z-Boat's LOW is 1.5 kn in a 1.75 kn set. She was set backward at
+ * commanded LOW, and the small-class boat's LOW is 1.5 kn in a 1.75 kn set. She was set backward at
  * 0.39 kn over the ground with a 125° crab, 24 minutes at waypoint 0 of 142, the card
  * reading "~169 min to the end". His 09:38 record has the same thing seven times over at
  * 10:05-10:06: every PROCEED he pressed on that approach was pressed with the SOG reading
@@ -10508,6 +10513,7 @@ function openChartMenu(clientX, clientY, ll){
   cmGate("#cmGoto",  canCommand(), "arm first");
   cmGate("#cmHome",  canSetHome(), "no link");
   cmGate("#cmSpawn", canSpawn(),   "sim only");
+  gateResumeHere(ll);                                   // shown only while PAUSED; live only on a line the route runs
   cmenuEl.style.display = "block";
   // clamp into the viewport, flipping at the right/bottom edges — same discipline as the
   // hover tips and the pop-out panels: a menu opened near a corner must stay reachable.
@@ -10536,6 +10542,7 @@ cmRow("#cmMeasure", ()=>{
 cmRow("#cmWhat",  ll => sayWhatIsHere(ll));
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
+cmRow("#cmResume", ll => resumeFromHere(ll));   // paused runs only (2026-09-26)
 cmRow("#cmHome",  ll => doSetHome(ll));
 cmRow("#cmSpawn", ll => doSpawn(ll));
 cmRow("#cmCopy",  ll => copyPosition(ll));
@@ -12650,6 +12657,210 @@ async function resumeRun(){
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({kind:"resume", data:{line: resumeLine, backed_m: Math.round(backedM),
       boat_lengths: RESUME_BACK_LENGTHS, note}})}).catch(()=>{});
+  updateMissionCard(); render();
+}
+
+/**
+ * RESUME FROM HERE (Andy, 2026-09-26): *"'Resume from here' mode after pause. This is a right click
+ * option that appears on the drop down menu only if the mission is in pause status. The user clicks
+ * on a survey line at a specific point and the ASV moves in the direction of path planning once it
+ * transits/goto that point."*
+ *
+ * The pause resume above rejoins the line SHE WAS ON, twelve boat lengths behind the mark. This one
+ * rejoins the line THE OPERATOR POINTS AT, at the point they point at - a hole they can see on the
+ * chart, a line they want run again from a place of their choosing, a survey picked up somewhere
+ * other than where it was left. Everything else is the pause resume, deliberately: the remainder is
+ * AMENDED while still paused (never re-uploaded - an upload restarts the waypoint numbering and the
+ * survey with it) and the way in is routed by the same planner Go-To flies, at the guard's standoff.
+ * One resume behavior, now reached four ways - EXCEPT THE SPEED. The pause resume holds LOW until the
+ * operator says otherwise, because it backs a boat that drifted a few meters down the line she was
+ * on. This one is a chosen re-entry, and the way to it can be long: on the live check she crawled at
+ * 0.85 kn over the ground against a 0.76 kn set for 7 minutes to cover 200 m at LOW. So the GOVERNOR
+ * has the throttle from the first frame, as after Upload and Start - the transit at the transit
+ * speed, the line at the survey speed - and a LOW hold the operator had already set stands (nothing
+ * here touches resumeSlow). His words: "once it transits/goto that point", and a Go-To is flown at
+ * the transit speed.
+ *
+ * ⚠ THE DIRECTION IS READ OFF THE ROUTE, NEVER ASSUMED. The committed order is a->b, but a plan
+ * edited in WPT mode need not be, and a resumed remainder begins part-way down a line - so the leg
+ * of the vessel's own route that runs the line names the end she is to run TOWARD, and a line the
+ * route does not run is refused rather than guessed at. Backing the wrong way down a line is the
+ * one mistake the pause resume was written to avoid (tests/pause_resume.js 6), and this door is
+ * held to the same rule.
+ *
+ * ⚠ SHE HAS TO STILL BE PAUSED WHEN THE AMENDMENT GOES. The extract and the routing take real time
+ * and the guard commands the boat at 4 Hz through all of it: an in-extremis escape, or a Resume
+ * pressed in another tab, leaves her RUNNING a plan this amendment was never about - and the
+ * console's amend gate admits a running plan. Re-asked after the awaits, and nothing is sent when
+ * the answer has changed.
+ */
+/** The committed survey line under a chart point, and the point ON it: {line, to, along, len, acrossM}
+ *  or null. The reach is IDENTIFY_PX screen pixels at the current zoom - the same "I clicked on the
+ *  line" the What-is-this-line row uses - converted to meters so the geometry is done in the line's
+ *  own plane. A click beyond an end but within reach snaps to that end, as idSegDist's clamp does. */
+function resumeHereAt(ll){
+  if(!ll || !(mission.lines || []).length) return null;
+  const mPerPx = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+  const reachM = IDENTIFY_PX * mPerPx;
+  let best = null;
+  for(let k = 0; k < mission.lines.length; k++){
+    const L = mission.lines[k]; if(!L || !L.a || !L.b) continue;
+    const a = llEN(L.a.lat, L.a.lon, L.a), b = llEN(L.b.lat, L.b.lon, L.a), q = llEN(ll.lat, ll.lon, L.a);
+    const ex = b.e - a.e, en = b.n - a.n, len = Math.hypot(ex, en);
+    if(!(len > 0)) continue;
+    const along = Math.max(0, Math.min(len, ((q.e - a.e) * ex + (q.n - a.n) * en) / len));
+    const t = along / len;
+    const acrossM = Math.hypot(q.e - (a.e + t * ex), q.n - (a.n + t * en));
+    if(acrossM <= reachM && (!best || acrossM < best.acrossM))
+      best = {line: k, along, len, acrossM,
+              to: {lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t}};
+  }
+  return best;
+}
+/** The leg of the vessel's route that runs line `k`: {j, end, fwd} - `j` the index of the END waypoint
+ *  she runs toward (the leg is rr[j-1] -> rr[j]), `fwd` +1 toward L.b and -1 toward L.a - or null when
+ *  the route does not run that line. A leg runs the line when it joins its two ends either way round, or
+ *  is a REMAINDER of it (onLineM: begins on the line, ends at an end - an earlier resume's rejoin leg).
+ *  Prefers the first unflown leg (j >= idx); a line already flown answers its last leg, so the operator
+ *  can send her back over it. */
+function legOfLine(rr, k, idx){
+  const L = (mission.lines || [])[k]; if(!L || !rr || rr.length < 2) return null;
+  const endOf = (j) => {
+    const a = rr[j-1], b = rr[j]; if(!a || !b) return 0;
+    if(distTo(a, L.a) <= LINE_MATCH_M && distTo(b, L.b) <= LINE_MATCH_M) return 1;
+    if(distTo(a, L.b) <= LINE_MATCH_M && distTo(b, L.a) <= LINE_MATCH_M) return -1;
+    if(onLineM(L, a)){
+      if(distTo(b, L.b) <= LINE_MATCH_M) return 1;
+      if(distTo(b, L.a) <= LINE_MATCH_M) return -1;
+    }
+    return 0;
+  };
+  let flown = null;
+  for(let j = 1; j < rr.length; j++){
+    const fwd = endOf(j); if(!fwd) continue;
+    if(j >= idx) return {j, end: rr[j], fwd};
+    flown = {j, end: rr[j], fwd};
+  }
+  return flown;
+}
+/** How far along line `k` the point is, THE WAY SHE RUNS IT (from the end she starts at). */
+function alongAsRun(hit, leg){ return leg.fwd > 0 ? hit.along : hit.len - hit.along; }
+/** The row: SHOWN only while the run is paused (Andy: "appears on the drop down menu only if the mission
+ *  is in pause status"), LIVE only when the click is on a committed survey line the vessel's route runs,
+ *  and it says which line and how far along it before the operator chooses. Every other row is gated and
+ *  stays visible; this one is a mode of a paused run and has nothing to say about a running or an idle
+ *  one, so it is not there to be gray. */
+function gateResumeHere(ll){
+  const row = $("#cmResume"); if(!row) return;
+  const paused = !!(S && S.run === "paused");
+  row.style.display = paused ? "" : "none";
+  if(!paused) return;
+  // ⚠ A BOAT PAUSED ON A HOLD is refused here, in words, before the snap: the plan aboard is the hold
+  // point, the vessel refuses to amend a station-keeping plan, and the survey's remainder - if the
+  // guard banked one - is the guard bar's RESUME to spend. Measured on the live check: a paused boat
+  // 12.8 m off a pier was HELD by the no-way-on rung within seconds of the pause.
+  const holding = !!(S.status && S.status.holding);
+  const hit = (canCommand() && asv && !holding) ? resumeHereAt(ll) : null;
+  const leg = hit ? legOfLine(indexedRoute() || [], hit.line, window._wpIndex || 0) : null;
+  const why = !canCommand() ? "arm first" : !asv ? "no fix" : holding ? "holding - resume from the bar"
+            : !hit ? "click a survey line" : !leg ? "not in the plan aboard" : "";
+  if(cmGate("#cmResume", !why, why))
+    $("#cmResumeK").textContent = fmtDist(alongAsRun(hit, leg)) + " along L" + lineNo(hit.line);
+}
+async function resumeFromHere(ll){
+  if(!(S && S.run === "paused")){
+    flashNote("Resume from here needs a PAUSED run " + '—' + " she is " + ((S && S.run) || "idle") + "."); return; }
+  if(!asv){ flashNote("No position fix yet " + '—' + " can't resume from here."); return; }
+  if(S.status && S.status.holding){
+    flashNote("Resume from here needs a paused RUN " + '—' + " she is station-keeping (paused on a hold), and a held plan cannot be "
+              + "amended. Use RESUME SURVEY on the guard bar, Start, or Go-To."); return; }
+  const hit = resumeHereAt(ll);
+  if(!hit){ flashNote("Resume from here: click ON a committed survey line (within " + IDENTIFY_PX + " pixels of it)."); return; }
+  const rr0 = indexedRoute() || [];
+  const idx = Math.min(window._wpIndex || 0, rr0.length);
+  const leg = legOfLine(rr0, hit.line, idx);
+  const line = lineNo(hit.line);
+  if(!leg){
+    showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " the route aboard does not run line " + line
+      + (rr0.length ? " (a resumed remainder holds only the lines still to fly, and a plan edited in WPT mode need not run its lines end to end)"
+                    : " (this page does not hold the route the vessel is flying)")
+      + ". Stop and upload the survey again to run it from there.");
+    return;
+  }
+  // The point on the line, then the end she runs toward, then everything after that leg. A click within
+  // LINE_MATCH_M of that end IS the end: the point is dropped rather than sent as a leg of a few meters.
+  const atEnd = distTo(hit.to, leg.end) <= LINE_MATCH_M;
+  const tail = atEnd ? rr0.slice(leg.j) : [hit.to, ...rr0.slice(leg.j)];
+  const target = tail[0];
+  const fromStart = alongAsRun(hit, leg);
+  // THE WAY IN IS ROUTED, not merely checked: she may be a long way from the line, and "no" is what the
+  // operator already had. The same planner Go-To flies, at the guard's standoff (2026-09-26), the model
+  // widened to cover the point first so a distant one cannot read clear because nothing is loaded near it.
+  const from = {lat: asv.lat, lon: asv.lon};
+  showBanner("Routing to the point on line " + line + '…' + " a long way round obstacles can take several seconds.");
+  await ensureNogoCovers([from, target]);
+  const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM()});
+  takeDownBanner(/^Routing to the point on line/);
+  if(pin.error){
+    showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; pick a point nearer open water, or Go-To first.");
+    render(); return;
+  }
+  // ⚠ A RELOCATED TARGET IS A DIFFERENT COMMAND (resumeHeldRun's rule): holdTarget MOVES a target that sits
+  // in a keep-out, so the route would end somewhere other than the point on the line.
+  if(pin.heldOff){
+    showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + heldOffWhy(pin.heldOff) + ", so the way in cannot be certified. She is still paused; pick a point further along line " + line + ".");
+    render(); return;
+  }
+  if(!(S && S.run === "paused")){
+    showBanner('⚠ NOT RESUMED FROM THERE ' + '—' + " she is no longer paused (" + ((S && S.run) || "idle") + "), so the plan this would amend is not the one she is on. Nothing was sent.");
+    render(); return;
+  }
+  // The router's route EXCLUDES the start and ENDS at the target, which is tail[0] already - so only the
+  // detour waypoints go in front of it (resumeHeldRun's reading of the same contract).
+  const via = pin.degraded ? [] : pin.route.slice(0, -1);
+  const route = [...via, ...tail];
+  const transitM = distTo(from, target);
+  const way = fmtDist(transitM) + " to it"
+    + (via.length ? " via " + via.length + " waypoint" + (via.length === 1 ? "" : "s") + " clear of the keep-outs"
+                  : pin.degraded ? ", NOT certified (the keep-out model is not loaded)" : ", direct");
+  const r = await cmd("/api/cmd/amend", {route,
+    note: "Resuming the survey from the operator's point on line " + line + " (" + fmtDist(fromStart) + " along it), " + way + "."});
+  if(!took(r)){
+    // resumeRun's asymmetry, for the same reason: a refusal establishes she is still flying the plan the
+    // corners were measured on; a lost reply establishes nothing.
+    if(!(r && r.refused))
+      dropCornerSlow("the resume-from-here amendment was sent and NOT acknowledged, so the console cannot say which route she is flying");
+    showBanner(r && r.refused
+      ? '⚠ NOT RESUMED FROM THERE ' + '—' + " the amendment was REFUSED (" + r.error + "). She is still paused, on her old plan."
+      : '⚠ RESUME FROM THERE MAY NOT HAVE LANDED ' + '—' + " no answer to the amendment (" + ((r && r.error) || "no answer")
+        + "). Check the route on the chart against the vessel's waypoint count before pressing anything.");
+    render(); return;
+  }
+  runRoute = [...rr0.slice(0, idx), ...route];
+  dropCornerSlow("the survey was resumed from a point on line " + line + ", which amended the plan");
+  // THE GOVERNOR'S THROTTLE, NOT A LOW LATCH (see the header): `commandedSpeed` is cleared so the governor
+  // re-asserts the role's speed on the first frame - the transit role on the way in, the survey speed on
+  // the line - and `resumeSlow` is left exactly as the operator had it. Start has to land before anything
+  // is said (review #6).
+  commandedSpeed = null;
+  const started = await cmd("/api/cmd/start");
+  if(!took(started)){
+    flashNote(started && started.refused
+      ? "Resume stopped " + '—' + " Start was REFUSED (" + started.error + "). She is still paused, on the amended plan."
+      : "Resume may not have started " + '—' + " no answer to Start (" + ((started && started.error) || "no answer")
+        + "). Check the run state before pressing again.");
+    return;
+  }
+  pauseMark = null;                       // the pause's own mark is spent: this resume chose its own point
+  const said = "from the point you chose on line " + line + " (" + fmtDist(fromStart) + " along it): " + way
+             + ", then on down the line the way the plan runs it";
+  flashNote("Resumed " + said + ". The transit is at the transit speed and the line at the survey speed"
+            + (resumeSlow ? " once your LOW hold is released" : "") + '—' + " select LOW if you want it slow.");
+  if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED FROM A CHOSEN POINT after a pause " + '—' + " " + said
+    + "; the governor has the throttle (the transit at the transit speed, the line at the survey speed)"});
+  fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind:"resume", data:{line, from_point: true, along_m: Math.round(fromStart),
+      transit_m: Math.round(transitM), via: via.length, certified: !pin.degraded, note: said}})}).catch(()=>{});
   updateMissionCard(); render();
 }
 
