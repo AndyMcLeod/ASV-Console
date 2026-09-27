@@ -162,8 +162,12 @@ function holdOpts() { return {}; }
 function heldOffWhy(h) { return "the point sits inside " + ((h && h.kind) || "a keep-out"); }
 function takeDownBanner() {}
 function ensureNogoCovers() { if (coverHook) coverHook(); return Promise.resolve(); }
-function planNogoRoute(from, to) {
-  pinCalls.push({ from, to });
+// the held path and the contacts (2026-09-27): none in this world - the amend path is its subject
+var aisKoDrawn = [], aisAvoid = null;
+function guardHeldOffer() { return null; }
+async function resumeHeldSurvey() { throw new Error("the held path is ais_avoid.js's subject"); }
+function planNogoRoute(from, to, opts) {
+  pinCalls.push({ from, to, opts });
   if (pinNext) return pinNext;
   if (!nogo.ready || !nogo.ko || !nogo.frame) return { route: [{ lat: to.lat, lon: to.lon }], direct: true, degraded: true };
   return { route: [{ lat: to.lat, lon: to.lon }], direct: true, routed: false };
@@ -196,6 +200,7 @@ eval([
   // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
+  grab("koWithAis"), grabDecl("AIS_AROUND_AFTER_MS"),                              // the contacts fold into the way in (2026-09-27)
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and
@@ -1073,7 +1078,7 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     check("19i. a line the route aboard does not run is REFUSED in words rather than run a->b on a guess; a run that is not paused, and a boat paused ON A HOLD, are refused before the snap",
           () => notRunSent.length === 0 && /does not run line 2/.test(notRunSaid)
                 && runningSent.length === 0 && /needs a PAUSED run/.test(runningSaid)
-                && holdSent.length === 0 && pinCalls.length === 0 && /paused on a hold/.test(holdSaid) && /RESUME SURVEY on the guard bar/.test(holdSaid),
+                && holdSent.length === 0 && pinCalls.length === 0 && /paused on a hold/.test(holdSaid) && /no survey banked/.test(holdSaid),
           () => "not in the route: sent " + JSON.stringify(notRunSent) + ", " + JSON.stringify(notRunSaid.slice(0, 70))
                 + "; running: sent " + JSON.stringify(runningSent) + ", " + JSON.stringify(runningSaid.slice(0, 50))
                 + "; holding: sent " + JSON.stringify(holdSent) + ", " + JSON.stringify(holdSaid.slice(0, 60)));
@@ -1089,6 +1094,22 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && !!ev && ev.data && ev.data.from_point === true && ev.data.line === 1 && ev.data.along_m === 250
                 && ev.data.transit_m === Math.round(distTo(ll(150, 25), ll(250, 0))) && ev.data.via === 0 && ev.data.certified === true,
           () => "said " + JSON.stringify(notes.slice(-1)) + "; logged " + JSON.stringify(ev && ev.data));
+    __setResumeSlow(false);
+
+    // 19l. THE CONTACTS FOLD INTO THE WAY IN (2026-09-27)
+    world(ROUTE, 1, ll(150, 25));
+    aisKoDrawn = [{ ring: [{ e: 0, n: 0 }], bb: { minE: 0, maxE: 0, minN: 0, maxN: 0 }, kind: "AIS: TUG" }];
+    await resumeFromHere(ll(250, 10));
+    const askAis = pinCalls[0];
+    aisKoDrawn = [];
+    world(ROUTE, 1, ll(150, 25));
+    await resumeFromHere(ll(250, 10));
+    const askNone = pinCalls[0];
+    check("19l. the way in is routed against the charted model PLUS the contacts of the frame (koWithAis) - a way in through a ship is never right - and against the charted model itself when there are none",
+          () => !!askAis && !!askAis.opts && !!askAis.opts.ko && askAis.opts.ko !== nogo.ko && askAis.opts.ko.polys.length === 1 && askAis.opts.ko.polys[0].kind === "AIS: TUG"
+                && !!askNone && !!askNone.opts && askNone.opts.ko === nogo.ko,
+          () => "with a contact: " + JSON.stringify(askAis && askAis.opts && askAis.opts.ko && askAis.opts.ko.polys.map(p => p.kind))
+                + "; without: " + (askNone && askNone.opts && askNone.opts.ko === nogo.ko ? "nogo.ko itself" : "something else"));
     __setResumeSlow(false);
     cornerSlow = new Set(); cornerSlowFor = -1;
   }

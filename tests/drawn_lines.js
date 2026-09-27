@@ -208,13 +208,14 @@ check("8. the chart's labels, the turn table, the line tip, the held-survey bar 
   const logSite = /line: g\.mark \? lineNo\(g\.mark\.line\) : null/.test(code);
   check("every 'line N' the HELD resume states goes through lineNo(), like the pause resume "
         + "beside it",
-        () => raw.length === 0 && viaHelper === 5 && logSite,
+        // 5, then 8 (2026-09-27): the way round's three refusals in aisAroundPlan name the line the same way
+        () => raw.length === 0 && viaHelper === 8 && logSite,
         () => raw.length
                 ? raw.length + " raw segment-index conversion(s) left: " + raw.join(", ")
                   + " - the note, the banner and the session log each name a line the chart "
                   + "does not have"
                 : viaHelper + " site(s) through lineNo (the held bar, the note, "
-                  + "banner and session log of the held resume, and the AIS return's record); the log names the drawn "
+                  + "banner and session log of the held resume, the AIS return's record, and the way round's three refusals); the log names the drawn "
                   + "line: " + logSite);
 }
 

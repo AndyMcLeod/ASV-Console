@@ -648,7 +648,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000;
+  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 60000, AIS_AROUND_STEP_M = 5;
   const logClient = () => {}, heldResuming = false;
   // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
   // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could
@@ -743,6 +743,10 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "aisGuardWanted") + NL2 + grab(H, "aisKeepoutsNow") + NL2
                      + grab(H, "aisNearestKind") + NL2 + grab(H, "aisAvoidOpen") + NL2
                      + grab(H, "aisReturnTick") + NL2
+                     // the way round a contact that stays (2026-09-27): returns at its first line here (no episode)
+                     + grab(H, "koWithAis") + NL2 + grab(H, "aisAroundPlan") + NL2 + grab(H, "aisAroundTick") + NL2
+                     + "let heldResuming = false; const patClipBufM = () => nogo.buffer || 0; async function resumeHeldSurvey(){}"
+                     + " const LINE_MATCH_M = 5; const onLineM = () => false; const legOfLine = () => null;" + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")
                      .replace("return function clearanceGuard", "const clearanceGuard = function")
                      + "; return clearanceGuard; })()");

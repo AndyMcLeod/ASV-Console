@@ -309,7 +309,9 @@ export function pruneJunctionKnots(lineIn, Ap, via, Bp, lineOut, ref, ko, buf){
 // must cover; the page passes the mission's approach radius, floored at the sim's own 2 m.
 export function holdTarget(to, opts){
   if(!nogo.ready) return {to:{lat:to.lat,lon:to.lon}, heldOff:null, holdClear:null, degraded:true};
-  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
+  // `opts.ko` (2026-09-27): a model in place of the charted one - the page routes a way in round the
+  // AIS contacts as well, and those live in the guard's model, never in nogo.ko.
+  const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;
   const holdR = Math.max(HOLD_RADIUS_MIN_M, (opts && opts.holdR) || 0);
   // THE MARGIN IS THE ENVIRONMENT'S. A hold point must hold the boat for as long as the
   // ladder is allowed to take deciding about it, at the set the boat is actually in - so the
@@ -370,7 +372,7 @@ export function holdTarget(to, opts){
 // clear route exists (refuse + warn). Keeps to the starboard side of channels (Rule 9).
 export function planNogoRoute(from, to, opts){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
-  const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
+  const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
   const ht = holdTarget(to, opts);
   if(ht.error) return ht;
   to = ht.to;

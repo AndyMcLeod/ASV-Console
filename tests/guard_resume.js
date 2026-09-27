@@ -378,6 +378,10 @@ eval([
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),
   grab("aisReturnTick"), grab("logClient"),
+  // the way round a contact that stays (2026-09-27) - asked every frame beside the return; no episode ever
+  // opens in this world, so it returns at its first line, and these are the names it would reach
+  grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
   grab("renderGuardBar"), grab("renderHeldBar"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
@@ -668,6 +672,15 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
         "commanded -> " + (inGap ? "offer stands" : "OFFER GONE") + "; arrived -> "
         + (arrived ? "offer stands" : "OFFER GONE") + ". Five seconds of `holding === false` "
         + "is the state the offer is most needed in, not a state to discard it in");
+  // ⚠ A PAUSED HOLD IS STILL THE HOLD (2026-09-27): Andy paused a boat the guard was holding for a
+  // contact, and the pause spent the banked survey - nothing left to resume from. The automatic returns
+  // wait while she is paused (ais_avoid 13).
+  S.run = "paused"; S.behavior = "hold";
+  const pausedHold = guardHeldOffer();
+  S.run = "running";
+  check("8e. ... and a PAUSED hold keeps it too - the operator's pause on a station-keeping boat is not the situation changing",
+        !!kept && pausedHold === kept && guardHeld === kept,
+        "paused on the hold -> " + (pausedHold ? "offer stands" : "OFFER GONE"));
 
   // ⚠ AND THE SECOND FIRING. The hold rung fired three times in five seconds as the
   // clearance closed (25.4 -> 24.0 -> 21.3 m). By the third, behavior was already "hold", so

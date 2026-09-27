@@ -391,7 +391,7 @@ function menu(opts) {
     // RESUME FROM HERE (2026-09-26): what gateResumeHere reads besides the state - a fix, the vessel's
     // waypoint index, and its two lookups (the snap and the leg search), STEERED by a check rather than
     // computed; the real ones are pause_resume.js 18-19k's subject.
-    asv: { lat: 40, lon: -75 }, window: { _wpIndex: 0 }, hitNext: null, legNext: null,
+    asv: { lat: 40, lon: -75 }, window: { _wpIndex: 0 }, hitNext: null, legNext: null, heldNext: null,
     S: Object.assign({}, STATE_OK, opts.state || {}),
     mode: opts.mode || "pan", measures: opts.measures || [], measPend: opts.measPend || null,
     innerWidth: opts.vw || 1200, innerHeight: opts.vh || 800,
@@ -416,6 +416,7 @@ function menu(opts) {
     // RESUME FROM HERE (2026-09-26): openChartMenu shows, hides and gates the row through gateResumeHere
     "const resumeHereAt = () => G.hitNext; const legOfLine = () => G.legNext; const indexedRoute = () => [];" +
     "const lineNo = (k) => k + 1; const fmtDist = (m) => Math.round(m) + ' m';" +
+    "const guardHeldOffer = () => G.heldNext || null;" +      // a survey the guard holds and can hand back (2026-09-27)
     grab("alongAsRun") + grab("gateResumeHere") +
     "G.openChartMenu=openChartMenu; G.closeChartMenu=closeChartMenu;" +
     "G.chartMenuOpen=chartMenuOpen; G.cmRow=cmRow; G.cmGate=cmGate;" +
@@ -611,6 +612,14 @@ check("20 the Measure row reads the LIVE mode, so it is both arm and disarm",
   check("21d ... measured from the end she STARTS at: a line the route runs b->a reads 180 m along, not 220",
         () => !rowOff(rev, "#cmResume") && key(rev) === "180 m along L3",
         () => "'" + key(rev) + "'");
+  // A SURVEY THE GUARD HOLDS counts as paused for this row (2026-09-27): it is the operator's answer to a
+  // contact parked on the line, and the boat reads running / hold / holding the whole time.
+  const heldOn = (state, hitNext, legNext) => { const G = menu({ state }); G.hitNext = hitNext; G.legNext = legNext;
+    G.heldNext = { route: [], idx: 0 }; G.openChartMenu(10, 10, { lat: 40, lon: -75 }); return G; };
+  const heldRun = heldOn({ run: "running", status: { holding: true } }, hit, legFwd);
+  check("21e. ... and a survey the guard HOLDS and can hand back counts as paused: the row is shown and live while she is station-keeping under the guard's hold, the run reading running",
+        () => shown(heldRun) && !rowOff(heldRun, "#cmResume") && key(heldRun) === "220 m along L3",
+        () => "shown " + shown(heldRun) + ", off " + rowOff(heldRun, "#cmResume") + ", key '" + key(heldRun) + "'");
 }
 const ROW_IDS = [...H.matchAll(/<div class="cmi" id="(cm\w+)"/g)].map(m => m[1]);
 check("21 every row in the menu markup has a handler wired", () => ROW_IDS.length >= 5 &&

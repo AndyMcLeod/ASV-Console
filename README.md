@@ -434,9 +434,18 @@ crossing the survey area reconfigures nothing**. After a contact has stopped or 
 boat off a survey line, the console **brings her back itself** once the contact is clear of
 the line for 4 s: it rejoins **100 m back down the line** over water already run, so the
 coverage overlaps, and carries on — with none of the operator's resume latches (no LOW
-hold, no override). A contact that **stops on the line** never clears it: the boat holds, the
-guard bar says what she is holding for, and resuming or dropping the remainder is the
-operator's as before. A feed that stops answering is an **empty model that says so** — a
+hold, no override). A contact that **stays on the line** gets the three answers Andy set out
+(2026-09-27): the same line where she left it is **refused** — she would meet the contact again;
+the operator may right-click the line **beyond** the contact (*Resume from here*, below) and the
+console routes her round it and continues the survey from there; and if the operator has not
+answered **within 60 s**, the console routes round the contact **itself**, as if it were a buoy or
+a dock, to the first point of the line beyond her that is clear by the standoff with the rest of
+the line clear too, and carries on (a contact covering the rest of the line leaves that line and
+picks the plan up at its next waypoint). The guard bar counts the minute down and names both
+answers. Never on a stale feed, never while you have her **paused** (a paused hold keeps the
+offer now, and the bar says the console waits), not twice in a minute, and where no way round
+is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
+path of `resumeHeldRun`). A feed that stops answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 
@@ -1771,10 +1780,20 @@ diagnosable (`tests/frame_health.js`).
    against a 0.76 kn set, seven minutes for 200 m). Select LOW yourself if you want the survey
    slow; a LOW hold you had already set stands. A way in the router cannot find, or a point the
    keep-out model would hold the vessel off, refuses before anything is sent; a boat paused
-   **on a hold** (the guard held her, or she was holding at a Go-To point) is refused in words,
-   because a held plan cannot be amended — that survey's remainder is the guard bar's RESUME
-   to spend; and a run that stopped being paused during the routing — an escape, a Resume
-   in another tab — sends nothing, because the plan it would amend is no longer the one she is on.
+   **on a hold with nothing banked** (she was holding at a Go-To point) is refused in words,
+   because a held plan cannot be amended — a survey the guard holds goes a different way, next;
+   and a run that stopped being paused during the routing — an escape, a Resume in another
+   tab — sends nothing, because the plan it would amend is no longer the one she is on.
+
+   **Resume from here while the guard holds the survey** (2026-09-27). When the guard has
+   stopped a survey it can hand back — for a contact or a charted feature — the row is live
+   too, whether or not you pressed Pause: the remainder is **re-uploaded** from the point you
+   choose (the plan aboard is the hold point, so there is nothing to amend), the way in is routed
+   round the charted keep-outs **and the AIS contacts**, at the standoff, and the governor has the
+   throttle. A pause on that hold no longer spends the banked survey. A point on the **near side**
+   of the contact she is holding for is refused in words — the line from there runs into her
+   and she would only be stopped again — with the time left before the console routes round
+   her itself; see the AIS layer above for what it does then.
 
    **Every speed the console commands is checked against the speed the vessel reports**
    (`commandSpeed` / `speedReconcile`): re-sent after a second of disagreement, with a banner

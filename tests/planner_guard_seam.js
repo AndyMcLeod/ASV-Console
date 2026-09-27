@@ -213,11 +213,15 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             && /routeAround\(Ap,Bp,ref,koHere,buffer\)/.test(H)
             && /nHopInside\+\+/.test(H) && /hop\(s\) inside the \$\{clipBuf\.toFixed\(1\)\} m standoff/.test(H)
             // and the transits the page routes itself: the approach, RTH, Go-To, the transit line - and,
-            // since 2026-09-26 (the fifth planNogoRoute site), the resume-from-here way in (resumeFromHere)
+            // since 2026-09-26 (the fifth planNogoRoute site), the resume-from-here way in (resumeFromHere).
+            // Two of the five hand the router the charted model PLUS the contacts (koIn, 2026-09-27): the
+            // resume from a chosen point, and the held resume's way in (which the way round a contact rides).
             && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\)/g) || []).length === 2
             && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\)/.test(H)
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 5
-            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}\)/.test(H)
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 3
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}/g) || []).length === 2
+            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}\)/.test(H)
+            && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}\)/.test(H)
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(H)
             && /legSafe=\(a,b\)=>\{[\s\S]{0,400}?blocked\(\{[^}]*\}, koTurn, buffer\)/.test(H),
       "extendLead (both ends), every turnWithRetry (the first rung, the lead give, the trim "
@@ -325,6 +329,52 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
           + (open ? open.plain.toFixed(1) : "?") + " m), insideStandoff " + (open ? open.p.insideStandoff : "?")
           + " | the 20 m slot: insideStandoff " + (slot ? slot.p.insideStandoff : "?") + ", " + (slot ? slot.p.route.length : "?")
           + " waypoint(s), keeping " + (slot ? slot.min.toFixed(1) : "?") + " m - the buffer, said, rather than a refusal or a silent hug");
+}
+
+// ── 7d. THE ROUTER TAKES AN EXPLICIT MODEL (2026-09-27) ────────────────────────────────────
+// The AIS contacts live in the guard's model and never in nogo.ko. The way in round a contact that stays
+// on the line - the console's own (aisAroundTick) or the operator's point beyond her (resumeFromHere on a
+// held survey) - hands planNogoRoute the charted model plus the contacts as `opts.ko`, and holdTarget tests
+// the target against that same model. Driven through state.js like 7c: the charted model EMPTY, the hull
+// only in opts.ko.
+{
+  const { nogo } = require("../static/js/state.js");
+  const { planNogoRoute } = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 43.07, lon: -70.71 });
+  const at = (e, n) => F.fromEN(e, n);
+  const rect = (e0, e1, n0, n1) => { const r = [{ e: e0, n: n0 }, { e: e1, n: n0 }, { e: e1, n: n1 }, { e: e0, n: n1 }];
+    return { ring: r, bb: bbOf(r), kind: "AIS: KLEOS (20 x 8 m assumed)" }; };
+  const model = (polys) => ({ polys, lines: [], points: [], marks: [], sys: [], chans: [] });
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  const walk = (route, from, ko) => {
+    let min = Infinity, prev = F.toEN(from);
+    for (const w of route) { const q = F.toEN(w); const L = Math.hypot(q.e - prev.e, q.n - prev.n), n = Math.max(1, Math.ceil(L));
+      for (let i = 0; i <= n; i++) { const t = i / n; min = Math.min(min, K.clearanceM({ e: prev.e + (q.e - prev.e) * t, n: prev.n + (q.n - prev.n) * t }, ko, 100)); }
+      prev = q; }
+    return min;
+  };
+  let plain, plainClear = -1, withKo, minClear = -1, held;
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3; nogo.ko = model([]);
+    const A = at(-60, 0), B = at(60, 0);
+    const ship = model([rect(-15, 15, -4, 4)]);            // a hull across the leg, charted nowhere
+    plain = planNogoRoute(A, B, {});
+    plainClear = (plain && plain.route) ? walk(plain.route, A, ship) : -1;   // a "direct" route is still several waypoints (the lane pipeline): the question is whether it passes THROUGH her
+    withKo = planNogoRoute(A, B, { ko: ship });
+    minClear = (withKo && withKo.route) ? walk(withKo.route, A, ship) : -1;
+    held = planNogoRoute(A, at(0, 0), { ko: ship });       // the target ON her
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  check("7d. planNogoRoute routes round a model it is HANDED (opts.ko) where the charted model is empty - direct without it, a detour clear of the hull with it - and holdTarget holds a target ON her off her by the same model",
+        () => plain && plain.direct && plainClear < 1
+              && withKo && !withKo.error && withKo.route.length >= 2 && minClear >= 3 - 0.5
+              && held && !held.error && held.heldOff && held.heldOff.m > 0,
+        "without opts.ko: " + (plain ? (plain.direct ? "direct" : "routed") + ", " + plain.route.length + " wpt(s), through her at " + plainClear.toFixed(1) + " m" : "?")
+          + "; with the hull in opts.ko: " + (withKo ? (withKo.error ? "REFUSED " + withKo.error : withKo.route.length + " wpts, keeping " + minClear.toFixed(1) + " m") : "?")
+          + "; a target on her: " + (held ? (held.error ? "REFUSED" : held.heldOff ? "held off " + held.heldOff.m.toFixed(1) + " m" : "accepted where it stood") : "?"));
 }
 
 // ── 8. AND IT IS NEVER SILENT ───────────────────────────────────────────────────────
