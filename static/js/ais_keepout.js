@@ -183,6 +183,23 @@ export function aisKeepout(v, frame, opts = {}) {
 }
 
 /**
+ * THE AVOIDANCE KEEP-OUT for a contact (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the
+ * length or the estimated length of the vessel"): her keep-out grown by her own length on every side -
+ * the ring a route round her, the way in past her and the escape from her keep outside of. The guard's
+ * own model (aisKeepout) stays the bare hull, so the ladder still measures to her side; this is the
+ * MANEUVER's model. `q.box.lengthM` is the length she broadcasts, or the assumed 20 m.
+ */
+export function aisAvoidKeepout(q) {
+  if (!q || !q.ring || !q.box) return q;
+  const L = Math.max(0, +q.box.lengthM || AIS_DEFAULT_LENGTH_M);
+  const pts = [];
+  for (const v of q.ring) for (const p of discRingEN(v, L, 16)) pts.push(p);
+  const ring = convexHull(pts);
+  return { ...q, ring, bb: bbOf(ring), avoidM: L, kind: q.kind + ", " + Math.round(L) + " m round her" };
+}
+export function aisAvoidKeepouts(polys) { return (polys || []).map(aisAvoidKeepout); }
+
+/**
  * THE AIS KEEP-OUT MODEL for one frame: the contacts near the boat as polygons, or none with a
  * reason. `stale` is the answer the guard must not mistake for "no contacts": a poll older than
  * AIS_KO_STALE_S (or no poll yet) is a feed that has stopped answering, and the caller says so.

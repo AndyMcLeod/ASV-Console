@@ -164,6 +164,7 @@ function takeDownBanner() {}
 function ensureNogoCovers() { if (coverHook) coverHook(); return Promise.resolve(); }
 // the held path and the contacts (2026-09-27): none in this world - the amend path is its subject
 var aisKoDrawn = [], aisAvoid = null;
+const { aisAvoidKeepouts } = require("../static/js/ais_keepout.js");   // the way in keeps a ship-length round a contact
 function guardHeldOffer() { return null; }
 async function resumeHeldSurvey() { throw new Error("the held path is ais_avoid.js's subject"); }
 function planNogoRoute(from, to, opts) {

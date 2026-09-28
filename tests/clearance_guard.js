@@ -645,7 +645,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // return tick above every branch, so the names must exist. No contacts live here, and the poll is
   // always fresh - an EMPTY model, never a STALE one - so every check in this file is the charted
   // world it always was (tests/ais_avoid.js is where a contact stands).
-  const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+  const { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
   const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 60000, AIS_AROUND_STEP_M = 5;
@@ -1561,6 +1561,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // command that never landed.
   const holdRun = async (refuse) => {
     escCourse = null;
+    // the escape scenarios above leave the escape clock set, and an escape in flight stands the hold rung
+    // down (KLEOS, 2026-09-27): this run is a hold with no escape before it
+    guardEscapeAt = 0; helmHoldAt = 0;
     setRefuse(refuse ? "/api/cmd/hold" : null, refuse);
     Date.now = () => clock;
     const r = runFrame(6.0, true);

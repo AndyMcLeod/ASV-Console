@@ -196,7 +196,7 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
 const { clearanceM } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
@@ -332,7 +332,7 @@ eval([
   // review #14: the guard and the governor act only in the SUPERVISING tab. This world is that tab - a view-only
   // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
   "const supervising = () => true;",
-  grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
+  grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grabDecl("HELD_GRACE_MS"), grab("guardHeldOffer"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
@@ -592,6 +592,16 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   const kept = guardHeld;
   S.behavior = "hold"; S.status.holding = true;
   const live = guardHeldOffer();
+  // 8f (2026-09-27): a mismatching frame INSIDE the record's own command round trip is withheld, not spent -
+  // the frame before the command took effect is not the situation changing (KLEOS: the survey banked at the
+  // escape was gone by the next frame). Aged past HELD_GRACE_MS, a Stop spends it exactly as it always did.
+  S.run = "running"; S.behavior = "survey";
+  const insideGrace = guardHeldOffer(), keptInGrace = guardHeld;
+  S.behavior = "hold";
+  check("8f. a frame that reads 'survey' within HELD_GRACE_MS of the record being banked WITHHOLDS the offer and does not spend it",
+        !!kept && insideGrace === null && keptInGrace === kept,
+        "a survey frame 0 s after the bank -> " + (insideGrace ? "OFFERED" : "withheld") + ", record " + (keptInGrace === kept ? "kept" : "SPENT"));
+  guardHeld.t -= 10000;                            // the record is ten seconds old now: the grace is over
   S.run = "stopped";
   const stopped = guardHeldOffer();
   const cleared = guardHeld;
@@ -606,6 +616,7 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   standingIn(6); tryIt(() => clearanceGuard());
   S.behavior = "hold"; S.status.holding = true;
   const held2 = guardHeldOffer();
+  guardHeld.t -= 10000;                            // past the grace (8f)
   S.behavior = "rth";                       // still running, but a different command
   const onRth = guardHeldOffer();
   // ...and the console has to be able to COMMAND before it offers to
@@ -758,6 +769,7 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
   // THE CONTROL, and it is what stops 8d0 reading as "nothing clears the offer any more":
   // a commanded motion still spends it, exactly as 8b0 pins for RTH.
   standingIn(6); tryIt(() => clearanceGuard());
+  guardHeld.t -= 10000;                            // past the grace (8f): the record is not inside its own round trip
   S.behavior = "goto"; S.status.holding = true;
   const onGoto = guardHeldOffer();
   check("8d2. ... and a COMMANDED motion still spends it - the escape is the exception, not the rule",

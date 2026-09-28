@@ -445,7 +445,23 @@ picks the plan up at its next waypoint). The guard bar counts the minute down an
 answers. Never on a stale feed, never while you have her **paused** (a paused hold keeps the
 offer now, and the bar says the console waits), not twice in a minute, and where no way round
 is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
-path of `resumeHeldRun`). A feed that stops answering is an **empty model that says so** — a
+path of `resumeHeldRun`). **The maneuver keeps one ship-length off her** (Andy, 2026-09-27: "an
+avoidance maneuver of a radius equal to the length or the estimated length of the vessel"): the
+way round, the way in to a chosen point and the escape's own search are handed her keep-out
+grown by her broadcast length (20 m where it is assumed), so the rejoin point, the route to it
+and the escape point all clear her by that much; the guard's own hold still measures to her
+side, and a point within her length of her is "the near side" (`aisAvoidKeepout`). **Four
+things his 27 September session taught** (KLEOS, moored across line 8 at New Castle): a moored
+vessel that transmits every twelve minutes was **dropped from the AIS proxy's list** by its
+ten-minute time-to-live between reports, so the guard's model went empty of her and the boat
+drove onto her position unwarned — a vessel with no way on is now kept for an hour
+(`STATIONARY_TTL` in `ais_service.py`), one under way still ages out at ten minutes; her next
+report put her back at 0.0 m, the helm rung escaped her and **the hold rung cancelled the escape
+0.44 s later**, because from inside the buffer every track "enters in 0 s" — the slow and hold
+rungs now stand down while an escape is in flight (`escaping` in `clearanceGuard`); and the
+banked survey is **not spent by a frame inside its own command's round trip** (`HELD_GRACE_MS`),
+which is what emptied the guard bar and hid *Resume from here* that evening. A feed that stops
+answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 

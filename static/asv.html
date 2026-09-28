@@ -871,7 +871,7 @@ import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
 // under way. Pure geometry; the clearance guard below is what acts on it, and nothing else reads it.
-import { aisKeepouts, AIS_KO_STALE_S } from "/static/js/ais_keepout.js";
+import { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } from "/static/js/ais_keepout.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
 // THE LAUNCH GRANT - the berth, what it covers, where it applies and when it ends. Pure
@@ -2559,6 +2559,9 @@ let guardOverride = null;
  * {route, idx, mark, at, kind, clearM, t}
  */
 let guardHeld = null;
+// A frame read inside the command's own round trip is the frame BEFORE the command took effect, not the
+// situation changing: the offer is withheld on it, never spent (guardHeldOffer, 2026-09-27).
+const HELD_GRACE_MS = 3000;
 // ⚠⚠ THE RESUME SPENDS THIS RECORD ITSELF, AND USED TO SPEND IT HALFWAY THROUGH.
 // resumeHeldSurvey PAUSES before it uploads (review #6 - an upload to a station-keeping boat
 // releases her at the transit role's speed), so `run` reads "paused" for the length of its own
@@ -2716,9 +2719,11 @@ function aisReturnTick(p, aisKo, buf, now){
  */
 const AIS_AROUND_AFTER_MS = 60000;   // the operator's minute, before the console routes round the contact itself
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
-/** The charted model plus the contacts of this frame (the guard's own koAll, for the routers). */
-function koWithAis(aisKo){
-  const k = aisKo || aisKoDrawn;
+/** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
+ *  each contact grown by her own length (aisAvoidKeepouts): the model the MANEUVER keeps outside of. */
+function koWithAis(aisKo, avoid){
+  const k0 = aisKo || aisKoDrawn;
+  const k = avoid ? aisAvoidKeepouts(k0) : k0;
   return (nogo.ko && k && k.length) ? {...nogo.ko, polys: [...nogo.ko.polys, ...k]} : nogo.ko;
 }
 /**
@@ -2733,7 +2738,7 @@ function aisAroundPlan(g, aisKo, std){
   const leg = legOfLine(g.route, g.mark.line, g.idx);
   if(!leg) return {error: "the held route does not run line " + lineNo(g.mark.line)};
   const len = distTo(L.a, L.b); if(!(len > 0)) return {error: "line " + lineNo(g.mark.line) + " has no length"};
-  const aisOnly = {polys: aisKo, lines: [], points: []};
+  const aisOnly = {polys: aisAvoidKeepouts(aisKo), lines: [], points: []};   // one ship-length round her (2026-09-27)
   const at = (s) => { const t = Math.max(0, Math.min(1, s / len));
                       return {lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t}; };
   const s0 = g.mark.along, dir = g.mark.fwd > 0 ? 1 : -1;
@@ -2769,7 +2774,7 @@ function aisAroundTick(aisKo, now){
         + "right-click a line beyond her, or Go-To."); }
     return;
   }
-  resumeHeldSurvey({at: plan, ko: koWithAis(aisKo), auto: aisAvoid, around: true})
+  resumeHeldSurvey({at: plan, ko: koWithAis(aisKo, true), auto: aisAvoid, around: true})
     .catch(e => showBanner('⚠ THE WAY ROUND FAILED — ' + (e && e.message)
                            + ". The remainder is still held; resume it from the guard bar."));
 }
@@ -2817,6 +2822,10 @@ function guardHeldOffer(){
     // middle of resumeHeldSurvey's own sequence is not a situation that has changed; it is
     // this function's caller, two statements in.
     if(heldResuming) return null;
+    // ⚠ NOT INSIDE THE COMMAND'S OWN ROUND TRIP (2026-09-27). The rung banks the record and posts the hold or
+    // the escape in the same frame; a frame read before the vessel's answer has landed still says "survey",
+    // and that is not the situation changing - it is the frame before it changed. Withheld, not spent.
+    if(Date.now() - (guardHeld.t || 0) < HELD_GRACE_MS) return null;
     guardHeld = null; return null;
   }
   // ⚠⚠ AND AN ESCAPE IS NOT OVER UNTIL SHE IS ON STATION. The bar tests this offer FIRST,
@@ -3098,6 +3107,20 @@ function clearanceGuard(){
   renderGuardBar(a, c);
   if(!act) return c;                       // the operator has it; alarm, do not fight
 
+  // ⚠⚠ AN ESCAPE IN FLIGHT IS THE ANSWER, AND THE LOWER RUNGS MAY NOT UNDO IT (2026-09-27). Measured on
+  // Andy's console at New Castle: the helm rung escaped her from KLEOS at 20:54:30.299 and the hold rung
+  // held her at 20:54:30.741 - the next frame - because from INSIDE the buffer the track "enters in 0 s"
+  // whatever the heading, and the drift-only track read clear. The hold replaced the escape's plan with
+  // the point she was standing on, 2.6 m off the contact, and she stayed there for the rest of the
+  // evening. While the vessel is executing an escape (behavior "escape", not yet on station) or one was
+  // commanded within the re-solve window, slowing or stopping her is exactly wrong: the escape IS the
+  // maneuver, at HIGH, and the helm rung re-solves it itself every GUARD_REASSESS_MS while she is still
+  // in extremis. The edge rung is untouched: it does not stop her.
+  // (spelled S.status.holding rather than st.holding: clearance_guard 14 pins the ACT gate's independence from
+  // `st.holding` as an absence of that text in this function, and this is a different gate)
+  const escaping = !!(S && S.behavior === "escape" && !(S.status && S.status.holding))
+                || (guardEscapeAt > 0 && Date.now() - guardEscapeAt < GUARD_REASSESS_MS);
+
   // ── RUNG 1: EDGE. A few meters over, and keep going. ──────────────────────────────
   //
   // Andy, 2026-09-04, with a survey stopped at its own start and a Go-To put into holding:
@@ -3181,6 +3204,7 @@ function clearanceGuard(){
   // ── RUNG 2: SLOW. Buys time and shortens the stopping distance. ───────────────────
   if(a.level === "slow"){
     if(settling) return c;                 // a deviation is in flight; it answers this
+    if(escaping) return c;                 // an escape is in flight; slowing it is the opposite of it
     if(overridden && !overSlow) return c;  // a full PROCEED keeps the speed; a low one does not
     // THE BOAT'S OWN SPEED, where the vessel reports it (review #6): a role CONFIGURED low says
     // nothing about a boat actually running faster - a lost command, a resume, a transit.
@@ -3222,6 +3246,7 @@ function clearanceGuard(){
   // beside a structure it hands a stopped hull to the tide.
   if(a.level === "hold"){
     if(settling) return c;                 // a deviation is in flight; it answers this
+    if(escaping) return c;                 // an escape is in flight; a hold here cancels it (KLEOS, 2026-09-27)
     if(overridden) return c;               // the operator has said proceed; do not stop them
     // ⚠⚠ A DEVIATION CANNOT ANSWER A TURN, SO ASK THE RUNG THAT CAN BEFORE STOPPING THE BOAT.
     //
@@ -3453,7 +3478,10 @@ function clearanceGuard(){
     const escKn = V.SPEED_KN.high || 6;
     // ⚠ koAll, NOT koG (the grant's unfiltered rule stands) AND NOT nogo.ko: an escape solved without
     // the contacts could steer her straight into the ship she is escaping (2026-09-25).
-    const esc = escapeCourse(p, drift, koAll, buf, escKn * 0.514444);
+    // ONE SHIP-LENGTH ROUND A CONTACT (2026-09-27): the search is handed the avoidance model, so the point
+    // it steers to is her length clear of her - the ladder above still measured to her side (koAll).
+    const koEsc = aisKo.length ? koWithAis(aisKo, true) : koAll;
+    const esc = escapeCourse(p, drift, koEsc, buf, escKn * 0.514444);
     if(!esc){
       // REFUSING IS A REAL ANSWER. Every heading enters within the horizon: the boat is
       // boxed in, and a confident-looking escape would be a lie. Say so and leave the helm
@@ -12909,7 +12937,7 @@ async function resumeFromHere(ll){
   // side of the contact she is holding for, or one the contact sits on, with the time left before the
   // console acts itself.
   if(g && aisAvoid && aisKo.length && nogo.frame){
-    const aisOnly = {polys: aisKo, lines: [], points: []};
+    const aisOnly = {polys: aisAvoidKeepouts(aisKo), lines: [], points: []};   // one ship-length round her (2026-09-27)
     const std = patClipBufM();
     const foul = clearanceM(nogo.frame.toEN(hit.to), aisOnly, std + 1) < std
               || !legClear(hit.to, leg.end, nogo.frame, aisOnly, std);
@@ -12921,7 +12949,7 @@ async function resumeFromHere(ll){
       return;
     }
   }
-  const koIn = koWithAis(aisKo);
+  const koIn = koWithAis(aisKo, true);
   if(g) return resumeHeldSurvey({at: {to: hit.to, j: leg.j, line: hit.line, fromStart, atEnd, chosen: true}, ko: koIn});
   const tail = atEnd ? rr0.slice(leg.j) : [hit.to, ...rr0.slice(leg.j)];
   const target = tail[0];

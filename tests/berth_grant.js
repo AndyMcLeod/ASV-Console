@@ -530,7 +530,9 @@ check("10b. hold_clear_m is NEVER inflated and never reads the filtered model - 
   + "construction in asv_console.py: an inflated one is a lie the boat acts on");
 
 check("10c. escapeCourse is asked of the TRUE model, so an escape never steers toward a granted feature",
-  () => /escapeCourse\(p, drift, koAll,/.test(HC)
+  // koEsc (2026-09-27): koAll with each contact grown by her own length - still the UNFILTERED model plus the contacts, never koG
+  () => /escapeCourse\(p, drift, koEsc,/.test(HC)
+        && /const koEsc = aisKo\.length \? koWithAis\(aisKo, true\) : koAll;/.test(HC)
         && /const koAll = aisKo\.length \? \{\.\.\.nogo\.ko, polys: \[\.\.\.nogo\.ko\.polys, \.\.\.aisKo\]\} : nogo\.ko;/.test(HC),
   "escapeCourse(p, drift, koAll, ...) - the unfiltered model plus the AIS contacts (2026-09-25), never "
   + "koG. Handed koG it could steer the "

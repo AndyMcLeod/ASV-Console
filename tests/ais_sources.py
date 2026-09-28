@@ -151,6 +151,26 @@ check("3b. the displayed position still belongs to the live feed",
 check("3c. ... and the static fields merged in",
       lambda: snap[0]["name"] == "MERGED ONE" and snap[0]["type"] == 70)
 
+# ---- 3d-3e. A MOORED VESSEL IS WHERE SHE WAS UNTIL SHE SAYS OTHERWISE (2026-09-27) ---- #
+# KLEOS, moored across a survey line at New Castle, transmitted twelve minutes apart; the ten-minute ttl
+# dropped her between reports, the guard's model went empty of her, and the survey boat drove onto her
+# position unwarned. A vessel with no way on is kept for STATIONARY_TTL; one under way still ages out.
+reg_ttl = m.Registry(ttl=600)
+reg_ttl.update(333000333, "aisstream", lat=43.0789, lon=-70.7062, sog=0.0, name="KLEOS")
+reg_ttl.update(444000444, "aisstream", lat=43.0790, lon=-70.7070, sog=6.0, name="UNDER WAY")
+for _v in reg_ttl._v.values():
+    _v["last_ts"] -= 900.0                       # fifteen minutes since either was heard
+_kept = sorted(v["name"] for v in reg_ttl.snapshot())
+check("3d. fifteen minutes unheard: the vessel with no way on is KEPT where she was, the one under way is dropped",
+      lambda: _kept == ["KLEOS"],
+      lambda: "kept %s - a moored vessel that reports every twelve minutes must not vanish from the "
+              "keep-out model between reports; a dead-reckoned position that old is a guess" % _kept)
+for _v in reg_ttl._v.values():
+    _v["last_ts"] -= 3000.0                      # over an hour now
+check("3e. ... for STATIONARY_TTL (an hour), and then she goes too",
+      lambda: reg_ttl.snapshot() == [] and m.STATIONARY_TTL == 3600.0 and m.STATIONARY_KN == 0.5,
+      lambda: "after an hour: %d vessel(s)" % len(reg_ttl.snapshot()))
+
 now = time.time()
 reg.update(222000222, "nmea-udp-10110", lat=40.0, lon=-74.0, sog=5.0)
 reg.update(222000222, "aishub", pos_time=now - 120.0, lat=40.5, lon=-74.5,

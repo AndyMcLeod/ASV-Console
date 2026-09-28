@@ -156,7 +156,16 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DEFAULT_PORT = 8788
-DEFAULT_TTL = 600.0            # drop a vessel not heard from in this many seconds
+DEFAULT_TTL = 600.0            # drop a vessel UNDER WAY not heard from in this many seconds
+# A MOORED OR ANCHORED VESSEL IS WHERE SHE WAS UNTIL SHE SAYS OTHERWISE (2026-09-27). KLEOS, moored on a
+# survey line at New Castle, transmitted twelve minutes apart; the ten-minute TTL dropped her from the
+# list between reports, the guard's keep-out model went empty of her, and the survey boat drove onto her
+# position unwarned - her next report put her back in the model at 0.0 m and the helm rung fired. A
+# vessel whose last report had no way on is kept for STATIONARY_TTL; one under way still ages out at
+# `ttl`, because a dead-reckoned position an hour old is a guess and the model caps its own reckoning
+# at a minute.
+STATIONARY_KN = 0.5            # under this she is moored or anchored (the keep-out model's own AIS_MOVING_KN)
+STATIONARY_TTL = 3600.0        # and she is kept for an hour
 UA = {"User-Agent": "ais-service/1.0 (+survey-asv console; open AIS aggregation)"}
 
 
@@ -308,13 +317,22 @@ class Registry:
                     v[k] = val
             v["last_ts"] = now
 
+    def _ttl_for(self, v):
+        """How long a vessel is kept without a report: STATIONARY_TTL with no way on, else the registry's ttl."""
+        sog = v.get("sog")
+        try:
+            stopped = sog is not None and float(sog) < STATIONARY_KN
+        except (TypeError, ValueError):
+            stopped = False
+        return STATIONARY_TTL if stopped else self.ttl
+
     def snapshot(self, bbox=None, limit=0):
         """Current vessels with a valid recent position, optionally within bbox
         (W,S,E,N). Returns a list of plain dicts with an `age` (s since position)."""
         now = time.time()
         out = []
         with self._lock:
-            dead = [m for m, v in self._v.items() if now - v.get("last_ts", 0) > self.ttl]
+            dead = [m for m, v in self._v.items() if now - v.get("last_ts", 0) > self._ttl_for(v)]
             for m in dead:
                 del self._v[m]
             for v in self._v.values():

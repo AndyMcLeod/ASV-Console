@@ -140,7 +140,7 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = 0, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
 const { clearanceM } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
@@ -299,7 +299,7 @@ eval([
   // review #14: the guard and the governor act only in the SUPERVISING tab. This world is that tab - a view-only
   // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
   "const supervising = () => true;",
-  grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grab("guardHeldOffer"),
+  grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grabDecl("HELD_GRACE_MS"), grab("guardHeldOffer"),
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
@@ -665,6 +665,10 @@ function guardHeld_at_mark() { return ll(0, 0); }
   check("9c. ... and the episode opens on the helm rung too, with the survey banked",
         () => !!aisAvoid && aisAvoid.rung === "helm" && !!guardHeld && notes.some(n => /Steered clear of AIS: WORKBOAT/.test(n)),
         () => "episode " + JSON.stringify(aisAvoid) + ", banked " + !!guardHeld + ", notes " + JSON.stringify(notes));
+  // Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated length of the vessel"
+  check("9d. ... and the model the escape searches is the AVOIDANCE model - her hull grown by her own length (30 m here), so the point it steers to is a ship-length clear of her",
+        () => !!escKo && escKo.polys.length === 1 && escKo.polys[0].avoidM === 30 && /30 m round her/.test(escKo.polys[0].kind),
+        () => escKo ? JSON.stringify(escKo.polys.map(q => [q.kind, q.avoidM])) : "escapeCourse never asked");
 }
 
 // ── 10. A GO-TO STOPPED FOR A CONTACT HAS NO SURVEY TO COME BACK TO ──────────────────────
@@ -745,18 +749,20 @@ const nearRe = /WORKBOAT/;
               && paths().indexOf("/api/cmd/pause") < paths().indexOf("/api/cmd/upload")
               && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start"),
         () => "at 30 s: " + JSON.stringify(at30) + "; at 61 s: " + JSON.stringify(paths()));
-  check("14b. ... the upload picks the line up at the first point BEYOND her that is clear by the standoff with the rest of the line clear too (e = 50: her hull ends at 45, the standoff is 3), then flies the remainder",
-        () => rte.length === 4 && distTo(rte[0], ll(50, 0)) < 0.5 && distTo(rte[1], LINE_E.b) < 0.5 && distTo(rte[3], ll(-200, 60)) < 0.5,
-        () => rte.length + " wpts; first " + (rte[0] ? distTo(rte[0], ll(50, 0)).toFixed(1) + " m from (50, 0)" : "none"));
-  check("14c. ... and the way in was asked of the router with HER in the model (koWithAis), at the standoff - the charted model alone would have sent her straight through her",
+  // A SHIP-LENGTH ROUND HER (Andy, 2026-09-27): the rejoin clears her hull by her own length, not by the standoff alone
+  check("14b. ... the upload picks the line up at the first point BEYOND her that is clear of her avoidance ring by the standoff with the rest of the line clear too (e = 80: her hull ends at 45, her length is 30, the standoff is 3), then flies the remainder",
+        () => rte.length === 4 && distTo(rte[0], ll(80, 0)) < 0.5 && distTo(rte[1], LINE_E.b) < 0.5 && distTo(rte[3], ll(-200, 60)) < 0.5,
+        () => rte.length + " wpts; first " + (rte[0] ? distTo(rte[0], ll(80, 0)).toFixed(1) + " m from (80, 0)" : "none"));
+  check("14c. ... and the way in was asked of the router with HER in the model (koWithAis) as her avoidance ring - her length round her - at the standoff; the charted model alone would have sent her straight through her",
         () => !!ask && !!ask.opts && !!ask.opts.ko && ask.opts.ko.polys.length === 1 && nearRe.test(ask.opts.ko.polys[0].kind || "")
-              && ask.opts.standoffM === 3 && distTo(ask.from, ll(0, 0)) < 0.5 && distTo(ask.to, ll(50, 0)) < 0.5,
+              && ask.opts.ko.polys[0].avoidM === 30 && /30 m round her/.test(ask.opts.ko.polys[0].kind)
+              && ask.opts.standoffM === 3 && distTo(ask.from, ll(0, 0)) < 0.5 && distTo(ask.to, ll(80, 0)) < 0.5,
         () => "asked " + JSON.stringify(ask && { from: ask.from, to: ask.to, ko: ask.opts && ask.opts.ko && ask.opts.ko.polys.map(p => p.kind),
                                                   standoff: ask.opts && ask.opts.standoffM }));
   check("14d. ... with none of the operator's latches, the record spent, the episode closed, and it is said and recorded as ais_around with what was left under her",
         () => guardOverride === null && resumeSlow === false && guardHeld === null && aisAvoid === null && S.run === "running"
-              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /50 m of coverage left under/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 50 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 60),
+              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /80 m of coverage left under/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 80 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 60),
         () => "override " + JSON.stringify(guardOverride) + ", resumeSlow " + resumeSlow + ", episode " + JSON.stringify(aisAvoid)
             + ", banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b))) + ", logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
 
@@ -836,10 +842,79 @@ const nearRe = /WORKBOAT/;
   const nearSent = paths().slice(), nearSaid = banners.filter(b => /NEAR SIDE/.test(b));
   await resumeFromHere(ll(30, 2));                  // ON her
   const onSent = paths().slice(), onSaid = banners.filter(b => /NEAR SIDE/.test(b));
-  check("15d. a point on the NEAR side of her, or on her, is refused in words - she would only be stopped again - with the time left before the console acts; nothing is sent, the offer and the episode stand",
+  await resumeFromHere(ll(60, 2));                  // 15 m beyond her hull, inside her LENGTH (the ring reaches e = 75)
+  const inLenSent = paths().slice(), inLenSaid = banners.filter(b => /NEAR SIDE/.test(b));
+  check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - with the time left before the console acts; nothing is sent, the offer and the episode stand",
         () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself in 50 s/.test(nearSaid[0])
-              && onSent.length === 0 && onSaid.length === 2 && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
-        () => "near: sent " + JSON.stringify(nearSent) + ", " + JSON.stringify(nearSaid) + "; on her: sent " + JSON.stringify(onSent) + ", said " + onSaid.length);
+              && onSent.length === 0 && onSaid.length === 2 && inLenSent.length === 0 && inLenSaid.length === 3
+              && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
+        () => "near: sent " + JSON.stringify(nearSent) + ", " + JSON.stringify(nearSaid) + "; on her: said " + onSaid.length
+            + "; within her length: sent " + JSON.stringify(inLenSent) + ", said " + inLenSaid.length);
+}
+
+// ── 16. KLEOS (Andy's console, 2026-09-27 20:54:30): THE ESCAPE, AND THE HOLD 0.44 s LATER THAT CANCELLED IT ──
+// His log: the helm rung escaped her from KLEOS at 20:54:30.299 and the hold rung held her at 20:54:30.741 - the
+// next frame - reading "entry in 0 s under way, but on drift alone it is 0 s away and stays outside half the
+// buffer": from INSIDE the buffer the track enters at once whatever the heading. The hold replaced the escape's
+// plan with the point she stood on, 2.6 m off the contact, and she stayed there all evening. The lower rungs stand
+// down while an escape is in flight; the offer stands once she is on station; the way round goes at the minute.
+{
+  // the boat on line 1 at (0,0) heading east at 7 kn, INSIDE a 30 x 8 m hull parked with her center 6 m ahead
+  // (hull e = -9..21). No set on this first frame: in extremis, and after the dwell the escape.
+  surveying(7, [contact(6, 0, { sog: 0, cog: null, heading: 90 })]);
+  escFake = { hdg: 0, to: { e: 0, n: 60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
+  frame(); clock += 1600; frame();
+  const escaped = paths().includes("/api/cmd/escape"), banked = !!guardHeld, episode = !!aisAvoid;
+  // THE NEXT FRAME AS HIS CONSOLE SAW IT: the vessel reports "escape", not yet on station; the hull 2.6 m off her
+  // side (inside the 3 m buffer, outside the 1.5 m near buffer), heading still into her, the set carrying her away.
+  S = { ...S, behavior: "escape", status: { ...S.status, cog_deg: 180, heading_deg: 180, sog_kn: 3,
+                                            env_set_deg: 0, env_set_kn: 1.0, holding: false } };
+  asv = ll(0, 6.6);
+  clock += 400; sent = []; const r16 = frame();
+  const afterEsc = paths().slice(), lvl16 = clearance.level;
+  check("16. an escape in flight is NOT cancelled by the hold rung on the next frame: inside her buffer the level reads hold, and nothing is sent - she keeps the helm the escape took, the survey and the episode stand",
+        () => escaped && banked && episode && lvl16 === "hold" && afterEsc.length === 0 && !r16.raised && !!guardHeld && !!aisAvoid,
+        () => "escaped " + escaped + ", banked " + banked + ", episode " + episode + "; next frame: level " + lvl16 + ", sent "
+            + JSON.stringify(afterEsc) + (r16.raised ? ", RAISED " + r16.raised : "") + "; record " + (guardHeld ? "stands" : "GONE"));
+  // 16a. a frame that reads SLOW during the escape (she is 86 m off her, heading into her at 7 kn: entry in ~24 s)
+  // sends no speed command either - slowing an escape at HIGH is the opposite of it
+  S = { ...S, status: { ...S.status, cog_deg: 180, heading_deg: 180, sog_kn: 7, env_set_kn: 0 } };
+  asv = ll(0, 90); clock += 1000; frame();
+  const slowLvl = clearance.level, slowSent = paths().slice();
+  check("16a. ... nor does the SLOW rung touch the throttle while the escape is in flight: a frame reading slow sends no speed command",
+        () => slowLvl === "slow" && !slowSent.some(p => p === "/api/cmd/speed") && slowSent.length === 0,
+        () => "level " + slowLvl + ", sent " + JSON.stringify(slowSent));
+  // six seconds on, still under way on the escape: still nothing from the lower rungs
+  clock += 6000; asv = ll(0, 30); frame();
+  const stillNothing = paths().length === 0;
+  // she arrives on station: the offer stands, the bar says so, the episode is still open for the minute
+  // (the set comes off with the arrival, so the standoff below is the 3 m buffer: in the 1 kn set it was 11.8 m)
+  S = { ...S, status: { ...S.status, sog_kn: 0, cog_deg: null, holding: true, env_set_kn: 0 } }; asv = ll(0, 60);
+  clock += 5000; aisPolledAt = clock; frame();
+  const offer16 = guardHeldOffer();
+  renderGuardBar({ level: "blind" }, clearance);
+  const bar16 = $("#gb_rung").textContent + " " + $("#gb_why").textContent;
+  check("16b. ... under way on the escape the lower rungs stay silent, and once she is on station the banked survey is OFFERED - SURVEY HELD, STEERED CLEAR, holding for her - with the episode open",
+        () => stillNothing && !!offer16 && /SURVEY HELD/.test(bar16) && /STEERED CLEAR/.test(bar16) && /holding for AIS: WORKBOAT/.test(bar16) && !!aisAvoid,
+        () => "later commands " + JSON.stringify(paths()) + "; offer " + (offer16 ? "stands" : "GONE") + "; bar: " + bar16.slice(0, 170));
+  clock += 61000; aisPolledAt = clock; sent = []; frame(); await settle();
+  const up16 = sent.find(x => x.p === "/api/cmd/upload"), rte16 = (up16 && up16.route) || [];
+  check("16c. ... and at the minute the way round goes from the escape point, rejoining line 1 a ship-length beyond her (e = 55: her hull ends at 21, her length is 30, the standoff is 3), the record spent, the episode closed",
+        () => rte16.length === 4 && distTo(rte16[0], ll(55, 0)) < 0.5 && distTo(rte16[1], LINE_E.b) < 0.5 && guardHeld === null && aisAvoid === null,
+        () => rte16.length + " wpts; first " + (rte16[0] ? distTo(rte16[0], ll(55, 0)).toFixed(1) + " m from (55, 0)" : "none") + "; sent " + JSON.stringify(paths()));
+  // 16d. THE RING ITSELF: her hull grown by her own length on every side - the guard's model stays the bare hull
+  const q16 = aisKeepouts([contact(0, 0, { sog: 0, cog: null, heading: 90 })], ref, { now: clock, polledAt: clock, sweepS: 45 }).polys[0];
+  const ring16 = aisAvoidKeepout(q16), M16 = { polys: [ring16], lines: [], points: [] };
+  const assumed = aisAvoidKeepout(aisKeepouts([contact(0, 0, { sog: 0, cog: null, heading: 90, dim: null, length: null, beam: null })], ref,
+                                              { now: clock, polledAt: clock }).polys[0]);
+  check("16d. the avoidance keep-out is her hull grown by her own LENGTH on every side - 30 m for a 30 x 8 m hull, 20 m where the length is assumed: 29 m off her beam is inside it, 31 m is outside - and the guard's own keep-out is still the bare hull",
+        () => ring16.avoidM === 30 && clearanceM({ e: 0, n: 4 + 29 }, M16, 100) === 0 && clearanceM({ e: 0, n: 4 + 31 }, M16, 100) > 0.5
+              && clearanceM({ e: 15 + 29, n: 0 }, M16, 100) === 0
+              && clearanceM({ e: 0, n: 4 + 29 }, { polys: [q16], lines: [], points: [] }, 100) > 28
+              && assumed.avoidM === 20,
+        () => "avoidM " + ring16.avoidM + "; 29 m off the beam: " + clearanceM({ e: 0, n: 33 }, M16, 100).toFixed(1) + " m (bare hull: "
+            + clearanceM({ e: 0, n: 33 }, { polys: [q16], lines: [], points: [] }, 100).toFixed(1) + "), 31 m: " + clearanceM({ e: 0, n: 35 }, M16, 100).toFixed(1)
+            + "; assumed " + assumed.avoidM);
 }
 
 // ── 12. THE CONTACTS ARE POLLED WHENEVER THE CONSOLE HAS AUTHORITY, LAYER OR NO LAYER ─────
