@@ -325,7 +325,17 @@ window runs all the logic and owns the chart, the controls window mirrors its co
 and forwards your clicks and edits back. You still draw on the main window's chart. In
 the controls window the buttons become a vertical column on the left and each panel or
 table becomes a **draggable, resizable card**; the layout is saved to `localStorage`
-and restored next session. The **Mission Status card stays on the chart window** — it is
+and restored next session. **The ALERTS card lives in the controls window** (2026-09-28, Andy:
+"the pop-up alert messages are blocking each other or covering standing messages at the bottom
+center of the chart screen"): the guard's bar with its buttons (PROCEED, CONTINUE AT LOW, RESUME,
+ROUTE ROUND HER NOW, RELEASE LOW, CANCEL, LEAVE IT HOLDING), the standing banner and the flash
+note are one card now, stacked so they never cover one another or the RC banner, with the last
+six banners, notes and refusals listed beneath them so a note that faded is still there to read.
+The card is mirrored to the controls window and hidden on the chart while that window is alive;
+**ON CHART** on the card's head puts it above the command bar instead (and **TO CONTROLS** sends
+it back). One place at a time: the choice is a single browser-storage key both windows read.
+With no controls window — `--single-window`, or it closed — the chart shows the card whatever the
+choice says, so the alerts never vanish. The **Mission Status card stays on the chart window** — it is
 not mirrored, because two copies of one card is a second place to look rather than a
 second view; the chart window has the card, the top bar has the quick read, and the
 controls window is the toolbar. **Every card on the chart window is resizable** —
@@ -1394,7 +1404,8 @@ diagnosable (`tests/frame_health.js`).
    gets out of the buffer), rather than offering a confident-looking direction that still
    ends at the pier.
 
-   **The guard's own bar, and the two ways past it.** While the guard is intervening, the
+   **The guard's own bar, and the two ways past it.** (Since 2026-09-28 the bar is the top of
+   the ALERTS card, in the controls window by default — see the two-window split above.) While the guard is intervening, the
    rung, the reason, the clearance and the operator's way through it all sit in one box on
    the chart — a sentence that scrolls past, with the control it refers to somewhere else on
    the page, is how a survey ends up power-cycled. It offers two answers, and only at the

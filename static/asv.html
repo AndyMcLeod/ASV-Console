@@ -255,6 +255,25 @@
   .guardbar .gb-why{max-width:70vw;}
   .guardbar .ctl.small{background:#160d02;color:#f2e6d8;border-color:#160d02;}
   .guardbar .ctl.small:hover{background:#2b1a06;}
+  /* THE ALERTS CARD (2026-09-28). The three message surfaces are laid out in it, stacked, with their absolute
+     placement taken away; the card itself sits where they used to overlap - the chart's bottom center, above the
+     RC banner and the command bar - or in the controls window (see UI_BRIDGED). Width follows the widest message. */
+  .alertcard{left:50%;transform:translateX(-50%);bottom:108px;top:auto;width:auto;min-width:340px;max-width:82vw;
+    max-height:calc(100vh - 220px);user-select:text;}
+  .alertcard .vhead{cursor:move;}
+  .alertcard .vhead .alertwhere{height:22px;font-size:9px;padding:0 8px;width:auto;}
+  .alertcard .vbody{gap:3px;}
+  .alertcard .guardbar,.alertcard .encbanner,.alertcard .note{position:static;left:auto;bottom:auto;transform:none;
+    max-width:none;margin:0;box-shadow:none;}
+  .alertcard .guardbar .gb-why{max-width:none;}
+  .alertnone{font-family:var(--mono);font-size:10px;color:var(--ink-faint);padding:2px 4px;}
+  .alertrecent{display:flex;flex-direction:column;gap:1px;font-family:var(--mono);font-size:10px;color:var(--ink-dim);
+    border-top:1px solid var(--line);padding-top:3px;margin-top:2px;}
+  .alertrecent:empty{display:none;}
+  .alertrecent .arow{display:flex;gap:6px;align-items:baseline;}
+  .alertrecent .arow .at{color:var(--ink-faint);flex:0 0 auto;}
+  .alertrecent .arow .ax{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .alertrecent .arow.banner .ax{color:var(--warn);}
   /* MOVING BASE. Deliberately the loudest thing on the chart while it is up (Andy: "show
      some more obvious and overt indication that a shift of port is in process"). It is
      bigger than the note, sits over the middle of the chart rather than at an edge, and
@@ -393,11 +412,6 @@
     <div class="pill" id="unitsPill" style="cursor:pointer" title="Distance display unit for LONG distances — route lengths, remaining distance, HOME range, tide-station distance: kilometers or NAUTICAL MILES. Click to toggle (persisted). Short distances (line spacing, buffers, depths, the LINES table) always read in meters, chart-tile soundings stay in feet, and the AIS card always reads nm."><span class="k">DIST</span><b id="p_units">KM</b></div>
     <div class="pill" title="Local time · UTC"><span class="k">TIME</span><b id="p_time">--</b></div>
   </div>
-
-  <!-- Transient alerts only (flashNote). Starts EMPTY and hidden: it used to open with
-       "Not connected." and was then overwritten by the server's standing note, which is
-       what left a permanent box sitting on the status bar. -->
-  <div class="note" id="note"></div>
 
   <div class="controls">
     <button class="ctl" id="zin" title="Zoom in">+</button>
@@ -623,25 +637,47 @@
     <span>wpts <b id="r_wpts">0</b></span>
   </div>
 
-  <div class="encbanner" id="encbanner"></div>
-
-  <!-- THE CLEARANCE GUARD'S OWN BAR, and the operator's way past it.
-       A banner scrolls a sentence at somebody and then expects them to find a control
-       somewhere else; this puts the rung, the reason and the way forward in one place,
-       and it is up for exactly as long as the guard is intervening. The PROCEED button
-       is the operator saying they have looked and it is safe - see guardOverride. -->
-  <div class="guardbar" id="guardBar">
-    <div class="gb-row">
-      <span class="gb-rung" id="gb_rung">SLOW</span>
-      <span class="gb-why" id="gb_why"></span>
-    </div>
-    <div class="gb-row">
-      <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the minute.">ROUTE ROUND HER NOW</button>
-      <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
-      <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
-      <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
-      <button class="ctl small" id="gb_release" style="display:none" title="Give the throttle back to the plan: the survey, turn and transit speeds the run was set up with. Ends the low speed you asked for (CONTINUE AT LOW SPEED, RESUME AT LOW, or a pause resume).">RELEASE LOW — BACK TO THE PLAN'S SPEED</button>
-      <button class="ctl small" id="gb_drop" style="display:none" title="Leave the boat station-keeping and forget the unflown remainder. The survey would then have to be run again from waypoint one.">LEAVE IT HOLDING</button>
+  <!-- THE ALERTS CARD (Andy, 2026-09-28: "The pop-up alert messages are blocking each other or covering standing
+       messages at the bottom center of the chart screen above the tool bar. Create a new card for this information
+       and place it in the controls window with an option to put it in the chart window. Populate this new card with
+       all the alert messages and the buttons/controls the user needs to respond.")
+       ONE BOX for every message surface and every control the operator answers with: the guard bar (the rung, the
+       reason, PROCEED / CONTINUE AT LOW / RESUME / ROUTE ROUND / RELEASE LOW / CANCEL / LEAVE IT), the standing
+       banner, the flash note - and beneath them the last few of each, so a note that faded four seconds ago is still
+       there to read. The three surfaces keep their ids and their own show/hide (renderGuardBar, showBanner,
+       showNote): the card only gives them one home, stacked, never one over another and never over the RC banner.
+       It is MIRRORED to the controls window (UI_BRIDGED, a draggable card there) and lives there by default - the
+       chart hides it while that window is alive; ON CHART puts it above the command bar instead. The choice is one
+       localStorage key (asv_alerts_where) both windows read, so the card is in one place, never two. -->
+  <div class="vcard alertcard" id="alertCard">
+    <div class="vhead" id="alertHead"><span>ALERTS</span><button class="ctl small alertwhere" id="alertWhere" title="Where this card lives: in the controls window, or on the chart above the command bar. One place at a time.">ON CHART</button></div>
+    <div class="vbody" id="alertBody">
+      <!-- THE CLEARANCE GUARD'S OWN BAR, and the operator's way past it.
+           A banner scrolls a sentence at somebody and then expects them to find a control
+           somewhere else; this puts the rung, the reason and the way forward in one place,
+           and it is up for exactly as long as the guard is intervening. The PROCEED button
+           is the operator saying they have looked and it is safe - see guardOverride. -->
+      <div class="guardbar" id="guardBar">
+        <div class="gb-row">
+          <span class="gb-rung" id="gb_rung">SLOW</span>
+          <span class="gb-why" id="gb_why"></span>
+        </div>
+        <div class="gb-row">
+          <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the minute.">ROUTE ROUND HER NOW</button>
+          <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
+          <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
+          <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
+          <button class="ctl small" id="gb_release" style="display:none" title="Give the throttle back to the plan: the survey, turn and transit speeds the run was set up with. Ends the low speed you asked for (CONTINUE AT LOW SPEED, RESUME AT LOW, or a pause resume).">RELEASE LOW — BACK TO THE PLAN'S SPEED</button>
+          <button class="ctl small" id="gb_drop" style="display:none" title="Leave the boat station-keeping and forget the unflown remainder. The survey would then have to be run again from waypoint one.">LEAVE IT HOLDING</button>
+        </div>
+      </div>
+      <div class="encbanner" id="encbanner"></div>
+      <!-- Transient alerts only (flashNote). Starts EMPTY and hidden: it used to open with
+           "Not connected." and was then overwritten by the server's standing note, which is
+           what left a permanent box sitting on the status bar. -->
+      <div class="note" id="note"></div>
+      <div class="alertnone" id="alertNone">Nothing standing — the console is clear.</div>
+      <div class="alertrecent" id="alertRecent"></div>
     </div>
   </div>
 
@@ -973,9 +1009,44 @@ function recordAction(kind, label, answer){
     if(actionLog.length > HISTORY_MAX) actionLog.length = HISTORY_MAX; changed = {op: "new"}; }
   lsSet(HISTORY_KEY, actionLog);
   renderHistory(changed);
+  renderAlertRecent();                                  // the alerts card's own tail (2026-09-28)
   if(changed.op === "new") logClient("history", {what: kind, text: historyText(actionLog[0])});   // a repeat merges, and is not re-posted
 }
 function historyText(a){ return a.label + (a.answer ? " — " + a.answer : ""); }
+// THE ALERTS CARD (2026-09-28). Where it lives is ONE localStorage key both windows read: the main window sets
+// body.alerts-in-controls / alerts-on-chart from it and the CSS in setupUISplit's block does the hiding; the
+// controls window learns a change through the storage event (its copy of the button relays the click to main,
+// which is where the key is written). The button reads as the move it would make.
+const ALERT_WHERE_KEY = "asv_alerts_where", ALERTCARD_KEY = "asv_alertcard_v1", ALERT_RECENT_N = 6;
+function alertWhere(){ return lsGet(ALERT_WHERE_KEY, "controls") === "chart" ? "chart" : "controls"; }
+function applyAlertWhere(){
+  const w = alertWhere();
+  document.body.classList.toggle("alerts-in-controls", w === "controls");
+  document.body.classList.toggle("alerts-on-chart", w === "chart");
+  const btn = $("#alertWhere"); if(btn) btn.textContent = w === "chart" ? "TO CONTROLS" : "ON CHART";
+  if(typeof syncUICards === "function") syncUICards();
+}
+function setAlertWhere(w){ lsSet(ALERT_WHERE_KEY, w === "chart" ? "chart" : "controls"); applyAlertWhere(); }
+// "Nothing standing" shows only while all three surfaces are down - the card is never an empty box.
+function alertCardTidy(){
+  const none = $("#alertNone"); if(!none) return;
+  const up = ["#guardBar", "#encbanner", "#note"].some(s => { const e = $(s); return e && e.style.display && e.style.display !== "none"; });
+  none.style.display = up ? "none" : "";
+}
+// The last few banners and notes, newest first, so a flash that faded is still there to read.
+function renderAlertRecent(){
+  const el = $("#alertRecent"); if(!el) return;
+  const rows = actionLog.filter(a => a.kind === "banner" || a.kind === "note" || a.kind === "refused").slice(0, ALERT_RECENT_N);
+  el.textContent = "";
+  for(const a of rows){
+    const d = new Date(a.t), p = n => String(n).padStart(2, "0");
+    const row = document.createElement("div"); row.className = "arow " + a.kind;
+    const at = document.createElement("span"); at.className = "at"; at.textContent = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+    const ax = document.createElement("span"); ax.className = "ax"; ax.textContent = historyText(a) + (a.n > 1 ? " ×" + a.n : "");
+    ax.title = historyText(a);
+    row.appendChild(at); row.appendChild(ax); el.appendChild(row);
+  }
+}
 function fillHistoryRow(row, a){
   const d = new Date(a.t), p = n => String(n).padStart(2, "0"), txt = historyText(a);
   setCellText(row.firstChild, p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()));
@@ -1038,12 +1109,14 @@ const uiBus = ("BroadcastChannel" in window) ? new BroadcastChannel("asv_ui") : 
 // section of #vcard, so it rides across on that card's mirror.
 const UI_BRIDGED = [".controls", "#linePanel", "#boundPanel", "#searchPanel",
                     "#transitPanel", "#rocPanel", "#lineTablePanel", "#aisTablePanel",
-                    "#aisReopen", "#chartPanel"];
+                    "#aisReopen", "#chartPanel",
+                    "#alertCard"];                    // the alerts card (2026-09-28): the messages and the buttons that answer them
 document.body.classList.add("ui-" + UIROLE);
 (function(){ const s = document.createElement("style"); s.textContent =
   // controls window: show ONLY the control column + its panels; hide the chart/status/etc.
   "body.ui-controls #map,body.ui-controls .topbar,body.ui-controls .cmdbar,body.ui-controls .readout,"+
-  "body.ui-controls .rcbanner,body.ui-controls .attrib,body.ui-controls .encbanner,body.ui-controls .guardbar,body.ui-controls #note,"+
+  // (the guard bar, the banner and the note used to be hidden here; since 2026-09-28 they live in #alertCard, which is mirrored)
+  "body.ui-controls .rcbanner,body.ui-controls .attrib,"+
   // MOVING BASE belongs to the chart: it narrates a chart movement, and the port picker
   // that starts it lives on the .topbar, which this window hides.
   "body.ui-controls #portMove,"+
@@ -1085,7 +1158,12 @@ document.body.classList.add("ui-" + UIROLE);
   "body.ui-split .controls,body.ui-split #linePanel,body.ui-split #boundPanel,body.ui-split #searchPanel,"+
   "body.ui-split #transitPanel,body.ui-split #rocPanel,body.ui-split #lineTablePanel,body.ui-split #aisTablePanel,"+
   "body.ui-split #chartPanel,"+
-  "body.ui-split #aisReopen{display:none!important;}";
+  "body.ui-split #aisReopen{display:none!important;}"+
+  // THE ALERTS CARD IS IN ONE PLACE (2026-09-28): while a controls window is alive and the operator has it there,
+  // the chart hides it; when they put it ON CHART, the controls window hides it. No peer at all - single window,
+  // or the controls window closed - and the chart shows it whatever the setting says, so the alerts never vanish.
+  "body.ui-main.ui-split.alerts-in-controls #alertCard{display:none!important;}"+
+  "body.ui-controls.alerts-on-chart #alertCard{display:none!important;}";
   document.head.appendChild(s); })();
 
 // --- map config ---------------------------------------------------------- //
@@ -11410,6 +11488,17 @@ window.addEventListener("resize", render);
 // existing handler runs there, once - and mirrors the control DOM + live field values
 // back out. Same origin, so a BroadcastChannel is all it takes.
 function setupUISplit(){
+  // THE ALERTS CARD'S PLACE (2026-09-28), in both windows: apply the stored choice, follow a change made in the
+  // other window (the storage event), and watch the three surfaces so "nothing standing" is only up while they are
+  // all down. The button's click lands in the main window (the controls window relays it) and is handled there.
+  applyAlertWhere();
+  window.addEventListener("storage", e => { if(e.key === ALERT_WHERE_KEY) applyAlertWhere(); });
+  { const body = $("#alertBody");
+    if(body && "MutationObserver" in window)
+      new MutationObserver(alertCardTidy).observe(body, {subtree: true, attributes: true, attributeFilter: ["style", "class"], childList: true});
+    alertCardTidy(); }
+  if(UIROLE !== "controls"){ const btn = $("#alertWhere");
+    if(btn) btn.onclick = ()=>{ setAlertWhere(alertWhere() === "chart" ? "controls" : "chart"); if(uiBus) pushUISync(); }; }
   if(!uiBus) return;
   const sel = UI_BRIDGED.join(",");
   if(UIROLE === "controls"){
@@ -11512,7 +11601,10 @@ function applyUISync(m){
 // Controls window only: wrap each panel/table in a persistent .uicard the operator can
 // drag (by the grip) and resize (native corner). The card owns position/size and is NOT
 // part of the mirror, so it survives the panel's outerHTML being re-rendered each sync.
-const UI_CARD_TITLES = {"#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
+// The alerts card FIRST: with no saved layout it takes the first tile, beside the button column, because it is
+// the card the operator answers from (2026-09-28); a saved layout still wins for every card.
+const UI_CARD_TITLES = {"#alertCard":"Alerts",
+  "#linePanel":"Survey", "#boundPanel":"Survey area", "#searchPanel":"Search",
   "#transitPanel":"Transit", "#rocPanel":"ROC · HOME",
   "#lineTablePanel":"Lines", "#aisTablePanel":"AIS traffic", "#chartPanel":"Chart source"};
 const UI_LAYOUT_KEY = "asv_ui_cards_v1";
@@ -11687,6 +11779,7 @@ $("#wxWin").onclick   = ()=> openStationWindow("weather");
 const CARD_SIZE_KEY = "asv_card_sizes_v1";
 const RESIZABLE_CARDS = [
   {sel:"#vcard",          body:".vbody"},          // always visible: the one worth resizing most
+  {sel:"#alertCard",      body:"#alertBody"},      // the alerts card (2026-09-28)
   {sel:"#lineTablePanel", body:"#lineTableBody"},  // per-line table, grows with the plan
   {sel:"#aisTablePanel",  body:"#aisTableBody"},   // traffic list, grows with the sea
   {sel:"#chartPanel",     body:"#chartBody"},
@@ -11860,6 +11953,7 @@ const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
 makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
+makeDraggablePanel($("#alertCard"), $("#alertHead"), {key: ALERTCARD_KEY, unanchor: "bottom", ignore: "#alertWhere"});   // 2026-09-28
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
 makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
                                                 ignore: "#aisTableClose"});

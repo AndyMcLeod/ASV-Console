@@ -148,6 +148,9 @@ function makeWorld(store) {
     // recordAction posts a NEW row into the session log (2026-09-25, playback's History card); the post is
     // tests/page_log_posts.js's subject - here it must merely find its name.
     "const logClient = () => {};",
+    // recordAction also feeds the ALERTS card's own tail (2026-09-28) - stubbed here so the history's insert
+    // economy (check 10) is measured alone; the real renderAlertRecent is check 13's subject.
+    "const renderAlertRecent = () => {};",
     ["recordAction", "historyText", "fillHistoryRow", "historyRow", "renderHistory"].map(grab).join("\n"),
     LOAD_CALL,
     grab("cmd").replace(/^function cmd/, "async function cmd"), grab("cmdLabel"), decl(/^let noteTimer = [^;]*;/m),
@@ -302,6 +305,34 @@ const rowText = (r) => r.lastChild.textContent;
   // 12. where it lives
   const card = H.slice(H.indexOf('<div class="vcard" id="vcard">'), H.indexOf('<div class="vminipill" id="vReopen"'));
   const iHist = H.indexOf("const HISTORY_MAX = "), iRender = H.indexOf("\nrenderHistory();\n");
+  // 13. THE ALERTS CARD'S TAIL (2026-09-28): the last few banners, notes and refusals, newest first, so a note that
+  //     faded four seconds ago is still there to read - commands are the history's business, not this list's.
+  {
+    const els13 = { "#alertRecent": makeEl("div", "alertRecent") };
+    const t0 = new Date(2026, 8, 28, 10, 6, 37).getTime();
+    const log13 = [
+      { t: t0 + 9000, kind: "note", label: "Keep-out 45 s ahead \u2014 SLOWED to low.", answer: "", n: 3 },
+      { t: t0 + 8000, kind: "cmd", label: "Start", answer: "Survey started", n: 1 },
+      { t: t0 + 7000, kind: "banner", label: "\u26a0 SLOW \u2014 AIS: FRIGGA (20 x 8 m assumed) ahead in 45 s (61.8 m off).", answer: "", n: 1 },
+      { t: t0 + 6000, kind: "refused", label: "Go-To", answer: "refused: ARM first", n: 1 },
+      { t: t0 + 5000, kind: "note", label: "n5", answer: "", n: 1 }, { t: t0 + 4000, kind: "note", label: "n4", answer: "", n: 1 },
+      { t: t0 + 3000, kind: "note", label: "n3", answer: "", n: 1 }, { t: t0 + 2000, kind: "note", label: "n2", answer: "", n: 1 },
+      { t: t0 + 1000, kind: "banner", label: "b1", answer: "", n: 1 },
+    ];
+    const body13 = ["\"use strict\";", "const $ = (s) => els[s];", decl(/^const ALERT_WHERE_KEY = [^;]*;/m),
+                    grab("historyText"), grab("renderAlertRecent"), "renderAlertRecent(); return els;"].join("\n");
+    let rows13 = null, err13 = null;
+    try { new Function("els", "document", "actionLog", body13)(els13, { createElement: (t) => makeEl(t) }, log13); rows13 = els13["#alertRecent"].childNodes; }
+    catch (e) { err13 = e.message; }
+    check("13. the ALERTS card's tail lists the last six banners, notes and refusals newest first - never a command - each with its time, the repeat count, and its kind on the row",
+          () => !err13 && rows13.length === 6 && rows13.every(r => /\barow\b/.test(r.className))
+                && rows13[0].className === "arow note" && rows13[0].childNodes[0].textContent === "10:06:46"
+                && rows13[0].childNodes[1].textContent === "Keep-out 45 s ahead \u2014 SLOWED to low. \u00d73"
+                && rows13[1].className === "arow banner" && /FRIGGA/.test(rows13[1].childNodes[1].textContent)
+                && rows13[2].className === "arow refused" && rows13[2].childNodes[1].textContent === "Go-To \u2014 refused: ARM first"
+                && rows13[5].childNodes[1].textContent === "n3" && !rows13.some(r => /Start/.test(r.childNodes[1].textContent)),
+          () => err13 ? "THREW: " + err13 : rows13.map(r => r.className + ": " + r.childNodes.map(c => c.textContent).join(" ")).join(" | "));
+  }
   check("12. the section is on the Mission Status card, and the history is declared and drawn at the top of the module - "
         + "before any code that can post a banner or flash a note",
         () => /id="v_history"/.test(card) && /id="historyBody"/.test(card) && iHist > 0 && iRender > iHist

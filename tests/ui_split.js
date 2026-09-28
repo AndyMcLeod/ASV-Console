@@ -127,6 +127,35 @@ check("8. ... and never added to the ui-split list, which would strip it from th
       !/body\.ui-split #vcard\b/.test(splitLine),
       "the chart window is where it lives");
 
+// 22-25. THE ALERTS CARD (Andy, 2026-09-28: "The pop-up alert messages are blocking each other or covering
+// standing messages at the bottom center of the chart screen above the tool bar. Create a new card for this
+// information and place it in the controls window with an option to put it in the chart window."). The guard bar,
+// the standing banner and the flash note keep their ids and move INTO one card; the card is bridged and wrapped in
+// the controls window, hidden on the chart while that window is alive and the choice says controls, hidden in the
+// controls window when the choice says chart - and never in the ui-split list, which would strip it from the chart.
+const cardStart = H.indexOf('<div class="vcard alertcard" id="alertCard">'), cardEnd = H.indexOf("\n  </div>\n", cardStart);
+const CARD_HTML = cardStart >= 0 ? H.slice(cardStart, cardEnd) : "";
+check("22. the alerts card exists and holds the guard bar, the banner and the note - the three message surfaces, one home",
+      cardStart >= 0 && /id="guardBar"/.test(CARD_HTML) && /id="encbanner"/.test(CARD_HTML) && /id="note"/.test(CARD_HTML)
+      && /id="alertWhere"/.test(CARD_HTML) && /id="alertRecent"/.test(CARD_HTML) && /id="alertNone"/.test(CARD_HTML)
+      && (H.match(/id="guardBar"/g) || []).length === 1 && (H.match(/id="encbanner"/g) || []).length === 1 && (H.match(/ id="note"/g) || []).length === 1,
+      cardStart >= 0 ? "card at " + cardStart + ", " + CARD_HTML.length + " chars" : "no #alertCard in the page");
+check("23. ... it is bridged to the controls window and wrapped as a card there, and the three surfaces are no longer hidden there outright",
+      bridged.includes("#alertCard") && titles.includes("#alertCard")
+      && !/body\.ui-controls \.guardbar/.test(CSS) && !/body\.ui-controls \.encbanner/.test(CSS) && !/body\.ui-controls #note\b/.test(CSS),
+      "bridged " + bridged.includes("#alertCard") + ", titled " + titles.includes("#alertCard"));
+check("24. ... in ONE place: hidden on the chart only while a controls window is alive AND the choice says controls; hidden in the controls window only when the choice says chart; never in the ui-split list",
+      /body\.ui-main\.ui-split\.alerts-in-controls #alertCard\{display:none!important;\}/.test(CSS.replace(/\s+/g, " "))
+      && /body\.ui-controls\.alerts-on-chart #alertCard\{display:none!important;\}/.test(CSS.replace(/\s+/g, " "))
+      && !/body\.ui-split #alertCard\b/.test(splitLine)
+      && /localStorage|lsGet\(ALERT_WHERE_KEY/.test(H.slice(H.indexOf("function alertWhere"), H.indexOf("function alertWhere") + 400))
+      && /addEventListener\("storage"/.test(H),
+      "the choice is one localStorage key both windows read; a change in either window reaches the other through the storage event");
+check("25. ... and on the chart it is resizable and draggable like every other card, laid out inside as a stack (no absolute placement left on the three surfaces)",
+      /sel:"#alertCard"/.test(H) && /makeDraggablePanel\(\$\("#alertCard"\), \$\("#alertHead"\)/.test(H)
+      && /\.alertcard \.guardbar,\.alertcard \.encbanner,\.alertcard \.note\{position:static/.test(H),
+      "registered in RESIZABLE_CARDS, dragged by its head, the surfaces static inside it");
+
 // 9. The top status bar is deliberately left alone, overlap and all. If someone ever
 // "tidies" the duplication away, this says it was a decision.
 check("9. the top status bar still carries its own quick-read pills",
