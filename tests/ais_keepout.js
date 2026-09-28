@@ -117,7 +117,7 @@ console.log("An AIS contact as a keep-out:");
   const fresh = modelOf(contact(0, 0, { sog: 0.8, cog: 0, heading: null, age: 20 }), { sweepS: 45 });
   check("10. 0.8 kn reported twenty minutes ago is NOT under way: no dead reckoning, no sweep - her hull where she reported it, nothing 20 m up her course",
         () => old.q && !old.q.moving && old.q.sweepS === 0 && inKo(old.ko, 0, 9) && !inKo(old.ko, 0, 20) && !/kn\)/.test(old.q.kind)
-              && A.AIS_MOVING_AGE_S === 180 && A.AIS_MOVING_SURE_KN === 2,
+              && A.AIS_MOVING_AGE_S === 400 && A.AIS_MOVING_SURE_KN === 2,
         () => old.q ? "moving " + old.q.moving + ", sweep " + old.q.sweepS + ", 9 m up " + inKo(old.ko, 0, 9) + ", 20 m up " + inKo(old.ko, 0, 20) + ", kind " + old.q.kind : "no keep-out");
   check("10b. the same 0.8 kn reported 20 s ago IS under way, dead-reckoned and swept up her course (30 m up is inside her)",
         () => fresh.q && fresh.q.moving && fresh.q.sweepS === 45 && inKo(fresh.ko, 0, 30) && /0\.8 kn\)/.test(fresh.q.kind),
@@ -125,6 +125,21 @@ console.log("An AIS contact as a keep-out:");
   const anch = modelOf(contact(0, 0, { name: "FRIGGA", sog: 1.5, cog: 0, heading: null, age: 5, nav: 1 }), { sweepS: 45 });
   const moor = modelOf(contact(0, 0, { name: "FRIGGA", sog: 1.5, cog: 0, heading: null, age: 5, nav: 5 }), { sweepS: 45 });
   const fast = modelOf(contact(0, 0, { sog: 3.0, cog: 0, heading: null, age: 1200 }), { sweepS: 45 });
+  // 10d-10e. THE REVIEW'S TWO (2026-09-28): a status believed only under AIS_NAV_TRUST_KN, and an age past Class B's
+  //          own slow interval - a Class B under way at 0.8 kn reports every 180 s and carries no status.
+  const anchoredFast = modelOf(contact(0, 0, { name: "LIAR", sog: 6.0, cog: 0, heading: null, age: 5, nav: 1 }), { sweepS: 45 });
+  const aground = modelOf(contact(0, 0, { name: "STUCK", sog: 0.3, cog: 0, heading: null, age: 5, nav: 6 }), { sweepS: 45 });
+  check("10d. 'at anchor' reported at 6 kn is NOT believed (the commonest AIS error): she is under way, swept up her course; 'aground' at 0.3 kn is, and says so",
+        () => anchoredFast.q && anchoredFast.q.moving && inKo(anchoredFast.ko, 0, 60) && /6\.0 kn\)/.test(anchoredFast.q.kind)
+              && aground.q && !aground.q.moving && /STUCK \(20 x 8 m assumed, aground\)/.test(aground.q.kind) && A.AIS_NAV_TRUST_KN === 3,
+        () => "6 kn at anchor: moving " + (anchoredFast.q && anchoredFast.q.moving) + " " + (anchoredFast.q && anchoredFast.q.kind) + "; aground: " + (aground.q && aground.q.kind));
+  const classB = modelOf(contact(0, 0, { sog: 0.8, cog: 0, heading: null, age: 190 }), { sweepS: 45 });
+  const stale = modelOf(contact(0, 0, { sog: 0.8, cog: 0, heading: null, age: 401 }), { sweepS: 45 });
+  const edge = modelOf(contact(0, 0, { sog: 1.99, cog: 0, heading: null, age: 401 }), { sweepS: 45 });
+  const twoKn = modelOf(contact(0, 0, { sog: 2.0, cog: 0, heading: null, age: 1200 }), { sweepS: 45 });
+  check("10e. a Class B at 0.8 kn whose last report is 190 s old (her own slow interval is 180 s) is still under way; 401 s old she is not; 1.99 kn old is not, 2.0 kn old is (the boundary is under 2)",
+        () => classB.q && classB.q.moving && stale.q && !stale.q.moving && edge.q && !edge.q.moving && twoKn.q && twoKn.q.moving,
+        () => "190 s " + (classB.q && classB.q.moving) + ", 401 s " + (stale.q && stale.q.moving) + ", 1.99 kn old " + (edge.q && edge.q.moving) + ", 2.0 kn old " + (twoKn.q && twoKn.q.moving));
   check("10c. her navigational status outranks her speed: 'at anchor' (1) or 'moored' (5) at 1.5 kn fresh is not under way and says so in her name; 3 kn reported twenty minutes ago IS under way (the reckoning capped at AIS_DR_MAX_S)",
         () => anch.q && !anch.q.moving && /FRIGGA \(20 x 8 m assumed, at anchor\)/.test(anch.q.kind)
               && moor.q && !moor.q.moving && /, moored\)/.test(moor.q.kind)

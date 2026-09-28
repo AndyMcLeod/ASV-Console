@@ -1863,7 +1863,7 @@ function renderGuardBar(a, c){
   { const ga = $("#gb_around"); if(ga) ga.style.display = "none"; }   // shown by the held bar alone (2026-09-27)
   // THE LOW LATCH HAS A HOME ON THE BAR (2026-09-28): whenever the run is held at low on the operator's word, the
   // button that ends it is in view - in every rung state below, and on its own when the ladder reads clear.
-  const latched = !!(resumeSlow && S && S.run === "running" && !escapeThrottle);   // an escape holds the throttle, not the latch
+  const latched = lowLatched();                       // an escape holds the throttle, not the latch
   { const gr = $("#gb_release"); if(gr) gr.style.display = "none"; }
   // ⚠ A STOPPED SURVEY IS THE GUARD STILL INTERVENING, and the bar used to go out on it.
   // Once the boat is station-keeping the ladder reads CLEAR by construction - the hold rung
@@ -1931,6 +1931,7 @@ function renderGuardBar(a, c){
     // PROCEED against a measurement that was never taken is the worst button on the page.
     $("#gb_low").style.display = "none";  $("#gb_proceed").style.display = "none";
     $("#gb_cancel").style.display = "none"; $("#gb_drop").style.display = "none";
+    { const gr = $("#gb_release"); if(gr) gr.style.display = latched ? "" : "none"; }   // blind, but latched: the release stays in reach
     return;
   }
   const over = !!guardOverride;
@@ -2085,6 +2086,9 @@ function renderGrantBar(bar, a, c){
   $("#gb_cancel").style.display  = "none";
   $("#gb_drop").textContent      = "DROP THE GRANT";
   $("#gb_drop").style.display    = "";
+  // A DEPARTURE RESUMED AT LOW keeps its grant (a resume is the old motion carrying on) - the latch's release
+  // must stay in reach on this bar too (review, 2026-09-28).
+  { const gr = $("#gb_release"); if(gr) gr.style.display = lowLatched() ? "" : "none"; }
 }
 
 /**
@@ -3089,7 +3093,12 @@ function clearanceGuard(){
   if(grant && (!nogo.ready || !nogo.ko || !nogo.frame))
     standDownEnd("the keep-out model is no longer available, so nothing can be certified.",
                  {offerHold: false});
-  if(c.m == null || !nogo.ready || !nogo.ko || !nogo.frame || !asv){ return c; }
+  if(c.m == null || !nogo.ready || !nogo.ko || !nogo.frame || !asv){
+    // NO MODEL, BUT A LATCH (review, 2026-09-28): a run resumed at low with no keep-out model said "press RELEASE LOW
+    // on the bar" and no bar ever drew, because nothing below this line runs. The latch bar is drawn from here.
+    if(lowLatched()) renderGuardBar(null, c);
+    return c;
+  }
   const p = nogo.frame.toEN({lat:asv.lat, lon:asv.lon});
   // GROUND velocity, and the drift that would REMAIN with the engines stopped. The sim and
   // the real hull both publish the set on the telemetry, and since the tidal stream was
@@ -13519,6 +13528,10 @@ $("#gb_cancel").onclick = ()=>{
 /** RELEASE LOW: the operator taking the throttle back from their own instruction (2026-09-28). The one door the
  *  latch had - setRoleSpeed, a selector in another panel that only fires when its value CHANGES - is still a
  *  door; this one is on the bar, beside the state it ends. Answers whether there was a latch to release. */
+/** Is the run held at low on the operator's word - and is that the thing governing her speed? Not while paused
+ *  (nothing to release yet), not while an escape holds the throttle at high. ONE predicate for the bar, the grant
+ *  bar and the guard's no-model return (2026-09-28). */
+function lowLatched(){ return !!(resumeSlow && S && S.run === "running" && !escapeThrottle); }
 function releaseLow(why){
   if(!resumeSlow) return false;
   resumeSlow = false; commandedSpeed = null;              // the governor decides on the next frame
@@ -13699,7 +13712,11 @@ async function resumeHeldRun(opts){
   // is needed to get past it, and the governor has the throttle as after Upload and Start.
   if(!auto && !at) guardOverride = {t: Date.now(), level: "hold", clearM: g.clearM, slow: true};
   clearance.slowed = false;
-  resumeSlow = auto ? false : at ? resumeSlow : true; commandedSpeed = null;
+  // THE OPERATOR'S OWN LATCH SURVIVES THE CONSOLE'S RESUME (review, 2026-09-28): the automatic return and the way
+  // round carry none of the operator's latches, but a LOW they had standing BEFORE the hold is theirs, not the
+  // hold's - kept, and said below.
+  const hadLow = resumeSlow;
+  resumeSlow = auto ? hadLow : at ? resumeSlow : true; commandedSpeed = null;
   // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6) - the pause, the upload, the LOW and
   // the Start. Since review #3 an upload to a station-keeping boat is STAGED rather than releasing
   // her, so the pause is no longer what stops a take-off; it stays because every step after it
@@ -13783,7 +13800,8 @@ async function resumeHeldRun(opts){
       showBanner("ROUTED ROUND " + who + " — " + ((opts && opts.manual)
           ? "at your word, one ship-length off her: "
           : "she did not clear the line within " + Math.round(AIS_AROUND_AFTER_MS / 1000) + " s and you did not choose a point, so the survey goes on beyond her: ")
-        + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly. Recorded in the session log.");
+        + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly"
+        + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
       logClient("ais_around", {kind: who, line: at.line != null ? lineNo(at.line) : null, skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
                 held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual)});
     } else {

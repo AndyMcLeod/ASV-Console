@@ -364,7 +364,7 @@ eval([
   grab("notTookSay"),
   "function __clearCap(){ return CLEAR_CAP_M; }",
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
-  grab("renderGuardBar"), grab("renderHeldBar"),
+  grab("renderGuardBar"), grab("renderHeldBar"), grab("lowLatched"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
@@ -1222,6 +1222,68 @@ const nearRe = /WORKBOAT/;
         () => l18m === "slow" && m18m < 20 && keyOnClear === farId && keyAtPress === farId && !!guardOverride && guardOverride.key === farId && !banners.some(b => /OVERRIDE ENDED/.test(b)),
         () => "level " + l18m + " at " + (m18m != null ? m18m.toFixed(1) : "?") + " m (the pier is nearest the boat), key after a clear frame " + JSON.stringify(keyOnClear)
             + ", key at a press on the not-released frame " + JSON.stringify(keyAtPress) + ", 50 s on " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+
+  // ── 18n-18t. THE REVIEW'S UNPINNED BEHAVIORS (2026-09-28) ──────────────────────────────────────────────────
+  // 18n. RELEASE LOW is in reach at the HOLD rung too, and hidden when nothing is latched
+  surveying(7, [PARKED()]); resumeSlow = true; frame();
+  const relHold = EL["#gb_release"].style.display, rungHold = clearance.level;
+  surveying(7, [PARKED()]); frame();
+  const relNone = EL["#gb_release"].style.display;
+  check("18n. the latch's release is on the bar at the HOLD rung (not only at SLOW), and off it when nothing is latched",
+        () => rungHold === "hold" && relHold === "" && relNone === "none",
+        () => "hold rung: " + rungHold + " release '" + relHold + "'; unlatched '" + relNone + "'");
+  // 18o. the latch bar is not drawn while paused, nor while an escape holds the throttle; the guard's own slow-down is
+  //      not released while the plan's speed would read SLOW (the pre-existing half of the counterfactual, pinned)
+  surveying(7, []); resumeSlow = true; S = { ...S, run: "paused" }; frame();
+  const barPaused = EL["#guardBar"].style.display;
+  surveying(7, []); resumeSlow = true; escapeThrottle = true; frame();
+  const barEsc = EL["#guardBar"].style.display;
+  escapeThrottle = false;
+  surveying(7, [FAR()]); frame();                                        // the GUARD slows her (clearance.slowed)
+  const slowedByGuard = clearance.slowed === true;
+  speed(4); clock += 2000; aisPolledAt = clock; frame(); clock += 5000; aisPolledAt = clock; frame();
+  check("18o. the latch bar is not drawn on a paused boat nor under an escape; and the guard's OWN slow-down is not released while the plan's speed would read SLOW, the dwell notwithstanding",
+        () => barPaused === "none" && barEsc === "none" && slowedByGuard && clearance.slowed === true && guardLevel === "slow",
+        () => "paused " + barPaused + ", escape " + barEsc + ", slowed by the guard " + slowedByGuard + " still " + clearance.slowed + ", guardLevel " + guardLevel);
+  // 18p. in extremis ends the override - driven, not a source pin: a workboat northbound at 6 kn 40 m south, her sweep
+  //      already over the boat (check 9's fixture) reads HELM
+  surveying(7, [FAR()]); frame();
+  press();
+  escFake = { hdg: 90, to: { e: 60, n: 0 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
+  aisVessels = [contact(0, -40, { sog: 6, cog: 0, heading: 0 })]; clock += 2000; aisPolledAt = clock; frame();
+  check("18p. a frame in extremis ends the override (helm was never covered)",
+        () => clearance.level === "helm" && guardOverride === null,
+        () => "level " + clearance.level + ", override " + JSON.stringify(guardOverride));
+  // 18q. `closing` needs the contact under way to be the NEAREST hazard: a workboat far off closing 8 m does not lapse an
+  //      override on the parked contact ahead
+  surveying(7, [FAR(), contact(300, -60, { mmsi: 555, name: "FAR TUG", sog: 6, cog: 0, heading: 0 })]); frame(); press(); banners = [];
+  aisVessels = [FAR(), contact(292, -60, { mmsi: 555, name: "FAR TUG", sog: 6, cog: 0, heading: 0 })]; clock += 2000; aisPolledAt = clock; frame();
+  check("18q. a contact under way 300 m off closing 8 m does not lapse an override on the PARKED contact ahead - only the nearest hazard closing counts",
+        () => !!guardOverride && guardOverride.key === farId && !banners.some(b => /LAPSED/.test(b)),
+        () => "override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+  // 18r. RELEASE LOW leaves a full PROCEED standing and resets the commanded speed
+  surveying(7, [FAR()]); frame(); press(); resumeSlow = true; commandedSpeed = "low";
+  releaseLow("the test");
+  check("18r. RELEASE LOW ends only a LOW override: a full PROCEED stands, and the commanded speed is cleared for the governor to decide",
+        () => !!guardOverride && !guardOverride.slow && resumeSlow === false && commandedSpeed === null,
+        () => "override " + JSON.stringify(guardOverride) + ", commandedSpeed " + commandedSpeed);
+  // 18s. the PROCEED and CONTINUE AT LOW handlers adopt the hazard the bar showed (source), and the key is judged at the
+  //      entry point (source) - the fixture's press() copies the handler, so the handlers themselves are pinned here
+  const proceedSrc = H.slice(H.indexOf('$("#gb_proceed").onclick'), H.indexOf('$("#gb_proceed").onclick') + 900);
+  const contSrc = H.slice(H.indexOf("function continueAtLow(){"), H.indexOf("function continueAtLow(){") + 500);
+  const keySrc = H.slice(H.indexOf("function guardHazardKey("), H.indexOf("function guardHazardKey(") + 400);
+  check("18s. the real PROCEED and CONTINUE AT LOW handlers adopt guardKeyLast, and the hazard key is judged at the assessment's ENTRY point, not at the boat",
+        () => /key: guardKeyLast \? guardKeyLast\.id : null/.test(proceedSrc) && /key: guardKeyLast \? guardKeyLast\.id : null/.test(contSrc)
+              && /const at = \(a && a\.entry\) \? a\.entry : p;/.test(keySrc),
+        () => "proceed " + /guardKeyLast/.test(proceedSrc) + ", continue " + /guardKeyLast/.test(contSrc) + ", entry " + /a\.entry/.test(keySrc));
+  // 18t. the console's own return keeps an operator's LOW latch, and says so
+  surveying(7, [PARKED()]); frame(); nowHolding(); resumeSlow = true; sent = []; banners = []; notes = []; logged = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  aisAroundNow(); await settle();
+  check("18t. an operator's LOW latch standing before the hold survives the console's own way round - kept, and the banner says 'still at LOW on your authority'",
+        () => resumeSlow === true && paths().includes("/api/cmd/start") && banners.some(b => /ROUTED ROUND/.test(b) && /still at LOW on your authority/.test(b)),
+        () => "resumeSlow " + resumeSlow + ", sent " + JSON.stringify(paths()) + ", banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(-140))));
+  resumeSlow = false;
   const noRelease2 = releaseLow("nothing latched");
   check("18i. ... and with nothing latched RELEASE LOW does nothing and says so by answering false", () => noRelease2 === false, () => String(noRelease2));
 }

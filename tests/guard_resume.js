@@ -385,7 +385,7 @@ eval([
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
   grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
-  grab("renderGuardBar"), grab("renderHeldBar"),
+  grab("renderGuardBar"), grab("renderHeldBar"), grab("lowLatched"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),

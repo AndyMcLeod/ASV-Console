@@ -552,6 +552,7 @@ check("24. and it lapses when the water gets materially worse than the water the
       () => /closing && clearM != null && guardOverride\.clearM != null/.test(OVR)
             && /clearM < guardOverride\.clearM - OVERRIDE_GIVE_M/.test(OVR)
             && !/Date\.now\(\) - guardOverride\.t >/.test(OVR)
+            && !/now - guardOverride\.t > \d/.test(OVR)             // no numeric cap either (the review: the alias made the pin vacuous)
             && /key\.id !== guardOverride\.key/.test(OVR) && /OVERRIDE ENDED/.test(OVR),
       "a five-minute cap re-holds a boat halfway down a channel it has already assessed, " +
       "and a long enough one never fires; a give on a hazard that does not move is a stair " +

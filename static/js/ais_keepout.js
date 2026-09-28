@@ -59,9 +59,16 @@ export const AIS_MOVING_KN = 0.5;
 // ahead, 43 m of phantom hull pointing up her course that reached the way round her. A transponder under way
 // reports every few seconds; one reporting minutes apart at under AIS_MOVING_SURE_KN is a vessel at anchor or
 // moored with GPS jitter on her speed, and her navigational status, where she sends one, says so outright.
-export const AIS_MOVING_AGE_S = 180;      // a report older than this ...
+// ⚠ THE NUMBERS, after the review of 2026-09-28: 180 s sat exactly on Class B's own reporting interval at under
+// 2 kn (ITU-R M.1371: every 3 minutes, and a Class B report carries no navigational status), so a slow contact
+// genuinely under way flipped to "not under way" between two of her own reports; 400 s is past that interval with
+// margin for the console's own polling. And a navigational status counts only while she is doing under
+// AIS_NAV_TRUST_KN - "at anchor" left set at 6 kn is the commonest AIS data error there is, and the standard
+// itself trusts "at anchor or moored" only while not moving faster than 3 knots.
+export const AIS_MOVING_AGE_S = 400;      // a report older than this ...
 export const AIS_MOVING_SURE_KN = 2.0;    // ... at under this speed is a vessel not under way
-export const AIS_NAV_STOPPED = new Set([1, 5, 6]);   // navigational status: at anchor, moored, aground
+export const AIS_NAV_STOPPED = new Set([1, 5, 6]);   // navigational status: at anchor, moored, aground ...
+export const AIS_NAV_TRUST_KN = 3.0;      // ... believed only while she is doing under this
 export function aisNavWord(nav) { return nav == 1 ? "at anchor" : nav == 5 ? "moored" : nav == 6 ? "aground" : null; }
 /** Contacts farther than this from the boat (now or at the end of their sweep) are not modelled. */
 export const AIS_KO_RANGE_M = 3000;
@@ -163,7 +170,8 @@ export function aisKeepout(v, frame, opts = {}) {
   const now = +opts.now || 0;
   const sog = (v.sog != null && Number.isFinite(+v.sog) && +v.sog >= 0) ? +v.sog : null;
   const ageS = aisAgeS(v, +opts.polledAt || 0, now);
-  const navStopped = v.nav != null && AIS_NAV_STOPPED.has(+v.nav);                       // she says she is stopped
+  const navStopped = v.nav != null && AIS_NAV_STOPPED.has(+v.nav)
+                     && (sog == null || sog < AIS_NAV_TRUST_KN);                          // she says she is stopped, and is not plainly under way
   const slowAndOld = sog != null && sog < AIS_MOVING_SURE_KN && ageS > AIS_MOVING_AGE_S;   // reporting like one
   const vel = (sog != null && sog >= AIS_MOVING_KN && !navStopped && !slowAndOld) ? velocityEN(sog, v.cog) : null;   // null: no course
   const moving = !!vel;

@@ -686,6 +686,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                                 guardHeld = { spy: true }; };
   const guardHeldOffer = () => null, guardOverrideOk = () => false;
   const guardHazardKey = () => null, aisNearestPoly = () => null;   // the override's key and the closing test (2026-09-28) - no override stands in this world
+  const lowLatched = () => false;                                     // no operator's low latch in this world either
   let roleKey = "survey", speedWant = null;          // 15p switches the CONFIGURED role speed
   const roleSpeed = () => roleKey, speedRole = () => "survey";
   const ref = planeFrame({ lat: 43.07, lon: -70.76 });

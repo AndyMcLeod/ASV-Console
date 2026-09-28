@@ -466,8 +466,9 @@ vessel that transmits every twelve minutes was **dropped from the AIS proxy's li
 ten-minute time-to-live between reports, so the guard's model went empty of her and the boat
 drove onto her position unwarned — a vessel with no way on is now kept for an hour
 (`STATIONARY_TTL` in `ais_service.py`), one under way still ages out at ten minutes — and
-since 28 September **a contact reporting minutes apart at under 2 kn, or whose status says
-anchored, moored or aground, is not under way**: no dead reckoning, no sweep, and the registry
+since 28 September **a contact whose last report is more than about seven minutes old at under
+2 kn, or whose status says anchored, moored or aground while she is doing under 3 kn, is not
+under way**: no dead reckoning, no sweep, and the registry
 keeps any vessel under 2 kn the hour outright (FRIGGA at New Castle: 0.8 kn, twenty minutes
 between reports, at anchor, and 43 m of phantom hull swept up her course reached the way round
 her; kept on her reporting *interval* she would still have been purged before her second report

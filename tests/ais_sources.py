@@ -191,6 +191,20 @@ check("3f. fifteen minutes unheard under 2 kn: KEPT outright - FRIGGA (three min
       lambda: _kept2 == ["CRAWLER", "FIRST REPORT", "FRIGGA", "MOORED"] and m.STATIONARY_SURE_KN == 2.0
               and abs((reg_gap._v[555000555].get("pos_gap") or 0) - 180.0) < 2.0,
       lambda: "kept %s (pos_gap FRIGGA %.0f s)" % (_kept2, reg_gap._v[555000555].get("pos_gap") or -1))
+# 3h. THE REVIEW'S CEILING (2026-09-28): a status of anchored/moored/aground is believed only under STATIONARY_NAV_KN,
+# and the speed boundary is UNDER 2 kn.
+reg_nav = m.Registry(ttl=600)
+reg_nav.update(111000111, "aisstream", lat=43.0721, lon=-70.7079, sog=6.0, nav=1, name="LIAR")       # 'at anchor' at 6 kn
+reg_nav.update(222000222, "aisstream", lat=43.0722, lon=-70.7080, sog=2.5, nav=5, name="MOORED SLOW")  # moored at 2.5 kn: believed
+reg_nav.update(333000333, "aisstream", lat=43.0723, lon=-70.7081, sog=2.0, name="TWO KNOTS")           # 2.0 exactly: under way
+reg_nav.update(444000444, "aisstream", lat=43.0724, lon=-70.7082, sog=1.99, name="JUST UNDER")         # 1.99: kept
+for _v in reg_nav._v.values():
+    _v["last_ts"] -= 900.0
+_kept3 = sorted(v["name"] for v in reg_nav.snapshot())
+check("3h. 'at anchor' at 6 kn is NOT believed and she is dropped like any vessel under way; moored at 2.5 kn is believed and kept; 2.0 kn is under way, 1.99 kn is kept - the boundary is under 2",
+      lambda: _kept3 == ["JUST UNDER", "MOORED SLOW"] and m.STATIONARY_NAV_KN == 3.0,
+      lambda: "kept %s" % _kept3)
+
 reg_gap2 = m.Registry(ttl=600)
 reg_gap2.update(888000888, "aisstream", lat=43.0721, lon=-70.7079, sog=3.0, name="SLOW STEAMER")
 reg_gap2._v[888000888]["pos_ts"] -= 180.0

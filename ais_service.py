@@ -175,7 +175,8 @@ STATIONARY_TTL = 3600.0        # and she is kept for an hour
 # other side: a slow report older than three minutes is a vessel not under way, drawn where she reported herself.
 STATIONARY_SURE_KN = 2.0
 STATIONARY_GAP_S = 120.0       # recorded; not a condition any more
-STATIONARY_NAV = (1, 5, 6)     # at anchor, moored, aground
+STATIONARY_NAV = (1, 5, 6)     # at anchor, moored, aground ...
+STATIONARY_NAV_KN = 3.0        # ... believed only under this speed: "at anchor" left set at 6 kn is the commonest AIS error
 UA = {"User-Agent": "ais-service/1.0 (+survey-asv console; open AIS aggregation)"}
 
 
@@ -340,7 +341,8 @@ class Registry:
             sog = None
         stopped = sog is not None and sog < STATIONARY_SURE_KN     # under 2 kn: not under way (STATIONARY_KN within it)
         try:
-            if v.get("nav") is not None and int(v.get("nav")) in STATIONARY_NAV:
+            if (v.get("nav") is not None and int(v.get("nav")) in STATIONARY_NAV
+                    and (sog is None or sog < STATIONARY_NAV_KN)):
                 stopped = True
         except (TypeError, ValueError):
             pass
