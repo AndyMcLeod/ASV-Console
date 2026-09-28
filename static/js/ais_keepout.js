@@ -54,6 +54,15 @@ export const AIS_DEFAULT_BEAM_M = 8;
 export const AIS_DR_MAX_S = 60;
 /** Below this speed over the ground a contact is stationary: not dead-reckoned, not swept. */
 export const AIS_MOVING_KN = 0.5;
+// NOT UNDER WAY, THOUGH SHE REPORTS A SPEED (2026-09-28). FRIGGA at New Castle: 0.4 to 0.8 kn, twenty minutes
+// between reports, at anchor - and at 0.8 kn she was modelled as under way, dead-reckoned a minute and swept 45 s
+// ahead, 43 m of phantom hull pointing up her course that reached the way round her. A transponder under way
+// reports every few seconds; one reporting minutes apart at under AIS_MOVING_SURE_KN is a vessel at anchor or
+// moored with GPS jitter on her speed, and her navigational status, where she sends one, says so outright.
+export const AIS_MOVING_AGE_S = 180;      // a report older than this ...
+export const AIS_MOVING_SURE_KN = 2.0;    // ... at under this speed is a vessel not under way
+export const AIS_NAV_STOPPED = new Set([1, 5, 6]);   // navigational status: at anchor, moored, aground
+export function aisNavWord(nav) { return nav == 1 ? "at anchor" : nav == 5 ? "moored" : nav == 6 ? "aground" : null; }
 /** Contacts farther than this from the boat (now or at the end of their sweep) are not modelled. */
 export const AIS_KO_RANGE_M = 3000;
 /** A poll older than this is no model at all - the guard says so rather than reading a quiet sea. */
@@ -153,11 +162,14 @@ export function aisKeepout(v, frame, opts = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const now = +opts.now || 0;
   const sog = (v.sog != null && Number.isFinite(+v.sog) && +v.sog >= 0) ? +v.sog : null;
-  const vel = (sog != null && sog >= AIS_MOVING_KN) ? velocityEN(sog, v.cog) : null;   // null: no course
+  const ageS = aisAgeS(v, +opts.polledAt || 0, now);
+  const navStopped = v.nav != null && AIS_NAV_STOPPED.has(+v.nav);                       // she says she is stopped
+  const slowAndOld = sog != null && sog < AIS_MOVING_SURE_KN && ageS > AIS_MOVING_AGE_S;   // reporting like one
+  const vel = (sog != null && sog >= AIS_MOVING_KN && !navStopped && !slowAndOld) ? velocityEN(sog, v.cog) : null;   // null: no course
   const moving = !!vel;
   const c = frame.toEN({ lat, lon });
   // Dead reckoning, capped: past AIS_DR_MAX_S the box stays where the last honest position put it.
-  const dr = moving ? Math.min(aisAgeS(v, +opts.polledAt || 0, now), AIS_DR_MAX_S) : 0;
+  const dr = moving ? Math.min(ageS, AIS_DR_MAX_S) : 0;
   const c0 = { e: c.e + (moving ? vel.e * dr : 0), n: c.n + (moving ? vel.n * dr : 0) };
   const sweepS = moving ? Math.max(0, opts.sweepS == null ? HORIZON_S : +opts.sweepS) : 0;
   const c1 = sweepS > 0 ? { e: c0.e + vel.e * sweepS, n: c0.n + vel.n * sweepS } : null;
@@ -177,7 +189,7 @@ export function aisKeepout(v, frame, opts = {}) {
   const size = Math.round(box.lengthM) + " x " + Math.round(box.beamM) + " m" + (box.assumed ? " assumed" : "");
   const name = (v.name != null && String(v.name).trim()) ? String(v.name).trim() : null;
   const kind = "AIS: " + (name || ("MMSI " + v.mmsi)) + " (" + size
-    + (moving ? ", " + sog.toFixed(1) + " kn" : "") + ")";
+    + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : "") + ")";
   return { ring, bb: bbOf(ring), kind, mmsi: v.mmsi, name, moving, sweepS: c1 ? sweepS : 0,
            at: c0, hull, box, hdg };
 }

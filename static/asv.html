@@ -637,9 +637,10 @@
     </div>
     <div class="gb-row">
       <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the minute.">ROUTE ROUND HER NOW</button>
-      <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you change the speed yourself. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
+      <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
       <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
-      <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console.">CANCEL OVERRIDE</button>
+      <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
+      <button class="ctl small" id="gb_release" style="display:none" title="Give the throttle back to the plan: the survey, turn and transit speeds the run was set up with. Ends the low speed you asked for (CONTINUE AT LOW SPEED, RESUME AT LOW, or a pause resume).">RELEASE LOW — BACK TO THE PLAN'S SPEED</button>
       <button class="ctl small" id="gb_drop" style="display:none" title="Leave the boat station-keeping and forget the unflown remainder. The survey would then have to be run again from waypoint one.">LEAVE IT HOLDING</button>
     </div>
   </div>
@@ -1782,6 +1783,10 @@ function updateClearance(extra){
 function renderGuardBar(a, c){
   const bar = $("#guardBar"); if(!bar) return;
   { const ga = $("#gb_around"); if(ga) ga.style.display = "none"; }   // shown by the held bar alone (2026-09-27)
+  // THE LOW LATCH HAS A HOME ON THE BAR (2026-09-28): whenever the run is held at low on the operator's word, the
+  // button that ends it is in view - in every rung state below, and on its own when the ladder reads clear.
+  const latched = !!(resumeSlow && S && S.run === "running" && !escapeThrottle);   // an escape holds the throttle, not the latch
+  { const gr = $("#gb_release"); if(gr) gr.style.display = "none"; }
   // ⚠ A STOPPED SURVEY IS THE GUARD STILL INTERVENING, and the bar used to go out on it.
   // Once the boat is station-keeping the ladder reads CLEAR by construction - the hold rung
   // is only ever reached when the drift-only track is clear, which is the state taking the
@@ -1815,7 +1820,21 @@ function renderGuardBar(a, c){
   // `clear`, which is precisely the state that must not put this bar out: an operator looking
   // at a blank bar cannot tell "nothing is wrong" from "the helm is standing down".
   if(grant) return renderGrantBar(bar, a, c);
-  if(!a || a.level === "clear"){ bar.style.display = "none"; return; }
+  if(!a || a.level === "clear"){
+    if(!latched){ bar.style.display = "none"; return; }
+    // LOW ON THE OPERATOR'S AUTHORITY, AND NOTHING ELSE TO SHOW (2026-09-28). Andy's console crawled at 1.5 kn
+    // for minutes with the bar down and no control anywhere to raise it: the latch's only release was a speed
+    // selector in another panel, and the banner said "until you change it" without saying where.
+    bar.className = "guardbar over"; bar.style.display = "block";
+    $("#gb_rung").textContent = "LOW — OPERATOR'S AUTHORITY";
+    $("#gb_why").textContent = "the run is held at the low speed (" + (V.SPEED_KN.low != null ? V.SPEED_KN.low + " kn" : "low")
+      + ") on your instruction, and the governor is standing down · RELEASE LOW gives the throttle back to the plan's speeds";
+    $("#gb_low").style.display = "none";  $("#gb_proceed").style.display = "none";
+    $("#gb_cancel").style.display = guardOverride ? "" : "none";   // a low override can still be standing (review)
+    $("#gb_drop").style.display = "none";
+    { const gr = $("#gb_release"); if(gr) gr.style.display = ""; }
+    return;
+  }
   // ⚠ BLIND IS ITS OWN BAR, AND IT SAYS WHAT IS NOT HAPPENING (2026-09-19). It is not a
   // rung: nothing is being commanded and nothing is being offered, because nothing has been
   // measured. What the operator needs is the one fact the console has - that it cannot see -
@@ -1858,6 +1877,7 @@ function renderGuardBar(a, c){
   $("#gb_proceed").style.display = (!over && offerable) ? "" : "none";
   $("#gb_cancel").style.display  = over ? "" : "none";
   $("#gb_drop").style.display    = "none";
+  { const gr = $("#gb_release"); if(gr) gr.style.display = latched ? "" : "none"; }   // the latch's release, in view (2026-09-28)
 }
 /**
  * THE BAR AFTER THE SURVEY HAS ALREADY BEEN STOPPED. Same box, because it is the same
@@ -2553,6 +2573,7 @@ let edgeSearchAt = 0;
 // the boat but keeps it at low speed, which is the answer an operator actually wants beside
 // a charted feature they can see - see continueAtLow.
 let guardOverride = null;
+let guardKeyLast = null;     // the hazard the ladder last acted on {id, name} - a press against the bar adopts it (2026-09-28)
 /**
  * THE SURVEY THE GUARD STOPPED, kept so it can be handed back.
  *
@@ -2659,10 +2680,15 @@ function aisKeepoutsNow(){
 }
 /** The nearest contact's name, for a banner about a contact the readout has not yet named. */
 function aisNearestKind(p, aisKo){
+  const q = aisNearestPoly(p, aisKo);
+  return q ? q.kind : null;
+}
+/** The nearest contact polygon to `p` (EN), or null - the override asks it whether she is under way. */
+function aisNearestPoly(p, aisKo){
   let best = null, bestM = Infinity;
-  for(const q of aisKo){
+  for(const q of (aisKo || [])){
     const m = clearanceM(p, {polys: [q], lines: [], points: []}, bestM);
-    if(m < bestM){ bestM = m; best = q.kind; }
+    if(m < bestM){ bestM = m; best = q; }
   }
   return best;
 }
@@ -2903,18 +2929,72 @@ function guardHeldOffer(){
  * a verified track - the thing the override exists to protect - so suppressing it would make
  * PROCEED strictly worse for the operator than not pressing it.
  */
-const OVERRIDE_GIVE_M = 5;          // how much closer than the granted clearance still counts
-function guardOverrideOk(level, clearM){
+const OVERRIDE_GIVE_M = 5;          // how much closer than the granted clearance still counts - for a hazard CLOSING on her
+const OVERRIDE_STALE_MS = 45000;    // a press that meets no hazard within the horizon's own length was about nothing
+/**
+ * DOES THE OPERATOR'S OVERRIDE STILL STAND? (rewritten 2026-09-28: THE TREADMILL.) Andy's 08:34 log: 58 presses
+ * in fifty minutes against one vessel sitting on his line - 21 PROCEEDs landed on a frame that read CLEAR and
+ * were spent on the next (the ladder chatters clear/slow around the horizon, so a press against the bar's last
+ * frame arrived a frame late), and the rest lapsed every 5 m of progress, because a hazard ON the track shrinks
+ * the clearance by exactly the distance run. An override is the operator's word about a SITUATION, and it now
+ * stands for the whole approach to that hazard. It ends four ways, none of them a frame's flicker:
+ *   * in extremis - the helm was never covered ("keep going" is not an answer to "the water is carrying you in");
+ *   * a DIFFERENT hazard ahead - they assessed one thing, not the next; said, with both named;
+ *   * the RELEASE - the water reads clear at the speed the plan would restore, and has for RELEASE_HOLD_MS: the
+ *     hazard is behind her (clearanceGuard's clear branch, which nulls it; a clear FRAME never reaches here);
+ *   * a hazard CLOSING on her (a contact under way) more than OVERRIDE_GIVE_M nearer than assessed - the water
+ *     they looked at has changed; said. A hazard that stays put is passed, not "closed on".
+ * `key` names this frame's hazard (guardHazardKey); a press made against the bar's last frame adopts the first
+ * one it sees - within OVERRIDE_STALE_MS of the press, or it was about nothing and is dropped, so a press made
+ * against clear water can never become a standing permission for whatever comes next.
+ */
+function guardOverrideOk(level, clearM, key, closing){
   if(!guardOverride) return false;
-  if(level === "clear" || level === "helm"){ guardOverride = null; return false; }
-  if(clearM != null && guardOverride.clearM != null
+  const now = Date.now();
+  if(level === "helm"){ guardOverride = null; return false; }
+  if(key && key.id){
+    if(!guardOverride.key){
+      if(now - guardOverride.t > OVERRIDE_STALE_MS){ guardOverride = null; return false; }   // met nothing in time
+      guardOverride.key = key.id; guardOverride.keyName = key.name;
+    }
+    else if(key.id !== guardOverride.key){
+      showBanner("⚠ OVERRIDE ENDED — a different hazard ahead: " + key.name + ". You assessed "
+        + (guardOverride.keyName || guardOverride.key) + "; the console has the throttle again.");
+      guardOverride = null; return false;
+    }
+  }
+  if(closing && clearM != null && guardOverride.clearM != null
      && clearM < guardOverride.clearM - OVERRIDE_GIVE_M){
-    showBanner("⚠ OVERRIDE LAPSED — " + clearM.toFixed(1) + " m is more than "
-      + OVERRIDE_GIVE_M + " m closer than the " + guardOverride.clearM.toFixed(1)
+    showBanner("⚠ OVERRIDE LAPSED — " + ((key && key.name) || "the contact") + " is closing on her: " + clearM.toFixed(1)
+      + " m is more than " + OVERRIDE_GIVE_M + " m closer than the " + guardOverride.clearM.toFixed(1)
       + " m you assessed. The console has the throttle again.");
     guardOverride = null; return false;
   }
   return true;
+}
+/**
+ * THE HAZARD THE LADDER IS ACTING ON: {id, name}. The override's key is the `id` - an IDENTITY, not a description
+ * (review, 2026-09-28: a key that embedded her reported speed ended the override as a "different hazard" the moment
+ * a report read 0.1 kn more). A contact is her MMSI (or name); a charted feature is its chart kind plus its first
+ * vertex, so two piers of the same kind are two hazards. Judged AT THE ENTRY POINT the assessment answered with,
+ * not at the boat (review: the feature abeam is not the one ahead); the boat's own position is the fallback where
+ * no entry point exists (inside the buffer). `name` is what the banners say.
+ */
+function guardHazardKey(p, ko, c, aisKo, a){
+  const buf = nogo.buffer || 0;
+  const at = (a && a.entry) ? a.entry : p;
+  const q = aisNearestPoly(at, aisKo);
+  if(q && clearanceM(at, {polys: [q], lines: [], points: []}, buf + 1) <= buf + 0.5)
+    return {id: "ais:" + (q.mmsi != null ? q.mmsi : (q.name || q.kind)), name: q.kind};
+  const bi = (ko && at) ? blockedInfo(at, ko, buf + 0.5) : null;
+  if(bi){
+    const v = bi.ring ? bi.ring[0] : (bi.pts ? bi.pts[0] : bi.pt);
+    return {id: "chart:" + bi.kind + (v ? "@" + Math.round(v.e / 5) + "," + Math.round(v.n / 5) : ""), name: bi.kind};
+  }
+  if(q) return {id: "ais:" + (q.mmsi != null ? q.mmsi : (q.name || q.kind)), name: q.kind};   // nearest contact, off the track
+  if(c && c.info && c.info.kind) return {id: "chart:" + c.info.kind, name: c.info.kind};
+  const near = (c && c.m != null && ko) ? blockedInfo(p, ko, c.m + 0.5) : null;
+  return near ? {id: "chart:" + near.kind, name: near.kind} : {id: "a keep-out", name: "a keep-out"};
 }
 function clearanceGuard(){
   // THE AIS CONTACTS THIS FRAME (2026-09-25) - the hull box each broadcasts, where she is now and where
@@ -3084,7 +3164,13 @@ function clearanceGuard(){
       // we are proposing to enter, so there is no arbitrary number to tune and it cannot
       // chatter by construction.
       let release = true;
-      if(clearance.slowed && vel){
+      // ⚠ ASKED WHOEVER HOLDS THE THROTTLE (2026-09-28: THE TREADMILL). This used to be gated on `clearance.slowed`,
+      // and every PROCEED / CONTINUE AT LOW hands the throttle back by clearing exactly that flag - so after a
+      // press the release fired on the first clear frame WITHOUT the counterfactual, restored the plan's speed,
+      // the hazard came back inside the horizon, and the ladder read SLOW again ten seconds later. Andy's 08:34
+      // log has that loop running for fifty minutes. The question is about the speed the release RESTORES, and
+      // it is the same question whoever slowed her.
+      if(vel){
         const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
         const velBack = restoreVel(vel, drift, back);
         // ⚠ THE COUNTERFACTUAL IS ASKED IN THE SAME SHAPE AS THE TRIGGER. On a route the
@@ -3108,6 +3194,8 @@ function clearanceGuard(){
         // is the console telling the operator the episode is over while it is running.
         flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — " + (escapeThrottle
           ? "the escape still has the throttle at high until you command her somewhere."
+          : resumeSlow
+          ? "still at LOW on your authority; RELEASE LOW on the bar gives the throttle back to the plan's speed."
           : "speed back to " + roleSpeed(speedRole()) + " (" + speedRole() + ")."));
         clearance.slowed = false; commandedSpeed = null;   // let the governor re-assert
         guardLevel = "clear";
@@ -3116,8 +3204,12 @@ function clearanceGuard(){
         // rung's record of having acted, or the next episode would find the latch already set.
         guardOverride = null; edgeSpentM = 0; edgeCount = 0; guardActedAt = 0; holdWant = null;
         edgeSearchAt = 0;                  // a new episode gets its search on its first frame
+        guardKeyLast = null;               // the hazard is behind her: a later press is about something else
         renderGuardBar(null, c);
       }
+      // NOT RELEASED: the water reads clear at the speed she is doing and not at the speed the release would
+      // restore. The situation stands, and so does the bar - re-drawn with the range, not left on a stale frame.
+      if(!release) renderGuardBar({level: guardLevel, why: "clear at the speed she is doing, not yet at the plan's speed — the situation stands"}, c);
       setViolations(release ? [] : (c.info ? [{mode:"leg", info:c.info,
                                                at:{lat:asv.lat, lon:asv.lon}}] : []));
       return c;
@@ -3144,7 +3236,16 @@ function clearanceGuard(){
   }
   setViolations(c.info ? [{mode:"leg", info:c.info, at:{lat:asv.lat, lon:asv.lon}}] : []);
   guardLevel = a.level;
-  const overridden = guardOverrideOk(a.level, c.m);
+  // THE HAZARD BY NAME AND WHETHER IT IS CLOSING (2026-09-28), for the override's four endings. Named only when
+  // it can matter - an override standing, or a rung that offers one - so a clear frame costs nothing.
+  const hazardKey = (guardOverride || a.level === "slow" || a.level === "hold") ? guardHazardKey(p, koAll, c, aisKo, a) : null;
+  if(hazardKey) guardKeyLast = hazardKey;                 // what the bar is showing: a press adopts it (R5)
+  // CLOSING = the nearest hazard is a contact UNDER WAY (review, 2026-09-28: gated on aisCaused, a contact closing
+  // on her never lapsed the override while a charted feature was also in the track). Her distance is the readout's.
+  const qNear = (guardOverride || a.level === "slow" || a.level === "hold") ? aisNearestPoly(p, aisKo) : null;
+  const closing = !!(qNear && qNear.moving && c.m != null
+                     && clearanceM(p, {polys: [qNear], lines: [], points: []}, c.m + 1) <= c.m + 0.5);
+  const overridden = guardOverrideOk(a.level, c.m, hazardKey, closing);
   // TWO OVERRIDES, ONE RECORD. A full PROCEED suppresses both rungs that impede the boat; a
   // CONTINUE AT LOW suppresses only the one that STOPS it, because "keep surveying, slowly"
   // is not "keep surveying at survey speed" and the console should not read it as such.
@@ -4080,7 +4181,7 @@ function renderIntent(){
   if(clearance.slowed)
     html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
   else if(resumeSlow)
-    html += row("for", "RESUMED AFTER A PAUSE — held slow until you change the speed", "#e8b46a");
+    html += row("for", "HELD AT LOW ON YOUR INSTRUCTION — RELEASE LOW on the guard bar, or change a speed selector", "#e8b46a");
   else
     html += row("for", spRole.toUpperCase() + " — " + act.detail,
                 spRole === "survey" ? "#7fd6a0" : (spRole === "turn" ? "#e8c07a" : "var(--ink)"));
@@ -12833,7 +12934,7 @@ async function resumeRun(){
     return;
   }
   pauseMark = null;
-  flashNote("Resumed at LOW — " + (note || "carrying on") + ". Speed stays low until you change it.");
+  flashNote("Resumed at LOW — " + (note || "carrying on") + ". Speed stays low until you press RELEASE LOW on the bar (or change a speed selector).");
   if(planIntent) planIntent.why.push({t:"warn", s:"RESUMED after a pause — " + (note || "carrying on")
     + "; held at LOW speed until the operator changes it"});
   fetch("/api/logevent", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -13271,7 +13372,8 @@ $("#gb_proceed").onclick = ()=>{
   // Same ordering rule as gb_low above. Inside the stand-down this button is HOLD THE GRANT.
   if(!guardHeldOffer() && helmStoodDown(Date.now()) && grantLast) return holdTheGrant();
   const c = clearance || {};
-  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null};
+  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null,
+                   key: guardKeyLast ? guardKeyLast.id : null, keyName: guardKeyLast ? guardKeyLast.name : null};
   // Hand back anything the guard had already taken, so "proceed" means what it says. The
   // governor re-asserts the role's speed on the next frame.
   if(clearance.slowed){ clearance.slowed = false; commandedSpeed = null; }
@@ -13292,7 +13394,10 @@ $("#gb_proceed").onclick = ()=>{
 };
 $("#gb_cancel").onclick = ()=>{
   guardOverride = null;
-  flashNote("Override canceled — the console has the situation again.");
+  // AND THE LATCH GOES WITH IT (2026-09-28): a canceled CONTINUE AT LOW left her at 1.5 kn with no bar and no
+  // reason showing - the override was gone, the speed it asked for was not.
+  const freed = releaseLow("the override was canceled");
+  flashNote("Override canceled — the console has the situation again" + (freed ? "; the low speed is released too." : "."));
   renderGuardBar({level: guardLevel, why: clearance.why}, clearance);
 };
 
@@ -13317,9 +13422,29 @@ $("#gb_cancel").onclick = ()=>{
  * would restore the survey speed the moment the water read clear - undoing the instruction
  * without the operator touching anything. This one ends only where they end it.
  */
+/** RELEASE LOW: the operator taking the throttle back from their own instruction (2026-09-28). The one door the
+ *  latch had - setRoleSpeed, a selector in another panel that only fires when its value CHANGES - is still a
+ *  door; this one is on the bar, beside the state it ends. Answers whether there was a latch to release. */
+function releaseLow(why){
+  if(!resumeSlow) return false;
+  resumeSlow = false; commandedSpeed = null;              // the governor decides on the next frame
+  // AND A LOW OVERRIDE GOES WITH IT (review, 2026-09-28): CONTINUE AT LOW suppressed the hold "at the low speed";
+  // released to the plan's speed with that override standing, the hold rung would stay suppressed at seven knots
+  // on a decision taken about one and a half. The console has the situation again; PROCEED is the other decision.
+  if(guardOverride && guardOverride.slow) guardOverride = null;
+  logGuardLow("release", (clearance || {}).m, (clearance || {}).kind, {why: why || "the bar"});
+  flashNote("Speed released — " + (escapeThrottle ? "but the escape still has the throttle at high until you command her somewhere."
+    : clearance.slowed ? "but the guard still has her slowed for the hazard ahead; the plan's speed comes back when the water clears."
+    : "the governor has the throttle again; back to the plan's speeds."));
+  renderGuardBar({level: guardLevel, why: (clearance || {}).why}, clearance);
+  updateMissionCard();
+  return true;
+}
+$("#gb_release").onclick = ()=>{ releaseLow("RELEASE LOW on the bar"); };
 function continueAtLow(){
   const c = clearance || {};
-  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null, slow: true};
+  guardOverride = {t: Date.now(), level: c.level || guardLevel, clearM: c.m ?? null, slow: true,
+                   key: guardKeyLast ? guardKeyLast.id : null, keyName: guardKeyLast ? guardKeyLast.name : null};
   clearance.slowed = false;                 // the throttle passes from the ladder to the operator
   resumeSlow = true; commandedSpeed = null;
   commandSpeed(slowestMakingWayKey(setMsNow()) || "low");   // the slowest that makes way; reconciled against speed_key every frame
@@ -13332,7 +13457,7 @@ function continueAtLow(){
   showBanner("CONTINUING AT LOW SPEED ON THE OPERATOR'S AUTHORITY — the survey carries on at "
     + "the low speed and the console will not stop it for this situation. It is still "
     + "watching, will still deviate where there is water, and still takes the helm in "
-    + "extremis. The speed stays low until you change it. Recorded in the session log.");
+    + "extremis. The speed stays low until you press RELEASE LOW on the bar (or change a speed selector). Recorded in the session log.");
   renderGuardBar({level: guardOverride.level, why: c.why}, c);
   updateMissionCard();
 }
@@ -13905,7 +14030,7 @@ function applyCmdState(s){
   $("#b_pause").title = held
     ? "RESUME. The boat backs " + RESUME_BACK_LENGTHS + " boat lengths down the line it was "
       + "running before the pause, so the new coverage overlaps the old, then carries on at "
-      + "LOW speed until you change it."
+      + "LOW speed until you press RELEASE LOW on the guard bar (or change a speed selector)."
     : "Hold the run where it is. The prop stops; the boat is set by wind and stream while it "
       + "waits, and this button becomes RESUME.";
   $("#b_stop").disabled = !(run==="running" || run==="paused");

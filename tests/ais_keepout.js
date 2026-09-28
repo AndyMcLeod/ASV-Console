@@ -107,6 +107,32 @@ console.log("An AIS contact as a keep-out:");
         () => q && q.kind === "AIS: TEST HULL (220 x 32 m)", () => q && q.kind);
 }
 
+// ── 10. NOT UNDER WAY, THOUGH SHE REPORTS A SPEED (2026-09-28) ────────────────────────
+// FRIGGA at New Castle: 0.4 to 0.8 kn, twenty minutes between reports, at anchor - and at 0.8 kn she was
+// modelled as under way, dead-reckoned a minute and swept 45 s ahead: 43 m of phantom hull up her course that
+// reached the way round her. A transponder under way reports every few seconds; one reporting minutes apart at
+// under AIS_MOVING_SURE_KN is a vessel at anchor or moored with GPS jitter on her speed.
+{
+  const old = modelOf(contact(0, 0, { sog: 0.8, cog: 0, heading: null, age: 1200 }), { sweepS: 45 });
+  const fresh = modelOf(contact(0, 0, { sog: 0.8, cog: 0, heading: null, age: 20 }), { sweepS: 45 });
+  check("10. 0.8 kn reported twenty minutes ago is NOT under way: no dead reckoning, no sweep - her hull where she reported it, nothing 20 m up her course",
+        () => old.q && !old.q.moving && old.q.sweepS === 0 && inKo(old.ko, 0, 9) && !inKo(old.ko, 0, 20) && !/kn\)/.test(old.q.kind)
+              && A.AIS_MOVING_AGE_S === 180 && A.AIS_MOVING_SURE_KN === 2,
+        () => old.q ? "moving " + old.q.moving + ", sweep " + old.q.sweepS + ", 9 m up " + inKo(old.ko, 0, 9) + ", 20 m up " + inKo(old.ko, 0, 20) + ", kind " + old.q.kind : "no keep-out");
+  check("10b. the same 0.8 kn reported 20 s ago IS under way, dead-reckoned and swept up her course (30 m up is inside her)",
+        () => fresh.q && fresh.q.moving && fresh.q.sweepS === 45 && inKo(fresh.ko, 0, 30) && /0\.8 kn\)/.test(fresh.q.kind),
+        () => fresh.q ? "moving " + fresh.q.moving + ", sweep " + fresh.q.sweepS + ", 30 m up " + inKo(fresh.ko, 0, 30) + ", kind " + fresh.q.kind : "no keep-out");
+  const anch = modelOf(contact(0, 0, { name: "FRIGGA", sog: 1.5, cog: 0, heading: null, age: 5, nav: 1 }), { sweepS: 45 });
+  const moor = modelOf(contact(0, 0, { name: "FRIGGA", sog: 1.5, cog: 0, heading: null, age: 5, nav: 5 }), { sweepS: 45 });
+  const fast = modelOf(contact(0, 0, { sog: 3.0, cog: 0, heading: null, age: 1200 }), { sweepS: 45 });
+  check("10c. her navigational status outranks her speed: 'at anchor' (1) or 'moored' (5) at 1.5 kn fresh is not under way and says so in her name; 3 kn reported twenty minutes ago IS under way (the reckoning capped at AIS_DR_MAX_S)",
+        () => anch.q && !anch.q.moving && /FRIGGA \(20 x 8 m assumed, at anchor\)/.test(anch.q.kind)
+              && moor.q && !moor.q.moving && /, moored\)/.test(moor.q.kind)
+              && fast.q && fast.q.moving && fast.q.sweepS === 45,
+        () => "anchored: " + (anch.q && anch.q.kind) + " moving " + (anch.q && anch.q.moving) + "; moored: " + (moor.q && moor.q.kind)
+            + "; 3 kn old: moving " + (fast.q && fast.q.moving));
+}
+
 // ── 3. WHICH WAY SHE POINTS ────────────────────────────────────────────────────────────
 {
   const byCog = modelOf(contact(0, 0, { heading: null, sog: 6, cog: 90 }));

@@ -619,6 +619,10 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
                      : null;
   const tEntry = onPlan ? (hit ? hit.t : null)
                         : timeToEntry(p, vel, ko, buf, horizon, opts.stepS);
+  // WHERE the track enters (2026-09-28): the point the ladder is acting on, so a caller can name the feature THERE
+  // rather than whatever happens to be nearest the boat - the operator's override is about the hazard ahead.
+  const entry = (hit && hit.at) ? { e: hit.at.e, n: hit.at.n }
+              : (tEntry != null && vel) ? { e: p.e + vel.e * tEntry, n: p.n + vel.n * tEntry } : null;
   const track = onPlan ? "on the route ahead" : "on the present track";
   if (tEntry == null) {
     return { level: "clear", tEntry: null, tEntryDrift: null, onPlan, edge: null,
@@ -663,7 +667,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
       // No way on: a deviation or a slow-down is not a different state from this one, and
       // `hold` is the honest name for what she is doing. The page's hold rung station-keeps
       // a boat that is merely drifting and leaves one that already holds where she is.
-      return { level: "hold", tEntry, tEntryDrift: tDrift, tEntryDriftNear: null, canStop,
+      return { level: "hold", entry, tEntry, tEntryDrift: tDrift, tEntryDriftNear: null, canStop,
                onPlan, edge: null,
                why: "no way on to take off — the drift alone reaches it in "
                     + tDrift.toFixed(0) + " s, more than the " + helmS + " s a decision "
@@ -677,7 +681,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
     const edge = (onPlan && opts.edge !== false)
       ? edgeAround(p, opts.hdgDeg, opts.twMs, drift, route, ko, buf, opts) : null;
     if (edge) {
-      return { level: "edge", tEntry, tEntryDrift: tDrift, onPlan, edge,
+      return { level: "edge", entry, tEntry, tEntryDrift: tDrift, onPlan, edge,
                why: "entry in " + tEntry.toFixed(0) + " s " + track + ", but "
                     + edgeText(edge) + " clears it with " + edge.water.toFixed(1)
                     + " m of water — deviating, not stopping" };
@@ -693,7 +697,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
       : "on drift alone it is " + tDrift.toFixed(0) + " s away"
         + (tDriftNear == null ? " and stays outside half the buffer" : "")
         + " — taking the way off buys more than the " + helmS + " s a decision needs";
-    return { level: tEntry <= holdS ? "hold" : "slow", tEntry, tEntryDrift: tDrift,
+    return { level: tEntry <= holdS ? "hold" : "slow", entry, tEntry, tEntryDrift: tDrift,
              onPlan, edge: null,
              why: "entry in " + tEntry.toFixed(0) + " s under way, but " + stops };
   }
@@ -706,7 +710,7 @@ export function assess(p, vel, drift, ko, buf, opts = {}) {
   // arguments. One is "stopping buys too little time"; the other is "there is nothing to
   // stop". Collapsing them would put the console back to asserting a cause it had not
   // established, one rung down from where it was doing it before.
-  return { level: "helm", tEntry, tEntryDrift: tDrift, tEntryDriftNear: tDriftNear,
+  return { level: "helm", entry, tEntry, tEntryDrift: tDrift, tEntryDriftNear: tDriftNear,
            helmBufM: helmBuf, canStop, onPlan, edge: null,
            // ⚠ `tDriftNear` IS FORMATTED THROUGH A NULL GUARD, and that is not defensive
            // clutter: when the stricter test was removed as a MUTATION this line threw, and

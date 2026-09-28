@@ -171,6 +171,35 @@ check("3e. ... for STATIONARY_TTL (an hour), and then she goes too",
       lambda: reg_ttl.snapshot() == [] and m.STATIONARY_TTL == 3600.0 and m.STATIONARY_KN == 0.5,
       lambda: "after an hour: %d vessel(s)" % len(reg_ttl.snapshot()))
 
+# ---- 3f-3g. NOT UNDER WAY, THOUGH SHE REPORTS A SPEED (2026-09-28) ---- #
+# FRIGGA at New Castle: 0.8 kn, twenty minutes between reports, at anchor - over STATIONARY_KN, so the ttl above
+# would have dropped her between reports exactly as it dropped KLEOS. Her reporting INTERVAL says what she is (a
+# transponder under way reports every few seconds), and so does her navigational status where she sends one.
+reg_gap = m.Registry(ttl=600)
+reg_gap.update(555000555, "aisstream", lat=43.0721, lon=-70.7079, sog=0.8, name="FRIGGA")
+reg_gap._v[555000555]["pos_ts"] -= 180.0             # her previous position came three minutes ago
+reg_gap.update(555000555, "aisstream", lat=43.0721, lon=-70.7079, sog=0.8, name="FRIGGA")
+reg_gap.update(666000666, "aisstream", lat=43.0730, lon=-70.7090, sog=0.8, name="CRAWLER")
+reg_gap._v[666000666]["pos_ts"] -= 10.0              # ten seconds between reports: under way, slowly - kept all the same
+reg_gap.update(666000666, "aisstream", lat=43.0730, lon=-70.7091, sog=0.8, name="CRAWLER")
+reg_gap.update(777000777, "aisstream", lat=43.0740, lon=-70.7100, sog=1.5, nav=5, name="MOORED")
+reg_gap.update(999000999, "aisstream", lat=43.0750, lon=-70.7110, sog=1.9, name="FIRST REPORT")   # one report, no interval known
+for _v in reg_gap._v.values():
+    _v["last_ts"] -= 900.0                           # fifteen minutes since any was heard
+_kept2 = sorted(v["name"] for v in reg_gap.snapshot())
+check("3f. fifteen minutes unheard under 2 kn: KEPT outright - FRIGGA (three minutes between reports), CRAWLER (ten seconds), MOORED (nav 5 at 1.5 kn) and a vessel heard ONCE at 1.9 kn (the review: a vessel whose interval exceeds the ttl is purged before her second report could ever record one) - the interval recorded for the record",
+      lambda: _kept2 == ["CRAWLER", "FIRST REPORT", "FRIGGA", "MOORED"] and m.STATIONARY_SURE_KN == 2.0
+              and abs((reg_gap._v[555000555].get("pos_gap") or 0) - 180.0) < 2.0,
+      lambda: "kept %s (pos_gap FRIGGA %.0f s)" % (_kept2, reg_gap._v[555000555].get("pos_gap") or -1))
+reg_gap2 = m.Registry(ttl=600)
+reg_gap2.update(888000888, "aisstream", lat=43.0721, lon=-70.7079, sog=3.0, name="SLOW STEAMER")
+reg_gap2._v[888000888]["pos_ts"] -= 180.0
+reg_gap2.update(888000888, "aisstream", lat=43.0725, lon=-70.7085, sog=3.0, name="SLOW STEAMER")
+reg_gap2._v[888000888]["last_ts"] -= 900.0
+check("3g. ... but 3 kn is a vessel under way whatever her reporting interval: dropped after the ttl",
+      lambda: reg_gap2.snapshot() == [],
+      lambda: "kept %d" % len(reg_gap2.snapshot()))
+
 now = time.time()
 reg.update(222000222, "nmea-udp-10110", lat=40.0, lon=-74.0, sog=5.0)
 reg.update(222000222, "aishub", pos_time=now - 120.0, lat=40.5, lon=-74.5,

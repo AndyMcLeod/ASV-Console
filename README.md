@@ -455,7 +455,13 @@ things his 27 September session taught** (KLEOS, moored across line 8 at New Cas
 vessel that transmits every twelve minutes was **dropped from the AIS proxy's list** by its
 ten-minute time-to-live between reports, so the guard's model went empty of her and the boat
 drove onto her position unwarned — a vessel with no way on is now kept for an hour
-(`STATIONARY_TTL` in `ais_service.py`), one under way still ages out at ten minutes; her next
+(`STATIONARY_TTL` in `ais_service.py`), one under way still ages out at ten minutes — and
+since 28 September **a contact reporting minutes apart at under 2 kn, or whose status says
+anchored, moored or aground, is not under way**: no dead reckoning, no sweep, and the registry
+keeps any vessel under 2 kn the hour outright (FRIGGA at New Castle: 0.8 kn, twenty minutes
+between reports, at anchor, and 43 m of phantom hull swept up her course reached the way round
+her; kept on her reporting *interval* she would still have been purged before her second report
+could record one); her next
 report put her back at 0.0 m, the helm rung escaped her and **the hold rung cancelled the escape
 0.44 s later**, because from inside the buffer every track "enters in 0 s" — the slow and hold
 rungs now stand down while an escape is in flight (`escaping` in `clearanceGuard`); and the
@@ -1395,15 +1401,38 @@ diagnosable (`tests/frame_health.js`).
    two rungs that actually impede the boat:
 
    - **CONTINUE AT LOW SPEED** — keep surveying, slowly. The console stops *stopping* the
-     boat for this situation and holds it at the low speed until you change the speed
-     yourself.
+     boat for this situation and holds it at the low speed until you press **RELEASE LOW**
+     on the bar (or change a speed selector).
    - **PROCEED — I have assessed it** — the same, at the speed the run's role calls for.
 
    Neither one switches the guard off. Both keep the alarm, the clearance readout, the
    deviations where there is water, and the helm in extremis; both are recorded in the
-   session log as an operator override; and both lapse on their own three ways — the episode
-   ends, it goes in extremis (*"keep going"* was never an answer to *"the water is carrying
-   you in"*), or the water gets materially worse than the water you looked at.
+   session log as an operator override; and both **stand for the whole approach to that
+   hazard** (2026-09-28) and end four ways: it goes in extremis (*"keep going"* was never an
+   answer to *"the water is carrying you in"*); a *different* hazard is ahead, said with both
+   named; the guard *releases* her — the water reads clear at the speed the plan would restore,
+   and has for four seconds, so the hazard is behind her; or a hazard that is *closing on her* — a
+   contact under way — is more than 5 m nearer than the range you assessed. A hazard that stays
+   put is passed, not closed on; and a press made against clear water that meets no hazard within
+   45 s was about nothing, and is dropped rather than kept for whatever comes next. **The treadmill this replaced**, from
+   Andy's 28 September log: 58 presses in fifty minutes against one vessel parked on his
+   line. The override used to be spent by a single clear frame, and the ladder chatters
+   between SLOW and CLEAR around the horizon (slowing pushes the entry beyond 45 s, so it
+   reads clear and restores the speed, and the entry comes back inside), so 21 of 35 PROCEEDs
+   landed on a clear frame and were thrown away the frame after; the rest lapsed on the 5 m
+   give every 6 m down the line, because a parked hazard on the track shrinks the clearance
+   by exactly the distance run. The chatter itself had a second cause: the release's
+   counterfactual (would the speed we restore put the hazard back inside the horizon?) was
+   gated on the *guard* having slowed her, and every press hands the throttle back by
+   clearing exactly that flag — so after a press the release fired without it. It is asked
+   now whoever holds the throttle. **And the low speed has a home on the bar**: whenever a run
+   is held at low on your word (CONTINUE AT LOW, RESUME AT LOW, a pause resume) the bar
+   carries **RELEASE LOW — BACK TO THE PLAN'S SPEED**, on its own as *LOW — OPERATOR'S
+   AUTHORITY* when the ladder reads clear; it ends a CONTINUE AT LOW override with the latch
+   (the hold rung is not left suppressed at the plan's speed on a decision taken about the
+   low one); CANCEL OVERRIDE releases it too; and the release note says "still at LOW on
+   your authority" instead of promising a speed the latch will not give. Before this the only release was a speed selector in another panel, which fires only
+   when its value actually changes.
 
    **If the guard has already stopped the survey, the bar hands it back.** A `hold` uploads
    a one-waypoint plan over the running plan, so the moment it lands the vessel's plan *is*
@@ -1425,7 +1454,7 @@ diagnosable (`tests/frame_health.js`).
    her at 0.08 kn until the Start. Everything after that is the pause resume: twelve boat
    lengths back down the line, the way back checked against the chart (and *"no chart"* is
    not *"clear"*), the backtrack — never the resume — given up when that water is foul, and
-   low speed until you change it.
+   low speed until you press RELEASE LOW on the bar.
 
    **The banner NAMES what refused each one** — blocked by a keep-out, more than 15° off
    a true reversal, line ends too close together, or a fold an obstacle forced on a
@@ -1805,8 +1834,9 @@ diagnosable (`tests/frame_health.js`).
    released, so the boat never makes way under the old plan. A way back that is not clear
    gives up the *backtrack*, not the resume, and says so.
 
-   **And the run continues at low speed until you change it** (any of the three role
-   selectors releases it, including selecting `low` yourself). The governor stands down
+   **And the run continues at low speed until you release it** — **RELEASE LOW** on the
+   guard bar, which stays up for as long as the latch holds (2026-09-28), or any of the three
+   role selectors, including selecting `low` yourself. The governor stands down
    meanwhile, so it cannot re-assert the role's speed in the act of carrying the instruction
    out; the Intent card and the clearance chip both say the hold is on. A pause off a
    coverage line — mid-turn, on the approach, between regions — gets the low speed but no

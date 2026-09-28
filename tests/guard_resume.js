@@ -374,7 +374,9 @@ eval([
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
   grab("patClipBufM"),                                                     // the standoff the resume's run-in is routed at (2026-09-26)
-  grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
+  grab("guardOverrideOk"), grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("aisNearestPoly"), grabDecl("guardKeyLast"),   // the override keyed on the hazard (2026-09-28)
+  "const { blockedInfo } = require('../static/js/keepouts.js');",
+  grab("guardTrack"), grab("clearanceGuard"),
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),
   grab("aisReturnTick"), grab("logClient"),

@@ -501,17 +501,23 @@ check("19. and the DRAWN route follows the amendment — the chart may not show 
 // Andy: "generate a button that allows continued forward progress override. As if a user
 // has confirmed its safe to proceed". What it does NOT cover is the whole design.
 const OVR = H.slice(H.indexOf("function guardOverrideOk"),
-                    H.indexOf("function guardOverrideOk") + 900);
+                    H.indexOf("function guardOverrideOk") + 2400);
 check("20. there IS a button, it is wired, and it is offered only where it means something",
       () => /id="gb_proceed"/.test(H) && /\$\("#gb_proceed"\)\.onclick/.test(H)
             && /const offerable = \(a\.level === "slow" \|\| a\.level === "hold"\)/.test(H),
       "offering it at a rung that is not stopping the boat teaches the operator to press " +
       "it out of habit before the one that matters");
 check("21. PROCEED NEVER COVERS THE HELM — it lapses the moment stopping stops being an " +
-      "answer",
-      () => /level === "clear" \|\| level === "helm"/.test(OVR)
-            && /guardOverride = null; return false;/.test(OVR),
-      "\"keep going\" was never an answer to \"the water is carrying you in\"");
+      "answer; and since 2026-09-28 a CLEAR frame does NOT spend it (the ladder chatters " +
+      "clear/slow around the horizon - 21 of Andy's 35 PROCEEDs were spent the frame after " +
+      "they were pressed): the RELEASE ends it, behind her, and a press that meets no hazard " +
+      "within OVERRIDE_STALE_MS was about nothing",
+      () => /if\(level === "helm"\)\{ guardOverride = null; return false; \}/.test(OVR)
+            && !/level === "clear" \|\| level === "helm"/.test(OVR)
+            && !/if\(level === "clear"\)/.test(OVR)
+            && /now - guardOverride\.t > OVERRIDE_STALE_MS/.test(OVR),
+      "\"keep going\" was never an answer to \"the water is carrying you in\" - and a press " +
+      "against the bar's last frame must not be thrown away by the next one");
 // ⚠ THE SLOW RUNG'S GATE IS NO LONGER A BARE `overridden`, AND THAT IS DELIBERATE (Andy,
 // 2026-09-09, "force the ASV survey to continue at slow speed"). There are two strengths of
 // the same record now: a full PROCEED suppresses both rungs that impede the boat, while a
@@ -539,11 +545,17 @@ check("23. it is ONE DECISION ABOUT ONE SITUATION — a new commanded motion cle
       },
       "setPlanIntent is written wherever runRoute is - every Go-To, RTH, transit and survey");
 check("24. and it lapses when the water gets materially worse than the water the operator " +
-      "looked at — bounded by WHAT CHANGED, not by a clock",
-      () => /clearM < guardOverride\.clearM - OVERRIDE_GIVE_M/.test(OVR)
-            && !/Date\.now\(\) - guardOverride\.t >/.test(OVR),
+      "looked at — bounded by WHAT CHANGED, not by a clock: the 5 m give applies to a hazard " +
+      "CLOSING on her (a contact under way), never to one that stays put, which is passed " +
+      "(Andy's 08:34 log: a press every 6 m down a line toward a parked vessel); a different " +
+      "hazard ahead ends it by name",
+      () => /closing && clearM != null && guardOverride\.clearM != null/.test(OVR)
+            && /clearM < guardOverride\.clearM - OVERRIDE_GIVE_M/.test(OVR)
+            && !/Date\.now\(\) - guardOverride\.t >/.test(OVR)
+            && /key\.id !== guardOverride\.key/.test(OVR) && /OVERRIDE ENDED/.test(OVR),
       "a five-minute cap re-holds a boat halfway down a channel it has already assessed, " +
-      "and a long enough one never fires");
+      "and a long enough one never fires; a give on a hazard that does not move is a stair " +
+      "of presses down the line");
 
 // ── 27. THE DEVIATION GOES WHERE THE TROUBLE IS ─────────────────────────────────────
 check("27. on a multi-leg route the amendment lands at the leg that FOULS, not at the leg " +

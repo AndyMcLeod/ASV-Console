@@ -166,6 +166,16 @@ DEFAULT_TTL = 600.0            # drop a vessel UNDER WAY not heard from in this 
 # at a minute.
 STATIONARY_KN = 0.5            # under this she is moored or anchored (the keep-out model's own AIS_MOVING_KN)
 STATIONARY_TTL = 3600.0        # and she is kept for an hour
+# NOT UNDER WAY, THOUGH SHE REPORTS A SPEED (2026-09-28): FRIGGA at 0.8 kn, twenty minutes between reports, at
+# anchor - over STATIONARY_KN, so the ten-minute ttl would have dropped her between reports exactly as it dropped
+# KLEOS. A vessel under STATIONARY_SURE_KN is kept the hour OUTRIGHT, and so is one whose navigational status says
+# anchored / moored / aground. (The first draft kept her on her reporting INTERVAL - and the review pointed out that
+# a vessel whose interval exceeds the ttl is purged before her second report can ever record one: FRIGGA's own
+# case. The interval is still recorded, `pos_gap`, for the record.) The keep-out model's own rule agrees from the
+# other side: a slow report older than three minutes is a vessel not under way, drawn where she reported herself.
+STATIONARY_SURE_KN = 2.0
+STATIONARY_GAP_S = 120.0       # recorded; not a condition any more
+STATIONARY_NAV = (1, 5, 6)     # at anchor, moored, aground
 UA = {"User-Agent": "ais-service/1.0 (+survey-asv console; open AIS aggregation)"}
 
 
@@ -309,6 +319,8 @@ class Registry:
                     fields = {k: val for k, val in fields.items()
                               if k not in self.POS_KEYS}
                 else:
+                    if v.get("pos_ts"):
+                        v["pos_gap"] = now - v["pos_ts"]   # how long since her last position: her reporting interval
                     v["pos_time"] = t
                     v["pos_ts"] = now      # freshness clock: when WE heard it
                     v["src"] = src         # position provenance follows the winner
@@ -318,12 +330,20 @@ class Registry:
             v["last_ts"] = now
 
     def _ttl_for(self, v):
-        """How long a vessel is kept without a report: STATIONARY_TTL with no way on, else the registry's ttl."""
+        """How long a vessel is kept without a report: STATIONARY_TTL with no way on - no speed to speak of, a
+        navigational status of anchored / moored / aground, or reports minutes apart at a low speed - else the
+        registry's ttl."""
         sog = v.get("sog")
         try:
-            stopped = sog is not None and float(sog) < STATIONARY_KN
+            sog = float(sog) if sog is not None else None
         except (TypeError, ValueError):
-            stopped = False
+            sog = None
+        stopped = sog is not None and sog < STATIONARY_SURE_KN     # under 2 kn: not under way (STATIONARY_KN within it)
+        try:
+            if v.get("nav") is not None and int(v.get("nav")) in STATIONARY_NAV:
+                stopped = True
+        except (TypeError, ValueError):
+            pass
         return STATIONARY_TTL if stopped else self.ttl
 
     def snapshot(self, bbox=None, limit=0):

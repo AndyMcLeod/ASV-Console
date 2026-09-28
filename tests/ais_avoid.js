@@ -344,7 +344,10 @@ eval([
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
   grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
-  grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),
+  grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisNearestPoly"), grab("aisAvoidOpen"),
+  grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("releaseLow"), grabDecl("guardKeyLast"),   // the override's four endings and the latch's release (2026-09-28)
+  "function __overrideStale(){ return OVERRIDE_STALE_MS; }",
+  "function __keyLast(){ return guardKeyLast; }",
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays, and the operator's point beyond her (2026-09-27)
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
@@ -1073,6 +1076,154 @@ const nearRe = /WORKBOAT/;
             + " wpts" + (rte17h[0] ? " from " + distTo(rte17h[0], LINE_E.b).toFixed(1) + " m of L.b" : "") + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(0, 160)))
             + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
   runLineIdx = 0;
+}
+
+// ── 18. THE TREADMILL (Andy, 2026-09-28: "I have to acknowledge warning pop-ups many times why is that?" and
+//        "There is no obvious way to increase speed again"). His 08:34 log: 58 presses in fifty minutes against
+//        FRIGGA on his line - 21 PROCEEDs on a CLEAR frame spent on the next, the rest lapsing every 5 m of
+//        progress, and the low speed with no control anywhere to end it. ─────────────────────────────────────
+{
+  // a contact parked on the line 120 m ahead: at 7 kn the entry is ~28 s (SLOW); at this world's 4 kn LOW, ~50 s (clear)
+  const FAR = (o = {}) => contact(120, 0, { sog: 0, cog: null, heading: 90, ...o });
+  const speed = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn, speed_key: kn < 5 ? "low" : "survey" } }; };
+  // the PROCEED handler's record, as the page builds it (2026-09-28: it adopts the hazard the bar was showing, guardKeyLast)
+  const press = () => { const k = __keyLast(); guardOverride = { t: Date.now(), level: clearance.level, clearM: clearance.m, key: k ? k.id : null, keyName: k ? k.name : null }; clearance.slowed = false; commandedSpeed = null; };
+  const farKind = "AIS: WORKBOAT (30 x 8 m)", farId = "ais:338111222";   // the key is her IDENTITY; the kind is what the banner says
+  // 18. a clear frame does not spend it
+  surveying(7, [FAR()]); frame();
+  const l18a = clearance.level, slowed18 = clearance.slowed;
+  press(); banners = []; sent = [];
+  speed(4); clock += 2000; aisPolledAt = clock; frame();
+  const l18b = clearance.level, standsAfterClear = !!guardOverride;
+  speed(7); clock += 2000; aisPolledAt = clock; frame();
+  const l18c = clearance.level, standsAfterSlow = !!guardOverride, key18 = guardOverride && guardOverride.key;
+  check("18. PROCEED against a contact on the line: the ladder chatters SLOW (7 kn) / CLEAR (slowed to 4 kn) / SLOW - and the override STANDS through the clear frame, adopting the hazard's name, so the slow rung does not slow her again and the operator is not asked again",
+        () => l18a === "slow" && slowed18 && l18b === "clear" && standsAfterClear && l18c === "slow" && standsAfterSlow
+              && key18 === farId && guardOverride.keyName === farKind && clearance.slowed === false && !sent.some(x => x.p === "/api/cmd/speed" && x.speed === "low"),
+        () => "levels " + [l18a, l18b, l18c].join("/") + ", stands after clear " + standsAfterClear + ", after slow " + standsAfterSlow
+            + ", key " + JSON.stringify(key18) + ", slowed again " + clearance.slowed + ", sent " + JSON.stringify(paths()));
+  // 18b. a hazard that stays put is PASSED, not closed on: 60 m nearer, no lapse, no hold (the override covers the hold rung too)
+  asv = ll(60, 0); clock += 2000; aisPolledAt = clock; banners = []; sent = []; frame();
+  check("18b. sixty meters nearer the same parked contact - a hazard that stays put is passed, not 'closed on': no OVERRIDE LAPSED, the override stands, the hold rung stays quiet",
+        () => !!guardOverride && !banners.some(b => /LAPSED/.test(b)) && !paths().includes("/api/cmd/hold") && (clearance.level === "hold" || clearance.level === "slow"),
+        () => "level " + clearance.level + ", override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners) + ", sent " + JSON.stringify(paths()));
+  // 18c. a DIFFERENT hazard ends it, said with both named
+  aisVessels = [contact(120, 0, { name: "TUG", mmsi: 111222333, sog: 0, cog: null, heading: 90 })]; asv = ll(0, 0);
+  clock += 2000; aisPolledAt = clock; banners = []; frame();
+  check("18c. a DIFFERENT hazard ahead ends it, said with both named: 'OVERRIDE ENDED - a different hazard ahead: AIS: TUG ... You assessed AIS: WORKBOAT'",
+        () => guardOverride === null && banners.some(b => /OVERRIDE ENDED/.test(b) && /AIS: TUG/.test(b) && /You assessed AIS: WORKBOAT/.test(b)),
+        () => "override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+  // 18d. behind her: the RELEASE ends it (the counterfactual at the plan's speed clear, then the dwell) - quietly
+  surveying(7, [FAR()]); frame(); press(); banners = []; notes = [];
+  aisVessels = []; clock += 2000; aisPolledAt = clock; frame();
+  const standsFirstClear = !!guardOverride;
+  clock += 5000; aisPolledAt = clock; frame();
+  check("18d. the contact gone: the override stands on the first clear frame (the dwell is not up), and the RELEASE ends it - 'Clear ahead again' - with no OVERRIDE banner: behind her",
+        () => standsFirstClear && guardOverride === null && guardLevel === "clear" && notes.some(n => /Clear ahead again/.test(n)) && !banners.some(b => /OVERRIDE/.test(b)),
+        () => "first clear frame " + standsFirstClear + ", after the dwell " + JSON.stringify(guardOverride) + ", guardLevel " + guardLevel + ", notes " + JSON.stringify(notes.slice(-2)) + ", banners " + JSON.stringify(banners));
+  // 18d2. a press against clear water that meets no hazard within OVERRIDE_STALE_MS is dropped - never a standing permission
+  surveying(7, []); frame(); press(); banners = [];
+  clock += 30000; aisPolledAt = clock; frame();
+  const stands30 = !!guardOverride;
+  aisVessels = [FAR()]; clock += 20000; aisPolledAt = clock; frame();
+  const staleGone = guardOverride === null, slowedAgain = clearance.slowed === true;
+  surveying(7, []); frame(); press();
+  aisVessels = [FAR()]; clock += 10000; aisPolledAt = clock; frame();
+  check("18d2. pressed against clear water: it waits for a hazard 30 s on; a hazard first seen 50 s after the press finds it STALE and dropped (OVERRIDE_STALE_MS 45 s) - the rung slows her as if nothing was pressed; one seen 10 s after the press is adopted",
+        () => stands30 && staleGone && slowedAgain && __overrideStale() === 45000 && !!guardOverride && guardOverride.key === farId && clearance.slowed === false,
+        () => "30 s " + stands30 + ", stale gone " + staleGone + ", slowed again " + slowedAgain + ", adopted " + JSON.stringify(guardOverride) + ", slowed " + clearance.slowed);
+  // 18e. a contact CLOSING on her keeps the 5 m give, said with her name. A workboat crossing the line 120 m ahead,
+  //      northbound at 6 kn: her sweep reaches the line at e = 116..124, ~31 s ahead at 7 kn - SLOW, not yet a hold
+  surveying(7, [contact(120, -60, { sog: 6, cog: 0, heading: 0 })]); frame();
+  const l18e = clearance.level;
+  press(); banners = []; sent = [];
+  aisVessels = [contact(112, -60, { sog: 6, cog: 0, heading: 0 })]; clock += 2000; aisPolledAt = clock;
+  const r18e = frame();   // 8 m nearer along the line
+  check("18e. a workboat UNDER WAY closing on her: more than 5 m nearer than assessed lapses the override - 'OVERRIDE LAPSED - AIS: WORKBOAT ... is closing on her' - the one case the give is for",
+        () => (l18e === "hold" || l18e === "slow") && guardOverride === null && banners.some(b => /OVERRIDE LAPSED/.test(b) && /is closing on her/.test(b) && nearRe.test(b)),
+        () => "level " + l18e + " then " + clearance.level + " at " + (clearance.m != null ? clearance.m.toFixed(1) : "?") + " m, frame " + JSON.stringify(r18e.raised || "ok")
+            + ", override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners) + ", sent " + JSON.stringify(paths()));
+  // 18f. CONTINUE AT LOW: the counterfactual is asked whoever holds the throttle, the bar stays up with RELEASE LOW on it,
+  //      and the release note does not promise a speed the latch will not give
+  surveying(7, [FAR()]); frame(); banners = []; notes = []; sent = [];
+  continueAtLow();
+  const latched = resumeSlow === true && !!guardOverride && guardOverride.slow === true;
+  speed(4); clock += 2000; aisPolledAt = clock; frame();
+  clock += 5000; aisPolledAt = clock; frame();                       // past RELEASE_HOLD_MS: the dwell alone would release
+  const bar18f = EL["#guardBar"].style.display, rel18f = EL["#gb_release"].style.display, rung18f = EL["#gb_rung"].textContent, why18f = EL["#gb_why"].textContent;
+  const liedBack = notes.some(n => /speed back to (survey|high)/.test(n));
+  check("18f. CONTINUE AT LOW: slowed to 4 kn the water reads clear, but the release asks the counterfactual at the PLAN's speed (7 kn: SLOW) whoever took the throttle - so nothing is released, the override stands, the bar stays up (re-drawn: 'not yet at the plan's speed') with RELEASE LOW on it, and no note says 'speed back to survey'",
+        () => latched && !!guardOverride && guardLevel !== "clear" && bar18f === "block" && rel18f === "" && !liedBack && /not yet at the plan's speed/.test(why18f)
+              && !notes.some(n => /Speed released/.test(n)) && resumeSlow === true,
+        () => "latched " + latched + ", override " + JSON.stringify(guardOverride) + ", guardLevel " + guardLevel + ", bar " + bar18f + ", release btn '" + rel18f
+            + "', rung '" + rung18f + "', notes " + JSON.stringify(notes.slice(-3)));
+  // 18g. the contact gone: released at the plan's speed - but the note says she is STILL at low on the operator's
+  //      authority, the bar shows the latch on its own with RELEASE LOW, and RELEASE LOW hands the throttle back
+  aisVessels = []; notes = []; clock += 2000; aisPolledAt = clock; frame(); clock += 5000; aisPolledAt = clock; frame();
+  const releasedNote = notes.find(n => /Clear ahead again/.test(n)) || "";
+  const bar18g = EL["#guardBar"].style.display, rung18g = EL["#gb_rung"].textContent, why18g = EL["#gb_why"].textContent, rel18g = EL["#gb_release"].style.display;
+  const stillLatched = resumeSlow === true && guardOverride === null;
+  sent = []; logged = [];
+  const freed = releaseLow("the test");
+  const bar18g2 = EL["#guardBar"].style.display;
+  check("18g. the contact gone and the plan's speed clear: released - the note reads 'still at LOW on your authority; RELEASE LOW ...', the bar stands on its own as LOW - OPERATOR'S AUTHORITY with RELEASE LOW; pressing it frees the latch, says so, logs it, and the bar goes down",
+        () => /still at LOW on your authority/.test(releasedNote) && !/speed back to/.test(releasedNote) && stillLatched
+              && bar18g === "block" && /LOW .* OPERATOR'S AUTHORITY/.test(rung18g) && /RELEASE LOW/.test(why18g) && rel18g === ""
+              && freed === true && resumeSlow === false && notes.some(n => /Speed released/.test(n)) && bar18g2 === "none"
+              && logged.some(e => e.kind === "guard_low" && e.data.how === "release"),
+        () => "note '" + releasedNote.slice(0, 120) + "', latched " + stillLatched + ", bar " + bar18g + " '" + rung18g + "' / '" + why18g.slice(0, 80) + "', release btn '" + rel18g
+            + "', freed " + freed + ", after " + bar18g2 + ", logged " + JSON.stringify(logged.filter(e => e.kind === "guard_low")));
+  // 18h. CANCEL OVERRIDE releases the latch too (the handler is page-level: pinned in the source), and RELEASE LOW is wired
+  const cancelSrc = H.slice(H.indexOf('$("#gb_cancel").onclick'), H.indexOf('$("#gb_cancel").onclick') + 500);
+  check("18h. CANCEL OVERRIDE releases the low speed with the override (a canceled CONTINUE AT LOW used to leave her at 1.5 kn with no bar), and RELEASE LOW is a real button on the bar, wired",
+        () => /releaseLow\("the override was canceled"\)/.test(cancelSrc) && /id="gb_release"/.test(H) && /\$\("#gb_release"\)\.onclick/.test(H),
+        () => cancelSrc.slice(0, 160));
+
+  // 18j. RELEASE LOW ends a CONTINUE AT LOW override too (review): released to the plan's speed, the hold rung is
+  //      not left suppressed on a decision taken about the low speed
+  surveying(7, [FAR()]); frame(); continueAtLow();
+  const over18j = !!guardOverride && guardOverride.slow === true;
+  releaseLow("the test");
+  check("18j. RELEASE LOW ends the CONTINUE AT LOW override with the latch - the console has the situation again; PROCEED is the other decision",
+        () => over18j && guardOverride === null && resumeSlow === false,
+        () => "override before " + over18j + ", after " + JSON.stringify(guardOverride) + ", resumeSlow " + resumeSlow);
+  // 18k. a contact under way closing on her lapses the override even with a charted feature ALSO in the track
+  //      (review: `closing` used to need the charted model to read clear)
+  const blk = [{ e: 150, n: -10 }, { e: 160, n: -10 }, { e: 160, n: 10 }, { e: 150, n: 10 }];
+  const BLOCK = { polys: [{ ring: blk, bb: bbOf(blk), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  surveying(7, [contact(120, -60, { sog: 6, cog: 0, heading: 0 })], { ko: BLOCK }); frame();
+  const l18k = clearance.level;
+  press(); banners = [];
+  aisVessels = [contact(112, -60, { sog: 6, cog: 0, heading: 0 })]; clock += 2000; aisPolledAt = clock; frame();
+  check("18k. a pier 150 m ahead on the track AND a workboat under way whose sweep crosses the line nearer: the contact closing 8 m lapses the override (she is the nearest hazard), charted feature or no charted feature",
+        () => (l18k === "slow" || l18k === "hold") && guardOverride === null && banners.some(b => /OVERRIDE LAPSED/.test(b) && /is closing on her/.test(b)),
+        () => "level " + l18k + " then " + clearance.level + " at " + (clearance.m != null ? clearance.m.toFixed(1) : "?") + " m, override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+  // 18l. the key is her IDENTITY, not her description (review): a report reading 0.1 kn more is the same vessel
+  surveying(7, [contact(120, -60, { sog: 6, cog: 0, heading: 0 })]); frame(); press(); banners = [];
+  aisVessels = [contact(120, -60, { sog: 6.1, cog: 0, heading: 0 })]; clock += 2000; aisPolledAt = clock; frame();
+  check("18l. the same workboat reporting 6.1 kn instead of 6.0: the SAME hazard - the override stands, no 'different hazard' banner (the key is her MMSI, her kind only names her)",
+        () => !!guardOverride && guardOverride.key === farId && /6\.1 kn/.test(clearance.kind || aisNearestKind(nogo.frame.toEN(asv), aisKoDrawn) || "") && !banners.some(b => /OVERRIDE ENDED/.test(b)),
+        () => "override " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+  // 18m. the key names the hazard AHEAD, not the feature abeam (review): a pier beside the line while the contact
+  //      is the hazard on the track - the override adopts the contact; pressing on the not-released clear frame
+  //      adopts the hazard the bar was showing (guardKeyLast), so it is never 'stale'
+  const pierRing = [{ e: -50, n: 12 }, { e: 400, n: 12 }, { e: 400, n: 60 }, { e: -50, n: 60 }];
+  const PIER_ABEAM = { polys: [{ ring: pierRing, bb: bbOf(pierRing), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  surveying(7, [FAR()], { ko: PIER_ABEAM }); frame();
+  const l18m = clearance.level, m18m = clearance.m;
+  press();
+  speed(4); clock += 2000; aisPolledAt = clock; frame();                  // clear at 4 kn, not at 7: not released, the bar up
+  const keyOnClear = guardOverride && guardOverride.key;
+  surveying(7, [FAR()], { ko: PIER_ABEAM }); frame(); speed(4); clock += 2000; aisPolledAt = clock; frame();   // a not-released clear frame
+  press();                                                                 // pressed ON that frame: adopts what the bar shows
+  const keyAtPress = guardOverride && guardOverride.key;
+  clock += 50000; aisPolledAt = clock; speed(7); frame();                  // 50 s later, SLOW again: not stale, the same hazard
+  check("18m. a pier 12 m abeam while the contact ahead is the hazard: the override is keyed on the CONTACT (the feature at the entry point), and a press on a not-released clear frame adopts the hazard the bar showed - 50 s later it is neither stale nor 'different'",
+        () => l18m === "slow" && m18m < 20 && keyOnClear === farId && keyAtPress === farId && !!guardOverride && guardOverride.key === farId && !banners.some(b => /OVERRIDE ENDED/.test(b)),
+        () => "level " + l18m + " at " + (m18m != null ? m18m.toFixed(1) : "?") + " m (the pier is nearest the boat), key after a clear frame " + JSON.stringify(keyOnClear)
+            + ", key at a press on the not-released frame " + JSON.stringify(keyAtPress) + ", 50 s on " + JSON.stringify(guardOverride) + ", banners " + JSON.stringify(banners));
+  const noRelease2 = releaseLow("nothing latched");
+  check("18i. ... and with nothing latched RELEASE LOW does nothing and says so by answering false", () => noRelease2 === false, () => String(noRelease2));
 }
 
 Date.now = realNow;
