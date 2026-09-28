@@ -1809,7 +1809,11 @@ diagnosable (`tests/frame_health.js`).
    throttle. A pause on that hold no longer spends the banked survey. A point on the **near side**
    of the contact she is holding for is refused in words — the line from there runs into her
    and she would only be stopped again — with the time left before the console routes round
-   her itself; see the AIS layer above for what it does then.
+   her itself; see the AIS layer above for what it does then. **A frame that starts a motion cannot
+   also end it** (2026-09-27): the state the console pushes on the Start of a staged plan describes
+   the plan just applied (index zero, not holding), and the end-of-plan chain never fires on the
+   frame that moved the run counter — on Andy's console the held resume's Start was answered
+   seven milliseconds later by a chained Return-to-Home read off the old hold's 1/1.
 
    **Every speed the console commands is checked against the speed the vessel reports**
    (`commandSpeed` / `speedReconcile`): re-sent after a second of disagreement, with a banner

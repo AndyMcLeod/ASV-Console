@@ -268,6 +268,16 @@ check("16. ... and a stopped boat does not re-arm anything either",
         /chainableRun\(s\.behavior\)/.test(fireBlock)
           ? "chainableRun() - the same question rthPending() asks"
           : "MISSING — a guard hold or escape would still chain doRTH() here");
+  // 16d. A FRAME THAT STARTS A MOTION CANNOT ALSO END IT (2026-09-27). The Start of a staged plan is
+  // pushed with the new run's name; before the server fix it carried the OLD plan's telemetry too - a
+  // hold's 1/1, holding - and the chain read a survey at its last waypoint: Andy's held resume was
+  // answered 7 ms later by a Return-to-Home. The fire site asks `seqMoved`, read where run_seq moves.
+  const waits = /&& !rthChained && !seqMoved\)\{/.test(fireBlock)
+             && /const seqMoved = s\.run_seq!=null && s\.run_seq!==runSeq;/.test(onStateSrc);
+  check("16d. ... and never fires on the frame that moved run_seq - the frame that started the run is not evidence it ended",
+        waits,
+        waits ? "`&& !seqMoved` on the fire condition, `seqMoved` read where run_seq moves"
+              : "MISSING — the Start of a staged plan can chain a Return-to-Home off the previous plan's telemetry");
   // 16c. And the whitelist is a whitelist: naming the behaviours that MAY chain is what
   // makes a new safety behaviour excluded by default. A blacklist was one short twice.
   check("16c. the chainable set names plans that ended, and admits no guard command",

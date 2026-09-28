@@ -3496,6 +3496,11 @@ class SimVcu(VcuLink):
         return self._staged is not None
 
     @property
+    def plan_total(self):
+        """How many waypoints the LOADED plan holds - what the next tick's telemetry reports as wp_total."""
+        return len(self._plan)
+
+    @property
     def loaded_name(self):
         return self._plan_name
 
@@ -4587,6 +4592,20 @@ class Engine:
             self.run_completion = link.loaded_completion
             if not resuming:
                 self.run_seq += 1          # a staged plan is a new motion; a resume is the old one carrying on
+                # ⚠⚠ THE FRAME PUSHED BELOW MUST DESCRIBE THE PLAN JUST APPLIED (2026-09-27). `self.status` is
+                # the last TICK's telemetry, and with a staged plan applied it still read the old hold's
+                # `wp 1/1, holding` beside the new run's chainable name - one tick before the vessel had
+                # flown a meter of the new plan. On Andy's console at New Castle the held resume's Start
+                # was answered 7 ms later by the page's "End of plan - chaining Return-to-Home", and she
+                # went home instead of back to line 4. The tick overwrites these fields on its next pass;
+                # until then the frame says what the command did: index zero of the new plan, not holding.
+                total = getattr(link, "plan_total", None)
+                if total is not None:
+                    st = dict(self.status or {})
+                    st.update({"wp_index": 0, "wp_total": int(total), "holding": False,
+                               "hold_wants_route": False, "running": True, "paused": False})
+                    self.status = st
+                    self.wp_index, self.wp_total = 0, int(total)
             if resuming:
                 self.note = "Resumed."
             else:

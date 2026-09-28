@@ -13741,6 +13741,11 @@ function onState(s){
     if(s.behavior!=="rth"){ rthChained=false; rthChainFailed=false; } }  // fresh run re-arms the RTH chain (but not the chained RTH itself)
   // A command given while the boat is already running never makes that transition, so the MOTION is taken from the
   // console's own counter (review #23). A page that opened mid-run adopts the number it finds without resetting.
+  // A FRAME THAT STARTS A MOTION CANNOT ALSO END IT (2026-09-27): read here, asked by the end-of-plan
+  // chain below. The server pushes state on the Start of a staged plan with the new run's name and,
+  // before this commit, the OLD plan's telemetry - a hold's 1/1 and holding - which the chain read as a
+  // finished survey: Andy's held resume at New Castle was answered 7 ms later by a Return-to-Home.
+  const seqMoved = s.run_seq!=null && s.run_seq!==runSeq;
   if(s.run_seq!=null && s.run_seq!==runSeq){
     if(!freshRun && runSeq!=null) startNewMotion();
     runSeq = s.run_seq;
@@ -13772,8 +13777,9 @@ function onState(s){
   // within a second by an RTH to a HOME with 1.47 m of clear water. Taking the helm - or the
   // throttle - is meant to buy the operator's attention, not hand control straight back to
   // the standing plan that was driving at the pier.
+  // ⚠ AND NEVER ON THE FRAME THAT STARTED THE RUN (`seqMoved`, 2026-09-27) - see the note where it is read.
   if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior)
-     && s.armed && !s.estop && !rthChained){
+     && s.armed && !s.estop && !rthChained && !seqMoved){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");
     doRTH({chained:true});

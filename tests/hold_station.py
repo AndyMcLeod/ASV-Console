@@ -256,6 +256,26 @@ check("7e. ... and an IDLE vessel takes an upload at once, exactly as before",
       not v.plan_staged and t["wp_total"] == 2 and not t["running"],
       "staged=%s wp_total=%s running=%s" % (v.plan_staged, t["wp_total"], t["running"]))
 
+# 7j. THE ENGINE'S FRAME AFTER START DESCRIBES THE PLAN JUST APPLIED (2026-09-27). The engine's `status`
+#    is the last tick's telemetry; on the Start of a staged plan it still read the old hold's 1/1 and
+#    holding beside the new run's chainable name, one tick before the vessel had flown a meter of the new
+#    plan - and the page's end-of-plan chain read a survey at its last waypoint. Andy's console at New
+#    Castle: the held resume's Start, then "End of plan - chaining Return-to-Home" 7 ms later. Driven
+#    in-process so no tick can run between the Start and the read: without the fix this is red every time.
+E7 = _C.Engine()
+v, tel = _holding_boat(None)
+E7._link, E7.armed, E7.plan_uploaded, E7.run, E7.status = v, True, True, "running", dict(tel)
+E7.wp_index, E7.wp_total = tel["wp_index"], tel["wp_total"]
+v.upload_plan(FAR, 2.0, "high", 1.0, completion="rth", name="survey")     # STAGED: she is holding
+E7.start()
+s7f = E7.state()
+check("7j. the state the engine pushes on the Start of a STAGED plan already reads the new plan - 0 of 2, not "
+      "holding, named - one tick before the vessel has flown it; the page must never see a finished survey there",
+      s7f["wp_index"] == 0 and s7f["wp_total"] == 2 and s7f["status"]["holding"] is False
+      and s7f["behavior"] == "survey" and s7f["run_seq"] >= 1,
+      "wp %s/%s holding=%s behavior=%s run_seq=%s (the old hold read 1/1, holding)"
+      % (s7f["wp_index"], s7f["wp_total"], s7f["status"]["holding"], s7f["behavior"], s7f["run_seq"]))
+
 # 7f-7i. NOTHING THAT STOPS A BOAT LEAVES IT STATION-KEEPING, AND NOTHING STARTS ONE WITH NOTHING TO
 #    STEER FOR (review #8, 2026-09-14). `_holding` survived Stop, E-STOP and a disarm, so the telemetry
 #    went on saying "holding" and the console took a re-approach that restarted a stopped boat. And
