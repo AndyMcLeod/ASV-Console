@@ -119,8 +119,18 @@ LAKE_VESSELS = [dict(at_km(*ERIE, east_km=r), mmsi=200 + i, name="LAKE%d" % r, c
                 for i, r in enumerate([10, 60, 120])]
 
 
+# The provider DOWN for a check (2026-09-27): answers 503 while set, so the console's proxy takes its
+# exception path - which is where the test contacts must still be served from.
+DOWN = [False]
+
+
 class Stub(BaseHTTPRequestHandler):
     def do_GET(self):
+        if DOWN[0]:
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         # Filter by BBOX, exactly as a real provider does. That is a different filter from
         # the console's, which is a RANGE CIRCLE - so this cannot mask the behaviour under
         # test. (An earlier version routed on substrings in the path and mis-served the lake
@@ -277,6 +287,35 @@ try:
     check("8. the response reports collected and shown, so the card can say which",
           d3["area"]["collected"] == len(SEA_VESSELS) + 1 and d3["area"]["shown"] == 3,
           "shown=%s collected=%s" % (d3["area"]["shown"], d3["area"]["collected"]))
+
+    # 10. TEST CONTACTS (2026-09-27): the rehearsal's moored hull, placed from the chart menu, served by
+    # /api/ais beside the real traffic - age 0 (never stale), ranged, marked test - and served even while the
+    # provider is DOWN, because a rehearsal must not need the live feed and an {ok:false} would read to the
+    # page as a dead poll, emptying the guard's model of her.
+    t = api(port, "/api/ais/test", {"lat": LEWES[0], "lon": LEWES[1] + 0.001, "heading": 45})
+    d4 = api(port, sea)
+    tv = [v for v in d4["vessels"] if v.get("src") == "test"]
+    check("10. a test contact placed by POST /api/ais/test is served by /api/ais beside the real traffic - age 0, ranged, marked test, counted",
+          t.get("ok") and len(tv) == 1 and tv[0]["age"] == 0 and 0 < (tv[0]["range_m"] or 0) < 200 and tv[0]["heading"] == 45
+          and tv[0]["sog"] == 0 and tv[0]["cat"] == "test" and d4["area"]["shown"] == 4 and d4["count"] == 4,
+          json.dumps({"placed": t.get("ok"), "test": tv[:1], "shown": d4["area"]["shown"], "count": d4["count"]}))
+    DOWN[0] = True
+    try:
+        d4b = api(port, sea)
+    finally:
+        DOWN[0] = False
+    tvb = [v for v in d4b.get("vessels") or [] if v.get("src") == "test"]
+    check("10b. ... and with the provider DOWN the answer is still ok:true with the test contact in it, and says the service is offline",
+          d4b.get("ok") is True and len(tvb) == 1 and d4b["count"] == 1 and "offline" in (d4b.get("note") or ""),
+          json.dumps({"ok": d4b.get("ok"), "count": d4b.get("count"), "note": d4b.get("note")}))
+    c = api(port, "/api/ais/test", {"clear": True})
+    d5 = api(port, sea)
+    check("10c. Clear removes them: none served, the count back to the real traffic",
+          c.get("ok") and c.get("cleared") == 1 and not [v for v in d5["vessels"] if v.get("src") == "test"] and d5["area"]["shown"] == 3,
+          json.dumps({"cleared": c.get("cleared"), "shown": d5["area"]["shown"]}))
+    bad = api(port, "/api/ais/test", {"lat": "x", "lon": None})
+    check("10d. a contact with no position is refused in words, and nothing is placed",
+          "error" in bad and not [v for v in api(port, sea)["vessels"] if v.get("src") == "test"], json.dumps(bad))
 
 finally:
     try:

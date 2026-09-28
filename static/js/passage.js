@@ -312,6 +312,19 @@ export function holdTarget(to, opts){
   // `opts.ko` (2026-09-27): a model in place of the charted one - the page routes a way in round the
   // AIS contacts as well, and those live in the guard's model, never in nogo.ko.
   const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;
+  // A FLY-THROUGH TARGET IS NOT A BERTH (2026-09-27, found on the first rehearsal with a test contact). The way in
+  // to a survey's rejoin point ends at a waypoint the boat passes THROUGH at speed - the plan's own next leg
+  // carries her on - so it needs the buffer, not a hold's margin and disc. Judged as a berth, the first point of
+  // the line beyond a contact's ring (a standoff off it, 3 m) was "too tight to hold in" (the 6 m margin), moved
+  // off the line, and the resume refused with "inside a keep-out" - the automatic way round at the minute would
+  // have failed the same way. With `opts.flyThrough` the target stands where it is if it is clear at the buffer,
+  // and is refused BY NAME if it is not; nothing is relocated. Go-To, RTH and the hold keep the berth test.
+  if(opts && opts.flyThrough){
+    const en0 = llEN(to.lat,to.lon,ref);
+    const bi0 = blockedInfo(en0, ko, buf);
+    if(bi0) return {error:"the target sits in "+bi0.kind, reason:{mode:"target", info:bi0, at:to}};
+    return {to:{lat:to.lat,lon:to.lon}, heldOff:null, need:null, holdClear: holdClearM(en0, ko, buf)};
+  }
   const holdR = Math.max(HOLD_RADIUS_MIN_M, (opts && opts.holdR) || 0);
   // THE MARGIN IS THE ENVIRONMENT'S. A hold point must hold the boat for as long as the
   // ladder is allowed to take deciding about it, at the set the boat is actually in - so the

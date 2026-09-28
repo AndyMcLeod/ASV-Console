@@ -465,6 +465,40 @@ answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 
+**Avoidance you can see and trigger** (2026-09-27, Andy: "There is no button or right-click
+selection to initiate or manually avoid an AIS target"). Three additions, none of which changes
+the automatic answer above. **Right-click a contact** — her red hull on the chart — and the
+menu offers **Route round <name>**, her length in the key: while the guard holds the survey for
+her it is the way round *now*, the held path without waiting out the minute; on a survey still
+**running or paused** it **amends** the plan round her — the remainder from the first point of
+her line beyond her ring, the way in routed with the contacts in the model at the standoff — with
+no hold and no re-upload, and the guard's ladder settles while the amendment lands (`contactAt`,
+`avoidContactAt`, `aisAroundRunning`; the row says why when it cannot: not on a coverage line,
+held for a charted feature, arm first). The held bar carries **ROUTE ROUND HER NOW** beside
+RESUME SURVEY AT LOW SPEED while she is held for a contact still on the line (`aisAroundNow`
+forces `aisAroundTick`; refused in words while you have her paused). And in the **simulator**
+the menu offers **Place a test contact here** — a moored 20 x 8 m hull snapped onto the nearest
+survey line within reach and lying across it (at the click itself where no line is near), served
+by `/api/ais` with age 0 beside the real traffic, with or without the AIS
+service running — and **Clear test contacts** (`POST /api/ais/test`; a real link refuses it).
+**To rehearse the whole thing:** run a survey in the sim, right-click the line a few hundred
+meters ahead of the boat and place a test contact, and watch the guard slow and hold her
+(SURVEY HELD, the minute counting down on the bar); then press ROUTE ROUND HER NOW, or
+right-click the contact and choose Route round, or right-click the line beyond her and choose
+Resume from here, or wait the minute out — each ends with the survey carrying on beyond her,
+one ship-length off. **The first rehearsal caught a defect the suites could not** (their router is a
+stub): the way in to the rejoin point was judged as a place to *hold* — the 6 m hold margin and
+the hold disc — so a point a standoff beyond her ring was moved off the line and the resume
+refused with "inside a keep-out"; the automatic way round at the minute would have failed the same
+way. A rejoin point is a waypoint the boat passes through, so the three way-in sites now ask the
+router for a **fly-through** target (`flyThrough` in `holdTarget`): clear at the buffer it stands
+where it is, blocked it is refused by name, nothing is relocated (`planner_guard_seam` 7e). **And
+the second rehearsal caught the next one:** held while *swinging onto* the return line, with no
+coverage line under her, the way round had no line to walk beyond her and refused, while the bar
+went on promising the console would route round her. Held on a turn, the way round now picks the
+plan up at its **next waypoint**, routed round her (a next waypoint inside her ring is refused by
+name), and the bar says she was stopped on a turn (ais_avoid 17h).
+
 **CPA and TCPA** — the closest the two vessels will come on present course and speed, and
 how long until that happens — are shown for every contact with a track. They are recomputed
 from the live kinematics every time they are read, so a **manoeuvre by either vessel is
@@ -1814,6 +1848,11 @@ diagnosable (`tests/frame_health.js`).
    the plan just applied (index zero, not holding), and the end-of-plan chain never fires on the
    frame that moved the run counter — on Andy's console the held resume's Start was answered
    seven milliseconds later by a chained Return-to-Home read off the old hold's 1/1.
+
+   **Route round a contact** (2026-09-27). Right-click the contact herself — running, paused or
+   held — and choose *Route round <name>*; on the held bar, *ROUTE ROUND HER NOW*. See the
+   AIS layer above; the simulator's *Place a test contact here* is how to rehearse it. The way
+   in to any resume's rejoin point is a fly-through target now, not a berth (2026-09-27).
 
    **Every speed the console commands is checked against the speed the vessel reports**
    (`commandSpeed` / `speedReconcile`): re-sent after a second of disagreement, with a banner

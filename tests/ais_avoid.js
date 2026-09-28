@@ -182,6 +182,8 @@ function cmEl(kid) { const set = new Set();
                         add(c) { set.add(c); }, remove(c) { set.delete(c); } },
            querySelector() { return kid ? CM[kid] : null; } }; }
 CM["#cmResumeK"] = cmEl(null); CM["#cmResume"] = cmEl("#cmResumeK");   // both up front: the row's key is its child
+// ROUTE ROUND HER (2026-09-27): the row over a contact, its label and its key
+CM["#cmAvoidK"] = cmEl(null); CM["#cmAvoidLbl"] = cmEl(null); CM["#cmAvoid"] = cmEl("#cmAvoidK");
 
 // ⚠⚠ THE ROUTER, STUBBED AND STEERABLE. resumeHeldSurvey certifies the run-in with the same
 // planner Go-To flies (2026-09-23): after an ESCAPE she is not beside her line any more, and
@@ -277,7 +279,7 @@ function cmd(p, b) {
 // that would put it up exists".
 const EL = {};
 function $(sel) {
-  if (sel === "#cmResume" || sel === "#cmResumeK") return CM[sel];
+  if (CM[sel]) return CM[sel];
   if (sel === "#guardBar" || /^#(gb_|aisTip|aisBtn)/.test(sel))
     return EL[sel] || (EL[sel] = { textContent: "", className: "", style: { display: "" },
                                    classList: { toggle() {}, add() {}, remove() {} } });
@@ -346,6 +348,11 @@ eval([
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays, and the operator's point beyond her (2026-09-27)
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  // the way round ON DEMAND (2026-09-27): the held path split out of the tick, the bar's button, the row over a
+  // contact, and the running plan amended round her - aisAroundTick calls aisAroundGo every minute, so the
+  // bundle needs it or the automatic way round (14-14d) is a swallowed ReferenceError inside frame()
+  grab("aisAroundGo"), grab("aisAroundNow"), grabDecl("aisAroundBusy"), grab("contactAt"), grab("avoidWhy"),
+  grab("gateAvoidRow"), grab("avoidContactAt"), grab("aisAroundRunning"),
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("cmGate"), grab("linkConnected"), grab("canCommand"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
   grab("patClipBufM"), "const guardStandoffM = G.guardStandoffM;",
@@ -945,6 +952,127 @@ const nearRe = /WORKBOAT/;
   S.armed = false; setAIS(false);
   check("12c. turning the layer off keeps the contacts while the console is armed, and drops them once it is not",
         () => keptArmed === 1 && aisVessels.length === 0, () => "armed: " + keptArmed + " kept; disarmed: " + aisVessels.length);
+}
+
+// ── 17. ROUTE ROUND HER ON DEMAND (2026-09-27: "no button or right-click selection to initiate or manually
+//        avoid an AIS target") - the row over a contact, the held bar's button, and the running plan amended ──
+{
+  // 17. THE ROW, while the guard holds the survey for her
+  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  gateAvoidRow(ll(30, 0));                                  // ON her hull (e = 15..45)
+  const onHer = { shown: $("#cmAvoid").style.display !== "none", off: $("#cmAvoid").classList.contains("off"),
+                  lbl: $("#cmAvoidLbl").textContent, key: $("#cmAvoidK").textContent };
+  gateAvoidRow(ll(300, 0));                                 // 255 m off her: not over a contact
+  const offHer = $("#cmAvoid").style.display !== "none";
+  check("17. right-click ON a contact while the guard holds the survey for her: the chart menu shows 'Route round WORKBOAT', live, her length in the key; off her the row is hidden, not grayed",
+        () => onHer.shown && !onHer.off && onHer.lbl === "Route round WORKBOAT" && onHer.key === "30 m off her" && !offHer,
+        () => JSON.stringify(onHer) + "; off her shown " + offHer);
+  // 17b. choosing it goes the held path NOW - ten seconds in, not sixty
+  const r17b = await avoidContactAt(ll(30, 0)); await settle();
+  const up17 = sent.find(x => x.p === "/api/cmd/upload"), rte17 = (up17 && up17.route) || [], ask17 = pinCalls[pinCalls.length - 1];
+  check("17b. choosing it ten seconds in goes the held path NOW - pause, upload rejoining line 1 a ship-length beyond her (e = 80), LOW, Start, no amendment - the way in routed with her ring in the model, the record spent, the episode closed, said 'at your word' and logged as manual",
+        () => r17b === true && paths().indexOf("/api/cmd/pause") === 0 && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start")
+              && !paths().includes("/api/cmd/amend") && rte17.length === 4 && distTo(rte17[0], ll(80, 0)) < 0.5 && distTo(rte17[1], LINE_E.b) < 0.5
+              && !!ask17 && !!ask17.opts.ko && ask17.opts.ko.polys.length === 1 && ask17.opts.ko.polys[0].avoidM === 30 && ask17.opts.standoffM === 3
+              && ask17.opts.flyThrough === true            // a rejoin point is passed through, never held in (seam 7e)
+              && aisAvoid === null && guardHeld === null && S.run === "running"
+              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /at your word, one ship-length off her/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.manual === true && e.data.skip_m === 80 && e.data.line === 1),
+        () => "returned " + r17b + "; sent " + JSON.stringify(paths()) + "; upload " + rte17.length + " wpts from "
+            + (rte17[0] ? distTo(rte17[0], ll(80, 0)).toFixed(1) + " m of (80,0)" : "none") + "; episode " + JSON.stringify(aisAvoid)
+            + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b))) + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
+
+  // 17c. THE BAR'S BUTTON: shown while she is held for a contact, the same way round when pressed, hidden on a clear frame
+  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  const btnHeld = $("#gb_around").style.display;
+  const r17c = aisAroundNow(); await settle();
+  const up17c = sent.find(x => x.p === "/api/cmd/upload"), rte17c = (up17c && up17c.route) || [], sent17c = paths().slice();
+  surveying(7, []); frame();                                // (surveying resets `sent`: the paths were read first)
+  const btnClear = $("#gb_around").style.display;
+  check("17c. the held bar carries ROUTE ROUND HER NOW while she is held for a contact - pressing it is the same way round, ten seconds in (pause, upload from e = 80, Start) - and a clear frame takes the button down",
+        () => btnHeld !== "none" && r17c === true && sent17c.indexOf("/api/cmd/pause") === 0 && rte17c.length === 4 && distTo(rte17c[0], ll(80, 0)) < 0.5
+              && sent17c.includes("/api/cmd/start") && btnClear === "none",
+        () => "held: '" + btnHeld + "', pressed " + r17c + ", sent " + JSON.stringify(sent17c) + ", clear: '" + btnClear + "'");
+
+  // 17d. A PAUSED HOLD: the press is refused in words, nothing is sent, the offer and the episode stand
+  surveying(7, [PARKED()]); frame(); nowHolding(); S.run = "paused"; sent = []; notes = []; banners = [];
+  clock += 10000; aisPolledAt = clock; frame();
+  const r17d = aisAroundNow();
+  check("17d. on a PAUSED hold the press is refused in words - press PAUSE again to resume the hold first - nothing is sent, and the offer and the episode stand",
+        () => r17d === false && sent.length === 0 && notes.some(n => /Not routed round/.test(n) && /paused/.test(n)) && !!aisAvoid && !!guardHeldOffer(),
+        () => "returned " + r17d + ", sent " + JSON.stringify(paths()) + ", notes " + JSON.stringify(notes.slice(-2)));
+
+  // 17e. A SURVEY STILL RUNNING (not held): the row AMENDS the plan round her
+  surveying(7, [PARKED()]); aisKeepoutsNow(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  const why17e = avoidWhy();
+  const r17e = await avoidContactAt(ll(30, 0));
+  const am17 = sent.find(x => x.p === "/api/cmd/amend"), rte17e = (am17 && am17.route) || [], ask17e = pinCalls[pinCalls.length - 1];
+  check("17e. on a survey still RUNNING the row AMENDS the plan round her - no pause, no upload: the remainder from e = 80 on line 1 then the rest of the plan, the way in asked of the router with her ring at the standoff, runRoute spliced behind the index, the ladder settling on the edge rung's clock, said and logged as ais_around running",
+        () => why17e === "" && r17e === true && paths().length === 1 && paths()[0] === "/api/cmd/amend"
+              && rte17e.length === 4 && distTo(rte17e[0], ll(80, 0)) < 0.5 && distTo(rte17e[1], LINE_E.b) < 0.5 && distTo(rte17e[3], ll(-200, 60)) < 0.5
+              && !!ask17e && !!ask17e.opts.ko && ask17e.opts.ko.polys.length === 1 && ask17e.opts.ko.polys[0].avoidM === 30 && ask17e.opts.standoffM === 3
+              && ask17e.opts.flyThrough === true
+              && distTo(ask17e.from, ll(0, 0)) < 0.5 && distTo(ask17e.to, ll(80, 0)) < 0.5
+              && runRoute.length === 5 && distTo(runRoute[1], ll(80, 0)) < 0.5 && guardEdgeAt === clock
+              && notes.length === 1 && /Routed round/.test(notes[0]) && nearRe.test(notes[0]) && /at your word/.test(notes[0]) && /rejoining line 1/.test(notes[0])
+              && logged.some(e => e.kind === "ais_around" && e.data.running === true && e.data.manual === true && e.data.skip_m === 80),
+        () => "why '" + why17e + "', returned " + r17e + ", sent " + JSON.stringify(paths()) + ", amend " + rte17e.length + " wpts from "
+            + (rte17e[0] ? distTo(rte17e[0], ll(80, 0)).toFixed(1) + " m of (80,0)" : "none") + ", runRoute " + (runRoute && runRoute.length)
+            + ", guardEdgeAt " + guardEdgeAt + " vs " + clock + ", notes " + JSON.stringify(notes.slice(-1)));
+
+  // 17f. PAUSED on the line (a pause mark, no live line mark): amended the same way
+  surveying(7, [PARKED()]); aisKeepoutsNow(); S.run = "paused"; runLineIdx = -1;
+  pauseMark = { line: 0, along: 200, fwd: 1, at: ll(0, 0), t: clock };
+  sent = []; notes = []; banners = []; logged = []; pinCalls = [];
+  pinNext = { route: [ll(40, -60), ll(80, 0)], routed: true };   // the router detours south of her: one via waypoint, then the target
+  const r17f = await avoidContactAt(ll(30, 0));
+  pinNext = null;
+  const am17f = sent.find(x => x.p === "/api/cmd/amend"), rte17f = (am17f && am17f.route) || [];
+  check("17f. PAUSED on the line (the pause mark, no live line mark) it is amended the same way - and the router's detour goes IN FRONT of the rejoin: the via waypoint, e = 80, then the rest",
+        () => r17f === true && paths().length === 1 && paths()[0] === "/api/cmd/amend" && rte17f.length === 5
+              && distTo(rte17f[0], ll(40, -60)) < 0.5 && distTo(rte17f[1], ll(80, 0)) < 0.5 && distTo(rte17f[2], LINE_E.b) < 0.5
+              && notes.some(n => /via 1 waypoint clear of her/.test(n)),
+        () => "returned " + r17f + ", sent " + JSON.stringify(paths()) + ", amend " + rte17f.length + " wpts: " + JSON.stringify(rte17f.slice(0, 2).map(w => w && [Math.round(distTo(w, ll(40, -60))), Math.round(distTo(w, ll(80, 0)))])));
+
+  // 17g. THE REFUSALS: paused off a line, disarmed, and no contact under the click
+  surveying(7, [PARKED()]); aisKeepoutsNow(); S.run = "paused"; runLineIdx = -1; pauseMark = null; sent = []; notes = [];
+  const r17g = await avoidContactAt(ll(30, 0));
+  const offLine = r17g === false && sent.length === 0 && notes.some(n => /not on a coverage line/.test(n));
+  surveying(7, [PARKED()]); aisKeepoutsNow(); S.armed = false;
+  gateAvoidRow(ll(30, 0));
+  const disarmed = $("#cmAvoid").style.display !== "none" && $("#cmAvoid").classList.contains("off") && $("#cmAvoidK").textContent === "arm first";
+  surveying(7, []); aisKeepoutsNow();
+  gateAvoidRow(ll(30, 0));
+  const noContact = $("#cmAvoid").style.display === "none";
+  sent = []; notes = [];
+  const r17g2 = await avoidContactAt(ll(30, 0));
+  check("17g. refused in words: paused OFF a coverage line (no pause mark) sends nothing; disarmed, the row is shown but off with 'arm first'; with no contact under the click the row is hidden and the handler sends nothing",
+        () => offLine && disarmed && noContact && r17g2 === false && sent.length === 0,
+        () => "off line " + offLine + ", disarmed " + disarmed + ", no contact " + noContact + " / " + r17g2 + " " + JSON.stringify(paths()));
+  pauseMark = null; runLineIdx = 0;
+
+  // 17h. STOPPED ON A TURN (the second live rehearsal, 23:17: held swinging onto line 8, 13.5 m off her, no line
+  // under her - the way round refused "not stopped on a coverage line" while the bar promised "routes round her
+  // itself now"). No line to walk beyond her: the plan is picked up at its NEXT waypoint, routed round her.
+  surveying(7, [PARKED()]); runLineIdx = -1; frame(); nowHolding();
+  sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  const whyTurn = $("#gb_why").textContent, bankedTurn = !!guardHeld && !guardHeld.mark && !!aisAvoid;
+  const r17h = aisAroundNow(); await settle();
+  const up17h = sent.find(x => x.p === "/api/cmd/upload"), rte17h = (up17h && up17h.route) || [], ask17h = pinCalls[pinCalls.length - 1];
+  check("17h. held on a TURN (no line under her): the survey is banked with no mark, the bar says she was stopped on a turn instead of promising a line she is not on, and the way round picks the plan up at its NEXT waypoint routed round her - pause, upload route[idx..], LOW, Start, the way in asked with her ring as a fly-through - said and logged with no line",
+        () => bankedTurn && /stopped on a TURN, not a coverage line/.test(whyTurn) && !/back down it/.test(whyTurn) && /routes round her itself in 50 s/.test(whyTurn)
+              && r17h === true && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start") && !paths().includes("/api/cmd/amend")
+              && rte17h.length === 3 && distTo(rte17h[0], LINE_E.b) < 0.5 && distTo(rte17h[2], ll(-200, 60)) < 0.5
+              && !!ask17h && ask17h.opts.flyThrough === true && !!ask17h.opts.ko && ask17h.opts.ko.polys.length === 1 && distTo(ask17h.to, LINE_E.b) < 0.5
+              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /stopped on a turn/.test(b) && /next waypoint/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.line === null && e.data.manual === true && e.data.wpts === 3),
+        () => "banked " + bankedTurn + "; bar '" + whyTurn.slice(-200) + "'; returned " + r17h + "; sent " + JSON.stringify(paths()) + "; upload " + rte17h.length
+            + " wpts" + (rte17h[0] ? " from " + distTo(rte17h[0], LINE_E.b).toFixed(1) + " m of L.b" : "") + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(0, 160)))
+            + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
+  runLineIdx = 0;
 }
 
 Date.now = realNow;

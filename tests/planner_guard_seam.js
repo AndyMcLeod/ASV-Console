@@ -213,15 +213,19 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             && /routeAround\(Ap,Bp,ref,koHere,buffer\)/.test(H)
             && /nHopInside\+\+/.test(H) && /hop\(s\) inside the \$\{clipBuf\.toFixed\(1\)\} m standoff/.test(H)
             // and the transits the page routes itself: the approach, RTH, Go-To, the transit line - and,
-            // since 2026-09-26 (the fifth planNogoRoute site), the resume-from-here way in (resumeFromHere).
-            // Two of the five hand the router the charted model PLUS the contacts (koIn, 2026-09-27): the
-            // resume from a chosen point, and the held resume's way in (which the way round a contact rides).
+            // since 2026-09-26 (the fifth planNogoRoute site), the resume-from-here way in (resumeFromHere);
+            // since 2026-09-27 (the sixth), the running plan's way round a contact (aisAroundRunning).
+            // Three of the six hand the router the charted model PLUS the contacts (koIn, 2026-09-27): the
+            // resume from a chosen point, the held resume's way in (which the way round a contact rides), and
+            // the running plan's way round - and those three are FLY-THROUGH targets (flyThrough: true, 7e):
+            // a rejoin point is passed through, never held in, so it takes the buffer and not a berth's margin.
             && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\)/g) || []).length === 2
             && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\)/.test(H)
             && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 3
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}/g) || []).length === 2
-            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}\)/.test(H)
-            && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn\}\)/.test(H)
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 3
+            && !/planNogoRoute\([^)]*ko: koIn\}\)/.test(H)    // no way-in site is judged as a berth any more
+            && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
+            && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
             && /const turnMargin = Math\.max\(2, sp\.spacing\*0\.5\);/.test(H)
             && /legSafe=\(a,b\)=>\{[\s\S]{0,400}?blocked\(\{[^}]*\}, koTurn, buffer\)/.test(H),
       "extendLead (both ends), every turnWithRetry (the first rung, the lead give, the trim "
@@ -375,6 +379,45 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
         "without opts.ko: " + (plain ? (plain.direct ? "direct" : "routed") + ", " + plain.route.length + " wpt(s), through her at " + plainClear.toFixed(1) + " m" : "?")
           + "; with the hull in opts.ko: " + (withKo ? (withKo.error ? "REFUSED " + withKo.error : withKo.route.length + " wpts, keeping " + minClear.toFixed(1) + " m") : "?")
           + "; a target on her: " + (held ? (held.error ? "REFUSED" : held.heldOff ? "held off " + held.heldOff.m.toFixed(1) + " m" : "accepted where it stood") : "?"));
+}
+
+// ── 7e. A FLY-THROUGH TARGET IS NOT A BERTH (2026-09-27) ─────────────────────────────────────
+// Found on the first live rehearsal with a test contact: ROUTE ROUND HER NOW pressed, the rejoin point on the
+// line a standoff (3 m) beyond her ring, and holdTarget - which judges every target as a place to HOLD - wanted
+// the 6 m hold margin and the hold disc, moved the point off the line, and the resume refused with "the first
+// unflown waypoint is itself inside a keep-out". The automatic way round at the minute would have died the
+// same way, on KLEOS too. The test worlds could not see it: their router is a stub. So this one is real.
+{
+  const { nogo } = require("../static/js/state.js");
+  const { planNogoRoute } = require("../static/js/passage.js");
+  const { planeFrame, distTo } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 43.07, lon: -70.71 });
+  const at = (e, n) => F.fromEN(e, n);
+  const rect = (e0, e1, n0, n1, kind) => { const r = [{ e: e0, n: n0 }, { e: e1, n: n0 }, { e: e1, n: n1 }, { e: e0, n: n1 }];
+    return { ring: r, bb: bbOf(r), kind }; };
+  const model = (polys) => ({ polys, lines: [], points: [], marks: [], sys: [], chans: [] });
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  let berth, fly, onHer, T;
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3; nogo.ko = model([]);
+    // her avoidance ring: a 30 x 8 m hull grown by her length, 20 m round her (the way round's own model)
+    const ring = model([rect(-35, 35, -24, 24, "AIS: KLEOS (30 x 8 m), 20 m round her")]);
+    const A = at(-60, 40);
+    T = at(0, 28);                                       // 4 m off her ring: clear at the buffer, under the 6 m hold margin
+    berth = planNogoRoute(A, T, { ko: ring, standoffM: 3 });
+    fly = planNogoRoute(A, T, { ko: ring, standoffM: 3, flyThrough: true });
+    onHer = planNogoRoute(A, at(0, 0), { ko: ring, standoffM: 3, flyThrough: true });
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  const flyEnd = (fly && fly.route && fly.route.length) ? fly.route[fly.route.length - 1] : null;
+  check("7e. a rejoin point 4 m off a contact's ring is judged a BERTH by default (held off it - the 6 m margin), and a FLY-THROUGH target stands where it is: no heldOff, the route ending ON it; one on her is refused by name",
+        () => !!berth && !berth.error && !!berth.heldOff && berth.heldOff.m > 0
+              && !!fly && !fly.error && !fly.heldOff && !!flyEnd && distTo(flyEnd, T) < 0.5
+              && !!onHer && /sits in AIS: KLEOS/.test(onHer.error || ""),
+        "as a berth: " + (berth ? (berth.error ? "REFUSED " + berth.error : berth.heldOff ? "held off " + berth.heldOff.m.toFixed(1) + " m (" + berth.heldOff.kind + ")" : "accepted") : "?")
+          + "; fly-through: " + (fly ? (fly.error ? "REFUSED " + fly.error : fly.heldOff ? "held off " + fly.heldOff.m.toFixed(1) + " m" : "ends " + (flyEnd ? distTo(flyEnd, T).toFixed(2) + " m from the target" : "nowhere")) : "?")
+          + "; on her: " + (onHer ? (onHer.error || "ACCEPTED") : "?"));
 }
 
 // ── 8. AND IT IS NEVER SILENT ───────────────────────────────────────────────────────

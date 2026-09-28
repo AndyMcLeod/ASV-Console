@@ -384,6 +384,10 @@ function menu(opts) {
   mk("#cmResume", { kid: mk("#cmResumeK") });   // RESUME FROM HERE (2026-09-26): shown only while paused
   mk("#cmHome", { kid: mk("#cmHomeK") });
   mk("#cmSpawn", { kid: mk("#cmSpawnK") });
+  // ROUTE ROUND HER and the TEST CONTACTS (2026-09-27): the rows the menu gates on every open
+  mk("#cmAvoid", { kid: mk("#cmAvoidK") }); mk("#cmAvoidLbl");
+  mk("#cmAisTest", { kid: mk("#cmAisTestK") });
+  mk("#cmAisClear", { kid: mk("#cmAisClearK") });
   mk("#cmMeasure", { kid: D["#cmMeasureK"] });
   mk("#cmCopy", { kid: mk("#cmCopyK") });
   const G = {
@@ -417,6 +421,9 @@ function menu(opts) {
     "const resumeHereAt = () => G.hitNext; const legOfLine = () => G.legNext; const indexedRoute = () => [];" +
     "const lineNo = (k) => k + 1; const fmtDist = (m) => Math.round(m) + ' m';" +
     "const guardHeldOffer = () => G.heldNext || null;" +      // a survey the guard holds and can hand back (2026-09-27)
+    // ROUTE ROUND HER (2026-09-27): openChartMenu shows and gates the row over a contact through gateAvoidRow,
+    // STUBBED here - the real one reads the AIS model and is tests/ais_avoid.js 17-17g's subject.
+    "function gateAvoidRow(){}" +
     grab("alongAsRun") + grab("gateResumeHere") +
     "G.openChartMenu=openChartMenu; G.closeChartMenu=closeChartMenu;" +
     "G.chartMenuOpen=chartMenuOpen; G.cmRow=cmRow; G.cmGate=cmGate;" +
@@ -449,6 +456,15 @@ check("15 each command row is gated by the console's OWN predicate, one rule per
     && rowOff(v.real, "#cmSpawn") && !rowOff(v.real, "#cmGoto")         // sim-only is sim-only
     && rowOff(v.down, "#cmHome") && rowOff(v.down, "#cmSpawn");         // no link, no home
 }, () => g15.ok ? "canCommand / canSpawn / canSetHome drive the rows" : "THREW: " + g15.err);
+// TEST CONTACTS (2026-09-27): a moored hull the simulator serves as AIS traffic - sim-only, like Spawn, and
+// gated by the same predicate rather than a copy of it.
+check("15c the test-contact rows (Place a test contact here / Clear test contacts) are sim-only, gated like Spawn by canSpawn", () => {
+  if (!g15.ok) return false;
+  const v = g15.value;
+  return !rowOff(v.all, "#cmAisTest") && !rowOff(v.all, "#cmAisClear")
+    && rowOff(v.real, "#cmAisTest") && rowOff(v.real, "#cmAisClear")
+    && v.real.D["#cmAisTestK"].textContent === "sim only";
+}, () => g15.ok ? "sim: live; real: off, 'sim only'" : "THREW: " + g15.err);
 
 // SET HOME USES THE CLICKED POINT (the operator's call, 2026-08-08 - this asserted the
 // exact opposite for one commit, while the server still discarded a supplied position).

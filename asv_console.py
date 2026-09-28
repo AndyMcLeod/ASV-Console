@@ -205,6 +205,27 @@ AIS_OPENCPN = ""               # "[HOST:]PORT" for --source ...,opencpn
 # because "50 km of Lake Erie" is not a useful thing to ask for.
 AIS_COLLECT_RADIUS_KM = 150.0
 AIS_SHOW_RADIUS_KM = 50.0
+# TEST CONTACTS (2026-09-27, simulator only): synthetic AIS vessels the operator places from the chart menu
+# to rehearse the contact avoidance - a moored hull across a survey line - without waiting for the live feed
+# to put one there. Merged into every /api/ais answer with age 0 (never stale) and served even while the AIS
+# service is down; they never enter the AIS registry, and they are marked "test" wherever they appear.
+AIS_TEST_CONTACTS = []
+_AIS_TEST_LOCK = threading.Lock()
+
+
+def _ais_test_snapshot(lat, lon):
+    """The test contacts as /api/ais serves vessels: a fresh copy each, age 0, ranged from (lat, lon)."""
+    out = []
+    with _AIS_TEST_LOCK:
+        for v in AIS_TEST_CONTACTS:
+            c = dict(v)
+            c["age"] = 0.0
+            try:
+                c["range_m"] = round(_haversine_km(lat, lon, float(v["lat"]), float(v["lon"])) * 1000.0)
+            except (TypeError, ValueError):
+                c["range_m"] = None
+            out.append(c)
+    return out
 # Serial-over-IP default for the VCU control link (PortServer-style). The real
 # address depends on the boat's radio/serial-server config; override on the CLI.
 DEFAULT_VCU_HOST = ""
@@ -5863,6 +5884,11 @@ class Handler(BaseHTTPRequestHandler):
                 data["count"] = len(vs)
                 if nearest is not None:
                     area["nearest_km"] = round(nearest, 1)
+            tests = _ais_test_snapshot(lat, lon)
+            if tests:                                 # the rehearsal's moored hulls, beside the real traffic
+                vs = list(vs) + tests
+                data["vessels"] = vs
+                data["count"] = len(vs)
             area["shown"] = len(vs)
             # THE CONTACTS INTO THE SESSION LOG (2026-09-25), so a replay can draw the traffic the operator
             # saw: at most one `ais` record every AIS_LOG_INTERVAL_S whatever the page's polling, and none
@@ -5873,6 +5899,14 @@ class Handler(BaseHTTPRequestHandler):
             data["area"] = area
             self._send(200, json.dumps(data), "application/json")
         except Exception as e:
+            # THE TEST CONTACTS STAND WITHOUT THE SERVICE: a rehearsal must not need the live feed, and an
+            # {ok:false} here would read as a dead poll to the page, emptying the guard's model of them.
+            tests = _ais_test_snapshot(lat, lon)
+            if tests:
+                area["collected"] = area["shown"] = len(tests)
+                return self._send(200, json.dumps({"ok": True, "vessels": tests, "count": len(tests), "area": area,
+                                                   "sources": {}, "note": "AIS service offline - test contacts only"}),
+                                  "application/json")
             self._send(200, json.dumps({"ok": False, "vessels": [], "count": 0, "area": area,
                                         "note": "AIS service unreachable at %s (%s)"
                                         % (AIS_BASE, type(e).__name__)}))
@@ -6257,6 +6291,32 @@ class Handler(BaseHTTPRequestHandler):
                 # already had its 200 - so the endpoint looked perfectly healthy while
                 # every call killed the handler thread and skipped the session log.
                 return 200, {"ok": True, "show_km": km, "collect_km": AIS_COLLECT_RADIUS_KM}
+            elif path == "/api/ais/test":              # sim only: place a moored test contact, or clear them
+                # A REHEARSAL, NEVER A LIVE FEED'S PEER (2026-09-27): a real link gets real traffic only, so a
+                # synthetic hull can never sit in the model beside a real one on the water.
+                if ENGINE._mode != "sim":
+                    return 409, {"error": "test contacts are a simulator rehearsal - a real link gets real traffic"}
+                if body.get("clear"):
+                    with _AIS_TEST_LOCK:
+                        n = len(AIS_TEST_CONTACTS)
+                        del AIS_TEST_CONTACTS[:]
+                    return 200, {"ok": True, "cleared": n}
+                try:
+                    lat, lon = float(body.get("lat")), float(body.get("lon"))
+                except (TypeError, ValueError):
+                    return 400, {"error": "the test contact needs a position (lat, lon)"}
+                if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                    return 400, {"error": "the test contact needs a position on the globe"}
+                with _AIS_TEST_LOCK:
+                    n = len(AIS_TEST_CONTACTS) + 1
+                    v = {"mmsi": 990000000 + n, "name": str(body.get("name") or ("TEST-%d" % n))[:20],
+                         "lat": lat, "lon": lon,
+                         "sog": max(0.0, float(body.get("sog") or 0.0)), "cog": body.get("cog"),
+                         "heading": float(body.get("heading")) if body.get("heading") is not None else 90.0,
+                         "type": None, "cat": "test", "nav": None, "src": "test", "srcs": ["test"],
+                         "dim": body.get("dim"), "length": body.get("length"), "beam": body.get("beam")}
+                    AIS_TEST_CONTACTS.append(v)
+                return 200, {"ok": True, "vessel": v, "count": len(AIS_TEST_CONTACTS)}
             elif path == "/api/cmd/reset":             # sim power-cycle: full energy, spawn, clean slate
                 ENGINE.reset()
             elif path == "/api/cmd/spawn":             # sim: place the boat at a clicked point

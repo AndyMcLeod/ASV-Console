@@ -322,6 +322,9 @@
          the line the way the plan runs it, then the rest of the plan. gateResumeHere() shows, hides
          and gates it on every open; the key names the line and how far along it the point is. -->
     <div class="cmi" id="cmResume" style="display:none"><span>Resume from here</span><span class="cmk" id="cmResumeK"></span></div>
+    <!-- ROUTE ROUND A CONTACT (2026-09-27): shown when the click lands on an AIS contact's keep-out. A survey the
+         guard holds for her goes the held path now; one running or paused is amended round her at one ship-length. -->
+    <div class="cmi" id="cmAvoid" style="display:none"><span id="cmAvoidLbl">Route round her</span><span class="cmk" id="cmAvoidK"></span></div>
     <!-- Sets HOME at the CLICKED POINT (Andy, 2026-08-08 - this row read "at vessel" for
          one commit, when set_home still discarded a supplied position). RTH drives to
          HOME, so doSetHome() tests the point against the keep-out model first and WARNS
@@ -329,6 +332,10 @@
          operator asked for the point they picked. -->
     <div class="cmi" id="cmHome"><span>Set Home here</span><span class="cmk" id="cmHomeK"></span></div>
     <div class="cmi" id="cmSpawn"><span>Spawn here</span><span class="cmk" id="cmSpawnK"></span></div>
+    <!-- TEST CONTACTS (2026-09-27, simulator only): a moored 20 x 8 m hull the guard treats as real traffic,
+         so the avoidance can be rehearsed on demand - place one across a survey line. -->
+    <div class="cmi" id="cmAisTest"><span>Place a test contact here</span><span class="cmk" id="cmAisTestK"></span></div>
+    <div class="cmi" id="cmAisClear"><span>Clear test contacts</span><span class="cmk" id="cmAisClearK"></span></div>
     <div class="cmsep"></div>
     <div class="cmi" id="cmCopy"><span>Copy position</span><span class="cmk" id="cmCopyK"></span></div>
   </div>
@@ -629,6 +636,7 @@
       <span class="gb-why" id="gb_why"></span>
     </div>
     <div class="gb-row">
+      <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the minute.">ROUTE ROUND HER NOW</button>
       <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you change the speed yourself. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
       <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
       <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console.">CANCEL OVERRIDE</button>
@@ -1773,6 +1781,7 @@ function updateClearance(extra){
  */
 function renderGuardBar(a, c){
   const bar = $("#guardBar"); if(!bar) return;
+  { const ga = $("#gb_around"); if(ga) ga.style.display = "none"; }   // shown by the held bar alone (2026-09-27)
   // ⚠ A STOPPED SURVEY IS THE GUARD STILL INTERVENING, and the bar used to go out on it.
   // Once the boat is station-keeping the ladder reads CLEAR by construction - the hold rung
   // is only ever reached when the drift-only track is clear, which is the state taking the
@@ -1891,11 +1900,17 @@ function renderHeldBar(bar, g){
   // her once the minute is up (paused: it waits for the operator).
   if(aisAvoid){
     const leftS = Math.max(0, Math.ceil((AIS_AROUND_AFTER_MS - (Date.now() - aisAvoid.since)) / 1000));
+    // STOPPED ON A TURN (2026-09-27): no line under her, so no backtrack and no line to walk beyond her - the
+    // return and the way round both pick the plan up at its next waypoint, and the bar says so.
+    const onLine = !!(g && g.mark);
     $("#gb_why").textContent += " · holding for " + aisAvoid.kind
-      + " — resumes on its own once she is clear of the line (" + AIS_RETURN_BACK_M + " m back down it)"
+      + (onLine ? " — resumes on its own once she is clear of the line (" + AIS_RETURN_BACK_M + " m back down it)"
+                : " — stopped on a TURN, not a coverage line: resumes on its own from the plan's next waypoint once she is clear")
       + "; right-click the line BEYOND her to resume there (routed round her), or the console routes round her itself "
       + ((S && S.run === "paused") ? "once you resume the hold" : leftS > 0 ? "in " + leftS + " s" : "now");
   }
+  // ROUTE ROUND HER NOW (2026-09-27): the minute on demand, while she is held for a contact still on the line
+  { const ga = $("#gb_around"); if(ga) ga.style.display = (aisAvoid && !aisAvoid.clearSince) ? "" : "none"; }
   $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
   $("#gb_low").style.display     = "";
   $("#gb_proceed").style.display = "none";
@@ -2719,6 +2734,7 @@ function aisReturnTick(p, aisKo, buf, now){
  */
 const AIS_AROUND_AFTER_MS = 60000;   // the operator's minute, before the console routes round the contact itself
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
+let aisAroundBusy = false;           // the running plan's way round (aisAroundRunning): one in flight at a time
 /** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
  *  each contact grown by her own length (aisAvoidKeepouts): the model the MANEUVER keeps outside of. */
 function koWithAis(aisKo, avoid){
@@ -2734,7 +2750,15 @@ function koWithAis(aisKo, avoid){
  */
 function aisAroundPlan(g, aisKo, std){
   const L = g.mark ? (mission.lines || [])[g.mark.line] : null;
-  if(!L || !nogo.frame) return {error: "she was not stopped on a coverage line"};
+  if(!nogo.frame) return {error: "the keep-out model is not loaded"};
+  // STOPPED ON A TURN (2026-09-27, the second rehearsal: held swinging onto line 8, 13.5 m off her, no coverage
+  // line under her - and the bar promising a way round that could not be built). There is no line to walk
+  // beyond her, so the plan is picked up at its NEXT waypoint with the way in routed round her; a next waypoint
+  // inside her ring is refused by name by the router (flyThrough), and a plan with nothing left is said.
+  if(!L){
+    if(g.idx < g.route.length) return {to: null, j: g.idx, line: null, fromStart: null, skipM: 0, fromTurn: true};
+    return {error: "she was not stopped on a coverage line, and the plan has no waypoint left to pick up"};
+  }
   const leg = legOfLine(g.route, g.mark.line, g.idx);
   if(!leg) return {error: "the held route does not run line " + lineNo(g.mark.line)};
   const len = distTo(L.a, L.b); if(!(len > 0)) return {error: "line " + lineNo(g.mark.line) + " has no length"};
@@ -2755,28 +2779,49 @@ function aisAroundPlan(g, aisKo, std){
   return {error: "the contact covers the rest of line " + lineNo(g.mark.line) + ", and it is the last leg of the plan"};
 }
 function aisAroundTick(aisKo, now){
-  if(!aisAvoid || !guardHeld) return;
+  if(!aisAvoid || !guardHeld) return "nothing is held for a contact";
+  // ROUTE ROUND HER NOW (2026-09-27: "no button or right-click selection to initiate or manually avoid an AIS
+  // target"). The held bar's button and the chart-menu row over her set `forceAround`, and the minute and the
+  // once-a-minute retry stand aside for it; every other gate stands - on station, not paused, not stale, not
+  // already clear. Answers `true` when the way round went, else the reason in words, so the press can say why.
+  const forced = !!aisAvoid.forceAround; aisAvoid.forceAround = false;
   const g = guardHeldOffer();
-  if(!g || heldResuming) return;                    // not on station yet, or a resume in flight
-  if(!(S && S.run === "running")) return;           // paused by the operator: theirs to end
-  if(aisKoStale) return;                            // never on a stale model (aisReturnTick's rule)
+  if(!g) return "she is not on station yet";
+  if(heldResuming) return "a resume is already in flight";
+  if(!(S && S.run === "running")) return "she is paused - press PAUSE again to resume the hold first";   // theirs to end
+  if(aisKoStale) return "the AIS feed is stale, so the contacts are not known";   // never on a stale model (aisReturnTick's rule)
   // THE LINE READS CLEAR: the 100 m return's dwell is running, and the return - over water already run,
   // so the coverage overlaps - is the better answer to a contact that has just moved off. The way round is
   // for one that STAYS.
-  if(aisAvoid.clearSince) return;
-  if(now - aisAvoid.since < AIS_AROUND_AFTER_MS) return;
-  if(aisAvoid.aroundAt && now - aisAvoid.aroundAt < AIS_AROUND_AFTER_MS) return;   // one try a minute
+  if(aisAvoid.clearSince) return "she is clear of the line, and the " + AIS_RETURN_BACK_M + " m return is under way";
+  if(!forced && now - aisAvoid.since < AIS_AROUND_AFTER_MS) return "inside the operator's minute";
+  if(!forced && aisAvoid.aroundAt && now - aisAvoid.aroundAt < AIS_AROUND_AFTER_MS) return "tried inside the last minute";   // one try a minute
   aisAvoid.aroundAt = now;
-  const plan = aisAroundPlan(g, aisKo, patClipBufM());
+  return aisAroundGo(g, aisKo, aisAvoid, forced) ? true : "no way round her";
+}
+/** The held path's way round: the plan beyond her (aisAroundPlan), then resumeHeldSurvey from it. `ep` is the
+ *  AIS episode; `manual` says the operator asked (the banner says so, and a refusal is said every time). */
+function aisAroundGo(g, polys, ep, manual){
+  const plan = aisAroundPlan(g, polys, patClipBufM());
   if(plan.error){
-    if(!aisAvoid.aroundSaid){ aisAvoid.aroundSaid = true;
-      showBanner('⚠ NO WAY ROUND ' + aisAvoid.kind + ' — ' + plan.error + ". She keeps holding; resume from the bar, "
+    if(manual || !ep.aroundSaid){ ep.aroundSaid = true;
+      showBanner('⚠ NO WAY ROUND ' + ep.kind + ' — ' + plan.error + ". She keeps holding; resume from the bar, "
         + "right-click a line beyond her, or Go-To."); }
-    return;
+    return false;
   }
-  resumeHeldSurvey({at: plan, ko: koWithAis(aisKo, true), auto: aisAvoid, around: true})
+  resumeHeldSurvey({at: plan, ko: koWithAis(polys, true), auto: ep, around: true, manual: !!manual})
     .catch(e => showBanner('⚠ THE WAY ROUND FAILED — ' + (e && e.message)
                            + ". The remainder is still held; resume it from the guard bar."));
+  return true;
+}
+/** ROUTE ROUND HER NOW: the minute on demand - the held bar's button, and the chart-menu row over a contact
+ *  while the guard holds the survey for her. Says why when it cannot. */
+function aisAroundNow(polys){
+  if(!guardHeldOffer() || !aisAvoid){ flashNote("Nothing to route round: the guard is not holding the survey for a contact."); return false; }
+  aisAvoid.forceAround = true;
+  const r = aisAroundTick(polys || aisKoDrawn, Date.now());
+  if(r !== true){ flashNote("Not routed round " + (aisAvoid ? aisAvoid.kind : "her") + " — " + r + "."); return false; }
+  return true;
 }
 /**
  * Is that record still about the boat in front of the operator?
@@ -10645,6 +10690,9 @@ function openChartMenu(clientX, clientY, ll){
   cmGate("#cmHome",  canSetHome(), "no link");
   cmGate("#cmSpawn", canSpawn(),   "sim only");
   gateResumeHere(ll);                                   // shown only while PAUSED; live only on a line the route runs
+  gateAvoidRow(ll);                                     // shown only over an AIS contact (2026-09-27)
+  cmGate("#cmAisTest",  canSpawn(), "sim only");        // the rehearsal's moored hull (2026-09-27)
+  cmGate("#cmAisClear", canSpawn(), "sim only");
   cmenuEl.style.display = "block";
   // clamp into the viewport, flipping at the right/bottom edges — same discipline as the
   // hover tips and the pop-out panels: a menu opened near a corner must stay reachable.
@@ -10674,6 +10722,9 @@ cmRow("#cmWhat",  ll => sayWhatIsHere(ll));
 cmRow("#cmClear", ()=>{ clearMeasures(); flashNote("Measurements cleared."); });
 cmRow("#cmGoto",  ll => doGoTo(ll));
 cmRow("#cmResume", ll => resumeFromHere(ll));   // paused runs only (2026-09-26)
+cmRow("#cmAvoid",   ll => avoidContactAt(ll));   // over a contact (2026-09-27)
+cmRow("#cmAisTest", ll => placeTestContact(ll)); // sim only (2026-09-27)
+cmRow("#cmAisClear", () => clearTestContacts());
 cmRow("#cmHome",  ll => doSetHome(ll));
 cmRow("#cmSpawn", ll => doSpawn(ll));
 cmRow("#cmCopy",  ll => copyPosition(ll));
@@ -12960,7 +13011,7 @@ async function resumeFromHere(ll){
   const from = {lat: asv.lat, lon: asv.lon};
   showBanner("Routing to the point on line " + line + '…' + " a long way round obstacles can take several seconds.");
   await ensureNogoCovers([from, target]);
-  const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn});
+  const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
   takeDownBanner(/^Routing to the point on line/);
   if(pin.error){
     showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; pick a point nearer open water, or Go-To first.");
@@ -13024,6 +13075,141 @@ async function resumeFromHere(ll){
       transit_m: Math.round(transitM), via: via.length, certified: !pin.degraded, note: said}})}).catch(()=>{});
   updateMissionCard(); render();
 }
+
+/**
+ * ROUTE ROUND A CONTACT, ON DEMAND (Andy, 2026-09-27: "There is no button or right-click selection to initiate
+ * or manually avoid an AIS target"). Right-click a contact's keep-out and the menu offers "Route round <name>":
+ *   * a survey the guard HOLDS for her goes the held path NOW (aisAroundNow) - the same as the bar's ROUTE
+ *     ROUND HER NOW - without waiting out the operator's minute;
+ *   * a survey RUNNING or PAUSED is AMENDED round her (aisAroundRunning): the plan's own remainder from the
+ *     first point of her line beyond her avoidance ring (aisAroundPlan over the plan aboard and the line she is
+ *     on), the way in routed with the contacts in the model at the standoff - no hold, no re-upload.
+ * The automatic answer is unchanged (his 09-26 rule): a contact on the line holds her, the bar offers, and at
+ * sixty seconds with no answer the console routes round her itself. These make that answer a press away.
+ */
+/** The contact under a chart point - its keep-out within the identify reach (IDENTIFY_PX at this zoom) - or null. */
+function contactAt(ll){
+  if(!ll || !nogo.frame || !(aisKoDrawn || []).length) return null;
+  const en = nogo.frame.toEN({lat: ll.lat, lon: ll.lon});
+  const mPerPx = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+  const reachM = IDENTIFY_PX * mPerPx;
+  let best = null, bestM = Infinity;
+  for(const q of aisKoDrawn){
+    const m = clearanceM(en, {polys: [q], lines: [], points: []}, reachM + 1);
+    if(m <= reachM && m < bestM){ bestM = m; best = q; }
+  }
+  return best;
+}
+/** Why the row is off, or "" when it is live: the console able to command, and a survey to route round her. */
+function avoidWhy(){
+  if(!canCommand()) return "arm first";
+  if(!asv) return "no fix";
+  if(guardHeldOffer()) return aisAvoid ? "" : "held for a charted feature - resume from the bar";
+  if(!(S && S.behavior === "survey" && (S.run === "running" || S.run === "paused"))) return "no survey under way";
+  if(!(lineMark() || pauseMark)) return "not on a coverage line";
+  return "";
+}
+function gateAvoidRow(ll){
+  const row = $("#cmAvoid"); if(!row) return;
+  const q = contactAt(ll);
+  row.style.display = q ? "" : "none";
+  if(!q) return;
+  $("#cmAvoidLbl").textContent = "Route round " + (q.name || "her");
+  const why = avoidWhy();
+  if(cmGate("#cmAvoid", !why, why))
+    $("#cmAvoidK").textContent = (q.box && q.box.lengthM) ? Math.round(q.box.lengthM) + " m off her" : "";
+}
+async function avoidContactAt(ll){
+  const q = contactAt(ll);
+  if(!q){ flashNote("Route round: right-click ON a contact (her hull on the chart)."); return false; }
+  const why = avoidWhy();
+  if(why){ flashNote("Route round " + (q.name || "her") + ": " + why + "."); return false; }
+  if(guardHeldOffer()) return aisAroundNow(aisKoDrawn);
+  return aisAroundRunning(aisKoDrawn, q, "at your word");
+}
+/**
+ * The RUNNING (or paused) plan routed round a contact: the remainder amended from the first point of her line
+ * beyond her ring, the way in routed with the contacts in the model. `polys` is the frame's contacts, `q` the one
+ * named, `why` the sentence's cause. Resolves true when the amendment landed. The ladder settles while it lands
+ * (the edge rung's own clock); if the guard still reads a hold once she is under way on it, the hold banks the
+ * amended plan and the bar offers it back as it does any survey.
+ */
+async function aisAroundRunning(polys, q, why){
+  const kind = (q && q.kind) || "the contact";
+  if(aisAroundBusy){ flashNote("Route round " + kind + ": one is already in flight."); return false; }
+  const rr = indexedRoute() || [];
+  const idx = Math.min(window._wpIndex || 0, rr.length);
+  const mark = lineMark() || pauseMark;
+  if(!asv || !rr.length || !mark){
+    showBanner('⚠ NO WAY ROUND ' + kind + ' — she is not on a coverage line (a turn or a transit), so there is no line to pick up beyond her. Pause and use Resume from here on a line beyond her, or Go-To.');
+    return false;
+  }
+  aisAroundBusy = true;
+  try {
+    const g = {route: rr, idx, mark, at: {lat: asv.lat, lon: asv.lon}};
+    const plan = aisAroundPlan(g, polys, patClipBufM());
+    if(plan.error){ showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + plan.error + '.'); return false; }
+    const koIn = koWithAis(polys, true);
+    const tail = (plan.to && !plan.atEnd) ? [plan.to, ...rr.slice(plan.j)] : rr.slice(plan.j);
+    const target = tail[0];
+    const from = {lat: asv.lat, lon: asv.lon};
+    const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+    if(pin.error || pin.heldOff){
+      showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (pin.error || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
+      return false;
+    }
+    // The router's route EXCLUDES the start and ENDS at the target, which is tail[0] already (resumeFromHere's
+    // reading of the same contract) - so only the detour waypoints go in front of it.
+    const via = pin.degraded ? [] : pin.route.slice(0, -1);
+    const route = [...via, ...tail];
+    const line = lineNo(plan.line);
+    const said = (plan.skipLine
+        ? "line " + line + " is covered by " + kind + " from here to its end, so it is left and the plan is picked up at its next waypoint"
+        : "rejoining line " + line + " " + fmtDist(plan.fromStart) + " along it" + (plan.skipM ? ", " + fmtDist(plan.skipM) + " of coverage left under her" : ""))
+      + (via.length ? ", via " + via.length + " waypoint" + (via.length === 1 ? "" : "s") + " clear of her" : "")
+      + (pin.degraded ? " (the keep-out model is not loaded: NOT certified)" : "");
+    guardEdgeAt = Date.now();                 // the ladder settles while the amendment lands (the edge rung's clock)
+    const r = await cmd("/api/cmd/amend", {route, note: "Routing round " + kind + " (" + why + "): " + said + "."});
+    if(!took(r)){
+      guardEdgeAt = 0;
+      if(!(r && r.refused)) dropCornerSlow("the way round " + kind + " was sent and NOT acknowledged");
+      showBanner('⚠ NOT ROUTED ROUND ' + kind + ' — ' + (r && r.refused ? "the amendment was REFUSED (" + r.error + ")" : "no answer to the amendment") + ". She carries on as she was; the guard still watches.");
+      return false;
+    }
+    runRoute = [...rr.slice(0, idx), ...route];
+    dropCornerSlow("the plan was routed round " + kind);
+    flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
+    if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + kind + " " + why + " — " + said + "; one ship-length off her; the console is still watching"});
+    logClient("ais_around", {kind, line, skip_m: Math.round(plan.skipM || 0), skip_line: !!plan.skipLine, held_s: null,
+              wpts: route.length, manual: true, running: true});
+    updateMissionCard(); render();
+    return true;
+  } finally { aisAroundBusy = false; }
+}
+/** TEST CONTACTS (simulator only): a moored 20 x 8 m hull, SNAPPED ONTO the nearest survey line within the identify
+ *  reach and lying ACROSS it (like KLEOS across line 11), so the guard meets her the way it met the real one; with no
+ *  line within reach she is placed at the click. */
+async function placeTestContact(ll){
+  if(!canSpawn()){ flashNote("Test contacts are a simulator rehearsal."); return; }
+  const hit = resumeHereAt(ll);
+  const L = hit ? (mission.lines || [])[hit.line] : null;
+  const at = hit ? hit.to : ll;
+  const heading = L ? Math.round((azTo(L.a, L.b) + 90) % 360) : 90;
+  const r = await cmd("/api/ais/test", {lat: at.lat, lon: at.lon, heading});
+  if(!took(r)){ flashNote("Test contact not placed — " + ((r && r.error) || "no answer") + "."); return; }
+  pollAIS();
+  flashNote("Test contact " + ((r.vessel && r.vessel.name) || "") + " placed — a moored 20 x 8 m hull heading " + heading + "°"
+    + (hit ? ", ON line " + lineNo(hit.line) + " " + fmtDist(hit.along) + " along it, across it" : " (no survey line within reach: placed at the click)")
+    + ". The guard treats her as real traffic; Clear test contacts removes her.");
+}
+async function clearTestContacts(){
+  if(!canSpawn()){ flashNote("Test contacts are a simulator rehearsal."); return; }
+  const r = await cmd("/api/ais/test", {clear: true});
+  if(!took(r)){ flashNote("Test contacts not cleared — " + ((r && r.error) || "no answer") + "."); return; }
+  pollAIS();
+  flashNote("Test contacts cleared (" + (r.cleared || 0) + ").");
+}
+$("#gb_around").onclick = ()=>{ aisAroundNow(); };
 
 // PAUSE IS A TOGGLE NOW. It flashes while the run is held, and pressing it again is the
 // resume — so the control that stopped the boat is the control that starts it, and the
@@ -13220,7 +13406,9 @@ async function resumeHeldRun(opts){
     }
   } else if(at){
     const who = auto ? auto.kind : "the contact";
-    note = at.skipLine
+    note = at.fromTurn
+      ? "she was stopped on a turn, not a coverage line, so the plan is picked up at its next waypoint, routed round " + who
+      : at.skipLine
       ? "line " + lineNo(at.line) + " is covered by " + who + " from there to its end, so it is left and the "
         + "plan is picked up at its next waypoint"
       : (at.chosen ? "from the point you chose on line " : "rejoining line ") + lineNo(at.line) + " "
@@ -13250,7 +13438,7 @@ async function resumeHeldRun(opts){
   const wayClear = !!(firstWp && nogo.ready && nogo.frame && koIn
                       && legClear(backFrom, firstWp, nogo.frame, koIn, nogo.buffer));
   if(firstWp && !wayClear){
-    const pin = planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn});
+    const pin = planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error){
       showBanner("⚠ CANNOT RESUME FROM HERE - " + pin.error + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
@@ -13373,11 +13561,12 @@ async function resumeHeldRun(opts){
       if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + who + " after " + (ep ? Math.round((Date.now() - ep.since)/1000) : "?")
         + " s holding for her with no answer from the operator " + '—' + " " + (note || "carrying on") + "; " + left + " waypoint"
         + (left === 1 ? "" : "s") + " re-uploaded; the console is still watching"});
-      showBanner("ROUTED ROUND " + who + " — she did not clear the line within " + Math.round(AIS_AROUND_AFTER_MS / 1000)
-        + " s and you did not choose a point, so the survey goes on beyond her: " + (note || "carrying on") + ". " + left
-        + " waypoint" + (left === 1 ? "" : "s") + " to fly. Recorded in the session log.");
-      logClient("ais_around", {kind: who, line: lineNo(at.line), skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
-                held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left});
+      showBanner("ROUTED ROUND " + who + " — " + ((opts && opts.manual)
+          ? "at your word, one ship-length off her: "
+          : "she did not clear the line within " + Math.round(AIS_AROUND_AFTER_MS / 1000) + " s and you did not choose a point, so the survey goes on beyond her: ")
+        + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly. Recorded in the session log.");
+      logClient("ais_around", {kind: who, line: at.line != null ? lineNo(at.line) : null, skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
+                held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual)});
     } else {
       flashNote("Survey resumed " + (note || "from the point you chose") + ". The transit is at the transit speed and the line at "
         + "the survey speed" + (resumeSlow ? " once your LOW hold is released" : "") + " — select LOW if you want it slow.");
