@@ -35,6 +35,16 @@
 // pop-out seeded at {4000,3000} while hidden now reveals FULLY inside the chart, with the
 // stored position untouched.
 //
+// THE ALERTS CARD LOCKED TO THE LEFT (Andy, 2026-09-29: "The alert card when on the chart
+// browser window locks to the left of the frame and cannot be moved around. also, not all the
+// lines wrap"). The card is authored centered, left:50% plus translateX(-50%), and the drag
+// released its bottom anchor but never the translate - so it was drawn half its own width left
+// of where the drag and the clamp put it, and its width:auto grew it to the room right of its
+// left edge. 28-31: the translate released on both paths (the page's own drag code, run against
+// a model of the card's CSS), a width that does not move with the card, every line wrapping,
+// and a position key that no longer reads v1's centers as left edges. Verified live first on a
+// throwaway console: a 100 px drag right from 400 put the card's left edge at 51, not 500.
+//
 // Most of these are SOURCE-SHAPE assertions, in the house style of tests/ui_split.js: which
 // listener a browser calls is not observable from Node, and the regression this guards is
 // precisely a registration going missing or losing an option. The live behaviour WAS
@@ -60,6 +70,12 @@
 // re-clamp entirely and 22 fails. 20 and 22 compare the LAST display write against the
 // clamp, not the first - checking indexOf alone let a mutation through that moved the real
 // write after the clamp while an earlier one in a guard clause still satisfied it.
+// The alerts card (28-31), same way, with the old build as the control (it fails all nine):
+// drop `uncenter` from the registration and 28 + 28c-28f fail; stop unanchorPanel releasing the
+// translate, or clear it to "" rather than "none", and 28b-28f fail; take the release off the
+// restore path and 9 + 28e fail, off the drag path and 9 + 28c/28d/28f; width:auto back, or the
+// cap gone, and 29 fails; nowrap or an ellipsis back on the recent rows and 30; the key back to
+// v1 and 31. Ten mutations, ten caught.
 //
 // NOTE: this suite evaluates page code SLOPPY - a direct eval, so the page's function declarations bind into this
 // file. The page itself is <script type="module">, which runs STRICT: an assignment to an undeclared name passes
@@ -175,11 +191,29 @@ const REG = calls("makeDraggablePanel").map(argtext => {
     head: selOf(parts[1] || ""),
     key: keyTok ? (VARKEY[keyTok] || keyTok) : null,
     unanchor: (opts.match(/\bunanchor:\s*"([a-z]+)"/) || [])[1] || null,
+    uncenter: /\buncenter:\s*true\b/.test(opts),
     ignore: (opts.match(/\bignore:\s*"([^"]+)"/) || [])[1] || null,
     persist: /\bpersist:/.test(opts),
     noRestore: /\brestore:\s*false/.test(opts),
+    optsText: opts,                              // the options as written, so 28c can run them
   };
 });
+
+// Everything the page AUTHORS for one panel: its inline style, its #id rule and its own class rules, from the
+// page's stylesheet with the comments stripped. Check 7 used to read the inline style alone, and the alerts card is
+// placed by its CLASS rule (.alertcard{left:50%;transform:translateX(-50%);bottom:108px}), which it could not see.
+// A rule counts only when the selector IS the id or the class - `.alertcard .vhead{` is about something else.
+const STYLE_TEXT = (H.match(/<style[^>]*>[\s\S]*?<\/style>/g) || []).join("\n").replace(/\/\*[\s\S]*?\*\//g, " ");
+function authoredFor(sel) {
+  const id = sel.slice(1);
+  const tag = (H.match(new RegExp('<[a-z]+\\b[^>]*\\bid="' + id + '"[^>]*>')) || [""])[0];
+  const classes = ((tag.match(/\bclass="([^"]*)"/) || [])[1] || "").split(/\s+/).filter(Boolean);
+  const decls = [(tag.match(/\bstyle="([^"]*)"/) || [])[1] || ""];
+  for (const s of ["#" + id, ...classes.map(c => "." + c)])
+    for (const m of STYLE_TEXT.matchAll(new RegExp("(^|[},])\\s*" + s.replace(/[.#-]/g, "\\$&") + "\\{([^}]*)\\}", "g")))
+      decls.push(m[2]);
+  return decls.join(";");
+}
 
 // The helper body, for the invariants that live inside it.
 const HELPER = H.slice(H.indexOf("function makeDraggablePanel"),
@@ -226,11 +260,8 @@ check("6. NO PANEL FORGETS WHERE IT WAS PUT — each persists by key or by callb
 
 // 7. A card authored bottom- or right-anchored must release that anchor, or the anchor
 // and the new left/top fight and the card stretches instead of moving.
-const anchored = REG.filter(r => {
-  if (!r.el) return false;
-  const m = H.match(new RegExp('<div id="' + r.el.slice(1) + '"[^>]*>'));
-  return m && /style="[^"]*\b(bottom|right):\s*\d/.test(m[0]);
-});
+// Read from everything the page authors for the panel, its class rules included (authoredFor, above).
+const anchored = REG.filter(r => r.el && /(^|[;\s])(bottom|right):\s*\d/.test(authoredFor(r.el)));
 const unreleased = anchored.filter(r => !r.unanchor);
 check("7. a bottom/right-anchored panel declares the anchor to release",
       unreleased.length === 0,
@@ -575,6 +606,113 @@ check("26c no call site hard-codes a display any more - every one derives it",
                 + " (the READINGS hang to " + below.toFixed(0) + " px below the centre)");
   }
 }
+
+// --- 28-31. THE ALERTS CARD ON THE CHART (Andy, 2026-09-29) ------------------------------ //
+// "The alert card when on the chart browser window locks to the left of the frame and cannot be moved around.
+// also, not all the lines wrap." The card is authored centered - left:50% plus translateX(-50%) - and the drag
+// released its bottom anchor but never the translate, so it was drawn half its own width LEFT of the position the
+// drag and the clamp work in. Measured on a 1600 px chart: a 100 px drag right from 400 put its left edge at 51,
+// not 500. Its width:auto made it as wide as the room right of its left edge (800 authored, 898 dragged), so
+// the clamp held it in a band at the left edge. And its recent rows were nowrap with an ellipsis.
+const centered = () => REG.filter(r => r.el && /transform:\s*translate/.test(authoredFor(r.el)));
+check("28. a panel CENTERED by a translate declares `uncenter`, so the drag and the restore release it",
+      () => centered().length > 0 && centered().every(r => r.uncenter),
+      () => centered().map(r => r.el + (r.uncenter ? " releases it" : " does NOT release it")).join(", ")
+            || "no centered panel found - the alerts card is authored so, by its class rule");
+
+eval(grab("unanchorPanel"));
+check("28b. ... and unanchorPanel releases the translate with the anchor, and leaves another panel's transform alone",
+      () => { const a = { style: { bottom: "108px", transform: "" } }, b = { style: { bottom: "44px", transform: "scale(2)" } };
+              unanchorPanel(a, { unanchor: "bottom", uncenter: true }); unanchorPanel(b, { unanchor: "bottom" });
+              return a.style.bottom === "auto" && a.style.transform === "none"
+                  && b.style.bottom === "auto" && b.style.transform === "scale(2)"; },
+      "one call releases both, on the path the drag and the restore share");
+
+// 28c-28f. THE REPORTED FAULT, on the page's OWN drag path - makeDraggablePanel, the window mousemove and mouseup,
+// placePanel, unanchorPanel, clampPanelPos - run with the alerts card's own registration options against a model of
+// its CSS: 800 wide at left:50% of a 1600 x 900 chart, bottom:108px, and drawn half its width left of its `left`
+// for as long as the translate is on. Only the geometry is modelled; every decision is the page's.
+function alertDrag(stored, moves) {
+  const store = stored ? { k: stored } : {}, on = {};
+  const win = { addEventListener: (t, f) => (on[t] = on[t] || []).push(f) };
+  const src = H.slice(H.indexOf("const dragPanels = [];"), H.indexOf("const VCARD_KEY"));
+  const api = new Function("window", "lsGet", "lsSet", "clampPanelPos", "placeVcard",
+                           src + "\nreturn { makeDraggablePanel };")(
+    win, (k, d) => (k in store ? store[k] : d), (k, v) => { store[k] = JSON.parse(JSON.stringify(v)); },
+    clampPanelPos, () => {});
+  const W = 800, HT = 162;
+  const card = { offsetWidth: W, offsetHeight: HT, style: { left: "", top: "", bottom: "", transform: "" },
+    getBoundingClientRect() {
+      const left = this.style.left ? parseFloat(this.style.left) : 1600 * 0.5;
+      const top = this.style.top ? parseFloat(this.style.top) : 900 - 108 - HT;
+      const x = left - (this.style.transform === "none" ? 0 : W / 2);
+      return { left: x, top, right: x + W, bottom: top + HT, width: W, height: HT };
+    } };
+  const head = { addEventListener: (t, f) => { head["on" + t] = f; } };
+  const reg = REG.find(r => r.el === "#alertCard");
+  if (!reg) throw new Error("the alerts card is not registered with makeDraggablePanel");
+  const opts = new Function("ALERTCARD_KEY", "return (" + reg.optsText + ");")("k");
+  const evt = (x, y) => ({ clientX: x, clientY: y, button: 0, target: { closest: () => null }, stopPropagation() {} });
+  const was = MAP; MAP = { width: 1600, height: 900 };
+  try {
+    api.makeDraggablePanel(card, head, opts);
+    const out = { restored: card.getBoundingClientRect(), steps: [] };
+    for (const [dx, dy] of moves) {
+      const r0 = card.getBoundingClientRect(), gx = r0.left + 60, gy = r0.top + 8;
+      head.onmousedown(evt(gx, gy));
+      on.mousemove.forEach(f => f(evt(gx + dx, gy + dy)));
+      on.mouseup.forEach(f => f(evt(gx + dx, gy + dy)));
+      out.steps.push({ from: r0, to: card.getBoundingClientRect(), stored: store.k });
+    }
+    return out;
+  } finally { MAP = was; }
+}
+{
+  let one = null, edges = null, back = null, why = "";
+  try {
+    one = alertDrag(null, [[100, -200]]).steps[0];
+    edges = alertDrag(null, [[-3000, 0], [6000, 0], [0, -3000], [0, 6000]]).steps.map(t => t.to);
+    back = alertDrag({ left: 300, top: 438 }, []).restored;
+  } catch (e) { why = "THREW: " + e.message; }
+  check("28c. THE REPORTED FAULT: a drag moves the card WITH the mouse - 100 px right lands it 100 px right",
+        () => one && one.to.left === one.from.left + 100 && one.to.top === one.from.top - 200,
+        () => why || ("grabbed at " + one.from.left + "," + one.from.top + ", dragged +100,-200, landed at "
+                      + one.to.left + "," + one.to.top + (one.to.left !== one.from.left + 100 ? " - the translate is still on" : "")));
+  check("28d. ... and it reaches every edge of the chart and stops there, fully on it",
+        () => edges && edges[0].left === 0 && edges[1].right === 1600 && edges[2].top === 0 && edges[3].bottom === 900,
+        () => why || ("left edge at " + edges[0].left + ", right edge at " + edges[1].right + ", top at " + edges[2].top
+                      + ", bottom at " + edges[3].bottom + " in a 1600 x 900 chart"));
+  check("28e. ... and a stored position is restored where the card was LEFT - the translate released on restore too",
+        () => back && back.left === 300 && back.top === 438,
+        () => why || ("stored 300,438, restored at " + back.left + "," + back.top));
+  check("28f. ... and what is stored is where the card IS",
+        () => one && one.stored && one.stored.left === one.to.left && one.stored.top === one.to.top,
+        () => why || ("stored " + JSON.stringify(one.stored) + ", on screen at " + one.to.left + "," + one.to.top));
+}
+
+// 29. width:auto on an absolutely placed box is the room to the right of its left edge, so the card changed width
+// with every move. max-content under a cap is the same width wherever the card is.
+const CARD_RULE = (STYLE_TEXT.match(/(^|[},])\s*\.alertcard\{([^}]*)\}/) || [])[2] || "";
+check("29. the card's width does not move with the card: max-content under a cap, never width:auto",
+      () => /(^|;)\s*width:\s*max-content/.test(CARD_RULE) && !/(^|;)\s*width:\s*auto/.test(CARD_RULE)
+            && /(^|;)\s*max-width:\s*\d/.test(CARD_RULE),
+      () => (CARD_RULE.match(/(^|;)\s*(min-|max-)?width:[^;]*/g) || []).map(d => d.replace(/^;\s*/, "")).join("; ")
+            || "no .alertcard rule found");
+
+// 30. "not all the lines wrap": the recent rows were the lines that did not.
+const CUT = [...STYLE_TEXT.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+  .filter(m => /\.alert(card|recent)\b|#alert(Card|Body|Recent)\b/.test(m[1])
+            && /white-space:\s*nowrap|text-overflow:\s*ellipsis/.test(m[2]))
+  .map(m => m[1].trim());
+check("30. every line in the card wraps: no rule for the card or its recent rows cuts one off with nowrap or an ellipsis",
+      () => CUT.length === 0 && /\.alertrecent \.arow \.ax\{/.test(STYLE_TEXT),
+      () => CUT.length ? "still cut off: " + CUT.join(" | ") : "the recent rows wrap like the guard bar, the banner and the note");
+
+// 31. A v1 position was stored with the translate on: its `left` is where the card's CENTER was. Read as a left
+// edge it would put the card half its width right of where it was left, so the key moved on.
+check("31. the card's position key has moved on from v1, whose stored left is the card's CENTER",
+      () => !!VARKEY.ALERTCARD_KEY && VARKEY.ALERTCARD_KEY !== "asv_alertcard_v1",
+      () => "ALERTCARD_KEY = " + VARKEY.ALERTCARD_KEY);
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

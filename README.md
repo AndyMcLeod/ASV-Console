@@ -336,7 +336,11 @@ The card is mirrored to the controls window and hidden on the chart while that w
 **ON CHART** on the card's head puts it above the command bar instead (and **TO CONTROLS** sends
 it back). One place at a time: the choice is a single browser-storage key both windows read.
 With no controls window — `--single-window`, or it closed — the chart shows the card whatever the
-choice says, so the alerts never vanish. The **Mission Status card stays on the chart window** — it is
+choice says, so the alerts never vanish. On the chart it drags anywhere by its head and keeps its
+width wherever it is put (at most half the chart), and every line in it wraps (29 September, Andy:
+"locks to the left of the frame and cannot be moved around. also, not all the lines wrap" — the
+drag left the card's centering on, so it was drawn half its width left of where it was put and
+held there, and the recent rows were cut off). The **Mission Status card stays on the chart window** — it is
 not mirrored, because two copies of one card is a second place to look rather than a
 second view; the chart window has the card, the top bar has the quick read, and the
 controls window is the toolbar. **Every card on the chart window is resizable** —

@@ -257,8 +257,15 @@
   .guardbar .ctl.small:hover{background:#2b1a06;}
   /* THE ALERTS CARD (2026-09-28). The three message surfaces are laid out in it, stacked, with their absolute
      placement taken away; the card itself sits where they used to overlap - the chart's bottom center, above the
-     RC banner and the command bar - or in the controls window (see UI_BRIDGED). Width follows the widest message. */
-  .alertcard{left:50%;transform:translateX(-50%);bottom:108px;top:auto;width:auto;min-width:340px;max-width:82vw;
+     RC banner and the command bar - or in the controls window (see UI_BRIDGED). Width follows the widest message,
+     up to half the chart, and every line wraps inside that.
+     max-content, NOT auto (Andy, 2026-09-29: "The alert card when on the chart browser window locks to the left of
+     the frame and cannot be moved around. also, not all the lines wrap"). An absolutely placed box with width:auto
+     is as wide as the room to the RIGHT of its left edge, so a dragged card changed width with every move: 800 px
+     where it was authored, 898 once dragged 100 px right, on a 1600 px chart. The cap is a percentage of the chart
+     for the same reason - it must not move with the card. The drag releases the centering translate (`uncenter`,
+     see unanchorPanel); in the controls window the .uicard rules override the width, the cap and the translate. */
+  .alertcard{left:50%;transform:translateX(-50%);bottom:108px;top:auto;width:max-content;min-width:340px;max-width:50%;
     max-height:calc(100vh - 220px);user-select:text;}
   .alertcard .vhead{cursor:move;}
   .alertcard .vhead .alertwhere{height:22px;font-size:9px;padding:0 8px;width:auto;}
@@ -272,7 +279,9 @@
   .alertrecent:empty{display:none;}
   .alertrecent .arow{display:flex;gap:6px;align-items:baseline;}
   .alertrecent .arow .at{color:var(--ink-faint);flex:0 0 auto;}
-  .alertrecent .arow .ax{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* Every line wraps (2026-09-29): these rows were cut off with an ellipsis, the one set of lines in the card that
+     did not wrap. min-width:0 lets the row's text narrow past its longest word; `anywhere` breaks a long token. */
+  .alertrecent .arow .ax{min-width:0;overflow-wrap:anywhere;}
   .alertrecent .arow.banner .ax{color:var(--warn);}
   /* MOVING BASE. Deliberately the loudest thing on the chart while it is up (Andy: "show
      some more obvious and overt indication that a shift of port is in process"). It is
@@ -1017,7 +1026,10 @@ function historyText(a){ return a.label + (a.answer ? " — " + a.answer : ""); 
 // body.alerts-in-controls / alerts-on-chart from it and the CSS in setupUISplit's block does the hiding; the
 // controls window learns a change through the storage event (its copy of the button relays the click to main,
 // which is where the key is written). The button reads as the move it would make.
-const ALERT_WHERE_KEY = "asv_alerts_where", ALERTCARD_KEY = "asv_alertcard_v1", ALERT_RECENT_N = 6;
+// ALERTCARD_KEY is v2 since 2026-09-29. A v1 position was stored with the centering translate still on, so its
+// `left` was the card's CENTER; read as a left edge it would put the card half its width right of where it was left.
+// The card starts from its authored place once, and remembers from there.
+const ALERT_WHERE_KEY = "asv_alerts_where", ALERTCARD_KEY = "asv_alertcard_v2", ALERT_RECENT_N = 6;
 function alertWhere(){ return lsGet(ALERT_WHERE_KEY, "controls") === "chart" ? "chart" : "controls"; }
 function applyAlertWhere(){
   const w = alertWhere();
@@ -12226,7 +12238,12 @@ const dragPanels = [];
 // A card authored bottom- or right-anchored must have that anchor released the moment it is
 // positioned by left/top, or the two fight and it stretches instead of moving. Needed on
 // RESTORE as much as during a drag, so it lives in one function both call.
-function unanchorPanel(el, o){ if(o.unanchor) el.style[o.unanchor] = "auto"; }
+// A card CENTERED by a translate (`uncenter`: the alerts card, left:50% + translateX(-50%)) must
+// lose the translate at the same moment. Left on, it drew the card half its own width left of the
+// position the drag and the clamp work in, so the first move threw it half off the chart and the
+// clamp then held it there (Andy, 2026-09-29: "locks to the left of the frame and cannot be moved
+// around"). Measured: a 100 px drag right from 400 put the card's left edge at 51, not 500.
+function unanchorPanel(el, o){ if(o.unanchor) el.style[o.unanchor] = "auto"; if(o.uncenter) el.style.transform = "none"; }
 function placePanel(rec){
   const {el, o} = rec;
   const p = o.key ? lsGet(o.key, null) : null;
@@ -12312,7 +12329,8 @@ const linePanelEl = $("#linePanel"),      linePanelHead = $("#linePanelHead");
 const lineTableEl = $("#lineTablePanel"), lineTableHead = $("#lineTablePanelHead");
 const aisTableEl  = $("#aisTablePanel"),  aisTableHead  = $("#aisTablePanelHead");
 makeDraggablePanel(linePanelEl, linePanelHead, {key: SURVPANEL_KEY});
-makeDraggablePanel($("#alertCard"), $("#alertHead"), {key: ALERTCARD_KEY, unanchor: "bottom", ignore: "#alertWhere"});   // 2026-09-28
+makeDraggablePanel($("#alertCard"), $("#alertHead"), {key: ALERTCARD_KEY, unanchor: "bottom", uncenter: true,
+                                                    ignore: "#alertWhere"});   // 2026-09-28; uncenter 2026-09-29
 makeDraggablePanel(lineTableEl, lineTableHead, {key: LINESPANEL_KEY, unanchor: "bottom"});
 makeDraggablePanel(aisTableEl,  aisTableHead,  {key: AISPANEL_KEY,   unanchor: "right",
                                                 ignore: "#aisTableClose"});
