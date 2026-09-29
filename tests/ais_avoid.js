@@ -113,6 +113,9 @@ var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld =
 // across its own pause/upload/speed/start, because a paused boat matches neither arm of
 // guardHeldOffer and the record would otherwise be spent halfway through the resume.
 var heldResuming = false;
+// ... and when it began, for the window the rungs below helm stand by in (heldResumeOwns), and the guard's own moves,
+// counted, which the resume asks about before its upload, before its Start and after it (2026-09-28, FRIGGA).
+var heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;
 // Whether the modelled guard ticks between the resume's commands. Off by default so the
 // non-resume fixtures are unchanged; resumeFrom turns it on.
 var tickGuard = false;
@@ -215,6 +218,11 @@ globalThis.fetch = (p, o) => {
 // Commands are RECORDED, not stubbed to nothing, so a check can say WHAT was sent and in
 // what order rather than only that something was. `refuse` drives the refusal branch.
 var sent = [], refuse = null, lost = null;
+// THE GUARD BETWEEN THE RESUME'S COMMANDS (2026-09-28, FRIGGA): `onReply(path)` runs after a command's reply has
+// landed and before the page's await resumes - the moment the 4 Hz ladder ran at 21:19:45.801, 51 ms after the way
+// round's upload. `replyState[path]` is the state a success answers with (the console's own reply carries it): the
+// Start's `behavior` is what the vessel says it started.
+var onReply = null, replyState = {};
 // ⚠ THE VESSEL'S SIDE OF A COMMAND LANDS AFTER THE REPLY, which is what makes the
 // one-at-a-time gate measurable. The page awaits each command; the run state it then reads
 // comes from a LATER telemetry frame. Applying it synchronously inside cmd() meant a second
@@ -226,6 +234,7 @@ function applyReply(p, pr) {
     if (p === "/api/cmd/pause") S.run = "paused";
     if (p === "/api/cmd/start") S.run = "running";
     if (tickGuard) guardHeldOffer();
+    if (onReply) onReply(p);
     return r;
   });
 }
@@ -271,7 +280,7 @@ function cmd(p, b) {
     ? { ok: false, error: "no answer", sent: true, refused: false }
     : refuse && refuse === p
     ? { ok: false, error: "ARM before uploading a plan", sent: true, refused: true }
-    : { ok: true, state: {} }));
+    : { ok: true, state: replyState[p] || {} }));
 }
 
 // A minimal DOM, only as wide as the guard bar. renderGuardBar writes text and display, and
@@ -302,6 +311,7 @@ eval([
   // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
   "const supervising = () => true;",
   grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grabDecl("HELD_GRACE_MS"), grab("guardHeldOffer"),
+  grabDecl("HELD_RESUME_OWNS_MS"), grab("heldResumeOwns"), grab("guardMove"),   // a held resume in flight has her (2026-09-28)
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
@@ -456,6 +466,7 @@ function surveying(sogKn, vessels, o = {}) {
   aisAvoid = null; aisVessels = vessels || []; aisPolledAt = o.polledAt != null ? o.polledAt : clock;
   aisKoBlindSaid = false; aisKoWantedAt = 0; aisShow = false; escKo = null; escFake = null;
   sent = []; notes = []; banners = []; logged = []; planIntent = { why: [] };
+  onReply = null; replyState = {};
 }
 // The boat has taken the hold: station-keeping where she is, no way on.
 function nowHolding() {
@@ -591,9 +602,9 @@ function guardHeld_at_mark() { return ll(0, 0); }
   const heldFor = !!aisAvoid;
   nowHolding(); sent = [];
   // the feed keeps answering, and she keeps sitting there
-  clock += 30000; aisPolledAt = clock; frame(); await settle();
-  // (half a minute: at a full minute the console routes ROUND a contact that stays - 2026-09-27, check 14)
-  check("6. a contact stopped ON the line ahead holds her and never clears the line: half a minute on nothing has come back, the episode still stands",
+  clock += 20000; aisPolledAt = clock; frame(); await settle();
+  // (twenty seconds: at thirty the console routes ROUND a contact that stays - 2026-09-27, check 14; a minute until 2026-09-28)
+  check("6. a contact stopped ON the line ahead holds her and never clears the line: twenty seconds on nothing has come back, the episode still stands",
         () => heldFor && !!aisAvoid && aisAvoid.clearSince === 0 && sent.length === 0,
         () => "episode " + JSON.stringify(aisAvoid) + ", sent " + JSON.stringify(paths()));
   // THE FEED GOES QUIET WHILE SHE HOLDS. The model empties, and an empty model reads "clear of the
@@ -709,9 +720,10 @@ function guardHeld_at_mark() { return ll(0, 0); }
 // KLEOS sat across line 8 at New Castle and the survey held for her; his pause then SPENT the banked
 // survey, and "Resume from here" had nowhere to go. His three: (1) the same line where she left it -
 // refused, she would meet the contact again; (2) the operator's point BEYOND the contact - routed round
-// her, the survey continues from there; (3) no answer in 60 s - the console routes round her itself, as if
+// her, the survey continues from there; (3) no answer in 60 s - 30 s since 2026-09-28, at his word after FRIGGA -
+// the console routes round her itself, as if
 // she were a buoy or a dock, and carries on. A contact that clears the line first keeps the 100 m return
-// (check 3). Never on a stale model, never while paused, not twice in a minute.
+// (check 3). Never on a stale model, never while paused, not twice inside the operator's 30 s.
 const PARKED = () => contact(30, 0, { sog: 0, cog: null, heading: 90 });   // 30 x 8 across the line: her hull is e = 15..45
 const nearRe = /WORKBOAT/;
 // THE WAY ROUND'S GEOMETRY (2026-09-28). A way round is uploaded or amended as [...via, rejoin, then the plan's own
@@ -762,22 +774,22 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   const why23 = $("#gb_why").textContent;
   check("13b. ... running, the bar says what she is holding for, that the way back is the console's, that the operator may right-click the line BEYOND her, and how long before the console routes round her itself",
         () => /holding for AIS: WORKBOAT/.test(why23) && /resumes on its own/.test(why23) && /100 m back/.test(why23)
-              && /right-click the line BEYOND her/.test(why23) && /routes round her itself in 3[5-7] s/.test(why23),
+              && /right-click the line BEYOND her/.test(why23) && /routes round her itself in [5-7] s/.test(why23),
         () => why23);
 }
 {
-  // 14. OPTION 3: A MINUTE ON, THE CONSOLE ROUTES ROUND HER
+  // 14. OPTION 3: THIRTY SECONDS ON, THE CONSOLE ROUTES ROUND HER (a minute until 2026-09-28)
   surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
-  clock += 30000; aisPolledAt = clock; frame(); await settle();
-  const at30 = paths().slice();
-  clock += 31000; aisPolledAt = clock; frame(); await settle();
+  clock += 20000; aisPolledAt = clock; frame(); await settle();
+  const at20 = paths().slice();
+  clock += 11000; aisPolledAt = clock; frame(); await settle();
   const up = sent.find(x => x.p === "/api/cmd/upload"), rte = (up && up.route) || [];
   const ask = pinCalls[pinCalls.length - 1];
-  check("14. sixty seconds on with her still across the line, the console routes round her: pause, upload, LOW, Start - and nothing at thirty",
-        () => at30.length === 0 && paths().indexOf("/api/cmd/pause") === 0
+  check("14. thirty seconds on with her still across the line, the console routes round her: pause, upload, LOW, Start - and nothing at twenty",
+        () => at20.length === 0 && paths().indexOf("/api/cmd/pause") === 0
               && paths().indexOf("/api/cmd/pause") < paths().indexOf("/api/cmd/upload")
               && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start"),
-        () => "at 30 s: " + JSON.stringify(at30) + "; at 61 s: " + JSON.stringify(paths()));
+        () => "at 20 s: " + JSON.stringify(at20) + "; at 31 s: " + JSON.stringify(paths()));
   // A SHIP-LENGTH ROUND HER (Andy, 2026-09-27): the rejoin clears her hull by her own length, not by the standoff alone
   const rj14 = rejoinOf(rte), via14 = viaOf(rte), wayIn14 = wayInOf(rte, ll(0, 0));
   check("14b. ... the upload picks the line up at the first point BEYOND her that is clear of her maneuver ring by the standoff (e = 65: a ship-length about her center reaches e = 60, the 5 m walk's next step is 65 - it was e = 80 while her HULL was grown by her length and the standoff added outside that), the taut way round in front of it, then the remainder",
@@ -790,7 +802,8 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   check("14d. ... with none of the operator's latches, the record spent, the episode closed, and it is said and recorded as ais_around with what was left under her",
         () => guardOverride === null && resumeSlow === false && guardHeld === null && aisAvoid === null && S.run === "running"
               && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /65 m of coverage left under/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 65 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 60
+              && banners.some(b => /did not clear the line within 30 s/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 65 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 30
                                   && e.data.mmsi === 338111222 && e.data.round_m === 30 && e.data.std_m === 3),
         () => "override " + JSON.stringify(guardOverride) + ", resumeSlow " + resumeSlow + ", episode " + JSON.stringify(aisAvoid)
             + ", banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b))) + ", logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
@@ -798,10 +811,10 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   // 14e. THE CONTACT CLEARS FIRST: THE 100 m RETURN WINS, AND NO WAY ROUND FOLLOWS
   surveying(7, [CROSSING()]); frame(); nowHolding(); sent = []; logged = [];
   const her2 = (t) => { aisVessels = [contact(34, -60 + 3.087 * t, { sog: 6, cog: 0, heading: 0 })]; aisPolledAt = clock; };
-  clock += 30000; her2(30); frame(); clock += 4100; her2(34.1); frame(); await settle();
+  clock += 29000; her2(29); frame(); clock += 4100; her2(33.1); frame(); await settle();
   const returned = paths().includes("/api/cmd/upload"), afterReturn = sent.length;
   clock += 30000; her2(64); frame(); await settle();
-  check("14e. a contact that CLEARS the line inside the minute gets the 100 m return, and no way round follows it",
+  check("14e. a contact that CLEARS the line inside the operator's 30 s gets the 100 m return, and no way round follows it",
         () => returned && sent.length === afterReturn && aisAvoid === null && !logged.some(e => e.kind === "ais_around"),
         () => "returned " + returned + ", later commands " + (sent.length - afterReturn) + ", episode " + JSON.stringify(aisAvoid));
 
@@ -824,7 +837,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
         () => rte2.length + " wpts: " + JSON.stringify(rte2.map(p => { const q = llEN(p.lat, p.lon, ref); return [Math.round(q.e), Math.round(q.n)]; }))
             + "; " + JSON.stringify(banners.slice(-1)));
 
-  // 14h. NO WAY ROUND: SAID, STILL HOLDING, TRIED AGAIN A MINUTE LATER - NOT EVERY FRAME. Charted walls on both
+  // 14h. NO WAY ROUND: SAID, STILL HOLDING, TRIED AGAIN 30 s LATER - NOT EVERY FRAME. Charted walls on both
   // sides of her ring, so the taut way round cannot be certified and the router's own search is the one asked
   // (2026-09-28: the taut path comes first now) - and the router finds nothing either.
   const wall14N = [{ e: 5, n: 22 }, { e: 60, n: 22 }, { e: 60, n: 60 }, { e: 5, n: 60 }], wall14S = wall14N.map(p => ({ e: p.e, n: -p.n }));
@@ -834,14 +847,14 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   pinNext = { error: "no clear route to the target - every path crosses AIS: WORKBOAT", reason: {} };
   clock += 61000; aisPolledAt = clock; frame(); await settle();
   const said1 = banners.filter(b => /CANNOT RESUME FROM HERE/.test(b)).length, sent1 = paths().slice(), tries1 = pinCalls.length;
-  clock += 30000; aisPolledAt = clock; frame(); await settle();
+  clock += 20000; aisPolledAt = clock; frame(); await settle();
   const tries2 = pinCalls.length;
-  clock += 31000; aisPolledAt = clock; frame(); await settle();
+  clock += 11000; aisPolledAt = clock; frame(); await settle();
   const tries3 = pinCalls.length;
   pinNext = null;
-  check("14h. no way round her: nothing is sent, she keeps holding with the offer and the episode standing, it is said, and the router is asked again a minute later - a contact moves - not every frame",
+  check("14h. no way round her: nothing is sent, she keeps holding with the offer and the episode standing, it is said, and the router is asked again 30 s later - a contact moves - not every frame",
         () => sent1.length === 0 && said1 === 1 && tries1 === 1 && !!guardHeld && !!aisAvoid && tries2 === 1 && tries3 === 2,
-        () => "sent " + JSON.stringify(sent1) + ", said " + said1 + ", router asked " + tries1 + " / " + tries2 + " / " + tries3 + " times at 61 / 91 / 122 s");
+        () => "sent " + JSON.stringify(sent1) + ", said " + said1 + ", router asked " + tries1 + " / " + tries2 + " / " + tries3 + " times at 61 / 81 / 92 s");
 }
 {
   // 15. OPTION 2: THE OPERATOR'S POINT BEYOND HER
@@ -879,7 +892,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   await resumeFromHere(ll(55, 2));                  // 10 m beyond her hull, inside a ship-length of her CENTER (e = 60)
   const inLenSent = paths().slice(), inLenSaid = banners.filter(b => /NEAR SIDE/.test(b));
   check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - with the time left before the console acts; nothing is sent, the offer and the episode stand",
-        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself in 50 s/.test(nearSaid[0])
+        () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself in 20 s/.test(nearSaid[0])
               && onSent.length === 0 && onSaid.length === 2 && inLenSent.length === 0 && inLenSaid.length === 3
               && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
         () => "near: sent " + JSON.stringify(nearSent) + ", " + JSON.stringify(nearSaid) + "; on her: said " + onSaid.length
@@ -897,7 +910,8 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
 // next frame - reading "entry in 0 s under way, but on drift alone it is 0 s away and stays outside half the
 // buffer": from INSIDE the buffer the track enters at once whatever the heading. The hold replaced the escape's
 // plan with the point she stood on, 2.6 m off the contact, and she stayed there all evening. The lower rungs stand
-// down while an escape is in flight; the offer stands once she is on station; the way round goes at the minute.
+// down while an escape is in flight; the offer stands once she is on station; the way round goes once the operator's
+// 30 s are up.
 {
   // the boat on line 1 at (0,0) heading east at 7 kn, INSIDE a 30 x 8 m hull parked with her center 6 m ahead
   // (hull e = -9..21). No set on this first frame: in extremis, and after the dwell the escape.
@@ -927,7 +941,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   // six seconds on, still under way on the escape: still nothing from the lower rungs
   clock += 6000; asv = ll(0, 30); frame();
   const stillNothing = paths().length === 0;
-  // she arrives on station: the offer stands, the bar says so, the episode is still open for the minute
+  // she arrives on station: the offer stands, the bar says so, the episode is still open for the operator's 30 s
   // (the set comes off with the arrival, so the standoff below is the 3 m buffer: in the 1 kn set it was 11.8 m)
   S = { ...S, status: { ...S.status, sog_kn: 0, cog_deg: null, holding: true, env_set_kn: 0 } }; asv = ll(0, 60);
   clock += 5000; aisPolledAt = clock; frame();
@@ -939,7 +953,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
         () => "later commands " + JSON.stringify(paths()) + "; offer " + (offer16 ? "stands" : "GONE") + "; bar: " + bar16.slice(0, 170));
   clock += 61000; aisPolledAt = clock; sent = []; frame(); await settle();
   const up16 = sent.find(x => x.p === "/api/cmd/upload"), rte16 = (up16 && up16.route) || [];
-  check("16c. ... and at the minute the way round goes from the escape point, rejoining line 1 past a ship-length about her center (e = 40: her center is at 6, her length 30, the standoff 3 - it was e = 55), taut round her from where the escape left her, the record spent, the episode closed",
+  check("16c. ... and once the operator's 30 s are up the way round goes from the escape point, rejoining line 1 past a ship-length about her center (e = 40: her center is at 6, her length 30, the standoff 3 - it was e = 55), taut round her from where the escape left her, the record spent, the episode closed",
         () => rte16.length >= 4 && distTo(rejoinOf(rte16), ll(40, 0)) < 0.5 && distTo(rte16[rte16.length - 3], LINE_E.b) < 0.5
               && minDistTo(wayInOf(rte16, ll(0, 60)), { e: 6, n: 0 }) >= 30 - 0.05 && guardHeld === null && aisAvoid === null,
         () => rte16.length + " wpts; rejoin " + (rejoinOf(rte16) ? distTo(rejoinOf(rte16), ll(40, 0)).toFixed(1) + " m from (40, 0)" : "none") + "; sent " + JSON.stringify(paths()));
@@ -1002,7 +1016,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   check("17. right-click ON a contact while the guard holds the survey for her: the chart menu shows 'Route round WORKBOAT', live, her length in the key; off her the row is hidden, not grayed",
         () => onHer.shown && !onHer.off && onHer.lbl === "Route round WORKBOAT" && onHer.key === "30 m round her" && !offHer,
         () => JSON.stringify(onHer) + "; off her shown " + offHer);
-  // 17b. choosing it goes the held path NOW - ten seconds in, not sixty
+  // 17b. choosing it goes the held path NOW - ten seconds in, not thirty
   const r17b = await avoidContactAt(ll(30, 0)); await settle();
   const up17 = sent.find(x => x.p === "/api/cmd/upload"), rte17 = (up17 && up17.route) || [], ask17 = pinCalls[pinCalls.length - 1];
   check("17b. choosing it ten seconds in goes the held path NOW - pause, upload rejoining line 1 past a ship-length about her center (e = 65), LOW, Start, no amendment - the way in taut round her ring, the record spent, the episode closed, said 'at your word' and logged as manual",
@@ -1092,7 +1106,7 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
   const r17h = aisAroundNow(); await settle();
   const up17h = sent.find(x => x.p === "/api/cmd/upload"), rte17h = (up17h && up17h.route) || [];
   check("17h. held on a TURN (no line under her): the survey is banked with no mark, the bar says she was stopped on a turn instead of promising a line she is not on, and the way round picks the plan up at its NEXT waypoint routed round her - pause, upload route[idx..], LOW, Start, the way in asked with her ring as a fly-through - said and logged with no line",
-        () => bankedTurn && /stopped on a TURN, not a coverage line/.test(whyTurn) && !/back down it/.test(whyTurn) && /routes round her itself in 50 s/.test(whyTurn)
+        () => bankedTurn && /stopped on a TURN, not a coverage line/.test(whyTurn) && !/back down it/.test(whyTurn) && /routes round her itself in 20 s/.test(whyTurn)
               && r17h === true && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start") && !paths().includes("/api/cmd/amend")
               && rte17h.length >= 4 && distTo(rejoinOf(rte17h, 2), LINE_E.b) < 0.5 && distTo(rte17h[rte17h.length - 1], ll(-200, 60)) < 0.5
               && pinCalls.length === 0 && minDistTo(wayInOf(rte17h, ll(0, 0), 2), PARKED_C) >= 30 - 0.05   // taut round her to the next waypoint
@@ -1434,6 +1448,202 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
         () => distTo(rejoinOf(rte19i), ll(70, 0)) < 0.5 && viaOf(rte19i).length >= 1 && dH19i >= 22.5 - 0.05,
         () => "rejoin " + (rejoinOf(rte19i) ? JSON.stringify(ref.toEN(rejoinOf(rte19i))) : "none") + "; via " + viaOf(rte19i).length + "; off her hull " + dH19i.toFixed(2) + " m");
   S = { ...S, status: { ...S.status, env_set_kn: 0 } }; asv = ll(0, 0);
+}
+
+// ── 20. FRIGGA (Andy's console, 2026-09-28 21:19:45): THE GUARD'S HOLD BETWEEN THE WAY ROUND'S UPLOAD AND ITS START ──
+// His log: held 48 m off FRIGGA in a 1.75 kn set; six seconds into the hold the clear branch read the station-keeping
+// boat as clear and released the hold rung's latch ("Clear ahead again (43.3 m)"). The way round then paused her and
+// uploaded the route round her (STAGED), and PAUSED she drifted toward FRIGGA: the ladder read a fresh HOLD 42 s out and
+// the rung posted /api/cmd/hold 51 ms later, replacing the staged route round. The Start answered "Station-keep
+// started", the page announced ROUTED ROUND and spent the held survey, and every later press resumed only the hold.
+// Replayed with the guard ticking between the resume's commands (onReply).
+const OWNS_MS = +H.match(/const HELD_RESUME_OWNS_MS = (\d+)/)[1];
+// held for her, then station-keeping with a little way on AWAY from her - the station-keep's own motion - until the
+// clear branch releases the latch, as it did at 21:19:04. Answers whether it did.
+function heldThenReleased() {
+  surveying(7, [PARKED()]); frame(); nowHolding();
+  const held = !!guardHeld && !!aisAvoid && guardActedAt > 0;
+  S = { ...S, status: { ...S.status, sog_kn: 0.3, cog_deg: 270, heading_deg: 90 } };
+  for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  return held && guardActedAt === 0 && guardLevel === "clear";
+}
+// paused, and set toward her at `kn`: 1 kn is a HOLD 23 s out (the rung's own reading at 21:19:45.801), 1.75 kn a HELM 13 s out
+const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn, cog_deg: 90, heading_deg: 90, holding: false,
+                                                                   env_set_kn: kn, env_set_deg: 90 } }; };
+{
+  const released = heldThenReleased();
+  let midLevel = null, midBanners = null, midSent = null;
+  onReply = (p) => {
+    if (p !== "/api/cmd/upload") return;
+    pausedSetToward(1.0);
+    const b0 = banners.length, n0 = sent.length; frame();
+    midLevel = clearance.level; midBanners = banners.slice(b0); midSent = sent.slice(n0).map(x => x.p);
+  };
+  sent = []; banners = []; notes = []; logged = [];
+  clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();   // the operator's 30 s: the console's own way round
+  onReply = null;
+  const seq20 = paths();
+  check("20. FRIGGA: the latch released by a station-keeping frame (as at 21:19:04), the way round paused her and uploaded, and PAUSED she drifted toward her - the ladder reads HOLD mid-resume and posts NOTHING: pause, upload, LOW, Start, the route round started and announced, the record spent",
+        () => released && midLevel === "hold" && midSent && midSent.length === 0
+              && JSON.stringify(seq20) === JSON.stringify(["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/speed", "/api/cmd/start"])
+              && banners.some(b => /ROUTED ROUND/.test(b)) && guardHeld === null && aisAvoid === null,
+        () => "latch released " + released + "; mid-resume level " + midLevel + ", sent then " + JSON.stringify(midSent)
+            + "; sent " + JSON.stringify(seq20) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 70))));
+  check("20a. ... and no '⚠ HOLD ... holding still answers it' banner from inside the resume - on his console it came a third of a second before ROUTED ROUND and read as the console holding her",
+        () => midBanners !== null && !midBanners.some(b => /^⚠ HOLD/.test(b)),
+        () => "mid-resume banners " + JSON.stringify(midBanners));
+}
+{
+  // 20b. IN EXTREMIS MID-RESUME, at each of the resume's steps: the helm rung never stands by - it escapes - and the
+  //      resume does not go on over it. After the pause: nothing is uploaded. After the upload: no LOW (it would slow
+  //      the escape), no Start. After the LOW: no Start. After the Start: no ROUTED ROUND. Each time it says so, and
+  //      the held survey and the episode stand.
+  const got = [];
+  for (const at of ["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/speed", "/api/cmd/start"]) {
+    const released = heldThenReleased();
+    escFake = { hdg: 0, to: { e: 0, n: 60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
+    const kept = guardHeld, ep = aisAvoid;
+    let midSent = null;
+    onReply = (p) => {
+      if (p !== at || midSent) return;
+      pausedSetToward(1.75);
+      const n0 = sent.length; frame(); clock += 1600; frame(); midSent = sent.slice(n0).map(x => x.p);
+    };
+    sent = []; banners = []; notes = []; logged = [];
+    clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();
+    onReply = null;
+    const after = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
+    got.push({ at, released, esc: !!midSent && midSent.includes("/api/cmd/escape"), after,
+               upload: paths().includes("/api/cmd/upload"), start: paths().includes("/api/cmd/start"),
+               routed: banners.some(b => /ROUTED ROUND/.test(b)),
+               said: banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /took the helm/.test(b) && /on the guard's escape/.test(b)),
+               kept: guardHeld === kept && aisAvoid === ep,
+               logged: logged.some(e => e.kind === "resume_not_running" && e.data.guard === "took the helm" && e.data.around === true) });
+    escFake = null;
+  }
+  const want = { "/api/cmd/pause": [], "/api/cmd/upload": [], "/api/cmd/speed": [], "/api/cmd/start": [] };
+  check("20b. in extremis mid-resume the helm rung escapes - it never stands by - and the resume sends NOTHING after the escape at any of its four steps (no upload after the pause, no LOW and no Start after the upload, no Start after the LOW), announces no way round, says why, and keeps the held survey and the episode",
+        () => got.length === 4 && got.every(g => g.released && g.esc && JSON.stringify(g.after) === JSON.stringify(want[g.at]) && !g.routed && g.said && g.kept && g.logged)
+              && got[0].upload === false && got[3].start === true,
+        () => got.map(g => g.at.replace("/api/cmd/", "") + ": released " + g.released + ", escaped " + g.esc + ", then " + JSON.stringify(g.after)
+                           + ", routed " + g.routed + ", said " + g.said + ", kept " + g.kept + ", logged " + g.logged).join(" | "));
+}
+{
+  // 20c. THE START'S OWN ANSWER (FRIGGA's "Station-keep started"): the vessel says it started its station-keep plan -
+  //      no ROUTED ROUND, the record and the episode kept, and it says what happened
+  surveying(7, [PARKED()]); frame(); nowHolding();
+  clock += 10000; aisPolledAt = clock; frame();
+  replyState["/api/cmd/start"] = { behavior: "hold", note: "Station-keep started (will loiter / station-keep at the end)." };
+  const kept = guardHeld, ep = aisAvoid, route20c = runRoute;
+  sent = []; banners = []; notes = []; logged = [];
+  const r20c = aisAroundNow(); await settle();
+  replyState = {};
+  check("20c. the Start answers with the vessel's STATION-KEEP plan: no way round is announced - it says the way round is NOT RUNNING, why, and that the console tries again itself in 30 s - and the held survey, the episode and the logged record stand",
+        () => r20c === true && paths().includes("/api/cmd/start") && !banners.some(b => /ROUTED ROUND/.test(b))
+              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /answered Start with its station-keep plan/.test(b) && /tries again itself in 30 s/.test(b))
+              && guardHeld === kept && aisAvoid === ep && runRoute === route20c && !logged.some(e => e.kind === "ais_around")
+              && logged.some(e => e.kind === "resume_not_running" && /station-keep/.test(e.data.why)),
+        () => "returned " + r20c + "; sent " + JSON.stringify(paths()) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 120)))
+            + "; record " + (guardHeld === kept ? "kept" : "CHANGED") + ", episode " + (aisAvoid === ep ? "kept" : "CHANGED")
+            + ", drawn route " + (runRoute === route20c ? "the held survey's" : "NOT the held survey's"));
+  // 20d. ... the bar counts to the NEXT try, and the console does try again itself 30 s after the one that did not start
+  renderGuardBar({ level: "blind" }, clearance);
+  const why20d = $("#gb_why").textContent;
+  clock += 20000; aisPolledAt = clock; sent = []; banners = []; frame(); await settle();
+  const at20 = paths().slice();
+  replyState["/api/cmd/start"] = { behavior: "survey" };
+  clock += 11000; aisPolledAt = clock; frame(); await settle();
+  replyState = {};
+  check("20d. ... the bar counts to the NEXT try, not to 'now', and 30 s after the try that did not start the console tries again itself - nothing at 20 s, the way round at 31 s, the vessel starting the remainder ('survey'), announced and the record spent",
+        () => /routes round her itself in 30 s/.test(why20d) && at20.length === 0
+              && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start")
+              && banners.some(b => /ROUTED ROUND/.test(b)) && guardHeld === null && aisAvoid === null,
+        () => "bar '" + why20d.slice(-80) + "'; at 20 s " + JSON.stringify(at20) + "; at 31 s " + JSON.stringify(paths())
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 60))));
+}
+{
+  // 20e. THE STAND-BY IS BOUNDED AND NEVER COVERS HELM
+  const was = [heldResuming, heldResumingAt];
+  heldResuming = true; heldResumingAt = clock;
+  const hold0 = heldResumeOwns("hold", clock), helm0 = heldResumeOwns("helm", clock),
+        slowLate = heldResumeOwns("slow", clock + OWNS_MS - 1), holdOver = heldResumeOwns("hold", clock + OWNS_MS);
+  heldResuming = false;
+  const notIn = heldResumeOwns("hold", clock);
+  [heldResuming, heldResumingAt] = was;
+  check("20e. the stand-by is bounded and never covers helm: a resume in flight has her below helm, never at helm, and not once HELD_RESUME_OWNS_MS (" + OWNS_MS / 1000 + " s) has run - a resume stalled on a dead link hands the ladder back",
+        () => hold0 === true && helm0 === false && slowLate === true && holdOver === false && notIn === false && OWNS_MS === 10000,
+        () => "hold " + hold0 + ", helm " + helm0 + ", slow at " + (OWNS_MS - 1) + " ms " + slowLate + ", hold at " + OWNS_MS + " ms " + holdOver + ", not resuming " + notIn);
+}
+{
+  // 20f. THE 100 m RETURN THAT DID NOT START. It spends its episode before it calls the resume (aisReturnTick), so a
+  //      Start that answered the station-keep plan would have left nothing to try again with: the episode is PUT BACK,
+  //      its dwell to run again, and once the line has read clear for AIS_RETURN_DWELL_MS more the return goes again.
+  surveying(7, [CROSSING()]); frame(); nowHolding();
+  const her20f = (t) => { aisVessels = [contact(34, -60 + 3.087 * t, { sog: 6, cog: 0, heading: 0 })]; aisPolledAt = clock; };
+  const kept = guardHeld, route0 = runRoute;
+  clock += 30000; her20f(30); frame(); clock += 4100; her20f(34.1);
+  replyState["/api/cmd/start"] = { behavior: "hold" };
+  sent = []; banners = []; logged = [];
+  frame(); await settle();
+  replyState = {};
+  // the episode as it was put back - read NOW, because the frames below move the same object's dwell on
+  const first = paths().slice(), ep = aisAvoid ? { ...aisAvoid } : null, keptF = guardHeld === kept, routeF = runRoute === route0;
+  const saidF = banners.some(b => /THE SURVEY IS NOT RUNNING/.test(b) && /tries again once the line reads clear again/.test(b));
+  sent = []; banners = [];
+  clock += 1000; her20f(35.1); frame(); clock += 4100; her20f(39.2); frame(); await settle();
+  check("20f. a 100 m return whose Start answered the station-keep plan: NOT RUNNING said, the record kept, its spent episode PUT BACK with the dwell to run again - and 4 s of clear line later the return goes again and this time starts",
+        () => first.includes("/api/cmd/start") && saidF && keptF && routeF && !!ep && ep.clearSince === 0
+              && paths().includes("/api/cmd/upload") && paths().includes("/api/cmd/start")
+              && banners.some(b => /SURVEY RESUMED/.test(b)) && guardHeld === null && aisAvoid === null,
+        () => "first " + JSON.stringify(first) + ", said " + saidF + ", record kept " + keptF + ", drawn route kept " + routeF
+            + ", episode " + JSON.stringify(ep) + "; again " + JSON.stringify(paths()) + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 60))));
+}
+{
+  // 20g. A RESUME STALLED PAST THE STAND-BY (a slow link): the ladder has her back and the hold rung holds her - and the
+  //      resume does not Start over the guard's hold
+  const released = heldThenReleased();
+  const kept = guardHeld, ep = aisAvoid;
+  let midSent = null;
+  onReply = (p) => {
+    if (p !== "/api/cmd/upload" || midSent) return;
+    pausedSetToward(1.0);
+    clock += OWNS_MS + 500;                       // the upload's round trip outlasted the stand-by
+    const n0 = sent.length; frame(); midSent = sent.slice(n0).map(x => x.p);
+  };
+  sent = []; banners = []; logged = [];
+  clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();
+  onReply = null;
+  check("20g. a resume stalled past the " + OWNS_MS / 1000 + " s stand-by: the hold rung has her back and HOLDS her - and the resume sends nothing more, no LOW and no Start: NOT RUNNING, 'held her again', station-keeping, the record and the episode kept",
+        () => released && midSent && midSent.includes("/api/cmd/hold")
+              && JSON.stringify(paths()) === JSON.stringify(["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/hold"])
+              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /held her again/.test(b) && /She is station-keeping/.test(b))
+              && guardHeld === kept && aisAvoid === ep,
+        () => "released " + released + "; mid-resume sent " + JSON.stringify(midSent) + "; sent " + JSON.stringify(paths())
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
+}
+{
+  // 20h. THE UPLOAD'S ANSWER LOST WHILE THE HELM RUNG ESCAPED: the failed-upload path puts a paused boat back on
+  //      station with a hold - which here would land on top of the escape just sent. It does not.
+  const released = heldThenReleased();
+  escFake = { hdg: 0, to: { e: 0, n: 60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
+  const kept = guardHeld, ep = aisAvoid;
+  let midSent = null;
+  onReply = (p) => {
+    if (p !== "/api/cmd/upload" || midSent) return;
+    pausedSetToward(1.75);
+    const n0 = sent.length; frame(); clock += 1600; frame(); midSent = sent.slice(n0).map(x => x.p);
+  };
+  lost = "/api/cmd/upload";
+  sent = []; banners = []; logged = [];
+  clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();
+  onReply = null; lost = null; escFake = null;
+  const after20h = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
+  check("20h. the upload's answer LOST while the helm rung escaped: the failed-upload path does not put her 'back on station' over the escape - nothing is sent after it, NOT RUNNING is said with the cause, the record and the episode kept",
+        () => released && midSent && midSent.includes("/api/cmd/escape") && after20h.length === 0
+              && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /took the helm while the remainder was being uploaded/.test(b))
+              && guardHeld === kept && aisAvoid === ep,
+        () => "released " + released + "; mid-resume sent " + JSON.stringify(midSent) + "; after the escape " + JSON.stringify(after20h)
+            + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
 }
 
 Date.now = realNow;

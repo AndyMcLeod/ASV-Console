@@ -79,6 +79,9 @@ function check(name, cond, detail) {
   let ok = false, err = "";
   try { ok = (typeof cond === "function") ? !!cond() : !!cond; }
   catch (e) { ok = false; err = " THREW " + (e && e.message ? e.message : e); }
+  // A detail may be a function of what the check measured, CALLED here - 7f's printed its own source text for a
+  // day, so its line never showed a number (2026-09-28).
+  if (typeof detail === "function") { try { detail = detail(); } catch (e) { detail = "the detail threw " + (e && e.message ? e.message : e); } }
   console.log((ok ? "  ok   " : "  FAIL ") + name + (detail ? "   [" + detail + "]" : "") + err);
   if (!ok) fails++;
 }
@@ -460,6 +463,108 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
   check("7f. a route the router found at the 19.5 m standoff KEEPS it through the lane pass - every leg at least 19.5 m off a hull-sized block across the leg, in three orientations (the lane pass used to cut it to 6-14 m) - and a calm route at the 3 m buffer is still routed at the buffer",
         () => got.length === 3 && got.every(g => !g.err && !g.inside && g.m >= 19.5 - 0.05 && g.calm >= 3 - 0.05 && g.calm < 19.5),
         () => got.map(g => "rot " + g.rot + ": " + (g.err || g.m.toFixed(1) + " m (calm " + g.calm.toFixed(1) + " m)")).join("; "));
+}
+
+// ── 7g. AND THROUGH THE UPLOAD ROUTER'S LANE PASS (2026-09-28) ─────────────────────────────────
+// routePlan - Upload, Go-To's and RTH's plans, a drawn transit - had the same pass for its TRANSIT legs (every leg of a
+// pure transit, the approach of a plan): found at the standoff, laned at the buffer. Measured before the fix on 7f's
+// block: 6.3-14.1 m off it in every orientation, on the pure transit and on a plan's approach alike, with
+// insideStandoff 0 - the plan said the standoff was kept. A plan's legs BETWEEN its waypoints keep the buffer, as they
+// always have (the punch's own geometry), so only the approach is asked of a plan.
+{
+  const { nogo } = require("../static/js/state.js");
+  const { routePlan } = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 43.07, lon: -70.71 });
+  const at = (e, n) => F.fromEN(e, n);
+  const block = (rotDeg) => { const r = rotDeg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    const pts = [[-13, -7], [13, -7], [13, 7], [-13, 7]].map(([x, y]) => ({ e: x * c - y * s, n: x * s + y * c }));
+    return { ring: pts, bb: bbOf(pts), kind: "a hull-sized block" }; };
+  const model = (polys) => ({ polys, lines: [], points: [], marks: [], sys: [], chans: [] });
+  const minClear = (route, from, ko) => { let m = Infinity, prev = F.toEN(from);
+    for (const w of route) { const q = F.toEN(w), n = Math.max(1, Math.ceil(Math.hypot(q.e - prev.e, q.n - prev.n) / 0.5));
+      for (let i = 0; i <= n; i++) { const t = i / n; m = Math.min(m, K.clearanceM({ e: prev.e + (q.e - prev.e) * t, n: prev.n + (q.n - prev.n) * t }, ko, 200)); }
+      prev = q; }
+    return m; };
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  const got = [];
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3;
+    for (const rot of [-42, 30, 60]) {
+      const ko = model([block(rot)]); nogo.ko = ko;
+      const A = at(-58, 0), B = at(37, 0), C = at(37, 60);
+      const t = routePlan(A, [B], true, 19.5);                       // a pure transit: every leg is one
+      const p = routePlan(A, [B, C], false, 19.5);                   // a plan: its approach is the transit
+      const j = p.route.findIndex(w => { const q = F.toEN(w); return Math.abs(q.e - 37) < 0.01 && Math.abs(q.n) < 0.01; });
+      const calm = routePlan(A, [B], true, 3);                       // no standoff: the buffer's own route
+      got.push({ rot, t: minClear(t.route, A, ko), tIn: t.insideStandoff, a: j >= 0 ? minClear(p.route.slice(0, j + 1), A, ko) : -1,
+                 aIn: p.insideStandoff, unr: t.unroutable.length + p.unroutable.length, calm: minClear(calm.route, A, ko) });
+    }
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  check("7g. the Upload router keeps the 19.5 m standoff its transit legs were found at through its own lane pass - a pure transit and a plan's approach alike at least 19.5 m off the block in three orientations (they came out 6-14 m, with the plan saying the standoff was kept) - and a calm plan is still routed at the buffer",
+        () => got.length === 3 && got.every(g => g.unr === 0 && g.tIn === 0 && g.aIn === 0 && g.t >= 19.5 - 0.05 && g.a >= 19.5 - 0.05
+                                                  && g.calm >= 3 - 0.05 && g.calm < 19.5),
+        () => got.map(g => "rot " + g.rot + ": transit " + g.t.toFixed(1) + " m, approach " + g.a.toFixed(1) + " m (calm " + g.calm.toFixed(1)
+                           + " m; inside " + g.tIn + "/" + g.aIn + ", unroutable " + g.unr + ")").join("; "));
+}
+
+// ── 7h. A BUOYED CHANNEL IN A SET: THE LANE WHERE THE STANDOFF CANNOT BE KEPT, THE CENTERLINE WHERE ONLY IT CAN ──────────
+// The two sides of 7g's re-gate, pinned so the trade is deliberate. A leg found only at the BUFFER (a 30 m channel: no
+// line in it is 19.5 m off both banks) keeps the buffer's lane pass - the Rule 9 lane a quarter of the width in, as in
+// calm water; re-gating it at a standoff nothing can keep dropped the lane and ran the centerline (the mutation that
+// took the fallback's reset away). A leg the standoff CAN be kept on (a 40 m channel: the centerline is 20 m off each
+// bank) keeps it: the lane a quarter in is 10 m off the starboard bank, inside the guard's 19.5 m, so the plan runs the
+// centerline and reports the lane as partial. The guard's standoff is the speed-and-set margin the ladder acts on;
+// keeping right inside it is the treadmill (2026-09-28).
+{
+  const { nogo } = require("../static/js/state.js");
+  const { routePlan } = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 42.14, lon: -80.08 });
+  const at = (e, n) => F.fromEN(e, n);
+  const rect = (e0, e1, n0, n1) => { const r = [{ e: e0, n: n0 }, { e: e1, n: n0 }, { e: e1, n: n1 }, { e: e0, n: n1 }];
+    return { ring: r, bb: bbOf(r), kind: "a bank" }; };
+  const channel = (HALF) => {                                         // tests/buoy_lane.js's buoyed channel, between banks
+    const ns = [100, 300, 500, 700, 900];
+    const port = ns.map((n, i) => ({ e: -HALF, n, side: -1, num: 2 * i + 1, sys: "CH" }));
+    const stbd = ns.map((n, i) => ({ e: HALF, n, side: 1, num: 2 * (i + 1), sys: "CH" }));
+    return { polys: [rect(-80, -HALF, -200, 1200), rect(HALF, 80, -200, 1200)], lines: [], points: [],
+             marks: [...port, ...stbd], sys: [{ sys: "CH", port, stbd }], chans: [] };
+  };
+  const eAt = (route, nq) => { const q = route.map(w => F.toEN(w)); const m = q.find(x => x.n > nq - 60 && x.n < nq + 60); return m ? m.e : null; };
+  const minClear = (route, from, ko) => { let m = Infinity, prev = F.toEN(from);
+    for (const w of route) { const q = F.toEN(w), n = Math.max(1, Math.ceil(Math.hypot(q.e - prev.e, q.n - prev.n) / 2));
+      for (let i = 0; i <= n; i++) { const t = i / n; m = Math.min(m, K.clearanceM({ e: prev.e + (q.e - prev.e) * t, n: prev.n + (q.n - prev.n) * t }, ko, 100)); }
+      prev = q; }
+    return m; };
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  let narrow, mid;
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3;
+    const A = at(0, 0), B = at(0, 1000);
+    nogo.ko = channel(15);
+    const n1 = routePlan(A, [B], true, 19.5), n0 = routePlan(A, [B], true, 3);
+    narrow = { inside: n1.insideStandoff, lane: n1.lane, partial: n1.partial, e: eAt(n1.route, 500), eCalm: eAt(n0.route, 500) };
+    nogo.ko = channel(20);
+    const m1 = routePlan(A, [B], true, 19.5), m0 = routePlan(A, [B], true, 3);
+    mid = { inside: m1.insideStandoff, lane: m1.lane, partial: m1.partial, clr: minClear(m1.route, A, nogo.ko), eCalm: eAt(m0.route, 500),
+            eMax: Math.max(...m1.route.map(w => Math.abs(F.toEN(w).e))) };
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  check("7h. a buoyed channel in a 1.75 kn set: 30 m wide, where no line keeps the 19.5 m standoff, the leg is found at the buffer, SAID (insideStandoff), and rides the Rule 9 lane a quarter of the width in as in calm water; 40 m wide, where the centerline keeps it, she runs the centerline 19.5 m or more off both banks and the plan says the lane is partial - the lane 10 m off the starboard bank is inside the guard's standoff",
+        () => narrow && narrow.inside === 1 && narrow.lane === true && narrow.partial === false
+              && narrow.e != null && Math.abs(narrow.e - 7.5) < 0.5 && narrow.eCalm != null && Math.abs(narrow.eCalm - 7.5) < 0.5
+              && mid && mid.inside === 0 && mid.lane === true && mid.partial === true && mid.clr >= 19.5 - 0.05 && mid.eMax < 0.5
+              && mid.eCalm != null && Math.abs(mid.eCalm - 10) < 0.5,
+        () => "30 m: inside " + (narrow && narrow.inside) + ", lane " + (narrow && narrow.lane) + ", partial " + (narrow && narrow.partial) + ", e at mid-channel "
+            + (narrow && narrow.e != null ? narrow.e.toFixed(1) : "none") + " (calm " + (narrow && narrow.eCalm != null ? narrow.eCalm.toFixed(1) : "none") + ")"
+            + " | 40 m: inside " + (mid && mid.inside) + ", lane " + (mid && mid.lane) + ", partial " + (mid && mid.partial) + ", " + (mid ? mid.clr.toFixed(1) : "?")
+            + " m off the banks, widest " + (mid ? mid.eMax.toFixed(1) : "?") + " m off the centerline (calm lane at e " + (mid && mid.eCalm != null ? mid.eCalm.toFixed(1) : "none") + ")");
 }
 
 // ── 8. AND IT IS NEVER SILENT ───────────────────────────────────────────────────────

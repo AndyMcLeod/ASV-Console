@@ -294,6 +294,9 @@ function makeWorld() {
     + "const V = { SPEED_KN: { low: 4.0, high: 14.0 } };" + NL
     + "let mission = { speeds: { transit: 'transit', turn: 'low', survey: 'survey' } };" + NL
     + "let runLineIdx = -1, curTurn = -1;" + NL
+    // the guard's own moves, counted for a held resume in flight (2026-09-28): both stops here post one
+    + "let guardMoved = 0, guardMovedHow = null;" + NL
+    + grab("guardMove") + NL
     + grab("berthAt") + NL
     + grab("grantMembers") + NL
     + grab("grantNow") + NL
@@ -309,7 +312,7 @@ function makeWorld() {
     + " grantNow, grantOnNewMotion, roleSpeed," + NL
     + "  set: (o) => { if ('nogo' in o) nogo = o.nogo; if ('asv' in o) asv = o.asv;"
     + "                if ('S' in o) S = o.S; }," + NL
-    + "  state: () => ({ grant, grantStop, grantEndSay, grantLast, sent, banners, notes, events })," + NL
+    + "  state: () => ({ grant, grantStop, grantEndSay, grantLast, sent, banners, notes, events, guardMoved, guardMovedHow })," + NL
     + "  reset: () => { sent = []; banners = []; notes = []; events = []; planIntent = { why: [] }; },"
     + NL + "}; })()");
 }
@@ -404,6 +407,16 @@ check("12c. RECESSION ends the grant outright - and that is an end that RESTORES
   + " m, give " + B.recessionGiveM(20).toFixed(1) + " m · grant ended: " + !afterRecess.grant
   + " · helm stand-down armed: " + !!afterRecess.grantEndSay
   + ". The two ends differ in exactly this, and it is the difference the design turns on");
+
+// ── BOTH STOPS ARE THE GUARD'S OWN MOVES (2026-09-28, FRIGGA) ────────────────────────────
+// A held resume in flight asks whether the guard moved her, and does not Start over a move it made. Between the two
+// snapshots here there are THREE stops - the stall's (14f) and the clock latch's (14c), both stopAtBerth, and the
+// recession's end (12c), standDownEnd - and each counts once and names itself.
+check("12d. both of the berth's stops count as the guard's own moves - the stall's and the clock's stop and the recession's end, one each - so a held resume in flight will not Start over either",
+  () => afterClock.guardMoved >= 1 && afterRecess.guardMoved - afterClock.guardMoved === 3
+        && afterClock.guardMovedHow === "stopped her" && afterRecess.guardMovedHow === "stopped her",
+  "after the clock's stop: " + afterClock.guardMoved + " (" + afterClock.guardMovedHow + "); after the stall's and the "
+  + "recession's: " + afterRecess.guardMoved + " (" + afterRecess.guardMovedHow + ")");
 
 // ── R15: THE STAND-DOWN, AND THE ACCEPTANCE CASE THAT TELLS IT FROM A COINCIDENCE ──────
 check("15. R15: the helm is HELD for the full 20 s after a restoring end",

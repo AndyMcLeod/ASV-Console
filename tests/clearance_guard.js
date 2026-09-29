@@ -649,7 +649,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   const GUARD_HOLD_S = G4.HOLD_S;                    // the way round's run-out (2026-09-28)
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 60000, AIS_AROUND_STEP_M = 5;
+  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 30000, AIS_AROUND_STEP_M = 5;
   const logClient = () => {}, heldResuming = false;
   // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
   // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could
@@ -750,6 +750,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "koWithAis") + NL2 + grab(H, "aisAroundPlan") + NL2 + grab(H, "aisAroundTick") + NL2
                      // the tighter way round (2026-09-28): unreached here (no episode), declared so a later check cannot trip on it
                      + grab(H, "sameContact") + NL2 + grab(H, "aisHerPoly") + NL2 + grab(H, "koRoundHer") + NL2 + grab(H, "tautRoundHer") + NL2
+                     // a held resume in flight has her (2026-09-28): never in flight in this world, so the rungs always act
+                     + H.match(/const HELD_RESUME_OWNS_MS = [^;]*;/)[0] + " let heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;" + NL2
+                     + grab(H, "heldResumeOwns") + NL2 + grab(H, "guardMove") + NL2
                      + "let heldResuming = false; const patClipBufM = () => nogo.buffer || 0; async function resumeHeldSurvey(){}"
                      + " const LINE_MATCH_M = 5; const onLineM = () => false; const legOfLine = () => null;" + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")

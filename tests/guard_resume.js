@@ -169,6 +169,9 @@ var resumeSlow = false, commandedSpeed = null, guardOverride = null, guardHeld =
 // across its own pause/upload/speed/start, because a paused boat matches neither arm of
 // guardHeldOffer and the record would otherwise be spent halfway through the resume.
 var heldResuming = false;
+// ... and when it began, for the window the rungs below helm stand by in (heldResumeOwns), and the guard's own moves,
+// counted, which the resume asks about before its upload, before its Start and after it (2026-09-28, FRIGGA).
+var heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;
 // Whether the modelled guard ticks between the resume's commands. Off by default so the
 // non-resume fixtures are unchanged; resumeFrom turns it on.
 var tickGuard = false;
@@ -333,6 +336,7 @@ eval([
   // one is tests/supervisor_page.js's subject, and it holds that they assess and alarm without commanding.
   "const supervising = () => true;",
   grab("indexedRoute"), grab("lineMark"), grab("markGuardHeld"), grabDecl("HELD_GRACE_MS"), grab("guardHeldOffer"),
+  grabDecl("HELD_RESUME_OWNS_MS"), grab("heldResumeOwns"), grab("guardMove"),   // a held resume in flight has her (2026-09-28)
   // the DRAWN-LINE numbering every "line N" now goes through (review #18) - the page's own, not a stub
   grab("lineSetKey"),
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),

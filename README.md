@@ -448,12 +448,14 @@ hold, no override). A contact that **stays on the line** gets the three answers 
 (2026-09-27): the same line where she left it is **refused** — she would meet the contact again;
 the operator may right-click the line **beyond** the contact (*Resume from here*, below) and the
 console routes her round it and continues the survey from there; and if the operator has not
-answered **within 60 s**, the console routes round the contact **itself**, as if it were a buoy or
+answered **within 30 s** (a minute until 28 September, shortened at his word after FRIGGA), the
+console routes round the contact **itself**, as if it were a buoy or
 a dock, to the first point of the line beyond her that is clear by the standoff with the rest of
 the line clear too, and carries on (a contact covering the rest of the line leaves that line and
-picks the plan up at its next waypoint). The guard bar counts the minute down and names both
-answers. Never on a stale feed, never while you have her **paused** (a paused hold keeps the
-offer now, and the bar says the console waits), not twice in a minute, and where no way round
+picks the plan up at its next waypoint). The guard bar counts the 30 s down, to the next try
+after one that did not go, and names both answers. Never on a stale feed, never while you have
+her **paused** (a paused hold keeps the offer now, and the bar says the console waits), not twice
+inside 30 s, and where no way round
 is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
 path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
 to** (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated
@@ -499,11 +501,32 @@ answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 
+**The guard can no longer undo the way round halfway through it** (his 28 September run, FRIGGA).
+Held 48 m off her in a 1.75 kn set, the console released the hold rung's own latch six seconds
+into the hold, because a station-keeping boat reads clear. When he pressed for the way round, the
+resume paused her and uploaded the route round her, and paused she drifted toward FRIGGA. The
+ladder read a fresh HOLD and posted its own hold 51 ms after the upload, which replaced the route
+round on the vessel. The Start then started that hold ("Station-keep started"), the page announced
+ROUTED ROUND anyway and spent the held survey, and every later press resumed only the hold. Now the
+rungs below helm **stand by** while a held resume is in flight, for its four steps and at most
+10 s, so a resume stalled on a dead link hands the ladder back; the helm rung never stands by. The
+resume counts the guard's own stops, holds and escapes, and will not upload, set LOW or Start over
+one. It also reads the vessel's own answer to Start for the plan it actually started. Anything but
+the remainder says **THE WAY ROUND IS NOT RUNNING** with the cause, keeps the held survey and the
+contact's hold, and the console tries again itself 30 s later (`heldResumeOwns`, `guardMove` and
+the checks in `resumeHeldRun`). His wait before pressing was not the cause: the latch was gone six
+seconds into the hold, and the automatic way round takes the same path. Rehearsed on a throwaway
+console with his line, boat, set and FRIGGA across the line: held 51 m short of her, the latch
+released four seconds later, and at 30 s the way round went, started the remainder and passed her
+30 to 45 m from her center. That race needs a telemetry frame carrying her paused drift to land
+inside a quarter-second window, and neither that run nor a control on the previous version landed
+one, so it is pinned by replaying his exact sequence (`tests/ais_avoid.js` 20-20h).
+
 **Avoidance you can see and trigger** (2026-09-27, Andy: "There is no button or right-click
 selection to initiate or manually avoid an AIS target"). Three additions, none of which changes
 the automatic answer above. **Right-click a contact** — her red hull on the chart — and the
 menu offers **Route round <name>**, her length in the key: while the guard holds the survey for
-her it is the way round *now*, the held path without waiting out the minute; on a survey still
+her it is the way round *now*, the held path without waiting out the 30 s; on a survey still
 **running or paused** it **amends** the plan round her — the remainder from the first point of
 her line beyond her ring, the way in routed with the contacts in the model at the standoff — with
 no hold and no re-upload, and the guard's ladder settles while the amendment lands (`contactAt`,
@@ -517,13 +540,13 @@ by `/api/ais` with age 0 beside the real traffic, with or without the AIS
 service running — and **Clear test contacts** (`POST /api/ais/test`; a real link refuses it).
 **To rehearse the whole thing:** run a survey in the sim, right-click the line a few hundred
 meters ahead of the boat and place a test contact, and watch the guard slow and hold her
-(SURVEY HELD, the minute counting down on the bar); then press ROUTE ROUND HER NOW, or
+(SURVEY HELD, the 30 s counting down on the bar); then press ROUTE ROUND HER NOW, or
 right-click the contact and choose Route round, or right-click the line beyond her and choose
-Resume from here, or wait the minute out — each ends with the survey carrying on beyond her,
+Resume from here, or wait the 30 s out — each ends with the survey carrying on beyond her,
 one ship-length off. **The first rehearsal caught a defect the suites could not** (their router is a
 stub): the way in to the rejoin point was judged as a place to *hold* — the 6 m hold margin and
 the hold disc — so a point a standoff beyond her ring was moved off the line and the resume
-refused with "inside a keep-out"; the automatic way round at the minute would have failed the same
+refused with "inside a keep-out"; the automatic way round would have failed the same
 way. A rejoin point is a waypoint the boat passes through, so the three way-in sites now ask the
 router for a **fly-through** target (`flyThrough` in `holdTarget`): clear at the buffer it stands
 where it is, blocked it is refused by name, nothing is relocated (`planner_guard_seam` 7e). **And
@@ -1348,7 +1371,14 @@ diagnosable (`tests/frame_health.js`).
    smoothing, the gate and the knot prune at the bare buffer, so every corner they cut was cut
    back to 3 m — round a hull-sized block in a 1.75 kn set, the search's 20 to 23 m came out at
    6 to 14 m. Its result is re-gated at the margin the leg was found at (`keepStandoff` in
-   `static/js/passage.js`); the lane stands wherever it is clear of that.
+   `static/js/passage.js`); the lane stands wherever it is clear of that. The Upload router
+   (`routePlan`) had the same pass for its transit legs, and since 28 September its result is
+   re-gated the same way. A leg found only at the buffer, where no line keeps the standoff,
+   keeps its Rule 9 lane as in calm water. **The trade this makes, deliberately:** in a buoyed
+   channel between two and four standoffs wide (39 to 78 m in a 1.75 kn set), a transit runs
+   the centerline rather than the keep-right lane, because the lane a quarter of the width in
+   would pass inside the guard's standoff from the starboard bank and the centerline keeps it;
+   the lane note reads PARTIAL (`planner_guard_seam` 7g, 7h).
 
    **And the floor is under every command.** The third live run cleared the approach and then
    stood at the first line's end: the TURN role's speed is LOW, a turn at 1.5 kn in a 1.75 kn

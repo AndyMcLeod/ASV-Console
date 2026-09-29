@@ -663,7 +663,7 @@
           <span class="gb-why" id="gb_why"></span>
         </div>
         <div class="gb-row">
-          <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the minute.">ROUTE ROUND HER NOW</button>
+          <button class="ctl small" id="gb_around" style="display:none" title="Route round the contact the survey is held for NOW - one ship-length off her, carrying on beyond her - rather than waiting out the 30 s before the console does it itself.">ROUTE ROUND HER NOW</button>
           <button class="ctl small" id="gb_low" title="Keep surveying, but slowly. The console stops STOPPING the boat for this situation and holds it at LOW speed until you press RELEASE LOW on this bar or change a speed selector. It keeps watching, keeps reporting, keeps deviating where there is water, and still takes the helm in extremis.">CONTINUE AT LOW SPEED</button>
           <button class="ctl small" id="gb_proceed" title="You have assessed the water ahead and are taking responsibility for it. The console stops slowing and stopping the boat for this situation. It keeps watching, keeps reporting, and still takes the helm in extremis.">PROCEED — I have assessed it</button>
           <button class="ctl small" id="gb_cancel" style="display:none" title="Hand the situation back to the console. Ends the low speed you asked for as well.">CANCEL OVERRIDE</button>
@@ -1996,9 +1996,11 @@ function renderHeldBar(bar, g){
     + " unflown" + (g.mark ? ", on line " + lineNo(g.mark.line) : "");
   // HOLDING FOR A CONTACT (2026-09-25): say so, and that the way back is the console's own - and, since
   // 2026-09-27, the two other answers: the operator's point beyond her, or the console's own way round
-  // her once the minute is up (paused: it waits for the operator).
+  // her once the operator's 30 s are up (paused: it waits for the operator) - counted to the NEXT try, which after a
+  // try that found no way round, or did not start, is AIS_AROUND_AFTER_MS after that try (aisAroundTick).
   if(aisAvoid){
-    const leftS = Math.max(0, Math.ceil((AIS_AROUND_AFTER_MS - (Date.now() - aisAvoid.since)) / 1000));
+    const nextAt = Math.max(aisAvoid.since, aisAvoid.aroundAt || 0) + AIS_AROUND_AFTER_MS;
+    const leftS = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
     // STOPPED ON A TURN (2026-09-27): no line under her, so no backtrack and no line to walk beyond her - the
     // return and the way round both pick the plan up at its next waypoint, and the bar says so.
     const onLine = !!(g && g.mark);
@@ -2008,7 +2010,7 @@ function renderHeldBar(bar, g){
       + "; right-click the line BEYOND her to resume there (routed round her), or the console routes round her itself "
       + ((S && S.run === "paused") ? "once you resume the hold" : leftS > 0 ? "in " + leftS + " s" : "now");
   }
-  // ROUTE ROUND HER NOW (2026-09-27): the minute on demand, while she is held for a contact still on the line
+  // ROUTE ROUND HER NOW (2026-09-27): the operator's 30 s on demand, while she is held for a contact still on the line
   { const ga = $("#gb_around"); if(ga) ga.style.display = (aisAvoid && !aisAvoid.clearSince) ? "" : "none"; }
   $("#gb_low").textContent = "RESUME SURVEY AT LOW SPEED";
   $("#gb_low").style.display     = "";
@@ -2125,6 +2127,12 @@ function guardTrack(p, vel, drift){
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
 }
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
+// EVERY STOP, HOLD OR ESCAPE THE GUARD POSTS, counted, and what it was (2026-09-28, FRIGGA). resumeHeldRun asks
+// whether the guard moved her while it was in flight - before its upload, before its Start and after it - and
+// will not Start over the guard's own maneuver, nor announce a resume the vessel is not flying. A count, not a
+// time: a stamp can equal the resume's own start to the millisecond, and a count cannot.
+let guardMoved = 0, guardMovedHow = null;
+function guardMove(how){ guardMoved++; guardMovedHow = how; }
 // A SLOW-DOWN OFFERED IN LIEU OF A HOLD, while it stands: when it was offered and the speed over
 // ground at that moment. See the hold rung: it has SLOW_ANSWER_MS to be TAKEN, and it has to keep
 // answering the situation from wherever the boat is now, or the hold fires after all.
@@ -2417,6 +2425,7 @@ let grantLast = null;   // the ended grant, restorable by HOLD THE GRANT inside 
 let grantTrueAt = 0, grantTrueLevel = null;
 function stopAtBerth(why){
   grantStop = {t: Date.now(), why};
+  guardMove("stopped her");
   cmd("/api/cmd/stop");
   if(planIntent) planIntent.why.push({t:"warn", s:"DEPARTURE STOPPED AT THE BERTH: " + why
     + " The launch grant still stands — the console is not steering her off the berth."});
@@ -2437,6 +2446,7 @@ function stopAtBerth(why){
 function standDownEnd(why, opts){
   const offerHold = !(opts && opts.offerHold === false);
   const at = Date.now();
+  guardMove("stopped her");
   cmd("/api/cmd/stop");
   endGrant(why, false);
   if(!offerHold) grantLast = null;     // endGrant kept it; the operator asked for this end
@@ -2690,6 +2700,22 @@ const HELD_GRACE_MS = 3000;
 // as long as it is the one spending it, and clears the flag in a `finally` so a throw cannot
 // strand the record either.
 let heldResuming = false;
+// ⚠⚠ AND FOR THOSE FOUR ROUND TRIPS THE BOAT IS THE RESUME'S (2026-09-28, FRIGGA). Measured on Andy's console:
+// held 48 m off FRIGGA in a 1.75 kn set, the way round paused her at 21:19:45.647 and uploaded the route round her
+// at .750 (STAGED); PAUSED, she drifted toward FRIGGA, the ladder read a fresh HOLD 42 s out, and the hold rung
+// posted /api/cmd/hold at .801 - which replaced the staged route round on the vessel. The Start at 46.012 started
+// the hold ("Station-keep started"), the page announced ROUTED ROUND and spent the held survey, and every later
+// press resumed only the hold while she crept 25 m closer. The hold rung's latch was not there to stop it: the
+// clear branch had released it at 21:19:04, six seconds into the hold, because a station-keeping boat reads clear.
+// So while a held resume is in flight the rungs BELOW helm stand by (clearanceGuard) - a paused boat drifting
+// toward the contact is the situation the resume is answering, not a new one. THE HELM RUNG NEVER STANDS BY: in
+// extremis is in extremis, and resumeHeldRun gives up rather than Start over the guard's own maneuver. Bounded,
+// so a resume stalled on a dead link hands the ladder back: four steps take well under a second on the sim.
+const HELD_RESUME_OWNS_MS = 10000;
+let heldResumingAt = 0;
+function heldResumeOwns(level, now){
+  return heldResuming && level !== "helm" && now - heldResumingAt < HELD_RESUME_OWNS_MS;
+}
 function markGuardHeld(c){
   // ⚠ IT NEVER CLEARS WHAT IT CANNOT REPLACE. This began with `guardHeld = null` on entry,
   // and on 2026-09-10 that threw away a 645-waypoint survey: the hold rung fired THREE times
@@ -2840,10 +2866,13 @@ function aisReturnTick(p, aisKo, buf, now){
  * A contact that CLEARS the line first still gets the 100 m return above - a contact passing through is
  * the case that return was written for, and it takes the coverage back over water already run. The way
  * round never fires on a STALE model, never while the operator has her PAUSED (the offer stands and the
- * bar says it waits), and not twice in a minute; where no way round is found it says so and keeps
- * holding, and tries again a minute later, because a contact moves.
+ * bar says it waits), and not twice inside AIS_AROUND_AFTER_MS; where no way round is found it says so and
+ * keeps holding, and tries again that long after, because a contact moves.
+ *
+ * THIRTY SECONDS, NOT SIXTY (Andy, 2026-09-28, after FRIGGA: "Implement a short wait time, 30 seconds for the
+ * operator to respond, and then automatically trigger a go-around"). The same constant spaces the retries.
  */
-const AIS_AROUND_AFTER_MS = 60000;   // the operator's minute, before the console routes round the contact itself
+const AIS_AROUND_AFTER_MS = 30000;   // the operator's 30 s, before the console routes round the contact itself
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
 let aisAroundBusy = false;           // the running plan's way round (aisAroundRunning): one in flight at a time
 /** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
@@ -3004,8 +3033,8 @@ function aisAroundPlan(g, aisKo, std, herMmsi){
 function aisAroundTick(aisKo, now){
   if(!aisAvoid || !guardHeld) return "nothing is held for a contact";
   // ROUTE ROUND HER NOW (2026-09-27: "no button or right-click selection to initiate or manually avoid an AIS
-  // target"). The held bar's button and the chart-menu row over her set `forceAround`, and the minute and the
-  // once-a-minute retry stand aside for it; every other gate stands - on station, not paused, not stale, not
+  // target"). The held bar's button and the chart-menu row over her set `forceAround`, and the operator's 30 s
+  // and the retry spacing stand aside for it; every other gate stands - on station, not paused, not stale, not
   // already clear. Answers `true` when the way round went, else the reason in words, so the press can say why.
   const forced = !!aisAvoid.forceAround; aisAvoid.forceAround = false;
   const g = guardHeldOffer();
@@ -3017,8 +3046,9 @@ function aisAroundTick(aisKo, now){
   // so the coverage overlaps - is the better answer to a contact that has just moved off. The way round is
   // for one that STAYS.
   if(aisAvoid.clearSince) return "she is clear of the line, and the " + AIS_RETURN_BACK_M + " m return is under way";
-  if(!forced && now - aisAvoid.since < AIS_AROUND_AFTER_MS) return "inside the operator's minute";
-  if(!forced && aisAvoid.aroundAt && now - aisAvoid.aroundAt < AIS_AROUND_AFTER_MS) return "tried inside the last minute";   // one try a minute
+  const waitS = Math.round(AIS_AROUND_AFTER_MS / 1000);
+  if(!forced && now - aisAvoid.since < AIS_AROUND_AFTER_MS) return "inside the operator's " + waitS + " s";
+  if(!forced && aisAvoid.aroundAt && now - aisAvoid.aroundAt < AIS_AROUND_AFTER_MS) return "tried inside the last " + waitS + " s";   // one try per wait
   aisAvoid.aroundAt = now;
   return aisAroundGo(g, aisKo, aisAvoid, forced) ? true : "no way round her";
 }
@@ -3038,7 +3068,7 @@ function aisAroundGo(g, polys, ep, manual){
                            + ". The remainder is still held; resume it from the guard bar."));
   return true;
 }
-/** ROUTE ROUND HER NOW: the minute on demand - the held bar's button, and the chart-menu row over a contact
+/** ROUTE ROUND HER NOW: the operator's 30 s on demand - the held bar's button, and the chart-menu row over a contact
  *  while the guard holds the survey for her. Says why when it cannot. */
 function aisAroundNow(polys){
   if(!guardHeldOffer() || !aisAvoid){ flashNote("Nothing to route round: the guard is not holding the survey for a contact."); return false; }
@@ -3433,7 +3463,11 @@ function clearanceGuard(){
   // time she is alongside and teach the operator to ignore the banner that matters. The BAR
   // carries it instead - persistent, in view, and silent - which is the right surface for a
   // condition rather than an occurrence.
-  if(a.level !== "blind" && (escalated || Date.now() - clearAlarmAt > 8000)){
+  // ⚠ AND NOT FROM INSIDE A HELD RESUME (2026-09-28, FRIGGA): "⚠ HOLD ... holding still answers it" a third of a
+  // second before "ROUTED ROUND" reads as the console holding her, which is exactly what it no longer does there
+  // (heldResumeOwns). The bar still draws the frame; the banner says it on the first frame after, if it stands.
+  const resumeOwns = act && heldResumeOwns(a.level, Date.now());
+  if(a.level !== "blind" && !resumeOwns && (escalated || Date.now() - clearAlarmAt > 8000)){
     clearAlarmAt = Date.now();
     const t = a.tEntry != null ? " in " + a.tEntry.toFixed(0) + " s" : "";
     showBanner("⚠ " + a.level.toUpperCase() + " — " + (c.kind || aisKind || "a keep-out") + " ahead"
@@ -3458,6 +3492,10 @@ function clearanceGuard(){
   const overSlow = overridden && !!guardOverride.slow;
   renderGuardBar(a, c);
   if(!act) return c;                       // the operator has it; alarm, do not fight
+  // ⚠⚠ AND A HELD RESUME IN FLIGHT HAS HER (2026-09-28, FRIGGA - see heldResumeOwns). The rungs below helm stand
+  // by for its four round trips: the hold rung posting a hold between its upload and its Start is what replaced
+  // the route round on Andy's console. Helm falls through - resumeHeldRun sees the maneuver and does not Start.
+  if(resumeOwns) return c;
 
   // ⚠⚠ AN ESCAPE IN FLIGHT IS THE ANSWER, AND THE LOWER RUNGS MAY NOT UNDO IT (2026-09-27). Measured on
   // Andy's console at New Castle: the helm rung escaped her from KLEOS at 20:54:30.299 and the hold rung
@@ -3749,6 +3787,7 @@ function clearanceGuard(){
       // taken. A hold the vessel refused must leave the ladder free to act again next frame
       // rather than sitting behind a latch set on a command that never landed.
       if(gNow){
+        guardMove("stopped her");
         cmd("/api/cmd/stop");
         flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead inside the launch corridor "
           + "— STOPPED rather than held: a hold here would station-keep her against the berth.");
@@ -3756,6 +3795,7 @@ function clearanceGuard(){
           + "corridor: a hold ships hold_clear_m measured at the boat, which alongside a berth "
           + "is a re-approach cycle against the pier"});
       } else {
+        guardMove("held her again");
         cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv)}).then(r => {
           if(took(r)) return;                       // she has the hold: nothing to undo
           // The rung has NOT acted, so the ladder must be free to act again next frame rather
@@ -3937,6 +3977,7 @@ function clearanceGuard(){
     // ⚠ AND NO REFUSAL IS REQUIRED. A lost reply does all of this too, because until now the
     // rung read nothing at all and every statement above ran before any answer existed.
     const escRoute = runRoute;                  // the phantom this rung installed
+    guardMove("took the helm");                 // a held resume in flight must not Start over this
     cmd("/api/cmd/escape", {lat:to.lat, lon:to.lon, hold_clear_m: holdClearAt(to)}).then(r => {
       if(took(r)) return;                         // she has the helm: the claims are true
       // ⚠ AND THE RESTORE MAY NOT OVERTAKE THE OPERATOR. The command-bar handlers now clear
@@ -13322,10 +13363,11 @@ async function resumeFromHere(ll){
     const foul = clearanceM(nogo.frame.toEN(hit.to), herOnly, std + 1) < std
               || !legClear(hit.to, leg.end, nogo.frame, herOnly, std);
     if(foul){
-      const leftS = Math.max(0, Math.ceil((AIS_AROUND_AFTER_MS - (Date.now() - aisAvoid.since)) / 1000));
+      // counted to the NEXT try, as the bar counts it (renderHeldBar)
+      const leftS = Math.max(0, Math.ceil((Math.max(aisAvoid.since, aisAvoid.aroundAt || 0) + AIS_AROUND_AFTER_MS - Date.now()) / 1000));
       showBanner('⚠ THAT POINT IS ON THE NEAR SIDE OF ' + aisAvoid.kind + ' — line ' + line + " runs from there into her, and she "
         + "would only be stopped again. Pick a point BEYOND her"
-        + (S.run === "running" ? ", or wait: the console routes round her itself in " + leftS + " s." : "."));
+        + (S.run === "running" ? ", or wait: the console routes round her itself " + (leftS > 0 ? "in " + leftS + " s." : "now.") : "."));
       return;
     }
   }
@@ -13410,12 +13452,13 @@ async function resumeFromHere(ll){
  * ROUTE ROUND A CONTACT, ON DEMAND (Andy, 2026-09-27: "There is no button or right-click selection to initiate
  * or manually avoid an AIS target"). Right-click a contact's keep-out and the menu offers "Route round <name>":
  *   * a survey the guard HOLDS for her goes the held path NOW (aisAroundNow) - the same as the bar's ROUTE
- *     ROUND HER NOW - without waiting out the operator's minute;
+ *     ROUND HER NOW - without waiting out the operator's 30 s;
  *   * a survey RUNNING or PAUSED is AMENDED round her (aisAroundRunning): the plan's own remainder from the
  *     first point of her line beyond her avoidance ring (aisAroundPlan over the plan aboard and the line she is
  *     on), the way in routed with the contacts in the model at the standoff - no hold, no re-upload.
- * The automatic answer is unchanged (his 09-26 rule): a contact on the line holds her, the bar offers, and at
- * sixty seconds with no answer the console routes round her itself. These make that answer a press away.
+ * The automatic answer is his 09-26 rule: a contact on the line holds her, the bar offers, and with no answer the
+ * console routes round her itself - at sixty seconds until 2026-09-28, at thirty since (AIS_AROUND_AFTER_MS).
+ * These make that answer a press away.
  */
 /** The contact under a chart point - its keep-out within the identify reach (IDENTIFY_PX at this zoom) - or null. */
 function contactAt(ll){
@@ -13727,7 +13770,7 @@ async function resumeHeldSurvey(opts){
   // upload a second remainder over the first.
   if(heldResuming) return;
   if(!guardHeldOffer()) return;
-  heldResuming = true;
+  heldResuming = true; heldResumingAt = Date.now();
   try { return await resumeHeldRun(opts || {}); }
   finally { heldResuming = false; }
 }
@@ -13852,6 +13895,37 @@ async function resumeHeldRun(opts){
   // hold's - kept, and said below.
   const hadLow = resumeSlow;
   resumeSlow = auto ? hadLow : at ? resumeSlow : true; commandedSpeed = null;
+  // ⚠⚠ THE GUARD MAY STILL TAKE HER WHILE THIS IS IN FLIGHT (2026-09-28, FRIGGA), and when it has, the resume does
+  // not Start over it and does not announce a way round the vessel is not flying. The rungs below helm stand by for
+  // it (heldResumeOwns); helm does not, and nothing does once that window has run out. So the guard's own moves are
+  // counted (guardMove) and asked about before the upload, before the Start and after it, and the vessel's answer to
+  // Start is read for the plan it actually started: an upload is named "survey" on the vessel, and a Start that
+  // applied anything else - the guard's hold having replaced the staged remainder, which is what FRIGGA was -
+  // started something other than this. Either way the held record is NOT spent: the offer stays on the bar, the
+  // contact's episode stays open, and the way round tries again on its own.
+  const moved0 = guardMoved;
+  const routeBefore = runRoute, intentBefore = planIntent, intentRouteBefore = planIntent ? planIntent.route : null;
+  const around = !!(opts && opts.around);
+  const notRunning = (why, doing) => {
+    if(!auto && !at) guardOverride = null;             // the override this resume recorded, and only that
+    resumeSlow = hadLow;
+    // The drawn route goes back to the held survey's - unless the guard's escape has installed its own since.
+    if(runRoute === tail){ runRoute = routeBefore; if(planIntent && planIntent === intentBefore) planIntent.route = intentRouteBefore; }
+    // The 100 m return spent its episode before it called here: put back, with its dwell to run again.
+    if(auto && !at && !aisAvoid && guardHeld) aisAvoid = {...auto, clearSince: 0, aroundAt: Date.now()};
+    const held = doing !== "stopped";
+    showBanner("⚠ " + (around ? "THE WAY ROUND" : "THE SURVEY") + " IS NOT RUNNING — " + why + ". She is " + doing
+      + (!held ? "." : ", and the survey remainder is still held" + (around
+          ? ": ROUTE ROUND HER NOW on the bar tries again, and the console tries again itself in "
+            + Math.round(AIS_AROUND_AFTER_MS / 1000) + " s."
+          : auto && !at ? ": the console tries again once the line reads clear again, or resume it from the guard bar."
+          : "; resume it from the guard bar.")));
+    logClient("resume_not_running", {why, doing, around, auto: !!auto, manual: !!(opts && opts.manual),
+              guard: guardMoved !== moved0 ? guardMovedHow : null, wpts: tail.length});
+    updateMissionCard(); render();
+  };
+  const guardDoing = () => guardMovedHow === "took the helm" ? "on the guard's escape"
+                         : guardMovedHow === "stopped her" ? "stopped" : "station-keeping";
   // ⚠ EACH STEP HAS TO LAND BEFORE THE NEXT GOES (review #6) - the pause, the upload, the LOW and
   // the Start. Since review #3 an upload to a station-keeping boat is STAGED rather than releasing
   // her, so the pause is no longer what stops a take-off; it stays because every step after it
@@ -13865,6 +13939,8 @@ async function resumeHeldRun(opts){
       + ". The boat is still holding and the remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
+  if(guardMoved !== moved0)
+    return notRunning("the guard " + guardMovedHow + " before the remainder was uploaded, so nothing was sent", guardDoing());
   const up = await cmd("/api/cmd/upload",
                        {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1])});
   if(!took(up)){
@@ -13877,11 +13953,20 @@ async function resumeHeldRun(opts){
     // of those two routes is the one the set indexes.
     if(!(up && up.refused))
       dropCornerSlow("the remainder was sent and NOT acknowledged");
+    // ... and not over the guard's own move, if it made one meanwhile: its hold or its escape already has her.
+    if(guardMoved !== moved0)
+      return notRunning("the guard " + guardMovedHow + " while the remainder was being uploaded", guardDoing());
     await cmd("/api/cmd/hold", {hold_clear_m: holdClearAt(asv || g.at)});
     showBanner("⚠ COULD NOT RESUME THE SURVEY — " + up.error + ". The boat is station-keeping "
       + "again and the remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
+  // THE GUARD MOVED HER AFTER THE UPLOAD (FRIGGA's own moment, 50 ms after it): its hold or its escape replaced the
+  // staged remainder on the vessel, and a Start now would start the guard's plan ("Station-keep started") or restart
+  // an escape. Asked HERE, before the escape's claim is released and before a LOW goes out, because either one
+  // would slow an escape the helm rung has just sent at HIGH; asked again before the Start for the LOW's round trip.
+  if(guardMoved !== moved0)
+    return notRunning("the guard " + guardMovedHow + " after the remainder was uploaded, and that replaced it on the vessel", guardDoing());
   // The drawn route is the plan the vessel is flying, indexed by the same `wp_index` - the
   // upload restarted that index at zero, so the route it counts into has to be the tail.
   // ⚠⚠ AND THE ESCAPE'S CLAIM ENDS HERE, on a motion the vessel TOOK. escapeThrottle is
@@ -13907,8 +13992,13 @@ async function resumeHeldRun(opts){
   if(planIntent) planIntent.route = tail.length;
   const slowed = await commandSpeed(slowestMakingWayKey(setMsNow()) || "low");   // the slowest that makes way (2026-09-26)
   const lowOk = took(slowed);
+  if(guardMoved !== moved0)                             // ... during the LOW's round trip
+    return notRunning("the guard " + guardMovedHow + " after the remainder was uploaded, and that replaced it on the vessel", guardDoing());
   const started = lowOk ? await cmd("/api/cmd/start") : null;
   if(!took(started)){
+    // ... and not over the guard's own move, if it made one while Start was out.
+    if(guardMoved !== moved0)
+      return notRunning("the guard " + guardMovedHow + " while Start was in flight", guardDoing());
     // Paused beside the very feature the console stopped her off, remainder uploaded: put her back
     // on station rather than leave her drifting, and keep the offer up.
     guardOverride = null; resumeSlow = false;
@@ -13920,6 +14010,16 @@ async function resumeHeldRun(opts){
       + "remainder is still held; try again, or Stop and re-plan.");
     render(); return;
   }
+  // WHAT THE VESSEL SAYS IT STARTED (2026-09-28, FRIGGA): Start answered 200 and "Station-keep started", and the
+  // page read the 200 alone, announced ROUTED ROUND and spent the held survey. The Start's own state names the plan
+  // it applied - `behavior` is the loaded plan's name, read back after the staged plan went in, on either link - and
+  // anything but this upload's "survey" did not start this. No state in the answer (an older console): the 200 stands.
+  const began = (started.state && typeof started.state.behavior === "string") ? started.state.behavior : null;
+  if(guardMoved !== moved0)
+    return notRunning("the guard " + guardMovedHow + " as it started", guardDoing());
+  if(began && began !== "survey")
+    return notRunning("the vessel answered Start with its " + (began === "hold" ? "station-keep" : began)
+                      + " plan, not the remainder", began === "hold" ? "station-keeping" : "on that plan");
   const left = tail.length;
   guardHeld = null;
   if(at){

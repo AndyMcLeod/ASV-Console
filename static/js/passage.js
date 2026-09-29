@@ -459,7 +459,8 @@ export function routePlan(start, wps, keepRightAll, standoffM){
   wps.forEach((wp, i)=>{
     const transit = keepRightAll || i===0;                      // the legs the page routes itself
     let leg = legPath(prev, wp, ref, ko, transit ? want : buf);  // the standoff first (2026-09-26)
-    if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, ko, buf); if(leg) insideStandoff++; }
+    let atStandoff = transit && want > buf + 0.05;               // ... and whether the leg was FOUND there
+    if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, ko, buf); if(leg){ insideStandoff++; atStandoff = false; } }
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
     let seg = [prev, ...leg];                       // prev … wp
     // Rule 9 keep-right applies to a TRANSIT: the approach out (leg 0), and every
@@ -479,7 +480,12 @@ export function routePlan(start, wps, keepRightAll, standoffM){
     // transit in Rule 9's sense is the approach to it. Coverage lines and the hops
     // between them stay on their planned track.
     if(keepRightAll || i===0){
-      const kr = channelLaneRoute(seg, ref, ko, buf);
+      // ⚠ AND THE STANDOFF SURVIVES THE LANE PASS HERE TOO (2026-09-28), for planNogoRoute's reason: the lane, the
+      // smoothing, the gate and the knot prune run at the BUFFER, and a transit leg found at the 19.5 m standoff came
+      // out of them 6.3-14.1 m off a hull-sized block across it (tests/planner_guard_seam.js 7g). A leg found only at
+      // the buffer - counted in insideStandoff - keeps the buffer's pass.
+      const kr0 = channelLaneRoute(seg, ref, ko, buf);
+      const kr = atStandoff ? keepStandoff(kr0, seg, ref, ko, want) : kr0;
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
     }
     for(let k=1;k<seg.length;k++) out.push({lat:seg[k].lat, lon:seg[k].lon});
