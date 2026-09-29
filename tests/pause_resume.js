@@ -725,6 +725,10 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const routeTooLong = eval("(" + grab("routeTooLong") + ")");
     // eslint-disable-next-line no-eval
     const stagedNote = eval("(" + grab("stagedNote") + ")");
+    // THE TURN doUpload TAKES BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the routing freeze): the
+    // page's own `inkYield`, its right-hand side only - a `const` declared inside a direct eval stays there.
+    // eslint-disable-next-line no-eval
+    const inkYield = eval("(" + grabDecl("inkYield").replace(/^const\s+inkYield\s*=\s*/, "").replace(/;\s*$/, "") + ")");
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;

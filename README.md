@@ -830,6 +830,23 @@ OFF screen is the browser's throttling, not a stall, even when the page is back 
 its end. This does not fix the hang reported while placing survey corners; it makes each one
 diagnosable (`tests/frame_health.js`).
 
+**And the freeze it kept recording on every Upload and Return-to-Home is gone** (29 September,
+"Fix the routing freeze, push and merge"). It was never the router: routing his 25-line plan takes
+about 100-300 ms, and a Return-to-Home route 40 ms. It was the chart-image read that runs before
+every Upload, Go-To, Return-to-Home and drawn transit (the one that finds the piers the ENC does not
+carry). Once the tiles had arrived, everything after them ran as ONE task, with the clearance guard
+blind for all of it: 3.0 s on a Return-to-Home from the far end of his line 8, 6.6 s in the
+rehearsal log, 4-9 s on his Uploads. Two thirds of it was one search. To decide whether a mark is
+ATTACHED to a charted structure, the read measured both ends of every mark against every structural
+segment in the whole extract, 97,753 of them for 70 marks, of which 2,904 lay anywhere near the
+picture. That search now uses a grid, and it gives EXACTLY the old answers: the scan's output
+compared byte for byte on his chart, and 5,642 probes (every tie at a shared vertex included) gave
+the same distance and the same segment. The read also paints only the features that can touch the
+picture (214 of 5,530 there, with an identical mask), and it hands the page back between its steps
+so the guard judges the telemetry in between. Measured with the browser's own long-task record, the
+longest single task is now 137 ms on that Return-to-Home, and 378 ms on his plan's Upload, where
+the plan's own routing is what remains.
+
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
    3-click survey pattern**: click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the

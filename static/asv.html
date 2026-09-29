@@ -935,7 +935,7 @@ import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM } from "/static/js/hold.js";
 // structures its own vector service does not carry - a finger pier at New Castle, measured
 // 4.3 m from the nearest ENC object of any class. Pure: it takes pixels, and commands and
 // fetches nothing (see the module header for the sieve and what it deliberately will not do).
-import { scanChart, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
+import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
   from "/static/js/chartink.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
@@ -9598,7 +9598,7 @@ function drawViolation(toScreen){
 // SecurityError on the read - the scan would be silently impossible.
 const CHART_INK_Z = 19;              // 0.22 m/px here: a 10 m finger pier is 46 px long
 const CHART_INK_MIN_Z = 17;          // below this a 3 m mark is under two pixels - refuse
-const CHART_INK_MAX_TILES = 256;     // the scan's own budget, about 4 MB of pixels
+const CHART_INK_MAX_TILES = 256;     // the scan's own budget: 16.8 M pixels, 67 MB of RGBA per canvas
 // ⚠ A TILE BUDGET IS NOT A TIME BUDGET, AND THE FIRST CUT ONLY HAD THE FIRST. 196 tiles of
 // water the operator has never looked at are 196 COLD fetches to NOAA, and awaiting them all
 // froze the tab for minutes on the first Go-To in a new area. The deadline is what makes the
@@ -9610,6 +9610,27 @@ const CHART_INK_DEADLINE_MS = 15000;
 // the scan REFUSES to claim it read the area, because "I found nothing" and "I could not
 // look" must never be the same sentence.
 const CHART_INK_MIN_COVER = 0.9;
+// THE SCAN'S TWO ALLOWANCES FOR THE PAGE (2026-09-29, the freeze - see scanChartInk). The reach is
+// the widest mark the explained mask paints (a sounding's 14 px disc; a stroke is 4 px each side).
+const INK_PAINT_REACH_PX = 16;
+/** One turn of the event loop: the telemetry frames that queued behind the step before are handled here.
+ *  The same turn turns.js's cornerSlowPlan takes (`breathe`). In a HIDDEN tab a timer is throttled to about
+ *  once a second, so a scan there takes a few seconds longer; the frames themselves are not throttled. */
+const inkYield = () => new Promise(r => setTimeout(r, 0));
+/** How long the painting runs before it gives the page a turn. */
+const INK_SLICE_MS = 40;
+/** A feature's lat/lon box, walked once per feature object: a new extract is new objects, so it cannot go stale. */
+const featLLBoxes = new WeakMap();
+function featureLLBox(f){
+  let b = featLLBoxes.get(f);
+  if(b) return b;
+  let S=Infinity, N=-Infinity, W=Infinity, E=-Infinity;
+  const scan = c=>{ const lon=c[0], lat=c[1]; if(lat<S)S=lat; if(lat>N)N=lat; if(lon<W)W=lon; if(lon>E)E=lon; };
+  const g = f.geometry;
+  eachRing(g, r=>r.forEach(scan)); eachPath(g, p=>p.forEach(scan)); eachPoint(g, scan);
+  b = {S, N, W, E}; featLLBoxes.set(f, b);
+  return b;
+}
 const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
 // ⚠ A FOOTPRINT IS ITS OWN KIND, and the wording is careful. A marina's floats come off the
 // chart as one wide shape, and the keep-out is the CONVEX HULL of that shape - which fills in
@@ -9719,18 +9740,40 @@ async function scanChartInk(bb){
   const segs = [];
   const addSegs = (cs)=>{ for(let i=1;i<cs.length;i++)
     segs.push({a:toPx(cs[i-1][1], cs[i-1][0]), b:toPx(cs[i][1], cs[i][0])}); };
+  // ⚠ ONLY WHAT CAN PUT INK ON THIS CANVAS IS PAINTED (2026-09-29, the freeze). Every feature of
+  // the whole extract - kilometers of it - was stroked onto a canvas a few hundred meters across,
+  // 249 ms of it on his RTH box. Web Mercator is axis-aligned, so a feature's lat/lon box IS its
+  // pixel box, and INK_PAINT_REACH_PX covers the widest thing painted (a sounding's 14 px disc):
+  // what is skipped could not have lit one pixel of the mask. The STRUCTURE segments still come
+  // from every feature, in the same order - they are the pool `classify` measures attachment
+  // against, and the nearest charted structure may lie off the canvas.
+  const onCanvas = (f)=>{ const b = featureLLBox(f); if(!(b.S <= b.N)) return false;
+    const tl = toPx(b.N, b.W), br = toPx(b.S, b.E), R = INK_PAINT_REACH_PX;
+    return br.x >= -R && tl.x <= W + R && br.y >= -R && tl.y <= H + R; };
+  let slice = performance.now();
   for(const f of nogo.features){
-    const g = f.geometry, isStruct = STRUCT_ROLES.has(f.role);
-    eachPath(g, q=>{ paintPath(q); if(isStruct) addSegs(q); });
-    eachRing(g, r=>{ paintPath(r); if(isStruct) addSegs(r); });
-    eachPoint(g, c=>paintPt(c));
+    if(performance.now() - slice > INK_SLICE_MS){ await inkYield(); slice = performance.now(); }
+    const g = f.geometry, isStruct = STRUCT_ROLES.has(f.role), paint = onCanvas(f);
+    if(!paint && !isStruct) continue;
+    eachPath(g, q=>{ if(paint) paintPath(q); if(isStruct) addSegs(q); });
+    eachRing(g, r=>{ if(paint) paintPath(r); if(isStruct) addSegs(r); });
+    if(paint) eachPoint(g, c=>paintPt(c));
   }
+  // ⚠⚠ AND THE PAGE IS GIVEN BACK BETWEEN THE STEPS. After the tiles land, everything below ran
+  // as ONE task - 3.0 s on his RTH box, 6.6 s logged in the rehearsal - and a blocked main thread
+  // runs no clearance guard: the telemetry frames queue behind it and are judged late, all at
+  // once. The painting above gives the page a turn every INK_SLICE_MS, each pixel read and each
+  // step of the analysis (scanChartSliced) is a turn of its own (inkYield), so the frames that
+  // arrived meanwhile are assessed in between.
+  await inkYield();
   const rgba = ctx.getImageData(0, 0, W, H).data;
+  await inkYield();
   const md = mc.getImageData(0, 0, W, H).data;
   const explained = new Uint8Array(W*H);
   for(let i=0,q=3;i<explained.length;i++,q+=4) if(md[q]) explained[i] = 1;
   const mPerPx = 156543.03392 * Math.cos((bb.S+bb.N)/2 * Math.PI/180) / Math.pow(2, z);
-  const r = scanChart(rgba, W, H, explained, segs, mPerPx);
+  await inkYield();
+  const r = await scanChartSliced(rgba, W, H, explained, segs, mPerPx, {}, inkYield);
   const toLL = (q)=>worldToLatLon(q.x + PX0, q.y + PY0, z);
   return {z, tiles:nx*ny, got, mPerPx, ms:Date.now()-t0,
           inkPx:r.inkPx, unexplainedPx:r.unexplainedPx, components:r.components,
@@ -9760,6 +9803,7 @@ async function ensureChartInk(bb){
   chartInk.busy = true;
   try{
     const r = await scanChartInk(bb);
+    await inkYield();                  // the analysis and the model rebuild + redraw are separate turns (the freeze)
     if(!r || r.refused){
       // ⚠ THE KEY IS NOT SET ON A REFUSAL. A refusal is "not read yet", not "read and clean",
       // and caching it would mean the tiles finish arriving in the background and the next
@@ -12881,6 +12925,10 @@ async function doUpload(){
   // one given during the confirm is. A new await on this path is only safe BECAUSE that
   // snapshot is taken first; anything added above it would not be.
   await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps]);
+  // ⚠ AND A TURN BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the freeze): the model rebuild and
+  // redraw that end the read, then routePlan, certifyDeparture and the first corner slice, were one task.
+  // Go-To and RTH already take theirs ("Routing …", 50 ms); fenced by the same snapshot as the await above.
+  await inkYield();
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.

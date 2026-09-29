@@ -396,6 +396,86 @@ export function nearestSeg(p, segs) {
   return { d: best, seg: hit };
 }
 
+/** Cell size of the segment grid, in pixels: ~14 m at z19, so a mark's end usually has its answer within a ring. */
+export const SEG_CELL_PX = 64;
+/** A segment whose bounding box spans more cells than this is kept in a list every query reads instead. */
+export const SEG_BIG_CELLS = 4096;
+
+/**
+ * THE SAME QUESTION AS `nearestSeg`, ANSWERED FROM THE CELLS ROUND THE POINT OUTWARD (2026-09-29).
+ *
+ * ⚠⚠ THE WALK WAS THE FREEZE. `classify` asks where both ends of every mark sit against every
+ * structural segment in the pool, and the pool is every dock, land and shoreline segment in the
+ * WHOLE extract - an operating area kilometers across - while the scan covers a few hundred
+ * meters of it. Measured on his New Castle chart over the Return-to-Home's box (204 tiles at
+ * z19): 70 marks against 97,753 segments, 2,904 of them anywhere near the canvas, 970 ms a round
+ * and ~1.9 s over the two rounds - the bulk of the single 3.0 s task that froze the page, and the
+ * clearance guard with it, on every RTH, Go-To and Upload that read the chart.
+ *
+ * EXACT, NOT APPROXIMATE, and that is the whole contract: the same `dSegPx` on the same segment
+ * gives the same distance to the last bit, and among equal distances the LOWEST INDEX wins, which
+ * is the one the walk's strict `<` keeps - a point on a shared vertex is equally near both
+ * segments that meet there, and which of them it names sets the angle `classify` measures. Every
+ * segment sits in every cell its bounding box touches, so after the rings out to r every segment
+ * with ANY point in that block has been read, and everything else is at least r cells plus the
+ * point's own margin to its cell edge away; the search stops only when the best is STRICTLY
+ * nearer than that, so a tie beyond the ring is never missed. `add` appends at the next index,
+ * exactly as the pool's push did. tests/chart_ink.js 22 holds it against the walk.
+ */
+export function segIndex(segs, cellPx = SEG_CELL_PX) {
+  const cells = new Map(), big = [], list = [];
+  let cx0 = Infinity, cy0 = Infinity, cx1 = -Infinity, cy1 = -Infinity, reads = 0, visits = 0;
+  const OFF = 33554432, SPAN = 67108864;              // 2^25 / 2^26: distinct keys, still exact integers
+  const key = (cx, cy) => (cx + OFF) * SPAN + (cy + OFF);
+  function add(s) {
+    const i = list.length;
+    list.push(s);
+    const x0 = Math.floor(Math.min(s.a.x, s.b.x) / cellPx), x1 = Math.floor(Math.max(s.a.x, s.b.x) / cellPx);
+    const y0 = Math.floor(Math.min(s.a.y, s.b.y) / cellPx), y1 = Math.floor(Math.max(s.a.y, s.b.y) / cellPx);
+    if (!(x1 - x0 >= 0 && y1 - y0 >= 0)) return;      // a non-finite end: the walk never picks it either
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > SEG_BIG_CELLS) { big.push(i); return; }
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+      const k = key(cx, cy), c = cells.get(k);
+      if (c) c.push(i); else cells.set(k, [i]);
+    }
+    if (x0 < cx0) cx0 = x0; if (x1 > cx1) cx1 = x1;
+    if (y0 < cy0) cy0 = y0; if (y1 > cy1) cy1 = y1;
+  }
+  function nearest(p) {
+    let best = Infinity, hit = null, bi = Infinity;
+    const read = (i) => {
+      reads++;
+      const s = list[i], d = dSegPx(p, s.a, s.b);
+      if (d < best || (d === best && hit !== null && i < bi)) { best = d; hit = s; bi = i; }
+    };
+    for (const i of big) read(i);
+    const pcx = Math.floor(p.x / cellPx), pcy = Math.floor(p.y / cellPx);
+    if (!cells.size || !Number.isFinite(pcx) || !Number.isFinite(pcy)) return { d: best, seg: hit };
+    const fx = p.x - pcx * cellPx, fy = p.y - pcy * cellPx;
+    const edge = Math.min(fx, cellPx - fx, fy, cellPx - fy) - 1e-6;   // the float slack goes the safe way
+    const rMax = Math.max(Math.abs(pcx - cx0), Math.abs(pcx - cx1), Math.abs(pcy - cy0), Math.abs(pcy - cy1));
+    const visit = (cx, cy) => { visits++; const c = cells.get(key(cx, cy)); if (c) for (const i of c) read(i); };
+    for (let r = 0; r <= rMax; r++) {
+      // ⚠ A POINT FAR FROM EVERYTHING IS ONE WALK, NOT A BILLION EMPTY CELLS. The rings cost (2r+1)^2 cells
+      // however few of them hold anything, so a point whose nearest segment is far - a mark in open water,
+      // a probe a thousand kilometers off - would sweep an ever wider square of nothing (15,000 rings, some
+      // 10^9 lookups, for the test's far probe). Once the square would hold more cells than the grid has,
+      // reading every segment once is the cheaper road to the SAME answer: the same `read`, so the same
+      // distances and the same lowest-index tie-break as the walk.
+      if ((2 * r + 1) * (2 * r + 1) > cells.size) { for (let i = 0; i < list.length; i++) read(i); break; }
+      for (let cx = pcx - r; cx <= pcx + r; cx++) {
+        if (r === 0 || cx === pcx - r || cx === pcx + r) { for (let cy = pcy - r; cy <= pcy + r; cy++) visit(cx, cy); }
+        else { visit(cx, pcy - r); visit(cx, pcy + r); }
+      }
+      if (best < r * cellPx + edge) break;              // nothing unread can be as near
+    }
+    return { d: best, seg: hit };
+  }
+  for (const s of segs || []) add(s);
+  return { add, nearest, get length() { return list.length; }, get reads() { return reads; },
+           get visits() { return visits; }, get cells() { return cells.size; } };
+}
+
 /**
  * Is this mark a STRUCTURE? Returns the verdict and, either way, WHY - because a scan that
  * silently drops candidates cannot be audited, and auditing the rejects is how the aspect
@@ -415,7 +495,9 @@ export function classify(fit, segs, mPerPx, opts = {}) {
   // and a marina footprint is exactly a wide mark that has to prove it is attached. Measuring
   // it up front costs two nearest-segment searches per component (~10 ms over a whole tile
   // mosaic) and lets every branch below, and every reject, speak about where the mark sits.
-  const na = nearestSeg(fit.a, segs), nb = nearestSeg(fit.b, segs);
+  // `segs` is the pool as a list, or as the grid scanChart builds (segIndex): the same answer either way.
+  const nearOf = (segs && typeof segs.nearest === "function") ? segs.nearest : (p) => nearestSeg(p, segs);
+  const na = nearOf(fit.a), nb = nearOf(fit.b);
   const near = na.d <= nb.d ? na : nb, far = na.d <= nb.d ? nb : na;
   r.attachM = near.d * mPerPx;
   r.reachM = far.d * mPerPx;
@@ -499,18 +581,39 @@ export function convexHull(xs, ys) {
  *   is a sieve nobody can tune.
  */
 export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
+  const it = scanSteps(rgba, w, h, explained, segs, mPerPx, opts);
+  for (;;) { const s = it.next(); if (s.done) return s.value; }
+}
+
+/**
+ * THE SAME SCAN, GIVING THE PAGE BACK BETWEEN ITS STEPS (2026-09-29, the freeze). `pause` is awaited
+ * after the ink mask, after the unexplained mask and after the flood fill - each of them a pass over
+ * every pixel of a canvas up to 16.8 M pixels - so the telemetry frames that arrive meanwhile are
+ * handled, and the clearance guard judges them, in between. ONE BODY, TWO DRIVERS: both step
+ * `scanSteps`, so the sliced scan cannot come to answer differently from the one the tests hold.
+ */
+export async function scanChartSliced(rgba, w, h, explained, segs, mPerPx, opts = {},
+                                      pause = () => new Promise(r => setTimeout(r, 0))) {
+  const it = scanSteps(rgba, w, h, explained, segs, mPerPx, opts);
+  for (;;) { const s = it.next(); if (s.done) return s.value; await pause(); }
+}
+
+function* scanSteps(rgba, w, h, explained, segs, mPerPx, opts) {
   const ink = inkMask(rgba, w, h, opts.inkLum);
+  yield;
   const un = unexplainedMask(ink, explained);
   let inkPx = 0, unPx = 0;
   for (let i = 0; i < ink.length; i++) { if (ink[i]) inkPx++; if (un[i]) unPx++; }
+  yield;
   const comps = components(un, w, h, opts.minPx);
+  yield;
   const marks = chainMarks(comps.map(c => ({ xs: c.xs, ys: c.ys, fit: fitAxis(c.xs, c.ys) })),
                            mPerPx, opts);
   // ⚠ THE POOL GROWS. Seeded with the ENC's own structures, and every mark accepted joins
   // it, so a marina's spine can attach to a finger that attached to the shore. The
   // perpendicular test is paid at every step, which is what keeps a contour out of the
   // chain: a line running ALONG a pier is refused by the pier just as it was by the shore.
-  const pool = segs.slice();
+  const pool = segIndex(segs);                    // the walk's answers, from a grid (see segIndex)
   const structures = [], unexplained = [], rejected = [], areas = [];
   let pending = marks;
   const rounds = opts.growRounds ?? GROW_ROUNDS;
@@ -550,9 +653,11 @@ export function scanChart(rgba, w, h, explained, segs, mPerPx, opts = {}) {
       }
       break;
     }
-    for (const w of won) pool.push({ a: w.m.fit.a, b: w.m.fit.b });
+    for (const w of won) pool.add({ a: w.m.fit.a, b: w.m.fit.b });
     pending = left;
   }
+  // `segReads` is how many segment distances the attachment searches took (segIndex): the number
+  // tests/chart_ink.js 22d holds the index to, where timing it would be a flaky way to say the same.
   return { structures, unexplained, areas, rejected, marks: marks.length,
-           inkPx, unexplainedPx: unPx, components: comps.length };
+           inkPx, unexplainedPx: unPx, components: comps.length, segReads: pool.reads };
 }

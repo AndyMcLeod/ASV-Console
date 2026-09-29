@@ -750,6 +750,162 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           + "merge two fields and let two different reads collide");
 }
 
-console.log("");
-console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
-process.exit(fails ? 1 : 0);
+// ── 22. THE NEAREST STRUCTURE FROM A GRID, AND A SCAN THAT GIVES THE PAGE BACK (2026-09-29) ─
+//
+// THE WALK WAS THE FREEZE. `classify` asks `nearestSeg` about both ends of every mark, and the
+// pool is every structural segment in the extract: on his New Castle chart 97,753 of them for 70
+// marks, ~1.9 s of the single 3.0 s task that stopped the page - and the clearance guard with it -
+// on every RTH, Go-To and Upload that read the chart. `segIndex` answers the same question from the
+// cells round the point outward, and it must answer it EXACTLY, ties included: which of two equally
+// near segments is named sets the angle `classify` measures. So every check here asks the grid and
+// the walk the same question and demands the same OBJECT back, not a close number.
+(async () => {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const world = [];
+  for (let k = 0; k < 60; k++) {                       // polylines: every inner vertex is on TWO segments
+    let x = rnd() * 2000 - 500, y = rnd() * 2000 - 500;
+    for (let j = 0; j < 12; j++) {
+      const nx = x + (rnd() - 0.5) * 120, ny = y + (rnd() - 0.5) * 120;
+      world.push({ a: { x, y }, b: { x: nx, y: ny } }); x = nx; y = ny;
+    }
+  }
+  for (let k = 0; k < 6; k++)                          // long enough to go to the list every query reads
+    world.push({ a: { x: -60000 + rnd() * 1000, y: rnd() * 2000 }, b: { x: 60000, y: rnd() * 2000 } });
+  for (let k = 0; k < 20; k++) { const x = rnd() * 3000, y = rnd() * 3000; world.push({ a: { x, y }, b: { x, y } }); }
+  for (let k = 0; k < 200; k++) {                      // a cluster far from everything else
+    const x = 40000 + rnd() * 500, y = 40000 + rnd() * 500;
+    world.push({ a: { x, y }, b: { x: x + 30, y: y + 10 } });
+  }
+  const probes = [];
+  for (let k = 0; k < 1500; k++) probes.push({ x: rnd() * 5000 - 1500, y: rnd() * 5000 - 1500 });
+  for (const s of world.slice(0, 720)) probes.push({ x: s.a.x, y: s.a.y }, { x: s.b.x, y: s.b.y });
+  probes.push({ x: 41000, y: 41000 }, { x: -1e6, y: 3e5 }, { x: NaN, y: 5 });
+  const ix = C.segIndex(world);
+  const same = (w, g) => (w.d === g.d || (Number.isNaN(w.d) && Number.isNaN(g.d))) && w.seg === g.seg;
+  let diff = 0, vertexTies = 0; const firstDiff = [];
+  for (const p of probes) {
+    const w = C.nearestSeg(p, world), g = ix.nearest(p);
+    if (!same(w, g)) { diff++; if (firstDiff.length < 2) firstDiff.push(JSON.stringify(p) + " walk " + w.d + " grid " + g.d); }
+    if (w.d === 0) vertexTies++;
+  }
+  const empty = C.segIndex([]).nearest({ x: 0, y: 0 }), emptyWalk = C.nearestSeg({ x: 0, y: 0 }, []);
+  check("22. the grid answers EXACTLY as the walk - the same distance and the SAME segment: ties at shared "
+        + "vertices go to the lowest index, and the long segments, the zero-length ones, the far cluster, a "
+        + "point far off, a non-finite point and an empty pool all agree",
+        () => diff === 0 && vertexTies > 1000 && same(emptyWalk, empty) && empty.seg === null,
+        () => probes.length + " probes (" + vertexTies + " on a vertex, where two segments tie), " + diff
+              + " disagreements" + (firstDiff.length ? ": " + firstDiff.join("; ") : ""));
+
+  // 22b. ... and so the VERDICTS are the walk's: `classify` through the grid and through the list.
+  let vdiff = 0, kept = 0, n = 0;
+  for (let k = 0; k < 400; k++) {
+    const x0 = rnd() * 2500 - 600, y0 = rnd() * 2500 - 600, ang = rnd() * Math.PI, len = 5 + rnd() * 120;
+    const xs = [], ys = [];
+    for (let t = 0; t <= len; t++) for (let w = 0; w < 2; w++) {
+      xs.push(Math.round(x0 + Math.cos(ang) * t - Math.sin(ang) * w)); ys.push(Math.round(y0 + Math.sin(ang) * t + Math.cos(ang) * w));
+    }
+    const fit = C.fitAxis(xs, ys);
+    const a = C.classify(fit, world, MPP), b = C.classify(fit, C.segIndex(world), MPP);
+    n++; if (a.keep) kept++;
+    if (JSON.stringify(a) !== JSON.stringify(b)) vdiff++;
+  }
+  check("22b. ... so `classify` reaches the SAME verdict through the grid as through the list - reason, "
+        + "attachment, reach and angle included",
+        () => vdiff === 0 && kept > 0 && kept < n,
+        () => n + " marks, " + kept + " kept, " + vdiff + " verdicts different");
+
+  // 22c. THE POOL GROWS BY `add`, AT THE NEXT INDEX - exactly as the list's push did.
+  const g2 = C.segIndex([{ a: { x: 0, y: 10 }, b: { x: 100, y: 10 } }]);
+  const tie = { a: { x: 0, y: -10 }, b: { x: 100, y: -10 } }, nearer = { a: { x: 50, y: 3 }, b: { x: 60, y: 3 } };
+  g2.add(tie);
+  const t1 = g2.nearest({ x: 50, y: 0 });              // 10 px from both: the FIRST one is named
+  g2.add(nearer);
+  const t2 = g2.nearest({ x: 50, y: 0 });              // 3 px: the newcomer
+  // ⚠ AND THE TIE-BREAK HAS TO BE STATED, NOT INHERITED FROM THE ORDER THE CELLS ARE READ IN. Here the
+  // LATER segment lies in the point's own cell and is read first; the earlier one, exactly as near, is
+  // only reached in the next ring - so "keep the first one read" names the wrong one, and the walk's
+  // answer is the lower index. Without this the explicit tie clause could be deleted with 22 still green:
+  // at a shared vertex both segments sit in the same cell, in index order.
+  const lowFar = { a: { x: 0, y: 54 }, b: { x: 40, y: 54 } }, highNear = { a: { x: 0, y: 94 }, b: { x: 40, y: 94 } };
+  const pTie = { x: 20, y: 74 };                          // 20 px from both; its cell holds only the later one
+  const g3 = C.segIndex([lowFar, highNear], 64), t3 = g3.nearest(pTie), w3 = C.nearestSeg(pTie, [lowFar, highNear]);
+  check("22c. a segment ADDED later ties behind the ones before it and wins when it is nearer, the pool "
+        + "counts it - and a tie is the LOWER index even when the later segment is the one read first",
+        () => t1.d === 10 && t1.seg !== tie && t2.seg === nearer && g2.length === 3
+              && w3.seg === lowFar && t3.seg === lowFar && t3.d === w3.d,
+        () => "tie named " + (t1.seg === tie ? "the NEWCOMER" : "the first") + " at " + t1.d
+              + " px; nearer " + (t2.seg === nearer ? "named" : "missed") + "; " + g2.length + " in the pool; "
+              + "cross-cell tie named " + (t3.seg === lowFar ? "the lower index" : "the LATER one") + " (walk: "
+              + (w3.seg === lowFar ? "lower" : "later") + ")");
+
+  // 22g. AND A POINT FAR FROM EVERYTHING COSTS ONE PASS, NOT A SQUARE OF EMPTY CELLS. The rings cost
+  // (2r+1)^2 cells however few hold anything: this point's nearest segment is 781 rings off, some 2.4 M
+  // empty lookups, where reading the two segments there are costs two. (Found by 22's own far probe, which
+  // took the suite from 2 s to over a minute before the fallback.)
+  const sparse = [{ a: { x: 0, y: 0 }, b: { x: 10, y: 0 } }, { a: { x: 1e5, y: 0 }, b: { x: 1e5 + 10, y: 0 } }];
+  const gs = C.segIndex(sparse), pf = { x: -5e4, y: 3 };
+  const ans = gs.nearest(pf), ws = C.nearestSeg(pf, sparse);
+  check("22g. a point far from every segment costs about one pass over the grid, not a square of empty "
+        + "cells - and it is still the walk's answer",
+        () => ans.seg === ws.seg && ans.d === ws.d && gs.visits <= gs.cells + 16,
+        () => gs.visits + " cells visited for a grid of " + gs.cells + " (without the fallback: "
+              + Math.round(5e4 / C.SEG_CELL_PX) + " rings)");
+
+  // 22d. AND IT IS NOT A WALK: the fixture scene with 20,000 structural segments far off the canvas
+  // gives the same answer, and the searches read a sliver of them. Counted (segReads), not timed.
+  const farSegs = SEGS.slice();
+  for (let k = 0; k < 20000; k++) { const x = 50000 + (k % 200) * 40, y = 50000 + Math.floor(k / 200) * 40;
+    farSegs.push({ a: { x, y }, b: { x: x + 30, y: y + 5 } }); }
+  const base = C.scanChart(scene({ tick: true, stub: true }), W, H2, explainedOf(), SEGS, MPP);
+  const far = C.scanChart(scene({ tick: true, stub: true }), W, H2, explainedOf(), farSegs, MPP);
+  const strip = (r) => JSON.stringify({ ...r, segReads: 0 });
+  const walkReads = 2 * far.marks * farSegs.length;       // one round, both ends, every segment
+  check("22d. the attachment searches are an INDEX, not a walk: 20,000 structural segments off the canvas "
+        + "change nothing and cost almost nothing",
+        () => strip(base) === strip(far) && far.structures.length > 0 && far.segReads < walkReads / 100,
+        () => far.marks + " marks, " + far.segReads + " segment distances read against " + walkReads
+              + " for the walk; the same result: " + (strip(base) === strip(far)));
+
+  // 22e. THE SLICED SCAN IS THE SAME SCAN. One body (scanSteps), two drivers - and it pauses.
+  let pauses = 0;
+  const scenes = [{ label: true, tick: true, stub: true, slab: true }, {}, { finger: false }];
+  let sdiff = 0;
+  for (const o of scenes) {
+    const a = C.scanChart(scene(o), W, H2, explainedOf(o), SEGS, MPP);
+    const b = await C.scanChartSliced(scene(o), W, H2, explainedOf(o), SEGS, MPP, {},
+                                      () => { pauses++; return Promise.resolve(); });
+    if (JSON.stringify(a) !== JSON.stringify(b)) sdiff++;
+  }
+  check("22e. scanChartSliced answers exactly as scanChart, and gives the page a turn between its steps",
+        () => sdiff === 0 && pauses >= 3 * scenes.length,
+        () => scenes.length + " scenes, " + sdiff + " different; " + pauses + " pauses");
+
+  // 22f. THE PAGE USES THEM. The painting skips only what cannot light the canvas and still gathers every
+  // structure segment; every step is a turn of its own; the read and the rebuild, the read and the Upload's
+  // routing, are separate turns.
+  {
+    const i = H.indexOf("async function scanChartInk(bb){");
+    const scan = H.slice(i, H.indexOf("\n}", i));
+    const j = H.indexOf("async function ensureChartInk(bb){");
+    const ens = H.slice(j, H.indexOf("\n}", j));
+    const k = H.indexOf("async function doUpload(");
+    const up = H.slice(k, H.indexOf("\n}", k));
+    check("22f. the page scans through scanChartSliced, paints only what can reach the canvas but gathers "
+          + "EVERY structure segment, slices the painting, and yields between the read, the rebuild and the "
+          + "Upload's routing",
+          () => /await scanChartSliced\(rgba, W, H, explained, segs, mPerPx, \{\}, inkYield\)/.test(scan)
+                && /if\(!paint && !isStruct\) continue;/.test(scan)
+                && /eachPath\(g, q=>\{ if\(paint\) paintPath\(q\); if\(isStruct\) addSegs\(q\); \}\);/.test(scan)
+                && /eachRing\(g, r=>\{ if\(paint\) paintPath\(r\); if\(isStruct\) addSegs\(r\); \}\);/.test(scan)
+                && /performance\.now\(\) - slice > INK_SLICE_MS\)\{ await inkYield\(\)/.test(scan)
+                && (scan.match(/await inkYield\(\)/g) || []).length >= 4
+                && /await scanChartInk\(bb\);\s*await inkYield\(\);/.test(ens)
+                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\]\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,300}?const plan = routePlan\(/.test(up),
+          "scanChartInk, ensureChartInk and doUpload in static/asv.html");
+  }
+
+  console.log("");
+  console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
+  process.exit(fails ? 1 : 0);
+})().catch((e) => { console.log("  FAIL 22. CRASHED: " + (e && e.stack || e)); process.exit(1); });
