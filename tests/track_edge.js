@@ -201,6 +201,23 @@ check("4. a boat holding its track in a cross set reads CLEAR — the crab is re
                    onPlan(route, 0, 4, TIGHT)) === "clear";
       },
       "a waypoint follower crabs; a projection that cannot crab alarms on every tide");
+// 4b. ... AND NOW THE PROJECTION CRABS TOO (2026-09-29, the deviation chatter). Check 4 claimed it and passed without
+//     it: 40 m off, a pursuit of a waypoint 300 m ahead bows too little to reach the buffer. Here the boat crabs down
+//     a line 12 m off a pier face 320 m long - 7 m outside the 5 m buffer - in a 1 kn set onto it, bow into the set
+//     the way the vessel's line-follower holds it. Pursuing the waypoint and ADDING the set carried the projection
+//     onto the face inside the look-ahead; the crab keeps it on the line she is holding.
+check("4b. alongside a long face in a 1 kn set onto it, a boat CRABBING down her line 12 m off reads CLEAR - the projection holds the line the way the vessel does, rather than pursuing the waypoint and being carried onto the face",
+      () => {
+        const face = [{ e: 0, n: -20 }, { e: 60, n: -20 }, { e: 60, n: 300 }, { e: 0, n: 300 }];
+        const LONG = { polys: [{ ring: face, bb: bbOf(face), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+        const set = { e: KN(1.0), n: 0 }, tw = KN(4);
+        const crab = Math.asin(set.e / tw);                          // the bow west of north, into the set
+        const hdg = (360 - crab / Math.PI * 180) % 360;
+        const ground = { e: tw * Math.sin(-crab) + set.e, n: tw * Math.cos(crab) };
+        return G.assess({ e: -12, n: 0 }, ground, set, LONG, BUF, onPlan([{ e: -12, n: 280 }], hdg, 4, TIGHT)).level === "clear"
+            && G.projectRoute({ e: -12, n: 0 }, hdg, tw, set, [{ e: -12, n: 280 }], LONG, BUF, TIGHT) === null;
+      },
+      "4 kn through the water, 1 kn onto the face: the bow 14.5 deg into the set, the track down the line");
 check("5. THE DRIFT IS IN THE INTEGRATION: the same geometry with a set the boat cannot " +
       "hold against does read the entry",
       () => {

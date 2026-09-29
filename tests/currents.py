@@ -368,6 +368,58 @@ check("F. the SET is reported on a boat that has NOT been started - that frame i
       "not wandered: %.3f m in 20 s" % (_t0.get("env_set_kn"), _t0.get("env_set_deg"), _moved))
 
 
+# ── G-I. THE SET ON A LINK THAT REPORTS NONE (2026-09-29) ─────────────────────────────
+# Only the simulator wrote env_set_kn, so a link reporting none read as SLACK WATER to every consumer of the set - the
+# guard's drift and standoff, the slowest speed that makes way, the hold margins: on the real boat "consistent, and
+# blind". The console already fetches the stream forecast under the boat in both modes; a frame with no set of its
+# own now carries it, marked as a forecast (with_forecast_set).
+import threading as _threading
+_fc = _FakeCurrents(1.2, 45.0)
+_tel = {"lat_deg": 43.07, "lon_deg": -70.71, "heading_deg": 90.0, "sog_kn": 3.0}
+_f = _C.with_forecast_set(_tel, _fc.snapshot())
+check("G. a frame that reports no set carries the stream FORECAST under the boat, marked as one (the frame it was "
+      "handed is left untouched)",
+      _f.get("env_set_kn") == 1.2 and _f.get("env_set_deg") == 45.0 and _f.get("env_set_src") == "stream"
+      and "env_set_kn" not in _tel,
+      "set %s kn toward %s, source %s" % (_f.get("env_set_kn"), _f.get("env_set_deg"), _f.get("env_set_src")))
+_own = _C.with_forecast_set({"env_set_kn": 0.8, "env_set_deg": 200.0}, _fc.snapshot())
+_none = _C.with_forecast_set(dict(_tel), {"ok": False, "note": "no cycle cached yet"})
+check("H. ... a frame with a set of its own - the simulator's - is left exactly as it is, and with no forecast the set "
+      "stays ABSENT: never a claim of slack water",
+      _own == {"env_set_kn": 0.8, "env_set_deg": 200.0} and "env_set_kn" not in _none and "env_set_src" not in _none,
+      "own %s; no forecast %s" % (_own, sorted(_none.keys())))
+
+
+class _NoSetLink(_C.VcuLink):
+    """A link whose frames carry a position and a heading and no set - a real VCU's, once its codec exists."""
+    def open(self): pass
+    def close(self): pass
+    def tick(self, dt):
+        return {"lat_deg": 43.07, "lon_deg": -70.71, "heading_deg": 90.0, "cog_deg": 90.0, "sog_kn": 0.0}
+
+
+_C.CURRENTS = _FakeCurrents(1.2, 45.0)
+_eng = _C.Engine()
+with _eng._lock:
+    _eng._link = _NoSetLink()
+    _eng._mode = "real"
+    _eng._stop.clear()
+_th = _threading.Thread(target=_eng._run, daemon=True)
+_th.start()
+_st = {}
+for _ in range(30):
+    time.sleep(0.1)
+    _st = dict(_eng.status or {})
+    if _st.get("env_set_kn") is not None:
+        break
+_eng._stop.set()
+_th.join(timeout=2.0)
+check("I. ... and the ENGINE publishes it: a link whose frames carry a position and a heading but no set reaches the "
+      "page with the stream forecast on its status",
+      _st.get("env_set_kn") == 1.2 and _st.get("env_set_deg") == 45.0 and _st.get("env_set_src") == "stream",
+      "status set %s kn toward %s, source %s" % (_st.get("env_set_kn"), _st.get("env_set_deg"), _st.get("env_set_src")))
+
+
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails
       else "\nall checks passed (%d)" % ran)
 sys.exit(1 if fails else 0)

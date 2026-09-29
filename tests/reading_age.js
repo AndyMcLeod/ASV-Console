@@ -167,5 +167,18 @@ check("7. the current - recomputed every minute - shows its age only once it is 
       () => "fresh '" + curFresh.row + "'; old '" + curOld.row + "' " + curOld.col + "; not-ok tooltip '"
             + curErr.replace(/\n/g, " ").slice(0, 120) + "'");
 
+// 8. THE SET SAYS WHERE IT CAME FROM (2026-09-29): on a link that reports none the console fills in the tidal-stream
+//    FORECAST under the boat (with_forecast_set), and the row says so - it is what the guard is using, and it is not
+//    the whole set (the wind's leeway is not in it). The vessel's own set reads as it always did.
+page.updateEnvUI(env(), { env_set_kn: 1.2, env_set_deg: 45, env_set_src: "stream" });
+const setFc = { row: els["#v_set"].textContent, tip: els["#v_set"].title };
+page.updateEnvUI(env(), { env_set_kn: 1.75, env_set_deg: 272 });
+const setOwn = { row: els["#v_set"].textContent, tip: els["#v_set"].title };
+check("8. the SET row says when it is the tidal-stream FORECAST the console filled in - and that the leeway is not in it - and reads as the vessel's own set otherwise",
+      () => /^1\.20 kn @ /.test(setFc.row) && /stream forecast/.test(setFc.row) && /FORECAST of the tidal stream/.test(setFc.tip)
+            && /leeway is not in it/.test(setFc.tip)
+            && /^1\.75 kn @ /.test(setOwn.row) && !/forecast/.test(setOwn.row) && /The set the vessel reports/.test(setOwn.tip),
+      () => "forecast row '" + setFc.row + "'; own row '" + setOwn.row + "'");
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

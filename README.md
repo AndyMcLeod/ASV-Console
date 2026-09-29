@@ -32,7 +32,7 @@ The console's own modules beside them include `guard.js` (what is AHEAD of the b
 the four-rung ladder that answers it) and `hold.js` (where a boat is asked to hold, and how
 much water it has there: a target inside a keep-out is held OFF at the nearest clear water
 in any direction, and every holding command tells the vessel the radius certified clear
-round its hold point, so a boat set off station re-approaches direct only inside that
+round its hold point (clear of the chart and of the AIS contacts the guard sees), so a boat set off station re-approaches direct only inside that
 water and is routed back beyond it).
 
 Run it, a
@@ -259,7 +259,8 @@ elsewhere. Set is **where the water goes**, degrees true. Unlike the wind rows t
 **not** simulator-only: a real hull sits in real water, and while the simulator invents
 the wind, nobody invents the tide. It is a *model prediction*, not a measurement, and a
 different question from the **Set / crab** row above it — that is the leeway the boat is
-actually fighting. Every way it can fail to be a live reading is stated rather than
+actually fighting, except on a vessel link that reports no set of its own, where the row carries
+this forecast and says "stream forecast" (see the last four open items, below). Every way it can fail to be a live reading is stated rather than
 dressed up as a number: no cycle cached yet, no model water at that position, or a value
 **projected by whole tidal cycles** because no forecast frame covers now (marked `~`,
 and refused outright past three cycles). The model fetch runs on a background thread, so
@@ -541,6 +542,45 @@ beats the set by half a knot, with the bow crabbed so her track runs home (`hold
 `asv_console.py`; a real vessel's station-keeping is its own). Rehearsed on a throwaway console
 with his line, boat and set and FRIGGA on the line: held within 2 m of her point for 20 s where she
 used to creep, and paused, she drifted 4.7 m toward FRIGGA before the guard put her back on station.
+
+**And the last four open items** (29 September, "Fix the open items, push and merge"). **The
+deviation chatter.** The guard's look-ahead walked the route with the bow swung straight at each
+waypoint and the set added on top, so in a cross-set it predicted a boat carried downstream of
+every leg, while the vessel's own line-follower crabs into the set and holds the line. Beside a
+structure with the set toward it, that phantom track read an entry the vessel was never going
+to make, and the guard deviated her off a line she was holding. Driven through the page's own
+guard, a line held 8 m off a pier with half a knot to a knot and a half of set toward it was
+deviated 2 to 4 times in 90 s. His 26 September record has 62 deviations in six minutes, with
+the bow 25 to 37 degrees off the course made good, which fits; it came from an older build and
+was not replayed. The projection now crabs the bow into the set the way the vessel does, up to
+about 64 degrees (a set too strong to cancel still carries her, and the projection says so).
+The line 8 m off is now left alone, and one 2 m off, inside the buffer, is still deviated,
+once. **Every station-keep takes the hold speed.** At a Go-To point, at home after a
+Return-to-Home or at the end of a plan she kept the speed her last leg ran at (HIGH, after a
+Go-To or a Return-to-Home), because the speed governor stood down whenever the vessel reported
+holding. It now acts there and commands the slowest speed that makes way against the set; a
+speed selector pressed during the hold sets the next leg's speed. An in-extremis escape's hold
+keeps the escape's speed. **The clear water round a hold point counts the contacts.** Every
+holding command tells the vessel the radius certified clear round its point, inside which she
+drives straight back when set off station. It was measured against the chart alone, so a moored
+ship near the point was inside it: held 51 m short of FRIGGA, the vessel was told 64 m. It now
+counts the contacts the guard sees - for the guard's own hold, the Hold button, an escape, the end
+of an uploaded plan, and a Go-To, Return-to-Home or drawn transit, whose planned disc is cut to
+the smaller of the two before anything reads it - and a boat set beyond it is routed back round
+the contact too. Plans still never see a contact. **A link that reports no set is given the
+stream forecast.** Only the simulator wrote the set (`env_set_kn`), so a vessel link that
+reports none read as slack water to everything that uses it: the guard's drift and standoff, the
+slowest speed that makes way, the hold margins. The console already fetches NOAA's forecast of
+the stream at the boat's position in both modes, so a frame with no set of its own now carries
+that, marked `env_set_src: "stream"`, and the **Set / crab** row says "stream forecast". It is
+not the whole set: the wind's leeway is modeled only in the simulator, and in a blow it can be
+most of it. A link's own set is never replaced, and no forecast leaves the set absent rather than
+claiming slack water. **The real link still sends no telemetry at all** (Phase 0), so this takes
+effect with its first frame; the simulator reports its own set and is unchanged. Rehearsed on a
+throwaway console with his line, boat and set and a moored test contact 45 m north of HOME: the
+Return-to-Home ran at HIGH and, arrived, held at SURVEY - the slowest speed that makes way in
+1.75 kn - where HIGH used to stay on; it told the vessel 38.0 m of clear water round home, and
+143.2 m once the contact was cleared.
 
 **Avoidance you can see and trigger** (2026-09-27, Andy: "There is no button or right-click
 selection to initiate or manually avoid an AIS target"). Three additions, none of which changes

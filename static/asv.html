@@ -1309,11 +1309,12 @@ function roleSpeed(role){
   if(role === "depart") return "low";
   // ⚠ `hold` IS NOT THE OPERATOR'S TO SET EITHER (2026-09-29, FRIGGA): a hold at the present position - the guard's,
   // or the Hold button's - is a station-keep, not one of Andy's four transits, and it was classified as a transit
-  // for the instant between the hold command and her arrival on station. That instant is when the governor acts
-  // (it stands down once she reports holding), so it commanded the TRANSIT speed - high, 6 kn - and that is the
+  // for the instant between the hold command and her arrival on station. That instant is when the governor acted
+  // (it stood down once she reported holding), so it commanded the TRANSIT speed - high, 6 kn - and that is the
   // speed she then held at for the rest of the hold: his log, spd high while station-keeping 40 m off FRIGGA. A
   // hold is flown at the slowest speed that still makes way against the set, which is what a way back onto
-  // station needs and no more.
+  // station needs and no more. Since the same day the governor no longer stands down on a holding boat, and every
+  // station-keep but an escape's - a Go-To point, home, the end of a plan - takes this role (currentActivity).
   if(role === "hold") return slowestMakingWayKey(setMsNow()) || "low";
   const s = (mission.speeds || {})[role];
   return (s && V.SPEED_KN[s] != null) ? s : (mission.speed || "survey");
@@ -1584,7 +1585,28 @@ function heldOffWhy(h){
 }
 function holdClearAt(ll){
   if(!nogo.ready || !nogo.ko || !nogo.frame || !ll || ll.lat == null) return null;
-  return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), nogo.ko, nogo.buffer || 0);
+  // ⚠⚠ AND THE CONTACTS ARE IN THE WATER IT CERTIFIES (2026-09-29). `hold_clear_m` is the disc round the hold
+  // point inside which the vessel drives a STRAIGHT chord back to it - clear by construction, because nothing in
+  // the disc is a keep-out. It was measured against the charted model alone, so a moored ship inside it was not
+  // a keep-out: held 51 m short of FRIGGA, the disc sent was 64 m, and a boat set past her would have driven
+  // back through her. The contacts the guard sees are in it now (koWithAis: the charted model plus this frame's
+  // hulls, a moving one swept ahead), so the disc stops short of her and a boat set beyond it asks for a ROUTED
+  // way back - routed round her too (reapproachIfSetOff). Plans still never see a contact; this is the vessel's
+  // own safety margin, as the guard's model is.
+  return holdClearM(nogo.frame.toEN({lat:ll.lat, lon:ll.lon}), koWithAis() || nogo.ko, nogo.buffer || 0);
+}
+/**
+ * THE DISC A PLANNED HOLD SHIPS WITH (2026-09-29). Go-To, Return-to-Home and a drawn transit take their disc from
+ * the PLAN (`holdClear`, passage.js holdTarget), and a plan is measured against the charted model alone - plans
+ * never see a contact. The disc is the vessel's own safety margin, not a plan: the water she may drive a straight
+ * chord back through when set off station. So what ships is the smaller of the plan's disc and the one counting
+ * the contacts round `ll`, the hold point - and it is written back onto the plan, so the Intent card's "clear water
+ * round it", the coast solve and the command all read the one number. No model (holdClearAt null): the plan's own.
+ */
+function holdClearWithContacts(ll, charted){
+  const withAis = holdClearAt(ll);
+  if(withAis == null) return charted;
+  return charted == null ? withAis : Math.min(charted, withAis);
 }
 // ⚠⚠ THE DRAWN PICTURE IS ONE THING, AND THIS COUNTS IT. The route, its reasoning and its
 // unsafe legs are drawn together and must clear together - but the command-bar handlers now
@@ -4221,7 +4243,14 @@ function speedReconcile(s, st){
 let commandedSpeed = null;
 function speedGovernor(){
   const st = (S && S.status) || {};
-  const act = !!(S && S.run === "running" && S.armed && !S.estop && !st.holding) && supervising();
+  // ⚠⚠ A STATION-KEEPING BOAT IS GOVERNED TOO (2026-09-29). This stood down on `st.holding` from its first line,
+  // on the argument a stopped boat is re-governed on start - but a boat holding at a Go-To point, at home after a
+  // Return-to-Home, or loitering at the end of a plan is not stopped: she is driving back onto station every time
+  // the set moves her off it. Standing down there left her at the TRANSIT speed the last leg ran at, for the whole
+  // hold. She is governed now, at the `hold` role's speed - the slowest that makes way against the set (roleSpeed).
+  // Except on an ESCAPE's hold: that throttle is the escape's claim (escapeThrottle), and it stays exactly as it was.
+  const act = !!(S && S.run === "running" && S.armed && !S.estop
+                 && !(st.holding && S.behavior === "escape")) && supervising();
   if(!act){ commandedSpeed = null; return null; }     // a stopped boat - or a view-only tab - governs nothing
   if(clearance.slowed) return null;                   // safety owns the throttle
   // ⚠ AND THE OPERATOR OWNS IT AFTER A PAUSE. A resumed run is held at low until they say
@@ -6356,7 +6385,9 @@ function currentActivity(){
     if(S && S.behavior === "escape")
       return {activity:"holding", detail:"in-extremis escape — holding clear, awaiting the operator" + off,
               surveying:false, role:"transit"};
-    return {activity:"holding", detail:"station-keeping" + off, surveying:false, role:"transit"};
+    // STATION-KEEPING IS THE HOLD ROLE (2026-09-29), whatever the run was: the governor now acts while she holds,
+    // and a hold is flown at the slowest speed that makes way (roleSpeed), not the transit speed the last leg ran at.
+    return {activity:"holding", detail:"station-keeping" + off, surveying:false, role:"hold"};
   }
   if(run !== "running") return {activity:"idle", detail:(run || "not running"), surveying:false, role:"transit"};
   // ⚠⚠ R8 - THE DEPARTURE IS ITS OWN ACTIVITY, AND IT IS ASKED FIRST. While a launch grant
@@ -8384,6 +8415,7 @@ async function doGoTo(target){
   // The route ends at the HOLD POINT - the target itself, or the nearest clear water to it
   // when it sits in a keep-out - and the vessel is told how much water is clear round it.
   const hp = plan.route[plan.route.length-1] || target;
+  plan.holdClear = holdClearWithContacts(hp, plan.holdClear);        // the disc counts the contacts (2026-09-29)
   const gCoast = solveCoastFor(plan);
   // The same rule doRTH carries, for the same reason: the button's gate was read off an
   // earlier state frame, and this function has spent the extract since. See doRTH.
@@ -8515,6 +8547,7 @@ async function doRTH(opts){
   clearViolation();
   // A HOME set at a berth is held OFF, at the nearest clear water - the route already ends
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
+  plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear);   // + the contacts (2026-09-29)
   const rCoast = solveCoastFor(plan);
   const r = await cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
                        coast_from_m: rCoast ? rCoast.groundM : null});
@@ -8714,7 +8747,7 @@ async function doTransit(){
   }
   const line = [...transit.slice(0,-1), ht.to];
   const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true, patClipBufM());   // pure transit: keep right (Rule 9), at the guard's standoff where the water allows
-  plan.heldOff = ht.heldOff; plan.holdClear = ht.holdClear;
+  plan.heldOff = ht.heldOff; plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear);   // + the contacts (2026-09-29)
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
     // ⚠ THIS BRANCH DRAWS, AND IT IS THE ONE PLACE A REFUSED TRANSIT SHOULD. Its banner says
@@ -11670,7 +11703,11 @@ async function reapproachIfSetOff(s, st){
   if(reapproachBusy || Date.now() - reapproachAt < REAPPROACH_MIN_MS) return;
   reapproachBusy = true; reapproachAt = Date.now();
   try{
-    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon}, {...holdOpts(), standoffM: patClipBufM()});
+    // ROUTED ROUND THE CONTACTS TOO (2026-09-29): this is the vessel's own way back onto station, a safety maneuver
+    // like the guard's rather than a plan, and the disc it answers now stops short of a contact (holdClearAt) - so the
+    // way back is routed through the same model, the charted world plus this frame's hulls, and certifies its disc there.
+    const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon},
+                               {...holdOpts(), standoffM: patClipBufM(), ko: koWithAis() || nogo.ko});
     if(plan.error){
       setViolation(plan.reason);
       showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and NO clear route back — holding where it is with the way off. "+plan.error);
@@ -14976,9 +15013,15 @@ function updateEnvUI(env, st){
     : (w && w.speed_kn!=null ? (w.speed_kn+" kn @ "+dirTxt(w.dir_from_deg)+envAge) : (env.enabled ? "calm" : "off"));
   $("#v_sea").textContent = simOff ? "--"
     : (sea && sea.hs_m!=null ? (sea.hs_m.toFixed(2)+" m / "+ (sea.tp_s!=null?sea.tp_s+"s":"?") +" @ "+dirTxt(sea.dir_from_deg) + (sea.derived?" ~":"")) : "--");
-  // applied set + crab from the sim telemetry
+  // applied set + crab from the sim telemetry - or, on a link that reports no set of its own, the tidal-stream
+  // FORECAST the console fills in (with_forecast_set, 2026-09-29), which the row says is a forecast and not the whole set
   const set = st.env_set_kn, sd = st.env_set_deg, crab = st.crab_deg;
-  $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
+  const setFc = st.env_set_src === "stream";
+  $("#v_set").textContent = (set!=null && set>0.01) ? (set.toFixed(2)+" kn @ "+dirTxt(sd) + (setFc ? " · stream forecast" : "")
+                                                       + (crab!=null?" · crab "+(crab>=0?"+":"")+crab.toFixed(0)+"°":"")) : "--";
+  { const vset = $("#v_set"); if(vset) setTip(vset, setFc
+      ? "This link reports no set of its own, so this is NOAA's FORECAST of the tidal stream under the boat - what the guard and the planner are using. The wind's leeway is not in it."
+      : "The set the vessel reports: the ground drift that would remain with the engines stopped, leeway and stream together."); }
   const vw=$("#v_wind"); if(vw) vw.style.color = (!env.enabled||simOff)?"var(--ink-faint)":"";
   const ageTip = (!simOff && typeof env.age_s==="number")
     ? "\nObserved " + fmtAge(env.age_s) + " ago (the oldest buoy report in the blend). A buoy whose last report is over 2 h old is left out while a fresher one is in reach." : "";

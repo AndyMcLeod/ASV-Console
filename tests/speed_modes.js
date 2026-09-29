@@ -328,15 +328,31 @@ console.log("Speed by mode - three settings, and the console governs which one i
 // the clearance guard uses. A speed sent while the operator is driving on RC is the console
 // taking a control it was never given.
 {
+  // (A HOLDING boat was a fourth case until 2026-09-29: she is governed now, at the hold role's speed - 8c.)
   const cases = [["not running", { run: "stopped" }], ["disarmed", { armed: false }],
-                 ["E-STOP", { estop: true }], ["holding", { status: { holding: true } }]];
+                 ["E-STOP", { estop: true }]];
   const bad = [];
   for (const [why, over] of cases) {
     world(); onLine(); S = { ...S, ...over };
     if (speedGovernor() !== null || sent.length) bad.push(why);
   }
-  check("8. it commands nothing unless running, armed, not E-STOPped and not holding",
-        () => bad.length === 0, bad.length ? "commanded while " + bad.join(", ") : "silent in all four");
+  check("8. it commands nothing unless running, armed and not E-STOPped",
+        () => bad.length === 0, bad.length ? "commanded while " + bad.join(", ") : "silent in all three");
+  // 8c. A STATION-KEEPING BOAT IS GOVERNED (2026-09-29). Standing down on `holding` left a boat at a Go-To point, at
+  //     home or at the end of a plan at the TRANSIT speed her last leg ran at, for the whole hold. She takes the hold
+  //     role now - the slowest speed that makes way against the set - once, not every frame; and on an ESCAPE's hold
+  //     the throttle is still the escape's, so there the governor still commands nothing.
+  world(); onLine(); S = { ...S, behavior: "goto", status: { holding: true } };
+  const kCalm = speedGovernor(), sCalm = sent.map(s => s.body.speed);
+  speedGovernor(); const again = sent.length;
+  world(); onLine(); S = { ...S, behavior: "rth", status: { holding: true, env_set_kn: 4.0, env_set_deg: 90 } };
+  const kSet = speedGovernor();
+  world(); onLine(); S = { ...S, behavior: "escape", status: { holding: true } };
+  const kEsc = speedGovernor(), sEsc = sent.length;
+  check("8c. a HOLDING boat is governed at the hold role's speed - the slowest that makes way: LOW in calm water, the next up in a set LOW cannot beat - once, not every frame, and never the transit speed; on an ESCAPE's hold it still commands nothing",
+        () => kCalm === "low" && JSON.stringify(sCalm) === '["low"]' && again === 1 && kSet === "survey" && kEsc === null && sEsc === 0,
+        "Go-To hold, calm: " + kCalm + " " + JSON.stringify(sCalm) + " (then " + again + " sent in all); RTH hold in a 4 kn set: "
+          + kSet + "; escape hold: " + kEsc + ", " + sEsc + " sent");
   // ... and a stopped boat forgets what it commanded, so a fresh run re-asserts from zero
   // rather than assuming the boat still holds a speed from the last run.
   world(); onLine(); speedGovernor(); S.run = "stopped"; speedGovernor();

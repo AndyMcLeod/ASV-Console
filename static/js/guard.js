@@ -239,6 +239,10 @@ export const EDGE_SCREEN_MIN_S = 15;
 export const PROJECT_TURN_RATE_DEG_S = 20;
 /** Waypoint capture radius the projection advances at, mirroring the vessel's own. */
 export const PROJECT_APPROACH_M = 2.0;
+/** The most of her way through the water the projected bow spends crabbing across a set: the sine of the widest
+ *  crab angle, ~64 deg - the simulator's own line-follower clamp (SimVcu.tick). A cross-set stronger than that is
+ *  not cancelled, and the projection carries her with it. */
+export const CRAB_MAX_SIN = 0.9;
 
 /**
  * HOW FAR THE CONSOLE MAY MOVE THE OPERATOR'S TRACK ON ITS OWN AUTHORITY.
@@ -357,7 +361,21 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
   let e = p.e, n = p.n, h = hdgDeg, i = 0, prev = { e: p.e, n: p.n };
   for (let t = step; t <= horizon; t += step) {
     const tgt = route[i];
-    h = turnToward(h, Math.atan2(tgt.e - e, tgt.n - n) / D2R, swing);
+    // ⚠⚠ THE BOW IS CRABBED INTO THE SET, AS THE VESSEL'S OWN LINE-FOLLOWER CRABS IT (2026-09-29, the deviation
+    // chatter). The projection swung the bow straight at the waypoint and ADDED the set, so in a cross-set it
+    // predicted a boat that bows downstream of every leg - one that pursues the waypoint and is carried off it -
+    // while the vessel solves the drift triangle and holds the line (SimVcu.tick's CRAB FEEDFORWARD; any line-
+    // following autopilot's cross-track control). Measured through the page's own guard on a boat crabbing down
+    // a line 8 m off a pier, clear of the 5 m the deviation wants: in cross-sets of 0.5, 1 and 1.5 kn toward the
+    // pier the phantom bow carried the projection 11-35 m inside the look-ahead, and the guard DEVIATED her 2, 3
+    // and 4 times in 90 s off a line she was holding - the chatter his 2026-09-26 record has 62 of in 6 min. Now
+    // the bow the projection swings toward is the one that puts the GROUND track on the waypoint; where the set
+    // is too strong to cancel (beyond CRAB_MAX_SIN of the way through the water) she is still carried, and the
+    // projection says so. The swing from her present heading, at the hull's turn rate, is unchanged.
+    const brg = Math.atan2(tgt.e - e, tgt.n - n);
+    const dCross = dr.e * Math.cos(brg) - dr.n * Math.sin(brg);          // the set, + = right of the way to it
+    const crab = Math.asin(Math.max(-CRAB_MAX_SIN, Math.min(CRAB_MAX_SIN, dCross / twMs)));
+    h = turnToward(h, (brg - crab) / D2R, swing);
     const a = h * D2R;
     e += (twMs * Math.sin(a) + dr.e) * step;
     n += (twMs * Math.cos(a) + dr.n) * step;

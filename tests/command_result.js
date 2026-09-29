@@ -245,7 +245,8 @@ const PRELUDE = [
   // What THIS page did to the picture, written in the same statement that nulls the route.
   // The card reads it where `runRoute` is null, so the checks below can read it too.
   "let routeGone = null;",
-  "const holdClearAt = () => 12;",
+  // the disc counting the contacts round a point: 12 (the plans' own) unless a world says otherwise (10b)
+  "const holdClearAt = (ll) => (W.holdClearAt ? W.holdClearAt(ll) : 12);",
   "const mission = {waypoints: []};",
   // #b_start asks before it commands, and hands a paused boat to resumeRun
   "const guiConfirm = async () => true;",
@@ -325,10 +326,12 @@ function bannerEl() {
 function world(opts) {
   const o = opts || {};
   const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0,
-                posts: [], banner: bannerEl(), aborts: 0, resumed: 0 };
+                posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
     out.posts.push(url);
+    // what was SENT, beside where (10b reads the disc a hold ships with)
+    try { out.bodies.push(init && init.body ? JSON.parse(init.body) : null); } catch (e) { out.bodies.push(null); }
     if (o.reply === "hang") {
       return new Promise((resolve, reject) => {
         if (init && init.signal) init.signal.addEventListener("abort", () => {
@@ -386,7 +389,7 @@ function world(opts) {
     return Promise.resolve({ ok: true, status: 200,
       json: async () => ({ ok: true, state: { behavior: "rth", note: "Return-to-Home." } }) });
   };
-  const W = { out, supervising: o.viewOnly ? false : true, fetch: fetchStub,
+  const W = { out, supervising: o.viewOnly ? false : true, fetch: fetchStub, holdClearAt: o.holdClearAt || null,
               transit: o.transit || [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
               S: { home: { lat: 43.0, lon: -70.5 }, note: "" },
               asv: o.noFix ? null : { lat: 43.02, lon: -70.48 },
@@ -427,6 +430,8 @@ function world(opts) {
                            // than restated: the WORDS are the product here.
                            + grab("indexedRoute") + "\n" + grab("cardRoute") + "\n"
                            + grab("routeSayWhy") + "\n"
+                           // the disc a planned hold ships with - the page's own, reading the holdClearAt above
+                           + grab("holdClearWithContacts") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -642,6 +647,30 @@ console.log("\n-- 9-11: the same rule at the other two commanded motions --");
         && ok.after().runRoute && ok.after().planIntent.kind === "transit",
         "refused -> " + (a.runRoute ? "ROUTE DRAWN" : "no route") + "; accepted -> "
           + (ok.after().planIntent || {}).kind);
+}
+
+// 10b. THE DISC A PLANNED HOLD SHIPS WITH COUNTS THE CONTACTS (2026-09-29). Go-To, RTH and a drawn Transit took
+// `hold_clear_m` from the PLAN, which is measured against the charted model alone (plans never see a contact), so a
+// ship moored by the hold point sat inside the water the vessel drives a straight chord back through. Each now ships
+// the SMALLER of the plan's disc and the one counting the contacts round the hold point (holdClearWithContacts), and
+// writes it back onto the plan, so the Intent card's "clear water round it" and the command are one number. A wider
+// contact-aware disc never widens it (one model cannot produce one; this is the guard against a second), and with no
+// model at all the plan's own disc ships, as before.
+{
+  const sent = async (fn, at) => {
+    const w = world({ holdClearAt: at });
+    await w[fn](fn === "doGoTo" ? { lat: 43.01, lon: -70.49 } : fn === "doRTH" ? {} : undefined);
+    const i = w.out.posts.findIndex((p) => /\/api\/cmd\/(goto|rth|transit)$/.test(p));
+    return { disc: i >= 0 && w.out.bodies[i] ? w.out.bodies[i].hold_clear_m : undefined, plan: w.W.plan.holdClear };
+  };
+  const rows = [];
+  for (const fn of ["doGoTo", "doRTH", "doTransit"])
+    rows.push([fn, await sent(fn, () => 7), await sent(fn, () => 30), await sent(fn, () => null)]);
+  check("10b. Go-To, RTH and a drawn Transit each ship the SMALLER of the plan's disc and the one counting the contacts, "
+        + "and the plan carries the same number - never wider, and the plan's own where there is no model",
+        rows.every(([, near, wide, none]) => near.disc === 7 && near.plan === 7 && wide.disc === 12 && none.disc === 12),
+        rows.map(([fn, n, w, z]) => fn + ": a contact near -> " + n.disc + " (plan " + n.plan + "), a wider disc -> "
+                                    + w.disc + ", no model -> " + z.disc).join("; "));
 }
 
 // 11. ⚠ AND THE BLOCKED-TRANSIT HIGHLIGHT SURVIVED THE FIX. This is the check that exists

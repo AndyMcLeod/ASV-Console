@@ -352,6 +352,20 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
               // the window - a check measuring distance rather than the property.
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(BHOLD_SRC),
         "every holding command tells the vessel how much water it has");
+  // 9b2. ... AND THE DISC A PLANNED HOLD SENDS COUNTS THE CONTACTS (2026-09-29). The plan's disc is measured against
+  // the chart alone, so Go-To, RTH and Transit correct it (holdClearWithContacts) BEFORE anything reads it: the coast
+  // solve, the command and the Intent card all take `plan.holdClear`, and a correction after the coast solve would let
+  // a coast-in be judged against water with a ship in it. What ships is tested in tests/command_result.js 10b.
+  const before = (src, a, ...later) => { const i = src.indexOf(a);
+    return i >= 0 && later.every((l) => { const j = src.indexOf(l); return j >= 0 && i < j; }); };
+  check("9b2. Go-To, RTH and Transit correct the plan's disc for the contacts BEFORE the coast solve and the command read it",
+        () => before(goTo, "plan.holdClear = holdClearWithContacts(hp, plan.holdClear)",
+                     "solveCoastFor(plan)", 'cmd("/api/cmd/goto", {lat:hp.lat')
+              && before(rth, "plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear)",
+                        "solveCoastFor(plan)", 'cmd("/api/cmd/rth", {route:plan.route')
+              && before(tran, "plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear)",
+                        'cmd("/api/cmd/transit", {route: plan.route'),
+        "a disc measured against the chart alone lets a boat set off station drive back through a moored ship");
   // 9c. EVERY hold point is chosen against the SAME water. Four call sites reach the
   // planner; if one of them forgets the set, a berth commanded from that button is sized by
   // a different rule than the others - and the one that forgets is the one that hits a pier.
@@ -399,6 +413,28 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         () => /plan\.heldOff/.test(noComments(grab(PAGE, "setPlanIntent")))
               && /holding "[\s\S]{0,80} off it, at the nearest clear water/.test(grab(PAGE, "setPlanIntent")),
         "the operator picked a point they can see; the boat stops somewhere else");
+}
+
+// ── 20. THE DISC COUNTS THE CONTACTS (2026-09-29) ─────────────────────────────────────
+// `hold_clear_m` is the water round the hold point inside which the vessel drives a STRAIGHT chord back - clear by
+// construction because nothing in the disc is a keep-out. It was measured against the charted model alone: held 51 m
+// short of FRIGGA, the disc sent was 64 m, with her inside it. The page's own holdClearAt and koWithAis, in a world
+// of one frame, the charted model and this frame's contacts.
+{
+  const fr = planeFrame({ lat: 43.07, lon: -70.71 });
+  const OPENW = { polys: [], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const hull = [{ e: 41, n: -4 }, { e: 61, n: -4 }, { e: 61, n: 4 }, { e: 41, n: 4 }];   // 20 x 8, her center 51 m east
+  const HULL = { ring: hull, bb: bbOf(hull), kind: "AIS: FRIGGA (20 x 8 m assumed)" };
+  const PAGE20 = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const make = new Function("nogo", "aisKoDrawn", "holdClearM", "aisAvoidKeepouts",
+    grab(PAGE20, "koWithAis") + "\n" + grab(PAGE20, "holdClearAt") + "\nreturn { holdClearAt };");
+  const at = fr.fromEN(0, 0);
+  const nogo = { ready: true, ko: OPENW, frame: fr, buffer: 3 };
+  const withHer = make(nogo, [HULL], H.holdClearM, (k) => k).holdClearAt(at);
+  const without = make(nogo, [], H.holdClearM, (k) => k).holdClearAt(at);
+  check("20. the hold disc counts the CONTACTS the guard sees: a hold 41 m from a moored hull certifies the water only as far as her less the buffer, where the charted model alone certified the whole cap round her",
+        () => withHer != null && withHer <= 41 - 3 + 0.05 && withHer >= 41 - 3 - 0.5 && without > 100,
+        "with her: " + (withHer == null ? "null" : withHer.toFixed(1)) + " m; no contacts drawn: " + (without == null ? "null" : without.toFixed(1)) + " m");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

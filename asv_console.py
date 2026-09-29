@@ -3227,6 +3227,31 @@ CURRENTS = CurrentsMonitor()
 apply_port()
 
 
+def with_forecast_set(telem, snap=None):
+    """The link's frame with a SET on it: its own where it reports one, else the tidal-stream FORECAST under the boat.
+
+    ⚠⚠ ONLY THE SIMULATOR WROTE `env_set_kn` (2026-09-29, an open item since 2026-09-26). Every consumer of the set
+    - the guard's drift projection and its standoff (guardStandoffM), the slowest speed that makes way, the hold
+    margins, the coast solver - reads it off this frame, and a link that reports none read as SLACK WATER: on the
+    real boat the planner clipped at the bare buffer and the guard projected no drift at all, "consistent, and
+    blind". The console already fetches NOAA's forecast of the stream under the boat in BOTH modes (CURRENTS is fed
+    the real fix too), so a frame with no set of its own carries that, marked `env_set_src: "stream"`, and the card
+    says it is a forecast. What it is NOT is the whole set: the wind's leeway is the simulator's model only, and in a
+    blow it can be most of it (1.75 kn of the small-class boat's set in 29 kn, with no stream at all). No forecast,
+    no set: absent stays absent rather than becoming a claim of slack water.
+    """
+    if not isinstance(telem, dict) or telem.get("env_set_kn") is not None:
+        return telem
+    snap = CURRENTS.snapshot() if snap is None else snap
+    if not (snap and snap.get("ok") and snap.get("speed_kn") is not None):
+        return telem
+    out = dict(telem)
+    out["env_set_kn"] = round(max(0.0, float(snap["speed_kn"])), 2)
+    out["env_set_deg"] = round(float(snap.get("set_deg") or 0.0) % 360.0, 1)
+    out["env_set_src"] = "stream"
+    return out
+
+
 def _json_body_yielding(obj):
     """Serialize a LARGE response without holding the GIL for the whole of it.
 
@@ -5292,6 +5317,8 @@ class Engine:
                 elif telem:
                     self._misses = 0
                     self.link = self.LINK_OK
+                    # the link's own set where it reports one, else the stream forecast under her (with_forecast_set)
+                    telem = with_forecast_set(telem)
                     self.status = telem
                     # A selected ROC drives HOME: its arrival point overrides the
                     # first-fix launch point and, for a ship, moves every tick.

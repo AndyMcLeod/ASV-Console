@@ -1733,6 +1733,50 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
         () => "hold: role " + roleCalm + ", calm " + keyCalm + ", in a 5 kn set " + keySet + "; Go-To: role " + roleGoto + ", " + keyGoto);
 }
 
+// ── 22. THE DEVIATION CHATTER (2026-09-29; open since 2026-09-26: "62 amends in 6 min, 1.5-4.5 m dog-legs") ─────────
+// The guard's projection swung the bow at each waypoint and ADDED the set, so in a cross-set it predicted a boat carried
+// off her line - while the vessel's line-follower crabs into the set and holds it. Replayed through the page's own
+// guard: a boat crabbing down a straight line 8 m off a pier, clear of the 5 m a deviation wants, in a cross-set onto
+// it. With the pursuing projection she was DEVIATED 3 times in 90 s at 1 kn (2 at 0.5, 4 at 1.5) off a line she was
+// holding; with the crab in the projection (guard.js projectRoute), none. The control: the same line 2 m off - inside
+// the buffer - is deviated round the pier exactly once.
+async function crabbingPast(offM, setKn, secs) {
+  const PIER = { polys: [(() => { const r = [{ e: -60, n: offM }, { e: 60, n: offM }, { e: 60, n: offM + 30 }, { e: -60, n: offM + 30 }];
+                                  return { ring: r, bb: bbOf(r), kind: "a dock / pier" }; })()],
+                 lines: [], points: [], marks: [], sys: [], chans: [] };
+  surveying(7, [], { ko: PIER });
+  mission.lines = []; runLineIdx = -1; lineSwing = -1;
+  runRoute = [ll(-300, 0), ll(300, 0)]; window._wpIndex = 1;
+  edgeSpentM = 0; edgeCount = 0;
+  const twMs = 7 * 0.514444, drift = { e: 0, n: setKn * 0.514444 };
+  let pos = { e: -200, n: 0 }, amends = 0;
+  for (let k = 0; k < secs * 4; k++) {
+    // the vessel's line-follower: bow crabbed into the set so the GROUND track runs down the leg she is on
+    const idx = Math.min(window._wpIndex || 0, runRoute.length - 1), tgt = ref.toEN(runRoute[idx]);
+    const brg = Math.atan2(tgt.e - pos.e, tgt.n - pos.n);
+    const crab = Math.asin(Math.max(-0.9, Math.min(0.9, (drift.e * Math.cos(brg) - drift.n * Math.sin(brg)) / twMs)));
+    const hdg = brg - crab, ge = twMs * Math.sin(hdg) + drift.e, gn = twMs * Math.cos(hdg) + drift.n;
+    pos = { e: pos.e + ge * 0.25, n: pos.n + gn * 0.25 };
+    if (Math.hypot(tgt.e - pos.e, tgt.n - pos.n) < 2 && idx < runRoute.length - 1) window._wpIndex = idx + 1;
+    asv = ll(pos.e, pos.n);
+    S = { ...S, status: { ...S.status, cog_deg: ((Math.atan2(ge, gn) / Math.PI * 180) + 360) % 360, sog_kn: Math.hypot(ge, gn) / 0.514444,
+                          heading_deg: ((hdg / Math.PI * 180) + 360) % 360, env_set_kn: setKn, env_set_deg: 0, holding: false, speed_key: "survey" } };
+    clock += 250; aisPolledAt = clock;
+    const n0 = sent.length;
+    frame();
+    await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0));
+    amends += sent.slice(n0).filter(x => x.p === "/api/cmd/amend").length;
+  }
+  return { amends, holds: paths().filter(p => p === "/api/cmd/hold").length, end: clearance.level };
+}
+{
+  const holding8 = await crabbingPast(8, 1.0, 90), strong8 = await crabbingPast(8, 1.5, 90), inside2 = await crabbingPast(2, 1.0, 60);
+  check("22. THE CHATTER: a boat crabbing down her line 8 m off a pier in a cross-set onto it - 1 kn, and 1.5 kn - is NOT deviated in 90 s (she was deviated 3 and 4 times off a line she was holding), nor held; the same line 2 m off, inside the buffer, is deviated round the pier exactly ONCE",
+        () => holding8.amends === 0 && holding8.holds === 0 && strong8.amends === 0 && strong8.holds === 0
+              && inside2.amends === 1 && inside2.holds === 0,
+        () => "8 m off, 1 kn: " + JSON.stringify(holding8) + "; 1.5 kn: " + JSON.stringify(strong8) + "; 2 m off: " + JSON.stringify(inside2));
+}
+
 Date.now = realNow;
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
