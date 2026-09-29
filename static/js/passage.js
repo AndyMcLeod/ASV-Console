@@ -408,13 +408,29 @@ export function planNogoRoute(from, to, opts){
   // - "it already runs out to the last buoy pair, so the fairway projects past the mouth"
   // - which was false: it ran out AT the last pair and the offset was decaying before it.
   const path = [{lat:from.lat,lon:from.lon}, ...leg];
-  const kr = channelLaneRoute(path, ref, ko, buf);
+  // ⚠ AND THE STANDOFF SURVIVES THE LANE PASS (2026-09-28). The lane, the smoothing, the gate and the knot prune
+  // all run at the operator's BUFFER, so every shortcut they take is clear of the buffer and nothing more - and a
+  // route the search built at the standoff came out of them with its corners cut back to 3 m. Found on the tighter
+  // way round a contact, replayed on Andy's 19:25 geometry: routed at 19.5 m round KLEOS's ring, the route that
+  // came out passed 7.9 m off her hull - inside the guard's standoff, where the helm rung takes the boat. The
+  // result is re-gated at the margin the leg was FOUND at: the lane stands wherever it is clear of that, the
+  // search's own route is spliced back where it is not. (routePlan has the same pass; see CLAUDE.md.)
+  const kr = insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(path, ref, ko, buf)
+                                                     : keepStandoff(channelLaneRoute(path, ref, ko, buf), path, ref, ko, want);
   // (the knot prune that used to run here moved INTO channelLaneRoute — the producer —
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
   return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial,
           heldOff, holdClear, insideStandoff, standoffM: want};
+}
+/** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
+ *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
+function keepStandoff(kr, fallback, ref, ko, want){
+  const g = gateLegClear(kr.route, fallback, ref, ko, want);
+  const route = pruneStitch(g.route, ref, ko, want);
+  const lane = !!kr.lane && !g.abandoned;
+  return {route, lane, partial: lane && (!!kr.partial || g.splices > 0)};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are

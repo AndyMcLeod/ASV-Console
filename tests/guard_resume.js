@@ -196,8 +196,8 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
-const { clearanceM } = require("../static/js/keepouts.js");
+const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { clearanceM, blocked } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
 var slowLieu = null;
@@ -209,7 +209,7 @@ var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = nu
 // The real assess, counting the frames that asked it to SEARCH for a deviation (check 23 reads the count).
 const guardAssess = (p, v, d, ko, buf, o) => { if (o && o.edge) searchCount++; return G.assess(p, v, d, ko, buf, o); },
       groundVel = G.groundVel, restoreVel = G.restoreVel, guardStandoffM = G.guardStandoffM,
-      edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S;
+      edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S, GUARD_HOLD_S = G.HOLD_S;
 function escapeCourse() { return null; }        // the helm rung is in_extremis's suite
 
 function fmtDist(m) { return Math.round(m) + " m"; }
@@ -383,6 +383,7 @@ eval([
   // the way round a contact that stays (2026-09-27) - asked every frame beside the return; no episode ever
   // opens in this world, so it returns at its first line, and these are the names it would reach
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
   grab("renderGuardBar"), grab("renderHeldBar"), grab("lowLatched"),

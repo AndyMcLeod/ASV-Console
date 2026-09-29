@@ -148,6 +148,29 @@ console.log("An AIS contact as a keep-out:");
             + "; 3 kn old: moving " + (fast.q && fast.q.moving));
 }
 
+// ── 10f-10h. THE WAY ROUND'S RING (2026-09-28): a ship-length about HER CENTER, her hull plus the buffer at least ──
+{
+  const hull30 = modelOf(contact(0, 0, { heading: 90, dim: { a: 15, b: 15, c: 4, d: 4 }, length: 30, beam: 8 })).q;   // 30 x 8 m, e = -15..15
+  const calm = A.aisRoundKeepout(hull30, 3, 3), M = { polys: [calm], lines: [], points: [] };
+  const clr = (e, n) => clearanceM({ e, n }, M, 200);
+  check("10f. calm (standoff = the 3 m buffer): the ring is a disc of her length less the standoff (27 m) about her CENTER - so a route kept the standoff off it passes one ship-length (30 m) from her center - on the beam and ahead alike; named, and her hull inside it",
+        () => calm.roundM === 30 && calm.stdM === 3 && /, 30 m round her$/.test(calm.kind)
+              && Math.abs(clr(0, 30) - 3) < 0.2 && Math.abs(clr(30, 0) - 3) < 0.2 && clr(0, 26.5) === 0 && clr(26.5, 0) === 0 && clr(15, 4) === 0,
+        () => "kind " + calm.kind + "; clearance 30 m abeam " + clr(0, 30).toFixed(2) + ", 30 m ahead " + clr(30, 0).toFixed(2) + ", 26.5 m abeam " + clr(0, 26.5).toFixed(2));
+  const set = A.aisRoundKeepout(hull30, 19.5, 3), MS = { polys: [set], lines: [], points: [] };
+  const clrS = (e, n) => clearanceM({ e, n }, MS, 200);
+  check("10g. in a set (standoff 19.5 m) her length less the standoff is 10.5 m and the HULL grown by the buffer dominates along her length: 18 m ahead of her center is inside the ring (her 15 m half-length + 3), 19 m is outside; abeam the disc still reaches 10.5 m",
+        () => set.stdM === 19.5 && clrS(17.9, 0) === 0 && clrS(19, 0) > 0 && clrS(0, 10.4) === 0 && clrS(0, 11.5) > 0,
+        () => "18 m ahead " + clrS(17.9, 0).toFixed(2) + ", 19 m ahead " + clrS(19, 0).toFixed(2) + ", 10.4 m abeam " + clrS(0, 10.4).toFixed(2) + ", 11.5 m abeam " + clrS(0, 11.5).toFixed(2));
+  const moving = modelOf(contact(0, 0, { sog: 10, cog: 90, heading: 90, dim: { a: 15, b: 15, c: 4, d: 4 }, length: 30, beam: 8 }), { sweepS: 45 }).q;
+  const mv = A.aisRoundKeepout(moving, 3, 3), MM = { polys: [mv], lines: [], points: [] };
+  const endE = 10 * KN * 45;                                    // where her center is at the end of the sweep
+  check("10h. under way, the disc is laid about her center NOW and at the END of her sweep (10 kn x 45 s = 231 m on): 26.5 m abeam of both is inside the ring, 30 m abeam of the end is the standoff off it",
+        () => mv.roundM === 30 && clearanceM({ e: 0, n: 26.5 }, MM, 200) === 0 && clearanceM({ e: endE, n: 26.5 }, MM, 200) === 0
+              && Math.abs(clearanceM({ e: endE, n: 30 }, MM, 200) - 3) < 0.2,
+        () => "sweep end at e = " + endE.toFixed(0) + "; 26.5 m abeam of it " + clearanceM({ e: endE, n: 26.5 }, MM, 200).toFixed(2) + ", 30 m abeam " + clearanceM({ e: endE, n: 30 }, MM, 200).toFixed(2));
+}
+
 // ── 3. WHICH WAY SHE POINTS ────────────────────────────────────────────────────────────
 {
   const byCog = modelOf(contact(0, 0, { heading: null, sog: 6, cog: 90 }));

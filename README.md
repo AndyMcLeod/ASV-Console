@@ -455,12 +455,29 @@ picks the plan up at its next waypoint). The guard bar counts the minute down an
 answers. Never on a stale feed, never while you have her **paused** (a paused hold keeps the
 offer now, and the bar says the console waits), not twice in a minute, and where no way round
 is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
-path of `resumeHeldRun`). **The maneuver keeps one ship-length off her** (Andy, 2026-09-27: "an
-avoidance maneuver of a radius equal to the length or the estimated length of the vessel"): the
-way round, the way in to a chosen point and the escape's own search are handed her keep-out
-grown by her broadcast length (20 m where it is assumed), so the rejoin point, the route to it
-and the escape point all clear her by that much; the guard's own hold still measures to her
-side, and a point within her length of her is "the near side" (`aisAvoidKeepout`). **Four
+path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
+to** (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated
+length of the vessel"; 2026-09-28: "Too much distance from the AIS target and a long failure to
+regain the survey line"). The radius is about her **center**: the way round, and the way in to a
+point chosen beyond her, keep at least her length from her center and at least the guard's
+standoff plus the buffer from her hull, whichever is further. Only **she** — the contact being
+routed round, named by her MMSI or else the first one the line ahead runs into — gets that ring;
+every other contact is the bare hull the guard itself measures to. The survey is picked up at
+the first point of the line past her ring, unless another hull sits on the line inside the hold
+horizon after it (then past that one too), and the way in is the **taut** path round her ring,
+checked leg by leg against the whole model at the standoff, with the router's own search as the
+fallback wherever something else is in the way; a boat held inside her standoff first moves
+straight away from her. The escape's own search keeps the wider berth, her hull grown by her
+length, because getting well clear is an escape's whole job (`aisRoundKeepout`, `aisHerPoly`,
+`koRoundHer`, `tautRoundHer`; the escape's `aisAvoidKeepout`). A point within a ship-length of
+her center is "the near side", and Resume from here refuses it. **His 28 September run showed
+what the first version did:** KLEOS on line 6 and FRIGGA anchored 35 m off its far end, in a
+1.75 kn set. Every contact in range was grown by her length and the whole rest of the line held
+clear of all of them, so FRIGGA pushed the rejoin to 587 m along, 375 m of coverage skipped; and
+the router's 19.5 m standoff was added *outside* KLEOS's grown hull, so the way round passed
+48 to 63 m off a 20 m vessel and was off the line for 109 s. Replayed on a throwaway console with
+the same boat, set and contacts: rejoined at 301 m with 90 m skipped, 28 m off her, back on the
+line in 24 s. **Four
 things his 27 September session taught** (KLEOS, moored across line 8 at New Castle): a moored
 vessel that transmits every twelve minutes was **dropped from the AIS proxy's list** by its
 ten-minute time-to-live between reports, so the guard's model went empty of her and the boat
@@ -1326,7 +1343,12 @@ diagnosable (`tests/frame_health.js`).
    ("N transit leg(s) run inside the guard's 19.5 m standoff — expect the guard to slow or
    hold her there"), so a hug is a stated decision rather than a surprise. The legs between a
    plan's own waypoints keep the buffer: they are the punch's geometry, already built at the
-   standoff where it matters.
+   standoff where it matters. **And the standoff survives the finishing pass** (2026-09-28): the
+   Go-To / RTH / resume router searched at the standoff and then ran the Rule 9 lane, the
+   smoothing, the gate and the knot prune at the bare buffer, so every corner they cut was cut
+   back to 3 m — round a hull-sized block in a 1.75 kn set, the search's 20 to 23 m came out at
+   6 to 14 m. Its result is re-gated at the margin the leg was found at (`keepStandoff` in
+   `static/js/passage.js`); the lane stands wherever it is clear of that.
 
    **And the floor is under every command.** The third live run cleared the approach and then
    stood at the first line's end: the TURN role's speed is LOW, a turn at 1.5 kn in a 1.75 kn

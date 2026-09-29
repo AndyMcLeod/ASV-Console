@@ -61,6 +61,7 @@ function world() {
     const HISTORY_MAX = 20, HISTORY_KEY = "k";
     let actionLog = [];
     const lsSet = () => {}; const renderHistory = () => {};
+    const renderAlertRecent = () => {};   // recordAction feeds the ALERTS card's tail (2026-09-28) - the card is ui_split / action_history's subject
     const buildLineTable = () => [{ len_m: 100, plan_s: 60, actual_s: 30 }]; const buildTurnTable = () => []; const buildHopTable = () => [];
     ${decl(/^let lastNogoLogged = null;/m)}
     ${decl(/^let lastGuardLogged = "";/m)}

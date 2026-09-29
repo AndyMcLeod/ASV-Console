@@ -420,6 +420,48 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
           + "; on her: " + (onHer ? (onHer.error || "ACCEPTED") : "?"));
 }
 
+// ── 7f. THE STANDOFF SURVIVES THE LANE PASS (2026-09-28) ─────────────────────────────────────
+// planNogoRoute searched at the standoff, then ran the lane, the smoothing, the gate and the knot prune at the bare
+// BUFFER - so every shortcut they took was clear of the buffer and nothing more. Measured on a hull-sized block
+// across the leg, a 19.5 m standoff (a 1.75 kn set) and a 3 m buffer: the search held 19.7-23.1 m and the lane
+// pass cut it to 6.3-14.1 m in every orientation tried; found on the tighter way round a contact, where it would
+// have taken the boat inside the guard's standoff. Re-gated at the margin the leg was found at.
+{
+  const { nogo } = require("../static/js/state.js");
+  const { planNogoRoute } = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 43.07, lon: -70.71 });
+  const at = (e, n) => F.fromEN(e, n);
+  const block = (rotDeg) => { const r = rotDeg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    const pts = [[-13, -7], [13, -7], [13, 7], [-13, 7]].map(([x, y]) => ({ e: x * c - y * s, n: x * s + y * c }));
+    return { ring: pts, bb: bbOf(pts), kind: "a hull-sized block" }; };
+  const model = (polys) => ({ polys, lines: [], points: [], marks: [], sys: [], chans: [] });
+  const minClear = (route, from, ko) => { let m = Infinity, prev = F.toEN(from);
+    for (const w of route) { const q = F.toEN(w), n = Math.max(1, Math.ceil(Math.hypot(q.e - prev.e, q.n - prev.n) / 0.5));
+      for (let i = 0; i <= n; i++) { const t = i / n; m = Math.min(m, K.clearanceM({ e: prev.e + (q.e - prev.e) * t, n: prev.n + (q.n - prev.n) * t }, ko, 200)); }
+      prev = q; }
+    return m; };
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  const got = [];
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3;
+    for (const rot of [-42, 30, 60]) {
+      const ko = model([block(rot)]); nogo.ko = ko;
+      const A = at(-58, 0), B = at(37, 0);
+      const r = planNogoRoute(A, B, { standoffM: 19.5, ko });
+      const calm = planNogoRoute(A, B, { ko });                      // no standoff: the buffer's own route, untouched
+      got.push({ rot, m: r.route ? minClear(r.route, A, ko) : -1, err: r.error || null, inside: r.insideStandoff,
+                 calm: calm.route ? minClear(calm.route, A, ko) : -1 });
+    }
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  check("7f. a route the router found at the 19.5 m standoff KEEPS it through the lane pass - every leg at least 19.5 m off a hull-sized block across the leg, in three orientations (the lane pass used to cut it to 6-14 m) - and a calm route at the 3 m buffer is still routed at the buffer",
+        () => got.length === 3 && got.every(g => !g.err && !g.inside && g.m >= 19.5 - 0.05 && g.calm >= 3 - 0.05 && g.calm < 19.5),
+        () => got.map(g => "rot " + g.rot + ": " + (g.err || g.m.toFixed(1) + " m (calm " + g.calm.toFixed(1) + " m)")).join("; "));
+}
+
 // ── 8. AND IT IS NEVER SILENT ───────────────────────────────────────────────────────
 // Clipping coverage at more than the operator asked for COSTS THEM SURVEY. This console's
 // standing rule is that dropping coverage somebody asked for is said out loud with the

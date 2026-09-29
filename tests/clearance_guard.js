@@ -645,7 +645,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // return tick above every branch, so the names must exist. No contacts live here, and the poll is
   // always fresh - an EMPTY model, never a STALE one - so every check in this file is the charted
   // world it always was (tests/ais_avoid.js is where a contact stands).
-  const { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+  const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+  const GUARD_HOLD_S = G4.HOLD_S;                    // the way round's run-out (2026-09-28)
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
   const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 60000, AIS_AROUND_STEP_M = 5;
@@ -747,6 +748,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "aisReturnTick") + NL2
                      // the way round a contact that stays (2026-09-27): returns at its first line here (no episode)
                      + grab(H, "koWithAis") + NL2 + grab(H, "aisAroundPlan") + NL2 + grab(H, "aisAroundTick") + NL2
+                     // the tighter way round (2026-09-28): unreached here (no episode), declared so a later check cannot trip on it
+                     + grab(H, "sameContact") + NL2 + grab(H, "aisHerPoly") + NL2 + grab(H, "koRoundHer") + NL2 + grab(H, "tautRoundHer") + NL2
                      + "let heldResuming = false; const patClipBufM = () => nogo.buffer || 0; async function resumeHeldSurvey(){}"
                      + " const LINE_MATCH_M = 5; const onLineM = () => false; const legOfLine = () => null;" + NL2
                      + grab(H, "clearanceGuard").replace(/^function /, "return function ")

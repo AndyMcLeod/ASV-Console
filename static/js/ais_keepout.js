@@ -199,15 +199,17 @@ export function aisKeepout(v, frame, opts = {}) {
   const kind = "AIS: " + (name || ("MMSI " + v.mmsi)) + " (" + size
     + (moving ? ", " + sog.toFixed(1) + " kn" : navStopped ? ", " + aisNavWord(+v.nav) : "") + ")";
   return { ring, bb: bbOf(ring), kind, mmsi: v.mmsi, name, moving, sweepS: c1 ? sweepS : 0,
-           at: c0, hull, box, hdg };
+           at: c0, end: c1, hull, box, hdg };
 }
 
 /**
- * THE AVOIDANCE KEEP-OUT for a contact (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the
- * length or the estimated length of the vessel"): her keep-out grown by her own length on every side -
- * the ring a route round her, the way in past her and the escape from her keep outside of. The guard's
- * own model (aisKeepout) stays the bare hull, so the ladder still measures to her side; this is the
- * MANEUVER's model. `q.box.lengthM` is the length she broadcasts, or the assumed 20 m.
+ * THE ESCAPE'S KEEP-OUT for a contact (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the
+ * length or the estimated length of the vessel"): her keep-out grown by her own length on every side - the
+ * ring the ESCAPE from her keeps outside of, because an escape is the one maneuver whose whole job is to get
+ * well clear. The guard's own model (aisKeepout) stays the bare hull, so the ladder still measures to her
+ * side. `q.box.lengthM` is the length she broadcasts, or the assumed 20 m.
+ * ⚠ THE WAY ROUND HAS ITS OWN, TIGHTER RING since 2026-09-28 (aisRoundKeepout, below): with this one plus the
+ * router's standoff outside it, the way round KLEOS passed 48-63 m off a 20 m vessel.
  */
 export function aisAvoidKeepout(q) {
   if (!q || !q.ring || !q.box) return q;
@@ -218,6 +220,56 @@ export function aisAvoidKeepout(q) {
   return { ...q, ring, bb: bbOf(ring), avoidM: L, kind: q.kind + ", " + Math.round(L) + " m round her" };
 }
 export function aisAvoidKeepouts(polys) { return (polys || []).map(aisAvoidKeepout); }
+
+/** A disc as a polygon that CONTAINS the circle: vertices on radius r / cos(pi/n), so no edge cuts inside r. */
+function discOutEN(c, r, n) { return discRingEN(c, r / Math.cos(Math.PI / n), n); }
+function centroidEN(ring) {
+  let e = 0, n = 0;
+  for (const p of ring) { e += p.e; n += p.n; }
+  return { e: e / ring.length, n: n / ring.length };
+}
+
+/**
+ * THE WAY ROUND'S KEEP-OUT for the contact the survey is routed round (Andy, 2026-09-28: "Too much distance
+ * from the AIS target and a long failure to regain the survey line. Make the avoidance maneuver tighter and
+ * recover the survey line sooner."). His 09-27 rule is kept and read as he said it - "an avoidance maneuver of
+ * a RADIUS equal to the length" - a radius ABOUT HER. The first reading grew her hull by her length on every
+ * side and the router then kept its standoff outside THAT, so the two margins were SUMMED: at New Castle, in a
+ * 1.75 kn set (standoff 19.5 m), the way round passed KLEOS, 20 m long, 48-63 m off her center.
+ *
+ * The ring returned is what the ROUTER keeps `stdM` (its standoff) outside of, so it is built to put the route
+ * where the larger of the two rules puts it, and no wider:
+ *   * ONE SHIP-LENGTH FROM HER CENTER - a disc of radius L - stdM about her hull's center (and about where that
+ *     center will be at the end of her sweep, if she is under way), which the router's standoff tops up to L;
+ *   * THE STANDOFF PLUS THE BUFFER FROM HER HULL - her (swept) hull grown by the operator's buffer: the guard's
+ *     own ladder measures to her hull, a way round that passes inside its standoff is a way round the guard
+ *     stops, and the buffer is the margin for the boat's own cross-track error on the way past.
+ * The union's convex hull. In calm water (standoff = the buffer) the disc dominates and the route passes one
+ * ship-length from her center; in a set the standoff outgrows her length and the hull dominates.
+ * Returned with `roundM` (her length) and `stdM`, and her kind naming the ring.
+ */
+export function aisRoundKeepout(q, stdM, bufM) {
+  if (!q || !q.ring || !q.hull || !q.box) return q;
+  const L = Math.max(0, +q.box.lengthM || AIS_DEFAULT_LENGTH_M);
+  const std = Math.max(0, +stdM || 0), buf = Math.max(0, +bufM || 0);
+  const pts = [];
+  for (const v of q.ring) {
+    if (buf > 0) for (const p of discOutEN(v, buf, 16)) pts.push(p);
+    else pts.push(v);
+  }
+  const r = L - std;
+  if (r > 0) {
+    const hc = centroidEN(q.hull);
+    for (const p of discOutEN(hc, r, 32)) pts.push(p);
+    if (q.end && q.at) {
+      const he = { e: hc.e + (q.end.e - q.at.e), n: hc.n + (q.end.n - q.at.n) };
+      for (const p of discOutEN(he, r, 32)) pts.push(p);
+    }
+  }
+  const ring = convexHull(pts);
+  return { ...q, ring, bb: bbOf(ring), roundM: L, stdM: std,
+           kind: q.kind + ", " + Math.round(L) + " m round her" };
+}
 
 /**
  * THE AIS KEEP-OUT MODEL for one frame: the contacts near the boat as polygons, or none with a

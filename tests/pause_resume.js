@@ -164,7 +164,7 @@ function takeDownBanner() {}
 function ensureNogoCovers() { if (coverHook) coverHook(); return Promise.resolve(); }
 // the held path and the contacts (2026-09-27): none in this world - the amend path is its subject
 var aisKoDrawn = [], aisAvoid = null;
-const { aisAvoidKeepouts } = require("../static/js/ais_keepout.js");   // the way in keeps a ship-length round a contact
+const { aisAvoidKeepouts, aisRoundKeepout, convexHull } = require("../static/js/ais_keepout.js");   // the way in keeps a ship-length round a contact
 function guardHeldOffer() { return null; }
 async function resumeHeldSurvey() { throw new Error("the held path is ais_avoid.js's subject"); }
 function planNogoRoute(from, to, opts) {
@@ -202,6 +202,8 @@ eval([
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
   grab("koWithAis"), grabDecl("AIS_AROUND_AFTER_MS"),                              // the contacts fold into the way in (2026-09-27)
+  grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
+  "const { blocked, clearanceM } = require('../static/js/keepouts.js');",
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and

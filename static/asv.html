@@ -916,7 +916,7 @@ import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // AIS CONTACTS AS KEEP-OUTS (2026-09-25): the hull box each broadcasts (20 x 8 m assumed where it
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
 // under way. Pure geometry; the clearance guard below is what acts on it, and nothing else reads it.
-import { aisKeepouts, aisAvoidKeepouts, AIS_KO_STALE_S } from "/static/js/ais_keepout.js";
+import { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S } from "/static/js/ais_keepout.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
 // THE LAUNCH GRANT - the berth, what it covers, where it applies and when it ends. Pure
@@ -927,7 +927,7 @@ import { berthClearM, berthNeedM, corridorGate, corridorHalfM, grantClockMs, gra
          recessionGiveM } from "/static/js/berth.js";
 import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
          HORIZON_S as GUARD_HORIZON_S, edgeCapM, guardStandoffM,
-         HELM_S as GUARD_HELM_S } from "/static/js/guard.js";
+         HELM_S as GUARD_HELM_S, HOLD_S as GUARD_HOLD_S } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
 import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM } from "/static/js/hold.js";
@@ -2774,11 +2774,14 @@ function aisNearestPoly(p, aisKo){
   }
   return best;
 }
-function aisAvoidOpen(c, a, aisKind){
+function aisAvoidOpen(c, a, aisKind, aisHer){
   if(!guardHeld || aisAvoid) return;   // nothing banked (not a survey, or nothing unflown), or one already open
+  // `mmsi` NAMES HER (2026-09-28): the way round gives HER alone the ship-length ring, and finds her again by it
+  // in a later frame - the contact at the point the ladder acted on (aisHer), not merely the nearest to the boat.
   aisAvoid = {kind: aisKind || (c && c.kind) || "an AIS contact", rung: a && a.level,
-              since: Date.now(), clearSince: 0, line: guardHeld.mark ? guardHeld.mark.line : null};
-  logClient("ais_avoid", {kind: aisAvoid.kind, rung: aisAvoid.rung,
+              since: Date.now(), clearSince: 0, line: guardHeld.mark ? guardHeld.mark.line : null,
+              mmsi: aisHer && aisHer.mmsi != null ? aisHer.mmsi : null};
+  logClient("ais_avoid", {kind: aisAvoid.kind, rung: aisAvoid.rung, mmsi: aisAvoid.mmsi,
             line: aisAvoid.line != null ? lineNo(aisAvoid.line) : null,
             t_entry_s: (a && a.tEntry != null) ? Math.round(a.tEntry) : null});
   flashNote((aisAvoid.rung === "helm" ? "Steered clear of " : "Holding for ") + aisAvoid.kind
@@ -2844,19 +2847,119 @@ const AIS_AROUND_AFTER_MS = 60000;   // the operator's minute, before the consol
 const AIS_AROUND_STEP_M = 5;         // the walk along the held line, looking for the first clear point beyond her
 let aisAroundBusy = false;           // the running plan's way round (aisAroundRunning): one in flight at a time
 /** The charted model plus the contacts of this frame - the guard's own koAll for the routers; with `avoid`,
- *  each contact grown by her own length (aisAvoidKeepouts): the model the MANEUVER keeps outside of. */
+ *  each contact grown by her own length (aisAvoidKeepouts): the ESCAPE's model, the one maneuver whose job is
+ *  to get well clear. The way round has its own (koRoundHer). */
 function koWithAis(aisKo, avoid){
   const k0 = aisKo || aisKoDrawn;
   const k = avoid ? aisAvoidKeepouts(k0) : k0;
   return (nogo.ko && k && k.length) ? {...nogo.ko, polys: [...nogo.ko.polys, ...k]} : nogo.ko;
 }
+/** One contact, two frames: the same object, or the same MMSI. */
+function sameContact(a, b){ return !!(a && b && (a === b || (a.mmsi != null && a.mmsi === b.mmsi))); }
 /**
- * Where the survey picks up beyond the contact: {to, j, line, fromStart, skipM, atEnd} - the first point
- * of the held line, walking on from where she left it, that is `std` clear of the contacts with the rest
- * of the line clear too; {to:null, j, skipLine:true} when the contact covers the rest of the line (the
- * plan is picked up at the waypoint after the line's end); {error} when there is nothing to pick up.
+ * HER - the contact a way round goes round - out of this frame's contacts: the one named by `mmsi` (the episode's,
+ * or the one right-clicked), else the FIRST whose hull comes within `std` of the straight run fromLL -> toLL (the
+ * line ahead, or the way in): the one actually in the way. Null when nobody is in the way.
+ * (2026-09-28: every contact in range used to be treated as her. FRIGGA, anchored 35 m off the far end of line 6
+ * and in nobody's way, pushed the rejoin 375 m on.)
  */
-function aisAroundPlan(g, aisKo, std){
+function aisHerPoly(aisKo, mmsi, fromLL, toLL, std){
+  const k = aisKo || [];
+  if(!k.length) return null;
+  if(mmsi != null){ const q = k.find(x => x && x.mmsi === mmsi); if(q) return q; }
+  if(!(fromLL && toLL && nogo.frame)) return null;
+  const a = nogo.frame.toEN(fromLL), b = nogo.frame.toEN(toLL);
+  const n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 2));
+  for(let i = 0; i <= n; i++){
+    const t = i / n, pt = {e: a.e + (b.e - a.e) * t, n: a.n + (b.n - a.n) * t};
+    for(const q of k) if(clearanceM(pt, {polys: [q], lines: [], points: []}, std + 1) < std) return q;
+  }
+  return null;
+}
+/**
+ * THE WAY ROUND'S MODEL (2026-09-28): the charted keep-outs, HER maneuver ring (aisRoundKeepout: a ship-length from
+ * her center, her hull plus the buffer at the least), and every OTHER contact as the guard's bare hull - they are
+ * not being routed round, and the guard holds its own line against them. `nogo.ko` itself with no contacts.
+ */
+function koRoundHer(aisKo, her, std){
+  const k0 = aisKo || aisKoDrawn || [];
+  const k = k0.map(q => sameContact(q, her) ? aisRoundKeepout(q, std, nogo.buffer || 0) : q);
+  return (nogo.ko && k.length) ? {...nogo.ko, polys: [...nogo.ko.polys, ...k]} : nogo.ko;
+}
+/**
+ * THE TAUT WAY ROUND HER (2026-09-28): the shortest path from `fromLL` to `toLL` that keeps `std` - and half a meter
+ * more - off her maneuver ring: the convex hull of that ring grown by it and the two ends, walked round whichever
+ * side is shorter and certified leg by leg against the WHOLE model `ko` at `std` (the charted keep-outs and every
+ * other contact too). Answered in planNogoRoute's own shape - the route EXCLUDES the start and ENDS at the target -
+ * or null when it cannot be certified here: an end inside the grown ring, the target inside a keep-out, or both
+ * sides crossing something else. Null hands the way in to the router's own search, as before. On Andy's 19:25
+ * geometry the router's grid search went 44.9 m wide of the line and 133 m round; this, 33.7 m and 119 m.
+ */
+function tautRoundHer(fromLL, toLL, herRing, ko, std){
+  if(!herRing || !herRing.ring || !herRing.ring.length || !nogo.frame || !ko || !fromLL || !toLL) return null;
+  const Fr = nogo.frame, A0 = Fr.toEN(fromLL), B0 = Fr.toEN(toLL);
+  if(blocked(B0, ko, nogo.buffer || 0)) return null;        // a target in a keep-out: the router refuses it by name
+  const done = (viaEN) => { const via = viaEN.map(p => { const q = Fr.fromEN(p.e, p.n); return {lat: q.lat, lon: q.lon}; });
+    return {route: [...via, {lat: toLL.lat, lon: toLL.lon}], direct: !via.length, routed: via.length > 0, taut: true, standoffM: std}; };
+  if(legClear(fromLL, toLL, Fr, ko, std)) return done([]);
+  const need = std + 0.05;                                    // a hair over the standoff, so a leg along it certifies
+  const r = need / Math.cos(Math.PI / 8);                     // octagons that CONTAIN the circle: no edge cuts inside `need`
+  const RM = {polys: [herRing], lines: [], points: []};
+  const clrR = (p) => clearanceM(p, RM, r + 2);
+  // AN END INSIDE HER STANDOFF - the boat held closer than a ship-length to her center (any big vessel, or a late
+  // hold) - goes straight AWAY from her center first, to where the standoff begins; the taut way round starts there.
+  let cE = 0, cN = 0;
+  for(const v of herRing.ring){ cE += v.e; cN += v.n; }
+  cE /= herRing.ring.length; cN /= herRing.ring.length;
+  // ... and clear of the octagons' OUTER radius `r`, not only of `need`: they reach 8% beyond the circle they contain
+  // (1.6 m in a 1.75 kn set), and an end parked in that band is inside the hull the taut path is built from.
+  const outOf = (P) => {
+    if(clrR(P) >= r + 0.05) return P;
+    let ue = P.e - cE, un = P.n - cN; const d = Math.hypot(ue, un) || 1; ue /= d; un /= d;
+    for(let t = 1; t <= 600; t++){ const Q = {e: P.e + ue * t, n: P.n + un * t}; if(clrR(Q) >= r + 0.2) return Q; }
+    return null;
+  };
+  const A1 = outOf(A0), B1 = outOf(B0);
+  if(!A1 || !B1) return null;
+  const pts = [];
+  for(const v of herRing.ring) for(let i = 0; i < 8; i++){
+    const t = i / 8 * 2 * Math.PI; pts.push({e: v.e + r * Math.sin(t), n: v.n + r * Math.cos(t)});
+  }
+  const hull = convexHull([...pts, A1, B1]);
+  const ia = hull.indexOf(A1), ib = hull.indexOf(B1);
+  if(ia < 0 || ib < 0) return null;
+  const side = (step) => { const out = [];
+    for(let i = (ia + step + hull.length) % hull.length; i !== ib; i = (i + step + hull.length) % hull.length) out.push(hull[i]);
+    return out; };
+  const withEnds = (chain) => [...(A1 !== A0 ? [A1] : []), ...chain, ...(B1 !== B0 ? [B1] : [])];
+  const lenOf = (via) => { let s = 0, p = A0; for(const q of [...via, B0]){ s += Math.hypot(q.e - p.e, q.n - p.n); p = q; } return s; };
+  // The lead OUT of her standoff starts inside it by construction, so it is certified against everything ELSE.
+  const others = {...ko, polys: (ko.polys || []).filter(p => !(p.roundM != null && sameContact(p, herRing)))};
+  for(const via of [withEnds(side(1)), withEnds(side(-1))].sort((x, y) => lenOf(x) - lenOf(y))){
+    const legs = [A0, ...via, B0];
+    let ok = true;
+    for(let i = 1; i < legs.length && ok; i++){
+      const a = Fr.fromEN(legs[i - 1].e, legs[i - 1].n), bb = Fr.fromEN(legs[i].e, legs[i].n);
+      ok = legClear(a, bb, Fr, (i === 1 && A1 !== A0) ? others : ko, std);
+    }
+    if(ok) return done(via);
+  }
+  return null;
+}
+/**
+ * Where the survey picks up beyond HER: {to, j, line, fromStart, skipM, atEnd, her, roundM, stdM} - the first
+ * point of the held line, walking on from where she left it, that is
+ *   * `std` clear of HER maneuver ring (aisRoundKeepout) with the rest of the line clear of it - she is behind;
+ *   * `std` clear of every OTHER contact's bare hull (the guard's model: they are not being routed round), with
+ *     none of them on the line within the hold horizon after it - she would only be held again at once;
+ * {to:null, j, skipLine:true} when she covers the rest of the line (the plan is picked up at the waypoint after
+ * the line's end); {error} when there is nothing to pick up. `herMmsi` names her; without it she is the first
+ * contact the line ahead runs into (aisHerPoly).
+ * (Andy, 2026-09-28: "why did the rejoin go 587m down the line". The whole rest of the line used to be held clear
+ * of EVERY contact's ship-length ring: FRIGGA, anchored 35 m off the far end of line 6, kept every point before
+ * her "not clear", and the survey was picked up 14 m from the line's end, 375 m of it skipped.)
+ */
+function aisAroundPlan(g, aisKo, std, herMmsi){
   const L = g.mark ? (mission.lines || [])[g.mark.line] : null;
   if(!nogo.frame) return {error: "the keep-out model is not loaded"};
   // STOPPED ON A TURN (2026-09-27, the second rehearsal: held swinging onto line 8, 13.5 m off her, no coverage
@@ -2864,26 +2967,38 @@ function aisAroundPlan(g, aisKo, std){
   // beyond her, so the plan is picked up at its NEXT waypoint with the way in routed round her; a next waypoint
   // inside her ring is refused by name by the router (flyThrough), and a plan with nothing left is said.
   if(!L){
-    if(g.idx < g.route.length) return {to: null, j: g.idx, line: null, fromStart: null, skipM: 0, fromTurn: true};
+    if(g.idx < g.route.length){
+      const herT = aisHerPoly(aisKo, herMmsi, g.at || (asv ? {lat: asv.lat, lon: asv.lon} : null), g.route[g.idx], std);
+      return {to: null, j: g.idx, line: null, fromStart: null, skipM: 0, fromTurn: true, her: herT, roundM: null, stdM: std};
+    }
     return {error: "she was not stopped on a coverage line, and the plan has no waypoint left to pick up"};
   }
   const leg = legOfLine(g.route, g.mark.line, g.idx);
   if(!leg) return {error: "the held route does not run line " + lineNo(g.mark.line)};
   const len = distTo(L.a, L.b); if(!(len > 0)) return {error: "line " + lineNo(g.mark.line) + " has no length"};
-  const aisOnly = {polys: aisAvoidKeepouts(aisKo), lines: [], points: []};   // one ship-length round her (2026-09-27)
   const at = (s) => { const t = Math.max(0, Math.min(1, s / len));
                       return {lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t}; };
   const s0 = g.mark.along, dir = g.mark.fwd > 0 ? 1 : -1;
+  const her = aisHerPoly(aisKo, herMmsi, at(s0), leg.end, std);
+  const ring = her ? aisRoundKeepout(her, std, nogo.buffer || 0) : null;
+  const herOnly = {polys: ring ? [ring] : [], lines: [], points: []};                        // a ship-length round HER
+  const others = {polys: (aisKo || []).filter(q => !sameContact(q, her)), lines: [], points: []};   // the guard's hulls
+  // THE HOLD HORIZON AHEAD OF THE REJOIN, at the speed the line is flown: another hull on the line inside it and the
+  // guard holds her again the moment she is back - so the way round goes past that one too.
+  const runOutM = GUARD_HOLD_S * roleSpeedMS("survey");
   for(let s = s0; dir > 0 ? s <= len : s >= 0; s += dir * AIS_AROUND_STEP_M){
-    const p = at(s);
-    if(clearanceM(nogo.frame.toEN(p), aisOnly, std + 1) < std) continue;
-    if(!legClear(p, leg.end, nogo.frame, aisOnly, std)) continue;
+    const p = at(s), pe = nogo.frame.toEN(p);
+    if(clearanceM(pe, herOnly, std + 1) < std) continue;                 // inside her maneuver ring
+    if(clearanceM(pe, others, std + 1) < std) continue;                  // at another contact's hull
+    if(!legClear(p, leg.end, nogo.frame, herOnly, std)) continue;        // she is still ahead
+    if(!legClear(p, at(s + dir * runOutM), nogo.frame, others, nogo.buffer || 0)) continue;   // another hull right after
     return {to: p, j: leg.j, line: g.mark.line, fromStart: leg.fwd > 0 ? s : len - s,
-            skipM: Math.abs(s - s0), atEnd: distTo(p, leg.end) <= LINE_MATCH_M};
+            skipM: Math.abs(s - s0), atEnd: distTo(p, leg.end) <= LINE_MATCH_M,
+            her, roundM: ring ? ring.roundM : null, stdM: std};
   }
   if(leg.j + 1 < g.route.length)
     return {to: null, j: leg.j + 1, line: g.mark.line, fromStart: null,
-            skipM: dir > 0 ? len - s0 : s0, skipLine: true};
+            skipM: dir > 0 ? len - s0 : s0, skipLine: true, her, roundM: ring ? ring.roundM : null, stdM: std};
   return {error: "the contact covers the rest of line " + lineNo(g.mark.line) + ", and it is the last leg of the plan"};
 }
 function aisAroundTick(aisKo, now){
@@ -2910,14 +3025,15 @@ function aisAroundTick(aisKo, now){
 /** The held path's way round: the plan beyond her (aisAroundPlan), then resumeHeldSurvey from it. `ep` is the
  *  AIS episode; `manual` says the operator asked (the banner says so, and a refusal is said every time). */
 function aisAroundGo(g, polys, ep, manual){
-  const plan = aisAroundPlan(g, polys, patClipBufM());
+  const std = patClipBufM();
+  const plan = aisAroundPlan(g, polys, std, ep.mmsi);
   if(plan.error){
     if(manual || !ep.aroundSaid){ ep.aroundSaid = true;
       showBanner('⚠ NO WAY ROUND ' + ep.kind + ' — ' + plan.error + ". She keeps holding; resume from the bar, "
         + "right-click a line beyond her, or Go-To."); }
     return false;
   }
-  resumeHeldSurvey({at: plan, ko: koWithAis(polys, true), auto: ep, around: true, manual: !!manual})
+  resumeHeldSurvey({at: plan, ko: koRoundHer(polys, plan.her, std), auto: ep, around: true, manual: !!manual})
     .catch(e => showBanner('⚠ THE WAY ROUND FAILED — ' + (e && e.message)
                            + ". The remainder is still held; resume it from the guard bar."));
   return true;
@@ -3191,6 +3307,9 @@ function clearanceGuard(){
     && guardAssess(p, vel, drift, gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko, buf,
                    {...(trk||{}), edge: false}).level === "clear";
   const aisKind = aisCaused ? aisNearestKind(p, aisKo) : null;
+  // HER, for the episode: the contact at the point the ladder is acting on (the assessment's entry point), which
+  // is the one a way round goes round (2026-09-28). The boat's own position where there is no entry point.
+  const aisHer = aisCaused ? aisNearestPoly((a && a.entry) || p, aisKo) : null;
   clearance.level = a.level; clearance.tEntry = a.tEntry; clearance.why = a.why;
   clearance.onPlan = !!a.onPlan;
   // ⚠⚠ SPOKEN, OR IT IS A DISABLED SAFETY. While a grant stands, the ladder above is
@@ -3595,7 +3714,7 @@ function clearanceGuard(){
       // hold uploads a one-waypoint plan over theirs, and after that `window._wpIndex`
       // counts the hold, not the survey.
       markGuardHeld(c);
-      if(aisCaused) aisAvoidOpen(c, a, aisKind);       // a contact stopped her: the console brings her back
+      if(aisCaused) aisAvoidOpen(c, a, aisKind, aisHer);   // a contact stopped her: the console brings her back
       // ⚠⚠ AND A HOLD THE VESSEL NEVER TOOK MAY NOT OUTLIVE THE REFUSAL. This posted and
       // never looked, then said "HOLDING" and "the survey is kept" about a boat that was
       // still surveying. What a refusal costs, on the lieuFailed path, is worse than the
@@ -3779,7 +3898,7 @@ function clearanceGuard(){
     // ⚠ IT MUST BE ABOVE THE OVERWRITE, not merely before the POST. `markGuardHeld` reads
     // `runRoute` and `window._wpIndex`, and one line down both describe the escape.
     markGuardHeld(c);
-    if(aisCaused) aisAvoidOpen(c, a, aisKind);         // a contact drove her off: the console brings her back
+    if(aisCaused) aisAvoidOpen(c, a, aisKind, aisHer);     // a contact drove her off: the console brings her back
     runRoute = [{lat:to.lat, lon:to.lon}]; runUnsafe = [];
     setPlanIntent("escape", null, runRoute);
     // ⚠⚠ SAY WHAT WAS MEASURED, NOT WHAT IT LOOKS LIKE. Andy, 2026-09-19: *"a cause the
@@ -13188,14 +13307,20 @@ async function resumeFromHere(ll){
   const atEnd = distTo(hit.to, leg.end) <= LINE_MATCH_M;
   const fromStart = alongAsRun(hit, leg);
   const aisKo = aisKoDrawn || [];
+  const std = patClipBufM();
+  // HER (2026-09-28): the contact the guard holds the survey for, found again by her MMSI, else the first one the
+  // line ahead runs into; on a plain pause, the first one the way in to the chosen point would run into. Only she
+  // gets the ship-length ring; every other contact is the guard's bare hull.
+  const her = !aisKo.length ? null : (g && aisAvoid)
+    ? aisHerPoly(aisKo, aisAvoid.mmsi, g.at || {lat: asv.lat, lon: asv.lon}, leg.end, std)
+    : aisHerPoly(aisKo, null, {lat: asv.lat, lon: asv.lon}, hit.to, std);
   // OPTION 1 IS REFUSED (Andy: "the ASV would just encounter the nogo zone again"): a point on the NEAR
   // side of the contact she is holding for, or one the contact sits on, with the time left before the
   // console acts itself.
-  if(g && aisAvoid && aisKo.length && nogo.frame){
-    const aisOnly = {polys: aisAvoidKeepouts(aisKo), lines: [], points: []};   // one ship-length round her (2026-09-27)
-    const std = patClipBufM();
-    const foul = clearanceM(nogo.frame.toEN(hit.to), aisOnly, std + 1) < std
-              || !legClear(hit.to, leg.end, nogo.frame, aisOnly, std);
+  if(g && aisAvoid && her && nogo.frame){
+    const herOnly = {polys: [aisRoundKeepout(her, std, nogo.buffer || 0)], lines: [], points: []};   // a ship-length round her
+    const foul = clearanceM(nogo.frame.toEN(hit.to), herOnly, std + 1) < std
+              || !legClear(hit.to, leg.end, nogo.frame, herOnly, std);
     if(foul){
       const leftS = Math.max(0, Math.ceil((AIS_AROUND_AFTER_MS - (Date.now() - aisAvoid.since)) / 1000));
       showBanner('⚠ THAT POINT IS ON THE NEAR SIDE OF ' + aisAvoid.kind + ' — line ' + line + " runs from there into her, and she "
@@ -13204,8 +13329,8 @@ async function resumeFromHere(ll){
       return;
     }
   }
-  const koIn = koWithAis(aisKo, true);
-  if(g) return resumeHeldSurvey({at: {to: hit.to, j: leg.j, line: hit.line, fromStart, atEnd, chosen: true}, ko: koIn});
+  const koIn = koRoundHer(aisKo, her, std);
+  if(g) return resumeHeldSurvey({at: {to: hit.to, j: leg.j, line: hit.line, fromStart, atEnd, chosen: true, her, stdM: std}, ko: koIn});
   const tail = atEnd ? rr0.slice(leg.j) : [hit.to, ...rr0.slice(leg.j)];
   const target = tail[0];
   // THE WAY IN IS ROUTED, not merely checked: she may be a long way from the line, and "no" is what the
@@ -13215,7 +13340,8 @@ async function resumeFromHere(ll){
   const from = {lat: asv.lat, lon: asv.lon};
   showBanner("Routing to the point on line " + line + '…' + " a long way round obstacles can take several seconds.");
   await ensureNogoCovers([from, target]);
-  const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+  const pin = (her ? tautRoundHer(from, target, aisRoundKeepout(her, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
+           || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
   takeDownBanner(/^Routing to the point on line/);
   if(pin.error){
     showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; pick a point nearer open water, or Go-To first.");
@@ -13321,7 +13447,7 @@ function gateAvoidRow(ll){
   $("#cmAvoidLbl").textContent = "Route round " + (q.name || "her");
   const why = avoidWhy();
   if(cmGate("#cmAvoid", !why, why))
-    $("#cmAvoidK").textContent = (q.box && q.box.lengthM) ? Math.round(q.box.lengthM) + " m off her" : "";
+    $("#cmAvoidK").textContent = (q.box && q.box.lengthM) ? Math.round(q.box.lengthM) + " m round her" : "";   // her length, from her center
 }
 async function avoidContactAt(ll){
   const q = contactAt(ll);
@@ -13351,13 +13477,16 @@ async function aisAroundRunning(polys, q, why){
   aisAroundBusy = true;
   try {
     const g = {route: rr, idx, mark, at: {lat: asv.lat, lon: asv.lon}};
-    const plan = aisAroundPlan(g, polys, patClipBufM());
+    const std = patClipBufM();
+    const plan = aisAroundPlan(g, polys, std, q && q.mmsi);
     if(plan.error){ showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + plan.error + '.'); return false; }
-    const koIn = koWithAis(polys, true);
+    const koIn = koRoundHer(polys, plan.her || q, std);
     const tail = (plan.to && !plan.atEnd) ? [plan.to, ...rr.slice(plan.j)] : rr.slice(plan.j);
     const target = tail[0];
     const from = {lat: asv.lat, lon: asv.lon};
-    const pin = planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+    const herQ = plan.her || q;
+    const pin = (herQ ? tautRoundHer(from, target, aisRoundKeepout(herQ, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
+             || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
       showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (pin.error || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
       return false;
@@ -13385,6 +13514,7 @@ async function aisAroundRunning(polys, q, why){
     flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
     if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + kind + " " + why + " — " + said + "; one ship-length off her; the console is still watching"});
     logClient("ais_around", {kind, line, skip_m: Math.round(plan.skipM || 0), skip_line: !!plan.skipLine, held_s: null,
+              mmsi: plan.her ? plan.her.mmsi : null, round_m: plan.roundM, std_m: Math.round(std * 10) / 10,
               wpts: route.length, manual: true, running: true});
     updateMissionCard(); render();
     return true;
@@ -13667,10 +13797,15 @@ async function resumeHeldRun(opts){
   let inNote = null;
   // backtrackClear's own test, against the model the way in is routed by - the charted one, or the
   // charted one plus the contacts when a chosen point brought them (koIn). No model is not clear.
+  // AT THE STANDOFF when a chosen point brought the contacts in (2026-09-28): her ring is tight now, and a straight
+  // leg merely clear of it at the bare buffer would pass her hull inside the guard's standoff - the treadmill again.
   const wayClear = !!(firstWp && nogo.ready && nogo.frame && koIn
-                      && legClear(backFrom, firstWp, nogo.frame, koIn, nogo.buffer));
+                      && legClear(backFrom, firstWp, nogo.frame, koIn, at ? patClipBufM() : nogo.buffer));
   if(firstWp && !wayClear){
-    const pin = planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+    // TAUT ROUND HER FIRST when a way round brought her (2026-09-28); the router's own search where that cannot be certified.
+    const stdIn = (at && at.stdM != null) ? at.stdM : patClipBufM();
+    const pin = (at && at.her ? tautRoundHer(backFrom, firstWp, aisRoundKeepout(at.her, stdIn, nogo.buffer || 0), koIn, stdIn) : null)
+             || planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error){
       showBanner("⚠ CANNOT RESUME FROM HERE - " + pin.error + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
@@ -13803,6 +13938,8 @@ async function resumeHeldRun(opts){
         + (note || "carrying on") + ". " + left + " waypoint" + (left === 1 ? "" : "s") + " to fly"
         + (hadLow ? ", still at LOW on your authority (RELEASE LOW on the bar for the plan's speed)" : "") + ". Recorded in the session log.");
       logClient("ais_around", {kind: who, line: at.line != null ? lineNo(at.line) : null, skip_m: Math.round(at.skipM || 0), skip_line: !!at.skipLine,
+                mmsi: at.her ? at.her.mmsi : null, round_m: at.roundM != null ? at.roundM : null,
+                std_m: at.stdM != null ? Math.round(at.stdM * 10) / 10 : null,
                 held_s: ep ? Math.round((Date.now() - ep.since) / 1000) : null, wpts: left, manual: !!(opts && opts.manual)});
     } else {
       flashNote("Survey resumed " + (note || "from the point you chose") + ". The transit is at the transit speed and the line at "

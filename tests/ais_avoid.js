@@ -140,8 +140,8 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = 0, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
-const { clearanceM } = require("../static/js/keepouts.js");
+const { aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRoundKeepout, convexHull, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { clearanceM, blocked } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
 var slowLieu = null;
@@ -153,7 +153,7 @@ var confirmAnswer = true, confirmAsked = 0, lastResume = null, lastContinue = nu
 // The real assess, counting the frames that asked it to SEARCH for a deviation (check 23 reads the count).
 const guardAssess = (p, v, d, ko, buf, o) => { if (o && o.edge) searchCount++; return G.assess(p, v, d, ko, buf, o); },
       groundVel = G.groundVel, restoreVel = G.restoreVel,
-      edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S;
+      edgeText = G.edgeText, edgeCapM = G.edgeCapM, GUARD_HORIZON_S = G.HORIZON_S, GUARD_HOLD_S = G.HOLD_S;
 // THE ESCAPE, STUBBED AND STEERABLE: it records the MODEL it was handed (the check that the contacts
 // reach the helm rung) and answers whatever `escFake` says, so the rung can be driven past its search.
 let escKo = null, escFake = null;
@@ -351,6 +351,7 @@ eval([
   grab("aisReturnTick"), grab("logClient"),
   // the way round a contact that stays, and the operator's point beyond her (2026-09-27)
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
+  grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   // the way round ON DEMAND (2026-09-27): the held path split out of the tick, the bar's button, the row over a
   // contact, and the running plan amended round her - aisAroundTick calls aisAroundGo every minute, so the
   // bundle needs it or the automatic way round (14-14d) is a swallowed ReferenceError inside frame()
@@ -713,6 +714,24 @@ function guardHeld_at_mark() { return ll(0, 0); }
 // (check 3). Never on a stale model, never while paused, not twice in a minute.
 const PARKED = () => contact(30, 0, { sog: 0, cog: null, heading: 90 });   // 30 x 8 across the line: her hull is e = 15..45
 const nearRe = /WORKBOAT/;
+// THE WAY ROUND'S GEOMETRY (2026-09-28). A way round is uploaded or amended as [...via, rejoin, then the plan's own
+// remainder] - the taut way round her in front of the rejoin point - so these read it from the END, and measure how
+// close the way in comes to a point (her center) and to a polygon (her hull), every half meter along it.
+const PARKED_C = { e: 30, n: 0 };                                                // her center
+const parkedHull = () => aisKeepouts([PARKED()], ref, { now: clock, polledAt: clock, sweepS: 45 }).polys[0];
+const rejoinOf = (rte, tail = 3) => rte[rte.length - 1 - tail];                 // tail: waypoints of the remainder after it
+const viaOf = (rte, tail = 3) => rte.slice(0, Math.max(0, rte.length - 1 - tail));
+function alongPts(pts, fn) {
+  let m = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const a = ref.toEN(pts[i - 1]), b = ref.toEN(pts[i]), n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 0.5));
+    for (let k = 0; k <= n; k++) { const t = k / n; m = Math.min(m, fn({ e: a.e + (b.e - a.e) * t, n: a.n + (b.n - a.n) * t })); }
+  }
+  return m;
+}
+const minDistTo = (pts, c) => alongPts(pts, (p) => Math.hypot(p.e - c.e, p.n - c.n));
+const minClearTo = (pts, poly) => alongPts(pts, (p) => clearanceM(p, { polys: [poly], lines: [], points: [] }, 500));
+const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rte, tail)];
 {
   // 13. THE OFFER SURVIVES A PAUSE, AND THE BAR SAYS THE CONSOLE WAITS
   surveying(7, [PARKED()]); frame(); nowHolding();
@@ -760,19 +779,19 @@ const nearRe = /WORKBOAT/;
               && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start"),
         () => "at 30 s: " + JSON.stringify(at30) + "; at 61 s: " + JSON.stringify(paths()));
   // A SHIP-LENGTH ROUND HER (Andy, 2026-09-27): the rejoin clears her hull by her own length, not by the standoff alone
-  check("14b. ... the upload picks the line up at the first point BEYOND her that is clear of her avoidance ring by the standoff with the rest of the line clear too (e = 80: her hull ends at 45, her length is 30, the standoff is 3), then flies the remainder",
-        () => rte.length === 4 && distTo(rte[0], ll(80, 0)) < 0.5 && distTo(rte[1], LINE_E.b) < 0.5 && distTo(rte[3], ll(-200, 60)) < 0.5,
-        () => rte.length + " wpts; first " + (rte[0] ? distTo(rte[0], ll(80, 0)).toFixed(1) + " m from (80, 0)" : "none"));
-  check("14c. ... and the way in was asked of the router with HER in the model (koWithAis) as her avoidance ring - her length round her - at the standoff; the charted model alone would have sent her straight through her",
-        () => !!ask && !!ask.opts && !!ask.opts.ko && ask.opts.ko.polys.length === 1 && nearRe.test(ask.opts.ko.polys[0].kind || "")
-              && ask.opts.ko.polys[0].avoidM === 30 && /30 m round her/.test(ask.opts.ko.polys[0].kind)
-              && ask.opts.standoffM === 3 && distTo(ask.from, ll(0, 0)) < 0.5 && distTo(ask.to, ll(80, 0)) < 0.5,
-        () => "asked " + JSON.stringify(ask && { from: ask.from, to: ask.to, ko: ask.opts && ask.opts.ko && ask.opts.ko.polys.map(p => p.kind),
-                                                  standoff: ask.opts && ask.opts.standoffM }));
+  const rj14 = rejoinOf(rte), via14 = viaOf(rte), wayIn14 = wayInOf(rte, ll(0, 0));
+  check("14b. ... the upload picks the line up at the first point BEYOND her that is clear of her maneuver ring by the standoff (e = 65: a ship-length about her center reaches e = 60, the 5 m walk's next step is 65 - it was e = 80 while her HULL was grown by her length and the standoff added outside that), the taut way round in front of it, then the remainder",
+        () => rte.length >= 5 && via14.length >= 1 && distTo(rj14, ll(65, 0)) < 0.5 && distTo(rte[rte.length - 3], LINE_E.b) < 0.5 && distTo(rte[rte.length - 1], ll(-200, 60)) < 0.5,
+        () => rte.length + " wpts; rejoin " + (rj14 ? distTo(rj14, ll(65, 0)).toFixed(1) + " m from (65, 0)" : "none") + ", via " + via14.length);
+  const dC14 = minDistTo(wayIn14, PARKED_C), dH14 = minClearTo(wayIn14, parkedHull());
+  check("14c. ... and the way in is the TAUT way round her ring: never nearer her center than her own length (30 m) and no more than a meter and a half beyond it, at least the standoff plus the buffer off her hull - with no call on the router's grid search",
+        () => dC14 >= 30 - 0.05 && dC14 <= 31.5 && dH14 >= 6 - 0.05 && pinCalls.length === 0,
+        () => "closest to her center " + dC14.toFixed(2) + " m, to her hull " + dH14.toFixed(2) + " m; router calls " + pinCalls.length);
   check("14d. ... with none of the operator's latches, the record spent, the episode closed, and it is said and recorded as ais_around with what was left under her",
         () => guardOverride === null && resumeSlow === false && guardHeld === null && aisAvoid === null && S.run === "running"
-              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /80 m of coverage left under/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 80 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 60),
+              && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /65 m of coverage left under/.test(b))
+              && logged.some(e => e.kind === "ais_around" && e.data.skip_m === 65 && e.data.line === 1 && e.data.skip_line === false && e.data.held_s >= 60
+                                  && e.data.mmsi === 338111222 && e.data.round_m === 30 && e.data.std_m === 3),
         () => "override " + JSON.stringify(guardOverride) + ", resumeSlow " + resumeSlow + ", episode " + JSON.stringify(aisAvoid)
             + ", banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b))) + ", logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
 
@@ -805,8 +824,13 @@ const nearRe = /WORKBOAT/;
         () => rte2.length + " wpts: " + JSON.stringify(rte2.map(p => { const q = llEN(p.lat, p.lon, ref); return [Math.round(q.e), Math.round(q.n)]; }))
             + "; " + JSON.stringify(banners.slice(-1)));
 
-  // 14h. NO WAY ROUND: SAID, STILL HOLDING, TRIED AGAIN A MINUTE LATER - NOT EVERY FRAME
-  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; banners = []; pinCalls = [];
+  // 14h. NO WAY ROUND: SAID, STILL HOLDING, TRIED AGAIN A MINUTE LATER - NOT EVERY FRAME. Charted walls on both
+  // sides of her ring, so the taut way round cannot be certified and the router's own search is the one asked
+  // (2026-09-28: the taut path comes first now) - and the router finds nothing either.
+  const wall14N = [{ e: 5, n: 22 }, { e: 60, n: 22 }, { e: 60, n: 60 }, { e: 5, n: 60 }], wall14S = wall14N.map(p => ({ e: p.e, n: -p.n }));
+  const WALLS14 = { polys: [{ ring: wall14N, bb: bbOf(wall14N), kind: "a dock / pier" }, { ring: wall14S, bb: bbOf(wall14S), kind: "a dock / pier" }],
+                    lines: [], points: [], marks: [], sys: [], chans: [] };
+  surveying(7, [PARKED()], { ko: WALLS14 }); frame(); nowHolding(); sent = []; banners = []; pinCalls = [];
   pinNext = { error: "no clear route to the target - every path crosses AIS: WORKBOAT", reason: {} };
   clock += 61000; aisPolledAt = clock; frame(); await settle();
   const said1 = banners.filter(b => /CANNOT RESUME FROM HERE/.test(b)).length, sent1 = paths().slice(), tries1 = pinCalls.length;
@@ -834,8 +858,8 @@ const nearRe = /WORKBOAT/;
   check("15b. a point BEYOND her goes the held path: pause, upload from that point, LOW, Start - not an amendment - with the way in asked of the router with her in the model, at the standoff",
         () => !paths().includes("/api/cmd/amend") && paths().indexOf("/api/cmd/pause") === 0
               && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start")
-              && rte3.length === 4 && distTo(rte3[0], ll(120, 0)) < 0.5 && distTo(rte3[1], LINE_E.b) < 0.5
-              && !!ask3 && !!ask3.opts && !!ask3.opts.ko && ask3.opts.ko.polys.length === 1 && ask3.opts.standoffM === 3 && distTo(ask3.to, ll(120, 0)) < 0.5,
+              && rte3.length >= 5 && distTo(rejoinOf(rte3), ll(120, 0)) < 0.5 && distTo(rte3[rte3.length - 3], LINE_E.b) < 0.5
+              && pinCalls.length === 0 && minDistTo(wayInOf(rte3, ll(0, 0)), PARKED_C) >= 30 - 0.05,   // taut round her, a ship-length off her center
         () => "sent " + JSON.stringify(paths()) + "; upload " + rte3.length + " wpts from " + (rte3[0] ? distTo(rte3[0], ll(120, 0)).toFixed(1) + " m of (120,0)" : "none")
             + "; asked " + JSON.stringify(ask3 && { to: ask3.to, ko: ask3.opts && ask3.opts.ko && ask3.opts.ko.polys.length }));
   check("15c. ... with no latch (the governor has the throttle), the record spent, the episode closed, said and logged as a resume from a point on a held survey",
@@ -852,7 +876,7 @@ const nearRe = /WORKBOAT/;
   const nearSent = paths().slice(), nearSaid = banners.filter(b => /NEAR SIDE/.test(b));
   await resumeFromHere(ll(30, 2));                  // ON her
   const onSent = paths().slice(), onSaid = banners.filter(b => /NEAR SIDE/.test(b));
-  await resumeFromHere(ll(60, 2));                  // 15 m beyond her hull, inside her LENGTH (the ring reaches e = 75)
+  await resumeFromHere(ll(55, 2));                  // 10 m beyond her hull, inside a ship-length of her CENTER (e = 60)
   const inLenSent = paths().slice(), inLenSaid = banners.filter(b => /NEAR SIDE/.test(b));
   check("15d. a point on the NEAR side of her, on her, or within her own length of her is refused in words - she would only be stopped again - with the time left before the console acts; nothing is sent, the offer and the episode stand",
         () => nearSent.length === 0 && nearSaid.length === 1 && /routes round her itself in 50 s/.test(nearSaid[0])
@@ -860,6 +884,12 @@ const nearRe = /WORKBOAT/;
               && !!guardHeld && !!aisAvoid && pinCalls.length === 0,
         () => "near: sent " + JSON.stringify(nearSent) + ", " + JSON.stringify(nearSaid) + "; on her: said " + onSaid.length
             + "; within her length: sent " + JSON.stringify(inLenSent) + ", said " + inLenSaid.length);
+  // 15e. THE ACCEPTANCE THAT PAIRS WITH IT (2026-09-28): 34 m from her center - past a ship-length and her standoff
+  await resumeFromHere(ll(64, 2)); await settle();
+  const up15e = sent.find(x => x.p === "/api/cmd/upload"), rte15e = (up15e && up15e.route) || [];
+  check("15e. ... and a point just past a ship-length from her center (e = 64: 34 m from it) is ACCEPTED - the held path goes from there, taut round her",
+        () => !!up15e && distTo(rejoinOf(rte15e), ll(64, 0)) < 0.5 && minDistTo(wayInOf(rte15e, ll(0, 0)), PARKED_C) >= 30 - 0.05 && guardHeld === null,
+        () => "sent " + JSON.stringify(paths()) + "; upload " + rte15e.length + " wpts" + (rejoinOf(rte15e) ? ", rejoin " + distTo(rejoinOf(rte15e), ll(64, 0)).toFixed(1) + " m from (64,0)" : ""));
 }
 
 // ── 16. KLEOS (Andy's console, 2026-09-27 20:54:30): THE ESCAPE, AND THE HOLD 0.44 s LATER THAT CANCELLED IT ──
@@ -909,9 +939,10 @@ const nearRe = /WORKBOAT/;
         () => "later commands " + JSON.stringify(paths()) + "; offer " + (offer16 ? "stands" : "GONE") + "; bar: " + bar16.slice(0, 170));
   clock += 61000; aisPolledAt = clock; sent = []; frame(); await settle();
   const up16 = sent.find(x => x.p === "/api/cmd/upload"), rte16 = (up16 && up16.route) || [];
-  check("16c. ... and at the minute the way round goes from the escape point, rejoining line 1 a ship-length beyond her (e = 55: her hull ends at 21, her length is 30, the standoff is 3), the record spent, the episode closed",
-        () => rte16.length === 4 && distTo(rte16[0], ll(55, 0)) < 0.5 && distTo(rte16[1], LINE_E.b) < 0.5 && guardHeld === null && aisAvoid === null,
-        () => rte16.length + " wpts; first " + (rte16[0] ? distTo(rte16[0], ll(55, 0)).toFixed(1) + " m from (55, 0)" : "none") + "; sent " + JSON.stringify(paths()));
+  check("16c. ... and at the minute the way round goes from the escape point, rejoining line 1 past a ship-length about her center (e = 40: her center is at 6, her length 30, the standoff 3 - it was e = 55), taut round her from where the escape left her, the record spent, the episode closed",
+        () => rte16.length >= 4 && distTo(rejoinOf(rte16), ll(40, 0)) < 0.5 && distTo(rte16[rte16.length - 3], LINE_E.b) < 0.5
+              && minDistTo(wayInOf(rte16, ll(0, 60)), { e: 6, n: 0 }) >= 30 - 0.05 && guardHeld === null && aisAvoid === null,
+        () => rte16.length + " wpts; rejoin " + (rejoinOf(rte16) ? distTo(rejoinOf(rte16), ll(40, 0)).toFixed(1) + " m from (40, 0)" : "none") + "; sent " + JSON.stringify(paths()));
   // 16d. THE RING ITSELF: her hull grown by her own length on every side - the guard's model stays the bare hull
   const q16 = aisKeepouts([contact(0, 0, { sog: 0, cog: null, heading: 90 })], ref, { now: clock, polledAt: clock, sweepS: 45 }).polys[0];
   const ring16 = aisAvoidKeepout(q16), M16 = { polys: [ring16], lines: [], points: [] };
@@ -969,21 +1000,20 @@ const nearRe = /WORKBOAT/;
   gateAvoidRow(ll(300, 0));                                 // 255 m off her: not over a contact
   const offHer = $("#cmAvoid").style.display !== "none";
   check("17. right-click ON a contact while the guard holds the survey for her: the chart menu shows 'Route round WORKBOAT', live, her length in the key; off her the row is hidden, not grayed",
-        () => onHer.shown && !onHer.off && onHer.lbl === "Route round WORKBOAT" && onHer.key === "30 m off her" && !offHer,
+        () => onHer.shown && !onHer.off && onHer.lbl === "Route round WORKBOAT" && onHer.key === "30 m round her" && !offHer,
         () => JSON.stringify(onHer) + "; off her shown " + offHer);
   // 17b. choosing it goes the held path NOW - ten seconds in, not sixty
   const r17b = await avoidContactAt(ll(30, 0)); await settle();
   const up17 = sent.find(x => x.p === "/api/cmd/upload"), rte17 = (up17 && up17.route) || [], ask17 = pinCalls[pinCalls.length - 1];
-  check("17b. choosing it ten seconds in goes the held path NOW - pause, upload rejoining line 1 a ship-length beyond her (e = 80), LOW, Start, no amendment - the way in routed with her ring in the model, the record spent, the episode closed, said 'at your word' and logged as manual",
+  check("17b. choosing it ten seconds in goes the held path NOW - pause, upload rejoining line 1 past a ship-length about her center (e = 65), LOW, Start, no amendment - the way in taut round her ring, the record spent, the episode closed, said 'at your word' and logged as manual",
         () => r17b === true && paths().indexOf("/api/cmd/pause") === 0 && paths().indexOf("/api/cmd/upload") < paths().indexOf("/api/cmd/start")
-              && !paths().includes("/api/cmd/amend") && rte17.length === 4 && distTo(rte17[0], ll(80, 0)) < 0.5 && distTo(rte17[1], LINE_E.b) < 0.5
-              && !!ask17 && !!ask17.opts.ko && ask17.opts.ko.polys.length === 1 && ask17.opts.ko.polys[0].avoidM === 30 && ask17.opts.standoffM === 3
-              && ask17.opts.flyThrough === true            // a rejoin point is passed through, never held in (seam 7e)
+              && !paths().includes("/api/cmd/amend") && rte17.length >= 5 && distTo(rejoinOf(rte17), ll(65, 0)) < 0.5 && distTo(rte17[rte17.length - 3], LINE_E.b) < 0.5
+              && pinCalls.length === 0 && minDistTo(wayInOf(rte17, ll(0, 0)), PARKED_C) >= 30 - 0.05
               && aisAvoid === null && guardHeld === null && S.run === "running"
               && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /at your word, one ship-length off her/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.manual === true && e.data.skip_m === 80 && e.data.line === 1),
-        () => "returned " + r17b + "; sent " + JSON.stringify(paths()) + "; upload " + rte17.length + " wpts from "
-            + (rte17[0] ? distTo(rte17[0], ll(80, 0)).toFixed(1) + " m of (80,0)" : "none") + "; episode " + JSON.stringify(aisAvoid)
+              && logged.some(e => e.kind === "ais_around" && e.data.manual === true && e.data.skip_m === 65 && e.data.line === 1),
+        () => "returned " + r17b + "; sent " + JSON.stringify(paths()) + "; upload " + rte17.length + " wpts, rejoin "
+            + (rejoinOf(rte17) ? distTo(rejoinOf(rte17), ll(65, 0)).toFixed(1) + " m of (65,0)" : "none") + "; router calls " + pinCalls.length + "; episode " + JSON.stringify(aisAvoid)
             + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b))) + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
 
   // 17c. THE BAR'S BUTTON: shown while she is held for a contact, the same way round when pressed, hidden on a clear frame
@@ -994,8 +1024,8 @@ const nearRe = /WORKBOAT/;
   const up17c = sent.find(x => x.p === "/api/cmd/upload"), rte17c = (up17c && up17c.route) || [], sent17c = paths().slice();
   surveying(7, []); frame();                                // (surveying resets `sent`: the paths were read first)
   const btnClear = $("#gb_around").style.display;
-  check("17c. the held bar carries ROUTE ROUND HER NOW while she is held for a contact - pressing it is the same way round, ten seconds in (pause, upload from e = 80, Start) - and a clear frame takes the button down",
-        () => btnHeld !== "none" && r17c === true && sent17c.indexOf("/api/cmd/pause") === 0 && rte17c.length === 4 && distTo(rte17c[0], ll(80, 0)) < 0.5
+  check("17c. the held bar carries ROUTE ROUND HER NOW while she is held for a contact - pressing it is the same way round, ten seconds in (pause, upload from e = 65, Start) - and a clear frame takes the button down",
+        () => btnHeld !== "none" && r17c === true && sent17c.indexOf("/api/cmd/pause") === 0 && rte17c.length >= 5 && distTo(rejoinOf(rte17c), ll(65, 0)) < 0.5
               && sent17c.includes("/api/cmd/start") && btnClear === "none",
         () => "held: '" + btnHeld + "', pressed " + r17c + ", sent " + JSON.stringify(sent17c) + ", clear: '" + btnClear + "'");
 
@@ -1012,32 +1042,28 @@ const nearRe = /WORKBOAT/;
   const why17e = avoidWhy();
   const r17e = await avoidContactAt(ll(30, 0));
   const am17 = sent.find(x => x.p === "/api/cmd/amend"), rte17e = (am17 && am17.route) || [], ask17e = pinCalls[pinCalls.length - 1];
-  check("17e. on a survey still RUNNING the row AMENDS the plan round her - no pause, no upload: the remainder from e = 80 on line 1 then the rest of the plan, the way in asked of the router with her ring at the standoff, runRoute spliced behind the index, the ladder settling on the edge rung's clock, said and logged as ais_around running",
+  check("17e. on a survey still RUNNING the row AMENDS the plan round her - no pause, no upload: the taut way round, the remainder from e = 65 on line 1, then the rest of the plan, runRoute spliced behind the index, the ladder settling on the edge rung's clock, said and logged as ais_around running",
         () => why17e === "" && r17e === true && paths().length === 1 && paths()[0] === "/api/cmd/amend"
-              && rte17e.length === 4 && distTo(rte17e[0], ll(80, 0)) < 0.5 && distTo(rte17e[1], LINE_E.b) < 0.5 && distTo(rte17e[3], ll(-200, 60)) < 0.5
-              && !!ask17e && !!ask17e.opts.ko && ask17e.opts.ko.polys.length === 1 && ask17e.opts.ko.polys[0].avoidM === 30 && ask17e.opts.standoffM === 3
-              && ask17e.opts.flyThrough === true
-              && distTo(ask17e.from, ll(0, 0)) < 0.5 && distTo(ask17e.to, ll(80, 0)) < 0.5
-              && runRoute.length === 5 && distTo(runRoute[1], ll(80, 0)) < 0.5 && guardEdgeAt === clock
+              && rte17e.length >= 5 && distTo(rejoinOf(rte17e), ll(65, 0)) < 0.5 && distTo(rte17e[rte17e.length - 3], LINE_E.b) < 0.5 && distTo(rte17e[rte17e.length - 1], ll(-200, 60)) < 0.5
+              && pinCalls.length === 0 && minDistTo(wayInOf(rte17e, ll(0, 0)), PARKED_C) >= 30 - 0.05
+              && runRoute.length === rte17e.length + 1 && distTo(runRoute[runRoute.length - 4], ll(65, 0)) < 0.5 && guardEdgeAt === clock
               && notes.length === 1 && /Routed round/.test(notes[0]) && nearRe.test(notes[0]) && /at your word/.test(notes[0]) && /rejoining line 1/.test(notes[0])
-              && logged.some(e => e.kind === "ais_around" && e.data.running === true && e.data.manual === true && e.data.skip_m === 80),
-        () => "why '" + why17e + "', returned " + r17e + ", sent " + JSON.stringify(paths()) + ", amend " + rte17e.length + " wpts from "
-            + (rte17e[0] ? distTo(rte17e[0], ll(80, 0)).toFixed(1) + " m of (80,0)" : "none") + ", runRoute " + (runRoute && runRoute.length)
+              && logged.some(e => e.kind === "ais_around" && e.data.running === true && e.data.manual === true && e.data.skip_m === 65 && e.data.mmsi === 338111222),
+        () => "why '" + why17e + "', returned " + r17e + ", sent " + JSON.stringify(paths()) + ", amend " + rte17e.length + " wpts, rejoin "
+            + (rejoinOf(rte17e) ? distTo(rejoinOf(rte17e), ll(65, 0)).toFixed(1) + " m of (65,0)" : "none") + ", router calls " + pinCalls.length + ", runRoute " + (runRoute && runRoute.length)
             + ", guardEdgeAt " + guardEdgeAt + " vs " + clock + ", notes " + JSON.stringify(notes.slice(-1)));
 
   // 17f. PAUSED on the line (a pause mark, no live line mark): amended the same way
   surveying(7, [PARKED()]); aisKeepoutsNow(); S.run = "paused"; runLineIdx = -1;
   pauseMark = { line: 0, along: 200, fwd: 1, at: ll(0, 0), t: clock };
-  sent = []; notes = []; banners = []; logged = []; pinCalls = [];
-  pinNext = { route: [ll(40, -60), ll(80, 0)], routed: true };   // the router detours south of her: one via waypoint, then the target
+  sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
   const r17f = await avoidContactAt(ll(30, 0));
-  pinNext = null;
-  const am17f = sent.find(x => x.p === "/api/cmd/amend"), rte17f = (am17f && am17f.route) || [];
-  check("17f. PAUSED on the line (the pause mark, no live line mark) it is amended the same way - and the router's detour goes IN FRONT of the rejoin: the via waypoint, e = 80, then the rest",
-        () => r17f === true && paths().length === 1 && paths()[0] === "/api/cmd/amend" && rte17f.length === 5
-              && distTo(rte17f[0], ll(40, -60)) < 0.5 && distTo(rte17f[1], ll(80, 0)) < 0.5 && distTo(rte17f[2], LINE_E.b) < 0.5
-              && notes.some(n => /via 1 waypoint clear of her/.test(n)),
-        () => "returned " + r17f + ", sent " + JSON.stringify(paths()) + ", amend " + rte17f.length + " wpts: " + JSON.stringify(rte17f.slice(0, 2).map(w => w && [Math.round(distTo(w, ll(40, -60))), Math.round(distTo(w, ll(80, 0)))])));
+  const am17f = sent.find(x => x.p === "/api/cmd/amend"), rte17f = (am17f && am17f.route) || [], via17f = viaOf(rte17f);
+  check("17f. PAUSED on the line (the pause mark, no live line mark) it is amended the same way - the way round IN FRONT of the rejoin: its waypoints, e = 65, then the rest, and the note counts them",
+        () => r17f === true && paths().length === 1 && paths()[0] === "/api/cmd/amend" && via17f.length >= 1
+              && distTo(rejoinOf(rte17f), ll(65, 0)) < 0.5 && distTo(rte17f[rte17f.length - 3], LINE_E.b) < 0.5
+              && notes.some(n => new RegExp("via " + via17f.length + " waypoints? clear of her").test(n)),
+        () => "returned " + r17f + ", sent " + JSON.stringify(paths()) + ", amend " + rte17f.length + " wpts, via " + via17f.length + ", notes " + JSON.stringify(notes.slice(-1)));
 
   // 17g. THE REFUSALS: paused off a line, disarmed, and no contact under the click
   surveying(7, [PARKED()]); aisKeepoutsNow(); S.run = "paused"; runLineIdx = -1; pauseMark = null; sent = []; notes = [];
@@ -1064,16 +1090,16 @@ const nearRe = /WORKBOAT/;
   clock += 10000; aisPolledAt = clock; frame();
   const whyTurn = $("#gb_why").textContent, bankedTurn = !!guardHeld && !guardHeld.mark && !!aisAvoid;
   const r17h = aisAroundNow(); await settle();
-  const up17h = sent.find(x => x.p === "/api/cmd/upload"), rte17h = (up17h && up17h.route) || [], ask17h = pinCalls[pinCalls.length - 1];
+  const up17h = sent.find(x => x.p === "/api/cmd/upload"), rte17h = (up17h && up17h.route) || [];
   check("17h. held on a TURN (no line under her): the survey is banked with no mark, the bar says she was stopped on a turn instead of promising a line she is not on, and the way round picks the plan up at its NEXT waypoint routed round her - pause, upload route[idx..], LOW, Start, the way in asked with her ring as a fly-through - said and logged with no line",
         () => bankedTurn && /stopped on a TURN, not a coverage line/.test(whyTurn) && !/back down it/.test(whyTurn) && /routes round her itself in 50 s/.test(whyTurn)
               && r17h === true && paths().indexOf("/api/cmd/pause") === 0 && paths().includes("/api/cmd/start") && !paths().includes("/api/cmd/amend")
-              && rte17h.length === 3 && distTo(rte17h[0], LINE_E.b) < 0.5 && distTo(rte17h[2], ll(-200, 60)) < 0.5
-              && !!ask17h && ask17h.opts.flyThrough === true && !!ask17h.opts.ko && ask17h.opts.ko.polys.length === 1 && distTo(ask17h.to, LINE_E.b) < 0.5
+              && rte17h.length >= 4 && distTo(rejoinOf(rte17h, 2), LINE_E.b) < 0.5 && distTo(rte17h[rte17h.length - 1], ll(-200, 60)) < 0.5
+              && pinCalls.length === 0 && minDistTo(wayInOf(rte17h, ll(0, 0), 2), PARKED_C) >= 30 - 0.05   // taut round her to the next waypoint
               && banners.some(b => /ROUTED ROUND/.test(b) && nearRe.test(b) && /stopped on a turn/.test(b) && /next waypoint/.test(b))
-              && logged.some(e => e.kind === "ais_around" && e.data.line === null && e.data.manual === true && e.data.wpts === 3),
+              && logged.some(e => e.kind === "ais_around" && e.data.line === null && e.data.manual === true && e.data.wpts === rte17h.length),
         () => "banked " + bankedTurn + "; bar '" + whyTurn.slice(-200) + "'; returned " + r17h + "; sent " + JSON.stringify(paths()) + "; upload " + rte17h.length
-            + " wpts" + (rte17h[0] ? " from " + distTo(rte17h[0], LINE_E.b).toFixed(1) + " m of L.b" : "") + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(0, 160)))
+            + " wpts" + (rejoinOf(rte17h, 2) ? ", next waypoint " + distTo(rejoinOf(rte17h, 2), LINE_E.b).toFixed(1) + " m of L.b" : "") + "; banners " + JSON.stringify(banners.filter(b => /ROUTED/.test(b)).map(b => b.slice(0, 160)))
             + "; logged " + JSON.stringify(logged.filter(e => e.kind === "ais_around")));
   runLineIdx = 0;
 }
@@ -1286,6 +1312,128 @@ const nearRe = /WORKBOAT/;
   resumeSlow = false;
   const noRelease2 = releaseLow("nothing latched");
   check("18i. ... and with nothing latched RELEASE LOW does nothing and says so by answering false", () => noRelease2 === false, () => String(noRelease2));
+}
+
+// ── 19. THE TIGHTER WAY ROUND (Andy, 2026-09-28: "why did the rejoin go 587m down the line" and "Too much distance
+//        from the AIS target and a long failure to regain the survey line. Make the avoidance maneuver tighter and
+//        recover the survey line sooner."). His 19:25 run: KLEOS on line 6; FRIGGA anchored 35 m off its far end;
+//        the rejoin 375 m on, the way in 48-63 m off KLEOS. ─────────────────────────────────────────────────────────
+{
+  // 19. FRIGGA: a second contact, anchored 32 m off the line near its far end, in nobody's way
+  const FRIGGA = () => contact(150, 32, { mmsi: 777000777, name: "FRIGGA", sog: 0, cog: null, heading: null, dim: null, length: null, beam: null });
+  surveying(7, [PARKED(), FRIGGA()]); frame(); nowHolding();
+  sent = []; notes = []; banners = []; logged = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  const herMmsi = aisAvoid && aisAvoid.mmsi;
+  aisAroundNow(); await settle();
+  const up19 = sent.find(x => x.p === "/api/cmd/upload"), rte19 = (up19 && up19.route) || [];
+  const ev19 = logged.find(e => e.kind === "ais_around");
+  check("19. a second contact anchored 32 m off the far end of the line (FRIGGA: her own ship-length ring would come within 1.2 m of it) does NOT push the rejoin past her: it is e = 65, a ship-length past the contact the survey is held for, and the episode names that one by MMSI",
+        () => herMmsi === 338111222 && !!up19 && distTo(rejoinOf(rte19), ll(65, 0)) < 0.5 && !!ev19 && ev19.data.skip_m === 65 && ev19.data.mmsi === 338111222,
+        () => "episode mmsi " + herMmsi + "; upload " + rte19.length + " wpts, rejoin " + (rejoinOf(rte19) ? distTo(rejoinOf(rte19), ll(65, 0)).toFixed(1) + " m from (65,0)" : "none")
+            + "; logged " + JSON.stringify(ev19 && ev19.data));
+
+  // 19b. two contacts ON the line: the second inside the hold horizon after the first -> the way round goes past both;
+  //      the second beyond it -> the survey is picked up between them (the guard answers the second when she gets there)
+  const SECOND = (e) => contact(e, 0, { mmsi: 888000888, name: "SECOND", sog: 0, cog: null, heading: 90, dim: null, length: null, beam: null });
+  surveying(7, [PARKED(), SECOND(100)]); frame(); nowHolding(); sent = []; logged = []; pinCalls = [];
+  clock += 10000; aisPolledAt = clock; frame();
+  aisAroundNow(); await settle();
+  const rte19b = ((sent.find(x => x.p === "/api/cmd/upload") || {}).route) || [];
+  surveying(7, [PARKED(), SECOND(170)]); frame(); nowHolding(); sent = []; logged = []; pinCalls = [];
+  clock += 10000; aisPolledAt = clock; frame();
+  aisAroundNow(); await settle();
+  const rte19b2 = ((sent.find(x => x.p === "/api/cmd/upload") || {}).route) || [];
+  check("19b. a second hull ON the line 45 m past the first (inside the hold horizon at the survey speed, 72 m) - the way round goes past BOTH (e = 115, 5 m past her hull and the standoff); one 115 m past (beyond it) - the survey is picked up between them (e = 65)",
+        () => distTo(rejoinOf(rte19b), ll(115, 0)) < 0.5 && distTo(rejoinOf(rte19b2), ll(65, 0)) < 0.5 && Math.abs(GUARD_HOLD_S * roleSpeedMS("survey") - 72.0) < 0.1,
+        () => "second at 100: rejoin " + (rejoinOf(rte19b) ? JSON.stringify(ref.toEN(rejoinOf(rte19b))) : "none") + "; second at 170: rejoin "
+            + (rejoinOf(rte19b2) ? JSON.stringify(ref.toEN(rejoinOf(rte19b2))) : "none") + "; run-out " + (GUARD_HOLD_S * roleSpeedMS("survey")).toFixed(1));
+
+  // 19c. THE ROUTER FALLBACK: charted walls on both sides of her ring - neither taut side can be certified - so the
+  //      router's own search is asked, with HER as the ship-length ring and nothing else grown
+  const wallN = [{ e: 5, n: 22 }, { e: 60, n: 22 }, { e: 60, n: 60 }, { e: 5, n: 60 }], wallS = wallN.map(p => ({ e: p.e, n: -p.n }));
+  const WALLS = { polys: [{ ring: wallN, bb: bbOf(wallN), kind: "a dock / pier" }, { ring: wallS, bb: bbOf(wallS), kind: "a dock / pier" }],
+                  lines: [], points: [], marks: [], sys: [], chans: [] };
+  surveying(7, [PARKED(), FRIGGA()], { ko: WALLS }); frame(); nowHolding(); sent = []; pinCalls = []; pinNext = null;
+  clock += 10000; aisPolledAt = clock; frame();
+  const held19c = !!aisAvoid;
+  aisAroundNow(); await settle();
+  const ask19c = pinCalls[pinCalls.length - 1];
+  const polys19c = (ask19c && ask19c.opts && ask19c.opts.ko && ask19c.opts.ko.polys) || [];
+  const herP = polys19c.find(p => p.mmsi === 338111222), friggaP = polys19c.find(p => p.mmsi === 777000777);
+  check("19c. with charted walls on both sides of her ring the taut way round cannot be certified, so the router's own search is asked - at the standoff, as a fly-through, the model HER ship-length ring (30 m round her) plus FRIGGA as the guard's BARE hull and the walls",
+        () => held19c && !!ask19c && ask19c.opts.standoffM === 3 && ask19c.opts.flyThrough === true && !!herP && herP.roundM === 30 && /30 m round her/.test(herP.kind)
+              && !!friggaP && friggaP.roundM == null && !/round her/.test(friggaP.kind) && polys19c.filter(p => /pier/.test(p.kind)).length === 2,
+        () => "held " + held19c + "; asked " + JSON.stringify(ask19c && { standoff: ask19c.opts.standoffM, kinds: polys19c.map(p => p.kind) }));
+
+  // 19d. IN A SET: the standoff outgrows her length, and her hull (plus the buffer) is what the way round keeps its
+  //      standoff from - the guard's own line - not her hull grown by her length AND the standoff
+  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; logged = []; pinCalls = [];
+  clock += 10000; aisPolledAt = clock; frame();
+  S = { ...S, status: { ...S.status, env_set_kn: 1.75, env_set_deg: 90 } };
+  const std19d = patClipBufM();
+  aisAroundNow(); await settle();
+  const rte19d = ((sent.find(x => x.p === "/api/cmd/upload") || {}).route) || [];
+  // Held 15 m off her hull - INSIDE the standoff - so the way in first moves straight away from her center, and is
+  // measured from where that leaves her standoff: every point after it keeps the standoff plus the buffer off her hull.
+  const via19d = viaOf(rte19d), out19d = via19d[0];
+  const wayIn19d = [...via19d, rejoinOf(rte19d)], dH19d = minClearTo(wayIn19d, parkedHull()), dC19d = minDistTo(wayIn19d, PARKED_C);
+  const hull19d = parkedHull(), clr0 = clearanceM(ref.toEN(ll(0, 0)), { polys: [hull19d], lines: [], points: [] }, 500);
+  const clrOut = out19d ? clearanceM(ref.toEN(out19d), { polys: [hull19d], lines: [], points: [] }, 500) : -1;
+  check("19d. in a 1.75 kn set (standoff 19.5 m) the rejoin is where her hull plus the buffer plus the standoff ends (e = 70: hull to 45, +3, +19.5 - it was e = 95 with her length added too); held 15 m off her hull, the way in first moves straight AWAY from her, and from there keeps at least the standoff plus the buffer off her HULL (22.5 m) and no more than 2 m beyond it",
+        () => Math.abs(std19d - 19.5) < 0.1 && distTo(rejoinOf(rte19d), ll(70, 0)) < 0.5 && !!out19d && clrOut > clr0 + 5
+              && dH19d >= 22.5 - 0.05 && dH19d <= 24.5
+              && logged.some(e => e.kind === "ais_around" && e.data.std_m === 19.5 && e.data.skip_m === 70),
+        () => "std " + std19d.toFixed(2) + "; rejoin " + (rejoinOf(rte19d) ? JSON.stringify(ref.toEN(rejoinOf(rte19d))) : "none") + "; held " + clr0.toFixed(1)
+            + " m off her hull, moved out to " + clrOut.toFixed(1) + " m; from there off her hull " + dH19d.toFixed(2)
+            + " m, off her center " + dC19d.toFixed(2) + " m; logged " + JSON.stringify((logged.find(e => e.kind === "ais_around") || {}).data));
+  S = { ...S, status: { ...S.status, env_set_kn: 0 } };
+
+  // 19f. WITHOUT AN MMSI she is the first contact the line AHEAD runs into - not merely the nearest one
+  surveying(7, [PARKED(), contact(5, 18, { mmsi: 999000999, name: "BESIDE", sog: 0, cog: null, heading: null, dim: null, length: null, beam: null })]);
+  frame(); nowHolding(); clock += 10000; aisPolledAt = clock; frame();
+  const g19f = guardHeldOffer();
+  const plan19f = g19f ? aisAroundPlan(g19f, aisKoDrawn, 3, null) : null;
+  const nearestToBoat = aisNearestPoly(ref.toEN(ll(0, 0)), aisKoDrawn);
+  check("19f. with no MMSI to go on, HER is the first contact the line ahead runs into (the WORKBOAT across it), not the nearest one to the boat (BESIDE, 7 m off her track), and the rejoin is past the WORKBOAT",
+        () => !!plan19f && !!plan19f.her && plan19f.her.mmsi === 338111222 && !!nearestToBoat && nearestToBoat.mmsi === 999000999 && distTo(plan19f.to, ll(65, 0)) < 0.5,
+        () => "her " + (plan19f && plan19f.her && plan19f.her.name) + ", nearest to the boat " + (nearestToBoat && nearestToBoat.name) + ", rejoin " + (plan19f && plan19f.to ? JSON.stringify(ref.toEN(plan19f.to)) : JSON.stringify(plan19f)));
+
+  // 19g. THE MMSI NAMES HER (mutation R5): on a RUNNING survey the operator right-clicks the FAR contact of two on the
+  //      line - the way round goes round the one they named, not the first one the line runs into
+  const FARB = () => contact(150, 0, { mmsi: 555000555, name: "FARBOAT", sog: 0, cog: null, heading: 90, dim: null, length: null, beam: null });
+  surveying(7, [PARKED(), FARB()]); aisKeepoutsNow(); sent = []; notes = []; logged = []; pinCalls = [];
+  const r19g = await avoidContactAt(ll(150, 0));
+  const am19g = sent.find(x => x.p === "/api/cmd/amend"), rte19g = (am19g && am19g.route) || [];
+  const ev19g = logged.find(e => e.kind === "ais_around");
+  check("19g. right-clicking the FAR of two contacts on the line routes round HER - the one named, found by her MMSI - rejoining past her (e = 175: her assumed 20 m length about her center at 150, the standoff, the next 5 m step), not past the near one the line runs into first",
+        () => r19g === true && !!ev19g && ev19g.data.mmsi === 555000555 && ev19g.data.round_m === 20 && distTo(rejoinOf(rte19g), ll(175, 0)) < 0.5,
+        () => "returned " + r19g + "; rejoin " + (rejoinOf(rte19g) ? JSON.stringify(ref.toEN(rejoinOf(rte19g))) : "none") + "; logged " + JSON.stringify(ev19g && ev19g.data));
+
+  // 19h. THE SHORTER SIDE (mutation R13): her center 10 m NORTH of the line - the taut way passes SOUTH of her
+  const NORTHOF = () => contact(30, 10, { sog: 0, cog: null, heading: 90 });
+  surveying(7, [NORTHOF()]); aisKeepoutsNow(); sent = []; notes = []; logged = []; pinCalls = [];
+  const r19h = await avoidContactAt(ll(30, 10));
+  const am19h = sent.find(x => x.p === "/api/cmd/amend"), rte19h = (am19h && am19h.route) || [], via19h = viaOf(rte19h);
+  check("19h. with her center 10 m north of the line the taut way round takes the SHORTER side - every waypoint of it south of the line - and still a ship-length off her center",
+        () => r19h === true && via19h.length >= 1 && via19h.every(w => ref.toEN(w).n < 0)
+              && minDistTo(wayInOf(rte19h, ll(0, 0)), { e: 30, n: 10 }) >= 30 - 0.05,
+        () => "returned " + r19h + "; via n " + JSON.stringify(via19h.map(w => +ref.toEN(w).n.toFixed(1))));
+
+  // 19i. THE HELD WAY IN IS JUDGED AT THE STANDOFF (mutation R15): held, then set 40 m north of the line in a 1.75 kn
+  //      set - the straight run to the rejoin would pass her ring about 5 m off, clear of the 3 m buffer and well inside
+  //      the 19.5 m standoff, so it is ROUTED round her and not flown straight
+  surveying(7, [PARKED()]); frame(); nowHolding(); sent = []; logged = []; pinCalls = [];
+  clock += 10000; aisPolledAt = clock; frame();
+  asv = ll(0, 40);
+  S = { ...S, status: { ...S.status, env_set_kn: 1.75, env_set_deg: 90 } };
+  aisAroundNow(); await settle();
+  const rte19i = ((sent.find(x => x.p === "/api/cmd/upload") || {}).route) || [];
+  const wayIn19i = wayInOf(rte19i, ll(0, 40)), dH19i = minClearTo(wayIn19i, parkedHull());
+  check("19i. held, then 40 m north of the line in a 1.75 kn set: the straight run to the rejoin would pass her ring inside the standoff though outside the buffer - so it is ROUTED round her, the way in at least the standoff plus the buffer off her hull",
+        () => distTo(rejoinOf(rte19i), ll(70, 0)) < 0.5 && viaOf(rte19i).length >= 1 && dH19i >= 22.5 - 0.05,
+        () => "rejoin " + (rejoinOf(rte19i) ? JSON.stringify(ref.toEN(rejoinOf(rte19i))) : "none") + "; via " + viaOf(rte19i).length + "; off her hull " + dH19i.toFixed(2) + " m");
+  S = { ...S, status: { ...S.status, env_set_kn: 0 } }; asv = ll(0, 0);
 }
 
 Date.now = realNow;
