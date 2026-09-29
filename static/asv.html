@@ -5654,7 +5654,7 @@ function render(){
   ctx.clearRect(0,0,w,h);
   const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
   if(encShow) drawENCCached(toScreen, w, h, o);   // cached layer; see drawENCCached for the key
-  drawNogo(toScreen);
+  drawNogoCached(toScreen, w, h, o);               // cached too; see drawNogoCached (2026-09-29)
   drawAisKeepouts(toScreen);                       // the contacts the guard treats as keep-outs (2026-09-25)
   drawMarks(toScreen);
   drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
@@ -8041,12 +8041,43 @@ function depthRange(){
 // THE DATA IS COMPARED BY IDENTITY, not by a count: fetchENCBbox REPLACES `sea.enc` wholesale
 // (`sea.enc = {features: ...}`), never mutating it, so `===` is exact and free. A feature
 // COUNT would miss a refetch of the same water at a different depth band.
-let encLayer = null, encLayerSrc = null, encLayerKey = "";
-function encLayerKeyNow(w, h, o){
+//
+// ⚠⚠ AND A CACHED LAYER IS ONE THE VIEW CAN MOVE UNDER (2026-09-29, the per-frame redraw). This cache used to
+// key on the view itself - its size and its origin to the pixel - and the chart FOLLOWS THE BOAT: onState
+// re-centers on her on every frame she has a fix, so while she was under way the origin moved and the layer
+// missed, frame after frame, exactly when the guard mattered most (onFrame 30-73 ms a frame on a rehearsed
+// Return-to-Home). A layer is drawn over the view plus LAYER_PAD_PX on every side now and blitted at the
+// view's offset into it, and it is redrawn only when the view leaves what was drawn or when its key or one of
+// its sources changes: at z17 a boat at 6 kn crosses the margin in about 100 s. The blit offset is whole
+// pixels, so a cached layer can sit up to half a pixel off the live ones - which the view-keyed cache already
+// did, by rounding the origin into its key.
+const LAYER_PAD_PX = 256;
+function makeLayer(){ return {cv: null, key: "", srcs: [], ox: 0, oy: 0, w: 0, h: 0}; }
+/** Is what this layer holds still the picture for this view? Its key, its sources by identity, and the view inside it. */
+function layerHolds(L, key, srcs, w, h, o){
+  return !!L.cv && L.key === key && L.srcs.length === srcs.length && L.srcs.every((s, i) => s === srcs[i])
+         && o.x >= L.ox && o.y >= L.oy && o.x + w <= L.ox + L.w && o.y + h <= L.oy + L.h;
+}
+/** Blit a cached layer for this view, drawing it first - over the view and its margin - when it no longer holds. */
+function drawLayer(L, key, srcs, draw, toScreen, w, h, o){
+  if(!layerHolds(L, key, srcs, w, h, o)){
+    const W = w + 2 * LAYER_PAD_PX, Hh = h + 2 * LAYER_PAD_PX;
+    const ox = Math.round(o.x) - LAYER_PAD_PX, oy = Math.round(o.y) - LAYER_PAD_PX;
+    if(!L.cv) L.cv = document.createElement("canvas");
+    // Assigning width/height CLEARS the canvas and resets its context, which is what a miss
+    // wants - and it is also why the same size has to be cleared by hand.
+    if(L.cv.width !== W || L.cv.height !== Hh){ L.cv.width = W; L.cv.height = Hh; }
+    else L.cv.getContext("2d").clearRect(0, 0, W, Hh);
+    const dx = o.x - ox, dy = o.y - oy;            // the view's own toScreen, moved into the layer's frame
+    draw((lat, lon) => { const s = toScreen(lat, lon); return {x: s.x + dx, y: s.y + dy}; }, L.cv.getContext("2d"));
+    L.key = key; L.srcs = srcs; L.ox = ox; L.oy = oy; L.w = W; L.h = Hh;
+  }
+  ctx.drawImage(L.cv, Math.round(L.ox - o.x), Math.round(L.oy - o.y));
+}
+const encLayer = makeLayer();
+function encLayerKeyNow(){
   const dr = nogoDR();
-  return [w, h, zoom, Math.round(o.x), Math.round(o.y),
-          dr.min, V.WRECK_RADIUS_M, V.NOGO_BUFFER_M,
-          (sea.waterOffset || 0).toFixed(3)].join("|");
+  return [zoom, dr.min, V.WRECK_RADIUS_M, V.NOGO_BUFFER_M, (sea.waterOffset || 0).toFixed(3)].join("|");
 }
 function drawENCCached(toScreen, w, h, o){
   if(!sea.enc.features.length) return;
@@ -8063,17 +8094,7 @@ function drawENCCached(toScreen, w, h, o){
   // ⚠ NOT CACHED EITHER. Returning before the key is computed means the next frame with a
   // real size is an honest miss rather than a hit on a layer that was never drawn.
   if(!(w > 0 && h > 0)) return;
-  const key = encLayerKeyNow(w, h, o);
-  if(!(encLayer && encLayerSrc === sea.enc && encLayerKey === key)){
-    if(!encLayer) encLayer = document.createElement("canvas");
-    // Assigning width/height CLEARS the canvas and resets its context, which is what this
-    // layer wants on every miss - and it is also why the same size has to be cleared by hand.
-    if(encLayer.width !== w || encLayer.height !== h){ encLayer.width = w; encLayer.height = h; }
-    else encLayer.getContext("2d").clearRect(0, 0, w, h);
-    drawENC(toScreen, encLayer.getContext("2d"));
-    encLayerSrc = sea.enc; encLayerKey = key;
-  }
-  ctx.drawImage(encLayer, 0, 0);
+  drawLayer(encLayer, encLayerKeyNow(), [sea.enc], drawENC, toScreen, w, h, o);
 }
 function drawENC(toScreen, ctx){
   if(!sea.enc.features.length) return;
@@ -8784,7 +8805,28 @@ async function doTransit(){
 // the 1 m navigability floor that every behavior avoids); AMBER = water outside
 // the survey COVERAGE window (navigable, just not surveyed) - shown only while a
 // survey pattern is being planned. drawENC no longer shades depth (no duplication).
-function drawNogo(toScreen){
+// ⚠⚠ THE KEEP-OUT LAYER IS CACHED TOO (2026-09-29, the per-frame redraw), in the same kind of layer as the ENC's
+// (drawLayer). The ENC cache's own note measured this layer as cheap on 2026-09-22; measured with his 25-line plan
+// loaded and the boat lying idle, render() was 22.9 of a telemetry frame's 23.9 ms and drawNogo 18.6 of that - every
+// feature of the extract re-projected and re-filled four times a second, hidden tab or not. It draws into the
+// context it is handed now (the layer's), and its KEY NAMES EVERY INPUT IT READS, because a keep-out shading held for
+// the wrong water is worse than a slow one: the enforce toggles, the depth floor (nogoDR), the survey window
+// (depthRange, the amber tier) and whether a pattern is up to show it, the TIDE (depthExcluded corrects every depth
+// by sea.waterOffset), and the zoom; its SOURCES by identity - nogo.features, and the chart read's lines and
+// footprints, each of them replaced wholesale when it changes, never edited.
+const nogoLayer = makeLayer();
+function nogoLayerKeyNow(){
+  const dr = nogoDR(), sd = depthRange(), enf = nogo.enf || {};
+  return [zoom, !!enf.land, !!enf.depth, dr.min, dr.max, sd.min, sd.max, !!currentPattern(),
+          (sea.waterOffset || 0).toFixed(3)].join("|");
+}
+function drawNogoCached(toScreen, w, h, o){
+  if(!nogoShow || !nogo.ready || !nogo.features) return;
+  if(!(w > 0 && h > 0)) return;                     // a view with no size: see drawENCCached
+  drawLayer(nogoLayer, nogoLayerKeyNow(), [nogo.features, chartInk.lines, chartInk.areas], drawNogo,
+            toScreen, w, h, o);
+}
+function drawNogo(toScreen, ctx){
   if(!nogoShow || !nogo.ready || !nogo.features) return;
   const floorDr=nogoDR();                          // < 1 m corrected -> nogo
   const surveyDr=depthRange();                      // survey coverage window (panel)

@@ -847,6 +847,20 @@ so the guard judges the telemetry in between. Measured with the browser's own lo
 longest single task is now 137 ms on that Return-to-Home, and 378 ms on his plan's Upload, where
 the plan's own routing is what remains.
 
+**And every telemetry frame costs about a fifth of what it did** (29 September, "#1", then
+"definitely push and merge"). With his 25-line plan loaded, drawing the chart took 22.9 ms of each
+23.9 ms telemetry frame, four times a second, whether or not anyone could see the page, and 18.6 ms
+of that was the keep-out layer, redrawn from every feature of the extract on every frame. The chart
+layer beside it was cached, but keyed to the view to the pixel, and the view follows the boat, so
+under way it missed as well. Both layers are now drawn over the view plus a 256-pixel margin and
+slid into place as the view moves. They are redrawn only when the view leaves the margin, the zoom
+changes, or something they are drawn from changes (the tide, the depth floor and survey window, the
+enforce toggles, a new chart read). Measured on a throwaway console with his plan: a frame costs
+5.1 ms with the boat idle (was 23.9), and 7.3-8.0 ms under way at 7.7 kn with the view following,
+at zoom 13 and 17 (was 27.0); neither layer was redrawn once in 30 s. The chart still draws on every
+frame, hidden or not: pausing it in a covered window would risk a chart that stops updating in front
+of the operator.
+
 1. **Plan** — `WPT` to drop/remove waypoints, or `SURV` for a **CAMP-style
    3-click survey pattern**: click the start corner, the opposite (diagonal)
    corner, then a third point that sets the **line spacing** (distance from the

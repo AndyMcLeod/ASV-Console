@@ -484,7 +484,8 @@ check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC pu
         // ⚠ SLICED TO EACH BLOCK. A file-wide search for the magenta passed with the LINE
         // colour mutated back to the ENC's red, because the FOOTPRINT fill still carried the
         // magenta a few lines above - one colour standing in for the other's check.
-        const dn = H.slice(H.indexOf("function drawNogo"), H.indexOf("function drawMarks"));
+        // "function drawNogo(" exactly: drawNogoCached (2026-09-29) sits above it and names chartInk.lines/areas too.
+        const dn = H.slice(H.indexOf("function drawNogo("), H.indexOf("function drawMarks"));
         const areaBlk = dn.slice(dn.indexOf("chartInk.areas"), dn.indexOf("chartInk.lines"));
         const lineBlk = dn.slice(dn.indexOf("chartInk.lines"));
         return areaBlk.length > 100 && lineBlk.length > 100

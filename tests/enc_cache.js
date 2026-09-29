@@ -13,6 +13,11 @@
 //     100 Hz is ~17.5 s of blocked main thread - his recorded stall was 20.2 s
 //   * AFTER: idle 35.9 % -> 1.0 % (1 long task of 50 ms in 5 s), ink still present, and a
 //     zoom still invalidated the layer and redrew
+//   * 2026-09-29, his 25-line plan loaded, the boat idle: render() was 22.9 ms of a 23.9 ms
+//     telemetry frame and drawNogo 18.6 of it - the keep-out layer had no cache at all - and under
+//     way the chart FOLLOWS the boat, so the view-keyed ENC layer missed on every frame as well.
+//     Both are held in a layer drawn over the view plus LAYER_PAD_PX a side (drawLayer), redrawn
+//     only when the view leaves it or an input changes (checks 2, 2b and 10-14)
 //
 //   node tests/enc_cache.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
@@ -68,20 +73,25 @@ console.log("The ENC layer is cached, and the key is the whole point:");
 // -- THE WORLD --------------------------------------------------------------------------
 // A fake canvas/context that RECORDS. drawENC is the real one, so a miss really walks the
 // features and a hit really does not.
-let drew = 0, blits = 0;
+let drew = 0, blits = 0, lastBlit = null, rec = null;
 function fakeCtx() {
   const noop = () => {};
+  // `rec`, when a check sets it, collects every vertex drawn: what 13 compares between the direct
+  // draw and the cached one. `lastBlit` is where the layer was put on the screen.
+  const pt = (x, y) => { if (rec) rec.push([x, y]); };
   return { save: noop, restore: noop, beginPath: () => { drew++; }, closePath: noop,
-           moveTo: noop, lineTo: noop, stroke: noop, fill: noop, arc: noop,
-           clearRect: noop, setLineDash: noop, drawImage: () => { blits++; },
-           fillStyle: "", strokeStyle: "", lineWidth: 0, font: "" };
+           moveTo: pt, lineTo: pt, stroke: noop, fill: noop, arc: noop,
+           clearRect: noop, setLineDash: noop,
+           drawImage: (src, x, y) => { blits++; lastBlit = { x, y }; },
+           fillStyle: "", strokeStyle: "", lineWidth: 0, font: "", lineCap: "" };
 }
 const ctx = fakeCtx();
-// ⚠ THE CACHE'S OWN THREE, AT MODULE SCOPE. The page declares them with `let` on a bare
-// declaration line, which grab() cannot reach (it takes functions), and a `let` written inside
-// the eval below would live in the eval's scope where drawENCCached writes it and nothing here
-// could read it. Mirrored out here, as guard_resume records for holdWant.
-var encLayer = null, encLayerSrc = null, encLayerKey = "";
+// ⚠ THE CACHES' OWN STATE, AT MODULE SCOPE. The page declares them as `const encLayer = makeLayer()`
+// on a bare declaration line, which grab() cannot reach (it takes functions), and a declaration
+// written inside the eval below would live in the eval's scope where drawENCCached writes it and
+// nothing here could read it. Mirrored out here (and made after the eval, which defines makeLayer),
+// as guard_resume records for holdWant.
+var encLayer = null, nogoLayer = null;
 let sea = { enc: { features: [] }, waterOffset: 0 };
 let zoom = 13;
 const V = { WRECK_RADIUS_M: 25, NOGO_BUFFER_M: 3, NOGO_MIN_DEPTH_M: 1, OPER_MIN_DEPTH_M: 3 };
@@ -98,8 +108,22 @@ globalThis.document = { createElement: () => {
   return c;
 } };
 
+// the keep-out layer's world (checks 10-14): what drawNogo reads, each of it movable by a check
+let nogoShow = true, SD = { min: 0, max: 0 }, PAT = null;
+let nogo = { ready: true, features: [], enf: { land: true, depth: true } };
+let chartInk = { lines: [], areas: [] };
+function depthRange() { return { min: SD.min, max: SD.max }; }
+function currentPattern() { return PAT; }
+// the page's depthExcluded corrects a feature's depth by the tide; so does this one, so the tide matters
+function depthExcluded(f, dr) { return (f.d + (sea.waterOffset || 0)) < dr.min; }
+
+// the margin a layer is drawn with, read from the page so a change to it moves these checks with it
+const PAD = +(H.match(/const LAYER_PAD_PX = (\d+);/) || [])[1];
 // eslint-disable-next-line no-eval
-eval(grab("drawENC") + "\n" + grab("encLayerKeyNow") + "\n" + grab("drawENCCached"));
+eval("const LAYER_PAD_PX = " + PAD + ";\n" + grab("makeLayer") + "\n" + grab("layerHolds") + "\n" + grab("drawLayer")
+     + "\n" + grab("drawENC") + "\n" + grab("encLayerKeyNow") + "\n" + grab("drawENCCached")
+     + "\n" + grab("drawNogo") + "\n" + grab("nogoLayerKeyNow") + "\n" + grab("drawNogoCached"));
+encLayer = makeLayer(); nogoLayer = makeLayer();
 
 const feat = { role: "land", geometry: { type: "Polygon", coordinates: [[[0,0],[0,1],[1,1],[0,0]]] } };
 const toScreen = (lat, lon) => ({ x: lon * 100, y: lat * 100 });
@@ -119,12 +143,26 @@ check("1. the second draw of an unchanged view walks NO features and blits the l
         + ". At 4 Hz with 481,980 coordinate pairs this is the 35.9 % of the main thread the "
         + "page was spending on a chart that had not changed");
 
+// 2. A PAN INSIDE THE DRAWN MARGIN IS A BLIT AT THE NEW OFFSET (2026-09-29). The chart follows the boat
+//    on every frame she has a fix, so under way this is the ordinary frame, not a corner case - and the
+//    view-keyed cache missed on every one of them. The layer must MOVE with the view, pixel for pixel,
+//    or it strands the chart where it was first drawn; past the margin it is a redraw.
+reset(); drawENCCached(toScreen, 800, 600, o);
+const at0 = lastBlit;
 reset(); drawENCCached(toScreen, 800, 600, { x: 140, y: 200 });
-const moved = { drew, blits };
-check("2. ... and a view that MOVED redraws it",
-      () => moved.drew > 0 && moved.blits === 1,
-      "panned 40 px -> drew " + moved.drew + " path(s). A cache that never misses is faster "
-        + "and wrong, and would strand the chart at the place it was first drawn");
+const moved = { drew, blits, at: lastBlit };
+check("2. a view that moved WITHIN the drawn margin draws nothing, and the layer moves 40 px with it",
+      () => moved.drew === 0 && moved.blits === 1 && !!at0 && !!moved.at
+            && moved.at.x === at0.x - 40 && moved.at.y === at0.y,
+      () => "panned 40 px -> drew " + moved.drew + " path(s), blitted at " + JSON.stringify(moved.at)
+            + " (was " + JSON.stringify(at0) + ")");
+reset(); drawENCCached(toScreen, 800, 600, { x: 100 + PAD + 40, y: 200 });
+const past = { drew, blits };
+check("2b. ... and one that moved PAST the margin redraws it",
+      () => PAD > 0 && past.drew > 0 && past.blits === 1,
+      "panned " + (PAD + 40) + " px, beyond the " + PAD + " px margin -> drew " + past.drew
+        + " path(s). A cache that never misses is faster and wrong, and would strand the chart at "
+        + "the place it was first drawn");
 
 // -- 3-6. THE KEY CARRIES EVERY INPUT drawENC READS --------------------------------------
 // """ + W + W + """ THESE ARE THE CHECKS THAT MATTER. hazExtent(f) -> koOpts() reads sea.waterOffset,
@@ -162,6 +200,15 @@ check("5. ... and the VESSEL's own wreck radius and buffer, which change when th
       () => hull.drew > 0,
       "WRECK_RADIUS_M 25 -> 60 redrew " + hull.drew + " path(s). V.* is rewritten when the "
         + "operator switches hull, which changes no view field at all");
+
+// 5b. THE ZOOM IS NAMED NOW (2026-09-29). The view-keyed layer had it twice over - the zoom and an
+//     origin to the pixel, which every zoom moves - and the padded layer keys on neither origin nor
+//     size, so the zoom is the one view term left in its key, and it has to be there by name.
+const zm = invalidatesOn("the zoom changed", () => { zoom = 14; }, () => { zoom = 13; });
+check("5b. ... and the ZOOM, the one view term the layer's key still carries",
+      () => zm.drew > 0,
+      "zoom 13 -> 14 redrew " + zm.drew + " path(s). The origin left the key when a pan became a blit, "
+        + "so without its own term a zoom would have been blitted at the old scale");
 
 // -- 6. THE DATA IS COMPARED BY IDENTITY, NOT BY COUNT -----------------------------------
 reset();
@@ -217,17 +264,19 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
       throw new Error("InvalidStateError: The image argument is a canvas element with a width or height of 0.");
     blits++;
   };
-  encLayer = null; encLayerSrc = null; encLayerKey = "";
+  encLayer = makeLayer();
   reset();
   // ⚠ THREE DEGENERATE VIEWS, NOT ONE. Driven only at 0x0, this check passed a guard that
   // tested the width alone - the mutation survived - and a window collapsed to zero HEIGHT
   // with a real width would still have thrown. Each axis is its own refusal case.
   let threw = null, blitsAtZero = 0, cachedZero = false;
   for (const [dw, dh] of [[0, 0], [0, 600], [800, 0]]) {
-    encLayer = null; encLayerSrc = null; encLayerKey = ""; reset();
+    encLayer = makeLayer(); reset();
     try { drawENCCached(toScreen, dw, dh, o); } catch (e) { threw = threw || (dw + "x" + dh + ": " + e.message); }
     blitsAtZero += blits;
-    cachedZero = cachedZero || (!!encLayer && !(encLayer.width > 0 && encLayer.height > 0));
+    // (the layer's canvas is `cv` since 2026-09-29; the MARGIN would size even a 0x0 view's layer to 2*PAD
+    //  a side, so what makes this red without the guard is the blit count, not the size)
+    cachedZero = cachedZero || (!!encLayer.cv && !(encLayer.cv.width > 0 && encLayer.cv.height > 0));
   }
   // THE ACCEPTANCE CASE: the same layer, given a real view, still draws - a guard that made
   // every draw a no-op would pass the refusal above and fail here.
@@ -238,9 +287,105 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
   check("9. a view with NO SIZE draws nothing and throws nothing - the cache is never sized 0x0",
         threw === null && blitsAtZero === 0 && !cachedZero && threwReal === null && blitsReal === 1,
         "0x0: " + (threw ? "THREW " + threw.slice(0, 60) : "no throw") + ", " + blitsAtZero
-          + " blit(s), cache " + (cachedZero ? "SIZED 0x0" : (encLayer ? "sized for the real view" : "untouched"))
+          + " blit(s), cache " + (cachedZero ? "SIZED 0x0" : (encLayer.cv ? "sized for the real view" : "untouched"))
           + "; then 800x600: " + (threwReal ? "THREW" : "drew") + " with " + blitsReal + " blit(s)");
   ctx.drawImage = lenient;
+}
+
+// -- 10-14. THE KEEP-OUT LAYER IS CACHED TOO, AND ITS KEY NAMES EVERYTHING drawNogo READS (2026-09-29) -----
+// Measured with his 25-line plan loaded and the boat idle: render() 22.9 ms of a 23.9 ms telemetry frame, and
+// drawNogo 18.6 of it - no cache at all. A keep-out shading held for the wrong water is WORSE than a slow one, so
+// the checks that matter are the key's: every input drawNogo reads must redraw it when it moves.
+{
+  const poly = (d, role) => ({ role, d, geometry: { type: "Polygon", coordinates: [[[0,0],[0,2],[2,2],[0,0]]] } });
+  const shore = { role: "shore_line", geometry: { type: "LineString", coordinates: [[0,0],[3,1],[4,4]] } };
+  nogo = { ready: true, features: [poly(0, "land"), poly(2, "depth_area"), shore], enf: { land: true, depth: true } };
+  chartInk = { lines: [{ a: { lat: 1, lon: 1 }, b: { lat: 2, lon: 3 } }],
+               areas: [{ ring: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }] }] };
+  sea.waterOffset = 0; V.OPER_MIN_DEPTH_M = 3; SD = { min: 0, max: 0 }; PAT = null; zoom = 13;
+  nogoLayer = makeLayer();
+  reset(); drawNogoCached(toScreen, 800, 600, o); const nf = { drew, blits };
+  reset(); drawNogoCached(toScreen, 800, 600, o); const ns = { drew, blits };
+  nogoShow = false; reset(); drawNogoCached(toScreen, 800, 600, o); const off = { drew, blits }; nogoShow = true;
+  // a view with no size (a minimized window): nothing drawn or blitted, as for the ENC layer (9). The margin would
+  // size even this layer to 2*PAD a side, so it is the counts that make the guard's absence visible
+  const keep = nogoLayer; nogoLayer = makeLayer();
+  let zeroDrew = 0, zeroBlits = 0;
+  for (const [dw, dh] of [[0, 0], [0, 600], [800, 0]]) { reset(); drawNogoCached(toScreen, dw, dh, o); zeroDrew += drew; zeroBlits += blits; }
+  nogoLayer = keep;
+  check("10. the keep-out layer is CACHED: the second draw of an unchanged view walks no feature and blits it - and "
+        + "switched off, or in a view with no size, nothing is drawn or blitted",
+        () => nf.drew > 0 && nf.blits === 1 && ns.drew === 0 && ns.blits === 1 && off.drew === 0 && off.blits === 0
+              && zeroDrew === 0 && zeroBlits === 0,
+        "first " + nf.drew + " path(s), repeat " + ns.drew + " (" + ns.blits + " blit), off " + off.drew + "/" + off.blits
+          + ", no size " + zeroDrew + "/" + zeroBlits
+          + ". 18.6 ms of every 23.9 ms telemetry frame, with his plan loaded, was this layer redrawn unchanged");
+
+  const primeN = () => { reset(); drawNogoCached(toScreen, 800, 600, o); };
+  const movesIt = (label, mutate, restore) => {
+    primeN(); mutate(); reset(); drawNogoCached(toScreen, 800, 600, o); const d = drew; restore(); primeN();
+    return { label, d };
+  };
+  const inputs = [
+    movesIt("structures enforced", () => { nogo.enf.land = false; }, () => { nogo.enf.land = true; }),
+    movesIt("depth enforced", () => { nogo.enf.depth = false; }, () => { nogo.enf.depth = true; }),
+    movesIt("the depth floor", () => { V.OPER_MIN_DEPTH_M = 5; }, () => { V.OPER_MIN_DEPTH_M = 3; }),
+    movesIt("the survey window's floor", () => { SD = { min: 4, max: 0 }; }, () => { SD = { min: 0, max: 0 }; }),
+    movesIt("the survey window's ceiling", () => { SD = { min: 0, max: 30 }; }, () => { SD = { min: 0, max: 0 }; }),
+    movesIt("a pattern up (the amber tier)", () => { PAT = { lines: [] }; }, () => { PAT = null; }),
+    movesIt("the tide", () => { sea.waterOffset = 1.2; }, () => { sea.waterOffset = 0; }),
+    movesIt("the zoom", () => { zoom = 14; }, () => { zoom = 13; }),
+  ];
+  const stale = inputs.filter(x => !(x.d > 0)).map(x => x.label);
+  check("11. its key names EVERY input drawNogo reads - the two enforce toggles, the depth floor, the survey window "
+        + "both ways, a pattern being up, the tide and the zoom each redraw it",
+        () => stale.length === 0,
+        () => stale.length ? "HELD across: " + stale.join(", ") : inputs.length + " inputs, every one redraws");
+
+  const srcCases = [
+    movesIt("a refetch (a new feature list, the same features)", () => { nogo.features = nogo.features.slice(); }, () => {}),
+    movesIt("a new chart read's lines", () => { chartInk = { ...chartInk, lines: chartInk.lines.slice() }; }, () => {}),
+    movesIt("a new chart read's footprints", () => { chartInk = { ...chartInk, areas: chartInk.areas.slice() }; }, () => {}),
+  ];
+  const same = (() => { primeN(); chartInk = { ...chartInk }; reset(); drawNogoCached(toScreen, 800, 600, o); return drew; })();
+  const missed = srcCases.filter(x => !(x.d > 0)).map(x => x.label);
+  check("12. its SOURCES are compared by identity - a new feature list, a new chart read's lines or footprints "
+        + "each redraw it; the same arrays under a new chartInk object do not",
+        () => missed.length === 0 && same === 0,
+        () => (missed.length ? "HELD across: " + missed.join(", ") : "all three redraw") + "; the same arrays: "
+              + same + " path(s)");
+
+  // 13. THE CACHED DRAW IS THE DIRECT DRAW, MOVED BY THE BLIT: every vertex the layer holds, put where the blit puts
+  //     it, is the vertex the direct draw would have put on the screen - in the same order.
+  const verts = (fn) => { rec = []; fn(); const r = rec; rec = null; return r; };
+  nogoLayer = makeLayer();
+  let blitAt = null;
+  const cached = verts(() => { lastBlit = null; drawNogoCached(toScreen, 800, 600, o); blitAt = lastBlit; });
+  const direct = verts(() => drawNogo(toScreen, ctx));
+  let worst = 0;
+  const sameGeom = cached.length === direct.length && cached.length > 0 && !!blitAt
+    && cached.every((v, i) => { const e = Math.max(Math.abs(v[0] + blitAt.x - direct[i][0]), Math.abs(v[1] + blitAt.y - direct[i][1]));
+                                 worst = Math.max(worst, e); return e < 1e-9; });
+  // and at a FRACTIONAL origin - the ordinary case, since the view centers on the boat - the blit is whole pixels,
+  // so a vertex may land up to half a pixel from where a direct draw puts it, never more
+  const of = { x: 100.37, y: 200.81 };
+  const tsF = (lat, lon) => ({ x: lon * 100 - of.x + 100, y: lat * 100 - of.y + 200 });
+  nogoLayer = makeLayer();
+  let blitF = null;
+  const cachedF = verts(() => { lastBlit = null; drawNogoCached(tsF, 800, 600, of); blitF = lastBlit; });
+  const directF = verts(() => drawNogo(tsF, ctx));
+  let worstF = 0;
+  cachedF.forEach((v, i) => { worstF = Math.max(worstF, Math.abs(v[0] + blitF.x - directF[i][0]), Math.abs(v[1] + blitF.y - directF[i][1])); });
+  check("13. the cached layer IS the direct draw, moved by its blit - every vertex in the same order, exactly at a whole-"
+        + "pixel origin and within half a pixel at a fractional one",
+        () => sameGeom && cachedF.length === directF.length && worstF <= 0.5 + 1e-9,
+        () => cached.length + " vertices, worst " + worst.toExponential(1) + " px; at a fractional origin "
+              + worstF.toFixed(3) + " px (blit at " + JSON.stringify(blitF) + ")");
+
+  const rn = codeOnly(grab("render"));
+  check("14. render() draws the keep-out layer THROUGH the cache, not directly",
+        () => /drawNogoCached\(toScreen, w, h, o\);/.test(rn) && !/drawNogo\(toScreen/.test(rn),
+        "render in static/asv.html");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed (" + ran + ")");
