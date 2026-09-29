@@ -172,6 +172,8 @@ var heldResuming = false;
 // ... and when it began, for the window the rungs below helm stand by in (heldResumeOwns), and the guard's own moves,
 // counted, which the resume asks about before its upload, before its Start and after it (2026-09-28, FRIGGA).
 var heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;
+// ... and when the hold rung last put a boat PAUSED on its own hold back on station (2026-09-29), paced by it
+var holdBackAt = 0;
 // Whether the modelled guard ticks between the resume's commands. Off by default so the
 // non-resume fixtures are unchanged; resumeFrom turns it on.
 var tickGuard = false;

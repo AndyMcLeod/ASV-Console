@@ -116,6 +116,8 @@ var heldResuming = false;
 // ... and when it began, for the window the rungs below helm stand by in (heldResumeOwns), and the guard's own moves,
 // counted, which the resume asks about before its upload, before its Start and after it (2026-09-28, FRIGGA).
 var heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;
+// ... and when the hold rung last put a boat PAUSED on its own hold back on station (2026-09-29), paced by it
+var holdBackAt = 0;
 // Whether the modelled guard ticks between the resume's commands. Off by default so the
 // non-resume fixtures are unchanged; resumeFrom turns it on.
 var tickGuard = false;
@@ -233,6 +235,10 @@ function applyReply(p, pr) {
   return pr.then((r) => {
     if (p === "/api/cmd/pause") S.run = "paused";
     if (p === "/api/cmd/start") S.run = "running";
+    // THE VESSEL STAGES an upload to a paused or station-keeping boat until Start, and any other motion replaces it
+    // (2026-09-29: the hold rung reads it - a Start with a plan staged APPLIES that plan, it does not resume the hold)
+    if (r && r.ok && p === "/api/cmd/upload") S.plan_staged = S.run === "paused" || S.behavior === "hold";
+    if (r && r.ok && ["/api/cmd/start", "/api/cmd/hold", "/api/cmd/escape", "/api/cmd/stop"].includes(p)) S.plan_staged = false;
     if (tickGuard) guardHeldOffer();
     if (onReply) onReply(p);
     return r;
@@ -1458,20 +1464,22 @@ const wayInOf = (rte, from, tail = 3) => [from, ...viaOf(rte, tail), rejoinOf(rt
 // started", the page announced ROUTED ROUND and spent the held survey, and every later press resumed only the hold.
 // Replayed with the guard ticking between the resume's commands (onReply).
 const OWNS_MS = +H.match(/const HELD_RESUME_OWNS_MS = (\d+)/)[1];
-// held for her, then station-keeping with a little way on AWAY from her - the station-keep's own motion - until the
-// clear branch releases the latch, as it did at 21:19:04. Answers whether it did.
-function heldThenReleased() {
+// held for her, then station-keeping with a little way on AWAY from her - the station-keep's own motion. On his
+// console the clear branch released the hold rung's latch here, at 21:19:04; since 2026-09-29 it does not (check 21),
+// so these replays run with the latch KEPT - the console as it is now - and with the upload STAGED on the vessel,
+// where the rung's only answer is a hold at her present position. Answers whether the latch was kept.
+function heldAndKept() {
   surveying(7, [PARKED()]); frame(); nowHolding();
   const held = !!guardHeld && !!aisAvoid && guardActedAt > 0;
   S = { ...S, status: { ...S.status, sog_kn: 0.3, cog_deg: 270, heading_deg: 90 } };
   for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; frame(); }
-  return held && guardActedAt === 0 && guardLevel === "clear";
+  return held && guardActedAt > 0 && guardLevel !== "clear";
 }
 // paused, and set toward her at `kn`: 1 kn is a HOLD 23 s out (the rung's own reading at 21:19:45.801), 1.75 kn a HELM 13 s out
 const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn, cog_deg: 90, heading_deg: 90, holding: false,
                                                                    env_set_kn: kn, env_set_deg: 90 } }; };
 {
-  const released = heldThenReleased();
+  const kept = heldAndKept();
   let midLevel = null, midBanners = null, midSent = null;
   onReply = (p) => {
     if (p !== "/api/cmd/upload") return;
@@ -1483,11 +1491,11 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();   // the operator's 30 s: the console's own way round
   onReply = null;
   const seq20 = paths();
-  check("20. FRIGGA: the latch released by a station-keeping frame (as at 21:19:04), the way round paused her and uploaded, and PAUSED she drifted toward her - the ladder reads HOLD mid-resume and posts NOTHING: pause, upload, LOW, Start, the route round started and announced, the record spent",
-        () => released && midLevel === "hold" && midSent && midSent.length === 0
+  check("20. FRIGGA: held for her (the latch kept), the way round paused her and uploaded - STAGED - and PAUSED she drifted toward her; the ladder reads HOLD mid-resume, where a paused boat with a plan staged gets the rung's hold, and posts NOTHING: pause, upload, LOW, Start, the route round started and announced, the record spent",
+        () => kept && midLevel === "hold" && midSent && midSent.length === 0
               && JSON.stringify(seq20) === JSON.stringify(["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/speed", "/api/cmd/start"])
               && banners.some(b => /ROUTED ROUND/.test(b)) && guardHeld === null && aisAvoid === null,
-        () => "latch released " + released + "; mid-resume level " + midLevel + ", sent then " + JSON.stringify(midSent)
+        () => "latch kept " + kept + "; mid-resume level " + midLevel + ", sent then " + JSON.stringify(midSent)
             + "; sent " + JSON.stringify(seq20) + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 70))));
   check("20a. ... and no '⚠ HOLD ... holding still answers it' banner from inside the resume - on his console it came a third of a second before ROUTED ROUND and read as the console holding her",
         () => midBanners !== null && !midBanners.some(b => /^⚠ HOLD/.test(b)),
@@ -1500,7 +1508,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   //      the held survey and the episode stand.
   const got = [];
   for (const at of ["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/speed", "/api/cmd/start"]) {
-    const released = heldThenReleased();
+    const latchKept = heldAndKept();
     escFake = { hdg: 0, to: { e: 0, n: 60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
     const kept = guardHeld, ep = aisAvoid;
     let midSent = null;
@@ -1513,7 +1521,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
     clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();
     onReply = null;
     const after = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
-    got.push({ at, released, esc: !!midSent && midSent.includes("/api/cmd/escape"), after,
+    got.push({ at, latchKept, esc: !!midSent && midSent.includes("/api/cmd/escape"), after,
                upload: paths().includes("/api/cmd/upload"), start: paths().includes("/api/cmd/start"),
                routed: banners.some(b => /ROUTED ROUND/.test(b)),
                said: banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /took the helm/.test(b) && /on the guard's escape/.test(b)),
@@ -1523,9 +1531,9 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   }
   const want = { "/api/cmd/pause": [], "/api/cmd/upload": [], "/api/cmd/speed": [], "/api/cmd/start": [] };
   check("20b. in extremis mid-resume the helm rung escapes - it never stands by - and the resume sends NOTHING after the escape at any of its four steps (no upload after the pause, no LOW and no Start after the upload, no Start after the LOW), announces no way round, says why, and keeps the held survey and the episode",
-        () => got.length === 4 && got.every(g => g.released && g.esc && JSON.stringify(g.after) === JSON.stringify(want[g.at]) && !g.routed && g.said && g.kept && g.logged)
+        () => got.length === 4 && got.every(g => g.latchKept && g.esc && JSON.stringify(g.after) === JSON.stringify(want[g.at]) && !g.routed && g.said && g.kept && g.logged)
               && got[0].upload === false && got[3].start === true,
-        () => got.map(g => g.at.replace("/api/cmd/", "") + ": released " + g.released + ", escaped " + g.esc + ", then " + JSON.stringify(g.after)
+        () => got.map(g => g.at.replace("/api/cmd/", "") + ": latch kept " + g.latchKept + ", escaped " + g.esc + ", then " + JSON.stringify(g.after)
                            + ", routed " + g.routed + ", said " + g.said + ", kept " + g.kept + ", logged " + g.logged).join(" | "));
 }
 {
@@ -1601,7 +1609,7 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
 {
   // 20g. A RESUME STALLED PAST THE STAND-BY (a slow link): the ladder has her back and the hold rung holds her - and the
   //      resume does not Start over the guard's hold
-  const released = heldThenReleased();
+  const latchKept = heldAndKept();
   const kept = guardHeld, ep = aisAvoid;
   let midSent = null;
   onReply = (p) => {
@@ -1614,17 +1622,17 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   clock += 30000 - 6000; aisPolledAt = clock; frame(); await settle();
   onReply = null;
   check("20g. a resume stalled past the " + OWNS_MS / 1000 + " s stand-by: the hold rung has her back and HOLDS her - and the resume sends nothing more, no LOW and no Start: NOT RUNNING, 'held her again', station-keeping, the record and the episode kept",
-        () => released && midSent && midSent.includes("/api/cmd/hold")
+        () => latchKept && midSent && midSent.includes("/api/cmd/hold")
               && JSON.stringify(paths()) === JSON.stringify(["/api/cmd/pause", "/api/cmd/upload", "/api/cmd/hold"])
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /held her again/.test(b) && /She is station-keeping/.test(b))
               && guardHeld === kept && aisAvoid === ep,
-        () => "released " + released + "; mid-resume sent " + JSON.stringify(midSent) + "; sent " + JSON.stringify(paths())
+        () => "latch kept " + latchKept + "; mid-resume sent " + JSON.stringify(midSent) + "; sent " + JSON.stringify(paths())
             + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
 }
 {
   // 20h. THE UPLOAD'S ANSWER LOST WHILE THE HELM RUNG ESCAPED: the failed-upload path puts a paused boat back on
   //      station with a hold - which here would land on top of the escape just sent. It does not.
-  const released = heldThenReleased();
+  const latchKept = heldAndKept();
   escFake = { hdg: 0, to: { e: 0, n: 60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
   const kept = guardHeld, ep = aisAvoid;
   let midSent = null;
@@ -1639,11 +1647,90 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   onReply = null; lost = null; escFake = null;
   const after20h = paths().slice(paths().indexOf("/api/cmd/escape") + 1);
   check("20h. the upload's answer LOST while the helm rung escaped: the failed-upload path does not put her 'back on station' over the escape - nothing is sent after it, NOT RUNNING is said with the cause, the record and the episode kept",
-        () => released && midSent && midSent.includes("/api/cmd/escape") && after20h.length === 0
+        () => latchKept && midSent && midSent.includes("/api/cmd/escape") && after20h.length === 0
               && banners.some(b => /THE WAY ROUND IS NOT RUNNING/.test(b) && /took the helm while the remainder was being uploaded/.test(b))
               && guardHeld === kept && aisAvoid === ep,
-        () => "released " + released + "; mid-resume sent " + JSON.stringify(midSent) + "; after the escape " + JSON.stringify(after20h)
+        () => "latch kept " + latchKept + "; mid-resume sent " + JSON.stringify(midSent) + "; after the escape " + JSON.stringify(after20h)
             + "; banners " + JSON.stringify(banners.map(b => b.slice(0, 110))));
+}
+
+// ── 21. THE HOLD THE GUARD COMMANDED STANDS UNTIL SHE LEAVES IT (2026-09-29, the three open items) ────────────────
+// His FRIGGA log again: the clear branch released the hold rung's record six seconds into the hold (a station-keeping
+// boat reads clear) and put the throttle back to the transit speed; with the record gone, each Pause was answered by
+// a fresh hold where the set had carried her - 48 m off her, then 41, 33, 25.
+{
+  // 21. item 1: station-keeping frames that read CLEAR release nothing
+  surveying(7, [PARKED()]); frame(); nowHolding();
+  const acted21 = guardActedAt, lvl21 = guardLevel;
+  S = { ...S, status: { ...S.status, sog_kn: 0.3, cog_deg: 270, heading_deg: 90 } };
+  sent = []; notes = [];
+  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  const read21 = clearance.level, sent21 = paths().slice();
+  check("21. held for her and station-keeping, the frames read CLEAR for 8 s and NOTHING is released - no 'Clear ahead again', no speed command, the hold rung's record and the ladder's level stand: the hold is the answer, not a cleared situation",
+        () => acted21 > 0 && lvl21 === "hold" && read21 === "clear" && guardActedAt === acted21 && guardLevel === "hold"
+              && !notes.some(n => /Clear ahead again/.test(n)) && sent21.length === 0,
+        () => "acted " + acted21 + " -> " + guardActedAt + ", level " + lvl21 + " -> " + guardLevel + ", read " + read21
+            + ", sent " + JSON.stringify(sent21) + ", notes " + JSON.stringify(notes));
+  // 21a. CONTROL: the same frames with the record gone - as his console had it - DO release: the gate is what stops it
+  guardActedAt = 0; notes = []; sent = [];
+  for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  check("21a. CONTROL: the same station-keeping frames with the record gone - as his console had it after 21:19:04 - DO release and say 'Clear ahead again': the gate on her own hold is what stops it, not the water",
+        () => notes.some(n => /Clear ahead again/.test(n)) && guardLevel === "clear",
+        () => "level " + guardLevel + ", notes " + JSON.stringify(notes));
+}
+{
+  // 21b. item 3: PAUSED on the guard's hold, the set carrying her in - back on station at the hold's own point
+  surveying(7, [PARKED()]); frame(); nowHolding();
+  clock += 5000; aisPolledAt = clock; frame();
+  S.run = "paused"; pausedSetToward(1.0);
+  sent = []; notes = [];
+  frame();
+  const first21b = paths().slice(), lvl21b = clearance.level;
+  frame(); clock += 1000; aisPolledAt = clock; frame();
+  const again21b = paths().slice();
+  check("21b. PAUSED on the guard's hold with the set carrying her toward her (the ladder reads HOLD): the rung RESUMES the hold she is paused on - /api/cmd/start, back to its own point - and does NOT post a fresh hold where the set has carried her; it says so, and asks once, not every frame",
+        () => lvl21b === "hold" && JSON.stringify(first21b) === '["/api/cmd/start"]' && JSON.stringify(again21b) === '["/api/cmd/start"]'
+              && notes.some(n => /BACK ON STATION/.test(n) && /not re-held where the set has carried her/.test(n)),
+        () => "level " + lvl21b + ", first frame sent " + JSON.stringify(first21b) + ", two more " + JSON.stringify(again21b)
+            + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 90))));
+  // 21c. ... with a plan STAGED a Start would apply it: the old answer, a hold at her present position, paced
+  surveying(7, [PARKED()]); frame(); nowHolding(); clock += 5000; aisPolledAt = clock; frame();
+  S.run = "paused"; pausedSetToward(1.0); S.plan_staged = true; sent = [];
+  frame(); const staged21c = paths().slice(); frame(); const staged21c2 = paths().slice();
+  check("21c. ... but with a plan STAGED on the vessel (a Start would apply it, not resume the hold) the rung holds her where she is, as it always did - and paced, not every frame",
+        () => JSON.stringify(staged21c) === '["/api/cmd/hold"]' && JSON.stringify(staged21c2) === '["/api/cmd/hold"]',
+        () => "first " + JSON.stringify(staged21c) + ", next frame " + JSON.stringify(staged21c2));
+  // 21d. ... and a STOPPED boat is neither put back nor re-held
+  surveying(7, [PARKED()]); frame(); nowHolding(); clock += 5000; aisPolledAt = clock; frame();
+  S.run = "stopped"; pausedSetToward(1.0); sent = [];
+  frame(); clock += 1000; aisPolledAt = clock; frame();
+  check("21d. ... and a STOPPED boat drifting the same way is neither put back nor re-held: Stop ends the hold, and only the in-extremis rung acts on her then",
+        () => clearance.level === "hold" && sent.length === 0,
+        () => "level " + clearance.level + ", sent " + JSON.stringify(paths()));
+}
+{
+  // 21e. item 1's other half: the resume that ends the hold ends its record
+  surveying(7, [PARKED()]); frame(); nowHolding(); clock += 10000; aisPolledAt = clock; frame();
+  const acted21e = guardActedAt, lvl21e = guardLevel;
+  sent = [];
+  aisAroundNow(); await settle();
+  check("21e. the way round that ends the hold ends its record - the hold rung's latch and the ladder's level reset - so the new track is judged afresh: a HOLD on it is a first action, not 'the hold was not taken - re-sending'",
+        () => acted21e > 0 && lvl21e !== "clear" && paths().includes("/api/cmd/start") && guardActedAt === 0 && holdWant === null && guardLevel === "clear",
+        () => "before: acted " + acted21e + ", level " + lvl21e + "; after: sent " + JSON.stringify(paths()) + ", acted " + guardActedAt
+            + ", holdWant " + JSON.stringify(holdWant) + ", level " + guardLevel);
+}
+{
+  // 21f. item 1: the hold's speed - coming onto station is not a transit
+  surveying(7, []);
+  S = { ...S, behavior: "hold", status: { ...S.status, holding: false, sog_kn: 0.5, env_set_kn: 0 } };
+  const roleCalm = speedRole(), keyCalm = roleSpeed(roleCalm);
+  S = { ...S, status: { ...S.status, env_set_kn: 5.0, env_set_deg: 90 } };     // stronger than this world's LOW (4 kn)
+  const keySet = roleSpeed(speedRole());
+  S = { ...S, behavior: "goto", status: { ...S.status, env_set_kn: 0 } };
+  const roleGoto = speedRole(), keyGoto = roleSpeed(roleGoto);
+  check("21f. a HOLD coming onto station takes the HOLD role - the slowest speed that makes way: LOW in calm water, the next up in a set LOW cannot beat - never the transit speed, which a Go-To's transit keeps",
+        () => roleCalm === "hold" && keyCalm === "low" && keySet === "survey" && roleGoto === "transit" && keyGoto === "high",
+        () => "hold: role " + roleCalm + ", calm " + keyCalm + ", in a 5 kn set " + keySet + "; Go-To: role " + roleGoto + ", " + keyGoto);
 }
 
 Date.now = realNow;

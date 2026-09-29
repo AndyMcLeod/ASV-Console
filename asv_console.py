@@ -3807,8 +3807,24 @@ class SimVcu(VcuLink):
                 target_kn = 0.0                    # arrived - hold position
                 self._hold_wants_route = False
             elif self._hold_clear_m is None or dist_h <= self._hold_clear_m:
-                self.heading = _turn_toward(self.heading, brg_h, MAX_TURN_RATE_DEG_S * dt)
-                target_kn = SPEED_KN["low"]
+                # ⚠⚠ THE RE-APPROACH HAS TO MAKE WAY AGAINST THE SET (2026-09-29). It was driven at LOW, bow
+                # straight at the hold point - and the small-class boat's LOW is 1.5 kn. In Andy's 1.75 kn set
+                # off FRIGGA that is 0.25 kn LOST over the ground on every re-approach: measured in his log,
+                # holding 48 m off her, the station crept 0.1 m/s toward her for as long as she held (53.9 m to
+                # 48.8 m in 41 s, then on), which is the drift a hold exists to stop. Now the slowest speed that
+                # beats the set by HOLD_MAKES_WAY_KN - the page's own margin for a slow-down that still makes way
+                # (slowestMakingWayKey) - and the bow CRABBED so the ground track runs at the point, the same
+                # drift-triangle feedforward the line-follower uses. Calm water is LOW, exactly as before; the
+                # hold radius and the certified disc are untouched.
+                de, dn = self._drift_en
+                desired = brg_h
+                if de or dn:
+                    v_thru = max(0.4, self.sog_kn * 0.514444)
+                    chi = math.radians(desired)
+                    d_cross = de * math.cos(chi) - dn * math.sin(chi)   # set, + = right of the way back
+                    desired -= math.degrees(math.asin(clamp(d_cross / v_thru, -0.9, 0.9)))
+                self.heading = _turn_toward(self.heading, desired, MAX_TURN_RATE_DEG_S * dt)
+                target_kn = hold_speed_kn(math.hypot(de, dn))
                 self._hold_wants_route = False
             else:
                 target_kn = 0.0                    # beyond the certified water: no blind drive
@@ -4105,6 +4121,24 @@ def _turn_toward(cur, target, max_step):
     d = ((target - cur + 540.0) % 360.0) - 180.0
     d = clamp(d, -max_step, max_step)
     return (cur + d) % 360.0
+
+
+# The station-keep's re-approach speed: the slowest of the vessel's speeds that beats the modelled set (leeway plus
+# stream, m/s) by this much, so a boat set off her hold point always makes good her way back to it. The page's own
+# margin for a slow-down that still makes way (slowestMakingWayKey's SLOW_MAKES_WAY_KN).
+HOLD_MAKES_WAY_KN = 0.5
+
+
+def hold_speed_kn(set_ms):
+    """Through-water speed (kn) for the way back onto station in a set of `set_ms` m/s: LOW in calm water, as it always
+    was; the next speed up once LOW no longer beats the set by HOLD_MAKES_WAY_KN; the fastest when none does - the
+    most she has, and a boat that still cannot hold is set off and says so (hold_wants_route) at the disc's edge."""
+    need = max(0.0, set_ms) * 1.9438 + HOLD_MAKES_WAY_KN
+    for k in ("low", "survey", "high"):
+        kn = SPEED_KN.get(k)
+        if kn is not None and kn > need:
+            return kn
+    return max(SPEED_KN.values()) if SPEED_KN else 0.0
 
 
 class RealVcu(VcuLink):

@@ -522,6 +522,26 @@ released four seconds later, and at 30 s the way round went, started the remaind
 inside a quarter-second window, and neither that run nor a control on the previous version landed
 one, so it is pinned by replaying his exact sequence (`tests/ais_avoid.js` 20-20h).
 
+**And the hold the guard commands now stands until she leaves it** (29 September, the three items his
+FRIGGA run left open). The guard no longer ends its own hold because a station-keeping boat reads
+clear. That frame used to say "Clear ahead again", hand the throttle back and wipe the hold rung's
+record of having acted, so every later frame reading HOLD was a first action - the one that
+undid the way round, and each Pause answered by a fresh hold where the set had carried her, 48 m
+off FRIGGA, then 41, 33, 25. The hold now ends only with a new commanded motion: the resume,
+which also ends the rung's record, or any new plan. A hold coming onto station is flown at the
+slowest speed that makes way against the set, not the transit speed that used to leave her at
+HIGH for the whole hold. A **Pause** on the guard's hold no longer ratchets her in: if the set
+carries her toward the hazard, the guard resumes the hold she is paused on, which drives her back
+to its own point ("BACK ON STATION"). With a plan staged on the vessel it holds her where she is,
+as before, because a Start would apply the staged plan; a **Stop** ends the hold, and then only
+the in-extremis rung acts. In the **simulator** station-keeping no longer creeps: the way back
+onto station was driven at LOW, which is 1.5 kn on the small-class boat, so a 1.75 kn set carried
+her toward FRIGGA at about 0.1 m/s for as long as she held. It now takes the slowest speed that
+beats the set by half a knot, with the bow crabbed so her track runs home (`hold_speed_kn` in
+`asv_console.py`; a real vessel's station-keeping is its own). Rehearsed on a throwaway console
+with his line, boat and set and FRIGGA on the line: held within 2 m of her point for 20 s where she
+used to creep, and paused, she drifted 4.7 m toward FRIGGA before the guard put her back on station.
+
 **Avoidance you can see and trigger** (2026-09-27, Andy: "There is no button or right-click
 selection to initiate or manually avoid an AIS target"). Three additions, none of which changes
 the automatic answer above. **Right-click a contact** — her red hull on the chart — and the

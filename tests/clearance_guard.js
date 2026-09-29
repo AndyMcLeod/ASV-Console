@@ -751,7 +751,7 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      // the tighter way round (2026-09-28): unreached here (no episode), declared so a later check cannot trip on it
                      + grab(H, "sameContact") + NL2 + grab(H, "aisHerPoly") + NL2 + grab(H, "koRoundHer") + NL2 + grab(H, "tautRoundHer") + NL2
                      // a held resume in flight has her (2026-09-28): never in flight in this world, so the rungs always act
-                     + H.match(/const HELD_RESUME_OWNS_MS = [^;]*;/)[0] + " let heldResumingAt = 0, guardMoved = 0, guardMovedHow = null;" + NL2
+                     + H.match(/const HELD_RESUME_OWNS_MS = [^;]*;/)[0] + " let heldResumingAt = 0, guardMoved = 0, guardMovedHow = null, holdBackAt = 0;" + NL2
                      + grab(H, "heldResumeOwns") + NL2 + grab(H, "guardMove") + NL2
                      + "let heldResuming = false; const patClipBufM = () => nogo.buffer || 0; async function resumeHeldSurvey(){}"
                      + " const LINE_MATCH_M = 5; const onLineM = () => false; const legOfLine = () => null;" + NL2

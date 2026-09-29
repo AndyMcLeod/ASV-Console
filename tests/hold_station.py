@@ -354,6 +354,79 @@ check("7i. ... and the tick itself makes no way with no leg left and no hold to 
       peak < 0.05, "peak %.2f kn at waypoint 1 of 1, not holding" % peak)
 
 
+# 7k. A SET STRONGER THAN LOW (2026-09-29, FRIGGA). The re-approach was driven at LOW with the bow straight at the
+#     hold point, so in a set LOW could not beat every re-approach LOST ground and the station crept down-set for as
+#     long as she held: 0.1 m/s toward FRIGGA in his 1.75 kn set, the small-class boat's LOW being 1.5 kn. Now the
+#     slowest speed that beats the set by HOLD_MAKES_WAY_KN, the bow crabbed onto the way back. The stream here is
+#     LOW + 0.25 kn, whatever vessel the module loaded, so the old re-approach loses exactly his 0.25 kn.
+def _hold_in(kn, set_deg, secs):
+    v, _ = _holding_boat(None)                          # no disc: the direct drive everywhere
+    _C.CURRENTS = _FakeCurrents(kn, set_deg)
+    worst = thru = 0.0
+    tel = None
+    for _ in range(int(secs / 0.1)):
+        tel = v.tick(0.1)
+        worst = max(worst, tel["off_station_m"] or 0.0)
+        thru = max(thru, v.sog_kn)
+    return {"worst": worst, "end": tel["off_station_m"] or 0.0, "thru": thru, "holding": tel["holding"]}
+
+
+LOW = _C.SPEED_KN["low"]
+strong = _hold_in(LOW + 0.25, 272.0, 120.0)
+check("7k. in a set stronger than LOW the station-keeping boat HOLDS - two minutes in a stream of LOW + 0.25 kn, "
+      "never more than 6 m off her point (the LOW re-approach lost ground on every return: measured, 20 m in the same "
+      "two minutes on this vessel, and 17.5 m for the small-class boat in his 1.75 kn set) - because the way back is "
+      "driven at the slowest speed that beats the set",
+      strong["holding"] and strong["worst"] < 6.0 and strong["end"] < 6.0
+      and strong["thru"] > LOW + 0.25 + _C.HOLD_MAKES_WAY_KN - 0.05,
+      "stream %.2f kn against LOW %.1f kn: %.1f m off at the worst, %.1f m at the end; the way back driven at up to "
+      "%.2f kn through the water" % (LOW + 0.25, LOW, strong["worst"], strong["end"], strong["thru"]))
+calm = _hold_in(1.0, 90.0, 60.0)
+# (No bound on the distance here: with the set behind her bow a slow-turning hull strays well past the hold radius
+# while it comes round - the DriX, at 20 deg/s, 12.9 m - and it did exactly that before this change too. What this
+# pins is the SPEED: nothing faster than LOW where LOW does the job.)
+check("7l. ... and where LOW does beat the set by the margin, the way back is still flown at LOW, as it always was",
+      calm["holding"] and LOW - 0.05 < calm["thru"] <= LOW + 0.01,
+      "a 1 kn stream: the way back at up to %.2f kn (LOW %.1f), %.1f m off at the worst"
+      % (calm["thru"], LOW, calm["worst"]))
+# 7m. THE MARGIN: a stream LOW beats by only 0.25 kn - a way back at a quarter of a knot over the ground - takes the next
+#     speed up, because a slow-down "that makes way" is one that beats the set by HOLD_MAKES_WAY_KN (the page's rule).
+narrow = _hold_in(LOW - 0.25, 272.0, 60.0)
+check("7m. ... and where LOW beats the set by LESS than the margin (a stream of LOW - 0.25 kn) the way back takes the next "
+      "speed up: a quarter of a knot over the ground is not making way",
+      narrow["holding"] and narrow["thru"] > LOW + 0.1,
+      "stream %.2f kn against LOW %.1f: the way back at up to %.2f kn, %.1f m off at the worst"
+      % (LOW - 0.25, LOW, narrow["thru"], narrow["worst"]))
+
+
+# 7n. THE CRAB: put 15 m ACROSS the set from her point (north of it, the set running west), the way back is aimed so
+#     the GROUND track runs home - measured, the DriX in a stream of LOW - 0.5 kn is carried 3.1 m down-set of the line
+#     home with the crab and 6.1 m with the bow straight at the point, and is back in 17.6 s rather than 24.9.
+def _across(kn, secs=60.0):
+    v, _ = _holding_boat(None)
+    v.lat = HP["lat"] + 15.0 / _C.M_PER_DEG_LAT
+    v.lon = HP["lon"]
+    v.heading = 90.0
+    _C.CURRENTS = _FakeCurrents(kn, 270.0)
+    worst_w = 0.0
+    back = None
+    for k in range(int(secs / 0.1)):
+        tel = v.tick(0.1)
+        de = (v.lon - HP["lon"]) * _C.M_PER_DEG_LAT * _math.cos(_math.radians(HP["lat"]))
+        worst_w = max(worst_w, -de)
+        if back is None and (tel["off_station_m"] if tel["off_station_m"] is not None else 99.0) < 2.5:
+            back = k * 0.1
+    return worst_w, back
+
+
+w7n, back7n = _across(LOW - 0.5)
+check("7n. put 15 m across the set from her point, the way back is CRABBED onto the line home: carried under 4.5 m "
+      "down-set of it (the bow straight at the point let the set carry her 6.1 m) and back on station",
+      w7n < 4.5 and back7n is not None,
+      "a %.2f kn set across the way back: carried %.1f m down-set at the worst, back within 2.5 m at %s s"
+      % (LOW - 0.5, w7n, "%.1f" % back7n if back7n is not None else "never"))
+
+
 # --- 8-13: the engine over a real console ------------------------------------------- #
 def free_port():
     s = socket.socket()

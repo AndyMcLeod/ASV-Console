@@ -1307,6 +1307,14 @@ function roleSpeed(role){
   // `mission.speed || "survey"` on the load path, so the default departure speed would have
   // been the SURVEY speed - the opposite of the rule - with no operator action at all.
   if(role === "depart") return "low";
+  // ⚠ `hold` IS NOT THE OPERATOR'S TO SET EITHER (2026-09-29, FRIGGA): a hold at the present position - the guard's,
+  // or the Hold button's - is a station-keep, not one of Andy's four transits, and it was classified as a transit
+  // for the instant between the hold command and her arrival on station. That instant is when the governor acts
+  // (it stands down once she reports holding), so it commanded the TRANSIT speed - high, 6 kn - and that is the
+  // speed she then held at for the rest of the hold: his log, spd high while station-keeping 40 m off FRIGGA. A
+  // hold is flown at the slowest speed that still makes way against the set, which is what a way back onto
+  // station needs and no more.
+  if(role === "hold") return slowestMakingWayKey(setMsNow()) || "low";
   const s = (mission.speeds || {})[role];
   return (s && V.SPEED_KN[s] != null) ? s : (mission.speed || "survey");
 }
@@ -2127,6 +2135,9 @@ function guardTrack(p, vel, drift){
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
 }
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
+// When the hold rung last put a boat PAUSED on its own hold back on station (the Start that resumes it), so one
+// refused or lost Start costs one re-send per SLOW_ANSWER_MS rather than a stream of them (2026-09-29).
+let holdBackAt = 0;
 // EVERY STOP, HOLD OR ESCAPE THE GUARD POSTS, counted, and what it was (2026-09-28, FRIGGA). resumeHeldRun asks
 // whether the guard moved her while it was in flight - before its upload, before its Start and after it - and
 // will not Start over the guard's own maneuver, nor announce a resume the vessel is not flying. A count, not a
@@ -3388,6 +3399,21 @@ function clearanceGuard(){
 
   if(a.level === "clear"){
     if(guardLevel !== "clear"){
+      // ⚠⚠ BUT A HOLD THE GUARD COMMANDED IS ITS ANSWER, NOT A SITUATION THAT HAS CLEARED (2026-09-29, FRIGGA).
+      // Andy's console, held 48 m off FRIGGA in a 1.75 kn set: six seconds into the hold this branch read the
+      // STATION-KEEPING boat as clear - the counterfactual projects the plan's speed along whichever way her bow
+      // points, and a station-keep's bow points up-set, away from the hazard - and released everything: "Clear
+      // ahead again (43.3 m) — speed back to high (transit)", the governor handed the throttle, and the hold rung's
+      // own record of having acted wiped. With that record gone every later frame reading HOLD was a FIRST action:
+      // the one 51 ms after the way round's upload that replaced it, and each Pause answered by a fresh hold where
+      // the set had carried her - 48 m, 41 m, 33 m, 25 m. While she is on the hold the guard commanded (arriving,
+      // on station, paused or stopped on it) the situation stands until a new commanded motion ends it: the resume
+      // (which now ends the record itself) or any new plan (setPlanIntent). Nothing is released here.
+      if(S && S.behavior === "hold" && guardActedAt > 0){
+        renderGuardBar(null, c);
+        setViolations([]);
+        return c;
+      }
       // ⚠ RELEASING ON THE TEST THAT TRIGGERED WOULD OSCILLATE, because slowing changes
       // the very quantity being tested. Slow -> the projected entry moves past the horizon
       // -> "clear" -> speed restored -> the entry collapses back inside it -> slow again,
@@ -3738,7 +3764,44 @@ function clearanceGuard(){
     // ("the rung above spends the escalation"), and the helm rung already replaced `escalated`
     // with an episode test for exactly this reason - this is the same swap one rung down.
     // `guardActedAt` was already written here and read nowhere; now it is the test.
-    if(!guardActedAt || lieuFailed || holdUntaken){
+    //
+    // ⚠⚠ PAUSED ON ITS OWN HOLD, WITH THE SET CARRYING HER IN: BACK ON STATION, NOT A NEW HOLD WHERE SHE DRIFTED
+    // (2026-09-29, FRIGGA). On Andy's console each Pause stopped the prop, the set carried her toward FRIGGA, and
+    // this rung answered with /api/cmd/hold - "station-keeping at PRESENT position" - so every Pause moved the hold
+    // point down-set by however far she had drifted: 48 m off her, then 41, 33, 25. The hold she is paused on
+    // already names its point, and resuming it (Start: "Resumed.") drives her back to that point rather than
+    // keeping her where the set left her. So while she is paused on the guard's own hold and the water reads HOLD,
+    // the rung resumes it. Never a stopped boat: Stop ends the hold, and only the in-extremis rung acts on her
+    // then. A held resume in flight pauses her itself, and the rungs stand by for it (heldResumeOwns).
+    //
+    // ⚠ BUT NOT WITH A PLAN STAGED ON THE VESSEL: a Start would APPLY that plan, not resume the hold. The one
+    // answer that keeps her off the hazard there is the hold rung's own, at her present position - which replaces
+    // the staged plan - and that is the rung below, as it always was: a held resume stalled past its stand-by after
+    // its upload, or an operator's upload while she was paused. Both paths are paced at SLOW_ANSWER_MS.
+    const pausedOwn = !!(S && S.run === "paused" && S.behavior === "hold") && guardActedAt > 0;
+    const backDue = pausedOwn && Date.now() - holdBackAt > SLOW_ANSWER_MS;
+    if(pausedOwn && !S.plan_staged){
+      if(backDue){
+        holdBackAt = Date.now();
+        guardMove("put her back on station");
+        cmd("/api/cmd/start").then(r => {
+          if(took(r)) return;
+          holdBackAt = 0;                                  // not taken: free to ask again next frame
+          const say = notTookSay(r, "BACK ON STATION");
+          if(say) showBanner(say + " — she is still PAUSED and the set is carrying her toward "
+            + (c.kind || aisKind || "a keep-out") + ". Resume her from the command bar, or take the RC transmitter.");
+          render();
+        });
+        flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s down-set of her while she is PAUSED on the guard's hold — "
+          + "BACK ON STATION: the hold she was paused on is resumed at its own point, not re-held where the set has "
+          + "carried her. Stop ends the hold; then only the in-extremis rung acts on her.");
+        if(planIntent) planIntent.why.push({t:"warn", s:"PAUSED ON THE GUARD'S HOLD with " + (c.kind || aisKind || "a keep-out")
+          + " " + (a.tEntry||0).toFixed(0) + " s down-set - the hold resumed at its own point rather than re-held where she drifted"});
+      }
+      return c;
+    }
+    if(!guardActedAt || lieuFailed || holdUntaken || backDue){     // backDue here: paused with a plan STAGED
+      if(backDue) holdBackAt = Date.now();
       // ⚠ CAPTURED BEFORE THE RUNG WRITES, not after - the snapshot exists so a refusal can
       // put these back, and one taken afterwards restores the rung's own new values, which
       // is no restore at all. (Caught by check 15z7 going red on exactly that.)
@@ -6361,6 +6424,10 @@ function currentActivity(){
   // legs are sensor work, not a way of getting somewhere. So it takes the SURVEY speed -
   // the alternative is a sensor run flown at transit speed because nobody named it.
   if(beh === "search") return {activity:"surveying", surveying:true, detail:why.search, role:"survey"};
+  // A HOLD ON ITS WAY ONTO STATION (2026-09-29): the hold point is where she was when it was commanded, so this is
+  // the tick or two before she reports holding - and it is the moment the governor acts. The `hold` role, not the
+  // transit one (see roleSpeed).
+  if(beh === "hold") return {activity:"transiting", surveying:false, role:"hold", detail:"coming onto station at the hold point"};
   // goto · rth · transit - and the RTH that CHAINS after a survey arrives here too, which
   // is Andy's "after the survey to home".
   return {activity:"transiting", surveying:false, role:"transit", detail: why[beh] || beh || "under way"};
@@ -14022,6 +14089,11 @@ async function resumeHeldRun(opts){
                       + " plan, not the remainder", began === "hold" ? "station-keeping" : "on that plan");
   const left = tail.length;
   guardHeld = null;
+  // AND THE HOLD RUNG'S RECORD ENDS WITH THE HOLD (2026-09-29). The clear branch no longer releases it while she
+  // station-keeps on the guard's own hold - that hold is the answer, not a cleared situation - so the resume that
+  // ends the hold, a new commanded motion, ends its record, and the ladder judges the new track afresh: a HOLD on it
+  // is a first action, not a "hold not taken - re-sending" about a hold she was meant to leave.
+  guardActedAt = 0; holdWant = null; guardLevel = "clear"; holdBackAt = 0;
   if(at){
     // The contact episode, if one was open, is answered - by the operator or by the console.
     const ep = aisAvoid; aisAvoid = null;
