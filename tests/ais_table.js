@@ -636,6 +636,77 @@ check("8. the row template provides the marker and name spans the patch writes t
         + "no-op, or 6-6d's grace is gone with it");
 }
 
+// ── 23. WHICH WAY THE LAYER DRAWS A SHIP: THE KEEP-OUT'S RULE, NOT HER COURSE (Andy, 2026-09-30, at the Port of Los
+//        Angeles: "The red outlines are perfectly alongside their respective pier as expected, while the green targets
+//        are rotated.") The page's own drawAIS, with the three shapes it can draw spied on - which shape, at which
+//        angle - and every rotation it makes itself (the speed stalk). The contacts are his feed round Pier 300. ──────
+{
+  const KO = require(process.env.ASV_AIS_KEEPOUT || path.join(__dirname, "..", "static", "js", "ais_keepout.js"));
+  const { hullBox } = require("../static/js/targets.js");
+  const drawn = [], stalks = [];
+  const ctxStub = { save() {}, restore() {}, translate() {}, rotate(a) { stalks.push(Math.round(a * 180 / Math.PI * 10) / 10); },
+                    beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {}, fillText() {}, arc() {}, closePath() {},
+                    setLineDash() {}, globalAlpha: 1, fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textBaseline: "" };
+  const glyphDecl = (H.match(/^const GLYPH_FWD = [^;]*;/m) || [""])[0];
+  const make = new Function("ctx", "aisShow", "aisVessels", "AIS_COL", "aisMotion", "aisDiscM", "aisPolledAt", "hullBox",
+                            "center", "zoom", "aisNote", "drawHullToScale", "drawVesselGlyph", "drawHullDisc",
+                            glyphDecl + "\n" + grab("drawAIS") + "\nreturn drawAIS;");
+  const at = { lat: 33.737, lon: -118.2669 };
+  const fleet = [
+    { ...at, mmsi: 1, name: "CMA CGM AMAZON", cat: "cargo", sog: 0.0, cog: 327.5, heading: 251, nav: 5, length: 366, beam: 48 },
+    { ...at, mmsi: 2, name: "CABRILLO", cat: "tug", sog: 0.0, cog: 223.0, heading: null, nav: 0, length: 30, beam: 10 },
+    { ...at, mmsi: 3, name: "UNDER WAY", cat: "cargo", sog: 8, cog: 90, heading: null, nav: 0, length: 100, beam: 20 },
+    { ...at, mmsi: 4, name: "CRABBING", cat: "cargo", sog: 12, cog: 95, heading: 88, nav: 0, length: 100, beam: 20 },
+    { ...at, mmsi: 5, name: "NO SIZE", cat: "tug", sog: 0.0, cog: 12.0, heading: 170, nav: 5 },
+    { ...at, mmsi: 6, name: "DRIFTER", cat: "cargo", sog: 0.6, cog: 40.0, heading: 200, nav: 5, length: 50, beam: 10 },   // moored: 0.6 kn of fix noise
+  ];
+  const drawAIS = make(ctxStub, true, fleet, { cargo: "#3c3", tug: "#333", unknown: "#999" }, KO.aisMotion, KO.aisDiscM, 0, hullBox,
+                       { lat: at.lat }, 15, "",
+                       (c, x, y, course) => drawn.push(["hull", course]),
+                       (c, x, y, course) => drawn.push(["glyph", course]),
+                       (c, x, y, col, rPx) => drawn.push(["disc", Math.round(rPx * 10) / 10]));
+  const realNow = Date.now; Date.now = () => 0;
+  try { drawAIS(() => ({ x: 100, y: 100 })); } finally { Date.now = realNow; }
+  const shapes = drawn.map(d => d[0] + (d[0] === "disc" ? "" : "@" + d[1])).join(", ");
+  check("23. the AIS layer points each ship by the KEEP-OUT'S rule: the moored AMAZON along her heading 251 (not her course noise 327.5), the stopped CABRILLO with no heading as a DISC (not along 223), a ship under way with no heading along her course, a crabbing one along her heading 88, a moored glyph along her heading 170, a moored ship whose fix wanders at 0.6 kn along her heading 200",
+        () => shapes === "hull@251, disc, hull@90, hull@88, glyph@170, hull@200",
+        () => "drawn: " + shapes);
+  check("23b. ... and the speed stalk alone follows the COURSE, and only for a ship under way: 90 and 95 - none for the four that are stopped, the moored one whose fix wanders at 0.6 kn included",
+        () => JSON.stringify(stalks) === JSON.stringify([90, 95]),
+        () => "stalk rotations " + JSON.stringify(stalks));
+  // 23d. THE KEEP-OUTS ARE DRAWN OVER THE SHIPS: pointed by one rule, a moored ship's hull lies exactly on her red
+  // outline, and drawn first the outline was painted over by it - her keep-out disappeared from the chart.
+  const RENDER_ALL = grab("render");
+  const iShips = RENDER_ALL.indexOf("drawAIS(toScreen);"), iKo = RENDER_ALL.indexOf("drawAisKeepouts(toScreen);");
+  check("23d. ... and the red keep-outs are drawn AFTER the ships, so a moored ship's outline - now lying exactly on her hull - is not painted over by it",
+        () => iShips > 0 && iKo > iShips,
+        () => "render(): drawAIS at " + iShips + ", drawAisKeepouts at " + iKo);
+  // 23e. THE HOVER TIP SAYS WHICH WAY SHE IS DRAWN, AND WHY - the page's own updateAisTip
+  const tipEl = { style: {}, innerHTML: "" };
+  const makeTip = new Function("aisShow", "dragging", "patDrag", "boundDrag", "searchDrag", "wpDrag", "roseDrag", "aisAt",
+                               "aisTypeLabel", "fmtHullM", "aisCpa", "cpaText", "aisMotion", "aisPolledAt", "$",
+                               grab("updateAisTip") + "\nreturn updateAisTip;");
+  const tipFor = (v) => {
+    const f = makeTip(true, false, false, null, false, false, false, () => v, () => "cargo", (m) => m + " m", () => null,
+                      () => "", KO.aisMotion, 0, () => tipEl);
+    const was = Date.now; Date.now = () => 0;
+    try { f({ clientX: 10, clientY: 10 }); } finally { Date.now = was; }
+    return tipEl.innerHTML;
+  };
+  const tA = tipFor({ ...fleet[0], age: 0 }), tC = tipFor({ ...fleet[1], age: 0 }), tU = tipFor({ ...fleet[2], age: 0 });
+  check("23e. ... and the hover tip says which way she is drawn and why: along her heading (AMAZON, her course marked as noise while she is stopped), as a circle with no heading (CABRILLO), along her course under way (no noise mark)",
+        () => /Drawn along her heading, 251°/.test(tA) && /COG 328° \(noise while she is stopped\)/.test(tA)
+              && /drawn as a circle: she can lie any way round/.test(tC)
+              && /Drawn along her course, 90° — under way, no heading reported/.test(tU) && !/noise while she is stopped/.test(tU),
+        () => "AMAZON: " + tA.replace(/<br>/g, " | ").slice(0, 170) + " || UNDER WAY: " + tU.replace(/<br>/g, " | ").slice(0, 120));
+  const tip = (H.match(/id="aisBtn" title="([^"]*)"/) || [])[1] || "";
+  check("23c. ... and the AIS button says it in words: the bow, the heading, the course only while under way, the circle, and that the red outline is the guard's keep-out by the same rule - not the old 'Triangles point along course' or 'Situational awareness only'",
+        () => /points the way her BOW does/.test(tip) && /course over the ground only while she is under way/.test(tip)
+              && /dashed circle/.test(tip) && /KEEP-OUT/.test(tip) && !/Triangles point along course/.test(tip)
+              && !/Situational awareness only/.test(tip),
+        () => "title: " + tip.slice(0, 160));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

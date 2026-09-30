@@ -21,6 +21,9 @@ tests/lib/console_state.py), and nothing a test does is written beside the progr
         broken flag cannot reach the operator's files, writes its plan, comms settings, port registry,
         ROC registry and session log into the state folder and nothing beside the program - and
         without the flag the same copy DOES write beside the program, so check 3 can see a write there.
+  4-4c. --mission PATH (2026-09-30): the plan alone goes to PATH - read there, saved there with its .bak1 beside it,
+        winning over --state-dir for the plan while the comms settings still land in the state folder - and a
+        PATH whose folder does not exist yet is given the folder.
 TEETH - 11 mutations RUN in a scratch clone, 11 killed, no crash:
     the plan / comms settings / port registry not moved         -> 2, 2b, 3 (each)
     the session logs / ROC registry not moved                   -> 2b, 3 (each)
@@ -323,6 +326,71 @@ check("3b. ... while the same program WITHOUT the flag writes its plan beside it
       "write there",
       lambda: up_b and plain and plain[0] == 200 and os.path.exists(os.path.join(COPY, "mission.json")),
       lambda: "came up=%s answer=%s beside the program: %s" % (up_b, plain and plain[0], beside_program()))
+
+# ── THE PLAN'S OWN FILE: --mission PATH (2026-09-30) ──────────────────────────────────────────────────────────────
+# The single-file override --ports-config and --roc-config already are, for the plan: given with --state-dir, the
+# plan goes to PATH and everything else to the state folder. SEEDED, so the file is READ as well as written - a
+# console that saved to PATH while still reading mission.json would be two plans at once.
+for n in os.listdir(COPY):                           # 3b's plan beside the program, so 4b can see a write there
+    if n.startswith("mission.json"):
+        os.remove(os.path.join(COPY, n))
+MSTATE = ConsoleState(prefix="asv_test_mission_")
+A_DIR = MSTATE.path("state")
+PLAN_FILE = MSTATE.path("jobs", "job-7", "plan.json")
+os.makedirs(os.path.dirname(PLAN_FILE))
+with open(PLAN_FILE, "w", encoding="utf-8") as f:
+    json.dump({"waypoints": [{"lat": 38.70, "lon": -75.10}, {"lat": 38.71, "lon": -75.10},
+                             {"lat": 38.72, "lon": -75.10}], "lines": []}, f)
+NEW_FILE = MSTATE.path("fresh", "deeper", "plan.json")     # its folder does not exist yet
+
+
+def jload(p):
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+m_seen, m_answers, m_said = {}, {}, ""
+port, proc, out, up_m = start(["--state-dir", A_DIR, "--mission", PLAN_FILE])
+try:
+    out.seek(0)
+    m_said = out.read()
+    if up_m:
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/mission" % port, timeout=15) as r:
+            m_seen = json.loads(r.read().decode())
+        m_answers["plan"] = post(port, "/api/mission", {"waypoints": [{"lat": 38.79, "lon": -75.16}], "lines": []})
+        m_answers["comms"] = post(port, "/api/comms", {"mode": "wifi", "host": "10.20.30.41",
+                                                       "username": "mission-test"})
+finally:
+    stop(proc)
+in_file, in_bak = jload(PLAN_FILE), jload(PLAN_FILE + ".bak1")
+check("4. a console given --mission PATH READS its plan there and SAVES it there, the plan it replaced kept beside it "
+      "(.bak1) - with --state-dir given too, so the single-file flag is seen to win for the plan",
+      lambda: up_m and ("keeps its plan in %s" % os.path.abspath(PLAN_FILE)) in m_said
+      and len(m_seen.get("waypoints") or []) == 3 and m_answers.get("plan", (0,))[0] == 200
+      and len(in_file.get("waypoints") or []) == 1 and len(in_bak.get("waypoints") or []) == 3,
+      lambda: "up=%s said-where=%s read %d wpts, saved %s; the file now %d wpts, .bak1 %d wpts"
+      % (up_m, ("keeps its plan in %s" % os.path.abspath(PLAN_FILE)) in m_said, len(m_seen.get("waypoints") or []),
+         m_answers.get("plan", (None,))[0], len(in_file.get("waypoints") or []), len(in_bak.get("waypoints") or [])))
+check("4b. ... and nothing else moved with it: no plan in the state folder or beside the program, while the comms "
+      "settings still land in the state folder",
+      lambda: up_m and not any(n.startswith("mission.json") for n in os.listdir(A_DIR))
+      and "mission.json" not in beside_program() and m_answers.get("comms", (0,))[0] == 200
+      and jload(os.path.join(A_DIR, "comms_config.json")).get("host") == "10.20.30.41",
+      lambda: "state folder %s; beside the program %s; comms %s"
+      % (sorted(os.listdir(A_DIR)) if os.path.isdir(A_DIR) else "missing", beside_program() or "nothing",
+         jload(os.path.join(A_DIR, "comms_config.json")).get("host")))
+port, proc, out, up_n = start(["--state-dir", A_DIR, "--mission", NEW_FILE, "--no-log"])
+try:
+    fresh = post(port, "/api/mission", {"waypoints": [{"lat": 38.80, "lon": -75.17}], "lines": []}) if up_n else None
+finally:
+    stop(proc)
+check("4c. ... and a --mission path whose folder does not exist yet is given the folder and starts with no plan, "
+      "as a fresh app folder does - the plan saved lands there",
+      lambda: up_n and fresh and fresh[0] == 200 and len(jload(NEW_FILE).get("waypoints") or []) == 1,
+      lambda: "came up=%s answer=%s; the file %s" % (up_n, fresh and fresh[0], jload(NEW_FILE) or "missing"))
 
 shutil.rmtree(COPY, ignore_errors=True)
 print(("\n%d CHECK(S) FAILED (%d ran)" % (fails, ran)) if fails else ("\nall checks passed (%d)" % ran))

@@ -434,7 +434,7 @@
     <button class="ctl small on" id="areaBtn" title="Show / hide the survey-area boundary overlay (persisted). It still clips the lines while hidden; editing in BND always shows it.">AREA</button>
     <button class="ctl small on" id="chrtBtn" title="Show / hide ENC chart features (shoreline, docks, depths, hazards) fetched by Punch Out">CHRT</button>
     <button class="ctl small" id="nogoBtn" title="Show / hide the ENC NOGO zones (shoreline, manmade features, water shallower than 1 m corrected). Every behavior routes clear of these. Click to toggle; established automatically at startup.">NOGO</button>
-    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Triangles point along course, colored by ship type; hover for details. Situational awareness only — needs the AIS service running.">AIS</button>
+    <button class="ctl small" id="aisBtn" title="AIS: show nearby vessels (name, position, course, speed) from the AIS service (ais_service.py, proxied at /api/ais). Colored by ship type, drawn to scale when the chart can show her, each ship points the way her BOW does: her true heading; her course over the ground only while she is under way, because a stopped ship's course is noise. A dashed circle: stopped with no heading reported — she can lie any way round. The red outline round a contact near your boat is the clearance guard's KEEP-OUT: the same hull, pointed by the same rule, dashed ahead where she will be within the look-ahead. Hover a ship for details. Needs the AIS service running.">AIS</button>
     <button class="ctl small" id="rocBtn" title="Remote Operations Centers + HOME: track each ROC (shore or ship/Mothership) from its position data stream, set the launch/recovery offset, and pick one as HOME. A ship HOME moves and Return-to-Home chases it live.">ROC</button>
     <button class="ctl small" id="clear" title="Clear the displayed track">CLR</button>
     <button class="ctl small" id="linesBtn" title="Show / hide the per-survey-line table: length, planned time and actual time, plus the ENC-routed transit time from the boat to line 1 and the RTH time from the last line home. Actuals accrue while the survey runs and are written to the session log.">LINES</button>
@@ -926,7 +926,7 @@ import { cpa as cpaOf, hullBox, KN_TO_MS } from "/static/js/targets.js";
 // broadcasts none), dead-reckoned between polls and swept over the guard's look-ahead while she is
 // under way. Pure geometry; the clearance guard below is what acts on it, and nothing else reads it.
 import { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
-         AIS_LOOKAHEAD_M, aisInReach, aisReachM } from "/static/js/ais_keepout.js";
+         AIS_LOOKAHEAD_M, aisInReach, aisReachM, aisMotion, aisDiscM } from "/static/js/ais_keepout.js";
 // What is AHEAD, and what it warrants. Pure prediction - it commands nothing; the
 // clearance guard below is the one place that decides and commands.
 // THE LAUNCH GRANT - the berth, what it covers, where it applies and when it ends. Pure
@@ -940,7 +940,7 @@ import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
          HELM_S as GUARD_HELM_S, HOLD_S as GUARD_HOLD_S } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
-import { HOLD_RADIUS_MIN_M, holdClearM, snapCapM } from "/static/js/hold.js";
+import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM } from "/static/js/hold.js";
 // Reading the CHART ITSELF, where the ENC has nothing to say. NOAA's renderer draws
 // structures its own vector service does not carry - a finger pier at New Castle, measured
 // 4.3 m from the nearest ENC object of any class. Pure: it takes pixels, and commands and
@@ -2204,6 +2204,46 @@ function guardTrack(p, vel, drift){
           hdgDeg: st.heading_deg, twMs,
           turnRateDegS: V.MAX_TURN_RATE_DEG_S,
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
+}
+/**
+ * THE ON-STATION READING, SAID IN ITS OWN TERMS (2026-09-30). On station the ladder judges the DRIFT (see onStation in
+ * clearanceGuard), and guard.js's sentences for a drift-only velocity are written for a boat with NO WAY ON - "no way
+ * on to take off", "stopping is already what she is doing" - which a boat hunting round her point at 4 kn, or arriving
+ * on it at 7, has not got. The level and every number are guard.js's, untouched; only the sentence is the station's,
+ * because a console that reports a cause it has not established is the defect this ladder's sentences were rewritten
+ * for. `onStation: true` rides along for the rungs.
+ */
+/**
+ * IS SHE ON STATION, for the ladder (2026-09-30): a running plan the vessel reports station-keeping on - a plan's end
+ * point, the operator's Hold, an escape's point - but NOT the guard's own hold (its record and the FRIGGA rules stand)
+ * and not inside a launch grant (R10). A gate on the ladder's MODEL, beside guardTrack's, which asks the same thing
+ * the other way round; the ACT gate is independent of both (clearance_guard 14).
+ */
+function guardOnStation(gNow){
+  const st = (S && S.status) || {};
+  return !!(S && S.run === "running" && st.holding) && !gNow && !(S.behavior === "hold" && guardActedAt > 0);
+}
+function onStationWhy(a){
+  if(!a || a.level === "blind") return a;
+  const why = a.level === "clear"
+      ? "on station — she is holding at her point, and the drift alone reaches nothing within " + GUARD_HORIZON_S + " s"
+    : a.level === "helm"
+      ? "on station, and the drift alone reaches within " + (a.helmBufM != null ? a.helmBufM.toFixed(1) : "half the buffer")
+        + " m of it in " + (a.tEntryDriftNear != null ? a.tEntryDriftNear.toFixed(0) : "—") + " s — under the "
+        + GUARD_HELM_S + " s a decision needs, so the hold she is on does not answer it"
+    : a.tEntryDrift === 0
+      ? "on station INSIDE the buffer — the drift does not carry her within half of it inside " + GUARD_HELM_S
+        + " s, and the hold she is on answers it: the guard commands nothing"
+    // ⚠ TWO CASES, NOT ONE (found on the live rehearsal, 2026-09-30: "reaches it in 19 s, more than the 20 s a decision
+    // needs"). HOLD rather than helm says the drift does not reach within HALF the buffer inside a decision's time - it
+    // may still reach the buffer's edge sooner than that, and then the sentence has to say which it is.
+    : a.tEntryDrift != null && a.tEntryDrift < GUARD_HELM_S
+      ? "on station — the drift alone reaches the buffer in " + a.tEntryDrift.toFixed(0) + " s but not within half of it "
+        + "inside the " + GUARD_HELM_S + " s a decision needs, and the hold she is on answers it: the guard commands nothing"
+      : "on station — the drift alone reaches it in " + (a.tEntryDrift != null ? a.tEntryDrift.toFixed(0) : "—")
+        + " s, more than the " + GUARD_HELM_S + " s a decision needs, and the hold she is on answers it: the guard "
+        + "commands nothing (her own motion is the station-keep's, not a track)";
+  return {...a, why, onStation: true};
 }
 let clearAlarmAt = 0, guardLevel = "clear", guardActedAt = 0, guardEscapeAt = 0;
 // When the hold rung last put a boat PAUSED on its own hold back on station (the Start that resumes it), so one
@@ -3530,14 +3570,35 @@ function clearanceGuard(){
   // course over the ground had the throttle handed back after RELEASE_HOLD_MS of blindness,
   // on the strength of frames that had measured nothing. A blind frame is not evidence of
   // clear water and must not advance that dwell.
-  const a = vel ? guardAssess(p, vel, drift, koG, buf, {...(trk||{}), edge: wantEdge})
-                : {level:"blind", tEntry:null,
-                   why:"no course over the ground - nothing ahead is being assessed"};
+  // ⚠⚠ ON STATION, HER OWN MOTION IS THE STATION-KEEP'S, SO THE LADDER JUDGES THE DRIFT (Andy, 2026-09-30: items 2 and 5
+  // of his list). The straight projection of a holding boat's ground velocity was called "the honest drift projection",
+  // and it is one only while she sits still: a boat hunting round her point, or arriving on it with the way still on,
+  // is being steered BACK to it, and flying that velocity on for 45 s predicts a track she will never make. Two records:
+  //   * at home after an RTH, the DriX hunting at 3.2-3.9 kn: the 45 s line reached a keep-out 89 m off and SLOW /
+  //     "Clear ahead again (89.4 m) — speed back to low (hold)" alternated every 19 s for three minutes;
+  //   * at the end of a line run at HIGH with the 1.75 kn set behind her, 0.9 m from the last waypoint - the moment the
+  //     vessel reports holding - the line at 7.7 kn read "entry in 16 s" and the hold rung HELD her at present position,
+  //     replacing the plan's own end hold, so its end action never fired: with RTH at the end she would have sat there.
+  // She overshot 5 m and came back. And the two rungs had nothing to offer her anyway: SLOW finds no speed below the
+  // hold speed she is governed at, and a hold at present position is the same station-keep with its point moved - the
+  // creep toward the hazard the guard's own hold was fixed for (THE HOLD STANDS UNTIL SHE LEAVES IT). So on station the
+  // velocity the ladder judges is the DRIFT: the helm decides on the drift exactly as before (its two tests always were
+  // the drift's), and - stronger than before - a boat sitting still is no longer read clear BEFORE the drift is tested
+  // (the vel=0 probe trap); a drift that reaches the hazard beyond a decision's worth of time reads HOLD, said as the
+  // hold she is on, and commands nothing. NOT the guard's own hold (its record and the FRIGGA rules stand, unchanged),
+  // not inside a launch grant (R10), and not without a course over the ground (still blind - a set the link does not
+  // report would be read as slack water).
+  const onStation = guardOnStation(gNow);
+  const aVel = (onStation && vel) ? drift : vel;
+  const a0 = aVel ? guardAssess(p, aVel, drift, koG, buf, {...(trk||{}), edge: wantEdge})
+                  : {level:"blind", tEntry:null,
+                     why:"no course over the ground - nothing ahead is being assessed"};
+  const a = onStation ? onStationWhy(a0) : a0;
   // WHICH WORLD THE LADDER IS ANSWERING (2026-09-25). Asked only when it is not clear, and asked of
   // the CHARTED model alone: if that reads clear, the contact is the whole of it, and aisReturnTick
   // owns the way back once she has passed. A charted feature keeps today's offer to the operator.
-  const aisCaused = aisLadder.length > 0 && !!vel && a.level !== "clear" && a.level !== "blind"
-    && guardAssess(p, vel, drift, gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko, buf,
+  const aisCaused = aisLadder.length > 0 && !!aVel && a.level !== "clear" && a.level !== "blind"
+    && guardAssess(p, aVel, drift, gNow ? grantFilter(nogo.ko, gNow.covered) : nogo.ko, buf,
                    {...(trk||{}), edge: false}).level === "clear";
   const aisKind = aisCaused ? aisNearestKind(p, aisLadder) : null;
   // HER, for the episode: the contact at the point the ladder is acting on (the assessment's entry point), which
@@ -3624,7 +3685,9 @@ function clearanceGuard(){
       // the hazard came back inside the horizon, and the ladder read SLOW again ten seconds later. Andy's 08:34
       // log has that loop running for fifty minutes. The question is about the speed the release RESTORES, and
       // it is the same question whoever slowed her.
-      if(vel){
+      // ⚠ BUT NOT ON STATION (2026-09-30): there the release restores no plan speed - the hold role governs her - and
+      // the ladder judges the drift, which the throttle does not change, so there is no counterfactual to ask.
+      if(vel && !onStation){
         const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
         const velBack = restoreVel(vel, drift, back);
         // ⚠⚠ AND OF THE CONTACTS IN REACH AT THAT SPEED (2026-09-29). The reach grows with the speed on a hull that
@@ -3655,7 +3718,9 @@ function clearanceGuard(){
         // unmoved 13 m off a pier - because the rung's phantom route reads clear by
         // construction. The LADDER really has let go. The THROTTLE has not, and saying it has
         // is the console telling the operator the episode is over while it is running.
-        flashNote("Clear ahead again (" + c.m.toFixed(1) + " m) — " + (escapeThrottle
+        flashNote((onStation ? "On station (" + c.m.toFixed(1) + " m off) — the drift reaches nothing, so the guard "
+                               + "stands down; "
+                             : "Clear ahead again (" + c.m.toFixed(1) + " m) — ") + (escapeThrottle
           ? "the escape still has the throttle at high until you command her somewhere."
           : resumeSlow
           ? "still at LOW on your authority; RELEASE LOW on the bar gives the throttle back to the plan's speed."
@@ -3694,7 +3759,10 @@ function clearanceGuard(){
   // second before "ROUTED ROUND" reads as the console holding her, which is exactly what it no longer does there
   // (heldResumeOwns). The bar still draws the frame; the banner says it on the first frame after, if it stands.
   const resumeOwns = act && heldResumeOwns(a.level, Date.now());
-  if(a.level !== "blind" && !resumeOwns && (escalated || Date.now() - clearAlarmAt > 8000)){
+  // ⚠ AND ON STATION A HOLD IS A STATE TOO (2026-09-30): she is not standing into it, she is holding off it - the bar
+  // carries it, and the banner says it once, when it rises. In extremis still repeats: that is an occurrence.
+  const repeats = !onStation || a.level === "helm";
+  if(a.level !== "blind" && !resumeOwns && (escalated || (repeats && Date.now() - clearAlarmAt > 8000))){
     clearAlarmAt = Date.now();
     const t = a.tEntry != null ? " in " + a.tEntry.toFixed(0) + " s" : "";
     showBanner("⚠ " + a.level.toUpperCase() + " — " + (c.kind || aisKind || "a keep-out") + " ahead"
@@ -3820,6 +3888,7 @@ function clearanceGuard(){
   }
   // ── RUNG 2: SLOW. Buys time and shortens the stopping distance. ───────────────────
   if(a.level === "slow"){
+    if(onStation) return c;                // she is holding: there is no speed below the hold speed to take off
     if(settling) return c;                 // a deviation is in flight; it answers this
     if(escaping) return c;                 // an escape is in flight; slowing it is the opposite of it
     if(overridden && !overSlow) return c;  // a full PROCEED keeps the speed; a low one does not
@@ -3862,6 +3931,10 @@ function clearanceGuard(){
   // the hold point, so the console's only way back is to re-run from waypoint one), and
   // beside a structure it hands a stopped hull to the tide.
   if(a.level === "hold"){
+    // ON STATION the hold she is on IS the answer (2026-09-30): a hold at present position is the same station-keep with
+    // its point moved - toward the hazard, the way the drift is carrying her - and it replaced a plan's own end hold, so
+    // the plan's end action (an RTH) never fired. The reading stands on the bar; the helm below still acts.
+    if(onStation) return c;
     if(settling) return c;                 // a deviation is in flight; it answers this
     if(escaping) return c;                 // an escape is in flight; a hold here cancels it (KLEOS, 2026-09-27)
     if(overridden) return c;               // the operator has said proceed; do not stop them
@@ -5835,9 +5908,13 @@ function render(){
   const toScreen = (lat,lon)=>{ const p = worldPx(lat,lon,zoom); return {x:p.x-o.x, y:p.y-o.y}; };
   if(encShow) drawENCCached(toScreen, w, h, o);   // cached layer; see drawENCCached for the key
   drawNogoCached(toScreen, w, h, o);               // cached too; see drawNogoCached (2026-09-29)
-  drawAisKeepouts(toScreen);                       // the contacts the guard treats as keep-outs (2026-09-25)
   drawMarks(toScreen);
   drawAIS(toScreen);                               // nearby AIS vessels (under own track/plan/boat)
+  // ⚠ THE KEEP-OUTS OVER THE SHIPS, NOT UNDER THEM (2026-09-30). While the AIS layer pointed a moored ship along her
+  // course noise the two drawings of her fell apart and both showed; pointed by the same rule (aisMotion) her hull lies
+  // exactly on her red outline, and drawn first the outline was painted over by her own hull - a moored ship's
+  // keep-out disappeared. Over the ship, the red outline stays visible on the hull it belongs to.
+  drawAisKeepouts(toScreen);                       // the contacts the guard treats as keep-outs (2026-09-25)
   if(track.length > 1){
     ctx.beginPath();
     trailScreenPath(track, zoom, o, w, h).forEach((s,i)=>{ i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); });
@@ -6076,6 +6153,21 @@ function drawHullToScale(ctx, x, y, course, col, box, mpp){
   ctx.lineWidth = 1.2; ctx.strokeStyle = col; ctx.stroke();
   // The antenna itself, so an operator can see WHERE the reported fix sits in the hull
   // rather than assuming the middle.
+  ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI*2);
+  ctx.fillStyle = glyphOutline(col); ctx.fill();
+  ctx.restore();
+}
+// A CONTACT THAT HAS NOT SAID WHICH WAY SHE LIES (2026-09-30): stopped, with no heading reported. Her hull can lie any
+// way round, so she is drawn as the keep-out models her - the disc every orientation of her fits in (aisDiscM, `rPx`
+// on screen), dashed, lightly filled, the antenna marked - rather than as a hull pointing somewhere she has not said,
+// which is what the course-first drawing did with her course noise.
+function drawHullDisc(ctx, x, y, col, rPx){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath(); ctx.arc(0, 0, Math.max(3, rPx), 0, Math.PI*2);
+  ctx.fillStyle = col; ctx.globalAlpha = ctx.globalAlpha * 0.3; ctx.fill();
+  ctx.globalAlpha = ctx.globalAlpha / 0.3;
+  ctx.setLineDash([4, 3]); ctx.lineWidth = 1.2; ctx.strokeStyle = col; ctx.stroke(); ctx.setLineDash([]);
   ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI*2);
   ctx.fillStyle = glyphOutline(col); ctx.fill();
   ctx.restore();
@@ -9578,7 +9670,14 @@ function updateAisTip(e){ const tip=$("#aisTip");
   if(v.callsign) ident.push(v.callsign);
   if(ident.length) rows.push(ident.join(" · "));
   if(v.dest) rows.push("→ "+v.dest + (v.eta ? " · ETA "+v.eta : ""));
-  rows.push(`SOG ${sog} · COG ${cog}`);
+  // WHICH WAY SHE IS DRAWN, AND WHY (2026-09-30). The hull on the chart and the red keep-out round her point by ONE rule
+  // (aisMotion), and it has three answers - said here, because a ship drawn across her berth, or as a circle, reads as
+  // a fault until it is explained. A stopped ship's course is GNSS noise, and the tip says so beside the number.
+  const mo = aisMotion(v, {now: Date.now(), polledAt: aisPolledAt});
+  rows.push(`SOG ${sog} · COG ${cog}` + (!mo.moving && v.cog != null ? " (noise while she is stopped)" : ""));
+  rows.push(mo.from === "heading" ? `Drawn along her heading, ${Math.round(mo.hdg)}°`
+          : mo.from === "course" ? `Drawn along her course, ${Math.round(mo.hdg)}° — under way, no heading reported`
+          : "No heading reported and not under way — drawn as a circle: she can lie any way round");
   const c = aisCpa(v);
   if(c) rows.push(cpaText(c));
   rows.push(`${Math.round(v.age)}s ago · ${v.srcs && v.srcs.length>1 ? v.srcs.join("+") : v.src}`);
@@ -9660,13 +9759,23 @@ function drawAIS(toScreen){
     const stale=(v.age||0)>180;
     ctx.globalAlpha = stale ? 0.45 : 1;
     const col = AIS_COL[v.cat] || AIS_COL.unknown;
-    const dir = (v.cog!=null ? v.cog : (v.heading!=null ? v.heading : null));
+    // ⚠⚠ WHICH WAY SHE POINTS IS THE KEEP-OUT'S ANSWER, NOT HER COURSE (Andy, 2026-09-30, at the Port of Los Angeles:
+    // "The red outlines are perfectly alongside their respective pier as expected, while the green targets are
+    // rotated."). This drew the hull along her COURSE OVER GROUND first, and a moored ship's course is GNSS noise, not a
+    // direction: CMA CGM AMAZON alongside Pier 300 at 0.0 kn, heading 251 - her berth - and course 327.5, drawn 76 deg
+    // across the pier while her red keep-out lay along it; 21 of the 45 contacts round the pier were drawn more than
+    // 10 deg off their own keep-out. Both drawings now ask aisMotion (ais_keepout.js): her true HEADING where she
+    // reports one; her COURSE only while she is under way; and stopped with no heading, NO direction - she can lie any
+    // way round, so she is drawn as the disc the keep-out models her as, never as a hull pointing somewhere she has not
+    // said. The speed stalk alone follows the course: the hull says where she POINTS, the stalk where she is GOING.
+    const mo = aisMotion(v, {now: Date.now(), polledAt: aisPolledAt});
+    const dir = mo.hdg;
     // THE SAME GLYPH AS THE VESSEL UNDER COMMAND, smaller. An AIS contact is a boat and
-    // points where it is going for the same reason ours does; drawing it as a different
+    // points the way it points for the same reason ours does; drawing it as a different
     // shape would have said the two were different KINDS of thing. Scaled down so the
     // operator's own vessel stays the salient one on a crowded harbour.
-    // No course and no heading = no direction to point: it is drawn bow-north and the
-    // absent speed stalk is what says the contact is not reporting a track.
+    // No direction at all (stopped, no heading) is a disc and no speed stalk: that is what
+    // says the contact has not told us which way she lies.
     // ⚠ DRAWN TO ITS REAL SIZE WHEN THE CHART CAN SHOW IT, AND ONLY THEN. Andy asked
     // (2026-09-02) for the icon to "match the relative size", and AIS gives the hull box
     // for free (message 5 / 19 / 24B). But a 300 m ship at 40 m/px is SEVEN PIXELS, and
@@ -9682,11 +9791,14 @@ function drawAIS(toScreen){
     const box = hullBox(v);
     const mpp = 156543.03392 * Math.cos(center.lat*Math.PI/180) / Math.pow(2, zoom);
     const toScale = box && (box.lengthM / mpp) > (GLYPH_FWD + GLYPH_AFT) * 0.62;
-    if(toScale) drawHullToScale(ctx, s.x, s.y, dir != null ? dir : 0, col, box, mpp);
-    else drawVesselGlyph(ctx, s.x, s.y, dir != null ? dir : 0, col, null, 0.62);
-    if((v.sog||0)>0.5 && dir!=null){                 // speed stalk, ahead of the bow
-      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(dir*Math.PI/180);
-      ctx.beginPath(); ctx.moveTo(0, -GLYPH_FWD*0.62); ctx.lineTo(0, -GLYPH_FWD*0.62 - 7);
+    if(dir == null) drawHullDisc(ctx, s.x, s.y, col, toScale ? aisDiscM(box) / mpp : GLYPH_FWD * 0.62);
+    else if(toScale) drawHullToScale(ctx, s.x, s.y, dir, col, box, mpp);
+    else drawVesselGlyph(ctx, s.x, s.y, dir, col, null, 0.62);
+    if(mo.moving){                                   // speed stalk along her COURSE, from her bow: where she is going
+      const cogDeg = ((+v.cog % 360) + 360) % 360;
+      const bowPx = (toScale && dir != null) ? box.toBowM / mpp : GLYPH_FWD * 0.62;
+      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(cogDeg * Math.PI/180);
+      ctx.beginPath(); ctx.moveTo(0, -bowPx); ctx.lineTo(0, -bowPx - 7);
       ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.stroke(); ctx.restore();
     }
     if(zoom>=12){ ctx.fillStyle = stale ? "rgba(200,215,225,0.5)" : "#c8dbe6";
@@ -11419,12 +11531,28 @@ function openChartMenu(clientX, clientY, ll){
 }
 // Each row captures the coordinate BEFORE the menu closes (closeChartMenu drops it), and
 // a disabled row is inert rather than a silently-swallowed command.
+// ⚠ AND A ROW THAT FAILS SAYS SO (2026-09-30). Most rows run an async command - Go-To, Resume from here, Route round
+// her - and this handler neither awaited nor caught them, and the page installs no unhandledrejection handler: a
+// throw was a click that did nothing, with no banner and no log line. Caught here for every row, thrown or
+// rejected, run synchronously as before (the clipboard row needs its click). A row that catches its own failures
+// (aisAroundRunning does, and says what the vessel was sent) never reaches this.
 function cmRow(id, fn){
   const el = $(id); if(!el) return;
   el.onclick = ()=>{
     if(el.classList.contains("off")) return;
-    const ll = menuLL; closeChartMenu(); if(ll) fn(ll);
+    const ll = menuLL; closeChartMenu(); if(!ll) return;
+    let r;
+    try { r = fn(ll); } catch(e){ cmRowFailed(el, id, e); return; }
+    if(r && typeof r.then === "function") r.then(null, e => cmRowFailed(el, id, e));
   };
+}
+function cmRowFailed(el, id, e){
+  const lbl = el.querySelector("span");
+  const what = ((lbl && lbl.textContent) || id).trim();
+  const msg = (e && e.message) || String(e);
+  showBanner("⚠ " + what.toUpperCase() + " FAILED — " + msg + ". The console stopped partway through it: check the "
+    + "vessel's state before trying again. The guard still watches.");
+  logClient("menu_failed", {row: id, error: msg});
 }
 cmRow("#cmMeasure", ()=>{
   setMode("measure");                              // setMode toggles, so this row is both ways
@@ -11991,6 +12119,64 @@ async function reapproachIfSetOff(s, st){
     flashNote("Set "+fmtDist(st.off_station_m||0)+" off station — re-approaching on a routed path ("+plan.route.length+" wpts).");
     render();
   } finally { reapproachBusy = false; }
+}
+// THE HOLD DISC, RE-CERTIFIED WHILE SHE HOLDS (Andy, 2026-09-30, item 7 of his list: "Re-checking the hold disc when a
+// contact moves in. It's checked only when the command is sent."). `hold_clear_m` is the water round the hold point in
+// which the vessel drives a STRAIGHT chord back to it, and it was certified once, with the command - so a contact that
+// moored inside it afterwards, or a falling tide that dried a bank into it, left her driving straight back through water
+// that was no longer clear. While she holds, this measures it again every HOLD_RECERT_MS (holdClearAt: the charted model
+// plus this frame's contacts, a moving one swept ahead) and sends the vessel the new radius when it has shrunk
+// (/api/cmd/hold_clear): beyond it she takes the way off and asks for the way back, which is routed round the contacts
+// too (reapproachIfSetOff). When the water opens again it grows back - never past the disc the hold began with, the one
+// certified with the command. A disc under the working margin a hold point needs (hold.js holdMarginM) is said once:
+// the point is crowded, and moving it is the operator's.
+const HOLD_RECERT_MS = 2000;
+let holdDiscAt = 0, holdDiscBusy = false;
+let holdDiscCeil = null;                 // {key, m, crowded}: this hold, the disc it began with, whether CROWDED was said
+async function holdDiscTick(s, st){
+  st = st || {};
+  if(!(s && s.run === "running" && st.holding && st.hold && st.hold_clear_m != null)){ holdDiscCeil = null; return; }
+  if(!(s.armed && !s.estop) || !supervising()) return;   // not under autonomous command, or a view-only tab: nothing sent
+  if(s.home_following) return;                           // a moving home is re-targeted by the chase
+  if(!nogo.ready || !nogo.ko || !nogo.frame) return;     // no model: nothing honest to measure
+  const have = +st.hold_clear_m;
+  const key = (+st.hold.lat).toFixed(6) + "," + (+st.hold.lon).toFixed(6) + "#" + (s.run_seq != null ? s.run_seq : "");
+  if(!holdDiscCeil || holdDiscCeil.key !== key) holdDiscCeil = {key, m: have, crowded: false};
+  if(holdDiscBusy || Date.now() - holdDiscAt < HOLD_RECERT_MS) return;
+  holdDiscAt = Date.now();
+  const nowM = holdClearAt(st.hold);
+  if(nowM == null || !isFinite(nowM)) return;
+  const want = Math.min(nowM, holdDiscCeil.m);
+  // hysteresis: a contact's swept hull moves every frame, and a disc re-sent for every meter of it is a stream
+  const shrink = want < have - Math.max(1, 0.05 * have);
+  const grow = want > have + Math.max(2, 0.10 * have);
+  if(!shrink && !grow) return;
+  holdDiscBusy = true;
+  try{
+    const hp = nogo.frame.toEN({lat: st.hold.lat, lon: st.hold.lon});
+    const charted = holdClearM(hp, nogo.ko, nogo.buffer || 0);
+    const byContact = charted != null && nowM < charted - 0.5;          // the contacts made the difference, not the chart
+    const q = byContact ? aisNearestPoly(hp, aisKoDrawn) : null;
+    const why = !shrink ? "the water round her hold point has opened again"
+              : byContact ? ((q && q.kind) || "a contact") + " is in the water round her hold point"
+              : "the chart's clear water round her hold point has shrunk";
+    const r = await cmd("/api/cmd/hold_clear", {hold_clear_m: want, note: why});
+    if(!took(r)) return;                                  // cmd() already said why; the next try is HOLD_RECERT_MS on
+    flashNote("HOLD DISC RE-CERTIFIED: " + fmtDist(want) + " clear round her hold point (was " + fmtDist(have) + ") — "
+      + why + ". " + (shrink ? "Set off it beyond that, she takes the way off and is routed back rather than driven straight."
+                             : "She may drive straight back within it again."));
+    if(planIntent) planIntent.why.push({t: shrink ? "warn" : "ok", s: "HOLD DISC " + (shrink ? "SHRUNK" : "RESTORED")
+      + " to " + fmtDist(want) + " (was " + fmtDist(have) + "): " + why});
+    logClient("hold_disc", {from_m: Math.round(have * 10) / 10, to_m: Math.round(want * 10) / 10,
+                            by: byContact ? "contact" : "chart", mmsi: (q && q.mmsi != null) ? q.mmsi : null});
+    const margin = holdMarginM(setMsNow());
+    if(shrink && want < margin && !holdDiscCeil.crowded){
+      holdDiscCeil.crowded = true;
+      showBanner("⚠ HOLD POINT CROWDED — " + why + ": " + fmtDist(want) + " of clear water round it, under the "
+        + fmtDist(margin) + " a hold point needs in this set. Every return beyond it is routed; hold her somewhere "
+        + "with more water, or take the RC transmitter.");
+    }
+  } finally { holdDiscBusy = false; }
 }
 // Close the loop: the selector mirrors the SERVER's setting, so the two can never drift
 // apart unnoticed. Skipped while the operator has the control open, so it can't fight a
@@ -13908,6 +14094,9 @@ async function aisAroundRunning(polys, q, why){
     return false;
   }
   aisAroundBusy = true;
+  // planning -> posting -> taken: what the catch below may say the vessel was sent. "posting" is its own state because a
+  // lost answer establishes nothing - she may have taken the way round - so it is neither "nothing was sent" nor "taken".
+  let stage = "planning";
   try {
     const g = {route: rr, idx, mark, at: {lat: asv.lat, lon: asv.lon}, leg};
     const std = patClipBufM();
@@ -13938,6 +14127,7 @@ async function aisAroundRunning(polys, q, why){
       + (via.length ? ", via " + via.length + " waypoint" + (via.length === 1 ? "" : "s") + " clear of her" : "")
       + (pin.degraded ? " (the keep-out model is not loaded: NOT certified)" : "");
     guardEdgeAt = Date.now();                 // the ladder settles while the amendment lands (the edge rung's clock)
+    stage = "posting";
     const r = await cmd("/api/cmd/amend", {route, note: "Routing round " + kind + " (" + why + "): " + said + "."});
     if(!took(r)){
       guardEdgeAt = 0;
@@ -13945,6 +14135,7 @@ async function aisAroundRunning(polys, q, why){
       showBanner('⚠ NOT ROUTED ROUND ' + kind + ' — ' + (r && r.refused ? "the amendment was REFUSED (" + r.error + ")" : "no answer to the amendment") + ". She carries on as she was; the guard still watches.");
       return false;
     }
+    stage = "taken";
     runRoute = [...rr.slice(0, idx), ...route];
     dropCornerSlow("the plan was routed round " + kind);
     flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
@@ -13954,6 +14145,26 @@ async function aisAroundRunning(polys, q, why){
               wpts: route.length, manual: true, running: true, ...(leg ? {leg: leg.behavior} : {})});
     updateMissionCard(); render();
     return true;
+  } catch(e){
+    // ⚠⚠ A THROW HERE WAS A SILENT NO-OP (2026-09-30). The chart menu calls this un-awaited (cmRow), so an error
+    // anywhere in planning the way round - the walk along the plan, the taut path, the router - became an unhandled
+    // rejection: the operator pressed "Route round her" and nothing happened, no banner, no log line, and nothing to
+    // say whether the vessel had been sent anything. What is said depends on exactly that, so it is tracked (`stage`):
+    // while planning nothing was sent; with the amendment's POST in flight a lost answer establishes nothing - she may
+    // have taken it - and the console says it cannot tell; once taken she IS flying the way round, and only the
+    // console's bookkeeping behind it failed. The settle clock is let go unless she took it.
+    const msg = (e && e.message) || String(e);
+    if(stage !== "taken") guardEdgeAt = 0;
+    showBanner('⚠ THE WAY ROUND ' + kind + ' FAILED — ' + msg + (stage === "taken"
+      ? '. The amendment WAS taken: she is flying the way round, but the console failed after it, so the chart and '
+        + 'the cards may not show it. The guard still watches.'
+      : stage === "posting"
+      ? '. The amendment\'s answer was lost, so the console cannot say whether she took the way round: watch her track. '
+        + 'The guard still watches.'
+      : '. Nothing was sent: she carries on as she was, and the guard still watches.'));
+    logClient("ais_around_failed", {kind, error: msg, sent: stage === "taken", stage, running: true,
+                                    ...(leg ? {leg: leg.behavior} : {})});
+    return false;
   } finally { aisAroundBusy = false; }
 }
 /** TEST CONTACTS (simulator only): a moored 20 x 8 m hull, SNAPPED ONTO the nearest survey line within the identify
@@ -15015,6 +15226,7 @@ function onState(s){
     doRTH({chained:true});
   }
   reapproachIfSetOff(s, st);                     // set beyond the certified water: route back
+  holdDiscTick(s, st);                           // and the certified water re-measured while she holds (2026-09-30)
   $("#dot").className = "dot " + (s.link==="ok"?"ok":(s.link==="lost"?"lost":""));
   $("#linktext").textContent = s.mode ? (s.mode+" · "+(s.link||"idle")) : (s.link||"idle");
   // ⚠ THE SERVER'S STANDING NOTE IS DELIBERATELY NOT PAINTED. `s.note` is a STATE, not an

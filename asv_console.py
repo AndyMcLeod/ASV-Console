@@ -3377,6 +3377,7 @@ class VcuLink:
     def estop(self, on): ...
     def set_neutral(self): ...
     def set_approach(self, m): ...          # live-tune the waypoint approach radius
+    def set_hold_clear(self, m): ...        # re-certify the clear disc round the hold point (2026-09-30)
     def set_speed(self, key): ...        # live-tune the commanded speed (low|survey|high)
     def set_unlimited_energy(self, on): ... # sim testing aid (no-op on real hardware)
     # True while an uploaded plan waits for start() because the link was running when it
@@ -3626,6 +3627,12 @@ class SimVcu(VcuLink):
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
+
+    def set_hold_clear(self, m):
+        """THE DISC RE-CERTIFIED WHILE SHE HOLDS (Engine.hold_clear, 2026-09-30). Only the radius changes - the hold
+        point, the plan and the run are the ones she has - and the station-keep branch reads it on its next tick: beyond
+        the new disc she takes the way off and raises `hold_wants_route`, exactly as for a disc sent with the plan."""
+        self._hold_clear_m = None if m is None else max(0.0, float(m))
 
     def set_speed(self, key):
         """Live speed change. The commanded speed used to arrive ONLY through
@@ -4219,6 +4226,7 @@ class RealVcu(VcuLink):
     def stop(self): self._blocked()
     def estop(self, on): self._blocked()
     def set_speed(self, key): self._blocked()
+    def set_hold_clear(self, m): self._blocked()
     def set_neutral(self): pass
 
 
@@ -4867,6 +4875,35 @@ class Engine:
         self._run_route(r, self.behavior,
                         "Set off station - re-approaching on a routed path (%d wpts)." % len(r),
                         hold_clear_m, continuing=True)
+
+    def hold_clear(self, hold_clear_m=None, note=None):
+        """THE HOLD DISC, RE-CERTIFIED WHILE SHE HOLDS (Andy, 2026-09-30, item 7 of his list: "Re-checking the hold disc
+        when a contact moves in. It's checked only when the command is sent.").
+
+        `hold_clear_m` is the disc round the hold point inside which the vessel drives a STRAIGHT chord back to it -
+        clear by construction, because the console measured nothing in it - and it was certified once, when the hold was
+        commanded. A contact that moors inside it afterwards, or a falling tide that dries a bank into it, left her
+        driving straight back through water that was no longer clear. The page re-measures the disc while she holds
+        (holdDiscTick) and sends the new radius here. The hold POINT, the plan and the run are untouched: only the radius
+        she may drive straight within changes, and beyond it she takes the way off and asks for a routed way back.
+
+        Gated as the re-approach is - armed, not e-stopped, the run under way, the vessel station-keeping, not chasing a
+        moving home - because a disc for a boat that is not holding is a number nothing reads."""
+        m = self._hold_clear(hold_clear_m)
+        self._require(m is not None, "hold_clear_m is required: the radius of the certified clear disc, in meters")
+        with self._lock:
+            link = self._link
+            self._require(link is not None, "not connected")
+            self._require(self.armed, "ARM before commanding the boat")
+            self._require(not self.estop, "clear E-STOP first")
+            self._require(self.run == "running", "the run is not under way (%s)" % self.run)
+            self._require(bool(self.status.get("holding")), "the vessel is not station-keeping")
+            self._require(not self._rth_follow, "a moving home is re-targeted by the chase, not here")
+            link.set_hold_clear(m)
+            self._commanded()                  # a frame read before this carries the old disc: drop it
+            self.note = "Hold disc re-certified: %.1f m clear round the hold point%s." % (
+                m, (" - " + str(note)[:200].rstrip(".")) if note else "")
+        self._push_state()
 
     def amend(self, route, note=None):
         """Deviate the RUNNING plan: replace its unflown remainder, keep everything else.
@@ -6324,6 +6361,8 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station
                 ENGINE.reapproach(body.get("route"), body.get("hold_clear_m"))
+            elif path == "/api/cmd/hold_clear":        # the hold disc re-certified while she holds
+                ENGINE.hold_clear(body.get("hold_clear_m"), body.get("note"))
             elif path == "/api/cmd/escape":            # the in-extremis guard's OWN maneuver
                 ENGINE.escape(body.get("lat"), body.get("lon"), body.get("hold_clear_m"))
             elif path == "/api/cmd/amend":             # deviate the RUNNING plan, keep the run
@@ -7296,6 +7335,32 @@ def use_state_dir(d):
     return d
 
 
+def use_mission_path(path):
+    """Keep this console's PLAN at `path` rather than mission.json (the --mission flag, 2026-09-30).
+
+    ⚠ WHY A FLAG OF ITS OWN WHEN --state-dir ALREADY MOVES THE PLAN. --state-dir moves the whole of a console's
+    state - the plan, the comms settings, the port registry, the ROC registry and the session logs - which is the
+    right tool for a harness and the wrong one for running ONE plan: a second console on a copy of the operator's
+    plan, a fixture plan for a rehearsal, a plan kept with a job's own files. That used to mean hand-copying
+    mission.json in and out of the app folder, and the OPEN list records what hand-copying cost: a 212-waypoint
+    plan lost on 2026-09-07 to a test mission POSTed over it, protected by fourteen hand-written backups rather
+    than by construction. So the plan gets the single-file override the port registry (--ports-config) and the
+    ROC registry (--roc-config) already have, and like theirs it wins over --state-dir for its own file alone.
+
+    Everything the plan writes goes with it, because each is named off MISSION_PATH at the moment it is written:
+    the .bak1..5 plan history, a .corrupt- copy and the per-writer .part. The folder is made if it is missing, as
+    --state-dir's is; a file not there yet is a first run with no plan, as a fresh app folder is."""
+    global MISSION_PATH, _MISSION_CACHE
+    path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    MISSION_PATH = path
+    with _mission_lock:
+        _MISSION_CACHE = None
+        _cache_plan_completion(None)
+    print("[state] this console keeps its plan in %s" % path, flush=True)
+    return path
+
+
 def main():
     global AIS_BASE, AIS_COLLECT_RADIUS_KM, AIS_SHOW_RADIUS_KM
     global AIS_SOURCE_ARG, AIS_NMEA_SPECS, AIS_OPENCPN
@@ -7386,13 +7451,21 @@ def main():
                          "backups), comms_config.json, ports.json, roc_config.json and the "
                          "session logs - in DIR instead of beside the program. EVERY TEST "
                          "HARNESS THAT STARTS A CONSOLE PASSES THIS (tests/lib/console_state.py). "
-                         "--ports-config and --roc-config still name their own file")
+                         "--mission, --ports-config and --roc-config still name their own file")
+    ap.add_argument("--mission", default="", metavar="PATH",
+                    help="the plan file to read and write instead of mission.json - its backups "
+                         "(.bak1..5) sit beside it. For running one plan without touching the "
+                         "operator's: a second console on a copy, a fixture for a rehearsal. Wins "
+                         "over --state-dir for the plan alone, as --ports-config and --roc-config "
+                         "do for theirs")
     args = ap.parse_args()
 
     # FIRST, before anything reads or writes state: a harness's console must never open the
-    # operator's plan, even to read it (review #16). The two single-file flags below still win.
+    # operator's plan, even to read it (review #16). The single-file flags below still win.
     if args.state_dir:
         use_state_dir(args.state_dir)
+    if args.mission:
+        use_mission_path(args.mission)
 
     # A harness that drives a real console MUST be able to keep its ROCs out of the
     # operator's registry. Without this every run of the HTTP-contract suite, which POSTs

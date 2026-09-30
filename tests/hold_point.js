@@ -437,6 +437,109 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         "with her: " + (withHer == null ? "null" : withHer.toFixed(1)) + " m; no contacts drawn: " + (without == null ? "null" : without.toFixed(1)) + " m");
 }
 
-console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
-                  : "\nall checks passed (" + ran + ")");
-process.exit(fails ? 1 : 0);
+// ── 21. THE HOLD DISC RE-CERTIFIED WHILE SHE HOLDS (Andy, 2026-09-30, item 7 of his list: "Re-checking the hold disc
+//        when a contact moves in. It's checked only when the command is sent.") - the page's own holdDiscTick, holdClearAt
+//        and koWithAis against a hull that moors in, closes, and leaves; only the wire and the words are stubbed ──────
+async function check21() {
+  const fr = planeFrame({ lat: 43.07, lon: -70.71 });
+  const OPENW = { polys: [], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const hullAt = (e0) => { const r = [{ e: e0, n: -4 }, { e: e0 + 20, n: -4 }, { e: e0 + 20, n: 4 }, { e: e0, n: 4 }];
+    return { ring: r, bb: bbOf(r), kind: "AIS: FRIGGA (20 x 8 m assumed)", mmsi: 338000001 }; };
+  const PAGE21 = fs.readFileSync(process.env.ASV_HTML || path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const decl = (name) => { const m = PAGE21.match(new RegExp("^(?:const|let|var)\\s+" + name + "\\s*=[^;]*;", "m"));
+    if (!m) throw new Error("test setup: declaration " + name + " not found (renamed?)"); return m[0]; };
+  const W = { sent: [], notes: [], banners: [], logged: [], setMs: 0, reply: () => ({ ok: true }), supervising: true };
+  const body = [
+    "let aisKoDrawn = [];",
+    "const supervising = () => W.supervising;",
+    "function cmd(p, b){ W.sent.push({ p, b }); return Promise.resolve(W.reply(p, b)); }",
+    grab(PAGE21, "took"),
+    "const flashNote = (m) => W.notes.push(m), showBanner = (m) => W.banners.push(m);",
+    "const logClient = (k, d) => W.logged.push({ kind: k, data: d });",
+    "const fmtDist = (m) => (Math.round(m * 10) / 10) + ' m';",
+    "const setMsNow = () => W.setMs;",
+    "const aisNearestPoly = (p, polys) => polys[0] || null;",
+    "let planIntent = { why: [] };",
+    decl("HOLD_RECERT_MS"), decl("holdDiscAt"), decl("holdDiscCeil"),
+    grab(PAGE21, "koWithAis"), grab(PAGE21, "holdClearAt"), "async " + grab(PAGE21, "holdDiscTick"),
+    "return { tick: holdDiscTick, setAis: (l) => { aisKoDrawn = l; }, HOLD_RECERT_MS };",
+  ].join("\n");
+  const nogo = { ready: true, ko: OPENW, frame: fr, buffer: 3 };
+  const M = new Function("nogo", "holdClearM", "aisAvoidKeepouts", "holdMarginM", "W", body)(
+    nogo, H.holdClearM, (k) => k, H.holdMarginM, W);
+  const realNow = Date.now;
+  let clock = 1_800_000_000_000;
+  Date.now = () => clock;
+  try {
+    const hp = fr.fromEN(0, 0);
+    const s = { run: "running", armed: true, estop: false, run_seq: 4, home_following: false };
+    const st = { holding: true, hold: { lat: hp.lat, lon: hp.lon }, hold_clear_m: 497 };   // open water: the cap less the buffer
+    const step = async () => { clock += M.HOLD_RECERT_MS + 1; await M.tick(s, st); };
+    const took = () => { const x = W.sent[W.sent.length - 1]; if (x) st.hold_clear_m = x.b.hold_clear_m; };   // the vessel took it
+    await step();                                                   // open water, nothing near
+    const nOpen = W.sent.length;
+    M.setAis([hullAt(41)]); await step();                           // FRIGGA moors 41 m east of her point
+    const first = W.sent.slice(), firstNote = W.notes[W.notes.length - 1] || ""; took();
+    // AT ONCE AGAIN, WITH A REAL REASON TO SEND - she has closed to 30 m (a 27 m disc, far outside the band): only the
+    // pace holds it back. (The first draft ticked again with nothing changed, and the band sent nothing paced or not -
+    // the mutation that removed the pace survived it.)
+    M.setAis([hullAt(30)]);
+    const n0 = W.sent.length; await M.tick(s, st); const paced = W.sent.length - n0;
+    M.setAis([hullAt(41)]);
+    M.setAis([hullAt(40.6)]); const nH = W.sent.length; await step();                  // she shifts 0.4 m: inside the band
+    const band = W.sent.length - nH; M.setAis([hullAt(41)]);
+    W.setMs = 0.9;                                                  // a 1.75 kn set: the working margin is 18 m
+    M.setAis([hullAt(10)]); await step(); took();                   // she closes to 10 m: CROWDED
+    M.setAis([hullAt(8)]); await step(); took();                    // and 8 m: said once, not again
+    const crowded = W.banners.filter(x => /HOLD POINT CROWDED/.test(x)).length;
+    M.setAis([]); await step(); const backTo = W.sent[W.sent.length - 1].b.hold_clear_m; took();   // she leaves
+    const backNote = W.notes[W.notes.length - 1] || "";
+    check("21. a contact that moors in the water round her hold point SHRINKS the disc the vessel holds - to her less the buffer, sent with a note naming her, said and logged - where open water sent nothing; and it is paced, not re-sent every frame",
+          nOpen === 0 && first.length === 1 && first[0].p === "/api/cmd/hold_clear"
+          && Math.abs(first[0].b.hold_clear_m - 38) < 0.6 && /FRIGGA/.test(first[0].b.note)
+          && /HOLD DISC RE-CERTIFIED: 3[78](\.\d)? m clear round her hold point \(was 497 m\)/.test(firstNote)
+          && W.logged.some(e => e.kind === "hold_disc" && e.data.by === "contact" && e.data.mmsi === 338000001) && paced === 0,
+          "open water sent " + nOpen + "; first " + JSON.stringify(first.map(x => [x.p, x.b])) + "; note '" + firstNote.slice(0, 110)
+          + "'; at once again sent " + paced);
+    check("21f. ... and a contact's hull shifting 0.4 m is inside the band: nothing re-sent (a moving hull would otherwise be a stream of discs) - and the page's state handler asks this tick every frame, beside the routed re-approach",
+          band === 0 && /reapproachIfSetOff\(s, st\);[^\n]*\n\s*holdDiscTick\(s, st\);/.test(PAGE21),
+          "0.4 m shift sent " + band + "; the state handler "
+          + (/reapproachIfSetOff\(s, st\);[^\n]*\n\s*holdDiscTick\(s, st\);/.test(PAGE21) ? "calls holdDiscTick" : "does NOT call holdDiscTick"));
+    check("21b. ... and a disc under the working margin a hold point needs in the set (18 m in 1.75 kn) is said ONCE as a CROWDED hold point - moving it is the operator's",
+          crowded === 1 && /under the 18 m a hold point needs/.test(W.banners.find(x => /CROWDED/.test(x)) || ""),
+          "CROWDED said " + crowded + " time(s): " + JSON.stringify(W.banners.map(x => x.slice(0, 120))));
+    // THE CEILING: a new hold (a new run) whose planned disc is 50 m in the same open water
+    s.run_seq = 5; st.hold_clear_m = 50;
+    const nC = W.sent.length; await step(); const ceilIdle = W.sent.length - nC;
+    M.setAis([hullAt(41)]); await step(); took();
+    M.setAis([]); await step(); const ceilBack = W.sent[W.sent.length - 1].b.hold_clear_m; took();
+    check("21c. ... and when she leaves the disc comes BACK - to the one the hold began with and no wider: 497 m for a hold certified at 497, 50 m for one certified at 50 (the open water round it is not a certificate)",
+          backTo === 497 && /may drive straight back within it again/.test(backNote) && ceilIdle === 0 && ceilBack === 50,
+          "back to " + backTo + " ('" + backNote.slice(-60) + "'); a 50 m hold in open water sent " + ceilIdle
+          + " at first, and came back to " + ceilBack);
+    // NO AUTHORITY: a view-only tab, a disarmed console, a moving home - and a boat not holding
+    const nA = W.sent.length;
+    W.supervising = false; M.setAis([hullAt(41)]); await step(); W.supervising = true;
+    s.armed = false; await step(); s.armed = true;
+    s.home_following = true; await step(); s.home_following = false;
+    st.holding = false; await step(); st.holding = true;
+    check("21d. ... and nothing is sent without the authority to send it: a view-only tab, a disarmed console, a hold that chases a moving home, or a boat not holding",
+          W.sent.length === nA, "sent " + (W.sent.length - nA) + ": " + JSON.stringify(W.sent.slice(nA).map(x => x.b)));
+    // A REFUSAL: nothing of its own said, and tried again after the pace
+    W.reply = () => ({ ok: false, refused: true, error: "the vessel is not station-keeping" });
+    s.run_seq = 6; st.hold_clear_m = 497; W.notes = [];
+    const nR = W.sent.length; await step(); await step();
+    const tries = W.sent.slice(nR).filter(x => x.p === "/api/cmd/hold_clear").length;
+    W.reply = () => ({ ok: true });
+    check("21e. ... and a REFUSED re-certification claims nothing - no RE-CERTIFIED note - and is tried again after the pace, not given up",
+          tries === 2 && !W.notes.some(n => /RE-CERTIFIED/.test(n)),
+          "tries " + tries + ", notes " + JSON.stringify(W.notes));
+  } finally { Date.now = realNow; }
+}
+
+check21().catch(e => check("21. the hold disc re-certified while she holds", false, "the check CRASHED: " + e.message))
+  .then(() => {
+    console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
+                      : "\nall checks passed (" + ran + ")");
+    process.exit(fails ? 1 : 0);
+  });

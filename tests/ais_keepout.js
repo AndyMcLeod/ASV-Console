@@ -326,5 +326,42 @@ console.log("An AIS contact as a keep-out:");
             + ", no LOW " + A.aisReachM(coast, 7 * KN, 0));
 }
 
+// ── 12. ONE RULE FOR WHICH WAY SHE POINTS - the keep-out's, and now the AIS layer's (Andy, 2026-09-30, at the Port of
+//        Los Angeles: "The red outlines are perfectly alongside their respective pier as expected, while the green
+//        targets are rotated.") The fixtures are his feed round Pier 300, as broadcast. ─────────────────────────────
+{
+  const at = { lat: 33.737, lon: -118.2669 };
+  const AMAZON = { ...at, mmsi: 1, name: "CMA CGM AMAZON", sog: 0.0, cog: 327.5, heading: 251, nav: 5, length: 366, beam: 48 };
+  const CABRILLO = { ...at, mmsi: 2, name: "CABRILLO", sog: 0.0, cog: 223.0, heading: null, nav: 0, length: 30, beam: 10 };
+  const m1 = A.aisMotion(AMAZON), m2 = A.aisMotion(CABRILLO);
+  check("12. MOORED WITH A HEADING (CMA CGM AMAZON: 0.0 kn, heading 251 - her berth - course 327.5, noise): she points along her HEADING, not her course, and she is not under way",
+        () => m1.moving === false && m1.hdg === 251 && m1.from === "heading",
+        () => JSON.stringify({ moving: m1.moving, hdg: m1.hdg, from: m1.from }));
+  check("12b. ... STOPPED WITH NO HEADING (CABRILLO: 0.0 kn, course 223 noise, no heading): NO direction - she can lie any way round - never her course",
+        () => m2.moving === false && m2.hdg === null && m2.from === null,
+        () => JSON.stringify({ moving: m2.moving, hdg: m2.hdg, from: m2.from }));
+  const under = A.aisMotion({ ...at, sog: 8, cog: 90, heading: null, nav: 0 });
+  const headed = A.aisMotion({ ...at, sog: 12, cog: 95, heading: 88, nav: 0 });
+  check("12c. ... UNDER WAY: with no heading reported she points along her course (and says so); with one, along her heading - the course is then only where she is GOING",
+        () => under.moving && under.hdg === 90 && under.from === "course" && headed.moving && headed.hdg === 88 && headed.from === "heading"
+              && Math.abs(Math.atan2(headed.vel.e, headed.vel.n) * 180 / Math.PI - 95) < 1e-6,
+        () => JSON.stringify({ under: [under.moving, under.hdg, under.from], headed: [headed.moving, headed.hdg, headed.from] }));
+  const na = A.aisMotion({ ...at, sog: 0.0, cog: 100, heading: 511, nav: 5 });           // 511: AIS for "not available"
+  const mooredDrift = A.aisMotion({ ...at, sog: 0.6, cog: 40, heading: null, nav: 5 });  // a moored ship's fix wandering
+  const slowOld = A.aisMotion({ ...at, sog: 1.0, cog: 40, heading: null, nav: 0, age: 600 });
+  check("12d. ... and the keep-out's own tests of 'under way' decide it: heading 511 (not available) is no heading; a MOORED ship's 0.6 kn of fix noise is not way; a 1 kn report 10 minutes old is a ship at anchor - none of them points along her course",
+        () => na.hdg === null && !mooredDrift.moving && mooredDrift.hdg === null && !slowOld.moving && slowOld.hdg === null,
+        () => JSON.stringify({ n511: na.hdg, mooredDrift: [mooredDrift.moving, mooredDrift.hdg], slowOld: [slowOld.moving, slowOld.hdg] }));
+  // THE KEEP-OUT IS DRAWN BY THE SAME ANSWER: the red outline is the hull at that heading, or the disc
+  const fr = planeFrame(at);
+  const q1 = A.aisKeepout(AMAZON, fr, { now: 0, polledAt: 0 }), q2 = A.aisKeepout(CABRILLO, fr, { now: 0, polledAt: 0 });
+  const r2 = q2 && q2.ring.length ? Math.hypot(q2.ring[0].e - q2.at.e, q2.ring[0].n - q2.at.n) : null;
+  check("12e. ... and the keep-out asks the SAME function: AMAZON's outline is her hull at 251, CABRILLO's the disc of aisDiscM - so the ship the layer draws inside the red outline points the way the outline does",
+        () => !!q1 && q1.hdg === 251 && q1.ring.length === 4 && !!q2 && q2.hdg === null && q2.ring.length === 12
+              && Math.abs(r2 - A.aisDiscM(q2.box)) < 1e-6 && Math.abs(A.aisDiscM(q2.box) - Math.hypot(30, 10) / 2) < 1e-6,
+        () => "AMAZON hdg " + (q1 && q1.hdg) + " (" + (q1 && q1.ring.length) + " corners); CABRILLO hdg " + (q2 && q2.hdg)
+            + ", " + (q2 && q2.ring.length) + "-point disc of " + (r2 == null ? "—" : r2.toFixed(2)) + " m");
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

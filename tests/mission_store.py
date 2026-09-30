@@ -477,6 +477,24 @@ finally:
     srv.shutdown()
     srv.server_close()
 
+# 15. --mission's RE-POINTING DROPS THE CACHED PLAN (use_mission_path, 2026-09-30). mission_params() answers from the
+# cache whenever it holds a plan, so a console re-pointed AFTER a read would go on commanding from the plan it read at
+# the old path. main() happens to re-point before anything reads today; this is the property, not the accident.
+_C.load_mission()                                           # the cache now holds the plan at the old path
+OTHER = os.path.join(TMP, "jobs", "other.json")
+os.makedirs(os.path.dirname(OTHER), exist_ok=True)
+OTHER_WPS = [{"lat": 44.95, "lon": -67.05}, {"lat": 44.96, "lon": -67.05}, {"lat": 44.97, "lon": -67.06}]
+with open(OTHER, "w", encoding="utf-8") as f:
+    json.dump({"waypoints": OTHER_WPS, "lines": []}, f)
+before_wps = _C.mission_params().get("waypoints") or []
+_C.use_mission_path(OTHER)
+after_wps = _C.mission_params().get("waypoints") or []
+check("15. --mission re-pointed AFTER a read answers from the plan at the NEW path - the plan cached from the old one is "
+      "dropped, not commanded from",
+      before_wps != OTHER_WPS and after_wps == OTHER_WPS
+      and os.path.abspath(_C.MISSION_PATH) == os.path.abspath(OTHER),
+      "before %d wpts, after %d wpts, MISSION_PATH %s" % (len(before_wps), len(after_wps), _C.MISSION_PATH))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

@@ -719,6 +719,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // silently does nothing and the checks go red for a reason that looks like the page.
   const guard = eval("(function(){ " + grab(H, "took") + NL2 + grab(H, "notTookSay") + NL2
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
+                     // ON STATION the ladder judges the drift and says so in its own words (2026-09-30)
+                     + grab(H, "guardOnStation") + NL2 + grab(H, "onStationWhy") + NL2
                      + grab(H, "helmSettled") + NL2
                      + grab(H, "sendSpeed") + NL2 + grab(H, "commandSpeed") + NL2
                      // the slow-down that MAKES WAY (2026-09-26): asked by rung 2 and the hold's lieu

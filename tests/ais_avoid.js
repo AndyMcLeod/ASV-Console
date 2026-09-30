@@ -195,6 +195,10 @@ function cmEl(kid) { const set = new Set();
 CM["#cmResumeK"] = cmEl(null); CM["#cmResume"] = cmEl("#cmResumeK");   // both up front: the row's key is its child
 // ROUTE ROUND HER (2026-09-27): the row over a contact, its label and its key
 CM["#cmAvoidK"] = cmEl(null); CM["#cmAvoidLbl"] = cmEl(null); CM["#cmAvoid"] = cmEl("#cmAvoidK");
+// THE MENU'S OWN HANDLER (2026-09-30): cmRow reads the point the menu was opened at, then closes the menu - which drops
+// it, as the page's does - so a row that reads the point after closing would read null here too.
+var menuLL = null;
+function closeChartMenu() { menuLL = null; }
 
 // ⚠⚠ THE ROUTER, STUBBED AND STEERABLE. resumeHeldSurvey certifies the run-in with the same
 // planner Go-To flies (2026-09-23): after an ESCAPE she is not beside her line any more, and
@@ -367,7 +371,7 @@ eval([
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
-  grab("guardOverrideOk"), grab("guardTrack"), grab("clearanceGuard"),
+  grab("guardOverrideOk"), grab("guardTrack"), grab("guardOnStation"), grab("onStationWhy"), grab("clearanceGuard"),   // on station: the drift (2026-09-30)
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisNearestPoly"), grab("aisAvoidOpen"),
   grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("releaseLow"), grabDecl("guardKeyLast"),   // the override's four endings and the latch's release (2026-09-28)
@@ -382,6 +386,7 @@ eval([
   // bundle needs it or the automatic way round (14-14d) is a swallowed ReferenceError inside frame()
   grab("aisAroundGo"), grab("aisAroundNow"), grabDecl("aisAroundBusy"), grab("contactAt"), grab("avoidWhy"),
   grab("gateAvoidRow"), grab("avoidContactAt"), grab("aisAroundRunning"),
+  grab("cmRow"), grab("cmRowFailed"),   // every chart-menu row's handler, and what it says when a row fails (2026-09-30)
   // THE HELD LEG (2026-09-29): a Go-To, a Return-to-Home or a transit held for a contact is banked, returned and routed
   // round by these - reached only once a leg is banked, so a bundle without them fails exactly there (check 10 did).
   grab("legName"), grab("legTitle"), grab("heldLegWay"), grab("legWayClear"), grab("aisReturnLegTick"),
@@ -1718,8 +1723,9 @@ const pausedSetToward = (kn) => { S = { ...S, status: { ...S.status, sog_kn: kn,
   // 21a. CONTROL: the same frames with the record gone - as his console had it - DO release: the gate is what stops it
   guardActedAt = 0; notes = []; sent = [];
   for (let k = 0; k < 6; k++) { clock += 1000; aisPolledAt = clock; frame(); }
-  check("21a. CONTROL: the same station-keeping frames with the record gone - as his console had it after 21:19:04 - DO release and say 'Clear ahead again': the gate on her own hold is what stops it, not the water",
-        () => notes.some(n => /Clear ahead again/.test(n)) && guardLevel === "clear",
+  // (said as "On station" since 2026-09-30: with the guard's record gone this is an ordinary station-keep, judged on the drift)
+  check("21a. CONTROL: the same station-keeping frames with the record gone - as his console had it after 21:19:04 - DO release and say so: the gate on her own hold is what stops it, not the water",
+        () => notes.some(n => /Clear ahead again|On station \(/.test(n)) && guardLevel === "clear",
         () => "level " + guardLevel + ", notes " + JSON.stringify(notes));
 }
 {
@@ -1997,6 +2003,98 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
         () => "shown " + shown + ", sent " + JSON.stringify(paths()) + ", notes " + JSON.stringify(notes));
 }
 
+// ── 23n-23p. A WAY ROUND THAT FAILS, OR ANY CHART-MENU ROW THAT FAILS, SAYS SO (Andy, 2026-09-30, item 1 of his list:
+//        "The 'Route round' click can silently do nothing") ───────────────────────────────────────────────────────────
+// The menu called the async handlers un-awaited and uncaught, and aisAroundRunning had a `finally` and no `catch`: a throw
+// anywhere in planning the way round was an unhandled rejection - a press that did nothing, said nothing, logged nothing.
+{
+  // 23n. a throw while PLANNING it: nothing was sent, and the settle clock is let go
+  onLeg("goto", [PARKED()]); aisKeepoutsNow(); sent = []; notes = []; banners = []; logged = []; pinCalls = [];
+  const taut = tautRoundHer;
+  tautRoundHer = () => { throw new Error("test: the taut way round threw"); };
+  let r, threw = null;
+  try { r = await avoidContactAt(ll(30, 0)); } catch (e) { threw = e; }
+  tautRoundHer = taut;
+  const b1 = banners.slice(), p1 = paths().slice(), edge1 = guardEdgeAt;
+  // the NEXT press, with the way round planning again: the handler must be free (its busy flag lives in the bundle)
+  let r2 = null;
+  try { r2 = await avoidContactAt(ll(30, 0)); } catch (e) { r2 = "threw " + e.message; }
+  const p2 = paths().slice(p1.length);
+  check("23n. a throw while PLANNING the way round a running Go-To is SAID, not swallowed: the press resolves false, the banner names the error and says nothing was sent, it is logged, the settle clock is let go - and the next press goes round her",
+        () => threw === null && r === false && p1.length === 0
+              && b1.some(b => /THE WAY ROUND AIS: WORKBOAT[^—]* FAILED — test: the taut way round threw/.test(b) && /Nothing was sent/.test(b))
+              && logged.some(e => e.kind === "ais_around_failed" && e.data.sent === false && e.data.leg === "goto"
+                                  && /taut way round threw/.test(e.data.error))
+              && edge1 === 0 && r2 === true && p2.length === 1 && p2[0] === "/api/cmd/amend",
+        () => "threw " + (threw && threw.message) + ", returned " + r + ", sent " + JSON.stringify(p1) + ", banners "
+            + JSON.stringify(b1.map(b => b.slice(0, 140))) + ", guardEdgeAt " + edge1 + "; the next press " + r2 + " sent " + JSON.stringify(p2));
+}
+{
+  // 23o. a throw AFTER the vessel took the amendment: she IS flying the way round, and it must not be denied
+  onLeg("goto", [PARKED()]); aisKeepoutsNow(); sent = []; notes = []; banners = []; logged = []; pinCalls = [];
+  const card = updateMissionCard;
+  updateMissionCard = () => { throw new Error("test: the card threw"); };
+  let r, threw = null;
+  try { r = await avoidContactAt(ll(30, 0)); } catch (e) { threw = e; }
+  updateMissionCard = card;
+  const am = sent.find(x => x.p === "/api/cmd/amend");
+  check("23o. ... and one AFTER the vessel took the amendment says she IS flying the way round - only the console's bookkeeping behind it failed - and is logged as sent",
+        () => threw === null && r === false && !!am
+              && banners.some(b => /THE WAY ROUND AIS: WORKBOAT[^—]* FAILED — test: the card threw/.test(b) && /The amendment WAS taken/.test(b)
+                                   && !/Nothing was sent/.test(b))
+              && logged.some(e => e.kind === "ais_around_failed" && e.data.sent === true),
+        () => "threw " + (threw && threw.message) + ", returned " + r + ", sent " + JSON.stringify(paths()) + ", banners "
+            + JSON.stringify(banners.map(b => b.slice(0, 160))));
+}
+{
+  // 23p. THE MENU ITSELF: a row whose command rejects, and one that throws, are each said and logged - no unhandled
+  // rejection, no click that does nothing - and a row that works is untouched
+  const rowEl = (label) => { const lbl = { textContent: label };
+    return { classList: { contains: () => false }, querySelector: (s) => (s === "span" ? lbl : null), onclick: null }; };
+  CM["#cmT1"] = rowEl("Go-To here"); CM["#cmT2"] = rowEl("Set Home here"); CM["#cmT3"] = rowEl("Copy position");
+  banners = []; logged = []; sent = [];
+  let got = null, got3 = null, ran = 0;
+  cmRow("#cmT1", async (p) => { got = p; throw new Error("test: the Go-To rejected"); });
+  cmRow("#cmT2", () => { throw new Error("test: the row threw"); });
+  cmRow("#cmT3", (p) => { ran++; got3 = p; });
+  const unhandled = [], syncThrew = [];
+  const onUR = (e) => unhandled.push(String((e && e.message) || e));
+  process.on("unhandledRejection", onUR);
+  for (const [id, at] of [["#cmT1", ll(5, 5)], ["#cmT2", ll(6, 6)], ["#cmT3", ll(7, 7)]]) {
+    menuLL = at;
+    try { CM[id].onclick(); } catch (e) { syncThrew.push(id + ": " + e.message); }
+  }
+  await settle(); await new Promise(res => setTimeout(res, 0));
+  process.off("unhandledRejection", onUR);
+  check("23p. THE CHART MENU: a row whose command REJECTS and a row that THROWS are each said in a banner naming the row and the error, and logged - no unhandled rejection, no click that does nothing - while a row that works runs once, with the point the menu was opened at",
+        () => syncThrew.length === 0 && unhandled.length === 0 && !!got && distTo(got, ll(5, 5)) < 0.01
+              && banners.some(b => /^⚠ GO-TO HERE FAILED — test: the Go-To rejected/.test(b))
+              && banners.some(b => /^⚠ SET HOME HERE FAILED — test: the row threw/.test(b)) && banners.length === 2
+              && ran === 1 && !!got3 && distTo(got3, ll(7, 7)) < 0.01
+              && logged.filter(e => e.kind === "menu_failed").length === 2,
+        () => "sync throws " + JSON.stringify(syncThrew) + ", unhandled " + JSON.stringify(unhandled) + ", banners "
+            + JSON.stringify(banners.map(b => b.slice(0, 90))) + ", ran " + ran + ", logged " + JSON.stringify(logged.map(e => e.kind)));
+  delete CM["#cmT1"]; delete CM["#cmT2"]; delete CM["#cmT3"];
+}
+{
+  // 23q. the amendment's POST itself is LOST (the command promise rejects): she may have taken it, so it is neither
+  // "nothing was sent" nor "taken" - and the settle clock, set for the amendment, is let go
+  onLeg("goto", [PARKED()]); aisKeepoutsNow(); sent = []; notes = []; banners = []; logged = []; pinCalls = [];
+  const realCmd = cmd;
+  cmd = (p, b) => (p === "/api/cmd/amend" ? Promise.reject(new Error("test: the answer was lost")) : realCmd(p, b));
+  let r, threw = null;
+  try { r = await avoidContactAt(ll(30, 0)); } catch (e) { threw = e; }
+  cmd = realCmd;
+  const edgeQ = guardEdgeAt;
+  check("23q. ... and one whose POST is LOST (the command promise rejects) says the console cannot tell whether she took it - never 'nothing was sent' - lets the settle clock go and logs the stage",
+        () => threw === null && r === false && edgeQ === 0
+              && banners.some(b => /FAILED — test: the answer was lost/.test(b) && /cannot say whether she took the way round/.test(b)
+                                   && !/Nothing was sent/.test(b))
+              && logged.some(e => e.kind === "ais_around_failed" && e.data.stage === "posting" && e.data.sent === false),
+        () => "threw " + (threw && threw.message) + ", returned " + r + ", guardEdgeAt " + edgeQ + ", banners "
+            + JSON.stringify(banners.map(b => b.slice(0, 150))));
+}
+
 // ── 24. THE LADDER'S REACH (Andy, 2026-09-29: "The buffer zone on approach to an AIS target appears to be 150m. confirm
 //        distance and modify to 50m." - then, when the stopping margin was raised, "extend for drix if necessary") ────
 {
@@ -2061,6 +2159,131 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   check("25. the operator's wait is 10 s, ONE constant: the ROUTE ROUND HER NOW tooltip is set from it at start-up (no '30 s' left in the markup), and the bar, the banners and every scenario in this file read it",
         () => WAIT === 10000 && /Math\.round\(AIS_AROUND_AFTER_MS \/ 1000\)/.test(tip) && !/waiting out the 30 s/.test(H),
         () => "AIS_AROUND_AFTER_MS " + WAIT + "; tooltip " + (tip ? tip.slice(0, 140) : "NOT SET"));
+}
+
+// ── 26. ON STATION THE LADDER JUDGES THE DRIFT (Andy, 2026-09-30, items 2 and 5 of his list: the SLOW / "Clear ahead
+//        again" chatter while she held station at home, and the guard hold at the end of a line in a following set,
+//        which blocks the plan's end-of-plan RTH) ──────────────────────────────────────────────────────────────────────
+// A boat the vessel reports station-keeping - at a plan's end point, on the operator's Hold, at an escape's point - is
+// being steered BACK to her point, so her own velocity flown on for 45 s is a track she will never make. On station the
+// ladder judges the drift; the helm decides on it as before, and slow and hold command nothing.
+function stationing(beh, sogKn, cogDeg, o = {}) {
+  surveying(sogKn, [], { ...o, behavior: beh });
+  mission.lines = []; runLineIdx = -1; lineSwing = -1;
+  runRoute = [ll(-200, 0), ll(0, 0)]; window._wpIndex = runRoute.length;   // the route is flown: she is on its end point
+  S = { ...S, status: { ...S.status, holding: true, cog_deg: cogDeg, heading_deg: cogDeg, sog_kn: sogKn,
+                        speed_key: o.key || "low", env_set_deg: o.setDeg || 0, env_set_kn: o.setKn || 0 } };
+}
+{
+  // 26. his rehearsal log: line 8 at HIGH, 7.7 kn over the ground with the 1.75 kn set behind her, 0.9 m from the last
+  // waypoint - the frame the vessel reports holding - "Keep-out 16 s ahead and closing — HOLDING". Here: north at 7.7 kn,
+  // a block 45 m ahead (its buffer from 42 m), the set 1.75 kn north: at her speed the line enters in 11 s; the drift does
+  // not reach it inside the look-ahead (0.9 m/s x 45 s = 40.5 m).
+  stationing("survey", 7.7, 0, { ko: wall(45), setKn: 1.75, setDeg: 0, key: "high" });
+  frame(); clock += 250; frame(); clock += 1000; frame();
+  const lvl26 = clearance.level, why26 = clearance.why || "";
+  check("26. ARRIVING ON the end point of a plan at 7.7 kn with the set behind her and a block 45 m beyond it, the frame she reports holding reads CLEAR on the drift - no hold, nothing banked, no banner: the plan's own end hold stands, so its end action (an RTH) can fire",
+        () => lvl26 === "clear" && /on station/.test(why26) && !paths().includes("/api/cmd/hold") && paths().length === 0
+              && guardHeld === null && banners.length === 0 && guardActedAt === 0,
+        () => "level " + lvl26 + " ('" + why26.slice(0, 90) + "'), sent " + JSON.stringify(paths()) + ", banked " + !!guardHeld
+            + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 60))));
+  // 26b. the SCOPE, and the control in the same water: a plan ending in STOP coasts on at 7.7 kn with nothing holding her
+  stationing("survey", 7.7, 0, { ko: wall(45), setKn: 1.75, setDeg: 0, key: "high" });
+  S = { ...S, run: "idle", status: { ...S.status, holding: false } };
+  frame();
+  check("26b. ... and the SCOPE: the same water and the same 7.7 kn on a boat NOT station-keeping - a plan that ended in STOP, coasting on - IS held (her own track is what she will make); only a boat already holding is judged on the drift",
+        () => paths().includes("/api/cmd/hold") && guardLevel === "hold",
+        () => "level " + guardLevel + ", sent " + JSON.stringify(paths()));
+}
+{
+  // 26c. his DriX at home after an RTH (the 2026-09-29 rehearsal): hunting at 3.9 kn, bow toward then away from a block
+  // 89.4 m off, every 10 s for 80 s - no set. Her own line reaches its buffer in 43 s (SLOW), then clears.
+  stationing("rth", 3.9, 0, { ko: wall(89.4), key: "low" });
+  let notClear = 0;
+  for (let k = 0; k < 80; k++) {
+    const toward = Math.floor(k / 10) % 2 === 0;
+    S = { ...S, status: { ...S.status, cog_deg: toward ? 0 : 180, heading_deg: toward ? 0 : 180 } };
+    clock += 1000; aisPolledAt = clock; frame();        // the feed kept fresh: an empty sea, not a stale one
+    if (clearance.level !== "clear") notClear++;
+  }
+  check("26c. STATION-KEEPING AT HOME, hunting at 3.9 kn toward and away from a block 89.4 m off for 80 s: no SLOW, no 'Clear ahead again', no banner and no command - every frame reads clear on the drift (his rehearsal: the pair every 19 s for three minutes)",
+        () => notClear === 0 && paths().length === 0 && banners.length === 0
+              && !notes.some(n => /SLOWED|Clear ahead again|NOT slowed|HOLDING|On station/.test(n)),
+        () => "frames not clear " + notClear + ", sent " + JSON.stringify(paths()) + ", banners "
+            + JSON.stringify(banners.map(b => b.slice(0, 120))) + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 50))));
+}
+{
+  // 26d. THE HELM STILL ACTS ON STATION: holding at a Go-To point in a 2.5 kn set onto a block 12 m off (its buffer from
+  // 9 m, half the buffer from 10.5 m) - the drift alone is inside half the buffer in 8 s, under the 20 s a decision needs.
+  // Her own motion AWAY from it, at 1 kn: the old straight line never entered, and assess answered clear before the drift
+  // was ever tested (the vel=0 probe trap) - so this is also where the new model is stronger than the old.
+  stationing("goto", 1.0, 180, { ko: wall(12), setKn: 2.5, setDeg: 0, key: "low" });
+  escFake = { hdg: 180, to: { e: 0, n: -60 }, m: 60, capped: false, clear: true, survived: 45, worst: 30, gain: 30 };
+  frame();
+  const first26 = clearance.level, why26d = clearance.why || "";
+  clock += 1600; frame();                             // past HELM_DWELL_MS: the rung acts
+  check("26d. ON STATION THE HELM STILL ACTS, on the drift: holding in a 2.5 kn set onto a block 12 m off, with her own motion AWAY from it, reads IN EXTREMIS and after the dwell the escape is commanded - said as the hold she is on not answering it",
+        () => first26 === "helm" && /on station, and the drift alone reaches within/.test(why26d) && paths().includes("/api/cmd/escape"),
+        () => "first frame " + first26 + " ('" + why26d.slice(0, 90) + "'), sent " + JSON.stringify(paths()));
+  // 26e. ... the same frame judged on her OWN velocity - the model before 2026-09-30 - reads clear: the control that 26d
+  // measures the change, not a helm that would have fired anyway
+  const pe = ref.toEN(asv), dr = G.groundVel(0, 2.5), own = G.groundVel(180, 1.0);
+  const oldLvl = G.assess(pe, own, dr, wall(12), 3, {}).level, newLvl = G.assess(pe, dr, dr, wall(12), 3, {}).level;
+  check("26e. ... CONTROL: the same frame judged on her own velocity (the old model) reads CLEAR - the probe trap - while the drift reads helm: 26d measures the change",
+        () => oldLvl === "clear" && newLvl === "helm",
+        () => "her own velocity -> " + oldLvl + ", the drift -> " + newLvl);
+}
+{
+  // 26f. A HOLD READING ON STATION IS A STATE: holding at a Go-To point in a 1.75 kn set toward a block 30 m off - the
+  // drift reaches its buffer in 30 s (inside the look-ahead, beyond the 20 s a decision needs): HOLD, and nothing to do
+  stationing("goto", 0.5, 90, { ko: wall(30), setKn: 1.75, setDeg: 0, key: "low" });
+  for (let k = 0; k < 40; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  check("26f. ON STATION A DRIFT THAT REACHES THE HAZARD BEYOND A DECISION'S WORTH OF TIME reads HOLD, said as the hold she is on answering it - ONE banner in 40 s (a state, not a stream), and no command: a hold at present position would only move her point",
+        () => guardLevel === "hold" && banners.length === 1 && /on station — the drift alone reaches it in 3\d s/.test(banners[0])
+              && !paths().includes("/api/cmd/hold") && paths().length === 0 && /on station/.test($("#gb_why").textContent),
+        () => "level " + guardLevel + ", banners " + JSON.stringify(banners.map(b => b.slice(0, 120))) + ", sent "
+            + JSON.stringify(paths()) + ", bar '" + $("#gb_why").textContent.slice(0, 100) + "'");
+}
+{
+  // 26g. FOUND ON THE LIVE REHEARSAL (MOOR-2, 11 m from her home point): "the drift alone reaches it in 19 s, more than
+  // the 20 s a decision needs". HOLD, not helm, says the drift does not reach within HALF the buffer inside 20 s - it
+  // may reach the buffer's edge sooner. A 0.97 kn set onto a block 12 m off: its buffer in 18 s, half of it in 21 s.
+  stationing("goto", 0.3, 90, { ko: wall(12), setKn: 0.972, setDeg: 0, key: "low" });
+  clock += 1000; aisPolledAt = clock; frame();
+  const why26g = clearance.why || "";
+  check("26g. ... and a drift that reaches the BUFFER sooner than a decision needs but not half of it says exactly that - never 'more than the 20 s' about 18 s",
+        () => guardLevel === "hold" && /reaches the buffer in 18 s but not within half of it inside the 20 s a decision needs/.test(why26g)
+              && !/more than the 20 s/.test(why26g) && paths().length === 0,
+        () => "level " + guardLevel + ", why '" + why26g.slice(0, 160) + "', sent " + JSON.stringify(paths()));
+}
+{
+  // 26h. THE SCOPE OF "ON STATION", asked of the predicate itself: a boat station-keeping at a Go-To point is; the GUARD'S
+  // OWN hold is not (its record and the FRIGGA rules stand, 20-21f); nor is a boat inside a LAUNCH GRANT (R10: there a
+  // hold becomes a STOP, and judging her on station would stand that down)
+  stationing("goto", 1.0, 0, { ko: wall(40) });
+  const plain = guardOnStation(null);
+  S = { ...S, behavior: "hold" }; guardActedAt = clock;
+  const own = guardOnStation(null);
+  guardActedAt = 0;
+  const opHold = guardOnStation(null);
+  S = { ...S, behavior: "goto" };
+  const inGrant = guardOnStation({ covered: [] });
+  check("26h. ... and the SCOPE of on station: a boat station-keeping at a Go-To point, or on the operator's Hold, is; the guard's OWN hold is not (the FRIGGA rules stand); nor is a boat inside a launch grant (R10's STOP stands)",
+        () => plain === true && opHold === true && own === false && inGrant === false,
+        () => JSON.stringify({ goto: plain, operatorHold: opHold, guardsOwnHold: own, inGrant }));
+}
+{
+  // 26i. AN ON-STATION HOLD THAT CLEARS IS RELEASED: no counterfactual on station - asked at the plan's speed along her bow
+  // (here pointing at the block she is holding off) it would read the hazard and never let go
+  stationing("goto", 0.5, 0, { ko: wall(30), setKn: 1.75, setDeg: 0, key: "low" });
+  for (let k = 0; k < 3; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  const held26i = guardLevel;
+  S = { ...S, status: { ...S.status, env_set_kn: 0 } };      // the set slackens
+  notes = [];
+  for (let k = 0; k < 8; k++) { clock += 1000; aisPolledAt = clock; frame(); }
+  check("26i. ... and when the drift no longer reaches it, the on-station HOLD is RELEASED and said as on station - with no counterfactual at the plan's speed along her bow, which would read the very hazard she holds off and never let go",
+        () => held26i === "hold" && guardLevel === "clear" && notes.some(n => /^On station \(/.test(n)) && paths().length === 0,
+        () => "level " + held26i + " -> " + guardLevel + ", notes " + JSON.stringify(notes.map(n => n.slice(0, 90))) + ", sent " + JSON.stringify(paths()));
 }
 
 Date.now = realNow;

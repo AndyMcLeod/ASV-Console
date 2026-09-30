@@ -87,6 +87,14 @@ _C.use_state_dir(STATE.dir)
 
 
 class _Log:                                        # the session recorder's command() and nothing else
+    # ⚠ THE TWO THINGS THE TELEMETRY LOOP READS AS DATA, NOT CALLS (2026-09-30). `__getattr__` below answers every
+    # name with a no-op function, so `LOG.quiet_after_s` arrived as a FUNCTION and the loop's log-quiet watch
+    # (`now - since >= LOG.quiet_after_s`) raised a TypeError on every frame the sim boat sat home and idle - "the
+    # telemetry loop raised in _log_quiet_watch ... and carries on" - while every check passed. Real values here:
+    # the recorder is never quiet and never goes quiet. Check 10 holds the loop to it.
+    quiet = False
+    quiet_after_s = float("inf")
+
     def __init__(self):
         self.commands = []
 
@@ -265,6 +273,10 @@ for rel, src in pages:
 check("9. every POST the console's own pages make is labeled application/json, so the rule refuses nothing of theirs",
       lambda: posts >= 5 and not unlabeled,
       lambda: "%d POSTs found; unlabeled: %s" % (posts, unlabeled or "none"))
+check("10. ... and the console's telemetry loop ran this whole suite without a fault - a stand-in recorder that answers "
+      "a value the loop reads with a function makes it raise on every frame while every check above still passes",
+      lambda: E.loop_fault is None,
+      lambda: "loop_fault %s" % (E.loop_fault,))
 
 E.disconnect()
 srv.shutdown()

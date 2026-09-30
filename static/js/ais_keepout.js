@@ -144,6 +144,51 @@ export function aisHeadingDeg(v, moving) {
 }
 
 /**
+ * IS SHE UNDER WAY, AND WHICH WAY DOES SHE POINT - ONE RULE, for the keep-out AND the AIS layer (2026-09-30).
+ *
+ * Andy, 2026-09-30, at the Port of Los Angeles: "The AIS targets at the pier ... show 2 separate states. The red
+ * outlines are perfectly alongside their respective pier as expected, while the green targets are rotated." Two
+ * drawings of one ship, turned by two different rules: the red outline (the keep-out, aisKeepout below) pointed the
+ * hull along her HEADING, and along her course only while she was under way; the AIS layer's hull (the page's
+ * drawAIS) pointed it along her COURSE OVER GROUND first. A moored ship's course over the ground is GNSS noise, not a
+ * direction. Measured on his own feed round Pier 300: CMA CGM AMAZON moored at 0.0 kn, heading 251 - the berth's axis
+ * - and course 327.5, so the layer drew her 76 deg across her berth; 21 of the 45 contacts nearest the pier were drawn
+ * more than 10 deg off their own keep-out. Both drawings now ask this, so the two cannot disagree again.
+ *
+ * `moving` is the keep-out's test, unchanged: making AIS_MOVING_KN with a course, and neither saying she is stopped
+ * (moored, at anchor or aground - AIS_NAV_STOPPED - at under AIS_NAV_TRUST_KN) nor reporting like a vessel at anchor
+ * (under AIS_MOVING_SURE_KN with a report older than AIS_MOVING_AGE_S). `vel` is her ground velocity then, else null.
+ * `hdg` is where the BOW points (aisHeadingDeg): her true heading where she reports one; her course only while she is
+ * under way; null when neither - a stopped ship with no heading can lie any way round, and is drawn and kept out as
+ * the disc every orientation of her fits in (aisDiscM). `from` says which, in words for the hover tip: "heading",
+ * "course" or null.
+ *
+ * opts: now (ms), polledAt (ms the contacts were fetched) - for the age that decides "reporting like one at anchor".
+ */
+export function aisMotion(v, opts = {}) {
+  const now = +opts.now || 0;
+  const sog = (v && v.sog != null && Number.isFinite(+v.sog) && +v.sog >= 0) ? +v.sog : null;
+  const ageS = aisAgeS(v, +opts.polledAt || 0, now);
+  const navStopped = !!v && v.nav != null && AIS_NAV_STOPPED.has(+v.nav)
+                     && (sog == null || sog < AIS_NAV_TRUST_KN);                          // she says she is stopped, and is not plainly under way
+  const slowAndOld = sog != null && sog < AIS_MOVING_SURE_KN && ageS > AIS_MOVING_AGE_S;   // reporting like one
+  const vel = (sog != null && sog >= AIS_MOVING_KN && !navStopped && !slowAndOld) ? velocityEN(sog, v.cog) : null;   // null: no course
+  const moving = !!vel;
+  const hdg = aisHeadingDeg(v, moving);
+  const h = v && v.heading;
+  const from = hdg == null ? null : (h != null && Number.isFinite(+h) && +h >= 0 && +h < 360) ? "heading" : "course";
+  return { sog, ageS, navStopped, vel, moving, hdg, from };
+}
+
+/** The radius of the disc a contact whose orientation is unknown is kept out as, and drawn as, round her ANTENNA: half
+ *  her hull's diagonal - every orientation of her fits in it when the antenna is amidships. ⚠ NOT when it is well
+ *  forward or aft: a 300 m ship with her antenna 50 m from the stern can swing her bow 250 m from it, outside a 150 m
+ *  disc. Recorded, not changed here (2026-09-30): growing it is a change to the guard's model, not to a drawing. */
+export function aisDiscM(box) {
+  return Math.hypot(box.lengthM, box.beamM) / 2;
+}
+
+/**
  * Seconds since the contact's position report: the service's own `age` at the moment it was
  * polled, plus the time since that poll.
  */
@@ -207,14 +252,9 @@ export function aisKeepout(v, frame, opts = {}) {
   if (!v || !frame || v.lat == null || v.lon == null) return null;
   const lat = +v.lat, lon = +v.lon;
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  const now = +opts.now || 0;
-  const sog = (v.sog != null && Number.isFinite(+v.sog) && +v.sog >= 0) ? +v.sog : null;
-  const ageS = aisAgeS(v, +opts.polledAt || 0, now);
-  const navStopped = v.nav != null && AIS_NAV_STOPPED.has(+v.nav)
-                     && (sog == null || sog < AIS_NAV_TRUST_KN);                          // she says she is stopped, and is not plainly under way
-  const slowAndOld = sog != null && sog < AIS_MOVING_SURE_KN && ageS > AIS_MOVING_AGE_S;   // reporting like one
-  const vel = (sog != null && sog >= AIS_MOVING_KN && !navStopped && !slowAndOld) ? velocityEN(sog, v.cog) : null;   // null: no course
-  const moving = !!vel;
+  // THE ONE RULE (aisMotion, 2026-09-30): whether she is under way, and which way her bow points. The AIS layer draws
+  // her hull by the same answer, so the outline here and the ship drawn inside it always point the same way.
+  const { sog, ageS, navStopped, vel, moving, hdg } = aisMotion(v, opts);
   const c = frame.toEN({ lat, lon });
   // Dead reckoning, capped: past AIS_DR_MAX_S the box stays where the last honest position put it.
   const dr = moving ? Math.min(ageS, AIS_DR_MAX_S) : 0;
@@ -228,9 +268,8 @@ export function aisKeepout(v, frame, opts = {}) {
     if (Math.min(d0, d1) > range) return null;
   }
   const box = aisBox(v);
-  const hdg = aisHeadingDeg(v, moving);
   const shape = (at) => hdg == null
-    ? discRingEN(at, Math.hypot(box.lengthM, box.beamM) / 2)
+    ? discRingEN(at, aisDiscM(box))
     : hullRingEN(at, hdg, box);
   const hull = shape(c0);
   const ring = c1 ? convexHull(hull.concat(shape(c1))) : hull;

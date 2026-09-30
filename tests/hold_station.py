@@ -181,6 +181,18 @@ check("4. inside a 100 m certified disc the same set is answered by the direct r
       "through-water %.2f kn commanded, wants_route=%s, %.1f m off"
       % (r["thru_max"], r["wanted"], r["tel"]["off_station_m"]))
 
+# 4b. THE DISC RE-CERTIFIED WHILE SHE HOLDS (Andy, 2026-09-30: "re-checking the hold disc when a contact moves in";
+#     Engine.hold_clear -> SimVcu.set_hold_clear). The boat of 4, holding on a 100 m disc, is told mid-hold that only 3 m
+#     round her point is clear now: the same set must be answered as 3 answers it, not as 4 does.
+v, _ = _holding_boat(100.0)
+v.set_hold_clear(3.0)
+r = _set_off(v, 1.0, 90.0, 30.0, disc=3.0)
+check("4b. a 100 m disc RE-CERTIFIED to 3 m while she holds is the disc she keeps: set beyond it she takes the way off "
+      "and asks for a route, exactly as 3 - the hold point unchanged",
+      r["thru_beyond"] < 0.05 and r["wanted"] and r["tel"]["hold_clear_m"] == 3.0 and r["tel"]["hold"] == HP,
+      "through-water beyond the new disc %.2f kn, wants_route=%s, disc %s, hold %s"
+      % (r["thru_beyond"], r["wanted"], r["tel"]["hold_clear_m"], r["tel"]["hold"]))
+
 # 5. Within the HOLD radius nothing is commanded at all, whatever the disc.
 v, _ = _holding_boat(3.0)
 r = _set_off(v, 0.0, 0.0, 5.0)
@@ -674,6 +686,66 @@ try:
           code == 409 and "hold_clear_m" in (r.get("error") or "")
           and code2 == 409 and "hold_clear_m" in (r2.get("error") or ""),
           "codes %s / %s, %r" % (code, code2, r.get("error")))
+
+    # 13b. THE DISC RE-CERTIFIED OVER THE API (2026-09-30): she is holding at the Go-To point of 12 on a 7.0 m disc.
+    # /api/cmd/hold_clear changes the radius and NOTHING else - the hold point, the behavior and the run stay hers.
+    s0 = state(port)
+    seq0, beh0, hp0 = s0.get("run_seq"), s0["behavior"], s0["status"].get("hold")
+    code, r = api(port, "/api/cmd/hold_clear", {"hold_clear_m": 2.5,
+                                                "note": "AIS: TEST-1 is in the water round her hold point"})
+    s, disc = None, None
+    for _ in range(20):
+        s = state(port)
+        disc = s["status"].get("hold_clear_m")
+        if disc == 2.5:
+            break
+        time.sleep(0.25)
+    check("13b. /api/cmd/hold_clear on a station-keeping boat re-certifies her disc and NOTHING else - the same hold "
+          "point, behavior and run - and the note says why",
+          code == 200 and disc == 2.5 and s["status"].get("holding") and s["behavior"] == beh0
+          and s.get("run_seq") == seq0 and s["status"].get("hold") == hp0
+          and "Hold disc re-certified: 2.5 m" in (s.get("note") or "") and "TEST-1" in (s.get("note") or ""),
+          "code %s, disc %s, behavior %s -> %s, run_seq %s -> %s, hold %s -> %s, note %r"
+          % (code, disc, beh0, s["behavior"], seq0, s.get("run_seq"), hp0, s["status"].get("hold"),
+             (s.get("note") or "")[:90]))
+    code_b, r_b = api(port, "/api/cmd/hold_clear", {"hold_clear_m": "abc"})
+    code_n, r_n = api(port, "/api/cmd/hold_clear", {})
+    # UNDER WAY AND NOT HOLDING - a Go-To 60 m on: only the HOLDING gate can refuse this one
+    far = {"lat": tgt["lat"] + 0.00055, "lon": tgt["lon"]}
+    api(port, "/api/cmd/goto", {"lat": far["lat"], "lon": far["lon"], "route": [far], "hold_clear_m": 6.0})
+    s_w = None
+    for _ in range(30):
+        s_w = state(port)
+        if s_w["behavior"] == "goto" and s_w["run"] == "running" and not s_w["status"].get("holding"):
+            break
+        time.sleep(0.2)
+    code_w, r_w = api(port, "/api/cmd/hold_clear", {"hold_clear_m": 3.0})
+    # PAUSED ON A HOLD, still holding - only the RUN gate can refuse this one
+    api(port, "/api/cmd/hold", {"hold_clear_m": 6.0})
+    for _ in range(30):
+        if state(port)["status"].get("holding"):
+            break
+        time.sleep(0.2)
+    api(port, "/api/cmd/pause", {})
+    time.sleep(0.4)
+    s_p = state(port)
+    code_p, r_p = api(port, "/api/cmd/hold_clear", {"hold_clear_m": 3.0})
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+    code_s, r_s = api(port, "/api/cmd/hold_clear", {"hold_clear_m": 3.0})
+    check("13c. ... and REFUSED in words (409), never a 500: a non-numeric disc, no disc at all, a boat UNDER WAY and not "
+          "holding (the holding gate), one PAUSED on her hold (the run gate), and one Stopped - a disc for a boat that is "
+          "not holding is a number nothing reads",
+          code_b == 409 and "hold_clear_m" in (r_b.get("error") or "")
+          and code_n == 409 and "required" in (r_n.get("error") or "")
+          and code_w == 409 and "not station-keeping" in (r_w.get("error") or "") and s_w["run"] == "running"
+          and code_p == 409 and "not under way" in (r_p.get("error") or "") and s_p["status"].get("holding") is True
+          and code_s == 409 and ("not under way" in (r_s.get("error") or "")
+                                 or "not station-keeping" in (r_s.get("error") or "")),
+          "codes %s / %s / %s (run %s, holding %s) / %s (run %s, holding %s) / %s: %r | %r | %r | %r | %r"
+          % (code_b, code_n, code_w, s_w["run"], s_w["status"].get("holding"), code_p, s_p["run"],
+             s_p["status"].get("holding"), code_s, r_b.get("error"), r_n.get("error"), r_w.get("error"),
+             r_p.get("error"), r_s.get("error")))
 
     # A handler that answers correctly and THEN raises is invisible to every check above.
     srvlog.seek(0)

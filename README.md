@@ -430,10 +430,12 @@ draught, IMO number, call sign and ETA. None of that needs a second service — 
 (Class A static and voyage) and messages 19 / 24B (Class B) have carried it all along, and
 the console simply had not been keeping it. All of it reads on **hover**, and the **icon is
 drawn to the hull's true size** whenever the chart is zoomed in far enough to show it,
-anchored on the **GNSS antenna** rather than centred: AIS reports the antenna's offsets
-within the hull, and on a 295 m ship with the bridge aft, centring the box would put the
+anchored on the **GNSS antenna** rather than centered: AIS reports the antenna's offsets
+within the hull, and on a 295 m ship with the bridge aft, centering the box would put the
 stem 77 m from where it actually is. Zoomed out, where a 300 m ship is seven pixels, it
-falls back to the standard glyph.
+falls back to the standard glyph. **Each ship points the way her bow does**, by the same rule
+as her keep-out: her true heading; her course over the ground only while she is under way; a
+dashed circle when she is stopped and reports no heading (see *Two drawings of one ship* below).
 
 **Contacts are keep-outs (2026-09-25).** Every AIS contact near the boat is a keep-out the
 clearance guard steers clear of, exactly as it does a pier: the **hull she broadcasts** (or
@@ -531,6 +533,57 @@ Go-To, the Return-to-Home chained after it and a drawn transit each met a moored
 own command. The rehearsal found one more thing: slowed to LOW 58 m off her - outside the DriX's
 50 m at LOW - the guard released her, she sped back into her 70 m and was slowed again; the
 release now asks the reach at the speed it would restore.
+
+**On station the guard judges the drift; the hold disc is re-measured while she holds; a way round
+that fails says so** (30 September, items 1, 2, 5 and 7 of his list). A boat already
+station-keeping - at a plan's end point, on the operator's Hold, at an escape's point - is being
+steered back to her point, so her own velocity flown on for 45 s is a track she will never make.
+At home after an RTH the DriX hunted at 3.9 kn and that line reached a keep-out 89 m off: SLOW and
+"Clear ahead again" every 19 s. At the end of a line run at HIGH with the set behind her, the
+moment she reported holding the line at 7.7 kn read "entry in 16 s", and the guard held her at
+present position - replacing the plan's own end hold, so its end-of-plan RTH never fired. On
+station the ladder now judges the **drift**: the helm decides on it exactly as before (and no longer
+reads a boat sitting still as clear before the drift is even tested); a drift that reaches the
+hazard beyond a decision's worth of time reads HOLD, said once as the hold she is on answering
+it; and slow and hold command nothing, because a hold at present position only moves her point.
+The guard's own hold keeps its rules. **The hold disc** - the water round her hold point in which
+she drives a straight chord back to it - was certified once, with the command; while she holds it
+is now re-measured every 2 s against the chart and the contacts, and when a contact moors inside
+it the vessel is sent the smaller disc (`/api/cmd/hold_clear`), so a boat set off beyond it takes
+the way off and is routed back round the contact. It grows back when the water opens, never past
+the disc it began with, and a disc under the working margin a hold point needs is said once as a
+**CROWDED** hold point. **A Route round** - or any chart-menu row - that fails with an error is
+now a banner naming it and saying whether anything was sent; it was a click that silently did
+nothing. Rehearsed on a throwaway console: a survey arrived on its end point with a contact
+moored 38 m beyond it and chained its RTH, and her disc was re-certified from 104 m to 38 m for
+it; at home a contact moored 11 m off shrank the disc from 143 m to 4 m - CROWDED - and the drift
+reading stood on the bar with nothing commanded.
+
+**Two drawings of one ship, and one rule for which way she points** (30 September, at the Port
+of Los Angeles: "The AIS targets at the pier ... show 2 separate states. The red outlines are
+perfectly alongside their respective pier as expected, while the green targets are rotated.") A
+contact near the boat is drawn twice, and the two drawings mean different things:
+
+- the **ship in her type color** (green for cargo, to scale when the chart can show her) is the
+  AIS target as she reports herself;
+- the **red outline** over her is the clearance guard's **keep-out** - the hull the guard steers
+  clear of, dashed ahead where she will be within the look-ahead while she is under way.
+
+The two were turned by two different rules. The keep-out pointed the hull along her **heading**;
+the layer pointed it along her **course over the ground** first - and a moored ship's course is
+GNSS noise, not a direction. On his own feed round Pier 300, CMA CGM AMAZON lay moored at 0.0 kn,
+heading 251° (her berth) and course 327.5°: her keep-out lay along the pier and her ship was drawn
+76° across it, and 21 of the 45 contacts nearest the pier were drawn more than 10° off their own
+keep-out. Both now ask one function (`aisMotion`, `static/js/ais_keepout.js`), which has three
+answers: **her true heading** where she reports one; **her course only while she is under way**;
+and, stopped with **no heading**, no direction at all - she can lie any way round, so the ship is
+a **dashed circle** and her keep-out the disc that fits her every way round. The speed stalk alone
+follows the course: the hull says where she points, the stalk where she is going. The keep-outs are
+drawn **over** the ships now, because once the two agree a moored ship's hull lies exactly on her
+red outline and would otherwise paint it over. Hover a ship and the tip says which way she is
+drawn and why, and marks a stopped ship's course as noise. (That disc is half her hull's diagonal
+about her antenna; for a ship with her antenna far forward or aft it does not cover her bow's
+whole swing - recorded, not changed, because it is the guard's model rather than a drawing.)
 
 **The guard can no longer undo the way round halfway through it** (his 28 September run, FRIGGA).
 Held 48 m off her in a 1.75 kn set, the console released the hold rung's own latch six seconds
@@ -2137,6 +2190,12 @@ it is what lets an area already seen plan with the network down (`tests/log_comp
 program. Every test that starts a console passes a temp folder this way
 (`tests/lib/console_state.py`), so running the suites or committing never writes your own plan,
 settings or logs; `tests/state_dir.py` fails if a suite starts a console without one.
+
+**`--mission PATH`** keeps this console's **plan** at PATH instead of `mission.json` - its
+`.bak1..5` history beside it - and everything else where it would be. It wins over `--state-dir`
+for the plan alone, as `--ports-config` and `--roc-config` do for theirs, so a second console can
+run a copy of a plan, or a rehearsal a fixture, without touching yours; a PATH whose folder does not
+exist yet is given the folder (`tests/state_dir.py` 4-4c).
 
 **Playback.** Open **`/playback`** (or the **▶ Playback** link in the top bar) to
 replay any recording on the same chart: the boat drives its recorded track, the
