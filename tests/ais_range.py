@@ -29,9 +29,10 @@ TEETH (verified by mutation, not assumed): drop the sea-mode filter and 3 and 4 
 the filter on a lake too and 6 fails. Filter by the bounding BOX instead of true range and 5
 fails - a vessel in the box corner is inside 1.4x the radius but outside the circle. Let the
 requested radius exceed what was collected and 7 fails, which would show nothing extra while
-implying the sea beyond is empty. Put the shipped default back to 50 km and 11 fails; author
-the field in whole miles ("3" for 5 km, which is 5.56 km) and 8c fails; fall back to a
-literal rather than the field's own default and 8h fails.
+implying the sea beyond is empty. Put the shipped default back to 50 km - or to the 5 km one
+commit set on a misread of "5km" - and 11 and 8c fail; author the field at anything but the
+5 the default reads and 8c fails; fall back to a literal rather than the field's own default
+and 8h fails.
 """
 
 import io
@@ -207,7 +208,7 @@ try:
           json.dumps(d["area"]))
 
     # 3-4. THE FILTER. At the 50 km this console was started at (--ais-radius-km 50; the
-    # shipped default is 5 km, check 11) only the three inside it survive; widening to 150
+    # shipped default is 5 nm, check 11) only the three inside it survive; widening to 150
     # picks up the rest WITHOUT the service being touched.
     names = sorted(v["name"] for v in d["vessels"])
     check("3. at the flag's 50 km only what is inside 50 km is shown",
@@ -327,7 +328,8 @@ finally:
     except Exception:
         proc.kill()
 
-# 11. THE SHIPPED DEFAULT (Andy, 2026-09-30: "change AIS default range to 5km"; it was 50 km). The
+# 11. THE SHIPPED DEFAULT (Andy, 2026-09-30: "oops. I meant 5nm not 5 km" - it was 50 km, then 5 km
+# for one commit on a misread of "change AIS default range to 5km"). 5 nm is 9.26 km on the wire. The
 # console above is started WITH --ais-radius-km 50, which is how 2-8 test the flag and the filter at
 # known ranges - so it cannot say what an operator who passes no flag gets. This one passes neither
 # radius flag, against the same stub, in a state folder of its own.
@@ -351,8 +353,9 @@ try:
         shipped = api(port2, "/api/ais?center=%.5f,%.5f" % LEWES).get("area") or {}
     except Exception as e:
         shipped = {"error": str(e)}
-    check("11. a console started with NO radius flag opens the card at the shipped 5 km (it was 50), collecting 150",
-          shipped.get("mode") == "sea" and shipped.get("show_km") == 5 and shipped.get("collect_km") == 150,
+    check("11. a console started with NO radius flag opens the card at the shipped 5 nm - 9.26 km on the wire (it was 50 km) - collecting 150",
+          shipped.get("mode") == "sea" and abs((shipped.get("show_km") or 0) - 5 * 1.852) < 1e-9
+          and shipped.get("collect_km") == 150,
           json.dumps(shipped))
 finally:
     try:
@@ -398,9 +401,9 @@ check("8b. the client converts with the DEFINED nautical mile, 1852 m exactly",
 
 # THE SHIPPED DEFAULT PRESENTS EXACTLY, and it is the value the markup opens with - if those two
 # disagree the field jumps the first time the poll lands. The field shows a range the way the contact
-# list does, to a tenth of a mile below 10 nm (units.js nmField), so 5 km is 2.7 nm: whole miles
-# would say "3", and 3 nm is 5.56 km - a range on the card that is not the one in force. Compared
-# with what check 11's console REPORTED, not a copied constant. (It was 50 km, 27 nm, until 2026-09-30.)
+# list does, to a tenth of a mile below 10 nm (units.js nmField), so the 9.26 km default reads 5.
+# Compared with what check 11's console REPORTED, not a copied constant. (It was 50 km, 27 nm, until
+# 2026-09-30; then 5 km, 2.7 nm, for one commit.)
 def field_nm(km):
     nm = km * 1000.0 / 1852.0
     return math.floor(nm * 10 + 0.5) / 10 if nm < 10 else math.floor(nm + 0.5)
@@ -408,7 +411,7 @@ def field_nm(km):
 
 markup = re.search(r'id="aisRange"[^>]*?value="([\d.]+)"', HTML)
 shipped_km = shipped.get("show_km")
-check("8c. the field's authored default is the shipped default as the field shows it (5 km = 2.7 nm, not 3)",
+check("8c. the field's authored default is the shipped default as the field shows it (9.26 km = 5 nm)",
       markup is not None and shipped_km is not None and float(markup.group(1)) == field_nm(shipped_km),
       "markup value=%s, shipped %s km = %s nm"
       % (markup.group(1) if markup else "?", shipped_km,
@@ -416,8 +419,8 @@ check("8c. the field's authored default is the shipped default as the field show
 
 # 8h. A BLANK ENTRY TAKES THE FIELD'S OWN DEFAULT, and a typed range is cut to the field's precision
 # BEFORE it is sent, so the echo reads back what was typed. The fallback was a literal 27 that nothing
-# tied to the server's default - with the default at 5 km, clearing the box would have widened the
-# view to 50 km. It reads the markup's value now, which 8c ties to what the server reports.
+# tied to the server's default - with the default at 5 nm, clearing the box would have widened the
+# view to 27 nm. It reads the markup's value now, which 8c ties to what the server reports.
 fallback = re.search(r'async function setAisRange\(nm\)\{[\s\S]*?const v=Math\.max\(1, nmField\('
                      r'parseFloat\(nm\) \|\| parseFloat\(el && el\.defaultValue\)', HTML)
 check("8h. a blank entry takes the field's authored default, and a typed range is sent at the field's own precision",

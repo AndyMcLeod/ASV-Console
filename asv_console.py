@@ -204,12 +204,13 @@ AIS_OPENCPN = ""               # "[HOST:]PORT" for --source ...,opencpn
 # NOT APPLIED ON A GREAT LAKE. There the area is the whole lake and EVERY contact is shown,
 # because "50 km of Lake Erie" is not a useful thing to ask for.
 AIS_COLLECT_RADIUS_KM = 150.0
-# THE CARD OPENS AT 5 km (Andy, 2026-09-30: "change AIS default range to 5km"; it was 50 km). The card
-# reads in nautical miles, to a tenth below 10 nm, so it shows 2.7 nm - not the "3" whole miles would
-# round it to, which is 5.56 km. The collect radius is unchanged, so widening from here is still instant.
-# The guard's AIS keep-outs are built from what this filter lets through, and need far less: its horizon
-# is 45 s, and a contact closing at 30 kn covers under 700 m in that.
-AIS_SHOW_RADIUS_KM = 5.0
+# THE CARD OPENS AT 5 nm (Andy, 2026-09-30: "oops. I meant 5nm not 5 km"; it was 50 km, then 5 km for one
+# commit on his first word, "change AIS default range to 5km"). The card reads in nautical miles, so it
+# shows 5; the wire and the flags stay metric, so the constant holds its kilometers. The collect radius is
+# unchanged, so widening from here is still instant. The guard's AIS keep-outs are built from what this
+# filter lets through, and need far less: its horizon is 45 s, and a contact closing at 30 kn covers under
+# 700 m in that.
+AIS_SHOW_RADIUS_KM = 5 * 1852 / 1000.0          # 5 nm = 9.26 km
 # TEST CONTACTS (2026-09-27, simulator only): synthetic AIS vessels the operator places from the chart menu
 # to rehearse the contact avoidance - a moored hull across a survey line - without waiting for the live feed
 # to put one there. Merged into every /api/ais answer with age 0 (never stale) and served even while the AIS
@@ -7377,10 +7378,10 @@ def main():
     ap.add_argument("--browser", choices=["edge", "chrome", "default", "none"],
                     default="edge", help="which browser to open")
     ap.add_argument("--ais-radius-km", type=float, default=AIS_SHOW_RADIUS_KM,
-                    help="AIS DISPLAY radius at sea, km (default %d) - the starting value of "
-                         "the range control on the AIS card, changeable live from there. "
+                    help="AIS range at sea, km (default %g - %g nm on the card, which reads nm) - the "
+                         "starting value of the range control on the AIS card, changeable live from there. "
                          "Ignored on a Great Lake, where the whole lake is shown."
-                         % AIS_SHOW_RADIUS_KM)
+                         % (AIS_SHOW_RADIUS_KM, AIS_SHOW_RADIUS_KM * 1000 / 1852))
     ap.add_argument("--ais-collect-km", type=float, default=AIS_COLLECT_RADIUS_KM,
                     help="AIS COLLECT radius at sea, km (default %d) - what the service "
                          "SUBSCRIBES to, and the most the display control can be widened to. "

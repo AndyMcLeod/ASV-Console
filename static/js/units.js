@@ -42,8 +42,9 @@ export function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Mat
 export function nmFromKm(km){ return km * 1000 / M_PER_NM; }
 export function kmFromNm(nm){ return nm * M_PER_NM / 1000; }
 // A range as a display FIELD holds it: a tenth of a mile below 10 nm, whole miles above - the contact
-// list's own rule (fmtNm above). Whole miles could not show the AIS card's 5 km default (2026-09-30): it
-// read "3", and 3 nm is 5.56 km, so the card named a range that was not the one in force.
+// list's own rule (fmtNm above), so a range under 10 nm can be set and read as finely as the list reports
+// one. (2026-09-30: whole miles would have shown 5 km as "3", which is 5.56 km - a range on the card that
+// is not the one in force. The card's default is 5 nm, which reads 5 either way.)
 export function nmField(nm){ return nm < 10 ? Math.round(nm * 10) / 10 : Math.round(nm); }
 export function nmRound(km){ return nmField(nmFromKm(km)); }     // km -> nm, as a display field shows it
 

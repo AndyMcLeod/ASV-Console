@@ -288,21 +288,22 @@ check("12. the AIS card still reads nm ALWAYS — its own earlier decision, not 
         !/export function fmtNm[\s\S]{0,140}?_distUnit/.test(U_SRC),
   "two display edges, deliberately independent");
 
-// 13. THE AIS CARD'S FIELD READS A TENTH OF A MILE BELOW 10 nm (2026-09-30). Its default became 5 km, and whole
-// miles would have shown that as "3" - 5.56 km, a range on the card that is not the one in force. The field keeps
-// the contact list's own rule (fmtNm): a tenth below 10 nm, whole above. And a value the operator types must come
-// back unchanged through the wire's km, or the field drifts under them.
+// 13. THE AIS CARD'S FIELD READS A TENTH OF A MILE BELOW 10 nm (2026-09-30), the contact list's own rule (fmtNm):
+// a tenth below 10 nm, whole above, so a range under 10 nm is set and read as finely as the list reports one. Whole
+// miles would show 5 km as "3" - 5.56 km, a range on the card that is not the one in force. The card's default is
+// 5 nm, 9.26 km on the wire, which must read 5. And a value the operator types must come back unchanged through the
+// wire's km, or the field drifts under them.
 {
   const U2 = require("../static/js/units.js");
-  const cases = [[5, 2.7], [50, 27], [150, 81], [1.852, 1], [18.52, 10], [3, 1.6]];
+  const cases = [[9.26, 5], [5, 2.7], [50, 27], [150, 81], [1.852, 1], [18.52, 10], [3, 1.6]];
   const bad = cases.filter(([km, nm]) => U2.nmRound(km) !== nm)
                    .map(([km, nm]) => km + " km -> " + U2.nmRound(km) + " (want " + nm + ")");
-  const trips = [2.7, 1.6, 9.9, 10, 27, 81].filter(nm => U2.nmRound(U2.kmFromNm(nm)) !== nm);
-  check("13. the AIS card's field reads a tenth of a mile below 10 nm - 5 km is 2.7, not 3 - and a typed value round-trips the wire unchanged",
+  const trips = [5, 2.7, 1.6, 9.9, 10, 27, 81].filter(nm => U2.nmRound(U2.kmFromNm(nm)) !== nm);
+  check("13. the AIS card's field reads a tenth of a mile below 10 nm - the 9.26 km default is 5, and 5 km is 2.7, not 3 - and a typed value round-trips the wire unchanged",
     () => bad.length === 0 && trips.length === 0 && U2.nmField(2.75) === 2.8 && U2.nmField(12.4) === 12,
     () => (bad.length || trips.length)
       ? bad.concat(trips.map(nm => nm + " nm did not round-trip")).join(" | ")
-      : "5 km = 2.7 nm, 50 km = 27, 150 km = 81; 2.7 / 1.6 / 9.9 / 10 / 27 / 81 nm survive km and back");
+      : "9.26 km = 5 nm, 5 km = 2.7, 50 km = 27, 150 km = 81; 5 / 2.7 / 1.6 / 9.9 / 10 / 27 / 81 nm survive km and back");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
