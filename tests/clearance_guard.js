@@ -645,11 +645,14 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // return tick above every branch, so the names must exist. No contacts live here, and the poll is
   // always fresh - an EMPTY model, never a STALE one - so every check in this file is the charted
   // world it always was (tests/ais_avoid.js is where a contact stands).
-  const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+  const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
+          AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
   const GUARD_HOLD_S = G4.HOLD_S;                    // the way round's run-out (2026-09-28)
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_AFTER_MS = 30000, AIS_AROUND_STEP_M = 5;
+  // AIS_AROUND_AFTER_MS READ FROM THE PAGE (2026-09-29): it was retyped here as 30000 and the page moved to 10 s.
+  const AIS_RETURN_BACK_M = 100, AIS_RETURN_DWELL_MS = 4000, AIS_AROUND_STEP_M = 5;
+  const AIS_AROUND_AFTER_MS = +(H.match(/const AIS_AROUND_AFTER_MS = (\d+)/) || [])[1];
   const logClient = () => {}, heldResuming = false;
   // ⚠ SWAPPABLE, because the escape rung's own behavior was untestable while this was a
   // constant null: every helm frame took the BOXED IN branch and no /api/cmd/escape could

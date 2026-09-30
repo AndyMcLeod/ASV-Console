@@ -544,9 +544,11 @@ check("10b. hold_clear_m is NEVER inflated and never reads the filtered model - 
 
 check("10c. escapeCourse is asked of the TRUE model, so an escape never steers toward a granted feature",
   // koEsc (2026-09-27): koAll with each contact grown by her own length - still the UNFILTERED model plus the contacts, never koG
+  // koAll (2026-09-29): the charted world plus the contacts IN REACH (aisLadder) - the ladder's model; the escape's is every
+  // contact (koWithAis(aisKo, true)) whenever there is one, so a contact outside the ladder's reach is still in its search
   () => /escapeCourse\(p, drift, koEsc,/.test(HC)
         && /const koEsc = aisKo\.length \? koWithAis\(aisKo, true\) : koAll;/.test(HC)
-        && /const koAll = aisKo\.length \? \{\.\.\.nogo\.ko, polys: \[\.\.\.nogo\.ko\.polys, \.\.\.aisKo\]\} : nogo\.ko;/.test(HC),
+        && /const koAll = aisLadder\.length \? \{\.\.\.nogo\.ko, polys: \[\.\.\.nogo\.ko\.polys, \.\.\.aisLadder\]\} : nogo\.ko;/.test(HC),
   "escapeCourse(p, drift, koAll, ...) - the unfiltered model plus the AIS contacts (2026-09-25), never "
   + "koG. Handed koG it could steer the "
   + "boat confidently into the launch pier, because the pier would not be in the world it "

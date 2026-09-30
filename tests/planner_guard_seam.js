@@ -229,7 +229,10 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // the contacts, as the disc it answers now counts them (holdClearAt) - and it is NOT a fly-through: its
             // target is the hold point she is going back to hold in, so a berth's margin is the right one
             && /planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:st\.hold\.lat, lon:st\.hold\.lon\},\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koWithAis\(\) \|\| nogo\.ko\}\)/.test(H)
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 3
+            // the EIGHTH (2026-09-29): a held Go-To / RTH / transit's way in (resumeHeldLeg) - the leg's way round and
+            // its return ride it - with the contacts in the model and a fly-through target, as the held survey's is
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 4
+            && /planNogoRoute\(from, tail\[0\], \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
             && !/planNogoRoute\([^)]*ko: koIn\}\)/.test(H)    // no way-in site is judged as a berth any more
             && /planNogoRoute\(from, target, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)
             && /planNogoRoute\(backFrom, firstWp, \{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}\)/.test(H)

@@ -453,14 +453,14 @@ hold, no override). A contact that **stays on the line** gets the three answers 
 (2026-09-27): the same line where she left it is **refused** — she would meet the contact again;
 the operator may right-click the line **beyond** the contact (*Resume from here*, below) and the
 console routes her round it and continues the survey from there; and if the operator has not
-answered **within 30 s** (a minute until 28 September, shortened at his word after FRIGGA), the
+answered **within 10 s** (a minute until 28 September, 30 s until 29 September - shortened at his word both times), the
 console routes round the contact **itself**, as if it were a buoy or
 a dock, to the first point of the line beyond her that is clear by the standoff with the rest of
 the line clear too, and carries on (a contact covering the rest of the line leaves that line and
-picks the plan up at its next waypoint). The guard bar counts the 30 s down, to the next try
+picks the plan up at its next waypoint). The guard bar counts the 10 s down, to the next try
 after one that did not go, and names both answers. Never on a stale feed, never while you have
 her **paused** (a paused hold keeps the offer now, and the bar says the console waits), not twice
-inside 30 s, and where no way round
+inside 10 s, and where no way round
 is found it says so and keeps holding (`koWithAis`, `aisAroundPlan`, `aisAroundTick`, the held
 path of `resumeHeldRun`). **The way round keeps one ship-length from her, and no more than it has
 to** (Andy, 2026-09-27: "an avoidance maneuver of a radius equal to the length or the estimated
@@ -506,6 +506,32 @@ answering is an **empty model that says so** — a
 banner while a run is under way, never a quiet sea (`static/js/ais_keepout.js`; the guard's
 `koAll`, `aisReturnTick` and `resumeHeldRun` in `static/asv.html`).
 
+**From 50 m, the same way round on every leg, and ten seconds to answer** (29 September: "The
+buffer zone on approach to an AIS target appears to be 150m. confirm distance and modify to 50m";
+"the avoidance maneuver used on survey lines for avoidance of AIS contact should have identical
+avoidance behavior when running a GOTO, RTH or transit line"; "reduce the wait for user input from
+30 seconds to 10 seconds"; "extend for drix if necessary"). The 150 m was the guard's 45 s
+look-ahead: a contact was a keep-out like a pier, so she was answered wherever the next 45 s of
+track reached her hull - 139 m at 6 kn - and his session slowed for TEST-1 132 m out and crept at
+LOW to her. The ladder now answers a contact only once her keep-out (her hull, swept along her own
+track while she is under way) is within **50 m** of the boat - and from further out on a hull that
+needs the water to come down to LOW first: the DriX's coast datum (estimated, 44 m from 7 to 2 kn)
+makes it **70 m at her 7 kn survey speed and 94 m at 14 kn**. A hull with no coast datum, or one
+already at LOW, is answered from 50 m. Charted keep-outs keep the whole look-ahead, and the escape,
+the way round and the hold disc still see every contact. A **Go-To, a Return-to-Home or a
+transit** held for a contact is now banked like a survey: the bar says GO-TO / RETURN-TO-HOME /
+TRANSIT HELD, with ROUTE ROUND HER NOW, RESUME <leg> AT LOW SPEED and LEAVE IT HOLDING; once the
+rest of the leg reads clear of her for 4 s she carries on from where she stopped, and if she stays
+the console routes round her itself - one ship-length off her, the leg picked up beyond her - and
+re-issues the leg's OWN command, so she still holds at its end point. Right-clicking a contact on a
+running leg amends it round her. The wait before the console routes round her itself is **10 s**
+(30 s until now), and its retries follow it. Rehearsed on a throwaway console with the DriX: a
+Go-To, the Return-to-Home chained after it and a drawn transit each met a moored test contact at
+7 kn, were slowed 67-69 m off her, held 44-45 m off, and were routed round her 10 s later in their
+own command. The rehearsal found one more thing: slowed to LOW 58 m off her - outside the DriX's
+50 m at LOW - the guard released her, she sped back into her 70 m and was slowed again; the
+release now asks the reach at the speed it would restore.
+
 **The guard can no longer undo the way round halfway through it** (his 28 September run, FRIGGA).
 Held 48 m off her in a 1.75 kn set, the console released the hold rung's own latch six seconds
 into the hold, because a station-keeping boat reads clear. When he pressed for the way round, the
@@ -518,7 +544,7 @@ rungs below helm **stand by** while a held resume is in flight, for its four ste
 resume counts the guard's own stops, holds and escapes, and will not upload, set LOW or Start over
 one. It also reads the vessel's own answer to Start for the plan it actually started. Anything but
 the remainder says **THE WAY ROUND IS NOT RUNNING** with the cause, keeps the held survey and the
-contact's hold, and the console tries again itself 30 s later (`heldResumeOwns`, `guardMove` and
+contact's hold, and the console tries again itself 10 s later (`heldResumeOwns`, `guardMove` and
 the checks in `resumeHeldRun`). His wait before pressing was not the cause: the latch was gone six
 seconds into the hold, and the automatic way round takes the same path. Rehearsed on a throwaway
 console with his line, boat, set and FRIGGA across the line: held 51 m short of her, the latch
@@ -590,7 +616,7 @@ Return-to-Home ran at HIGH and, arrived, held at SURVEY - the slowest speed that
 selection to initiate or manually avoid an AIS target"). Three additions, none of which changes
 the automatic answer above. **Right-click a contact** — her red hull on the chart — and the
 menu offers **Route round <name>**, her length in the key: while the guard holds the survey for
-her it is the way round *now*, the held path without waiting out the 30 s; on a survey still
+her it is the way round *now*, the held path without waiting out the 10 s; on a survey still
 **running or paused** it **amends** the plan round her — the remainder from the first point of
 her line beyond her ring, the way in routed with the contacts in the model at the standoff — with
 no hold and no re-upload, and the guard's ladder settles while the amendment lands (`contactAt`,
@@ -604,9 +630,9 @@ by `/api/ais` with age 0 beside the real traffic, with or without the AIS
 service running — and **Clear test contacts** (`POST /api/ais/test`; a real link refuses it).
 **To rehearse the whole thing:** run a survey in the sim, right-click the line a few hundred
 meters ahead of the boat and place a test contact, and watch the guard slow and hold her
-(SURVEY HELD, the 30 s counting down on the bar); then press ROUTE ROUND HER NOW, or
+(SURVEY HELD, the 10 s counting down on the bar); then press ROUTE ROUND HER NOW, or
 right-click the contact and choose Route round, or right-click the line beyond her and choose
-Resume from here, or wait the 30 s out — each ends with the survey carrying on beyond her,
+Resume from here, or wait the 10 s out — each ends with the survey carrying on beyond her,
 one ship-length off. **The first rehearsal caught a defect the suites could not** (their router is a
 stub): the way in to the rejoin point was judged as a place to *hold* — the 6 m hold margin and
 the hold disc — so a point a standoff beyond her ring was moved off the line and the resume

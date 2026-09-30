@@ -46,6 +46,8 @@
 import { hullBox, velocityEN } from "./targets.js";
 import { bbOf } from "./geometry.js";
 import { HORIZON_S } from "./guard.js";
+import { clearanceM } from "./keepouts.js";
+import { coastLc, coastRun } from "./coast.js";
 
 /** The hull assumed for a contact that broadcasts no size, meters. Andy's numbers. */
 export const AIS_DEFAULT_LENGTH_M = 20;
@@ -74,6 +76,44 @@ export function aisNavWord(nav) { return nav == 1 ? "at anchor" : nav == 5 ? "mo
 export const AIS_KO_RANGE_M = 3000;
 /** A poll older than this is no model at all - the guard says so rather than reading a quiet sea. */
 export const AIS_KO_STALE_S = 40;
+/**
+ * THE GUARD SEES A CONTACT FROM THIS FAR, AND NO FARTHER (Andy, 2026-09-29: "The buffer zone on approach to an AIS
+ * target appears to be 150m. confirm distance and modify to 50m.")
+ *
+ * It was not a setting. The guard looks HORIZON_S (45 s) ahead of the boat, and a contact was a keep-out like a pier,
+ * so she was slowed wherever the next 45 s of track reached a hull: 139 m at 6 kn. MEASURED in his 17:23 session: the
+ * slow-down for TEST-1 began with the boat 132 m from her reported position, and she then crept at LOW for two and a
+ * half minutes before holding 21 m off. A pier needs that horizon. A contact now joins the guard's model only once
+ * her keep-out - her hull, swept along her own track while she is under way - is within this of the boat. Charted
+ * keep-outs keep the whole horizon, and the escape, the way round, the return and the hold disc still see every
+ * contact: this is when the ladder starts answering one, not whether she is known.
+ */
+export const AIS_LOOKAHEAD_M = 50;
+/** The contacts the ladder acts on: those whose keep-out lies within `m` of the boat at `own` (the model's frame). */
+export function aisInReach(own, polys, m = AIS_LOOKAHEAD_M) {
+  if (!own || !polys || !polys.length) return [];
+  return polys.filter(q => clearanceM(own, { polys: [q], lines: [], points: [] }, m + 1) <= m);
+}
+/**
+ * THE REACH A HULL NEEDS (Andy, 2026-09-29, when the stopping margin was raised: "extend for drix if necessary").
+ * AIS_LOOKAHEAD_M is where the answer to a contact BEGINS. A hull that sheds way slowly has to be seen earlier by the
+ * water it takes her to come down to LOW first, or she arrives at the 50 m still at speed. That water is her own
+ * coast-down law (coast.js coastRun: v0 -> v1 takes Lc·ln(v0/v1) through the water, in Lc·(1/v1 - 1/v0) seconds) plus
+ * what the set carries her in those seconds. The DriX's datum is ESTIMATED, not measured (44 m from 7 kn to 2 kn:
+ * Lc 35.1 m), and her LOW is 4 kn: seen from 50 m at LOW, ~70 m at her 7 kn survey speed, ~94 m at 14 kn. A hull
+ * with no coast datum, or already at LOW, from 50 m.
+ *
+ * @param {object} coastBlock the vessel's `maneuvering.coast` block (coast.js coastLc), or null
+ * @param {number} twMs       her speed through the water, m/s
+ * @param {number} lowMs      the speed the guard slows her to (LOW), m/s
+ * @param {number} driftMs    the set's speed, m/s
+ */
+export function aisReachM(coastBlock, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M) {
+  const lc = coastLc(coastBlock);
+  const run = lc ? coastRun(twMs, lowMs, lc.lc) : null;
+  if (!run) return baseM;
+  return baseM + run.m + (driftMs > 0 ? driftMs * run.s : 0);
+}
 
 const D2R = Math.PI / 180;
 

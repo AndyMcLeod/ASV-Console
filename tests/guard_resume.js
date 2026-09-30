@@ -201,7 +201,8 @@ var searchCount = 0;                                    // how many times the la
 // banner cannot land in a check that counts banners (tests/ais_avoid.js owns the stale case).
 var aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
-const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S } = require("../static/js/ais_keepout.js");
+const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
+        AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
 const { clearanceM, blocked } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.

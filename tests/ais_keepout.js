@@ -300,5 +300,31 @@ console.log("An AIS contact as a keep-out:");
         () => named.q && named.q.kind === "AIS: EVER GIVEN (20 x 8 m assumed, 8.0 kn)", () => named.q && named.q.kind);
 }
 
+// ── 11. THE LADDER'S REACH (Andy, 2026-09-29: "The buffer zone on approach to an AIS target appears to be 150m. confirm
+//        distance and modify to 50m." - then, when the stopping margin was raised, "extend for drix if necessary") ────
+{
+  const own = { e: 0, n: 0 };
+  const hullAt = (e) => modelOf(contact(e, 0, { heading: 90 })).q;      // 20 x 8 m assumed about her antenna, heading east
+  const inside = hullAt(59.5), outside = hullAt(60.5);                    // her near end 49.5 m and 50.5 m off
+  const got = A.aisInReach(own, [inside, outside]);
+  const nearM = (q) => clearanceM(own, { polys: [q], lines: [], points: [] }, 100);
+  check("11. aisInReach keeps a contact whose keep-out comes within AIS_LOOKAHEAD_M (50 m) of the boat and drops one beyond it - measured to her near end, not her antenna - and keeps nothing from nothing",
+        () => A.AIS_LOOKAHEAD_M === 50 && got.length === 1 && got[0] === inside && A.aisInReach(own, []).length === 0
+              && A.aisInReach(null, [inside]).length === 0 && A.aisInReach(own, [inside, outside], 60).length === 2,
+        () => "reach " + A.AIS_LOOKAHEAD_M + ", kept " + got.length + " of 2 (near ends " + nearM(inside).toFixed(1) + " / " + nearM(outside).toFixed(1) + " m)");
+  const drix = JSON.parse(require("fs").readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const coast = drix.maneuvering.coast, low = drix.propulsion.speeds_kn.low * KN;
+  const r7 = A.aisReachM(coast, 7 * KN, low), r14 = A.aisReachM(coast, 14 * KN, low), rLow = A.aisReachM(coast, low, low);
+  const rSet = A.aisReachM(coast, 7 * KN, low, 1.0);
+  check("11b. EXTENDED FOR THE DRIX: 50 m plus the water her own coast datum (ESTIMATED: 44 m from 7 kn to 2 kn) says she needs to come down to LOW (4 kn) - 69.7 m at 7 kn, 94.0 m at 14 kn, 50 m at LOW - and more in a set, which carries her the while (7.3 s of it from 7 kn)",
+        () => Math.abs(r7 - 69.66) < 0.05 && Math.abs(r14 - 94.0) < 0.05 && rLow === 50 && Math.abs(rSet - r7 - 7.31) < 0.05,
+        () => "7 kn " + r7.toFixed(2) + ", 14 kn " + r14.toFixed(2) + ", LOW " + rLow + ", 7 kn in a 1 m/s set " + rSet.toFixed(2));
+  check("11c. ... and a hull with no coast datum (every vessel file but the DriX's), a malformed one, or no LOW to come down to, is seen from 50 m at any speed",
+        () => A.aisReachM(null, 14 * KN, low) === 50 && A.aisReachM(undefined, 7 * KN, low) === 50
+              && A.aisReachM({ from_kn: 2, to_kn: 7, distance_m: 44 }, 7 * KN, low) === 50 && A.aisReachM(coast, 7 * KN, 0) === 50,
+        () => "no datum " + A.aisReachM(null, 14 * KN, low) + ", reversed " + A.aisReachM({ from_kn: 2, to_kn: 7, distance_m: 44 }, 7 * KN, low)
+            + ", no LOW " + A.aisReachM(coast, 7 * KN, 0));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);
