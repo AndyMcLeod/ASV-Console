@@ -747,14 +747,15 @@ Marine **AIS** (Automatic Identification System) is how ships broadcast their
 identity, position, course and speed — over VHF, and onto the internet via shore
 and satellite receivers. The **AIS** button is a simple on/off overlay of the vessel traffic around the boat —
 the **whole lake** when you're on an enclosed lake (e.g. a Great Lake), or **within
-50 km** at sea: a triangle pointing along each vessel's course, coloured by ship type
+5 km** at sea by default (the card shows it as 2.7 nm, and its range control widens it):
+each vessel drawn pointing the way she is heading, colored by ship type
 (cargo / tanker / passenger / fishing / tug / …), with the name (or MMSI) beside it
 and full details on hover — **and** in an **AIS traffic table** (each vessel by
 range / bearing / speed / CPA / TCPA, sorted nearest-first) that opens with the layer and
 can be
 closed to a chip / reopened at will. The table always carries a **status line naming
 the live feed and its coverage** — e.g. *connected · aisstream (global) · no vessels in
-50 km yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
+2.7 nm yet*, or *connected · digitraffic (Finland/Baltic only)* — so an empty list tells
 you whether the service is down, still warming up, genuinely quiet, or simply on a feed
 that cannot cover where you are. It is **situational awareness only** — subject to
 feed coverage, latency and gaps — not a navigation or collision-avoidance system.
@@ -808,10 +809,12 @@ Sources (any combination, comma-separated — all merge):
   (`setx AISSTREAM_KEY KEY` on Windows) and every console on the machine picks it up;
   a per-project `ais_key.txt` or `--aisstream-key` also work. `--source auto` uses it. On a Great Lake the console pulls the
   **whole lake and shows every contact in it**; at sea it **collects a wide area (150 km)
-  and shows a narrower radius out of it — 50 km by default, changed LIVE from the range
-  control on the AIS traffic card**. Because the wide area is already collected, widening
+  and shows a narrower radius out of it — 5 km by default, changed LIVE from the range
+  control on the AIS traffic card**. The card reads in nautical miles, to a tenth of a mile
+  below 10 nm as the contact list does, so the default shows as 2.7 nm (whole miles would say
+  3, which is 5.56 km). Because the wide area is already collected, widening
   the view is instant and never re-subscribes; the control clamps to the collected width,
-  and the card reports *"3 of 6 in 150 km"* so *nothing out there* is distinguishable from
+  and the card reports *"3 of 6 in 81 nm"* so *nothing out there* is distinguishable from
   *I narrowed it down myself*. `--ais-radius-km` sets the control's starting value and
   `--ais-collect-km` the collected width — raise the latter where receiver coverage is
   thin: at the Delaware Bay mouth 50 km sees almost nothing because the receivers are
@@ -2482,7 +2485,9 @@ python tests/ais_range.py
 **AIS range** — that the display range filters the collected area as a true range circle
 (not the collect box), that it is clamped to what was actually collected, and that it is
 **never applied on a lake**, where every contact stands. Runs against a stub provider at
-known ranges, so it tests the console rather than today's real traffic.
+known ranges, so it tests the console rather than today's real traffic. And that a console
+started with no radius flag opens at the shipped 5 km, which the card's field shows as
+2.7 nm, and that a blank field goes back to that default.
 
 ```
 node tests/ui_split.js

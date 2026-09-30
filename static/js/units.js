@@ -41,7 +41,11 @@ export function fmtNm(m){ const nm=m/1852; return nm<10 ? nm.toFixed(1) : ""+Mat
 // and every wire field is still named _km. That is why the flags keep their names.
 export function nmFromKm(km){ return km * 1000 / M_PER_NM; }
 export function kmFromNm(nm){ return nm * M_PER_NM / 1000; }
-export function nmRound(km){ return Math.round(nmFromKm(km)); }  // whole nm, for a display field
+// A range as a display FIELD holds it: a tenth of a mile below 10 nm, whole miles above - the contact
+// list's own rule (fmtNm above). Whole miles could not show the AIS card's 5 km default (2026-09-30): it
+// read "3", and 3 nm is 5.56 km, so the card named a range that was not the one in force.
+export function nmField(nm){ return nm < 10 ? Math.round(nm * 10) / 10 : Math.round(nm); }
+export function nmRound(km){ return nmField(nmFromKm(km)); }     // km -> nm, as a display field shows it
 
 // --- durations ------------------------------------------------------------------------
 export function fmtETA(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60), s=sec%60;

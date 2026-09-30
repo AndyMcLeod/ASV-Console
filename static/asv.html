@@ -378,7 +378,7 @@
     <div id="aisTablePanelHead" title="Drag to move" style="cursor:move;display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:linear-gradient(180deg,#182636,#101c28);border-bottom:1px solid #24506a;border-radius:6px 6px 0 0;font-size:9px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase;user-select:none;"><span>&#10287; AIS traffic</span><span id="aisTableClose" title="Close (reopen from the AIS chip)" style="cursor:pointer;padding:0 3px;color:var(--ink-faint);">&times;</span></div>
     <div id="aisRangeRow" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid #24506a;">
       <span style="font-size:9px;letter-spacing:.06em;color:var(--ink-faint);text-transform:uppercase;">Range</span>
-      <input type="number" id="aisRange" min="1" step="5" value="27" title="How far out to SHOW traffic, in NAUTICAL MILES — the same unit the contact list reports range in. The service collects a wider area than this, so widening is instant: it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
+      <input type="number" id="aisRange" min="1" step="1" value="2.7" title="How far out to SHOW traffic, in NAUTICAL MILES — the same unit the contact list reports range in, and like the list to a tenth of a mile below 10 nm. The service collects a wider area than this, so widening is instant: it is a filter, not a new subscription. Ignored on a Great Lake, where the whole lake is shown."
         style="width:58px;background:var(--abyss);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:11px;padding:3px 4px;border-radius:2px;"/>
       <span style="font-size:10px;color:var(--ink-faint);">nm</span>
       <span id="aisRangeNote" style="margin-left:auto;font-size:9px;color:var(--ink-faint);text-align:right;"></span>
@@ -912,7 +912,7 @@
 // module namespace cannot be written to, and why destructuring V goes stale.
 import { M_PER_DEG_LAT, TILE, azTo, distTo, atDA, toEN, fromEN, llEN, planeFrame,
          worldPx, worldToLatLon, distPtSegPx, alignDeg } from "/static/js/geodesy.js";
-import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nmRound,
+import { M_PER_NM, distUnit, setDistUnit, fmtDist, fmtNm, nmFromKm, kmFromNm, nmRound, nmField,
          fmtETA, fmtDur, fmtMS, fmtLL } from "/static/js/units.js";
 import { bbOf, inBB, bboxContains, bboxAround, lerpLL, dSeg, segInt, pinp,
          eachRing, eachPath, eachPoint,
@@ -9184,10 +9184,12 @@ function drawMarks(toScreen){
 }
 // --- AIS layer: nearby vessels from the standalone AIS service (/api/ais) ------
 // The console proxies ais_service.py; the browser only polls /api/ais for the current
-// viewport. Draw each vessel as a triangle pointing along its course, colored by
-// ship type; hover for identity/course/speed. Situational awareness only.
+// viewport. Draw each vessel pointing the way she is heading (aisMotion: her course only
+// while under way, a dashed circle when neither), colored by ship type; hover for
+// identity/course/speed. The guard's AIS keep-outs are built from the same contacts.
 // AIS area is chosen SERVER-SIDE by /api/ais from the boat position: on a Great Lake
-// it returns the WHOLE lake's traffic, at sea a 50 km box. The browser just sends its
+// it returns the WHOLE lake's traffic, at sea the collected area filtered to the card's
+// range (5 km by default, shown as 2.7 nm). The browser just sends its
 // center and renders whatever comes back (no client-side range filter). `aisArea`
 // carries the mode/name for the table header. aisCenter() is still used for the
 // range/bearing columns.
@@ -9279,13 +9281,19 @@ function setAisTable(show){ aisTableShown=show;
 // The row says so rather than sitting there looking broken, which is the failure this
 // console keeps re-learning: a control that silently does nothing is worse than no control.
 async function setAisRange(nm){
-  const el=$("#aisRange"); const v=Math.max(1, Math.round(parseFloat(nm)||27));
+  // To the field's own precision BEFORE it is sent (nmField: a tenth of a mile below 10 nm, whole
+  // above), so the echo below reads back exactly what was typed and the range in force is the one
+  // on the card. A blank or unreadable entry takes the field's authored default - the shipped 5 km,
+  // 2.7 nm (2026-09-30) - where it used to take a literal 27 that nothing tied to the server's.
+  const el=$("#aisRange");
+  const v=Math.max(1, nmField(parseFloat(nm) || parseFloat(el && el.defaultValue) || 1));
   try{
     const r=await fetch("/api/ais/radius", {method:"POST", headers:{"Content-Type":"application/json"},
                                             body: JSON.stringify({km: kmFromNm(v)})});
     const d=await r.json();
-    // Reflect the server's clamp, back in nm. Round-trips stably: 27 nm -> 50.004 km ->
-    // 26.9999 nm -> 27, so a value the operator did not change never drifts under them.
+    // Reflect the server's clamp, back in nm. Round-trips stably: 2.7 nm -> 5.0004 km ->
+    // 2.7000 nm -> 2.7, and 27 nm -> 50.004 km -> 27, so a value the operator did not
+    // change never drifts under them.
     if(el && d && d.show_km!=null) el.value = nmRound(d.show_km);
   }catch(e){ /* leave the field; the note line reports the area actually in force */ }
   pollAIS();                                   // refresh now rather than on the next tick

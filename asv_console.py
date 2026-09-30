@@ -204,7 +204,12 @@ AIS_OPENCPN = ""               # "[HOST:]PORT" for --source ...,opencpn
 # NOT APPLIED ON A GREAT LAKE. There the area is the whole lake and EVERY contact is shown,
 # because "50 km of Lake Erie" is not a useful thing to ask for.
 AIS_COLLECT_RADIUS_KM = 150.0
-AIS_SHOW_RADIUS_KM = 50.0
+# THE CARD OPENS AT 5 km (Andy, 2026-09-30: "change AIS default range to 5km"; it was 50 km). The card
+# reads in nautical miles, to a tenth below 10 nm, so it shows 2.7 nm - not the "3" whole miles would
+# round it to, which is 5.56 km. The collect radius is unchanged, so widening from here is still instant.
+# The guard's AIS keep-outs are built from what this filter lets through, and need far less: its horizon
+# is 45 s, and a contact closing at 30 kn covers under 700 m in that.
+AIS_SHOW_RADIUS_KM = 5.0
 # TEST CONTACTS (2026-09-27, simulator only): synthetic AIS vessels the operator places from the chart menu
 # to rehearse the contact avoidance - a moored hull across a survey line - without waiting for the live feed
 # to put one there. Merged into every /api/ais answer with age 0 (never stale) and served even while the AIS
@@ -5915,9 +5920,10 @@ class Handler(BaseHTTPRequestHandler):
         # /api/ais?center=LAT,LON -> proxy to the standalone AIS service (ais_service.py,
         # AIS_BASE). The console queries the service so the browser never touches the
         # AIS feeds or any API key directly. It also picks the AREA here: on a Great
-        # Lake, pull the WHOLE lake (enclosed water); at sea, a 50 km box around the
-        # boat. Returns the service's vessels + an `area` tag, or {ok:false} when the
-        # service isn't running (the layer just shows "AIS offline").
+        # Lake, pull the WHOLE lake (enclosed water); at sea, the COLLECT box around the
+        # boat, filtered below to the display radius. Returns the service's vessels + an
+        # `area` tag, or {ok:false} when the service isn't running (the layer just shows
+        # "AIS offline").
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = urllib.parse.parse_qs(qs)
         lat = lon = None

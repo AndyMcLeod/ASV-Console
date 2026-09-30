@@ -29,7 +29,9 @@ TEETH (verified by mutation, not assumed): drop the sea-mode filter and 3 and 4 
 the filter on a lake too and 6 fails. Filter by the bounding BOX instead of true range and 5
 fails - a vessel in the box corner is inside 1.4x the radius but outside the circle. Let the
 requested radius exceed what was collected and 7 fails, which would show nothing extra while
-implying the sea beyond is empty.
+implying the sea beyond is empty. Put the shipped default back to 50 km and 11 fails; author
+the field in whole miles ("3" for 5 km, which is 5.56 km) and 8c fails; fall back to a
+literal rather than the field's own default and 8h fails.
 """
 
 import io
@@ -109,7 +111,7 @@ def at_km(lat, lon, east_km, north_km=0.0):
     dlon = east_km / (111.320 * math.cos(math.radians(lat)))
     return {"lat": lat + dlat, "lon": lon + dlon}
 
-# ranges chosen to straddle the 50 km default and the 150 km collect width
+# ranges chosen to straddle the 50 km the first console is started at and the 150 km collect width
 SEA_RANGES = [5, 20, 49, 51, 90, 140]
 SEA_VESSELS = [dict(at_km(*LEWES, east_km=r), mmsi=100 + i, name="SEA%d" % r, cog=90, sog=8)
                for i, r in enumerate(SEA_RANGES)]
@@ -204,10 +206,11 @@ try:
           and d["area"]["collect_km"] == 150,
           json.dumps(d["area"]))
 
-    # 3-4. THE FILTER. At the 50 km default only the three inside it survive; widening to
-    # 150 picks up the rest WITHOUT the service being touched.
+    # 3-4. THE FILTER. At the 50 km this console was started at (--ais-radius-km 50; the
+    # shipped default is 5 km, check 11) only the three inside it survive; widening to 150
+    # picks up the rest WITHOUT the service being touched.
     names = sorted(v["name"] for v in d["vessels"])
-    check("3. the default 50 km shows only what is inside 50 km",
+    check("3. at the flag's 50 km only what is inside 50 km is shown",
           names == ["SEA20", "SEA49", "SEA5"], ",".join(names))
     api(port, "/api/ais/radius", {"km": 150})
     d2 = api(port, sea)
@@ -323,17 +326,54 @@ finally:
         proc.wait(timeout=10)
     except Exception:
         proc.kill()
+
+# 11. THE SHIPPED DEFAULT (Andy, 2026-09-30: "change AIS default range to 5km"; it was 50 km). The
+# console above is started WITH --ais-radius-km 50, which is how 2-8 test the flag and the filter at
+# known ranges - so it cannot say what an operator who passes no flag gets. This one passes neither
+# radius flag, against the same stub, in a state folder of its own.
+srvlog2 = tempfile.TemporaryFile(mode="w+")
+STATE2 = ConsoleState()
+port2 = free_port()
+proc2 = subprocess.Popen([sys.executable, "asv_console.py", "--sim", "--browser", "none",
+                          "--port", str(port2), "--no-log", "--no-ais-service",
+                          "--ais", "http://127.0.0.1:%d" % stub_port, *STATE2.args()],
+                         cwd=APP, stdout=srvlog2, stderr=subprocess.STDOUT)
+shipped = {}
+try:
+    for _ in range(80):
+        try:
+            if (api(port2, "/api/state", timeout=2).get("status") or {}).get("lat_deg") is not None:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    try:
+        shipped = api(port2, "/api/ais?center=%.5f,%.5f" % LEWES).get("area") or {}
+    except Exception as e:
+        shipped = {"error": str(e)}
+    check("11. a console started with NO radius flag opens the card at the shipped 5 km (it was 50), collecting 150",
+          shipped.get("mode") == "sea" and shipped.get("show_km") == 5 and shipped.get("collect_km") == 150,
+          json.dumps(shipped))
+finally:
+    try:
+        proc2.terminate()
+        proc2.wait(timeout=10)
+    except Exception:
+        proc2.kill()
     stub.shutdown()
 
-# 9. THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the console is stopped, so its
+# 9. THE SERVER SURVIVED EVERY REQUEST ABOVE. Runs after the consoles are stopped, so their
 # output is complete. This is the check that would have caught /api/ais/radius returning
 # self._send(...) instead of its (code, obj) tuple: the response was already correct and on
 # the wire, so 1-8 could not see it - only the traceback afterwards gave it away, and that
 # was going to DEVNULL. Any endpoint that answers and then takes down its handler thread
-# fails here.
+# fails here. Both consoles' output is read.
 srvlog.seek(0)
 server_out = srvlog.read()
 srvlog.close()
+srvlog2.seek(0)
+server_out += srvlog2.read()
+srvlog2.close()
 # tracebacks and routes that raised - not every line that says "Error" (tests/lib/server_log.py, review #17)
 from server_log import exception_lines  # noqa: E402
 tb = exception_lines(server_out)
@@ -356,13 +396,34 @@ check("8b. the client converts with the DEFINED nautical mile, 1852 m exactly",
       "units.js M_PER_NM = %s; page redeclares it: %s"
       % (m_per_nm.group(1) if m_per_nm else "not found", "M_PER_NM =" in HTML))
 
-# 50 km is the shipped default and must present as 27 nm, which is the value the markup
-# opens with - if those two disagree the field jumps the first time the poll lands.
-markup = re.search(r'id="aisRange"[^>]*?value="(\d+)"', HTML)
-check("8c. the field's authored default matches what 50 km converts to (27 nm)",
-      markup is not None and int(markup.group(1)) == round(50 * 1000 / 1852),
-      "markup value=%s, 50 km = %.2f nm"
-      % (markup.group(1) if markup else "?", 50 * 1000 / 1852))
+# THE SHIPPED DEFAULT PRESENTS EXACTLY, and it is the value the markup opens with - if those two
+# disagree the field jumps the first time the poll lands. The field shows a range the way the contact
+# list does, to a tenth of a mile below 10 nm (units.js nmField), so 5 km is 2.7 nm: whole miles
+# would say "3", and 3 nm is 5.56 km - a range on the card that is not the one in force. Compared
+# with what check 11's console REPORTED, not a copied constant. (It was 50 km, 27 nm, until 2026-09-30.)
+def field_nm(km):
+    nm = km * 1000.0 / 1852.0
+    return math.floor(nm * 10 + 0.5) / 10 if nm < 10 else math.floor(nm + 0.5)
+
+
+markup = re.search(r'id="aisRange"[^>]*?value="([\d.]+)"', HTML)
+shipped_km = shipped.get("show_km")
+check("8c. the field's authored default is the shipped default as the field shows it (5 km = 2.7 nm, not 3)",
+      markup is not None and shipped_km is not None and float(markup.group(1)) == field_nm(shipped_km),
+      "markup value=%s, shipped %s km = %s nm"
+      % (markup.group(1) if markup else "?", shipped_km,
+         ("%.3f" % (shipped_km * 1000 / 1852)) if shipped_km is not None else "?"))
+
+# 8h. A BLANK ENTRY TAKES THE FIELD'S OWN DEFAULT, and a typed range is cut to the field's precision
+# BEFORE it is sent, so the echo reads back what was typed. The fallback was a literal 27 that nothing
+# tied to the server's default - with the default at 5 km, clearing the box would have widened the
+# view to 50 km. It reads the markup's value now, which 8c ties to what the server reports.
+fallback = re.search(r'async function setAisRange\(nm\)\{[\s\S]*?const v=Math\.max\(1, nmField\('
+                     r'parseFloat\(nm\) \|\| parseFloat\(el && el\.defaultValue\)', HTML)
+check("8h. a blank entry takes the field's authored default, and a typed range is sent at the field's own precision",
+      fallback is not None and "||27" not in HTML,
+      "setAisRange: nmField(parseFloat(nm) || the field's defaultValue) %s; a literal ||27 %s"
+      % ("found" if fallback else "NOT FOUND", "remains" if "||27" in HTML else "gone"))
 
 # The unit shown beside the box, and the wire it posts on, must not drift apart: the label
 # says nm and the request body must still be keyed "km".
