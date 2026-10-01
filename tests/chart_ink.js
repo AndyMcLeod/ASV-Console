@@ -113,6 +113,19 @@
 // crashes the suite through its guard rather than failing a check, and a crash is not the
 // same evidence as a red check.
 //
+// ⚠⚠ FOURTH ROUND (2026-10-01, Bellingham): A DASH THAT ENDS IN A DOT IS A LINE SYMBOL. Andy: *"identified a cable
+// way as a shore attached feature to be avoided ... visually identified as a cable way by the segmented line, but each
+// segment has a dot on one end."* Chaining joined 103 of its dashes into a 1,440 m "pier". Checks 23-23g. TEETH: 13
+// mutations of endDot / dashDotWhy / the chain's dot count / the verdict, all 13 killed:
+//   the dash-dot verdict never fires -> 23, 23f    no fraction gate -> 23d      no minimum count -> 23c, 23f
+//   a T-head is compact enough -> 23e              no ratio gate -> 17, 17d, 23e, 6
+//   no extra margin -> 23e                         only one end looked at -> 23, 23c, 23d, 23e
+//   a chain forgets its dots -> 23, 23d, 23f       a symbol may be a footprint -> 23f
+//   no piece is ever read -> 23, 23c, 23d, 23f     no minimum length -> 23e
+//   only a KEPT mark is judged a symbol -> 23f     the stroke's width is its widest bin -> 23e
+// The last first SURVIVED: every fixture's dash was clean, so its median and its widest bin agreed. 23e's blemish -
+// two stray pixels in the stroke - is the case where they do not.
+//
 // ⚠ THE SECOND ROUND FOUND FOUR MORE HOLES, three in the checks and one in the CODE:
 //   * nothing tested that chaining REFUSES - deleting either the offset or the gap test left
 //     every check green. 17b (two parallel piers stay two) and 17c (two distant collinear
@@ -931,6 +944,104 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           && ink.busy === false && rebuilt >= 1 && banners.some(b => /CHART IMAGE NOT COMPARED/.test(b)) && scans === 2,
           () => JSON.stringify({ key: ink.key, lines: ink.lines.length, note: ink.note, rebuilt, banners: banners.length,
                                  scans }));
+  }
+
+  // ── 23. A DASH THAT ENDS IN A DOT IS A LINE SYMBOL, NOT A STRUCTURE ─────────────────────────────────────────────
+  // Andy, 2026-10-01, at Bellingham: "The path planner punch out for this survey has identified a cable way as a
+  // shore attached feature to be avoided. This particular feature is visually identified as a cable way by the
+  // segmented line, but each segment has a dot on one end." The live symbol, measured on the tiles the scan read: a
+  // 2 px stroke 31 px long with a 5 px dot on one end, every 36 px. Drawn here at that pixel size, hanging off a
+  // charted quay exactly as a pier drawn in pieces would - which is what chaining joined it into, 1,440 m of it.
+  {
+    const DQ = { a: { x: 10, y: 10 }, b: { x: 310, y: 10 } };
+    const DSEGS = [{ a: DQ.a, b: DQ.b }];
+    // dotsAt: which pieces carry a dot (default all); bend: radians each piece turns from the one before.
+    const dashScene = ({ x = 160, dash = 31, period = 36, dots = true, dotsAt = null, bend = 0 } = {}) => {
+      const a = blank();
+      stroke(a, DQ.a.x, DQ.a.y, DQ.b.x, DQ.b.y);
+      let px = x, py = 11, ang = Math.PI / 2;
+      for (let k = 0; ; k++) {
+        const ex = px + Math.cos(ang) * (dash - 1), ey = py + Math.sin(ang) * (dash - 1);
+        if (ey > 300 || ex < 3 || ex > 316) break;
+        stroke(a, px, py, ex, ey); stroke(a, px + 1, py, ex + 1, ey);
+        if (dots && (!dotsAt || dotsAt.includes(k))) fillRect(a, Math.round(ex) - 2, Math.round(ey) - 2, 5, 5);
+        px += Math.cos(ang) * period; py += Math.sin(ang) * period; ang -= bend;
+      }
+      return a;
+    };
+    const dashExplained = () => maskOf((paint) => paintSeg(paint, DQ.a.x, DQ.a.y, DQ.b.x, DQ.b.y, C.EXPLAIN_PX));
+    const dashRun = (o = {}, cls = {}) => C.scanChart(dashScene(o), W, H2, dashExplained(), DSEGS, MPP, cls);
+    const sym = (r) => r.rejected.filter((x) => x.symbol === "dash-dot");
+
+    const r23 = dashRun();
+    check("23. THE CABLE WAY: a segmented line off a charted quay whose every piece ends in a DOT is refused as a "
+          + "dash-dot line symbol - not a structure, not a footprint, and not reported as a detached structure",
+          () => r23.structures.length === 0 && r23.areas.length === 0
+                && sym(r23).some((x) => x.pieces >= 7 && x.dots >= 7)
+                && !r23.unexplained.some((u) => /not attached/.test(u.why) && u.pieces > 1),
+          () => r23.structures.length + " structure(s), " + r23.areas.length + " footprint(s); "
+                + (sym(r23)[0] ? sym(r23)[0].why : "no dash-dot reject"));
+    const r23b = dashRun({ dots: false });
+    check("23b. ... and the SAME line with no dots is still ONE PIER IN PIECES - the segmented-pier rule stands, and "
+          + "only the dots make it a symbol",
+          () => r23b.structures.length === 1 && r23b.structures[0].pieces >= 7 && r23b.structures[0].dots === 0,
+          () => r23b.structures.map((s) => s.lengthM.toFixed(1) + " m, " + s.pieces + " pieces, " + s.dots + " dots")
+                .join("; ") || "nothing kept");
+    const r23c = dashRun({ dash: 60, period: 400 });
+    check("23c. a pier with ONE dot at its head is still a pier - a single piece is never judged a symbol",
+          () => r23c.structures.length === 1 && r23c.structures[0].pieces === 1 && r23c.structures[0].dots === 1,
+          () => r23c.structures.map((s) => s.lengthM.toFixed(1) + " m, dots " + s.dots).join("; ") || "nothing kept");
+    const r23d = dashRun({ dotsAt: [0, 4] });
+    check("23d. ... nor is a pier in pieces with a dot on FEWER THAN HALF of them (2 of 8): a symbol repeats",
+          () => r23d.structures.length === 1 && r23d.structures[0].dots === 2 && r23d.structures[0].pieces >= 7,
+          () => r23d.structures.map((s) => s.pieces + " pieces, " + s.dots + " dots").join("; ") || "nothing kept");
+    // endDot on its own, on pixel sets built directly - each refusal is refused by exactly one of its gates.
+    const P = () => { const s = new Set(); return { s, add(x, y) { s.add(x + "," + y); } }; };
+    const ln = (p, x0, y0, x1, y1, w = 2) => {
+      const n = Math.max(1, Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 4);
+      for (let i = 0; i <= n; i++) {
+        const x = Math.round(x0 + (x1 - x0) * i / n), y = Math.round(y0 + (y1 - y0) * i / n);
+        for (let k = 0; k < w; k++) p.add(x + k, y);
+      }
+    };
+    const sq = (p, cx, cy, s) => { for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) p.add(cx - (s >> 1) + dx, cy - (s >> 1) + dy); };
+    const dot = (p) => { const xs = [], ys = []; for (const k of p.s) { const [x, y] = k.split(",").map(Number); xs.push(x); ys.push(y); }
+                         return C.endDot(xs, ys, C.fitAxis(xs, ys)); };
+    const cases = {};
+    { const p = P(); ln(p, 10, 10, 10, 40); sq(p, 10, 40, 5); cases.far = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 40); sq(p, 10, 10, 5); cases.near = dot(p); }
+    { const p = P(); ln(p, 10, 40, 32, 18); sq(p, 33, 17, 5); cases.diag = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 40); cases.plain = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 40); ln(p, 3, 40, 17, 40, 1); ln(p, 3, 41, 17, 41, 1); cases.tHead = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 40, 4); sq(p, 12, 41, 6); cases.wideHead = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 40, 1); sq(p, 11, 41, 2); cases.knob = dot(p); }
+    { const p = P(); ln(p, 10, 10, 10, 15, 1); sq(p, 10, 16, 3); cases.short = dot(p); }
+    // A BLEMISH in the stroke - two stray pixels where it brushes other ink - must not set its width: the stroke is
+    // read by its MEDIAN width, and its widest bin would make the dot look no wider than the stroke.
+    { const p = P(); ln(p, 10, 10, 10, 40); p.add(12, 25); p.add(13, 25); sq(p, 10, 40, 5); cases.blemish = dot(p); }
+    check("23e. endDot reads a dot at EITHER end, at 45 deg and past a blemish in the stroke, and refuses a plain "
+          + "stroke, a T-HEADED pier (not compact), a head only 1.5x its stroke (ratio), a 1 px knob (too slight) and a "
+          + "mark too short to have both",
+          () => cases.far && cases.near && cases.diag && cases.blemish && !cases.plain && !cases.tHead && !cases.wideHead
+                && !cases.knob && !cases.short,
+          () => JSON.stringify(cases));
+    // A CURVING dash-dot line chains into a mark too wide to read as one line - and the footprint path would then
+    // claim the water inside the bend as a marina. The control first: with the dash-dot rule off it IS a footprint.
+    const curveOff = dashRun({ x: 40, bend: 0.09 }, { dashDotMinDots: Infinity });
+    const curveOn = dashRun({ x: 40, bend: 0.09 });
+    check("23f. a CURVING dash-dot line is not a footprint either - with the rule off its hull IS one, so the "
+          + "exclusion is what stands between the bend and a keep-out",
+          () => curveOff.areas.length >= 1 && curveOn.areas.length === 0 && curveOn.structures.length === 0
+                && sym(curveOn).length >= 1,
+          () => "rule off: " + curveOff.areas.length + " footprint(s); rule on: " + curveOn.areas.length
+                + " footprint(s), " + sym(curveOn).length + " dash-dot reject(s)");
+    // and the existing scene, which holds every real pier this suite knows, is untouched by the rule
+    const base = run({ tick: true, stub: true, slab: true });
+    const baseOff = run({ tick: true, stub: true, slab: true }, { dashDotMinDots: Infinity });
+    check("23g. ... and the rule changes nothing in a chart with no dash-dot line in it",
+          () => JSON.stringify(base.structures) === JSON.stringify(baseOff.structures)
+                && base.areas.length === baseOff.areas.length && !base.rejected.some((x) => x.symbol),
+          () => base.structures.length + " structure(s) either way");
   }
 
   console.log("");

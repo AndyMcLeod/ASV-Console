@@ -1876,6 +1876,18 @@ of the operator.
    **refused**, because a missing depth layer would read as one gap over the whole area. The
    row says the check was not made.
 
+   **A dashed line whose dashes each end in a dot is a symbol, not a pier (2026-10-01).** At
+   Bellingham a survey was cut along a 1.4 km line the chart draws southwest from the Whatcom
+   Waterway: short dashes, each with a dot on one end, the chart's mark for a cable way.
+   NOAA's vector service carries no object along it, so nothing explained its ink. The
+   chart-image read, which joins a pier drawn in pieces into one, chained 103 of the dashes
+   into a single 1,440 m "structure" counted as attached to the shore. A chained line at
+   least half of whose pieces end in a dot is now refused as a **dash-dot line symbol**. It
+   is never a keep-out and never a footprint (a bending one would otherwise have been read as
+   a marina), and it is never reported as a detached structure. A single piece with a dot at
+   its head is still a pier. Over the same tiles the read now finds nothing at Bellingham; over
+   the Kittery Point, New Castle and Fort Point piers it finds exactly what it found before.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·

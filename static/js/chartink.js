@@ -41,7 +41,7 @@
 //
 // ⚠⚠ THE SIEVE IS THE WHOLE SAFETY ARGUMENT, BECAUSE THIS MODULE ADDS KEEP-OUTS. A false
 // positive refuses water the vessel is entitled to; a false negative is the pier it was
-// written for. Five gates, and Andy named the two that matter:
+// written for. Six gates, and Andy named the two that matter (and, later, the dot):
 //
 //   long enough      MIN_LEN_M - under it, a label, a tick, a symbol stroke.
 //   THIN             MIN_ASPECT - length over width. ⚠ A WIDTH LIMIT ALONE IS NOT ENOUGH
@@ -56,6 +56,9 @@
 //                    Andy called out - they are drawn in the same gray at the same width,
 //                    and what tells them apart is that a depth contour runs ALONG the shore
 //                    and a pier runs OUT from it.
+//   NOT A SYMBOL     a chained line at least half of whose pieces END IN A DOT is a dash-dot
+//                    line - a cable way, a pipeline, a limit - however much it looks like a
+//                    pier in pieces (2026-10-01, Bellingham: see endDot and dashDotWhy).
 //
 // MEASURED over 670 x 670 m of New Castle at 0.22 m/px: 1,825 components, TWO kept - both
 // of them real finger piers, 88 deg and 89 deg off the pier they stand on, attached to
@@ -215,6 +218,40 @@ export const GROW_ROUNDS = 3;
 export const AREA_MIN_M = 10.0;
 export const AREA_MAX_FILL = 0.35;
 
+// ── A DASH THAT ENDS IN A DOT IS A LINE SYMBOL, NOT A STRUCTURE (2026-10-01) ────────────
+//
+// Andy, at Bellingham, with a survey cut along a line no pier has ever stood on: *"The path
+// planner punch out for this survey has identified a cable way as a shore attached feature to
+// be avoided. This particular feature is visually identified as a cable way by the segmented
+// line, but each segment has a dot on one end."*
+//
+// MEASURED on the tiles the scan read (z18, 0.39 m/px): a 2 px stroke 31 px long with a 5 px
+// dot on one end, repeated every 36 px to within a few percent - 104 pieces over 1.44 km, and
+// two short runs where it turns east to the shore. NOAA's vector service carries no object
+// along it; the renderer draws something the extract does not hold, so nothing explained it.
+// CHAINING - the rule that joins a pier drawn in pieces - joined them into one 1,440 m
+// "structure", and the punch cut the survey along it.
+//
+// A pier drawn in pieces is a few strokes of uneven length, broken by a label or a crossing
+// line. A symbol is the same dash and the same dot, over and over. So a piece whose width
+// swells into a COMPACT blob at one end ends in a dot (`endDot`) - compact, as long as it is
+// wide, because a T-headed pier also widens at its end and is not one - and a chained mark at
+// least half of whose pieces end in a dot is a dash-dot line (`dashDotWhy`): refused, never a
+// footprint, and never reported as a detached structure either. ONE piece with a dot is left
+// alone: a pier with something drawn at its head is still a pier.
+/** A dot is at least this many pixels wider than the stroke it ends... */
+export const DOT_MIN_EXTRA_PX = 2;
+/** ... and at least this many times as wide. */
+export const DOT_MIN_RATIO = 1.75;
+/** It is looked for within this fraction of the piece's length from either end. */
+export const DOT_END_FRAC = 0.25;
+/** A piece shorter than this (px) is too short to have a stroke AND a dot. */
+export const DOT_MIN_LEN_PX = 8;
+/** A chained mark is a dash-dot line when at least this many of its pieces end in a dot... */
+export const DASHDOT_MIN_DOTS = 2;
+/** ... and at least this fraction of them. */
+export const DASHDOT_FRAC = 0.5;
+
 const R2D = 180 / Math.PI;
 
 /**
@@ -312,6 +349,56 @@ export function fitAxis(xs, ys) {
            b: { x: mx + ux * a1, y: my + uy * a1 } };
 }
 
+/**
+ * Does this piece END IN A DOT? Its pixels are binned one pixel at a time along its own axis;
+ * the stroke's width is the median across-extent over the middle half, and a dot is a run of
+ * bins within DOT_END_FRAC of an end that is DOT_MIN_EXTRA_PX wider than the stroke and
+ * DOT_MIN_RATIO times as wide - and COMPACT: about as long as it is wide (half its width, at
+ * least), which a T-head's crossbar, two pixels thick and many wide, is not.
+ */
+export function endDot(xs, ys, fit, opts = {}) {
+  const L = fit.alongPx;
+  if (!(L >= (opts.dotMinLenPx ?? DOT_MIN_LEN_PX))) return false;
+  const nb = Math.floor(L) + 1;
+  const lo = new Float64Array(nb).fill(Infinity), hi = new Float64Array(nb).fill(-Infinity);
+  const a0 = (fit.a.x - fit.mx) * fit.ux + (fit.a.y - fit.my) * fit.uy;
+  for (let i = 0; i < xs.length; i++) {
+    const dx = xs[i] - fit.mx, dy = ys[i] - fit.my;
+    const b = Math.min(nb - 1, Math.max(0, Math.floor(dx * fit.ux + dy * fit.uy - a0)));
+    const p = -dx * fit.uy + dy * fit.ux;
+    if (p < lo[b]) lo[b] = p;
+    if (p > hi[b]) hi[b] = p;
+  }
+  const wid = (b) => (hi[b] >= lo[b] ? hi[b] - lo[b] + 1 : 0);
+  const mid = [];
+  for (let b = Math.floor(nb / 4); b < Math.ceil(3 * nb / 4); b++) if (hi[b] >= lo[b]) mid.push(wid(b));
+  if (!mid.length) return false;
+  mid.sort((u, v) => u - v);
+  const body = mid[mid.length >> 1];
+  const extra = opts.dotMinExtraPx ?? DOT_MIN_EXTRA_PX, ratio = opts.dotMinRatio ?? DOT_MIN_RATIO;
+  const e = Math.max(3, Math.round(nb * (opts.dotEndFrac ?? DOT_END_FRAC)));
+  // `run` counts the end bins at least `extra` wider than the stroke, so "compact" (a run at least half as long as the
+  // blob is wide) already says the blob is that much wider - the extra margin is not tested twice.
+  const bulb = (from, step) => {
+    let wmax = 0, run = 0;
+    for (let k = 0, b = from; k < e && b >= 0 && b < nb; k++, b += step) {
+      const wb = wid(b);
+      if (wb >= body + extra) run++;
+      if (wb > wmax) wmax = wb;
+    }
+    return wmax >= ratio * body && run >= 0.5 * (wmax - 1);
+  };
+  return bulb(0, 1) || bulb(nb - 1, -1);
+}
+
+/** A chained mark at least half of whose pieces END IN A DOT is a dash-dot line: the reason, or null. */
+export function dashDotWhy(m, opts = {}) {
+  const pieces = m.pieces || 1, dots = m.dots ?? (m.dot ? 1 : 0);
+  if (dots < (opts.dashDotMinDots ?? DASHDOT_MIN_DOTS) || dots < (opts.dashDotFrac ?? DASHDOT_FRAC) * pieces) return null;
+  return "a dash-dot line symbol, not a structure: " + dots + " of its " + pieces + " pieces end in a dot "
+       + "(the chart's mark for a cable way, a pipeline or a limit)";
+}
+
 /** Signed distance from a point to an infinite line through `c` with unit direction `u`. */
 function offAxis(p, c, ux, uy) {
   return Math.abs(-(p.x - c.x) * uy + (p.y - c.y) * ux);
@@ -384,9 +471,10 @@ export function chainMarks(marks, mPerPx, opts = {}) {
   const out = [];
   for (const members of groups.values()) {
     if (members.length === 1) { out.push(marks[members[0]]); continue; }
-    let xs = [], ys = [];
-    for (const i of members) { xs = xs.concat(marks[i].xs); ys = ys.concat(marks[i].ys); }
-    out.push({ xs, ys, fit: fitAxis(xs, ys), pieces: members.length });
+    let xs = [], ys = [], dots = 0;
+    for (const i of members) { xs = xs.concat(marks[i].xs); ys = ys.concat(marks[i].ys); if (marks[i].dot) dots++; }
+    // `dots` - how many of the pieces END IN A DOT - is what tells a dash-dot symbol from a pier in pieces.
+    out.push({ xs, ys, fit: fitAxis(xs, ys), pieces: members.length, dots });
   }
   return out;
 }
@@ -620,8 +708,10 @@ function* scanSteps(rgba, w, h, explained, segs, mPerPx, opts) {
   yield;
   const comps = components(un, w, h, opts.minPx);
   yield;
-  const marks = chainMarks(comps.map(c => ({ xs: c.xs, ys: c.ys, fit: fitAxis(c.xs, c.ys) })),
-                           mPerPx, opts);
+  const marks = chainMarks(comps.map((c) => {
+    const fit = fitAxis(c.xs, c.ys);
+    return { xs: c.xs, ys: c.ys, fit, dot: endDot(c.xs, c.ys, fit, opts) };
+  }), mPerPx, opts);
   // ⚠ THE POOL GROWS. Seeded with the ENC's own structures, and every mark accepted joins
   // it, so a marina's spine can attach to a finger that attached to the shore. The
   // perpendicular test is paid at every step, which is what keeps a contour out of the
@@ -639,24 +729,30 @@ function* scanSteps(rgba, w, h, explained, segs, mPerPx, opts) {
     const left = [], verdicts = [], won = [];
     for (const m of pending) {
       const v = classify(m.fit, pool, mPerPx, opts);
+      // ⚠ A DASH-DOT LINE IS A SYMBOL WHATEVER ELSE IT PASSES - measured attachment and all, so the reject still
+      // says where it lay - and it is named as one, so it is never reported as a "detached" structure either.
+      const sym = dashDotWhy(m, opts);
+      if (sym) { v.keep = false; v.symbol = "dash-dot"; v.why = sym; }
       if (v.keep) won.push({ m, v });
       else { left.push(m); verdicts.push(v); }
     }
     for (const w of won)
       structures.push({ a: w.m.fit.a, b: w.m.fit.b, px: w.m.xs.length,
-                        pieces: w.m.pieces || 1, round, ...w.v });
+                        pieces: w.m.pieces || 1, dots: w.m.dots ?? (w.m.dot ? 1 : 0), round, ...w.v });
     if (!won.length || round >= rounds || !left.length) {
       for (let i = 0; i < left.length; i++) {
         const f = left[i].fit;
         const fill = left[i].xs.length / Math.max(1, f.alongPx * Math.max(1, f.acrossPx));
         const rec = { a: f.a, b: f.b, px: left[i].xs.length, fill,
-                      pieces: left[i].pieces || 1, ...verdicts[i] };
+                      pieces: left[i].pieces || 1, dots: left[i].dots ?? (left[i].dot ? 1 : 0), ...verdicts[i] };
         rejected.push(rec);
         if (verdicts[i].attachM != null) unexplained.push(rec);
         // A NETWORK of drawn lines rather than one line: a footprint, not a track. It has
         // to be wide (the line sieve refused it), large, sparse, and ATTACHED on the same
         // proportional rule a pier obeys - see the AREA_ constants for why each is there.
-        if (!verdicts[i].keep && rec.widthM > (opts.maxWidthM ?? MAX_WIDTH_M)
+        // ⚠ A SYMBOL IS NEVER A FOOTPRINT: a dash-dot line that bends chains into a mark wide enough to read as a
+        // marina, and its convex hull would refuse all the water inside the bend.
+        if (!verdicts[i].keep && !verdicts[i].symbol && rec.widthM > (opts.maxWidthM ?? MAX_WIDTH_M)
             && rec.lengthM >= (opts.areaMinM ?? AREA_MIN_M)
             && fill <= (opts.areaMaxFill ?? AREA_MAX_FILL)
             && verdicts[i].attached) {
