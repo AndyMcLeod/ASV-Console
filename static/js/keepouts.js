@@ -35,6 +35,10 @@
  *          dredged area or fairway (`gateSweep`), and a gate whose own line touches
  *          one sweeps nothing. asv_core still sweeps every gate a full gate width
  *          each way. Covered by tests/turn_channel.js.
+ *       6. A GATE IS TWO MARKS OF ONE CHANNEL (2026-10-01): pairGates pairs a mark
+ *          only with marks of its own channel, by the prefix merge markSystems uses
+ *          (now `markRoots`, one rule for both). asv_core pairs the nearest mark of
+ *          the other hand whatever channel it marks. Covered by tests/turn_channel.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -391,6 +395,36 @@ export function markId(props) {
 }
 
 /**
+ * WHICH CHANNEL each mark name belongs to: name -> the root name of its system, by the
+ * PREFIX MERGE `markSystems` describes ("erie harbor entrance" into "erie harbor" when
+ * one name is a word prefix of the other and their numbers do not collide). An unnamed
+ * mark ('') is a group of its own. ONE rule, read by `markSystems` and by `pairGates`,
+ * so the lane's systems and the gates cannot come to disagree about what is one channel.
+ */
+export function markRoots(marks) {
+  const by = new Map();
+  for (const m of marks || []) {
+    const s = m.sys || '';
+    if (!by.has(s)) by.set(s, []);
+    by.get(s).push(m);
+  }
+  const names = [...by.keys()].filter((s) => s);
+  const root = new Map([['', '']]);
+  for (const s of names) {
+    let r = s;
+    for (const o of names) {
+      if (o !== s && o.length < r.length && s.startsWith(`${o} `)) {
+        const a = by.get(o).map((x) => x.num).filter((x) => x != null);
+        const b = by.get(s).map((x) => x.num).filter((x) => x != null);
+        if (!a.some((x) => b.includes(x))) r = o;
+      }
+    }
+    root.set(s, r);
+  }
+  return root;
+}
+
+/**
  * Group marks into channel SYSTEMS, and within each into the two ordered buoy
  * lines (port-hand and starboard-hand, ordered by number = ordered along).
  *
@@ -421,19 +455,9 @@ export function markSystems(marks) {
   }
   const names = [...by.keys()].filter((s) => s);
   const merged = new Map();
-  const rootOf = (s) => {
-    let r = s;
-    for (const o of names) {
-      if (o !== s && o.length < r.length && s.startsWith(`${o} `)) {
-        const a = by.get(o).map((x) => x.num).filter((x) => x != null);
-        const b = by.get(s).map((x) => x.num).filter((x) => x != null);
-        if (!a.some((x) => b.includes(x))) r = o;
-      }
-    }
-    return r;
-  };
+  const root = markRoots(uniq);
   for (const s of names) {
-    const r = rootOf(s);
+    const r = root.get(s);
     if (!merged.has(r)) merged.set(r, []);
     merged.get(r).push(...by.get(s));
   }
@@ -546,16 +570,27 @@ export function extendCenterline(cl, chans) {
 
 /**
  * Pair lateral marks into channel GATES: each port-hand mark with its nearest
- * starboard-hand mark across the channel, giving the gate center, its width and
- * the channel axis through it.
+ * starboard-hand mark OF THE SAME CHANNEL across it, giving the gate center, its
+ * width and the channel axis through it.
+ *
+ * ⚠ OF THE SAME CHANNEL (Andy, 2026-10-01: "fix the cross-channel buoy pairing").
+ * The nearest mark of the other hand used to be taken whatever channel it marked, and
+ * at Portsmouth three of the extract's seven gates paired a Sagamore Creek mark with a
+ * Northward Channel one where the two channels meet - corridors bracketing no channel
+ * at all, 135 to 377 m across. The channel is the mark's name less its tail (`markId`),
+ * grouped by the same prefix merge as the systems (`markRoots`); unnamed marks pair
+ * only with each other.
  */
 export function pairGates(marks) {
+  const root = markRoots(marks);
+  const chanOf = (m) => root.get(m.sys || '') ?? '';
   const ports = (marks || []).filter((m) => m.side < 0);
   const stbds = (marks || []).filter((m) => m.side > 0);
   const gates = [];
   for (const p of ports) {
     let best = null, bd = 1e9;
     for (const s of stbds) {
+      if (chanOf(s) !== chanOf(p)) continue;
       const d = Math.hypot(s.e - p.e, s.n - p.n);
       if (d >= 15 && d <= 400 && d < bd) { bd = d; best = s; }
     }

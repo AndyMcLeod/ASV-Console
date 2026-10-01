@@ -1755,6 +1755,16 @@ of the operator.
    transits checked through both harbors route identically before and after (the lane
    engaged on the Lewes routes, and on none of the Portsmouth paths tried).
 
+   **And a buoy pair is two marks of ONE channel (2026-10-01).** A mark used to be paired
+   with the nearest mark of the other hand whatever channel that one marked. At Portsmouth
+   four of seven pairs crossed channels: three paired Sagamore Creek with the Northward
+   Channel where they meet, and one paired Goat Island Ledge with Henderson Point. That
+   last one kept a 612 x 678 m corridor over water no channel runs through, so a survey
+   drawn across it there was cut. Now a mark pairs only within its own channel, by its
+   charted name, with a channel's entrance buoys counted as part of it (the same rule the
+   Rule 9 lane groups buoys by). Unnamed marks pair only with each other. Lewes and
+   Bellingham pair exactly as before, and the lane routes there are identical.
+
    **Turn water.** The keep-out set the turns answer to is *stricter* than the one
    transits use: channel polygons (the charted ones, plus buoy-pair corridors where the
    chart charts none) that none of the clipped survey lines occupy are keep-outs for the

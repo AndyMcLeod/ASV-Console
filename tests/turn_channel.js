@@ -391,5 +391,51 @@ check("15. punchOut skips BOTH channel rules - the span exclusion and the turn w
         () => "counter-clockwise: " + (bbs(ccw).join(" | ") || "none") + "; clockwise: " + (bbs(cw).join(" | ") || "none"));
 }
 
+// 17-17f. A GATE IS TWO MARKS OF ONE CHANNEL (Andy, 2026-10-01: "fix the cross-channel buoy pairing"). pairGates took the
+// nearest mark of the other hand whatever channel it marked: at Portsmouth three of seven gates paired a Sagamore Creek
+// mark with a Northward Channel one, and a Goat Island Ledge / Henderson Point pair kept a 612 x 678 m corridor over
+// water no channel runs through. Marks are named as buildKeepouts names them - markId's `sys`, the name less its tail.
+{
+  const mk = (sys, side, num, e, n) => ({ e, n, side, num, sys });
+  const show = (ms) => pairGates(ms).map((g) => Math.round(g.width) + " m at " + Math.round(g.C.e) + "," + Math.round(g.C.n))
+                                    .join(" | ") || "no gate";
+  const a17 = [mk("alpha", -1, 1, 0, 0), mk("alpha", 1, 2, 100, 0), mk("bravo", 1, 2, 0, 60)];
+  const g17 = pairGates(a17);
+  check("17. a mark pairs with ITS OWN channel's mark across, not a nearer mark of another channel",
+        () => g17.length === 1 && Math.round(g17[0].width) === 100 && Math.round(g17[0].C.e) === 50,
+        () => show(a17) + " (the other channel's mark is 60 m off; the old pairing took it)");
+  const b17 = [mk("charlie", -1, 1, 0, 0), mk("charlie", 1, 2, 0, 600), mk("delta", 1, 2, 30, 0)];
+  check("17b. ... and a mark with no partner of its OWN channel in reach makes no gate, however near another channel's "
+        + "mark stands",
+        () => pairGates(b17).length === 0, () => show(b17));
+  const c17 = [mk("erie harbor entrance", -1, 1, 0, 0), mk("erie harbor", 1, 8, 80, 0), mk("erie harbor", -1, 9, 0, 500)];
+  const g17c = pairGates(c17);
+  check("17c. ... while the PREFIX MERGE still pairs a channel's entrance marks with its own, the numbers running on",
+        () => g17c.length === 1 && Math.round(g17c[0].width) === 80, () => show(c17));
+  const d17 = [mk("erie harbor", -1, 2, 0, 0), mk("erie harbor entrance", 1, 2, 80, 0)];
+  check("17d. ... and two names whose NUMBERS collide stay two channels, so their marks make no gate",
+        () => pairGates(d17).length === 0, () => show(d17));
+  const e17 = [mk("", -1, null, 0, 0), mk("", 1, null, 70, 0), mk("golf", 1, 4, 20, 0)];
+  const g17e = pairGates(e17);
+  check("17e. unnamed marks pair with each other and never with a named one",
+        () => g17e.length === 1 && Math.round(g17e[0].width) === 70, () => show(e17));
+  // 17f. THE SYSTEMS ARE THE SAME RULE, AND NOTHING HELD THEM UNTIL NOW: markSystems' dedupe and prefix merge were
+  // imported by two suites and called by none. Its whole output, on marks that exercise each refinement.
+  const f17 = [mk("erie harbor entrance", -1, 1, 0, 0), mk("erie harbor entrance", 1, 2, 60, 0),
+               mk("erie harbor entrance", -1, 3, 0, 100), mk("erie harbor entrance", 1, 4, 60, 100),
+               mk("erie harbor", -1, 7, 0, 300), mk("erie harbor", 1, 8, 60, 300), mk("erie harbor", 1, 8, 61, 301),
+               mk("lake channel", -1, 1, 500, 0), mk("lake channel", 1, 2, 560, 0),
+               mk("lake channelside", -1, 5, 700, 0),
+               mk("erie harbor annex", -1, 7, 200, 300), mk("", 1, null, 300, 300)];
+  const sys17 = markSystems(f17).map((s) => s.sys + ": " + s.port.map((m) => m.num).join(",") + " / "
+                                            + s.stbd.map((m) => m.num).join(","));
+  check("17f. markSystems: a buoy charted twice counted once, the entrance merged into its channel in number order, "
+        + "a name whose numbers collide kept apart, a name that only STARTS with another's letters (not its words) "
+        + "kept apart, an unnamed mark left out",
+        () => JSON.stringify(sys17) === JSON.stringify(["erie harbor: 1,3,7 / 2,4,8", "lake channel: 1 / 2",
+                                                        "lake channelside: 5 / ", "erie harbor annex: 7 / "]),
+        () => sys17.join(" | "));
+}
+
 console.log(ran + " checks, " + fails + " failed");
 process.exit(fails ? 1 : 0);
