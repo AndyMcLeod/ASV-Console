@@ -4921,6 +4921,9 @@ let patRed = [];
 // Did the pair loop finish joining the runs now in patClip? A punch that throws part-way leaves patClip rebuilt and
 // its joins half-built, and Add to plan would have committed that: runs with no turn between them, said nowhere.
 let patJoined = false;
+// WHAT THE PUNCH TOOK, stage by stage - set beside patClip, so the two always describe the same punch - and read only by
+// punchRefusal when a punch leaves NO run, so its refusal names what took them instead of guessing (2026-10-01).
+let patFunnel = null;
 // WHY THE PAGE THREW A PUNCH AWAY ITSELF, or null (applyWaterOffset). With no patClip, Add to plan commits the pattern
 // un-punched - right for a pattern the operator never punched, wrong for one whose punch vanished under them - so
 // punchRefusal refuses while this is set. Cleared when Punch Out produces runs again, and by resetPattern.
@@ -7945,7 +7948,7 @@ function updatePatReadout(){
   }
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
-  patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
+  patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patFunnel=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
   // scheduled for it — a timer left running would re-punch a pattern that no longer
   // exists and end in a render against state this just cleared.
@@ -7975,6 +7978,36 @@ function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=n
  * reversal, and the ladder has already tried the pair at ZERO lead before it gives up (LEAD_GIVE ends at 0); a slower
  * TURN speed only helps a turn the boat could not TRACK, or a teardrop plan; a wider spacing only helps a teardrop.
  */
+/**
+ * WHY A PUNCH THAT LEFT NO RUN IS REFUSED: what took the lines, read off the punch's own funnel (patFunnel) in the
+ * order the stages took them, and only the fixes that answer those stages - the rule `punchRefusal` keeps for a red
+ * reversal, kept here too. The chart is named as taking the lines whole only when it left nothing at all; after it,
+ * every run the clip left is accounted for by the strikes, the slivers under a meter it cut, and the hull's minimum.
+ */
+function emptyPunchRefusal(f){
+  const short = "the punch left no survey line";
+  const head = "ADD TO PLAN REFUSED — Punch Out left no survey line";
+  const tail = ". There is nothing to add, and adding would throw the pattern away.";
+  if(!f) return {short, text: head + tail + " Punch Out again."};
+  const causes = [], fixes = [];
+  const overWater = "draw the box over water this vessel can survey";
+  if(f.clipped === 0){
+    causes.push("the chart left nothing of the " + f.drawn + " line(s) drawn - every one lay in a keep-out or outside "
+              + "the survey depth window" + (f.chans ? ", with " + f.chans + " navigation channel(s) cut out of the coverage" : ""));
+    fixes.push(overWater, "check the survey depth window");
+  } else {
+    if(f.struck) causes.push(f.struck + " run(s) struck off by hand");
+    if(f.slivers) causes.push(f.slivers + " run(s) the chart cut to slivers under a meter");
+    if(f.short) causes.push(f.short + " run(s) under this vessel's " + f.minLine + " m minimum survey line");
+    if(f.struck) fixes.push("put the struck runs back");
+    if(f.slivers) fixes.push(overWater);
+    if(f.short) fixes.push("draw lines long enough to keep " + f.minLine + " m of coverage each");
+    if(f.chans && (f.slivers || f.short))
+      fixes.push("uncheck Shipping channels, if the " + f.chans + " navigation channel(s) cut out of the coverage are meant to be surveyed");
+  }
+  if(!causes.length) return {short, text: head + tail + " Punch Out again."};
+  return {short, text: head + ": " + causes.join("; ") + tail + " To fix: " + fixes.join(", or ") + "."};
+}
 function punchRefusal(){
   // No punch: an un-punched pattern is the operator's to add, as it always was - unless the page threw the punch away
   // under them (patDropped), in which case adding would commit something they never saw.
@@ -7985,6 +8018,10 @@ function punchRefusal(){
   if(!patJoined) return {short: "the last Punch Out stopped part-way",
     text: "ADD TO PLAN REFUSED — the last Punch Out stopped part-way, so the turns between these runs were never all "
         + "built, and adding them would hand the boat straight legs where its turns belong. Punch Out again."};
+  // ⚠ A PUNCH THAT LEFT NOTHING IS NOT ADDED (2026-10-01). An empty patClip is an ARRAY, so it passed `!patClip` above,
+  // and with no red reversal nothing below refused it: commitPattern then committed nothing - and still set the plan to
+  // a survey, threw the drawn pattern away and saved - while the summary ended "clear of keep-outs ... Add to plan."
+  if(!patClip.length) return emptyPunchRefusal(patFunnel);
   const turns = patRed.filter(r => r.turn);
   const n = turns.length;
   if(!n) return null;
@@ -10568,6 +10605,11 @@ async function punchOut(){
     // thing that must be said out loud, with the number and the threshold, or a thin
     // survey looks like a chart problem instead of a setting.
     const nShort = shortened.length - patClip.length;
+    // THE FUNNEL, for the refusal of a punch that leaves no run (2026-10-01): what each stage took. `slivers` are the
+    // clip's remnants under a meter, which the filter above drops - shortenSeg hands a run too short for both margins
+    // back WHOLE, so nothing else reaches it - and they are the chart's doing, not a stage of their own.
+    patFunnel = {drawn: src.length, clipped: clipped.length, struck: nStruck,
+                 slivers: ro.ordered.length - shortened.length, short: nShort, minLine, chans: chanExcl.length};
     // ── LEAD-IN / LEAD-OUT ────────────────────────────────────────────────────────────
     // Applied LAST, and every word of that is load-bearing:
     //
@@ -11075,10 +11117,14 @@ async function punchOut(){
       // this line is where a plan that runs across a channel or over a wreck has to say why.
       (enf.chan===false?`, shipping-channel rules OFF (lines keep their coverage across a channel, turns may use channel water)`:``)+
       (ko.wrecksOff?`, Shipwrecks OFF: ${ko.wrecksOff} charted wreck(s) in the area are not keep-outs`:``)+
-      (!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
+      // ⚠ NOTHING LEFT IS NOT "CLEAR", AND IT IS NOT "ADD TO PLAN" (2026-10-01). With no run, none of the counters
+      // above is set, so this clause and the ending used to say a punch that left the operator nothing was clear of
+      // keep-outs and ready to add; punchRefusal refuses it now, and this line says so in its own words.
+      (patClip.length&&!nRoute&&!nU&&!nSemi&&!nTear&&!nRace?`, clear of keep-outs`:``)+
       ((nTear||nNoTurn)&&canWiden?`. Spacing ${sp.spacing.toFixed(1)} m is under the ${needSpacing.toFixed(0)} m a semicircle needs at ${spdKey} speed (min turn radius ${minTurnR.toFixed(1)} m)`:``)+
-      `. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``)+
-      (nUnsafeTurn?`. NOT READY for the plan — the note under Add to plan says why.`:`. Add to plan.`);
+      (patClip.length?`. Survey ~${surveyTxt}`+(approachLen>0?`, approach ~${approachTxt}`:``):``)+
+      (!patClip.length?`. NOTHING LEFT TO SURVEY, so nothing to add to the plan — the note under Add to plan says what took the lines.`
+       :nUnsafeTurn?`. NOT READY for the plan — the note under Add to plan says why.`:`. Add to plan.`);
     // Banner priority: hard blocks first, then the turn-radius advisories, then routing.
     const widenTxt = !canWiden ? `` : `Widen the spacing to ${Math.ceil(needSpacing)} m`+
       (lowSpacing < sp.spacing ? `, or plan at low speed (needs only ${lowSpacing.toFixed(0)} m)` : ``)+`.`;

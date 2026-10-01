@@ -60,6 +60,14 @@
 //   the drag hint still offering Add to plan while the drop refuses it -> 14
 // INERT, AND SAID SO: resetPattern leaving patRed / patJoined behind survives - every reader keys on patClip, which
 // the same reset nulls, and the next punch rebuilds both. The clearing stays as hygiene, not as coverage.
+// AND THE EMPTY PUNCH (20-20f, 2026-10-01): 11 more mutations RUN against a clone, graded here and on survey_order -
+// 10 caught, 1 inert:
+//   an empty punch not refused -> 20, 20b, 20c, 20d, 20f     the summary still ends "Add to plan." -> 20, 20c
+//   an empty punch "clear of keep-outs" -> 20                an empty punch still quotes a survey time -> 20
+//   the funnel never recorded -> 20, 20c, 20d, 20f           the chart always blamed -> 20c, 20d, 20f
+//   the strikes not named -> 20d     the hull's minimum not named -> 20c     the slivers not named -> 20f
+//   no fix offered for strikes -> 20d
+// INERT, the same way: resetPattern leaving patFunnel behind - punchRefusal reads it only for a live, empty patClip.
 // ⚠ TWO CHECKS PASSED FOR THE WRONG REASON ON THE FIRST SWEEP, BOTH READING STATE LATE: 13 read the whole banner log
 // after check 4's refused commit had posted the same text (the punch's banner could be dropped and 13 stayed green),
 // and it read the hint after other commits had reset it. Both are captured straight after the punch now. And 8's first
@@ -153,7 +161,7 @@ const PAGE_FUNCS = ["punchOut", "currentPattern", "surveyPattern", "patSourceLin
   "patClipBufM", "patClipKey",
   "makesWayKey", "slowestMakingWayKey", "setMsNow",     // the speed a turn is flown at (2026-09-26)
   "patLeadTotal", "leadMetres", "leadInM", "leadOutM", "easeLsM", "roleSpeed", "roleSpeedMS", "depthRange",
-  "kindsSummary", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
+  "kindsSummary", "emptyPunchRefusal", "punchRefusal", "commitPattern", "resetPattern", "updatePatReadout", "flushRepunch", "punchNow",
   "dropStruckFromPunch", "strikeSelectedRun", "scheduleRepunch", "applyWaterOffset"];
 const PAGE_DECLS = [/^const NO_LEAD = [^;]*;/m, /^const LEAD_GIVE = [^;]*;/m, /^const MAX_SURVEY_LINES = [^;]*;/m,
   /^const LEAD_MAX_M = [^;]*;/m, /^const REPUNCH_DELAY_MS = [^;]*;/m, /^const TIDE_REBUILD_M = [^;]*;/m, /^const TRIM_MAX_M = [^;]*;/m, /^const JUDGE_RUN_M = [^;]*;/m, /^const SPEED_ROLES = [^;]*;/m];
@@ -186,7 +194,7 @@ function makeWorld(opts) {
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
     + PAGE_DECLS.map(decl).join("\n") + "\n"
     + "let pat = {A:null, B:null, C:null, align:0}, patDrag = null, patMoveLast = null, patClip = null, patLead = [], patTrim = [];\n"
-    + "let patUnsafe = [], patRed = [], patJoined = false, patDropped = null, patRoutes = [], patTransits = [];\n"
+    + "let patUnsafe = [], patRed = [], patJoined = false, patDropped = null, patFunnel = null, patRoutes = [], patTransits = [];\n"
     + "let turnSlowAt = {};\n"
     + "let patStruck = [], patStruckKey = null, patSel = null, patClipMemo = null, patRepunchT = null;\n"
     + "let punchInFlight = null, punchBusy = false, encShow = false, boundary = [], boundaryClosed = false;\n"
@@ -746,6 +754,88 @@ const redList = (w) => redOf(w.get().patRed);
                 for (let i = 1; i < pts.length; i++) if (!C.legClear(pts[i - 1], pts[i], FRAME, ko, 3)) return false;
                 return true; },
         () => hop19.length + " via point(s): " + hop19.map(xy).join(" > "));
+
+  // ── 20. A PUNCH THAT LEAVES NOTHING IS NOT "ADD TO PLAN" ──────────────────────────────────────────────────────────
+  // Andy, 2026-10-01: "fix the empty punch saying Add to plan". An empty patClip is an ARRAY, so it is truthy:
+  // punchRefusal passed it (no red reversal), the summary ended "clear of keep-outs ... Add to plan.", and
+  // commitPattern committed NOTHING - and still set the plan to a survey, threw the drawn pattern away and saved. Each
+  // stage that can take the last run is driven through the page's own punch, and each refusal must name THAT stage and
+  // offer only the fixes that answer it.
+  const empty20 = async (w) => {
+    const p = await safely(() => w.punchOut());
+    w.updatePatReadout();
+    const ref = w.punchRefusal(), hint = w.$("#sp_hint").textContent;
+    const add = { disabled: w.$("#sp_add").disabled, title: w.$("#sp_add").title, note: w.$("#sp_refuse").textContent };
+    const c = await safely(() => w.commitPattern());
+    return { p, ref, hint, add, c, g: w.get(), w };
+  };
+  const e20 = await empty20(makeWorld({ features: [dock(-20, 70, -20, 220)] }));
+  check("20. a box drawn wholly over a dock leaves NO run: the punch says nothing is left to survey - not 'clear of "
+        + "keep-outs', not 'Add to plan' - and the button is refused, naming the chart as what took the lines",
+        () => !e20.p.err && e20.g.patClip && e20.g.patClip.length === 0
+              && /NOTHING LEFT TO SURVEY/.test(e20.hint) && !/Add to plan\.$/.test(e20.hint)
+              && !/clear of keep-outs/.test(e20.hint) && !/Survey ~/.test(e20.hint)
+              && e20.ref && e20.ref.short === "the punch left no survey line"
+              && /the chart left nothing of the 5 line\(s\) drawn/.test(e20.ref.text)
+              && /draw the box over water this vessel can survey/.test(e20.ref.text)
+              && !/struck|minimum/.test(e20.ref.text)
+              && e20.add.disabled === true && /^Refused: the punch left no survey line/.test(e20.add.title)
+              && e20.add.note === e20.ref.text,
+        () => (e20.p.err ? "punch threw: " + e20.p.err.message + "; " : "") + "hint: …" + e20.hint.slice(-110)
+              + " | refusal: " + (e20.ref ? e20.ref.text : "NONE"));
+  check("20b. ... and Add to plan over it changes NOTHING - no line, no save, the pattern still there to move - where "
+        + "it used to commit nothing and throw the pattern away",
+        () => !e20.c.err && e20.w.mission.lines.length === 0 && e20.w.log.saves === 0 && !!e20.g.pat.A
+              && e20.w.log.notes.some((n) => /^Not added to the plan — the punch left no survey line/.test(n)),
+        () => e20.w.mission.lines.length + " lines, " + e20.w.log.saves + " saves; notes: "
+              + (e20.w.log.notes.join(" | ") || "none"));
+  const hull20 = makeWorld({ features: [FAR()] });
+  S.V.MIN_SURVEY_LINE_M = 500;                  // longer than any of the five 200 m lines
+  const e20c = await empty20(hull20);
+  S.V.MIN_SURVEY_LINE_M = 0;
+  check("20c. every run under the HULL'S minimum survey line: refused naming that, with longer lines as the fix - "
+        + "not the chart, not a strike",
+        () => e20c.g.patClip.length === 0 && e20c.ref
+              && /5 run\(s\) under this vessel's 500 m minimum survey line/.test(e20c.ref.text)
+              && /draw lines long enough to keep 500 m of coverage each/.test(e20c.ref.text)
+              && !/the chart left nothing|struck|over water/.test(e20c.ref.text)
+              && /NOTHING LEFT TO SURVEY/.test(e20c.hint),
+        () => e20c.ref ? e20c.ref.text : "NONE");
+  // every run struck off by hand, one at a time, each strike re-punched as the page does it
+  const w20d = makeWorld({ features: [FAR()] });
+  await safely(() => w20d.punchOut());
+  for (let k = 0; k < 5 && w20d.get().patClip.length; k++) {
+    w20d.select({ ...w20d.patCoverMid(0), length: 190 });
+    w20d.strikeSelectedRun();
+    await safely(() => w20d.flushRepunch());
+  }
+  const r20d = w20d.punchRefusal();
+  check("20d. every run struck off by hand: refused naming the strikes, and the fix is to put them back",
+        () => w20d.get().patClip && w20d.get().patClip.length === 0 && r20d
+              && /5 run\(s\) struck off by hand/.test(r20d.text) && /put the struck runs back/.test(r20d.text)
+              && !/the chart left nothing|minimum/.test(r20d.text),
+        () => (w20d.get().patClip || []).length + " runs left; " + (r20d ? r20d.text : "NOT REFUSED"));
+  // A SLIVER IS ALL BUT UNREACHABLE: clipLine keeps only pieces spanning a whole ~2 m sample step, so a piece under a
+  // meter needs a line a meter or two long. Five 1.5 m lines, a dock whose buffered edge crosses them at 1 m: each clip
+  // leaves 0.75 m, the filter after the turn margins drops it - the chart's doing, named as the chart's.
+  const w20f = makeWorld({ features: [dock(-20, 70, 4, 220)] });
+  w20f.setPat(at(0, 0), at(45, 1.5), at(10, 0));
+  const e20f = await empty20(w20f);
+  check("20f. every run the chart cut to a SLIVER under a meter: refused naming that, with the box over water as the "
+        + "fix",
+        () => e20f.g.patClip && e20f.g.patClip.length === 0 && e20f.ref
+              && /5 run\(s\) the chart cut to slivers under a meter/.test(e20f.ref.text)
+              && /draw the box over water this vessel can survey/.test(e20f.ref.text)
+              && !/struck|minimum|the chart left nothing/.test(e20f.ref.text),
+        () => (e20f.g.patClip || []).length + " runs; " + (e20f.ref ? e20f.ref.text : "NOT REFUSED"));
+  // THE ACCEPTANCE PAIR: a punch that keeps its runs still reads as it always did.
+  const w20e = makeWorld({ features: [FAR()] });
+  await safely(() => w20e.punchOut());
+  const h20e = w20e.$("#sp_hint").textContent;
+  check("20e. ... while a punch that KEEPS its runs is not refused and still ends 'Add to plan.'",
+        () => w20e.get().patClip.length === 5 && w20e.punchRefusal() === null
+              && /Add to plan\.$/.test(h20e) && !/NOTHING LEFT/.test(h20e),
+        () => "…" + h20e.slice(-120));
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

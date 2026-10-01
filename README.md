@@ -1229,6 +1229,20 @@ of the operator.
    Out runs again; it used to leave the *un-punched* pattern to be added in its place,
    lines straight through the piers and no turns at all.
 
+   **A punch that leaves no survey line is refused too (2026-10-01).** It used to end
+   *"clear of keep-outs … Add to plan."*, and Add to plan then committed nothing, set the
+   plan to a survey, and threw the drawn pattern away. Now the summary says *NOTHING LEFT
+   TO SURVEY*, Add to plan is grayed out, and the note under it names what took the lines,
+   from the punch's own count of each stage:
+   - the chart, when nothing at all was left of them (every line in a keep-out or outside
+     the depth window);
+   - the operator's own strikes;
+   - slivers under a meter the clip left;
+   - lines under the vessel's minimum survey line.
+
+   It offers only the fixes that answer those causes: the box over survey-able water, the
+   struck runs put back, or lines long enough for the hull's minimum.
+
    *This matters more than it looks.* Until 2026-08-31 a refused reversal fell back to
    a straight leg between the two line ends. That leg is genuinely clear of the model —
    and it is a 180° the hull cannot track, so the boat loops on its own, uncommanded,
