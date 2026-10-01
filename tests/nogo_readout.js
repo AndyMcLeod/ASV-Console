@@ -95,7 +95,7 @@ const { nogo, sea } = require("../static/js/state.js");
 // a stub here would let this suite stay green while the row printed a floor the keep-out model
 // had not been built at - which is the exact fault that change was made to fix.
 const { nogoKindCounts, nogoDR } = require("../static/js/chart.js");
-// THE SEABED'S GAPS (2026-10-01): refreshNogo folds them in as features and the readout counts them by their kind,
+// THE SEABED'S GAPS (2026-09-30): refreshNogo folds them in as features and the readout counts them by their kind,
 // so the real module has to resolve in the eval'd scope - a free SKIN_KIND is a RUNTIME error inside the readout,
 // which is exactly how this suite first went red on the change.
 const { skinGaps, skinGapFeature, SKIN_KIND } = require("../static/js/skin.js");
@@ -185,7 +185,7 @@ check("18. ... and a scan that has NOT been made says so, rather than reading as
              return !/chart/.test(r.text) && /not compared here yet/.test(r.title); })(),
       "a silent absence would read exactly like open water");
 
-// 20-20e. THE SEABED'S GAPS (Andy, 2026-10-01, the floats at Pepperrell Cove that survey lines and transits crossed).
+// 20-20e. THE SEABED'S GAPS (Andy, 2026-09-30, the floats at Pepperrell Cove that survey lines and transits crossed).
 // Counted from the MODEL, by their own kind, so a gap the structure toggle has switched off is not claimed as a
 // keep-out; and every state of the check - found, off, refused, none, not yet - says which it is.
 const gapModel = (polys, skin) => ({ skin, ko: { polys: [{ kind: "land" }, ...polys], lines: [], points: [] } });
@@ -206,6 +206,27 @@ check("20d. a seabed with no gaps says so, rather than saying nothing",
       /Seabed gaps: none/.test(read(gapModel([], { gaps: [], refused: null })).title));
 check("20e. ... and a model built before any check (no nogo.skin) carries no seabed sentence and does not throw",
       (()=>{ const r = read(); return !/Seabed/.test(r.title) && !/seabed/.test(r.text); })());
+
+// 22-22c. THE TWO "DISREGARD" OPTIONS (Andy, 2026-09-30: Shipwrecks and Shipping channels on the survey card). Wrecks
+// leave EVERY behavior's model, so the row says so and the tip counts them; the channel rules shape only a survey
+// punch, so the tip alone says it; and with both armed - the default - neither says anything.
+const offModel = (enf, wrecksOff) => ({ enf, ko: { polys: [{ kind: "land" }], lines: [], points: [], wrecksOff } });
+check("22. Shipwrecks OFF is on the ROW and in the tip, counted from the model, with what it means",
+      (()=>{ const r = read(offModel({ wreck: false }, 3));
+             return /· wrecks off$/.test(r.text) && /Shipwrecks OFF: 3 charted wrecks are in this model/.test(r.title)
+                 && /every behavior may route and survey over a charted wreck/.test(r.title); })(),
+      read(offModel({ wreck: false }, 3)).text);
+check("22b. ... and with no wreck charted it still says the option is off - an operator choice is never silent",
+      (()=>{ const r = read(offModel({ wreck: false }, 0));
+             return /wrecks off/.test(r.text) && /Shipwrecks OFF: no charted wreck is in this model/.test(r.title); })());
+check("22c. Shipping channels OFF is in the tip - survey-only, and saying that transits still keep right",
+      (()=>{ const r = read(offModel({ chan: false }, 0));
+             return !/off/.test(r.text) && /Shipping channels OFF: the survey's channel rules are disregarded/.test(r.title)
+                 && /still keep right in a channel/.test(r.title); })(),
+      read(offModel({ chan: false }, 0)).text);
+check("22d. ... and with both armed, as a fresh page has them, neither sentence appears",
+      (()=>{ const r = read(offModel({ wreck: true, chan: true }, 0));
+             return !/OFF/.test(r.title) && !/off/.test(r.text); })());
 
 // 1-2. READING. The state that was stuck. It has to be visibly transient, and it has to
 // show how long it has been going: a chart service that stopped answering must not look
@@ -362,7 +383,7 @@ async function drive(fetchResult) {
         !/reading chart/.test(bad.last) && /failed/.test(bad.last) && nogo.busy === false,
         "final paint: " + JSON.stringify(bad.last));
 
-  // 21-21c. REFRESHNOGO FOLDS THE SEABED'S GAPS IN AS FEATURES (2026-10-01). A depth area with a float-shaped hole,
+  // 21-21c. REFRESHNOGO FOLDS THE SEABED'S GAPS IN AS FEATURES (2026-09-30). A depth area with a float-shaped hole,
   // inside the box this world's bboxAround answers (0..1 degrees each way).
   const sq = (x0, y0, x1, y1, cw) => { const r = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]; return cw ? r.reverse() : r; };
   const scene = (partial) => ({ band: "enc_5", partial, features: [{ role: "depth_area", cls: "Depth_Area", props: {},

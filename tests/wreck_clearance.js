@@ -496,5 +496,72 @@ console.log("Charted point-hazard extent — a wreck is a POSITION, not a 3 m do
         "segment never visits (measured on this fixture: 88)");
 }
 
+// 24-24h. THE SHIPWRECKS OPTION (Andy, 2026-09-30: "on the survey settings card add options to disregard shipwreck
+// avoidance and shipping channel avoidance to the existing 4 options"). `wreck` off drops the charted wrecks - points
+// AND areas - and counts what it dropped; it only ever NARROWS, so a wreck its own class has switched off is not
+// counted and cannot be armed by it, a wreck a sounding proves passable is counted as passed, and every other hazard
+// stays exactly where it was.
+{
+  const sq = (e0, n0, s) => {
+    const r = [enLL(e0, n0), enLL(e0 + s, n0), enLL(e0 + s, n0 + s), enLL(e0, n0 + s)].map(p => [p.lon, p.lat]);
+    r.push(r[0]);
+    return r;
+  };
+  const wreckPt = feat("Wreck_point", 0, 0);
+  const wreckAr = { role: "hazard_area", cls: "Wreck_area", props: {}, geometry: { type: "Polygon", coordinates: [sq(200, 0, 20)] } };
+  const rock = feat("Underwater_Awash_Rock_point", 400, 0);
+  const obsAr = { role: "hazard_area", cls: "Obstruction_area", props: {}, geometry: { type: "Polygon", coordinates: [sq(600, 0, 20)] } };
+  const passWreck = feat("Wreck_point", 800, 0, { VALSOU: 9.0 });        // charted water over it that clears the floor
+  const all = [wreckPt, wreckAr, rock, obsAr, passWreck];
+  const on = buildKeepouts(ref, ENF, DR, all);                             // ENF has no `wreck` key: the default
+  const off = buildKeepouts(ref, { ...ENF, wreck: false }, DR, all);
+  const say = (m) => m.points.length + " point(s), " + m.polys.length + " poly(s), wrecksOff " + m.wrecksOff
+                   + ", passed " + m.passed;
+  check("24. by default - no `wreck` key at all - a charted wreck is enforced, its point and its area alike",
+        on.points.length === 2 && on.polys.length === 2 && on.wrecksOff === 0 && on.passed === 1, say(on));
+  const ptE = off.points.map(p => Math.round(p.e)), polyE = off.polys.map(p => Math.round(Math.min(...p.ring.map(q => q.e))));
+  check("24b. Shipwrecks OFF drops the wreck point AND the wreck area, counts both, and leaves the rock and the "
+        + "obstruction area exactly where they were",
+        off.points.length === 1 && ptE[0] === 400 && off.polys.length === 1 && polyE[0] === 600 && off.wrecksOff === 2,
+        say(off) + "; kept points at e=" + ptE.join(",") + ", polys from e=" + polyE.join(","));
+  check("24c. ... and a wreck a charted sounding proves passable is counted as PASSED, not as disregarded",
+        off.passed === 1 && on.passed === 1, "passed " + off.passed + " off, " + on.passed + " on");
+  const hzOff = buildKeepouts(ref, { ...ENF, haz: false, wreck: false }, DR, [wreckPt]);
+  const ldOff = buildKeepouts(ref, { ...ENF, land: false, wreck: false }, DR, [wreckAr]);
+  const armed = buildKeepouts(ref, { ...ENF, haz: false, land: false, wreck: true }, DR, [wreckPt, wreckAr]);
+  check("24d. it only NARROWS: a wreck its own class switched off is not counted as disregarded, and Shipwrecks "
+        + "ON cannot arm one that Aids & hazards or Land / shore / docks switched off",
+        hzOff.wrecksOff === 0 && hzOff.points.length === 0 && ldOff.wrecksOff === 0 && ldOff.polys.length === 0
+        && armed.points.length === 0 && armed.polys.length === 0,
+        "haz off: " + say(hzOff) + " | land off: " + say(ldOff) + " | both off, wreck on: " + say(armed));
+  const legOn = legClear(enLL(-60, 10), enLL(60, 10), ref, on, 5), legOff = legClear(enLL(-60, 10), enLL(60, 10), ref, off, 5);
+  check("24e. a leg the wreck refused is clear with Shipwrecks OFF - which is what disregarding it means",
+        legOn === false && legOff === true, "on: " + legOn + ", off: " + legOff);
+  let threw = null;
+  try { buildKeepouts(ref, { ...ENF, wrecks: false }, DR, all); } catch (e) { threw = e.message; }
+  check("24f. a MISSPELLED option is refused, not ignored - `wrecks: false` would otherwise leave every wreck armed "
+        + "while the operator believed they were off",
+        !!threw && /unknown enforcement key "wrecks"/.test(threw), "threw: " + threw);
+  // 24g. THE PAGE OFFERS IT AND READS IT. On the card beside the four, checked - armed - on a fresh page; folded into
+  // nogo.enf by applyNogoControls; a change rebuilds like the other four; a disregarded wreck AREA is not drawn as a
+  // keep-out, and the layer's cache key names the toggle so the picture follows it.
+  const anc = grab("applyNogoControls"), dn = grab("drawNogo"), lk = grab("nogoLayerKeyNow");
+  const ST = fs.readFileSync(path.join(__dirname, "..", "static", "js", "state.js"), "utf8");
+  check("24g. the survey card offers Shipwrecks, armed by default on the card and in state.js, folded into nogo.enf, "
+        + "rebuilding on change, and a disregarded wreck AREA is neither drawn as a keep-out nor cached past the toggle",
+        /<input type="checkbox" id="enf_wreck" checked\/>Shipwrecks<\/label>/.test(H)
+        && /NOGO_ENF = \{[^}]*wreck:true[^}]*\}/.test(ST)
+        && /wreck:\$\("#enf_wreck"\)\.checked/.test(anc)
+        && /\["#enf_land","#enf_depth","#enf_haz","#enf_area","#enf_wreck","#enf_chan"\]\.forEach/.test(H)
+        && /if\(f\.cls==="Wreck_area" && nogo\.enf\.wreck===false\) continue;/.test(dn)
+        && /enf\.wreck !== false/.test(lk),
+        "the card's checkbox, state.js's NOGO_ENF, applyNogoControls, the change list, drawNogo and nogoLayerKeyNow");
+  check("24h. ... and a punch made with it off SAYS how many charted wrecks it disregarded, because a plan run over a "
+        + "wreck has to say why",
+        grab("punchOut").includes("(ko.wrecksOff?`, Shipwrecks OFF: ${ko.wrecksOff} charted wreck(s) in the area are "
+                                  + "not keep-outs`:``)"),
+        "the punch summary in punchOut");
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

@@ -22,10 +22,14 @@
  *          core still leaves a buffered point behind, which is what split a
  *          survey line beside a rock with 8.8 m of water over it. Covered by
  *          tests/wreck_clearance.js.
- *       3. A FEATURE MAY NAME ITS OWN KIND (2026-10-01): buildKeepouts takes
+ *       3. A FEATURE MAY NAME ITS OWN KIND (2026-09-30): buildKeepouts takes
  *          `f.kind` before nogoKind's role-based one, so the floats skin.js reads
  *          off the depth areas' holes are refused as what they are rather than
  *          as "a dock / pier" NOAA served. Covered by tests/skin_gaps.js.
+ *       4. TWO MORE ENFORCEMENT KEYS (2026-09-30): `wreck` drops the charted wrecks
+ *          and counts them as `wrecksOff`; `chan` is the survey's channel rules,
+ *          read by punchOut. Both default armed. Covered by tests/wreck_clearance.js
+ *          and tests/turn_channel.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -229,12 +233,28 @@ export const DEFAULTS = {
  * The key is `haz`, which is the spelling `contracts.nogoEnforcement` already
  * carries — ASV's `NOGO_ENF`, promoted verbatim into the schema before this
  * file existed. WorldView spelled it `hazard` and had no caller that passed it.
+ *
+ * TWO MORE, BOTH ARMED BY DEFAULT, AND BOTH ONLY EVER NARROW (Andy, 2026-09-30: "on
+ * the survey settings card add options to disregard shipwreck avoidance and shipping
+ * channel avoidance"):
+ *   wreck  the charted WRECKS - Wreck_point and Wreck_area - within the classes they
+ *          already belong to. Off drops them; on leaves them to `haz` (points) and
+ *          `land` (areas), so it can disregard a wreck those would have enforced and
+ *          can never enforce one they switched off.
+ *   chan   the SURVEY's channel rules (channelSpanKeepouts, channelTurnKeepouts) -
+ *          not a class this function builds at all. It rides here because it is a
+ *          keep-out the operator arms with the others, and because the punch memo's
+ *          key already names this whole object, so a toggle cannot be served a clip
+ *          taken under the other setting. Transits keep right in a channel under
+ *          Rule 9 whatever it says.
+ * `contracts.nogoEnforcement` is vendored from asv_core and still names four; this
+ * file is ASV's own (see its header), and nothing here calls that validator.
  */
-export const ENFORCE_DEFAULTS = { land: true, depth: true, haz: true, area: false };
+export const ENFORCE_DEFAULTS = { land: true, depth: true, haz: true, area: false, wreck: true, chan: true };
 
 /**
  * Merge an operator's enforcement toggles over the defaults, REFUSING a key
- * that is not one of the four.
+ * that is not one of the six.
  *
  * A spread would silently drop `{hazard: false}` on the floor and leave the
  * default `haz: true` armed — the caller asks for hazards off and gets them
@@ -615,12 +635,13 @@ export function nogoKind(role, depthbad, opts = {}) {
  * @param {Array}  feats   features from the chart extract
  * @param {object} [opts]
  * @param {{min:number,max:number}} [opts.depthRange]  the survey depth window
- * @param {object} [opts.enforce]  {land, depth, haz, area} — operator toggles
+ * @param {object} [opts.enforce]  {land, depth, haz, area, wreck, chan} — operator toggles
  * @returns {{polys:Array, lines:Array, points:Array, marks:Array, passed:number,
- *            sys:Array, chans:Array}} in the frame's meters. `passed` counts the
- *          charted hazards a charted sounding proved passable, and which are
+ *            wrecksOff:number, sys:Array, chans:Array}} in the frame's meters. `passed`
+ *          counts the charted hazards a charted sounding proved passable, and which are
  *          therefore absent from `points` -- a model that drops something has to
- *          be able to say how much.
+ *          be able to say how much. `wrecksOff` counts, for the same reason, the charted
+ *          wrecks the operator's `wreck` toggle dropped that the model would otherwise hold.
  */
 export function buildKeepouts(frame, feats, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -629,6 +650,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
 
   const polys = [], lines = [], points = [], marks = [];
   let passed = 0;              // hazards the chart proves passable, and this drops
+  let wrecksOff = 0;           // wrecks the operator disregards, and this drops
   for (const f of feats || []) {
     const g = f.geometry, r = f.role;
     // ⚠ `bridge` IS THE SUPPORTS, NOT THE SPAN. A bridge pylon is a pier that happens
@@ -691,6 +713,11 @@ export function buildKeepouts(frame, feats, opts = {}) {
     // extent was never enough: with r = 0 the operator's buffer still leaves a dot,
     // and a dot on a survey line splits that line in two.
     if (isHaz && hazPassable(f, o)) { eachPoint(g, () => passed++); continue; }
+    // ⚠ A DISREGARDED WRECK, AFTER EVERY GATE THAT WOULD HAVE DROPPED IT ANYWAY (2026-09-30).
+    // So the count is of wrecks the toggle ITSELF took out: one a sounding proves passable
+    // is counted as passed, one whose own class is switched off is not counted at all, and
+    // the toggle can only ever narrow - it cannot arm a wreck `haz` or `land` disarmed.
+    if (!enf.wreck && (f.cls === 'Wreck_point' || f.cls === 'Wreck_area')) { wrecksOff++; continue; }
     if (isArea && !enf.area) continue;
 
     // A feature that carries its own kind keeps it: a float read off the seabed's gaps (skin.js) is refused as
@@ -724,7 +751,7 @@ export function buildKeepouts(frame, feats, opts = {}) {
   // operator enforces it, yet its EXTENT is what tells the lane how far the
   // fairway runs past the last buoy. Built unconditionally for that reason.
   return {
-    polys, lines, points, marks, passed,
+    polys, lines, points, marks, passed, wrecksOff,
     sys: markSystems(marks),
     chans: channelPolys(frame, feats, marks),
   };

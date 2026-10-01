@@ -274,5 +274,38 @@ check("14. the banner and the hint NAME the channel (open-looking water needs na
       () => P.includes("a navigation channel the survey lines do not enter") &&
             P.includes("refused by a navigation channel"));
 
+// 15-15d. THE SHIPPING CHANNELS OPTION (Andy, 2026-09-30: "on the survey settings card add options to disregard
+// shipwreck avoidance and shipping channel avoidance"). BOTH channel rules - the span exclusion on the coverage clip
+// and the turn water above - are skipped when the operator unchecks it, and only then. It rides in nogo.enf, so the
+// punch memo's key (which names that object whole) cannot serve a clip taken under the other setting.
+check("15. punchOut skips BOTH channel rules - the span exclusion and the turn water - when Shipping channels is "
+      + "off, and runs both exactly as before when it is on",
+      () => P.includes("const chanExcl = enf.chan === false ? [] : channelSpanKeepouts(src, ref, nogo.features, ko.marks);")
+            && P.includes("const turnExcl = enf.chan === false ? [] : channelTurnKeepouts(clipped, ref, nogo.features, ko.marks);")
+            && /const ref=nogo\.frame, buffer=nogo\.buffer, enf=nogo\.enf;/.test(P),
+      "chanExcl and turnExcl in punchOut, both read off the punch's own `enf`");
+{
+  const anc = grab("applyNogoControls"), key = grab("patStrikeKey");
+  const ST = fs.readFileSync(path.join(__dirname, "..", "static", "js", "state.js"), "utf8");
+  const KO = fs.readFileSync(path.join(__dirname, "..", "static", "js", "keepouts.js"), "utf8");
+  check("15b. the survey card offers Shipping channels, ARMED on a fresh page and by default in both state.js and "
+        + "keepouts.js, and applyNogoControls folds it into nogo.enf",
+        () => /<input type="checkbox" id="enf_chan" checked\/>Shipping channels<\/label>/.test(H)
+              && /chan:\$\("#enf_chan"\)\.checked/.test(anc)
+              && /NOGO_ENF = \{[^}]*chan:true[^}]*\}/.test(ST)
+              && /ENFORCE_DEFAULTS = \{[^}]*chan: true[^}]*\}/.test(KO),
+        "static/asv.html, static/js/state.js, static/js/keepouts.js");
+  check("15c. ... a change re-punches like the other toggles, and the memo key names nogo.enf whole, so the option "
+        + "cannot be answered from a clip taken under the other setting",
+        () => /"#enf_chan"\]\.forEach\(id=>\{\s*\$\(id\)\.onchange = \(\)=>\{ applyNogoControls\(\); patClip=null;/.test(H)
+              && /JSON\.stringify\(nogo\.enf\|\|\{\}\)/.test(key),
+        "the change list and patStrikeKey");
+  // The CONDITION with the words: the sentence alone passed a mutant that kept the text and never printed it.
+  check("15d. ... and a punch made with it off SAYS so, because a plan run across a channel has to say why",
+        () => P.includes("(enf.chan===false?`, shipping-channel rules OFF (lines keep their coverage across a "
+                         + "channel, turns may use channel water)`:``)"),
+        "the punch summary in punchOut");
+}
+
 console.log(ran + " checks, " + fails + " failed");
 process.exit(fails ? 1 : 0);

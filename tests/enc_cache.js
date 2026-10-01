@@ -73,14 +73,14 @@ console.log("The ENC layer is cached, and the key is the whole point:");
 // -- THE WORLD --------------------------------------------------------------------------
 // A fake canvas/context that RECORDS. drawENC is the real one, so a miss really walks the
 // features and a hit really does not.
-let drew = 0, blits = 0, lastBlit = null, rec = null;
+let drew = 0, blits = 0, lastBlit = null, rec = null, arcs = 0;
 function fakeCtx() {
   const noop = () => {};
   // `rec`, when a check sets it, collects every vertex drawn: what 13 compares between the direct
   // draw and the cached one. `lastBlit` is where the layer was put on the screen.
   const pt = (x, y) => { if (rec) rec.push([x, y]); };
   return { save: noop, restore: noop, beginPath: () => { drew++; }, closePath: noop,
-           moveTo: pt, lineTo: pt, stroke: noop, fill: noop, arc: noop,
+           moveTo: pt, lineTo: pt, stroke: noop, fill: noop, arc: () => { arcs++; },
            clearRect: noop, setLineDash: noop,
            drawImage: (src, x, y) => { blits++; lastBlit = { x, y }; },
            fillStyle: "", strokeStyle: "", lineWidth: 0, font: "", lineCap: "" };
@@ -97,7 +97,8 @@ let zoom = 13;
 const V = { WRECK_RADIUS_M: 25, NOGO_BUFFER_M: 3, NOGO_MIN_DEPTH_M: 1, OPER_MIN_DEPTH_M: 3 };
 const M_PER_DEG_LAT = 111320;
 function nogoDR() { return { min: Math.max(V.NOGO_MIN_DEPTH_M, V.OPER_MIN_DEPTH_M), max: 0 }; }
-function hazExtent() { return 0; }
+let HAZ_R = 0;                          // the hazard radius drawENC is handed - 5c sets one so a circle is drawn
+function hazExtent() { return HAZ_R; }
 function eachRing(g, fn) { if (g && g.type === "Polygon") g.coordinates.forEach(fn); }
 function eachPath(g, fn) { if (g && g.type === "LineString") fn(g.coordinates); }
 function eachPoint(g, fn) { if (g && g.type === "Point") fn(g.coordinates); }
@@ -209,6 +210,26 @@ check("5b. ... and the ZOOM, the one view term the layer's key still carries",
       () => zm.drew > 0,
       "zoom 13 -> 14 redrew " + zm.drew + " path(s). The origin left the key when a pan became a blit, "
         + "so without its own term a zoom would have been blitted at the old scale");
+
+// 5c. A DISREGARDED WRECK KEEPS ITS CROSS AND LOSES ITS CIRCLE (2026-09-30). drawENC rings a sized hazard with the
+//     circle the router keeps out of; with Shipwrecks unchecked nothing keeps out of a charted wreck, so its circle
+//     goes and its cross - the chart - stays, a rock keeps both, and the layer's key names the toggle or the circle
+//     would be held on screen past the click. The radius is huge because this toScreen draws 100 px a degree: a
+//     circle under 2 px is not drawn at all, and 5 km is 4.5 px here.
+{
+  const pt = (cls, x) => ({ role: "hazard_point", cls, props: {}, geometry: { type: "Point", coordinates: [x, x] } });
+  sea.enc = { features: [pt("Wreck_point", 0.5), pt("Underwater_Awash_Rock_point", 0.2)] };
+  HAZ_R = 5000;
+  const drawWith = (on) => { nogo.enf.wreck = on; arcs = 0; reset(); drawENCCached(toScreen, 800, 600, o);
+                             return { arcs, drew }; };
+  const on = drawWith(true), off = drawWith(false), back = drawWith(true);
+  delete nogo.enf.wreck; HAZ_R = 0; sea.enc = { features: [feat] }; stable();
+  check("5c. a wreck the operator disregards keeps its chart cross and loses its keep-out circle - a rock keeps "
+        + "both - and the Shipwrecks toggle is in the layer's key, so the click redraws",
+        () => on.arcs === 2 && off.arcs === 1 && off.drew > 0 && back.arcs === 2,
+        "circles drawn: Shipwrecks on " + on.arcs + ", off " + off.arcs + " (" + off.drew + " path(s) redrawn), "
+          + "on again " + back.arcs);
+}
 
 // -- 6. THE DATA IS COMPARED BY IDENTITY, NOT BY COUNT -----------------------------------
 reset();
@@ -329,6 +350,8 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
   const inputs = [
     movesIt("structures enforced", () => { nogo.enf.land = false; }, () => { nogo.enf.land = true; }),
     movesIt("depth enforced", () => { nogo.enf.depth = false; }, () => { nogo.enf.depth = true; }),
+    // drawNogo skips a wreck AREA the operator disregards (2026-09-30), so the Shipwrecks toggle is an input too.
+    movesIt("shipwrecks enforced", () => { nogo.enf.wreck = false; }, () => { nogo.enf.wreck = true; }),
     movesIt("the depth floor", () => { V.OPER_MIN_DEPTH_M = 5; }, () => { V.OPER_MIN_DEPTH_M = 3; }),
     movesIt("the survey window's floor", () => { SD = { min: 4, max: 0 }; }, () => { SD = { min: 0, max: 0 }; }),
     movesIt("the survey window's ceiling", () => { SD = { min: 0, max: 30 }; }, () => { SD = { min: 0, max: 0 }; }),
@@ -337,7 +360,7 @@ check("6. a refetch of the same water is a MISS - the data is compared by identi
     movesIt("the zoom", () => { zoom = 14; }, () => { zoom = 13; }),
   ];
   const stale = inputs.filter(x => !(x.d > 0)).map(x => x.label);
-  check("11. its key names EVERY input drawNogo reads - the two enforce toggles, the depth floor, the survey window "
+  check("11. its key names EVERY input drawNogo reads - the three enforce toggles it draws by, the depth floor, the survey window "
         + "both ways, a pattern being up, the tide and the zoom each redraw it",
         () => stale.length === 0,
         () => stale.length ? "HELD across: " + stale.join(", ") : inputs.length + " inputs, every one redraws");

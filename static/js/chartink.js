@@ -85,7 +85,7 @@ export const INK_SAT_MAX = 60;
 export const EXPLAIN_PX = 4;
 
 // ⚠⚠ EVERY RING EXPLAINS INK - INCLUDING THE ONES THE CHART NEVER DRAWS - AND THAT IS MEASURED, NOT ASSUMED
-// (2026-10-01). Andy, at Pepperrell Cove: this routine "missed these dock features and ran transits and survey
+// (2026-09-30). Andy, at Pepperrell Cove: this routine "missed these dock features and ran transits and survey
 // lines across them". The floats are pontoons, which NOAA's vector service does not serve, and 85-93% of their
 // gray outline ink lay under the rings of the depth areas, zones of confidence, named waters and the anchorage -
 // rings no chart draws, but S-57 tiles the seabed so tightly that they trace every float cut out of it.

@@ -1,6 +1,6 @@
 // static/js/skin.js - THE SKIN OF THE EARTH HAS NO GAPS, so a gap in it is an object the console does not hold.
 //
-// Andy, 2026-10-01, at Pepperrell Cove with survey lines and transits drawn straight across the floats off the
+// Andy, 2026-09-30, at Pepperrell Cove with survey lines and transits drawn straight across the floats off the
 // Kittery Point piers: "The ENC check routine that catches features not represented in layers missed these dock
 // features and ran transits and survey lines across them. review the routine and improve."
 //

@@ -85,8 +85,10 @@ export const V = {
 // hazards, and water shallower than this vessel's own corrected floor.
 //
 // WHICH CLASSES ARE ENFORCED. A charted AREA is advisory here; the shoreline, structures,
-// depth and point hazards are what actually refuse a route.
-export const NOGO_ENF = {land:true, depth:true, haz:true, area:false};
+// depth and point hazards are what actually refuse a route. `wreck` and `chan` (2026-09-30)
+// are the survey card's two "disregard" options - the charted wrecks, and the survey's own
+// channel rules - and both start ARMED: a fresh page avoids them, as it always has.
+export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true, chan:true};
 
 // A CONST OBJECT, MUTATED IN PLACE AND NEVER REASSIGNED - which is why the page's 200-odd
 // references needed no change when it moved here. Assign to its FIELDS. Reassigning `nogo`

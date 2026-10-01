@@ -1080,6 +1080,27 @@ of the operator.
    `planning.nogo_buffer_m` — a plan saved against a small boat must not quietly narrow
    a bigger one's clearance.
 
+   **Two of the toggles DISREGARD a rule, and both start armed (2026-09-30).** The survey
+   card lists six: the four it always had — *Land / shore / docks*, *Water shallower than
+   floor*, *Aids & hazards*, *Dredged / restricted* — and **Shipwrecks** and **Shipping
+   channels**. Both new boxes are checked on a fresh page, so nothing changes until the
+   operator unchecks one, and each says so wherever it shapes a plan.
+   - **Shipwrecks** unchecked drops every charted wreck — wreck points and wreck areas —
+     from the keep-out model that **every** behavior shares: survey, Go-To, RTH, search
+     and the guard. It only ever narrows: a wreck that *Aids & hazards* or *Land / shore /
+     docks* has already switched off stays off whatever this box says, and a wreck the
+     chart proves passable is counted as passed, not disregarded. The no-go row adds
+     **· wrecks off**, its tooltip counts the charted wrecks the model no longer holds, a
+     disregarded wreck keeps its chart symbol but loses its keep-out (a point's dashed
+     circle, an area's red fill), and every punch made with it off says how many charted
+     wrecks it disregarded.
+   - **Shipping channels** unchecked disregards the survey's own two channel rules: a
+     channel that a survey line runs all the way across is no longer cut out of the
+     coverage, and the reversal turns and the line order may use channel water that no
+     coverage line enters. It is **survey-only** — Go-To, RTH and transits still keep
+     right in a channel under COLREGS Rule 9 — and the punch summary says *shipping-channel
+     rules OFF*.
+
    **Charted hazards have a SIZE, not just a position.** A wreck symbol on a chart is a
    *position*: the casualty under it can be a 100 m ship, and the ENC says nothing about
    its extent or which way it lies. So wrecks, hulks, obstructions and awash rocks carry

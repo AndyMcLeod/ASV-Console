@@ -1,6 +1,6 @@
 // tests/skin_gaps.js - the skin of the earth has no gaps, so a gap in it is an object the console does not hold.
 //
-// Andy, 2026-10-01, at Pepperrell Cove: "The ENC check routine that catches features not represented in layers
+// Andy, 2026-09-30, at Pepperrell Cove: "The ENC check routine that catches features not represented in layers
 // missed these dock features and ran transits and survey lines across them. review the routine and improve."
 //
 // The floats off the Kittery Point piers are PONTOONS, which NOAA's vector service does not serve in any band. But

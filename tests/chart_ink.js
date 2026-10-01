@@ -906,7 +906,7 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");
   }
 
-  // 14b. A READ THAT THREW IS NOT A CLEAN ONE EITHER (2026-10-01, found reviewing this routine for Andy's floats at
+  // 14b. A READ THAT THREW IS NOT A CLEAN ONE EITHER (2026-09-30, found reviewing this routine for Andy's floats at
   // Pepperrell Cove). ensureChartInk's catch KEPT THE KEY, so the same water was never read again that session, and
   // said so only on the readout - check 14 held the refusal path to the rule and nothing held the throw. Run the
   // shipped function, its leaves stubbed: a scan that throws, then the same box again.
