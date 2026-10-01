@@ -79,7 +79,7 @@ const { HAZ_UNKNOWN_EXTENT, MARK_TAIL, blocked, blockedInfo, buildKeepouts, chan
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
 // deleted export now fails HERE, at load, instead of quietly resolving to a stale
 // copy - and the checks below exercise the function that actually ships.
-const { channelTurnKeepouts } = require("../static/js/passage.js");
+const { channelSpanKeepouts, channelTurnKeepouts } = require("../static/js/passage.js");
 const { arcPts, teardropTurn } = require("../static/js/turns.js");
 
 // THE REAL MODULE, not its source text lifted out of the page. A renamed or
@@ -305,6 +305,90 @@ check("15. punchOut skips BOTH channel rules - the span exclusion and the turn w
         () => P.includes("(enf.chan===false?`, shipping-channel rules OFF (lines keep their coverage across a "
                          + "channel, turns may use channel water)`:``)"),
         "the punch summary in punchOut");
+}
+
+// 16-16j. THE CHART WINS OVER A BUOY CORRIDOR (Andy, 2026-09-30: "fix the buoy corridor so charted channels win").
+// channelPolys swept a corridor for EVERY gate, two gate widths along, however wide the gate. At the Northward Channel
+// (Portsmouth) buoys #3 and #4 stand 244 m apart either side of a charted strip ~20 m wide, and the span rule, which
+// takes the UNION, read a survey drawn across the channel as "contained" in the corridor: the channel was never cut
+// out, with Shipping channels armed. A corridor now runs along its axis only until it would touch a charted dredged
+// area or fairway, and a gate whose own line touches one sweeps nothing (keepouts.js, gateSweep). EN meters about ref.
+{
+  const sq = (e0, n0, e1, n1, role) => ({
+    role, cls: role === "fairway" ? "Fairway_area" : "Dredged_Area", props: {},
+    geometry: { type: "Polygon", coordinates: ringLonLat([[e0, n0], [e1, n0], [e1, n1], [e0, n1], [e0, n0]]) } });
+  const port = (e, n, num = 3) => ({ e, n, side: -1, num, sys: "t" });
+  const stbd = (e, n, num = 4) => ({ e, n, side: 1, num, sys: "t" });
+  const corridors = (fs_, marks) => channelPolys(ref, fs_, marks).slice(fs_.length);   // one ring per fixture feature
+  const bbs = (rs) => rs.map((c) => [c.bb.x0, c.bb.y0, c.bb.x1, c.bb.y1].map((v) => Math.round(v)).join(","));
+  const lineEW = (n, e0, e1) => [ll(e0, n), ll(e1, n)];
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+
+  const strip = sq(-10, -400, 10, 400, "dredged");
+  const nwc = [port(-122, 0), stbd(122, 0)];
+  const c16 = channelPolys(ref, [strip], nwc);
+  check("16. a gate whose marks BRACKET a charted channel sweeps no corridor - the chart already says where it is",
+        () => c16.length === 1,
+        () => c16.length + " channel polygon(s): " + bbs(c16).join(" | ")
+              + " (the corridor was 244 x 488 m round a 20 m strip)");
+  const ex16 = channelSpanKeepouts([0, 20, 40, 60, 80].map((n) => lineEW(n, -100, 100)), ref, [strip], nwc);
+  check("16b. ... so a survey drawn across that channel between the buoys has the CHANNEL cut out of its coverage again",
+        () => ex16.length === 1 && Math.round(ex16[0].bb.x0) === -10 && Math.round(ex16[0].bb.x1) === 10,
+        () => ex16.length + " excluded: " + bbs(ex16).join(" | ") + " - inside the corridor every line began and ended "
+              + "in a channel, read as contained, and nothing was cut");
+  const want = [[940, 1880], [1060, 1880], [1060, 2120], [940, 2120]];
+  const c16c = corridors([strip], [port(940, 2000), stbd(1060, 2000)]);
+  check("16c. a gate that brackets NO charted channel keeps exactly the corridor it always had, a gate width each way",
+        () => c16c.length === 1 && c16c[0].ring.every((p, i) => near(p.e, want[i][0]) && near(p.n, want[i][1])),
+        () => "corridor " + bbs(c16c).join(" | ") + " (want 940,1880,1060,2120)");
+  const mouth = [port(-60, 450), stbd(60, 450)];
+  const c16d = corridors([strip], mouth);
+  check("16d. a gate BEYOND a charted channel's end keeps its corridor seaward, stopped at the charted end rather than "
+        + "wrapped round it",
+        () => c16d.length === 1 && near(c16d[0].bb.y0, 400) && near(c16d[0].bb.y1, 570)
+              && near(c16d[0].bb.x0, -60) && near(c16d[0].bb.x1, 60),
+        () => "corridor " + bbs(c16d).join(" | ") + " (want -60,400,60,570; the old one ran back to n=330, round the "
+              + "charted end)");
+  const exEnd = channelSpanKeepouts([lineEW(380, -50, 50)], ref, [strip], mouth);
+  const exMouth = channelSpanKeepouts([lineEW(500, -100, 100)], ref, [strip], mouth);
+  check("16e. ... so a line across the channel NEAR that end has the charted channel cut out, and a line across the "
+        + "mouth still has the mouth's corridor cut out",
+        () => exEnd.length === 1 && Math.round(exEnd[0].bb.x0) === -10
+              && exMouth.length === 1 && Math.round(exMouth[0].bb.y0) === 400,
+        () => "near the end: " + bbs(exEnd).join(" | ") + "; across the mouth: " + bbs(exMouth).join(" | "));
+  const c16f = channelPolys(ref, [sq(-300, -1000, 300, 1000, "fairway")], [port(-100, 0), stbd(100, 0)]);
+  check("16f. a gate standing INSIDE a wide charted fairway sweeps nothing - its whole line is in charted water",
+        () => c16f.length === 1, () => c16f.length + " polygon(s): " + bbs(c16f).join(" | "));
+  const c16g = corridors([sq(-200, 80, 200, 100, "dredged")], [port(-60, 0), stbd(60, 0)]);
+  check("16g. a charted channel AHEAD of a gate shortens the corridor on that side only",
+        () => c16g.length === 1 && near(c16g[0].bb.y1, 80) && near(c16g[0].bb.y0, -120),
+        () => "corridor " + bbs(c16g).join(" | ") + " (want -60,-120,60,80)");
+  // A DIAGONAL gate, so its bounding box is bigger than the corridor: the charted square sits in that corner, where a
+  // test of the whole edge rather than the part inside the swept strip would shorten the corridor for nothing.
+  const c16h = corridors([sq(120, 120, 140, 140, "dredged")], [port(-50, -50), stbd(50, 50)]);
+  const len = (c) => Math.hypot(c.ring[2].e - c.ring[1].e, c.ring[2].n - c.ring[1].n);
+  check("16h. a charted channel BESIDE a corridor - inside its bounding box, never under the swept gate line - does not "
+        + "shorten it",
+        () => c16h.length === 1 && near(len(c16h[0]), 2 * Math.hypot(100, 100)),
+        () => "corridor " + (c16h.length ? len(c16h[0]).toFixed(2) : "-") + " m along (want "
+              + (2 * Math.hypot(100, 100)).toFixed(2) + ")");
+  const c16i = corridors([], [port(-60, 0), stbd(60, 0), port(-60, 100, 5), stbd(60, 100, 6)]);
+  check("16i. consecutive gates of an UNCHARTED buoyed channel each keep their full corridor - a corridor yields to the "
+        + "chart, never to another corridor",
+        () => c16i.length === 2 && c16i.every((c) => near(c.bb.y1 - c.bb.y0, 240)),
+        () => "corridors " + bbs(c16i).join(" | "));
+  // A charted channel crossing the gate line DIAGONALLY near a buoy and leaving the swept strip through its side just
+  // past the line. Wound clockwise, the edge that crosses is clipped at the strip's side 10 m past the line, and
+  // without the explicit "reaches the gate line" test the corridor was kept, beginning 10 m beyond the crossing.
+  const diag = (pts) => ({ role: "dredged", cls: "Dredged_Area", props: {},
+                           geometry: { type: "Polygon", coordinates: ringLonLat([...pts, pts[0]]) } });
+  const quad = [[30, -50], [50, -50], [90, 30], [70, 30]];
+  const ccw = corridors([diag(quad)], [port(-60, 0), stbd(60, 0)]);
+  const cw = corridors([diag(quad.slice().reverse())], [port(-60, 0), stbd(60, 0)]);
+  check("16j. a charted channel crossing the gate line DIAGONALLY, leaving the swept strip just past it, still means "
+        + "the gate brackets charted water - in either winding",
+        () => ccw.length === 0 && cw.length === 0,
+        () => "counter-clockwise: " + (bbs(ccw).join(" | ") || "none") + "; clockwise: " + (bbs(cw).join(" | ") || "none"));
 }
 
 console.log(ran + " checks, " + fails + " failed");

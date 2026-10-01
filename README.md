@@ -1729,9 +1729,21 @@ of the operator.
    of line spacing — ordinary deep-water spacing for a larger vessel — while the banner
    blamed a keep-out for it.
 
+   **What counts as a channel is the chart's, first (2026-09-30).** The survey's channel
+   rules read one list: the charted **dredged areas and fairways**, plus a corridor swept
+   from each port / starboard buoy pair for water the chart charts no channel in (an
+   inlet mouth, typically). A buoy pair that brackets a charted channel sweeps **no**
+   corridor, and a corridor stops where it would meet charted channel water. It used to
+   sweep every pair two gate widths along, however wide: at the Northward Channel
+   (Portsmouth) buoys 244 m apart either side of a charted strip about 20 m wide made a
+   corridor holding the strip and both banks, so a survey drawn across the channel there
+   read as *inside* a channel and was never cut. The Rule 9 lane reads the same list; the
+   transits checked through both harbors route identically before and after (the lane
+   engaged on the Lewes routes, and on none of the Portsmouth paths tried).
+
    **Turn water.** The keep-out set the turns answer to is *stricter* than the one
-   transits use: charted channel polygons (dredged areas + buoy-gate fairway
-   corridors) that none of the clipped survey lines occupy are keep-outs for the
+   transits use: channel polygons (the charted ones, plus buoy-pair corridors where the
+   chart charts none) that none of the clipped survey lines occupy are keep-outs for the
    reversal turns, the reversal straight-hop check and the serpentine ordering — a
    loop may not swing into a navigation channel the survey does not enter, even
    though the channel is deep, is not an enforced keep-out, and a charted pile row

@@ -30,6 +30,11 @@
  *          and counts them as `wrecksOff`; `chan` is the survey's channel rules,
  *          read by punchOut. Both default armed. Covered by tests/wreck_clearance.js
  *          and tests/turn_channel.js.
+ *       5. A BUOY CORRIDOR YIELDS TO THE CHART (2026-09-30): channelPolys sweeps a
+ *          gate's corridor along the channel only until it would touch a charted
+ *          dredged area or fairway (`gateSweep`), and a gate whose own line touches
+ *          one sweeps nothing. asv_core still sweeps every gate a full gate width
+ *          each way. Covered by tests/turn_channel.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -564,11 +569,32 @@ export function pairGates(marks) {
 }
 
 /**
- * Charted-channel polygons: the ENC dredged areas, plus buoy-gate FAIRWAY
- * corridors where no dredged polygon is charted (an inlet mouth, typically).
+ * Charted-channel polygons: the ENC dredged areas and fairways, plus buoy-gate
+ * corridors for the water the chart charts no channel in (an inlet mouth, typically).
  *
- * ONE list, shared by the lane's centerline extension and the survey span and
- * turn rules, so "what counts as a channel" cannot drift between them.
+ * ONE list, shared by the lane's centerline extension, the lane's Rule 9 scope
+ * and the survey span and turn rules, so "what counts as a channel" cannot drift
+ * between them.
+ *
+ * ⚠⚠ THE CHART WINS (Andy, 2026-09-30: "fix the buoy corridor so charted channels
+ * win"). This comment always said "where no dredged polygon is charted", and the
+ * code swept a corridor for EVERY gate anyway. At the Northward Channel
+ * (Portsmouth) buoys #3 and #4 stand 244 m apart either side of a charted strip
+ * about 20 m wide; their corridor, 244 m across and two gate widths along, held
+ * the strip AND its banks. The span rule takes the UNION of these polygons, so a
+ * survey line drawn across the charted channel there began and ended inside the
+ * corridor and was "contained" - the channel was never cut out of the coverage,
+ * with Shipping channels armed. Five of the seven gates in that extract bracket
+ * charted water, three of them pairing a Sagamore Creek mark with a Northward
+ * Channel one; at Lewes the one gate, the Roosevelt Inlet jetties, does too.
+ *
+ * So a corridor is swept along its axis only until it would first touch a charted
+ * dredged area or fairway (`gateSweep`), and a gate whose own line touches one
+ * sweeps nothing: those buoys mark a channel the chart has already drawn. A gate
+ * whose corridor would touch no charted channel keeps exactly the corridor it always
+ * had. A mouth beyond a charted end keeps its seaward corridor, stopped AT the
+ * charted end rather than wrapped round it, which is the overlap that could still
+ * hide the channel if the test were only "does the gate line cross it".
  */
 export function channelPolys(frame, feats, marks) {
   const chans = [];
@@ -587,19 +613,71 @@ export function channelPolys(frame, feats, marks) {
       if (ring.length >= 3) chans.push({ ring, bb: bbOf(ring) });
     });
   }
-  // Sweep each gate line one gate-width each way along the channel axis.
+  // Sweep each gate line along the channel axis - one gate width each way, or until it would touch charted water.
+  const charted = chans.slice();
   for (const g of pairGates(marks)) {
     const gux = g.axis[1], guy = -g.axis[0];
     const P = { e: g.C.e - gux * g.width / 2, n: g.C.n - guy * g.width / 2 };
     const S = { e: g.C.e + gux * g.width / 2, n: g.C.n + guy * g.width / 2 };
     const [ax, ay] = g.axis, Le = g.width;
+    const { fwd, back } = gateSweep(P, gux, guy, ax, ay, g.width, Le, charted);
+    if (fwd + back < GATE_SWEEP_MIN_M) continue;   // the gate brackets charted water: no corridor
     const ring = [
-      { e: P.e - ax * Le, n: P.n - ay * Le }, { e: S.e - ax * Le, n: S.n - ay * Le },
-      { e: S.e + ax * Le, n: S.n + ay * Le }, { e: P.e + ax * Le, n: P.n + ay * Le },
+      { e: P.e - ax * back, n: P.n - ay * back }, { e: S.e - ax * back, n: S.n - ay * back },
+      { e: S.e + ax * fwd, n: S.n + ay * fwd }, { e: P.e + ax * fwd, n: P.n + ay * fwd },
     ];
     chans.push({ ring, bb: bbOf(ring) });
   }
   return chans;
+}
+
+/** A corridor shallower than this along its axis, both ways together, is not swept at all. */
+export const GATE_SWEEP_MIN_M = 1;
+
+/**
+ * How far a gate's corridor may run along its axis, each way, before it would first
+ * touch a CHARTED channel ring - capped at `Le`.
+ *
+ * In the gate's own strip coordinates - u along the gate line from P (0) to S (w),
+ * t along the axis from the gate line - a polygon first touches the swept line at
+ * the smallest |t| of its boundary inside 0 <= u <= w. That is an endpoint of an
+ * edge clipped to the strip, since t is linear along an edge, so the answer is
+ * exact and O(edges). Any clipped edge reaching t = 0, or the gate's midpoint lying
+ * inside a ring, means the gate line itself touches charted water: { fwd: 0, back: 0 }.
+ * Rings whose box misses the full corridor's box are skipped.
+ */
+export function gateSweep(P, gx, gy, ax, ay, w, Le, rings) {
+  let fwd = Le, back = Le;
+  const corner = (u, t) => ({ e: P.e + gx * u + ax * t, n: P.n + gy * u + ay * t });
+  const box = bbOf([corner(0, -Le), corner(w, -Le), corner(w, Le), corner(0, Le)]);
+  const C = corner(w / 2, 0);
+  for (const c of rings) {
+    const bb = c.bb;
+    if (bb.x1 < box.x0 || bb.x0 > box.x1 || bb.y1 < box.y0 || bb.y0 > box.y1) continue;
+    if (pinp(C, c.ring)) return { fwd: 0, back: 0 };
+    const r = c.ring;
+    for (let i = 0; i < r.length; i++) {
+      const a = r[i], b = r[(i + 1) % r.length];
+      const ua = (a.e - P.e) * gx + (a.n - P.n) * gy, ta = (a.e - P.e) * ax + (a.n - P.n) * ay;
+      const ub = (b.e - P.e) * gx + (b.n - P.n) * gy, tb = (b.e - P.e) * ax + (b.n - P.n) * ay;
+      let s0 = 0, s1 = 1;                            // the part of the edge inside 0 <= u <= w
+      const du = ub - ua;
+      if (Math.abs(du) < 1e-12) {
+        if (ua < 0 || ua > w) continue;
+      } else {
+        let sA = -ua / du, sB = (w - ua) / du;
+        if (sA > sB) { const x = sA; sA = sB; sB = x; }
+        if (sA > s0) s0 = sA;
+        if (sB < s1) s1 = sB;
+        if (s0 > s1) continue;
+      }
+      const t0 = ta + (tb - ta) * s0, t1 = ta + (tb - ta) * s1;
+      if ((t0 <= 0 && t1 >= 0) || (t0 >= 0 && t1 <= 0)) return { fwd: 0, back: 0 };   // reaches the gate line
+      if (t0 > 0) fwd = Math.min(fwd, t0, t1);
+      else back = Math.min(back, -t0, -t1);
+    }
+  }
+  return { fwd, back };
 }
 
 /**
