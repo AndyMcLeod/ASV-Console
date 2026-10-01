@@ -35,6 +35,7 @@
 //   explained    what the ENC ALREADY ACCOUNTS FOR. Every vector the console holds, painted
 //                thick; ink within a few pixels of a charted object is that object's own
 //                stroke and is not news. At New Castle this removes 89% of the ink.
+//                ⚠ Undrawn rings included, on purpose - see the note under EXPLAIN_PX.
 //   components   what is left, grouped.
 //   the sieve    which of those are STRUCTURES rather than chart furniture.
 //
@@ -82,6 +83,18 @@ export const INK_LUM = 170;
 export const INK_SAT_MAX = 60;
 /** Ink within this many pixels of a charted object is that object's own stroke. */
 export const EXPLAIN_PX = 4;
+
+// ⚠⚠ EVERY RING EXPLAINS INK - INCLUDING THE ONES THE CHART NEVER DRAWS - AND THAT IS MEASURED, NOT ASSUMED
+// (2026-10-01). Andy, at Pepperrell Cove: this routine "missed these dock features and ran transits and survey
+// lines across them". The floats are pontoons, which NOAA's vector service does not serve, and 85-93% of their
+// gray outline ink lay under the rings of the depth areas, zones of confidence, named waters and the anchorage -
+// rings no chart draws, but S-57 tiles the seabed so tightly that they trace every float cut out of it.
+// Painting only the outlines the chart DRAWS was tried, as a whitelist, over his survey at z18: it handed the
+// sieve 5 more lines and 13 more "float system" footprints, up to 115 m - the hachured drying lines round the
+// ledges, which those same undrawn rings had been explaining. Dropping only the magenta limits changed nothing.
+// So every ring is painted, and the pontoons are read where they are EXACT: the holes in the seabed's own
+// topology (static/js/skin.js), which the page folds in as features - painted here, so their ink is explained
+// too, and joining the attachment pool, so a gangway can attach to its float.
 /** A component smaller than this is noise, not a mark. */
 export const MIN_PX = 8;
 /** Shorter than this and it is a label, a tick or part of a symbol. */

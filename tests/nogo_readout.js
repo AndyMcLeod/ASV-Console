@@ -95,6 +95,10 @@ const { nogo, sea } = require("../static/js/state.js");
 // a stub here would let this suite stay green while the row printed a floor the keep-out model
 // had not been built at - which is the exact fault that change was made to fix.
 const { nogoKindCounts, nogoDR } = require("../static/js/chart.js");
+// THE SEABED'S GAPS (2026-10-01): refreshNogo folds them in as features and the readout counts them by their kind,
+// so the real module has to resolve in the eval'd scope - a free SKIN_KIND is a RUNTIME error inside the readout,
+// which is exactly how this suite first went red on the change.
+const { skinGaps, skinGapFeature, SKIN_KIND } = require("../static/js/skin.js");
 // rebuildNogo() builds a FRAME now (Andy, 2026-08-20: "use frame"), so planeFrame has
 // to resolve in the eval'd scope below. A free variable there is a RUNTIME error inside
 // the function, never a load error -- which is why this suite went red at "it shows the
@@ -180,6 +184,28 @@ check("18. ... and a scan that has NOT been made says so, rather than reading as
       (()=>{ const r = read({}, {note:null, lines:[]});
              return !/chart/.test(r.text) && /not compared here yet/.test(r.title); })(),
       "a silent absence would read exactly like open water");
+
+// 20-20e. THE SEABED'S GAPS (Andy, 2026-10-01, the floats at Pepperrell Cove that survey lines and transits crossed).
+// Counted from the MODEL, by their own kind, so a gap the structure toggle has switched off is not claimed as a
+// keep-out; and every state of the check - found, off, refused, none, not yet - says which it is.
+const gapModel = (polys, skin) => ({ skin, ko: { polys: [{ kind: "land" }, ...polys], lines: [], points: [] } });
+const TWO = { gaps: [{ areaM2: 193.8 }, { areaM2: 62.4 }], refused: null };
+check("20. the seabed's gaps are on the row and in its tip - counted from the MODEL, sized, and named for what they are",
+      (()=>{ const r = read(gapModel([{ kind: SKIN_KIND }, { kind: SKIN_KIND }], TWO));
+             return /\+2 seabed/.test(r.text) && /Seabed gaps: 2 place/.test(r.title) && /194 m², 62 m²/.test(r.title)
+                 && /orange dashes/.test(r.title) && r.cls === ""; })(),
+      read(gapModel([{ kind: SKIN_KIND }, { kind: SKIN_KIND }], TWO)).text);
+check("20b. ... and with structures switched OFF they are not claimed as keep-outs",
+      (()=>{ const r = read(gapModel([], TWO)); return !/seabed/.test(r.text) && /NOT enforced/.test(r.title); })(),
+      read(gapModel([], TWO)).text);
+check("20c. a REFUSED check - a partial extract - is said, and the row warns",
+      (()=>{ const r = read(gapModel([], { gaps: [], refused: "the extract arrived without its Depth_Area layer(s)" }));
+             return /Seabed gaps: NOT checked - the extract arrived without/.test(r.title) && r.cls === "warn"; })(),
+      "'not checked' must never read as 'none'");
+check("20d. a seabed with no gaps says so, rather than saying nothing",
+      /Seabed gaps: none/.test(read(gapModel([], { gaps: [], refused: null })).title));
+check("20e. ... and a model built before any check (no nogo.skin) carries no seabed sentence and does not throw",
+      (()=>{ const r = read(); return !/Seabed/.test(r.title) && !/seabed/.test(r.text); })());
 
 // 1-2. READING. The state that was stuck. It has to be visibly transient, and it has to
 // show how long it has been going: a chart service that stopped answering must not look
@@ -335,6 +361,33 @@ async function drive(fetchResult) {
   check("14. and a THROWN extract does too, naming the failure",
         !/reading chart/.test(bad.last) && /failed/.test(bad.last) && nogo.busy === false,
         "final paint: " + JSON.stringify(bad.last));
+
+  // 21-21c. REFRESHNOGO FOLDS THE SEABED'S GAPS IN AS FEATURES (2026-10-01). A depth area with a float-shaped hole,
+  // inside the box this world's bboxAround answers (0..1 degrees each way).
+  const sq = (x0, y0, x1, y1, cw) => { const r = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]; return cw ? r.reverse() : r; };
+  const scene = (partial) => ({ band: "enc_5", partial, features: [{ role: "depth_area", cls: "Depth_Area", props: {},
+    geometry: { type: "Polygon", coordinates: [sq(0.4, 0.4, 0.6, 0.6), sq(0.49, 0.495, 0.51, 0.505, true)] } }] });
+  await drive(() => { sea.enc = scene([]); return { band: "enc_5" }; });
+  const gapF = (nogo.features || []).filter(f => f.derived === "skin_gap");
+  check("21. a successful extract carries its seabed gap as a FEATURE - role dock, its own class and kind - beside "
+        + "the extract's own, so every model built from nogo.features sees it",
+        nogo.skin && nogo.skin.gaps.length === 1 && gapF.length === 1 && gapF[0].role === "dock"
+        && gapF[0].cls === "Skin_Gap_area" && gapF[0].kind === SKIN_KIND && nogo.features.length === 2,
+        JSON.stringify({ gaps: nogo.skin && nogo.skin.gaps.length, features: (nogo.features || []).length,
+                         derived: gapF.length }));
+  await drive(() => { sea.enc = scene(["Depth_Area"]); return { band: "enc_5" }; });
+  check("21b. ... and an extract that arrived WITHOUT its depth layer is refused, with nothing folded in",
+        nogo.skin && /Depth_Area/.test(nogo.skin.refused || "") && !(nogo.features || []).some(f => f.derived),
+        "refused: " + (nogo.skin && nogo.skin.refused));
+  // ⚠ THE EXTRACT IS TAKEN BEFORE THE CHECK'S OWN TURN. Another fetch can replace `sea.enc` while it waits; reading it
+  // again afterwards would build the model from THAT extract under this one's box.
+  await drive(() => { sea.enc = scene([]);
+                      setTimeout(() => { sea.enc = { band: "enc_other", partial: [], features: [] }; }, 0);
+                      return { band: "enc_5" }; });
+  check("21c. ⚠ the extract is captured BEFORE the check's turn - an extract that replaces sea.enc meanwhile is not "
+        + "the one the model is built from",
+        nogo.band === "enc_5" && (nogo.features || []).length === 2 && nogo.skin && nogo.skin.gaps.length === 1,
+        JSON.stringify({ band: nogo.band, features: (nogo.features || []).length }));
 
   // THE SHIPPED DEFAULT, not the one this suite seeds. Every check above sets
   // V.NOGO_MIN_DEPTH_M to the DriX's 2.3 m first, so none of them can see what the console

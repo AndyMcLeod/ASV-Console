@@ -22,6 +22,10 @@
  *          core still leaves a buffered point behind, which is what split a
  *          survey line beside a rock with 8.8 m of water over it. Covered by
  *          tests/wreck_clearance.js.
+ *       3. A FEATURE MAY NAME ITS OWN KIND (2026-10-01): buildKeepouts takes
+ *          `f.kind` before nogoKind's role-based one, so the floats skin.js reads
+ *          off the depth areas' holes are refused as what they are rather than
+ *          as "a dock / pier" NOAA served. Covered by tests/skin_gaps.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -689,7 +693,9 @@ export function buildKeepouts(frame, feats, opts = {}) {
     if (isHaz && hazPassable(f, o)) { eachPoint(g, () => passed++); continue; }
     if (isArea && !enf.area) continue;
 
-    const kind = nogoKind(r, depthbad, o);
+    // A feature that carries its own kind keeps it: a float read off the seabed's gaps (skin.js) is refused as
+    // what it is, not as a dock NOAA served.
+    const kind = f.kind || nogoKind(r, depthbad, o);
     if (isLand || depthbad || isArea) {
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));

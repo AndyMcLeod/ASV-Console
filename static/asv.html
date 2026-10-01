@@ -947,6 +947,10 @@ import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM } from "/static/js
 // fetches nothing (see the module header for the sieve and what it deliberately will not do).
 import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M }
   from "/static/js/chartink.js";
+// THE SEABED'S OWN GAPS. S-57's skin of the earth tiles the chart with no gaps, so wherever the depth areas, land
+// and docks the console holds leave the seabed uncovered, the ENC charts an object NOAA's vector service does not
+// serve - the floats at Pepperrell Cove (Andy, 2026-10-01). Pure, like chartink.js: features in, gaps out.
+import { skinGaps, skinGapFeature, SKIN_KIND } from "/static/js/skin.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
 import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
@@ -5709,7 +5713,7 @@ async function resetForNewArea(at, note){
   // rule.) The boot-id clear is still what actually covers the respawn race here; this is
   // the immediate one, same as doSpawn's.
   clearTrack(); giveUpRoute("this page changed the operating area");
-  nogo.ready = false; nogo.features = null; nogo.note = "nogo not loaded";
+  nogo.ready = false; nogo.features = null; nogo.skin = null; nogo.note = "nogo not loaded";
   updateNogoUI(); render();
   const ll = at || (asv ? {lat:asv.lat, lon:asv.lon} : null);
   if(!ll){ portMoveDone(note); return; }
@@ -8418,7 +8422,9 @@ function encBbox(pad){ const sp=currentPattern(); if(!sp) return null;
 async function fetchENCBbox(b, minDepth){
   const url=`/api/enc?bbox=${b.W.toFixed(5)},${b.S.toFixed(5)},${b.E.toFixed(5)},${b.N.toFixed(5)}&min_depth=${minDepth}`;
   const d=await (await fetch(url)).json();
-  sea.enc={features:d.features||[], band:d.band, minDepth}; return d;
+  // `partial` names the layers that failed to arrive (the server serves such an extract once and never caches
+  // it). The seabed-gap check refuses on it: a missing depth layer would read as one gap over the whole area.
+  sea.enc={features:d.features||[], band:d.band, minDepth, partial:(d && d.partial) || []}; return d;
 }
 // clip one survey line to the sub-segments that clear every keep-out (sampled)
 function clipLine(a, b, ref, ko, buf){
@@ -8563,12 +8569,27 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
       updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
       render(); return;
     }
+    // ⚠⚠ THE SEABED'S OWN GAPS, CARRIED AS FEATURES (Andy, 2026-10-01, at Pepperrell Cove: the chart routine
+    // "missed these dock features and ran transits and survey lines across them"). The floats off the Kittery
+    // Point piers are pontoons, which NOAA's vector service does not serve at all - but the depth areas round them
+    // ARE served, with the floats cut out of them, so skinGaps reads each float's exact outline off the ENC's own
+    // topology (static/js/skin.js). AS FEATURES, role `dock`, NOT AS A FOLD BESIDE THE MODEL: rebuildNogo,
+    // punchOut's own two models, the chart scan's explained mask and its attachment pool all read nogo.features,
+    // so every one of them sees the floats with nothing to remember - the lesson foldChartInk's forgotten second
+    // caller taught. They carry their own class and kind, so a refusal names them and the readout counts them.
+    // ⚠ THE EXTRACT IS TAKEN BEFORE THE TURN, and the turn is the check's own: it walks every seabed edge of the
+    // extract (140-270 ms on his New Castle one), and `sea.enc` can be replaced by another fetch while it waits.
+    const enc = sea.enc, feats = (enc.features||[]).slice();
+    await new Promise(r => setTimeout(r, 0));
+    const skin = skinGaps(feats, b, {partial: enc.partial});
+    for(const g of skin.gaps) feats.push(skinGapFeature(g));
     // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
     // it was taken over; dropping the key here means the next plan re-reads rather than
     // carrying a previous area's findings into water they were never taken over.
     chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
-    nogo.features = (sea.enc.features||[]).slice();    // shared feature snapshot (behaviors + survey build from this)
-    nogo.band = sea.enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
+    nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
+    nogo.skin = skin;
+    nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
     // painting the row while this was still true left it reading "loading…" forever on
     // the SUCCESS path - the one path that never repainted afterwards. The model was
@@ -8665,9 +8686,24 @@ function nogoReadout(){
       + "keep-out model, not the chart. A hazard with no charted sounding is unknown, and "
       + "unknown keeps its full berth."
     : "";
-  return {text: n + " zones · floor " + floor + (inkN ? " · +" + inkN + " chart" : ""),
-    cls: inkN ? "warn" : "",
-    title: "Chart read (ENC band " + band + "): " + brk + "." + pastTxt + inkTxt + why};
+  // THE SEABED'S GAPS ARE COUNTED FROM THE MODEL, not from the list they came in: with the structure toggle off
+  // they are not keep-outs, and a count that says otherwise is the undercount above in the other direction.
+  const sk = nogo.skin;
+  const skinN = nogo.ko ? (nogo.ko.polys || []).filter(p => p.kind === SKIN_KIND).length : 0;
+  const skinTxt = !sk ? ""
+    : sk.refused ? "\n\nSeabed gaps: NOT checked - " + sk.refused + "."
+    : sk.gaps.length
+      ? "\n\nSeabed gaps: " + sk.gaps.length + " place(s) where the charted seabed has a hole - "
+        + sk.gaps.map(g => Math.round(g.areaM2) + " m²").join(", ") + ". S-57 tiles the seabed with depth "
+        + "areas, land and docks and leaves no gaps, so a hole is an object the ENC charts that NOAA's vector "
+        + "service does not serve - a float or pontoon, most often. "
+        + (skinN ? "Each is a keep-out, outlined in orange dashes." : "NOT enforced: structures are switched off.")
+      : "\n\nSeabed gaps: none - every part of the charted seabed in this extract is a depth area, land or a "
+        + "structure the console holds.";
+  return {text: n + " zones · floor " + floor + (skinN ? " · +" + skinN + " seabed" : "")
+                + (inkN ? " · +" + inkN + " chart" : ""),
+    cls: (inkN || (sk && sk.refused)) ? "warn" : "",
+    title: "Chart read (ENC band " + band + "): " + brk + "." + pastTxt + skinTxt + inkTxt + why};
 }
 let lastNogoLogged = null;
 function updateNogoUI(){
@@ -9117,6 +9153,15 @@ function drawNogo(toScreen, ctx){
   for(const f of nogo.features){ const r=f.role;
     if(nogo.enf.land && (r==="shore_line"||r==="dock_line"))
       eachPath(f.geometry,p=>{ ctx.beginPath(); p.forEach((c,i)=>{ const s=toScreen(c[1],c[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.stroke(); }); }
+  // ⚠ THE SEABED'S GAPS ARE OUTLINED IN THEIR OWN COLOR (2026-10-01). They are filled like every structure, because
+  // that is what they are to the router; but no NOAA layer served them - the console read them off the depth areas'
+  // own holes - and the operator must be able to see which floats those are and look at the chart to check them.
+  if(nogo.enf.land){
+    ctx.save(); ctx.strokeStyle="rgba(255,150,30,0.95)"; ctx.lineWidth=2; ctx.setLineDash([5,3]);
+    for(const f of nogo.features){ if(f.derived!=="skin_gap") continue;
+      eachRing(f.geometry,r=>{ ctx.beginPath(); r.forEach((p,i)=>{ const s=toScreen(p[1],p[0]); i?ctx.lineTo(s.x,s.y):ctx.moveTo(s.x,s.y); }); ctx.closePath(); ctx.stroke(); }); }
+    ctx.restore();
+  }
   // ⚠ WHAT WAS READ OFF THE CHART IS DRAWN DIFFERENTLY, AND THAT IS NOT DECORATION. These
   // are keep-outs the console inferred from a PICTURE; every other line here is published
   // vector data. Drawing them in the ENC's own red would tell the operator the console has a
@@ -10097,6 +10142,10 @@ async function scanChartInk(bb){
     if(performance.now() - slice > INK_SLICE_MS){ await inkYield(); slice = performance.now(); }
     const g = f.geometry, isStruct = STRUCT_ROLES.has(f.role), paint = onCanvas(f);
     if(!paint && !isStruct) continue;
+    // ⚠ EVERY RING, the undrawn ones included - measured, see the note under EXPLAIN_PX in chartink.js: without the
+    // depth-area and zone rings the drying-line hachures they trace become 13 false footprints over his survey.
+    // The pontoons those rings ALSO trace are in nogo.features as seabed gaps (skin.js), so they are painted here
+    // as themselves and join the attachment pool.
     eachPath(g, q=>{ if(paint) paintPath(q); if(isStruct) addSegs(q); });
     eachRing(g, r=>{ if(paint) paintPath(r); if(isStruct) addSegs(r); });
     if(paint) eachPoint(g, c=>paintPt(c));
@@ -10185,8 +10234,15 @@ async function ensureChartInk(bb){
             + "fingers is refused too)").join(", ")
         + ". Verify visually before relying on the plan.");
   } catch(e){
-    chartInk = {...chartInk, key, lines:[], areas:[], detached:[], busy:false,
+    // ⚠ A READ THAT THREW IS NOT A CLEAN ONE, AND IT IS NOT CACHED AS ONE (2026-10-01, found reviewing this routine).
+    // This kept the key, so the same water was never read again that session, and the failure was said only on
+    // the readout. The rule a refusal already obeys above: no key, a rebuild without what the read was to replace,
+    // and a banner - "I could not look" must not read as "I looked and found nothing".
+    chartInk = {...chartInk, key:null, lines:[], areas:[], detached:[], busy:false,
                 note:"chart read failed: " + e};
+    rebuildNogo(); updateNogoUI();
+    showBanner("⚠ CHART IMAGE NOT COMPARED — the chart read failed (" + e + "). The plan is checked against "
+      + "the ENC only; command it again to retry the read.");
   } finally { chartInk.busy = false; }
   return chartInk;
 }

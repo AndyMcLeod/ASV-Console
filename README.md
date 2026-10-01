@@ -1825,6 +1825,24 @@ of the operator.
    real published layer name, so the operator's "Dredged / restricted" enforcement had
    only ever enforced the dredged half of what it said.
 
+   **Floats the vector service leaves out are read off the seabed's own gaps.** At
+   Pepperrell Cove (Kittery Point), survey lines and transits ran straight across the
+   floats off the town piers. They are **pontoons**, and NOAA's vector service publishes no
+   pontoon layer in any band, so the extract held nothing there. The chart-image read
+   didn't catch them either: their outlines lay exactly under the depth areas' own
+   boundaries, which counted as "already charted". But S-57 tiles the seabed with depth
+   areas, land, dredged areas, floating docks, hulks, pontoons and unsurveyed areas, with
+   **no gaps and no overlaps**. So every pontoon is cut out of the depth areas around it,
+   and the depth areas *are* served. On each extract the console cancels every edge two of
+   those polygons share. What's left outlines the holes, and every hole wholly inside the
+   extract becomes a keep-out with its exact charted shape. On his New Castle extract that
+   is exactly the two floats (62 m² and 194 m²) plus one more at the shipyard. Lewes has
+   none; Los Angeles has seven, the San Pedro waterfront's floats. The gaps follow the
+   structures toggle, are outlined in **orange dashes** on the NOGO layer, and are counted on
+   the Nogo row as *+N seabed*. An extract that arrived without one of its seabed layers is
+   **refused**, because a missing depth layer would read as one gap over the whole area. The
+   row says the check was not made.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
@@ -2425,7 +2443,22 @@ node tests/nogo_readout.js
 **Nogo readout** — that the row stops saying "reading chart" once the extract has actually
 landed (it used to be painted one statement too early and stuck there forever, on the one
 path that ends in a working model), and that *"clear water"* and *"no chart at all"* — both
-of which look like zero keep-outs — never read as the same thing.
+of which look like zero keep-outs — never read as the same thing. The seabed's gaps are
+counted from the model (so a gap the structures toggle has switched off isn't claimed). A
+refused check warns, and an extract replaced by another fetch while the check waits is
+not the one the model is built from.
+
+```
+node tests/skin_gaps.js
+```
+
+**Seabed gaps** — that a hole in one depth area is a gap, and so is a gap *between* two
+of them that neither has as a hole (the Z-shaped float's own topology). It also checks
+that a hole filled by land, a dredged area, an unsurveyed area or a floating dock is not
+a gap, whatever way the rings are wound. A pier drawn over a hole does not fill it. A hole
+reaching outside the extract is not judged, and a partial extract is refused. Gaps
+touching at one corner stay separate from every starting vertex. A gap becomes a keep-out
+with its own kind and follows the structures toggle.
 
 ```
 node tests/pattern_move_grip.js

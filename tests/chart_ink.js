@@ -906,6 +906,33 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");
   }
 
+  // 14b. A READ THAT THREW IS NOT A CLEAN ONE EITHER (2026-10-01, found reviewing this routine for Andy's floats at
+  // Pepperrell Cove). ensureChartInk's catch KEPT THE KEY, so the same water was never read again that session, and
+  // said so only on the readout - check 14 held the refusal path to the rule and nothing held the throw. Run the
+  // shipped function, its leaves stubbed: a scan that throws, then the same box again.
+  {
+    const i = H.indexOf("async function ensureChartInk(bb){");
+    const fn = H.slice(i, H.indexOf("\n}", i) + 2);
+    let scans = 0, rebuilt = 0;
+    const banners = [];
+    const mk = new Function("nogo", "scanChartInk", "inkYield", "rebuildNogo", "updateNogoUI", "render", "showBanner",
+      "let chartInk = {key:null, lines:[{lengthM:9}], areas:[], detached:[], note:null, z:null, ms:0, busy:false};\n"
+      + fn + "\nreturn { run: ensureChartInk, ink: () => chartInk };");
+    const w = mk({ ready: true, band: "enc_harbour" },
+                 async () => { scans++; throw new TypeError("Failed to fetch"); }, async () => {},
+                 () => { rebuilt++; }, () => {}, () => {}, (t) => banners.push(t));
+    const BB = { W: -70.71, S: 43.08, E: -70.70, N: 43.09 };
+    await w.run(BB);
+    const ink = { ...w.ink() };          // a COPY: the second run sets `busy` on this same object before replacing it
+    await w.run(BB);
+    check("14b. ... nor is a read that THREW: no key, nothing left from before, the model rebuilt without it, a "
+          + "banner - and the same water is read again next time",
+          ink.key === null && ink.lines.length === 0 && /chart read failed: TypeError: Failed to fetch/.test(ink.note || "")
+          && ink.busy === false && rebuilt >= 1 && banners.some(b => /CHART IMAGE NOT COMPARED/.test(b)) && scans === 2,
+          () => JSON.stringify({ key: ink.key, lines: ink.lines.length, note: ink.note, rebuilt, banners: banners.length,
+                                 scans }));
+  }
+
   console.log("");
   console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
   process.exit(fails ? 1 : 0);
