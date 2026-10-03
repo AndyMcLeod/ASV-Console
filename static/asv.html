@@ -464,6 +464,7 @@
       /* the picked row's actions (3a): short labels, two to a line in the ~125 px card (four lines on the first try) */
       #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
       #sv_table .svacts button{width:auto;padding:0 4px;font-size:8.5px;}
+      #sv_table .svcont{width:100%;height:18px;font-size:9px;color:#39c0ff;border-color:#2b5a74;}
       #sv_head{display:flex;align-items:center;gap:4px;}
       #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
     </style>
@@ -998,7 +999,7 @@ import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STA
 // the surveys in run order, and the survey's number staying with it. See the module header.
 import { normalizeSurveys, surveyPoints, pathThroughSurveys,
          surveyEntries, moveSurvey, removeSurvey, replaceSurvey, surveyLabel,
-         runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM } from "/static/js/surveys.js";
+         runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM, splitAtHold } from "/static/js/surveys.js";
 // EVERY CHART READ OF THE EXTRACT, KEPT AND MERGED (2026-10-02): what is already read, the reads as one set of
 // structures, and a plan too big for one read cut into boxes that are not. See the module header.
 import { INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
@@ -4942,6 +4943,12 @@ let cardSv = null;
 // RUN IT BACKWARDS (phase 3a, 2026-10-02): the drawing's punch walks its runs from the other end - the last run first,
 // each the other way (runBackwards) - before the turns are built. A per-survey setting, recorded and put back by ✎.
 let patReverse = false;
+// THE HOLD SHE IS ON HER WAY TO, OR WAITING AT (phase 3b, 2026-10-02): {sv, at} after an upload that was SPLIT at a held
+// survey's start - the part aboard ends there in LOITER, and the survey's row offers Continue. Every successful upload
+// rewrites it (to its own split, or none); kept in this browser so a refresh while she waits still offers Continue.
+const PENDING_HOLD_KEY = "asv_pending_hold_v1";
+let pendingHold = (() => { const v = lsGet(PENDING_HOLD_KEY, null); return (v && typeof v.sv === "string") ? v : null; })();
+function setPendingHold(v){ pendingHold = v; lsSet(PENDING_HOLD_KEY, v); }
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
 let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
 let patClip = null;                            // Punch-Out result: the RUNS, lead included [[p0,p1]..]
@@ -8287,7 +8294,7 @@ function drawSurveyLabels(toScreen){
   for(const s of list){
     const l = first.get(s.id); if(!l) continue;
     const p = toScreen(l.a.lat, l.a.lon), ed = (s.id === editingSv);
-    const t = surveyLabel(s) + (ed ? " — editing" : "");
+    const t = surveyLabel(s) + (s.hold ? " ⏸ hold" : "") + (ed ? " — editing" : "");
     ctx.lineWidth = 3; ctx.strokeStyle = "rgba(10,20,28,0.85)"; ctx.strokeText(t, p.x + 5, p.y - 17);
     ctx.fillStyle = ed ? "#39c0ff" : "#ffd76a"; ctx.fillText(t, p.x + 5, p.y - 17);
   }
@@ -8368,8 +8375,9 @@ function renderSurveyTable(){
       : "No survey here has a recorded drawing to punch again."; }
   const key = JSON.stringify([rows.map(r => [r.s.id, r.s.no, r.s.name || "", r.f.lines, Math.round(r.f.m), !!r.s.punched,
                                             !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B), r.p.done, r.p.of, r.p.any,
-                                            r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse)]),
-                              editingSv, pick]);
+                                            r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse),
+                                            !!r.s.hold]),
+                              editingSv, pick, pendingHold && pendingHold.sv, holdWaiting()]);
   if(key === _svTableKey) return;
   // ⚠ NOT UNDER THE OPERATOR'S CURSOR: a rebuild while a name is being typed would throw the typing away.
   const foc = document.activeElement;
@@ -8399,18 +8407,26 @@ function renderSurveyTable(){
           ? "RUN IT BACKWARDS (or forwards again): punch this survey again from its other end - entered at the far end of its last line, the lines in reverse order and each the other way - and replace it where it stands."
           : "No drawing was recorded for this survey, so it cannot be punched again."}">${(s.settings && s.settings.reverse) ? "Forwards" : "Backwards"}</button>`
       + `<button class="ctl small" id="svr${i}_clr" data-act="clr" data-sv="${rocEsc(s.id)}"${p.any ? "" : " disabled"} title="CLEAR this survey's progress: forget which of its lines this page has seen run, so it reads as not run.">Clear</button>`
+      + `<button class="ctl small" id="svr${i}_hold" data-act="hold" data-sv="${rocEsc(s.id)}" title="${s.hold
+          ? "HOLD BEFORE THIS SURVEY is ON: Upload sends the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Click to turn it off."
+          : "HOLD BEFORE THIS SURVEY: Upload will send the plan only as far as this survey's start, where she station-keeps (loiter) until you press Continue on this row. Nothing releases her by itself."}">${s.hold ? "Hold: on" : "Hold: off"}</button>`
       + `</span>`;
+    // CONTINUE (3b): on the held survey's row, whether or not it is picked - it is the answer the run is waiting for.
+    const waiting = !!(pendingHold && pendingHold.sv === s.id), there = waiting && holdWaiting();
+    const cont = !waiting ? "" : `<span class="svbr"></span><button class="ctl small svcont" id="svr${i}_cont" data-act="cont" data-sv="${rocEsc(s.id)}"${there ? "" : " disabled"} title="${there
+        ? "CONTINUE: upload the plan from this survey on and start it. She is holding at its start."
+        : "She is on her way to this survey's start, where the uploaded part of the plan ends - Continue opens when she is holding there."}">${there ? "Continue " + rocEsc(surveyLabel(s)) + " ▶" : "Holding at its start - on her way"}</button>`;
     return `<div class="svrow${s.id === pick ? " on" : ""}${s.id === editingSv ? " edit" : ""}" id="svr${i}" data-act="pick" data-sv="${rocEsc(s.id)}" title="${tip}">`
       + `<span class="svno">S${s.no}</span>`
       + `<input class="svname" id="svr${i}_name" data-sv="${rocEsc(s.id)}" maxlength="120" placeholder="name" value="${rocEsc(s.name || "")}" title="The survey's name - shown on the chart and in the LINES card. Its number S${s.no} stays with it."/>`
-      + `<span class="svbr"></span><span class="svinfo">${t == null ? "" : "⚠"}${state}${f.lines}L ${fmtDist(f.m).replace(" ", "")}</span>`
+      + `<span class="svbr"></span><span class="svinfo">${s.hold ? "⏸" : ""}${t == null ? "" : "⚠"}${state}${f.lines}L ${fmtDist(f.m).replace(" ", "")}</span>`
       + `<button class="ctl small" id="svr${i}_up" data-act="up" data-sv="${rocEsc(s.id)}"${i === 0 ? " disabled" : ""} title="Run this survey one place EARLIER. Upload sends the new order.">▲</button>`
       + `<button class="ctl small" id="svr${i}_dn" data-act="dn" data-sv="${rocEsc(s.id)}"${i === n - 1 ? " disabled" : ""} title="Run this survey one place LATER. Upload sends the new order.">▼</button>`
       + `<button class="ctl small" id="svr${i}_ed" data-act="edit" data-sv="${rocEsc(s.id)}"${canEdit ? "" : " disabled"} title="${canEdit
           ? "EDIT: load this survey's drawing back onto the card - its pattern, boundary, Max depth, leads and turn shape. Punch Out, then Update replaces it where it stands."
           : "No drawing was recorded for this survey (it was planned before surveys were kept), so it cannot be loaded back. Draw it again, Add to plan, and delete this one."}">✎</button>`
       + `<button class="ctl small" id="svr${i}_del" data-act="del" data-sv="${rocEsc(s.id)}" title="DELETE this survey from the plan: its lines and waypoints. The others keep their numbers and order.">✕</button>`
-      + acts + `</div>`;
+      + acts + cont + `</div>`;
   }).join("");
 }
 // THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a quarter meter either way is flagged on its row. Smaller moves are inside
@@ -8469,6 +8485,7 @@ async function deleteSurvey(id){
       + "The other surveys keep their numbers and their order. The plan as it was is kept on the console as "
       + "mission.json.bak1.", {always: true})) return;
   if(!removeSurvey(mission, id)) return;          // gone already
+  if(pendingHold && pendingHold.sv === id) setPendingHold(null);   // its Continue has nothing to send now (3b)
   // A drawing being edited stays on the card; Add to plan now adds it as a NEW survey (commitPattern's rule).
   if(editingSv === id) editingSv = null;
   if(cardSv === id) cardSv = null;
@@ -8569,6 +8586,40 @@ async function reverseSurvey(id){
   if(r.ok) flashNote(surveyLabel(surveyById(id) || s) + " now runs " + to + " (" + r.lines + " lines). Upload sends it.");
   else showBanner("⚠ " + r.label + " NOT REVERSED - " + (r.refused || r.skip) + ". It is left as it was.");
 }
+/** Does this route END at the start of the survey the plan aboard was split for (3b)? Within half a meter: the split's
+ *  last waypoint is a copy of that survey's first. */
+function tailEndsAtHold(route){
+  if(!pendingHold || !route || !route.length) return false;
+  const i = surveyStartIdx(mission, pendingHold.sv);
+  return i >= 0 && distTo(route[route.length - 1], mission.waypoints[i]) <= 0.5;
+}
+/** She is holding where a split upload ended (station-keeping, not paused): what Continue waits for (3b). */
+function holdWaiting(){ return !!(S && S.status && S.status.holding && S.run !== "paused"); }
+/** Turn the hold before survey `id` on or off. Saved with the plan; the next Upload splits there. */
+function toggleSurveyHold(id){
+  const s = surveyById(id); if(!s) return;
+  s.hold = !s.hold;
+  saveMission(); renderSurveyTable(); render();
+  flashNote(s.hold ? "Hold before " + surveyLabel(s) + " is ON: Upload sends the plan as far as its start, where she waits until you press Continue."
+                   : "Hold before " + surveyLabel(s) + " is off.");
+}
+/**
+ * CONTINUE FROM A HOLD (3b): upload the plan from the held survey on - `release` naming this hold, so it is not split
+ * at the same place again (the NEXT held survey still splits it) - and start it through the Start button's own code.
+ * Only while she is holding there: before she arrives the vessel is running the part aboard and refuses an upload,
+ * and a paused boat would be resumed on the OLD part by Start.
+ */
+async function continueHold(id){
+  const s = surveyById(id); if(!s) return;
+  if(!pendingHold || pendingHold.sv !== id){ flashNote("Continue: the plan aboard is not waiting at " + surveyLabel(s) + "'s start."); return; }
+  if(!holdWaiting()){
+    flashNote("Continue " + surveyLabel(s) + ": she is not holding at its start yet (" + ((S && S.run) || "idle")
+              + (S && S.run === "paused" ? " - press Start to finish the way there first" : "") + ").");
+    return;
+  }
+  if(!await doUpload({fromSv: id, release: id})) return;
+  await startRun();
+}
 /** Forget the survey's progress (which lines this page has seen run). */
 function clearSurveyProgress(id){
   const s = surveyById(id); if(!s) return;
@@ -8590,6 +8641,8 @@ function clearSurveyProgress(id){
       else if(act === "from") uploadFromSurvey(id).catch(err => flashNote("Upload failed: " + ((err && err.message) || err)));
       else if(act === "rev") reverseSurvey(id).catch(err => flashNote("Reverse failed: " + ((err && err.message) || err)));
       else if(act === "clr") clearSurveyProgress(id);
+      else if(act === "hold") toggleSurveyHold(id);
+      else if(act === "cont") continueHold(id).catch(err => flashNote("Continue failed: " + ((err && err.message) || err)));
       else if(act === "pick"){ cardSv = id; updatePatReadout(); }
     });
     tb.addEventListener("change", e => {
@@ -8677,6 +8730,7 @@ async function commitPattern(){
   const sv = editing ? editing.id : "S" + no, drawnFrom = ((currentPattern() || sp) || {}).anchors || null;
   const pos = (p) => p ? {lat: p.lat, lon: p.lon} : null;
   const rec = {id: sv, no, name: editing ? (editing.name || "") : "", punched: !!patClip,
+    hold: !!(editing && editing.hold),        // the hold before it (3b) is the survey's, not the drawing's
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
                        : null,
     settings: surveySettingsNow(),             // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
@@ -12632,6 +12686,7 @@ async function clearPlan(){
       "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
       + "is kept on the console as mission.json.bak1.", {always: true})) return;
   mission.waypoints=[]; mission.lines=[]; mission.surveys=[]; cardSv=null; resetPattern();   // the surveys go with their lines
+  setPendingHold(null);
   giveUpRoute("this page cleared the drawn plan"); saveMission(); render();
 }
 $("#ln_clr").onclick = clearPlan;
@@ -12867,11 +12922,22 @@ function runHolds(){ const rc = runCompletion(); return rc==="loiter" || rc==="r
 // other way round: a return chains from a plan that ENDED, and nothing else.
 const CHAINABLE_BEHAVIORS = ["survey", "search", "goto", "transit"];
 function chainableRun(beh){ return CHAINABLE_BEHAVIORS.indexOf(beh) >= 0; }
+/**
+ * A HOLD'S SPLIT IS ABOARD (sequenced surveys 3b, 2026-10-02): a SURVEY run ending in a LOITER the operator's End of
+ * plan does not ask for, while this browser holds the hold it was split for (pendingHold, kept across a refresh).
+ * ⚠ FOUND ONLY LIVE: the end-of-plan RTH chain fired at the held survey's start - "loiter" is a HOLDING end, and a
+ * survey is chainable, so with End of plan RTH she was sent home from the point she had been told to wait at.
+ * ⚠ AND NOT THE FRAME ALONE (tests/end_action.js 5d): a plan uploaded under End of plan LOITER and switched to RTH
+ * while it runs looks the same, and has always chained home at its end - the pending hold is what tells them apart.
+ */
+function heldSplitRun(s){
+  return !!(pendingHold && s && s.behavior === "survey" && s.run_completion === "loiter" && s.completion !== "loiter");
+}
 function rthPending(){
   // The same whitelist the chain-fire condition uses, because this PREDICTS that condition:
   // a card that promises a return the boat is not going to make is worse than one that never
-  // mentioned it.
-  return !!(S && S.completion==="rth" && chainableRun(S.behavior)
+  // mentioned it. (And the same exception: a hold's split waits for Continue, it does not go home.)
+  return !!(S && S.completion==="rth" && chainableRun(S.behavior) && !heldSplitRun(S)
             && S.home && S.armed && !S.estop && !rthChainFailed && runHolds());
 }
 function endAction(){
@@ -14061,8 +14127,15 @@ async function doUpload(opts){
   // `opts` is the button's click event otherwise, which never carries `fromSv`. A survey with no waypoints is refused
   // HERE, before the empty-plan branch below could take an empty slice for "clear the plan aboard".
   const fromSv = (opts && typeof opts.fromSv === "string") ? opts.fromSv : null;
-  const wps = fromSv ? waypointsFrom(mission, fromSv) : mission.waypoints || [];
-  if(fromSv && !wps.length){ flashNote("Upload from that survey: it has no waypoints in the plan - nothing was sent."); return; }
+  const wpsAll = fromSv ? waypointsFrom(mission, fromSv) : mission.waypoints || [];
+  if(fromSv && !wpsAll.length){ flashNote("Upload from that survey: it has no waypoints in the plan - nothing was sent."); return; }
+  // THE HOLD BEFORE A SURVEY (phase 3b, 2026-10-02 - Andy: she waits at the held survey's start until Continue). The
+  // vessel has no mid-route dwell, so the plan is SPLIT there: what is sent ends at the held survey's first waypoint and
+  // asks the vessel to LOITER at it; Continue uploads the rest with `release` naming the hold it answers.
+  const release = (opts && typeof opts.release === "string") ? opts.release : null;
+  const hold = splitAtHold(wpsAll, mission.surveys, release);
+  const wps = hold ? hold.part : wpsAll;
+  const partial = !!(fromSv || hold);       // not the saved plan as it stands - so it is always sent as a route
   // The server refuses an empty plan in words, so the clear past this gate will essentially
   // never run - and that is the point rather than dead code: `runRoute` may hold the Go-To or
   // RTH she is still flying (this branch is reachable only while mission.waypoints is empty,
@@ -14109,7 +14182,10 @@ async function doUpload(opts){
     // be minutes old - which is how "ARM before uploading a plan" and "clear E-STOP first"
     // become reachable here despite the button. That is an argument for reading the answer,
     // not against it.
-    const r0 = await cmd("/api/cmd/upload");
+    // ⚠ A PART OF THE PLAN IS SENT AS ITS OWN WAYPOINTS (phase 3b). With no route the console falls back to the WHOLE
+    // saved plan - which, for an Upload from a survey or a plan split at a hold, is not what the operator asked for
+    // (found reading this branch for the hold: 3a's Upload from had the same hole).
+    const r0 = await cmd("/api/cmd/upload", partial ? {route: raw.route, ...(hold ? {completion: "loiter"} : {})} : undefined);
     if(!took(r0)){
       const say0 = notTookSay(r0, "UPLOAD");
       if(say0) showBanner(say0 + (r0 && r0.refused
@@ -14346,7 +14422,8 @@ async function doUpload(opts){
       + " m buffer. Nothing else in the plan changes.");
   // The plan's end is where a Loiter run holds: tell the vessel how much water it has there.
   const r = await cmd("/api/cmd/upload", {route: plan.route,
-                      hold_clear_m: holdClearAt(plan.route[plan.route.length-1])});
+                      hold_clear_m: holdClearAt(plan.route[plan.route.length-1]),
+                      ...(hold ? {completion: "loiter"} : {})});    // the hold's split: she waits at its start
   if(!took(r)){
     // ⚠ THREE ANSWERS, AND ONLY ONE IS A FACT ABOUT THE VESSEL. A REFUSAL may say she is
     // still on the plan she had, because every one of Engine.upload's gates raises BEFORE
@@ -14388,6 +14465,14 @@ async function doUpload(opts){
       + "exactly as before, but no corner is being slowed for — the hull rounds every corner "
       + "of a route and this is what measures that.");
   stagedNote(r);
+  setPendingHold(hold ? {sv: hold.held, at: Date.now()} : null);
+  if(hold){
+    const hs = surveyById(hold.held);
+    showBanner("UPLOADED UP TO " + (hs ? surveyLabel(hs) : hold.held) + "'S START (" + plan.route.length + " waypoints) - "
+      + "she will HOLD there (loiter) until you press Continue on its row. The rest of the plan is NOT aboard yet.");
+    if(planIntent) planIntent.why.push({t: "info", s: "split at the hold before " + (hs ? surveyLabel(hs) : hold.held)
+      + ": the run ends in a loiter at its start; Continue sends the rest"});
+  }
   if(fromSv){
     // SAID: the plan aboard is not the whole plan on the chart, and the surveys before this one are not in it.
     const i = (mission.surveys || []).findIndex(x => x.id === fromSv), sv = (mission.surveys || [])[i];
@@ -14399,6 +14484,7 @@ async function doUpload(opts){
       + (left.length ? "; " + left.join(", ") + " left out" : "")});
   }
   render();
+  return true;                                // TAKEN and drawn - what Continue waits for before it starts the rest
  }catch(e){ flashNote("Upload failed: " + ((e && e.message) || e)); }
  finally{ uploadBusy = false; applyCmdState(S); }
 }
@@ -14407,7 +14493,10 @@ function stagedNote(j){
     flashNote("Plan uploaded and STAGED — the boat carries on station-keeping until you press Start.");
 }
 $("#b_upload").onclick = doUpload;
-$("#b_start").onclick = async ()=>{
+// The Start button's press, named so the survey table's Continue (phase 3b) starts the rest of a held plan through
+// exactly this - its question, its fresh-run clears and its refusal handling. Answers whether Start was taken.
+$("#b_start").onclick = () => startRun();
+async function startRun(){
   // ⚠ RESUMING A PAUSE IS RESUMING, WHICHEVER BUTTON DOES IT. Start is enabled while paused
   // and has always been the way back; routing it through the same function as the Pause
   // toggle is what stops the backtrack depending on which control the operator reached for.
@@ -14446,8 +14535,10 @@ $("#b_start").onclick = async ()=>{
     if(say) showBanner(say + (r && r.refused
       ? " - the survey has NOT begun."
       : " - check the run state before pressing Start again."));
+    return false;
   }
-};
+  return true;
+}
 
 /**
  * WHERE THE BOAT IS ON ITS COVERAGE LINE AT THIS INSTANT, or null when it is not on one.
@@ -15549,8 +15640,11 @@ async function resumeHeldRun(opts){
   }
   if(guardMoved !== moved0)
     return notRunning("the guard " + guardMovedHow + " before the remainder was uploaded, so nothing was sent", guardDoing());
+  // ⚠ A HOLD'S SPLIT STAYS ONE (3b): a remainder that ends at the held survey's start still ends there in a LOITER -
+  // re-uploaded without it, it would take the End of plan setting and an RTH would chain from the hold point.
   const up = await cmd("/api/cmd/upload",
-                       {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1])});
+                       {route: tail, hold_clear_m: holdClearAt(tail[tail.length-1]),
+                        ...(tailEndsAtHold(tail) ? {completion: "loiter"} : {})});
   if(!took(up)){
     // ⚠ PUT HER BACK ON STATION. She is paused beside the very feature the console stopped
     // her off, and a paused boat does not station-keep - it drifts. The offer stays up.
@@ -16058,7 +16152,8 @@ function onState(s){
   // throttle - is meant to buy the operator's attention, not hand control straight back to
   // the standing plan that was driving at the pier.
   // ⚠ AND NEVER ON THE FRAME THAT STARTED THE RUN (`seqMoved`, 2026-09-27) - see the note where it is read.
-  if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior)
+  // ⚠ NOT AT A HOLD BEFORE A SURVEY (3b): there she waits for Continue - heldSplitRun.
+  if(s.run==="running" && st.holding && s.completion==="rth" && chainableRun(s.behavior) && !heldSplitRun(s)
      && s.armed && !s.estop && !rthChained && !seqMoved){
     rthChained=true;
     flashNote("End of plan — chaining Return-to-Home.");

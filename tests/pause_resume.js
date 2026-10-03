@@ -731,7 +731,11 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const inkYield = eval("(" + grabDecl("inkYield").replace(/^const\s+inkYield\s*=\s*/, "").replace(/;\s*$/, "") + ")");
     // EACH LATER SURVEY'S APPROACH IS A TRANSIT (2026-10-02): doUpload hands routePlan the page's own surveyEntries -
     // the real one; this world's plan has no survey tags, so it is empty and the routing below is unchanged.
-    const { surveyEntries, waypointsFrom, surveyLabel } = require("../static/js/surveys.js");
+    const { surveyEntries, waypointsFrom, surveyLabel, splitAtHold } = require("../static/js/surveys.js");
+    // THE HOLD BEFORE A SURVEY (3b): the success path records the split it sent (none in these plans), and the held
+    // survey's banner names it.
+    let pendingHold = null; const setPendingHold = (v) => { pendingHold = v; };
+    const surveyById = (id) => (mission.surveys || []).find((x) => x.id === id) || null;
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
@@ -823,6 +827,51 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     check("1s. ... and the plain Upload button (its click event as the argument) still sends the WHOLE plan",
           () => calls.length === 1 && calls[0].b && calls[0].b.route && calls[0].b.route.length === 5,
           () => "sent=" + JSON.stringify(calls.map((c) => c.b && c.b.route && c.b.route.length)));
+    // 1t-1x. THE HOLD BEFORE A SURVEY (3b, 2026-10-02 - Andy: she waits at the held survey's start until Continue).
+    // S2 held: Upload sends the plan only as far as S2's FIRST waypoint and asks the vessel to LOITER there; the
+    // page remembers the hold (Continue's cue). Continue is an upload FROM S2 with `release` naming that hold - the
+    // rest, with no loiter (the plan's own End of plan applies) - and nothing pending after it.
+    mission.surveys[1].hold = true;
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false; });
+    const split = calls.length === 1 && calls[0].b ? calls[0].b : null;
+    check("1t. Upload with S2 HELD sends the plan only as far as S2's first waypoint, asks the vessel to LOITER there, "
+          + "remembers the hold, and says the rest is not aboard",
+          () => split && JSON.stringify(split.route.map((q) => q.lat)) === JSON.stringify([43.08, 43.081, 43.09])
+                && split.completion === "loiter" && pendingHold && pendingHold.sv === "S2"
+                && /UPLOADED UP TO S2 Ledge'S START/.test(banners.join(" ")) && /NOT aboard yet/.test(banners.join(" ")),
+          () => JSON.stringify(split && { route: split.route.map((q) => q.lat), completion: split.completion })
+                + " pending=" + JSON.stringify(pendingHold));
+    calls.length = 0; banners.length = 0;
+    await doUpload({ fromSv: "S2", release: "S2" }); await Promise.resolve();
+    const rest = calls.length === 1 && calls[0].b ? calls[0].b : null;
+    check("1u. CONTINUE (an upload from S2 RELEASING its hold) sends S2 on with no loiter - the plan's own end - and "
+          + "leaves nothing pending",
+          () => rest && JSON.stringify(rest.route.map((q) => q.lat)) === JSON.stringify([43.09, 43.091, 43.095])
+                && !("completion" in rest) && pendingHold === null,
+          () => JSON.stringify(rest && { route: rest.route.map((q) => q.lat), completion: rest.completion }) + " pending=" + JSON.stringify(pendingHold));
+    calls.length = 0;
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    check("1v. ... while Upload FROM S2 without the release still holds at S2's start - she goes there and waits",
+          () => calls.length === 1 && calls[0].b.completion === "loiter" && calls[0].b.route.length === 1
+                && calls[0].b.route[0].lat === 43.09,
+          () => JSON.stringify(calls.map((c) => [c.b && c.b.route && c.b.route.length, c.b && c.b.completion])));
+    mission.surveys[1].hold = false;
+    // 1w-1x. THE UNROUTED UPLOAD OF A PART (found writing 3b: 3a's Upload from had the hole too). With no route the
+    // console flies the WHOLE saved plan, so a part of it is sent as its own waypoints; the whole plan still goes as
+    // it always did (1e).
+    calls.length = 0; banners.length = 0;
+    nogo = { ready: false, busy: false, band: null, note: "extract failed" }; answer = true;
+    await doUpload({ fromSv: "S2" }); await Promise.resolve();
+    check("1w. an UNROUTED Upload from S2 sends S2's waypoints - never the empty body that makes the console fly the "
+          + "whole saved plan",
+          () => calls.length === 1 && calls[0].b && JSON.stringify(calls[0].b.route.map((q) => q.lat)) === JSON.stringify([43.09, 43.091, 43.095]),
+          () => JSON.stringify(calls.map((c) => c.b)));
+    mission.surveys[1].hold = true; calls.length = 0;
+    await doUpload({ type: "click" }); await Promise.resolve();
+    check("1x. ... and an unrouted upload SPLIT at a hold sends its part with the loiter",
+          () => calls.length === 1 && calls[0].b && calls[0].b.completion === "loiter" && calls[0].b.route.length === 3,
+          () => JSON.stringify(calls.map((c) => c.b)));
+    mission.surveys[1].hold = false; nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
     mission = { ...mission, waypoints: keptW }; delete mission.surveys;
   // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
   // took the plan, so the upload is real - but the operator or the guard has commanded her

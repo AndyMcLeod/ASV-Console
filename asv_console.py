@@ -1161,6 +1161,8 @@ def _check_surveys(m):
             if wm is not None and (isinstance(wm, bool) or not isinstance(wm, (int, float)) or not math.isfinite(wm)):
                 raise PlanRefused("survey %s's water level must be a finite number of meters (got %r) - nothing was saved"
                                   % (sid, wm))
+            if s.get("hold") is not None and not isinstance(s.get("hold"), bool):   # the hold before it (3b)
+                raise PlanRefused("survey %s's hold flag must be true or false - nothing was saved" % sid)
             pa = s.get("punched_at")
             if pa is not None and not (isinstance(pa, str) and len(pa) <= 40):
                 raise PlanRefused("survey %s's punch time must be a time stamp (got %r) - nothing was saved" % (sid, pa))
@@ -4607,8 +4609,15 @@ class Engine:
             raise VcuProtocolError("coast_from_m must be a finite, non-negative number of meters")
         return f
 
-    def upload(self, route=None, hold_clear_m=None):
+    def upload(self, route=None, hold_clear_m=None, completion=None):
+        """`completion` (sequenced surveys, the hold before a survey, 2026-10-02): the page may ask for ONE end action
+        in place of the plan's own - "loiter", and only that: the first part of a plan split at a held survey ends at
+        that survey's start, where she station-keeps until the operator's Continue uploads the rest. Anything else is
+        refused in words; absent, the plan's End of plan setting applies as it always has."""
         hold_clear_m = self._hold_clear(hold_clear_m)
+        if completion is not None and completion != "loiter":
+            raise VcuProtocolError("an upload may only ask to LOITER at its end (a hold before a survey), not %r - "
+                                   "nothing was uploaded" % (completion,))
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
@@ -4633,7 +4642,8 @@ class Engine:
             self._require(len(wpts) >= 1, "add at least one waypoint first")
             # The saved plan's own waypoints (an upload with no route) meet the same bound.
             self._require(len(wpts) <= ROUTE_MAX_WPTS, too_many_wpts(len(wpts), ROUTE_MAX_WPTS, "saved plan"))
-            completion = plan_completion()            # a plan run honors the setting
+            # a plan run honors the setting - or LOITERS at the start of a held survey (the split upload)
+            completion = "loiter" if completion == "loiter" else plan_completion()
             # THE RUN STARTS WITH AN APPROACH, so it is uploaded at the TRANSIT speed. The
             # console's governor re-asserts the right role on the first telemetry frame
             # either way, but starting the boat at the survey speed for a 30-minute transit
@@ -6453,7 +6463,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cmd/arm":
                 ENGINE.set_armed(bool(body.get("on")))
             elif path == "/api/cmd/upload":            # optional ENC-aware run path
-                ENGINE.upload(body.get("route"), body.get("hold_clear_m"))
+                ENGINE.upload(body.get("route"), body.get("hold_clear_m"), body.get("completion"))
             elif path == "/api/cmd/start":
                 ENGINE.start()
             elif path == "/api/cmd/pause":

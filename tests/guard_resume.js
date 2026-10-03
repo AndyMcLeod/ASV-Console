@@ -271,7 +271,8 @@ function applyReply(p, pr) {
   });
 }
 function cmd(p, b) {
-  sent.push({ p, speed: b && b.speed, route: b && b.route });
+  // `completion` (3b): an upload's end action, recorded only when asked for - 10b reads its absence, 10c its value
+  sent.push({ p, speed: b && b.speed, route: b && b.route, ...(b && "completion" in b ? { completion: b.completion } : {}) });
   // ⚠ THE HOLD IS MODELLED, NOT JUST RECORDED, AND THAT IS WHAT MAKES CHECK 6 REAL. On the
   // vessel `hold` uploads a one-waypoint plan over the survey, so `wp_index` becomes 0 and
   // describes the hold. With a stub that only records, moving markGuardHeld to AFTER the
@@ -398,6 +399,9 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // the hold before a survey (3b): no split is aboard in this world, so every remainder takes the plan's own end
+  "let pendingHold = null, __svStart = -1; const surveyStartIdx = () => __svStart;", grab("tailEndsAtHold"),
+  "function __setHold(p, i){ pendingHold = p; __svStart = i; }",
   grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),
@@ -831,6 +835,10 @@ console.log("The guard stopped the survey, and the operator has to be able to ca
 async function resumeFrom(opts) {
   opts = opts || {};
   standingIn(6);
+  // THE HOLD BEFORE A SURVEY (3b): the plan aboard was split at a held survey whose start is `holdAt` - the plan gets
+  // that start as a waypoint and the pending hold points at it, as the split's own upload leaves them.
+  if (opts.holdAt) { mission.waypoints = [...mission.waypoints, opts.holdAt]; __setHold({ sv: "S2", at: 1 }, mission.waypoints.length - 1); }
+  else __setHold(null, -1);
   tryIt(() => clearanceGuard());                  // the real rung makes the real capture
   // ⚠ AFTER AN ESCAPE SHE IS NOT WHERE SHE STOPPED. The hold leaves her a few meters off
   // her own line; the escape DRIVES her clear at the vessel's high speed and leaves her
@@ -887,6 +895,18 @@ async function resumeFrom(opts) {
         () => "uploaded " + rte.length + " waypoints - the 3 she had left plus the rejoin "
             + "point. Uploading all 4 of the original would re-run the flown part; "
             + "uploading nothing at all is the state this feature exists to end");
+
+  // 10b-10c. THE HOLD BEFORE A SURVEY (sequenced surveys 3b, 2026-10-02). A plan split at a held survey ends at that
+  // survey's start in a LOITER; a guard-held resume of the way there re-uploads the remainder, and without the
+  // loiter it would take the End of plan setting - RTH - and chain home from the point she was told to wait at.
+  check("10b. with no hold pending the remainder asks for no end action of its own - the plan's setting applies",
+        () => !!r.up && !("completion" in r.up), () => JSON.stringify(r.up && r.up.completion));
+  const HELD_AT = ll(-200, 60);                              // the route aboard ends there: the held survey's start
+  const rh = await resumeFrom({ holdAt: HELD_AT });
+  __setHold(null, -1);
+  check("10c. a remainder that ENDS at the start of the survey the plan was split for keeps the LOITER there",
+        () => !!rh.up && rh.up.completion === "loiter" && distTo(rh.up.route[rh.up.route.length - 1], HELD_AT) < 0.5,
+        () => JSON.stringify(rh.up && { completion: rh.up.completion, n: rh.up.route.length }));
 
   check("11. ... with the rejoin point first, twelve boat lengths back down her line",
         () => rte.length === 4 && Math.abs(alongLineM(LINE_E, rte[0]) - (200 - back)) < 0.5

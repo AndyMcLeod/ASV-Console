@@ -399,11 +399,11 @@ function commit(w, lines, anchors) {
     const tb = v.env.els["#sv_table"], html = tb.innerHTML;
     const idsIn = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
     const acts = [...html.matchAll(/<(\w+)[^>]*data-act="([^"]+)"[^>]*>/g)];
-    // (3 rows x 6 ids, and the PICKED row's four actions since phase 3a - S3, the one just committed)
-    check("12. one row per survey, in run order; EVERY control - row, name, ▲ ▼ ✎ ✕, and the picked row's four "
+    // (3 rows x 6 ids, and the PICKED row's actions - four since phase 3a, five with 3b's hold - S3, the one just committed)
+    check("12. one row per survey, in run order; EVERY control - row, name, ▲ ▼ ✎ ✕, and the picked row's five "
           + "actions - carries a unique id (the controls window forwards clicks and edits BY ID)",
-          () => /S1<\/span>[\s\S]*S2<\/span>[\s\S]*S3<\/span>/.test(html) && idsIn.length === 22
-                && new Set(idsIn).size === 22 && acts.length === 19 && acts.every((m) => / id="/.test(m[0]))
+          () => /S1<\/span>[\s\S]*S2<\/span>[\s\S]*S3<\/span>/.test(html) && idsIn.length === 23
+                && new Set(idsIn).size === 23 && acts.length === 20 && acts.every((m) => / id="/.test(m[0]))
                 && /id="svr2_go"/.test(html) && !/id="svr0_go"/.test(html),
           () => idsIn.length + " ids, " + new Set(idsIn).size + " unique, " + acts.length + " actions");
     check("12b. ▲ is disabled on the first row, ▼ on the last, ✎ on the survey with no recorded drawing - and only there",
@@ -692,6 +692,96 @@ function commit(w, lines, anchors) {
           () => gated && v.env.log.uploads.length === 1 && v.env.log.uploads[0].fromSv === "S2");
   }
 
+  // ═══ PHASE 3b (2026-10-02): THE HOLD BEFORE A SURVEY - she waits at its start until Continue ═══
+
+  // ── 29. splitAtHold ─────────────────────────────────────────────────────────────────────────────────────────────
+  {
+    const m = THREE();
+    const none = SV.splitAtHold(m.waypoints, m.surveys);
+    m.surveys[1].hold = true;                                         // S2 held
+    const a = SV.splitAtHold(m.waypoints, m.surveys);
+    m.surveys[2].hold = true;                                         // and S3
+    const rel = SV.splitAtHold(SV.waypointsFrom(m, "S2"), m.surveys, "S2");
+    m.surveys[0].hold = true;                                         // S1, the first: index 0
+    const first = SV.splitAtHold(m.waypoints, m.surveys);
+    check("29. the split is at the FIRST held survey's first waypoint, inclusive (a free waypoint before it goes with "
+          + "the part); no hold, no split; Continue's release skips the hold it answers and splits at the next; a held "
+          + "first survey splits at index 0 - she goes to its start and waits",
+          () => none === null && a && a.held === "S2" && a.cut === 6 && tags(a.part) === "S1 S1 S1 S1 S1 - S2"
+                && rel && rel.held === "S3" && tags(rel.part) === "S2 S2 S3" && first && first.cut === 0 && first.part.length === 1
+                && SV.splitAtHold(m.waypoints, m.surveys.map((x) => ({ ...x, hold: "yes" }))) === null,
+          () => JSON.stringify({ a: a && [a.held, a.cut], rel: rel && [rel.held, rel.cut], first: first && first.cut }));
+  }
+
+  // ── 30-33. the toggle, Continue, the edit, the label ────────────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    await commit(w, pattern(2, 100, 10, 0, 0), ANCH(0));
+    await commit(w, pattern(2, 100, 10, 0, 300), ANCH(300));
+    const saves = v.env.log.saves;
+    w.toggleSurveyHold("S2");
+    const on = w.mission.surveys[1].hold === true && v.env.log.saves === saves + 1
+               && /Hold before S2 is ON/.test(v.env.log.notes.slice(-1)[0] || "");
+    w.cardSv = "S2"; w.renderSurveyTable();
+    const h = v.env.els["#sv_table"].innerHTML;
+    check("30. the picked row's Hold toggles the hold before its survey, saves the plan and says what Upload will do; "
+          + "a held survey shows ⏸ on its row",
+          () => { const rows = h.split('<div class="svrow').slice(1);   // one piece per row, in order
+                  return on && />Hold: on</.test(h) && rows.length === 2
+                         && !/svinfo">⏸/.test(rows[0]) && /svinfo">⏸/.test(rows[1]); },
+          () => (h.match(/svinfo">[^<]*/g) || []).join(" | "));
+    // Continue: only on the held survey's row, and only open when she is holding
+    w.pendingHold = { sv: "S2", at: 1 };
+    v.env.S.run = "running"; v.env.S.status = { holding: false }; w.renderSurveyTable();
+    const enRoute = v.env.els["#sv_table"].innerHTML;
+    v.env.S.status = { holding: true }; w.renderSurveyTable();
+    const there = v.env.els["#sv_table"].innerHTML;
+    check("31. Continue appears on the HELD survey's row only - closed while she is on her way, open (\"Continue S2 ▶\") "
+          + "once she holds there",
+          () => /id="svr1_cont"[^>]* disabled[^>]*>Holding at its start - on her way</.test(enRoute) && !/svr0_cont/.test(enRoute)
+                && /id="svr1_cont"(?![^>]* disabled)[^>]*>Continue S2 ▶</.test(there),
+          () => (there.match(/svr1_cont[^<]*/) || [""])[0]);
+    // the gates
+    v.env.S.status = { holding: false }; await w.continueHold("S2");
+    const notThere = v.env.log.uploads.length === 0 && /not holding at its start yet/.test(v.env.log.notes.slice(-1)[0] || "");
+    v.env.S.run = "paused"; v.env.S.status = { holding: true }; await w.continueHold("S2");
+    const paused = v.env.log.uploads.length === 0 && /press Start/.test(v.env.log.notes.slice(-1)[0] || "");
+    v.env.S.run = "running"; await w.continueHold("S1");
+    const wrong = v.env.log.uploads.length === 0 && /not waiting at S1/.test(v.env.log.notes.slice(-1)[0] || "");
+    check("32. Continue sends nothing unless THIS survey's hold is the one aboard and she is holding there - not on the "
+          + "way, not paused (Start would resume the old part)",
+          () => notThere && paused && wrong, () => JSON.stringify(v.env.log.notes.slice(-3)));
+    v.env.uploadTakes = false; await w.continueHold("S2");
+    const noStart = v.env.log.starts.length === 0;
+    v.env.uploadTakes = true; await w.continueHold("S2");
+    check("32b. holding there, Continue uploads FROM S2 RELEASING its hold, then starts it through the Start button's "
+          + "own code - and an upload that was not taken starts nothing",
+          () => noStart && v.env.log.uploads.slice(-1)[0].fromSv === "S2" && v.env.log.uploads.slice(-1)[0].release === "S2"
+                && v.env.log.starts.length === 1,
+          () => JSON.stringify(v.env.log.uploads.slice(-2)) + " starts=" + v.env.log.starts.length);
+    // an edit keeps the hold; a delete drops the pending one
+    w.editingSv = "S2";
+    await commit(w, pattern(3, 80, 10, 0, 300), ANCH(305));
+    check("33. a survey edited and updated in place keeps its hold (it is the survey's, not the drawing's)",
+          () => w.mission.surveys[1].id === "S2" && w.mission.surveys[1].hold === true);
+    w.pendingHold = { sv: "S2", at: 1 }; v.env.answer = true;
+    await w.deleteSurvey("S2");
+    check("33b. deleting the survey she was told to hold for drops the pending hold - its Continue has nothing to send",
+          () => w.pendingHold === null);
+  }
+  {
+    const calls = [];
+    const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => calls.push([k, ...a])), set: (t, k, v) => { t[k] = v; return true; } });
+    // eslint-disable-next-line no-new-func
+    const draw = new Function("ctx", "SV", "M", "\"use strict\";\nconst surveyLabel = SV.surveyLabel; let editingSv = null;"
+      + " const mission = M;\n" + grab("drawSurveyLabels") + "\nreturn drawSurveyLabels;")(ctx, SV,
+      { lines: [Ln(0, 1, "S1"), Ln(4, 5, "S2")], surveys: [{ id: "S1", no: 1, name: "" }, { id: "S2", no: 2, name: "Ledge", hold: true }] });
+    draw(() => ({ x: 0, y: 0 }));
+    const texts = calls.filter((c) => c[0] === "fillText").map((c) => c[1]);
+    check("33c. the chart marks a held survey's label: \"S2 Ledge ⏸ hold\"",
+          () => JSON.stringify(texts) === JSON.stringify(["S1", "S2 Ledge ⏸ hold"]), JSON.stringify(texts));
+  }
+
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED of " + ran : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
 })();
@@ -705,7 +795,8 @@ function pageWorldWithEnv() {
   els["#sp_mindepth"].value = "2";
   const env = { els, log: { notes: [], asked: [], saves: 0, modes: [], banners: [], punches: [], gotos: [], uploads: [] },
                 answer: true, SVM: SV, G, document: { activeElement: null }, sea: { waterOffset: 0 }, armed: true,
-                ls: {}, punch: null };
+                ls: {}, punch: null, S: { run: "idle", status: {} } };
+  env.log.starts = [];
   const w = buildWorld(env);
   return { w, env };
 }
@@ -719,9 +810,12 @@ function buildWorld(env) {
     + "let runLineIdx = -1, asv = null, missionLoaded = true;\n"
     + "const lsGet = (k, d) => (k in env.ls ? env.ls[k] : d), lsSet = (k, v) => { env.ls[k] = JSON.parse(JSON.stringify(v)); };\n"
     + "const canCommand = () => !!env.armed;\n"
+    // the hold before a survey (3b): what the vessel says about holding, the split's record, Start as a press
+    + "let S = env.S; let pendingHold = null; const setPendingHold = (v) => { pendingHold = v; };\n"
+    + "const startRun = async () => { env.log.starts.push(1); return env.startTakes !== false; };\n"
     // punchRefusal's wording asks these about a red reversal (the refusal itself is tests/turn_refusal.js's subject)
     + "const roleSpeed = () => 'survey', minTurnRadiusM = () => 5, kindsSummary = () => 'a dock / pier';\n"
-    + "const doGoTo = async (t) => { env.log.gotos.push(t); }; const doUpload = async (o) => { env.log.uploads.push(o); };\n"
+    + "const doGoTo = async (t) => { env.log.gotos.push(t); }; const doUpload = async (o) => { env.log.uploads.push(o); return env.uploadTakes !== false; };\n"
     // the punch, as the suite says it came out: {clip, red} - or null for a punch that did not finish (no chart)
     + "const punchNow = async () => { env.log.punches.push({reverse: patReverse, A: pat.A && {...pat.A}});"
     + "  const r = env.punch ? env.punch({pat, reverse: patReverse}) : null;"
@@ -758,7 +852,7 @@ function buildWorld(env) {
        // phase 3a
        "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
        "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
-       "reverseSurvey", "clearSurveyProgress"].map(grab).join("\n")
+       "reverseSurvey", "clearSurveyProgress", "holdWaiting", "toggleSurveyHold", "continueHold"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"
@@ -766,7 +860,8 @@ function buildWorld(env) {
     + " commitPattern, editSurvey, deleteSurvey, moveSurveyRow, renameSurvey, renderSurveyTable, cardSurveyId,"
     + " committedPatternInfo, surveySettingsNow, applySurveySettings,"
     + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
-    + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey,"
+    + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey, toggleSurveyHold, continueHold,"
+    + " get pendingHold(){ return pendingHold; }, set pendingHold(v){ pendingHold = v; },"
     + " get lineCov(){ return lineCov; }, set lineCov(v){ lineCov = v; }, get patReverse(){ return patReverse; },"
     + " setPatReverse: (v) => { patReverse = v; }, at: (k, p) => { runLineIdx = k; asv = p; },"
     + " set missionLoaded(v){ missionLoaded = v; }, get punchAllBusy(){ return punchAllBusy; },"

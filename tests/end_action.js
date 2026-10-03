@@ -102,6 +102,8 @@ var S = null, rthChained = false, rthChainFailed = false, mission = { completion
 // added to the page is tested here rather than in a copy of it that can drift.
 eval(grabDecl("CHAINABLE_BEHAVIORS") + "\n" + grab("chainableRun") + "\n" +
      grab("runCompletion") + "\n" + grab("runHolds") + "\n" +
+     // heldSplitRun (sequenced surveys 3b): the hold before a survey's split is not an end of plan
+     "var pendingHold = null;\n" + grab("heldSplitRun") + "\n" +
      grab("rthPending") + "\n" + grab("endAction") + "\n" + grab("rearmRthChain"));
 
 let fails = 0;
@@ -187,6 +189,18 @@ check("5d. ... and the whitelist still lets a real plan end at home: survey, sea
       ["hold", "escape", "rth"].every(
         (b) => (S = state({ behavior: b }), rthPending() === false)),
       "a blacklist was one short twice; this is the same question asked the other way round");
+
+// 5e. THE HOLD BEFORE A SURVEY (sequenced surveys 3b, 2026-10-02). Its split is a SURVEY run ending in a LOITER the
+// setting does not ask for - and with End of plan RTH the chain sent her home from the point she was told to wait at
+// (found only live). A pending hold is what says so: the same frame WITHOUT one is a plan uploaded under Loiter and
+// switched to RTH while it ran, which has always chained home and still must.
+pendingHold = { sv: "S2", at: 1 };
+const atHold = (S = state({ behavior: "survey", run_completion: "loiter" }), rthPending());
+pendingHold = null;
+const switched = (S = state({ behavior: "survey", run_completion: "loiter" }), rthPending());
+check("5e. a hold's split does not chain home at the held survey's start - and the same run with no hold pending (a "
+      + "plan switched to RTH while it ran) still does",
+      atHold === false && switched === true, "at a hold: " + atHold + ", switched mid-run: " + switched);
 
 // 6-9. THE CHAIN'S PRECONDITIONS. Each of these makes the chain unable to fire, so the
 // promise has to be retracted - a card that says "rth" when the boat is going to sit at
@@ -278,6 +292,11 @@ check("16. ... and a stopped boat does not re-arm anything either",
         waits,
         waits ? "`&& !seqMoved` on the fire condition, `seqMoved` read where run_seq moves"
               : "MISSING — the Start of a staged plan can chain a Return-to-Home off the previous plan's telemetry");
+  // 16e. THE HOLD BEFORE A SURVEY (3b, 2026-10-02), at the FIRE SITE: the first live run of the hold was answered by
+  // "End of plan — chaining Return-to-Home" at the held survey's start. 5e pins the predictor; this pins the subject.
+  const holdOff = /chainableRun\(s\.behavior\) && !heldSplitRun\(s\)/.test(fireBlock);
+  check("16e. ... and the literal fire condition skips a hold's split - she waits for Continue, she is not sent home",
+        holdOff, holdOff ? "`&& !heldSplitRun(s)` on the fire condition" : "MISSING — the chain sends her home from the hold");
   // 16c. And the whitelist is a whitelist: naming the behaviours that MAY chain is what
   // makes a new safety behaviour excluded by default. A blacklist was one short twice.
   check("16c. the chainable set names plans that ended, and admits no guard command",

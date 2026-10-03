@@ -203,6 +203,27 @@ try:
     api(port, "/api/cmd/stop", {})
     time.sleep(0.4)
 
+    # 12-12b. THE HOLD BEFORE A SURVEY (sequenced surveys 3b, 2026-10-02): the page splits a plan at a held survey's
+    # start and asks THAT upload to LOITER at its end - the run's completion, never the operator's setting (this
+    # suite's whole subject). Anything but "loiter" is refused, and the plan aboard is not replaced.
+    api(port, "/api/cmd/upload", {"route": m["waypoints"], "completion": "loiter"})
+    api(port, "/api/cmd/start", {})
+    time.sleep(1.0)
+    st = api(port, "/api/state")
+    check("12. an upload that asks to LOITER at its end (a hold's split) runs with loiter - and the End of plan setting "
+          "stays what the operator chose",
+          st.get("run_completion") == "loiter" and st.get("completion") == "repeat",
+          "run_completion=%s setting=%s" % (st.get("run_completion"), st.get("completion")))
+    api(port, "/api/cmd/stop", {})
+    time.sleep(0.4)
+    try:                                         # a refusal answers 409 with its words in the body
+        bad, code = api(port, "/api/cmd/upload", {"route": m["waypoints"], "completion": "rth"}), 200
+    except urllib.error.HTTPError as e:
+        bad, code = json.loads(e.read().decode() or "{}"), e.code
+    check("12b. ... and an upload asking for any other end action is REFUSED in words (409), nothing uploaded",
+          code == 409 and isinstance(bad, dict) and "only ask to LOITER" in str(bad.get("error")),
+          "HTTP %s, answer %s" % (code, json.dumps(bad)[:160]))
+
     # 9. An invalid value cannot poison the setting; it falls back to the safe default.
     m = api(port, "/api/mission")
     m["completion"] = "nonsense"

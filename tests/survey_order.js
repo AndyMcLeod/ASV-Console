@@ -251,7 +251,9 @@ const routePlan = grab(PJ, "routePlan"), upload = grab(H, "doUpload");
 check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg 0 - the approach - and the leg into "
       + "each later survey (2026-10-02) unless the whole route is a transit, and sends positions only",
       // (2026-10-02, phase 3a: or the plan FROM a survey, the table's Upload from here - waypointsFrom)
-      () => /const wps = fromSv \? waypointsFrom\(mission, fromSv\) : mission\.waypoints \|\| \[\];/.test(upload)
+      // (3b: and cut at the first held survey's start - splitAtHold; the rest goes on Continue)
+      () => /const wpsAll = fromSv \? waypointsFrom\(mission, fromSv\) : mission\.waypoints \|\| \[\];/.test(upload)
+            && /const wps = hold \? hold\.part : wpsAll;/.test(upload)
             && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\), surveyEntries\(wps\)\);/.test(upload)   // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
             && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, transit \? want : buf\)/.test(routePlan)

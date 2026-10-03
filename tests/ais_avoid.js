@@ -405,6 +405,8 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // the hold before a survey (3b): no split is aboard in this world, so every remainder takes the plan's own end
+  "let pendingHold = null; const surveyStartIdx = () => -1;", grab("tailEndsAtHold"),
   grab("dropHeldSurvey"),
   grab("logGuardLow"),
   grab("resumeBackM"), grab("resumePointOn"), grab("backtrackClear"), grab("alongLineM"),

@@ -604,10 +604,11 @@ check("16e. a survey's settings that are not what they claim are REFUSED in word
 # water level its punch was judged at and when, and its settings whether it runs backwards - all through both dicts,
 # all type-checked.
 W_SURVEYS = [dict(SURVEYS[0], water_m=0.39, punched_at="2026-10-02T21:40:00.000Z", settings=dict(ST, reverse=True)),
-             dict(SURVEYS[1], water_m=None, punched_at=None)]
+             dict(SURVEYS[1], water_m=None, punched_at=None, hold=True)]            # 3b: the hold before S3
 _, w_err = attempt(_C.save_mission, sv_plan(surveys=W_SURVEYS))
 w_back = _C.load_mission().get("surveys")
-check("16f. a survey's water level and punch time, and its BACKWARDS flag, are saved and loaded as they were",
+check("16f. a survey's water level and punch time, its BACKWARDS flag and its HOLD before it are saved and loaded as "
+      "they were",
       w_err is None and w_back == W_SURVEYS, "save: %s; loaded %s" % (w_err or "ok", json.dumps(w_back)[:140]))
 w_before = open(_C.MISSION_PATH, "rb").read()
 w_bad = {"a water level as text": sv_plan(surveys=[dict(SURVEYS[0], water_m="0.4")]),
@@ -615,7 +616,8 @@ w_bad = {"a water level as text": sv_plan(surveys=[dict(SURVEYS[0], water_m="0.4
          "an infinite water level": sv_plan(surveys=[dict(SURVEYS[0], water_m=float("inf"))]),
          "a punch time that is a number": sv_plan(surveys=[dict(SURVEYS[0], punched_at=12)]),
          "a punch time too long": sv_plan(surveys=[dict(SURVEYS[0], punched_at="x" * 60)]),
-         "backwards as text": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, reverse="yes"))])}
+         "backwards as text": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, reverse="yes"))]),
+         "a hold as a number": sv_plan(surveys=[dict(SURVEYS[0], hold=1)])}
 w_said = {k: refused(v) for k, v in w_bad.items()}
 check("16g. a water level, punch time or backwards flag that is not what it claims is REFUSED in words, naming the "
       "survey, and nothing is written",

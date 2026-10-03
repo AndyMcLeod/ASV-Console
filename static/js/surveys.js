@@ -259,6 +259,31 @@ export function coveredM(list, from, to){
   return m;
 }
 
+// --- THE HOLD BEFORE A SURVEY (2026-10-02, phase 3b) -----------------------------------------------------------------
+//
+// Andy's call: she waits AT THE HELD SURVEY'S START until the operator presses Continue - nothing releases her by
+// itself. The vessel has no mid-route dwell, only an action at the END of a route (complete, loiter, RTH, repeat), so
+// a hold is a SPLIT UPLOAD: the plan up to and including the held survey's first waypoint, ending in LOITER; Continue
+// uploads the rest from that survey on (split again at the next held survey, if any).
+
+/**
+ * Where to split `wps` for a hold: the FIRST waypoint of the first survey marked `hold` that the list enters, other
+ * than `release` (the survey whose hold the operator has just answered with Continue). Returns {part, held, cut} -
+ * `part` the waypoints up to and including that survey's first one, `held` its id, `cut` that index - or null when
+ * nothing in the list is held. A held survey at index 0 still splits: she goes to its start and waits there.
+ */
+export function splitAtHold(wps, surveys, release){
+  const held = new Set((surveys || []).filter(s => s && s.hold === true && s.id !== release).map(s => s.id));
+  if(!held.size) return null;
+  const w = wps || [];
+  for(let i = 0; i < w.length; i++){
+    const sv = svOf(w[i]);
+    if(sv && held.has(sv) && (i === 0 || svOf(w[i - 1]) !== sv))
+      return {part: w.slice(0, i + 1), held: sv, cut: i};
+  }
+  return null;
+}
+
 /** The survey's label, as the table, the chart and the LINES card all print it: "S3" or "S3 Rye ledge". */
 export function surveyLabel(s){
   if(!s) return "";

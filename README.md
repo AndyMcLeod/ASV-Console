@@ -1224,7 +1224,20 @@ of the operator.
      **Punch all** (beside the table's heading) punches every survey with a recorded drawing
      again, each with its own settings, against the chart and the water now, and replaces each
      where it stands; a survey the punch refuses is left exactly as it was, and the banner names
-     it and why. A hold before a survey is the next feature.
+     it and why.
+   - *A hold before a survey* (2026-10-02, phase 3b). A clicked row's **Hold: off/on** marks the
+     survey held (⏸ on its row and its chart label). The vessel can only act at the END of a
+     route, so **Upload splits the plan** there: it sends the plan only as far as the held
+     survey's first waypoint and asks her to **loiter** at it - your End of plan setting is not
+     touched - and the banner says the rest is not aboard. She waits there; nothing releases her
+     by itself. The held survey's row shows **Continue S*n* ▶** once she is holding (before
+     that it reads "on her way"): it uploads the plan from that survey on and starts it through
+     the Start button (its question included); a later held survey splits it again. The
+     end-of-plan Return-to-Home does **not** fire at a hold (it did on the first live run - she
+     was sent home from the point she was told to wait at), and a guard-held resume of the way
+     there still ends in the loiter. Upload from a held survey goes to its start and waits too.
+     (Also fixed: with the chart model not loaded, Upload from a survey - or a split - used to
+     send no route at all, and the console then flew the WHOLE saved plan.)
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a
