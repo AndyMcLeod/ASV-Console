@@ -1156,6 +1156,14 @@ def _check_surveys(m):
             if s.get("punched") is not None and not isinstance(s.get("punched"), bool):
                 raise PlanRefused("survey %s's punched flag must be true or false - nothing was saved" % sid)
             _check_survey_settings(sid, s.get("settings"))
+            # THE WATER IT WAS CUT AT (phase 3a): the level the punch judged its depth window at, and when.
+            wm = s.get("water_m")
+            if wm is not None and (isinstance(wm, bool) or not isinstance(wm, (int, float)) or not math.isfinite(wm)):
+                raise PlanRefused("survey %s's water level must be a finite number of meters (got %r) - nothing was saved"
+                                  % (sid, wm))
+            pa = s.get("punched_at")
+            if pa is not None and not (isinstance(pa, str) and len(pa) <= 40):
+                raise PlanRefused("survey %s's punch time must be a time stamp (got %r) - nothing was saved" % (sid, pa))
     for what, items in (("waypoint", m.get("waypoints") or []), ("survey line", m.get("lines") or [])):
         for i, x in enumerate(items):
             if isinstance(x, dict) and x.get("sv") is not None and not _is_survey_id(x.get("sv")):
@@ -1186,6 +1194,8 @@ def _check_survey_settings(sid, st):
     if st.get("turn_ease") is not None and st.get("turn_ease") not in ("arc", "eased"):
         raise PlanRefused("survey %s's turn shape must be arc or eased (got %r) - nothing was saved"
                           % (sid, st.get("turn_ease")))
+    if st.get("reverse") is not None and not isinstance(st.get("reverse"), bool):
+        raise PlanRefused("survey %s's backwards flag must be true or false - nothing was saved" % sid)
 
 
 def _stored_rev():

@@ -731,7 +731,7 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     const inkYield = eval("(" + grabDecl("inkYield").replace(/^const\s+inkYield\s*=\s*/, "").replace(/;\s*$/, "") + ")");
     // EACH LATER SURVEY'S APPROACH IS A TRANSIT (2026-10-02): doUpload hands routePlan the page's own surveyEntries -
     // the real one; this world's plan has no survey tags, so it is empty and the routing below is unchanged.
-    const { surveyEntries } = require("../static/js/surveys.js");
+    const { surveyEntries, waypointsFrom, surveyLabel } = require("../static/js/surveys.js");
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
@@ -794,6 +794,36 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
                 && banners.length === 0,
           () => "sent=" + JSON.stringify(calls.map((c) => [c.p, c.b && c.b.route && c.b.route.length])));
     delete S.route_max_wpts;
+    // 1q-1r. UPLOAD FROM A SURVEY (sequenced surveys phase 3a, 2026-10-02): the survey table's "Upload from here" hands
+    // doUpload {fromSv}, and the plan sent is that survey's waypoints and everything after them. ⚠ A survey with NO
+    // waypoints must be refused before the empty-plan branch: an empty slice there is "upload an empty plan", which
+    // CLEARS the plan aboard.
+    const keptW = mission.waypoints;
+    mission = { ...mission, surveys: [{ id: "S1", no: 1, name: "" }, { id: "S2", no: 2, name: "Ledge" }],
+                waypoints: [{ lat: 43.08, lon: -70.71, sv: "S1" }, { lat: 43.081, lon: -70.71, sv: "S1" },
+                            { lat: 43.09, lon: -70.70, sv: "S2" }, { lat: 43.091, lon: -70.70, sv: "S2" },
+                            { lat: 43.095, lon: -70.70 }] };
+    const upFrom = async (sv) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null; runRoute = null;
+                                   reply = null; covered = null; routedAfterCover = null;
+                                   nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
+                                   await doUpload({ fromSv: sv }); await Promise.resolve(); };
+    await upFrom("S2");
+    const sentFrom = calls.length === 1 && calls[0].b && calls[0].b.route ? calls[0].b.route.map((q) => q.lat) : null;
+    check("1q. Upload from S2 sends S2's waypoints and everything after them - S1's are NOT sent - and says so",
+          () => JSON.stringify(sentFrom) === JSON.stringify([43.09, 43.091, 43.095])
+                && /UPLOADED FROM S2 Ledge/.test(banners.join(" ")) && /S1 is NOT in the plan sent/.test(banners.join(" ")),
+          () => "sent " + JSON.stringify(sentFrom) + " | " + banners.join(" | ").slice(0, 160));
+    await upFrom("S9");
+    check("1r. ... and from a survey with no waypoints NOTHING is sent - never the empty plan, which would clear the "
+          + "plan aboard - and the note says so",
+          () => calls.length === 0 && /no waypoints in the plan - nothing was sent/.test(unotes.join(" ")),
+          () => "sent=" + JSON.stringify(calls.map((c) => [c.p, c.b && c.b.route && c.b.route.length])) + " " + unotes.join(" | "));
+    calls.length = 0; banners.length = 0; nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
+    await doUpload({ type: "click", isTrusted: true, target: { id: "b_upload" } }); await Promise.resolve();
+    check("1s. ... and the plain Upload button (its click event as the argument) still sends the WHOLE plan",
+          () => calls.length === 1 && calls[0].b && calls[0].b.route && calls[0].b.route.length === 5,
+          () => "sent=" + JSON.stringify(calls.map((c) => c.b && c.b.route && c.b.route.length)));
+    mission = { ...mission, waypoints: keptW }; delete mission.surveys;
   // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
   // took the plan, so the upload is real - but the operator or the guard has commanded her
   // somewhere in the meantime, and that command owns the picture. Drawing the survey over it

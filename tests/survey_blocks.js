@@ -208,6 +208,8 @@ const world = () => new Function("\"use strict\";\n"
   // phase 2 (2026-10-02): no survey is being edited here, so every Add to plan is a NEW survey; the settings recorder
   // and the edit's replace are tests/survey_table.js's subject.
   + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
+  // phase 3a: the commit records the water level the punch was cut at
+  + "const sea = {waterOffset: 0};\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n" + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
   + " patLead = o.lead || []; drawn = o.drawn || []; ANCHORS = o.anchors || null; } };")();

@@ -399,10 +399,12 @@ function commit(w, lines, anchors) {
     const tb = v.env.els["#sv_table"], html = tb.innerHTML;
     const idsIn = [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
     const acts = [...html.matchAll(/<(\w+)[^>]*data-act="([^"]+)"[^>]*>/g)];
-    check("12. one row per survey, in run order; EVERY control - row, name, ▲ ▼ ✎ ✕ - carries a unique id (the "
-          + "controls window forwards clicks and edits BY ID)",
-          () => /S1<\/span>[\s\S]*S2<\/span>[\s\S]*S3<\/span>/.test(html) && idsIn.length === 18
-                && new Set(idsIn).size === 18 && acts.length === 15 && acts.every((m) => / id="/.test(m[0])),
+    // (3 rows x 6 ids, and the PICKED row's four actions since phase 3a - S3, the one just committed)
+    check("12. one row per survey, in run order; EVERY control - row, name, ▲ ▼ ✎ ✕, and the picked row's four "
+          + "actions - carries a unique id (the controls window forwards clicks and edits BY ID)",
+          () => /S1<\/span>[\s\S]*S2<\/span>[\s\S]*S3<\/span>/.test(html) && idsIn.length === 22
+                && new Set(idsIn).size === 22 && acts.length === 19 && acts.every((m) => / id="/.test(m[0]))
+                && /id="svr2_go"/.test(html) && !/id="svr0_go"/.test(html),
           () => idsIn.length + " ids, " + new Set(idsIn).size + " unique, " + acts.length + " actions");
     check("12b. ▲ is disabled on the first row, ▼ on the last, ✎ on the survey with no recorded drawing - and only there",
           () => /id="svr0_up"[^>]* disabled/.test(html) && !/id="svr1_up"[^>]* disabled/.test(html)
@@ -474,6 +476,222 @@ function commit(w, lines, anchors) {
           () => JSON.stringify(texts) + " " + JSON.stringify(fills));
   }
 
+  // ═══ PHASE 3a (2026-10-02): backwards, upload from here, Go-To start, line progress, the water stamp, Punch all ═══
+
+  // ── 15. runBackwards and its place in the punch ─────────────────────────────────────────────────────────────────
+  {
+    const A = { lat: 1 }, B = { lat: 2 }, C = { lat: 3 }, D = { lat: 4 };
+    const r = SV.runBackwards([[A, B], [C, D]]);
+    check("15. BACKWARDS walks the punch's runs from the other end: the last run first, each the other way - the same "
+          + "path entered where it used to end",
+          () => r.length === 2 && r[0][0] === D && r[0][1] === C && r[1][0] === B && r[1][1] === A
+                && SV.runBackwards([]).length === 0 && SV.runBackwards(null).length === 0);
+    const PO = grab("punchOut");
+    const iOrder = PO.indexOf("const ro=regionOrder("), iRev = PO.indexOf("if(patReverse) ro.ordered = runBackwards(ro.ordered);"),
+          iShort = PO.indexOf("const shortened = ro.ordered.map");
+    check("15b. ... applied to the ORDERED runs, after regionOrder and BEFORE the margins, leads and turns are built - so "
+          + "they are built for the reversed path",
+          () => iOrder > 0 && iRev > iOrder && iShort > iRev, [iOrder, iRev, iShort].join(" < "));
+  }
+
+  // ── 16. surveyStartIdx / waypointsFrom ──────────────────────────────────────────────────────────────────────────
+  {
+    const m = THREE();
+    const from = SV.waypointsFrom(m, "S2");
+    check("16. Upload from S2 sends S2 and everything after it - S3, the free waypoint at the end - and nothing before; "
+          + "a survey with no waypoints gives NOTHING, never the whole plan",
+          () => SV.surveyStartIdx(m, "S2") === 6 && tags(from) === "S2 S2 S3 S3 -" && from[0].lat === W(5).lat
+                && SV.waypointsFrom(m, "S9").length === 0 && SV.surveyStartIdx(m, "S9") === -1,
+          () => tags(from));
+  }
+
+  // ── 17. addCoverage / coveredM ──────────────────────────────────────────────────────────────────────────────────
+  {
+    let c = SV.addCoverage([], 10, 20);
+    c = SV.addCoverage(c, 50, 60); c = SV.addCoverage(c, 15, 30); c = SV.addCoverage(c, 30.5, 40, 1);
+    check("17. coverage merges what overlaps or touches (a gap under a frame's step closes, a real hole stays) and "
+          + "counts only what lies inside the asked span",
+          () => JSON.stringify(c) === "[[10,40],[50,60]]" && SV.coveredM(c, 0, 100) === 40 && SV.coveredM(c, 35, 55) === 10
+                && JSON.stringify(SV.addCoverage(c, 5, 5)) === JSON.stringify(c),
+          () => JSON.stringify(c));
+  }
+
+  // ── 18-20. trackLineCoverage, surveyProgress, saveLineCov ───────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    await commit(w, pattern(2, 100, 10, 0, 0), ANCH(0));            // S1: two 100 m lines
+    await commit(w, pattern(1, 100, 10, 0, 300), ANCH(300));        // S2: one
+    const L0 = w.mission.lines[0], L1 = w.mission.lines[1];
+    const along = (L, m) => { const t = m / G.distTo(L.a, L.b);
+      return { lat: L.a.lat + (L.b.lat - L.a.lat) * t, lon: L.a.lon + (L.b.lon - L.a.lon) * t }; };
+    const run = (k, L, from, to, step) => { for (let m = from; m <= to + 1e-9; m += step) { w.at(k, along(L, m)); w.trackLineCoverage(); } };
+    run(0, L0, 0, 50, 2);
+    const p1 = w.surveyProgress("S1"), f50 = w.lineDoneFrac(L0);
+    run(0, L0, 50, 92, 2);
+    const f92 = w.lineDoneFrac(L0), p2 = w.surveyProgress("S1");
+    check("18. a line is covered by the steps she runs ON it; it reads PARTIAL until 90% of it is run, then DONE - by "
+          + "coverage, not time",
+          () => Math.abs(f50 - 0.5) < 0.02 && p1.done === 0 && p1.any && p1.of === 2
+                && f92 >= 0.9 && p2.done === 1 && p2.of === 2,
+          () => "50 m: " + f50.toFixed(3) + " " + JSON.stringify(p1) + "; 92 m: " + f92.toFixed(3) + " " + JSON.stringify(p2));
+    w.at(-1, null); w.trackLineCoverage();                           // off the line
+    w.at(1, along(L1, 0)); w.trackLineCoverage(); w.at(1, along(L1, 60)); w.trackLineCoverage();
+    const jump = w.lineDoneFrac(L1);
+    w.at(1, along(L1, 10)); w.trackLineCoverage(); w.at(-1, null); w.trackLineCoverage(); w.at(1, along(L1, 20)); w.trackLineCoverage();
+    const broken = w.lineDoneFrac(L1);
+    check("18b. ... a jump bigger than a frame's step (a resume elsewhere on the line) is NOT coverage between, and a "
+          + "frame off the line breaks the run",
+          () => jump === 0 && broken === 0, () => "jump " + jump + ", across a break " + broken);
+    // the same water run the other way: a reversed line keeps what was run
+    const rev = { a: L0.b, b: L0.a, lead_in_m: 0, lead_out_m: 0 };
+    check("18c. the SAME line run the other way (a survey punched backwards over it) keeps its coverage - the key and "
+          + "the meters are the line's, not its direction's",
+          () => w.lineGeoKey(rev) === w.lineGeoKey(L0) && Math.abs(w.lineDoneFrac(rev) - w.lineDoneFrac(L0)) < 1e-9);
+    // 18d: the leads are RUN, not coverage - a line run over its coverage alone is done
+    {
+      const LL = { a: L0.a, b: L0.b, lead_in_m: 20, lead_out_m: 10, sv: "S1" };
+      const keep = w.lineCov; w.lineCov = {};
+      run(0, LL, 20, 90, 2);                                     // line 0 in the world has LL's two ends
+      const fl = w.lineDoneFrac(LL), fbare = w.lineDoneFrac({ a: LL.a, b: LL.b });
+      check("18d. a line's LEADS are run, not coverage: run over its coverage alone (20 m in, 10 m out of 100 m) it is "
+            + "fully covered, where the same run measured against the whole line is 70%",
+            () => Math.abs(fl - 1) < 1e-9 && Math.abs(fbare - 0.7) < 0.01,
+            () => "with leads " + fl.toFixed(3) + ", whole line " + fbare.toFixed(3));
+      w.lineCov = keep;
+    }
+    // 19: by DRAWN line
+    run(0, L0, 0, 100, 2);
+    w.at(1, along(L1, 0)); w.trackLineCoverage(); run(1, L1, 0, 100, 2);
+    const done = w.surveyProgress("S1"), none = w.surveyProgress("S2");
+    check("19. a survey is DONE when every one of its lines is; another survey's lines count nothing for it",
+          () => done.done === 2 && done.of === 2 && none.done === 0 && !none.any && none.of === 1,
+          () => JSON.stringify({ done, none }));
+    // 20: saving
+    v.env.ls = {}; w.missionLoaded = false; w.saveLineCov(true);
+    const before = JSON.stringify(v.env.ls);
+    w.missionLoaded = true; w.lineCov = { ...w.lineCov, "1,2,3,4": [[0, 5]] }; w.saveLineCov(true);
+    const saved = v.env.ls.asv_line_cov_v1 || {};
+    check("20. progress is saved in this browser, PRUNED to the plan's lines - and never before the plan has loaded, "
+          + "when pruning to an empty plan would erase it",
+          () => before === "{}" && Object.keys(saved).length === 2 && !("1,2,3,4" in saved) && (w.lineGeoKey(L0) in saved),
+          () => before + " -> " + Object.keys(saved).join(" | "));
+    // 28: clear progress
+    w.clearSurveyProgress("S1");
+    check("28. Clear progress forgets ONE survey's lines and saves at once", () => !w.surveyProgress("S1").any
+          && w.lineDoneFrac(L0) === 0 && !(w.lineGeoKey(L0) in (v.env.ls.asv_line_cov_v1 || {})));
+  }
+
+  // ── 21-22. the water stamp ──────────────────────────────────────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    v.env.sea.waterOffset = 0.39;
+    await commit(w, pattern(2, 100, 10, 0, 0), ANCH(0));
+    w.set({ clip: null, drawn: pattern(1, 50, 10, 0, 300), anchors: ANCH(300) }); await w.commitPattern();   // un-punched
+    const [s1, s2] = w.mission.surveys;
+    check("21. Add to plan stamps a punched survey with the water level its lines were cut at, and when; an un-punched "
+          + "one with none",
+          () => s1.water_m === 0.39 && typeof s1.punched_at === "string" && !isNaN(Date.parse(s1.punched_at))
+                && s2.water_m === null && s2.punched_at === null && s1.settings.reverse === false,
+          () => JSON.stringify([s1.water_m, s1.punched_at, s2.water_m]));
+    const at = (lvl) => { v.env.sea.waterOffset = lvl; return w.surveyTideMoved(s1); };
+    const r = [at(0.39), at(0.20), at(0.14), at(0.64), at(-0.5)];
+    check("22. the row flags the tide only from a quarter meter either way, signed (fallen negative), and never a "
+          + "survey with no stamp",
+          () => r[0] === null && r[1] === null && Math.abs(r[2] + 0.25) < 1e-9 && Math.abs(r[3] - 0.25) < 1e-9
+                && Math.abs(r[4] + 0.89) < 1e-9 && w.surveyTideMoved(s2) === null,
+          () => JSON.stringify(r));
+    v.env.sea.waterOffset = -0.5; w.renderSurveyTable();
+    const html = v.env.els["#sv_table"].innerHTML;
+    check("22b. ... and says which way on the row: ⚠ before its figures, FALLEN and what it means in its tip",
+          () => /svinfo">⚠/.test(html) && /FALLEN 0\.89 m since it was punched, so its lines were cut for deeper water/.test(html),
+          () => (html.match(/svinfo">[^<]*/) || [""])[0]);
+  }
+
+  // ── 23. the row's state and the picked row's actions ────────────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    await commit(w, pattern(2, 100, 10, 0, 0), ANCH(0));
+    await commit(w, pattern(2, 100, 10, 0, 300), ANCH(300));
+    w.mission.surveys[1].pattern = null;
+    w.cardSv = "S1"; w.renderSurveyTable();
+    const h1 = v.env.els["#sv_table"].innerHTML;
+    check("23. only the PICKED row carries the actions; Backwards is offered where a drawing was recorded, Clear "
+          + "progress only where there is progress",
+          () => /id="svr0_go"/.test(h1) && /id="svr0_from"/.test(h1) && !/id="svr1_go"/.test(h1)
+                && !/id="svr0_rev"[^>]* disabled/.test(h1) && /id="svr0_clr"[^>]* disabled/.test(h1) && />Backwards</.test(h1));
+    w.mission.surveys[0].settings.reverse = true; w.renderSurveyTable();
+    check("23b. ... and a survey that runs backwards offers Forwards", () => />Forwards</.test(v.env.els["#sv_table"].innerHTML));
+    w.mission.surveys.forEach((x) => { x.pattern = null; }); w.renderSurveyTable();
+    check("23c. Punch all is disabled when no survey has a drawing to punch again, and says why",
+          () => v.env.els["#sv_punchall"].disabled === true && /No survey here has a recorded drawing/.test(v.env.els["#sv_punchall"].title));
+  }
+
+  // ── 24-25. repunch: Punch all and Backwards ─────────────────────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    for (const e of [0, 300, 600]) await commit(w, pattern(2, 100, 10, 0, e), ANCH(e));
+    w.mission.surveys[2].pattern = null;                               // S3: nothing to punch again
+    const s2Before = JSON.stringify(w.mission.lines.filter((l) => l.sv === "S2"));
+    // the punch as the chart answers it now: S1 comes out as 3 lines, S2 is REFUSED (a red reversal)
+    v.env.punch = ({ pat }) => Math.abs(pat.A.lon - ANCH(0).A.lon) < 1e-12 ? { clip: pattern(3, 90, 10, 0, 0) }
+                              : { clip: pattern(2, 100, 10, 0, 300), red: [{ turn: true, run: 1, why: "nogo", by: "a dock / pier" }] };
+    v.env.els["#sp_lead_in"].value = "0"; w.mission.lead_in = 7;          // the card's own setting, to come back after
+    await w.punchAll();
+    const m = w.mission, b = v.env.log.banners.slice(-1)[0] || "";
+    check("24. Punch all re-punches each survey with a drawing and puts it back WHERE IT STANDS (S1 now 3 lines, still "
+          + "first); a REFUSED one is left exactly as it was, one with no drawing skipped - and the banner says which",
+          () => ids(m) === "S1,S2,S3" && m.lines.filter((l) => l.sv === "S1").length === 3
+                && JSON.stringify(m.lines.filter((l) => l.sv === "S2")) === s2Before
+                && tags(m.lines) === "S1 S1 S1 S2 S2 S3 S3"
+                && /1 of 3 re-punched \(S1 3L\)/.test(b) && /REFUSED, left as it was: S2 - /.test(b) && /skipped: S3 \(no recorded drawing\)/.test(b),
+          () => tags(m.lines) + " | " + b);
+    check("24b. ... and the card's own settings are back afterwards, the edit ended, nothing left busy",
+          () => w.mission.lead_in === 7 && w.editingSv === null && !w.punchAllBusy && w.pat.A === null,
+          () => JSON.stringify({ lead: w.mission.lead_in, ed: w.editingSv, busy: w.punchAllBusy }));
+    // a punch that did not finish (no chart): commitPattern would commit the drawing UN-punched - the repunch must not
+    const s1Before = JSON.stringify(w.mission.lines.filter((l) => l.sv === "S1"));
+    v.env.punch = () => null;
+    const r = await w.repunchSurvey("S1");
+    check("24c. a punch that did not finish (no chart) is a refusal: the survey stays as it was - never committed "
+          + "un-punched",
+          () => !!r.refused && /did not finish/.test(r.refused)
+                && JSON.stringify(w.mission.lines.filter((l) => l.sv === "S1")) === s1Before,
+          () => JSON.stringify(r));
+    // 25: backwards
+    v.env.log.punches.length = 0;
+    v.env.punch = ({ reverse }) => ({ clip: reverse ? SV.runBackwards(pattern(3, 90, 10, 0, 0)) : pattern(3, 90, 10, 0, 0) });
+    await w.reverseSurvey("S1");
+    const back = w.mission.surveys[0], firstAfter = w.mission.lines[0];
+    await w.reverseSurvey("S1");
+    const fwd = w.mission.surveys[0];
+    check("25. Backwards punches the survey again with the flag turned over and replaces it where it stands - recorded "
+          + "on the survey; pressed again it runs forwards",
+          () => v.env.log.punches.length === 2 && v.env.log.punches[0].reverse === true && v.env.log.punches[1].reverse === false
+                && back.settings.reverse === true && fwd.settings.reverse === false && ids(w.mission) === "S1,S2,S3"
+                && Math.abs(firstAfter.a.lat - pattern(3, 90, 10, 0, 0)[2][1].lat) < 1e-12,
+          () => JSON.stringify(v.env.log.punches.map((x) => x.reverse)));
+  }
+
+  // ── 26-27. Go-To start and Upload from here ─────────────────────────────────────────────────────────────────────
+  {
+    const v = pageWorldWithEnv(), w = v.w;
+    await commit(w, pattern(2, 100, 10, 0, 0), ANCH(0));
+    await commit(w, pattern(2, 100, 10, 0, 300), ANCH(300));
+    v.env.armed = false; await w.goToSurvey("S2");
+    const refused = v.env.log.gotos.length === 0 && /arm first/.test(v.env.log.notes.slice(-1)[0] || "");
+    v.env.armed = true; await w.goToSurvey("S2");
+    const first = w.mission.waypoints.find((p) => p.sv === "S2");
+    check("26. Go-To start is refused unarmed, in words; armed it is a Go-To to the survey's FIRST waypoint",
+          () => refused && v.env.log.gotos.length === 1 && v.env.log.gotos[0].lat === first.lat && v.env.log.gotos[0].lon === first.lon);
+    v.env.els["#b_upload"].disabled = true; v.env.els["#b_upload"].title = "ARM before uploading a plan";
+    await w.uploadFromSurvey("S2");
+    const gated = v.env.log.uploads.length === 0 && /ARM before uploading a plan/.test(v.env.log.notes.slice(-1)[0] || "");
+    v.env.els["#b_upload"].disabled = false; await w.uploadFromSurvey("S2");
+    check("27. Upload from here stands behind the Upload button's own gate and says its reason; open, it hands doUpload "
+          + "the survey (1q-1s in tests/pause_resume.js drive what doUpload does with it)",
+          () => gated && v.env.log.uploads.length === 1 && v.env.log.uploads[0].fromSv === "S2");
+  }
+
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED of " + ran : "\nall checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
 })();
@@ -482,10 +700,12 @@ function commit(w, lines, anchors) {
 function pageWorldWithEnv() {
   const els = {};
   for (const id of ["sv_table", "sv_head", "sv_note", "sp_mindepth", "sp_maxdepth", "sp_lead_mode", "sp_lead_in",
-                    "sp_lead_out", "sp_turn_ease", "sp_align", "sp_add", "sp_hint"]) els["#" + id] = el(id);
+                    "sp_lead_out", "sp_turn_ease", "sp_align", "sp_add", "sp_hint", "sp_reverse", "sv_punchall",
+                    "b_upload"]) els["#" + id] = el(id);
   els["#sp_mindepth"].value = "2";
-  const env = { els, log: { notes: [], asked: [], saves: 0, modes: [] }, answer: true, SVM: SV, G,
-                document: { activeElement: null } };
+  const env = { els, log: { notes: [], asked: [], saves: 0, modes: [], banners: [], punches: [], gotos: [], uploads: [] },
+                answer: true, SVM: SV, G, document: { activeElement: null }, sea: { waterOffset: 0 }, armed: true,
+                ls: {}, punch: null };
   const w = buildWorld(env);
   return { w, env };
 }
@@ -493,8 +713,21 @@ function buildWorld(env) {
   // eslint-disable-next-line no-new-func
   const f = new Function("env", "\"use strict\";\n"
     + "const $ = (s) => env.els[s]; const document = env.document;\n"
-    + "const {replaceSurvey, moveSurvey, removeSurvey, surveyLabel, normalizeSurveys} = env.SVM;\n"
-    + "const llEN = env.G.llEN, distTo = env.G.distTo;\n"
+    + "const {replaceSurvey, moveSurvey, removeSurvey, surveyLabel, normalizeSurveys,"
+    + " runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM} = env.SVM;\n"
+    + "const llEN = env.G.llEN, distTo = env.G.distTo, toEN = env.G.toEN; const sea = env.sea;\n"
+    + "let runLineIdx = -1, asv = null, missionLoaded = true;\n"
+    + "const lsGet = (k, d) => (k in env.ls ? env.ls[k] : d), lsSet = (k, v) => { env.ls[k] = JSON.parse(JSON.stringify(v)); };\n"
+    + "const canCommand = () => !!env.armed;\n"
+    // punchRefusal's wording asks these about a red reversal (the refusal itself is tests/turn_refusal.js's subject)
+    + "const roleSpeed = () => 'survey', minTurnRadiusM = () => 5, kindsSummary = () => 'a dock / pier';\n"
+    + "const doGoTo = async (t) => { env.log.gotos.push(t); }; const doUpload = async (o) => { env.log.uploads.push(o); };\n"
+    // the punch, as the suite says it came out: {clip, red} - or null for a punch that did not finish (no chart)
+    + "const punchNow = async () => { env.log.punches.push({reverse: patReverse, A: pat.A && {...pat.A}});"
+    + "  const r = env.punch ? env.punch({pat, reverse: patReverse}) : null;"
+    + "  if(!r){ patClip = null; return; }"
+    + "  patClip = r.clip; patTransits = r.clip.slice(1).map(() => []); patLead = r.clip.map(() => ({in: 0, out: 0}));"
+    + "  patRed = r.red || []; patJoined = true; ANCHORS = {A: pat.A, B: pat.B, C: pat.C, align: pat.align}; };\n"
     + "const fmtDist = (m) => Math.round(m) + ' m';\n"
     + "let mission = {lines: [], waypoints: [], surveys: [], lead_mode: 'm', lead_in: 0, lead_out: 0, turn_ease: 'arc'};\n"
     + "let planKind = null; const NO_LEAD = {in: 0, out: 0};\n"
@@ -504,11 +737,16 @@ function buildWorld(env) {
     + decl(/^let editingSv = [^;]*;/m) + "\n" + decl(/^let cardSv = [^;]*;/m) + "\n"
     + decl(/^const LEAD_MAX_M = [^;]*;/m) + "\n" + decl(/^const LINE_PART_OFFSET_M = [^;]*;/m) + "\n"
     + decl(/^let _drawnLines = [^;]*;/m) + "\n" + decl(/^let _svTableKey = [^;]*;/m) + "\n"
+    + decl(/^let patReverse = [^;]*;/m) + "\n" + decl(/^const SURVEY_TIDE_FLAG_M = [^;]*;/m) + "\n"
+    + decl(/^const LINE_DONE_FRAC = [^;]*;/m) + "\n" + decl(/^const COV_STEP_MAX_M = [^;]*;/m) + "\n"
+    + decl(/^const LINE_COV_KEY = [^;]*;/m) + "\n" + "let lineCov = {};\n" + decl(/^let covPrev = [^;]*;/m) + "\n"
+    + decl(/^let punchAllBusy = [^;]*;/m) + "\n"
     + "const flushRepunch = async () => {}; const updatePatReadout = () => {};\n"
     + "const currentPattern = () => ({anchors: ANCHORS}); const patSourceLines = () => drawn;\n"
-    + "const resetPattern = () => { editingSv = null; pat = {A: null, B: null, C: null, align: pat.align}; patClip = null; };\n"
+    + "const resetPattern = () => { editingSv = null; pat = {A: null, B: null, C: null, align: pat.align}; patClip = null;"
+    + " patRed = []; patReverse = false; };\n"
     + "const recalcCommittedForSpeed = () => {}; const saveMission = () => { env.log.saves++; };\n"
-    + "const render = () => {}; const renderLineTable = () => {}; const showBanner = () => {};\n"
+    + "const render = () => {}; const renderLineTable = () => {}; const showBanner = (t) => env.log.banners.push(t);\n"
     + "const flashNote = (t) => env.log.notes.push(t);\n"
     + "const guiConfirm = (title, msg, opts) => { env.log.asked.push({title, msg, opts}); return Promise.resolve(env.answer); };\n"
     + "const setMode = (m) => { env.log.modes.push(m); mode = m; };\n"
@@ -516,13 +754,22 @@ function buildWorld(env) {
     + ["rocEsc", "depthRange", "boundaryActive", "lineSetKey", "linePartContinues", "drawnLines", "lineNo", "lineCount",
        "committedPatternInfo", "surveySettingsNow", "applySurveySettings", "surveyById", "surveyFigures",
        "renderSurveyTable", "cardSurveyId", "surveysChanged", "editSurvey", "deleteSurvey", "moveSurveyRow",
-       "renameSurvey", "emptyPunchRefusal", "punchRefusal", "commitPattern"].map(grab).join("\n")
+       "renameSurvey", "emptyPunchRefusal", "punchRefusal", "commitPattern",
+       // phase 3a
+       "lineCovFrame", "lineGeoKey", "trackLineCoverage", "saveLineCov", "lineDoneFrac", "surveyProgress",
+       "surveyTideMoved", "goToSurvey", "uploadFromSurvey", "repunchSurvey", "withCardKept", "punchAll",
+       "reverseSurvey", "clearSurveyProgress"].map(grab).join("\n")
     + "\nreturn { get mission(){ return mission; }, set mission(v){ mission = v; },"
     + " get editingSv(){ return editingSv; }, set editingSv(v){ editingSv = v; }, get cardSv(){ return cardSv; },"
     + " set cardSv(v){ cardSv = v; }, get pat(){ return pat; }, get boundary(){ return boundary; },"
     + " get boundaryClosed(){ return boundaryClosed; }, setBoundary: (b) => { boundary = b; boundaryClosed = b.length >= 3; },"
     + " commitPattern, editSurvey, deleteSurvey, moveSurveyRow, renameSurvey, renderSurveyTable, cardSurveyId,"
     + " committedPatternInfo, surveySettingsNow, applySurveySettings,"
+    + " trackLineCoverage, saveLineCov, lineDoneFrac, surveyProgress, surveyTideMoved, goToSurvey, uploadFromSurvey,"
+    + " repunchSurvey, punchAll, reverseSurvey, clearSurveyProgress, lineGeoKey,"
+    + " get lineCov(){ return lineCov; }, set lineCov(v){ lineCov = v; }, get patReverse(){ return patReverse; },"
+    + " setPatReverse: (v) => { patReverse = v; }, at: (k, p) => { runLineIdx = k; asv = p; },"
+    + " set missionLoaded(v){ missionLoaded = v; }, get punchAllBusy(){ return punchAllBusy; },"
     + " set: (o) => { patClip = o.clip || null; patTransits = o.transits || []; patLead = o.lead || [];"
     + "   drawn = o.drawn || []; ANCHORS = o.anchors || null; } };");
   return f(env);

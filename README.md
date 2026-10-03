@@ -1207,6 +1207,24 @@ of the operator.
      line ("S2 Rye ledge"; cyan, "editing", while ✎ has it), and the LINES card puts a heading
      with the survey's own plan and actual times in front of each survey's lines when there is
      more than one.
+   - *Running the surveys* (2026-10-02, phase 3a). Click a row and it shows four more
+     buttons. **Go-To** sends the boat to the survey's start (its first waypoint), routed as any
+     Go-To. **Upload from** uploads the plan *from* that survey on - it and everything after it,
+     the approach routed from the boat; the surveys before it are left out, and the banner says
+     so. **Backwards** punches the survey again from its other end - entered at the far end of
+     its last line, the lines in reverse order and each the other way - and puts it back where it
+     stands (it then reads **Forwards**); the card's own **Backwards** box does the same for a
+     drawing, and it is one of the settings each survey records. **Clear** forgets the survey's
+     progress. **Progress**: each row reads ✓ when every line is done, **n/m** while some are,
+     from what this page has seen her run ON each line - 90% of a line's coverage, leads left
+     out, makes it done; it is kept in this browser and survives a reorder, a refresh and a
+     re-punch over the same water. **The water each survey was cut at** is recorded at Add to
+     plan; once the level has moved a quarter meter either way the row shows ⚠ and its tip says
+     which way and what it means (fallen: its lines were cut for deeper water than there is).
+     **Punch all** (beside the table's heading) punches every survey with a recorded drawing
+     again, each with its own settings, against the chart and the water now, and replaces each
+     where it stands; a survey the punch refuses is left exactly as it was, and the banner names
+     it and why. A hold before a survey is the next feature.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a

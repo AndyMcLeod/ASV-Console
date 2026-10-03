@@ -600,6 +600,28 @@ check("16e. a survey's settings that are not what they claim are REFUSED in word
       and open(_C.MISSION_PATH, "rb").read() == st_before,
       "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in st_said.items()))
 
+# 16f-16g. THE WATER IT WAS CUT AT AND THE BACKWARDS FLAG (sequenced surveys phase 3a, 2026-10-02): a survey records the
+# water level its punch was judged at and when, and its settings whether it runs backwards - all through both dicts,
+# all type-checked.
+W_SURVEYS = [dict(SURVEYS[0], water_m=0.39, punched_at="2026-10-02T21:40:00.000Z", settings=dict(ST, reverse=True)),
+             dict(SURVEYS[1], water_m=None, punched_at=None)]
+_, w_err = attempt(_C.save_mission, sv_plan(surveys=W_SURVEYS))
+w_back = _C.load_mission().get("surveys")
+check("16f. a survey's water level and punch time, and its BACKWARDS flag, are saved and loaded as they were",
+      w_err is None and w_back == W_SURVEYS, "save: %s; loaded %s" % (w_err or "ok", json.dumps(w_back)[:140]))
+w_before = open(_C.MISSION_PATH, "rb").read()
+w_bad = {"a water level as text": sv_plan(surveys=[dict(SURVEYS[0], water_m="0.4")]),
+         "a water level that is a bool": sv_plan(surveys=[dict(SURVEYS[0], water_m=True)]),
+         "an infinite water level": sv_plan(surveys=[dict(SURVEYS[0], water_m=float("inf"))]),
+         "a punch time that is a number": sv_plan(surveys=[dict(SURVEYS[0], punched_at=12)]),
+         "a punch time too long": sv_plan(surveys=[dict(SURVEYS[0], punched_at="x" * 60)]),
+         "backwards as text": sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, reverse="yes"))])}
+w_said = {k: refused(v) for k, v in w_bad.items()}
+check("16g. a water level, punch time or backwards flag that is not what it claims is REFUSED in words, naming the "
+      "survey, and nothing is written",
+      all(w_said.values()) and all("S1" in v for v in w_said.values()) and open(_C.MISSION_PATH, "rb").read() == w_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in w_said.items()))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

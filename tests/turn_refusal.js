@@ -220,6 +220,8 @@ function makeWorld(opts) {
     // The survey table (sequenced surveys phase 2, 2026-10-02) is tests/survey_table.js's subject: inert here, and with
     // no survey being edited every Add to plan is the ordinary new survey this suite has always committed.
     + "let editingSv = null, cardSv = null; const renderSurveyTable = () => {}; const cardSurveyId = () => null;\n"
+    // phase 3a: punchOut reads the Backwards flag (forwards here, as every punch in this suite has been)
+    + "let patReverse = false; const runBackwards = (o) => o.slice().reverse().map(s => [s[1], s[0]]);\n"
     + "const surveySettingsNow = () => null; const replaceSurvey = () => {}; const surveyById = () => null;\n"
     + "const surveyLabel = () => '';\n"
     + "const rebuildNogo = () => { nogo.builtOffset = sea.waterOffset; };   // the model's own rebuild is not under test\n"

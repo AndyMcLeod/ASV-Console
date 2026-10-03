@@ -461,14 +461,20 @@
       #sv_table .svbr{flex-basis:100%;height:0;}
       #sv_table .svinfo{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);white-space:nowrap;}
       #sv_table button{width:15px;height:16px;padding:0;font-size:9px;line-height:1;flex:0 0 auto;}
+      /* the picked row's actions (3a): short labels, two to a line in the ~125 px card (four lines on the first try) */
+      #sv_table .svacts{display:flex;flex-wrap:wrap;gap:2px;width:100%;}
+      #sv_table .svacts button{width:auto;padding:0 4px;font-size:8.5px;}
+      #sv_head{display:flex;align-items:center;gap:4px;}
+      #sv_head button{margin-left:auto;width:auto;height:16px;padding:0 5px;font-size:8.5px;}
     </style>
-    <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;">Surveys, in run order</div>
+    <div id="sv_head" style="display:none;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;"><span>Surveys, in run order</span><button class="ctl small" id="sv_punchall">Punch all</button></div>
     <div id="sv_table" style="display:none"></div>
     <div class="phint" id="sv_note" style="display:none"></div>
     <div class="prow"><label>Align</label>
       <select id="sp_align" title="Where the leftover margin goes across the survey width">
         <option value="0" selected>Start</option><option value="1">Center</option><option value="2">Finish</option>
       </select></div>
+    <div class="prow"><label>Backwards</label><input type="checkbox" id="sp_reverse" style="width:auto" title="RUN THE SURVEY BACKWARDS: Punch Out walks the pattern from its other end - entered at the far end of its last line, the lines in reverse order and each the other way. The same coverage; the turns and leads are built for the reversed path. Recorded with the survey (✎ puts it back)."/></div>
     <div class="prow"><label>Spacing m</label><input type="number" id="sp_spacing" min="0.5" step="0.5" title="Line spacing - type to force it, or set it by placing the 3rd (C) point"/></div>
     <div class="prow"><label>Direction°</label><input type="number" id="sp_dir" min="0" max="359" step="1" title="Survey line bearing (°true) — type to rotate the pattern (keeps spacing + box), or set it by placing the 3rd (C) point"/></div>
     <div class="prow"><label>Line len</label><span class="phint" id="sp_len" style="color:var(--ink);">--</span></div>
@@ -991,7 +997,8 @@ import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STA
 // THE SURVEYS IN THE PLAN (sequenced surveys, phase 1, 2026-10-02): which survey each line and waypoint belongs to,
 // the surveys in run order, and the survey's number staying with it. See the module header.
 import { normalizeSurveys, surveyPoints, pathThroughSurveys,
-         surveyEntries, moveSurvey, removeSurvey, replaceSurvey, surveyLabel } from "/static/js/surveys.js";
+         surveyEntries, moveSurvey, removeSurvey, replaceSurvey, surveyLabel,
+         runBackwards, surveyStartIdx, waypointsFrom, addCoverage, coveredM } from "/static/js/surveys.js";
 // EVERY CHART READ OF THE EXTRACT, KEPT AND MERGED (2026-10-02): what is already read, the reads as one set of
 // structures, and a plan too big for one read cut into boxes that are not. See the module header.
 import { INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
@@ -4932,6 +4939,9 @@ let pat = {A:null, B:null, C:null, align:0};   // align 0=start 1=center 2=finis
 let editingSv = null;
 // THE SURVEY THE CARD DESCRIBES while no pattern is being drawn: the row picked in the table, else the last listed.
 let cardSv = null;
+// RUN IT BACKWARDS (phase 3a, 2026-10-02): the drawing's punch walks its runs from the other end - the last run first,
+// each the other way (runBackwards) - before the turns are built. A per-survey setting, recorded and put back by ✎.
+let patReverse = false;
 let patDrag = null;                            // handle being dragged: 'A'|'B'|'C'|'M' (M = whole-pattern move grip)
 let patMoveLast = null;                        // last cursor lat/lon during an 'M' drag (delta source)
 let patClip = null;                            // Punch-Out result: the RUNS, lead included [[p0,p1]..]
@@ -6703,6 +6713,75 @@ function accumLineTime(){
   if(dt>0 && S.run==="running" && S.behavior==="rth") rthSec += dt;
   lineClock = (S.run==="running") ? now : null;
 }
+// --- LINE PROGRESS (sequenced surveys phase 3a, 2026-10-02) -------------------------------------------------------- //
+// Which part of each committed line she has actually RUN: the meters along it, from its `a` end, that she covered while
+// accumLineTime had her ON it (runLineIdx - moving, aligned within 30°, within the cross-track tolerance). Time on a
+// line cannot say that - a set slows her, a pause stops her - so the table's done/partial state is coverage, not time.
+//   * KEYED BY THE LINE'S GEOMETRY, not its index: a reorder, a delete of another survey, a page refresh keep it; a
+//     re-punched line is a new line and starts with none, which is the truth.
+//   * Kept in this browser (localStorage) and pruned to the plan's lines on every save. It is a record of what this
+//     page SAW, not of the vessel: a run supervised from another tab, or before this build, is not in it.
+//   * A line is DONE at LINE_DONE_FRAC of its coverage (the leads are run, not coverage, and are left out): the first
+//     meters after a turn are flown before she is aligned, and a line that never reads 100% for that reason would
+//     never be done.
+const LINE_DONE_FRAC = 0.9;
+const COV_STEP_MAX_M = 40;            // one frame's step along a line; a bigger jump is a resume elsewhere, not coverage
+const LINE_COV_KEY = "asv_line_cov_v1";
+let lineCov = (() => { const v = lsGet(LINE_COV_KEY, {}); return (v && typeof v === "object" && !Array.isArray(v)) ? v : {}; })();
+let covPrev = null, covSavedAt = 0;
+// ⚠ THE SAME WATER WHICHEVER WAY IT IS RUN: the key names the line's two ends in a fixed order (the lower latitude, then
+// longitude, first) and coverage is measured from THAT end - so a survey punched again backwards over the same lines
+// keeps what she has already run. `flip` says the line's own a->b runs the other way to the key's frame.
+function lineCovFrame(L){
+  const fa = [+L.a.lat, +L.a.lon].map(v => v.toFixed(6)), fb = [+L.b.lat, +L.b.lon].map(v => v.toFixed(6));
+  const flip = (fb[0] < fa[0]) || (fb[0] === fa[0] && fb[1] < fa[1]);
+  return {key: (flip ? [...fb, ...fa] : [...fa, ...fb]).join(","), flip};
+}
+function lineGeoKey(L){ return lineCovFrame(L).key; }
+/** Called every telemetry frame after accumLineTime: the step she made along the line she is on, as coverage. */
+function trackLineCoverage(){
+  const L = (runLineIdx >= 0 && asv) ? (mission.lines || [])[runLineIdx] : null;
+  if(!L){ covPrev = null; return; }
+  const a = toEN(L.a, asv), b = toEN(L.b, asv);                  // the boat at the origin
+  const dx = b.e - a.e, dy = b.n - a.n, len = Math.hypot(dx, dy);
+  if(!(len > 0)){ covPrev = null; return; }
+  const s0 = Math.max(0, Math.min(len, -(a.e * dx + a.n * dy) / len));
+  const fr = lineCovFrame(L), key = fr.key, s = fr.flip ? len - s0 : s0;    // meters from the key's own end
+  if(covPrev && covPrev.key === key && Math.abs(s - covPrev.s) <= COV_STEP_MAX_M)
+    lineCov[key] = addCoverage(lineCov[key], Math.min(s, covPrev.s), Math.max(s, covPrev.s), 1);
+  covPrev = {key, s};
+  saveLineCov(false);
+}
+function saveLineCov(now){
+  if(!missionLoaded) return;                     // an unloaded plan has no lines - pruning to it would erase everything
+  const t = Date.now();
+  if(!now && t - covSavedAt < 5000) return;
+  covSavedAt = t;
+  const keep = new Set((mission.lines || []).map(lineGeoKey)), out = {};
+  for(const k in lineCov) if(keep.has(k)) out[k] = lineCov[k];
+  lineCov = out; lsSet(LINE_COV_KEY, out);
+}
+/** The share of line L's coverage (between its leads) she has run, 0..1. */
+function lineDoneFrac(L){
+  const len = distTo(L.a, L.b), from = Math.max(0, L.lead_in_m || 0), to = len - Math.max(0, L.lead_out_m || 0);
+  if(!(to > from)) return 0;
+  const fr = lineCovFrame(L);
+  const lo = fr.flip ? len - to : from, hi = fr.flip ? len - from : to;     // the coverage, in the key's frame
+  return Math.min(1, coveredM(lineCov[fr.key], lo, hi) / (hi - lo));
+}
+/** A survey's progress by DRAWN line (a line the keep-outs cut is done when all its parts are): {done, of, any}. */
+function surveyProgress(id){
+  const L = mission.lines || [];
+  let done = 0, of = 0, any = false;
+  for(const ks of drawnLines().lines){
+    if((L[ks[0]].sv || "") !== id) continue;
+    of++;
+    const fr = ks.map(k => lineDoneFrac(L[k]));
+    if(fr.every(f => f >= LINE_DONE_FRAC)) done++;
+    if(fr.some(f => f > 0)) any = true;
+  }
+  return {done, of, any};
+}
 // --- ACTIVITY: surveying is not the same thing as being on a survey ---------------- //
 // Andy, 2026-08-28: "Status must be clarified. When transiting between home and survey and
 // also between lines, the ASV is not surveying. It is transiting. This may be confusing
@@ -8083,6 +8162,7 @@ function updatePatReadout(){
 }
 function resetPattern(){ pat = {A:null,B:null,C:null,align:pat.align}; patDrag=null; patClip=null;
   editingSv = null;                              // the edit IS the pattern: discarding one ends the other (phase 2)
+  patReverse = false; { const rv = $("#sp_reverse"); if(rv) rv.checked = false; }   // a new drawing runs forwards (3a)
   patUnsafe=[]; patRed=[]; patJoined=false; patDropped=null; patFunnel=null; patRoutes=[]; patTransits=[]; patTrim=[]; $("#encbanner").style.display="none";
   // The strikes go with the pattern they were made against, and so does any rebuild still
   // scheduled for it — a timer left running would re-punch a pattern that no longer
@@ -8230,7 +8310,8 @@ function surveySettingsNow(){
           max_depth_m: dr.max > 0 ? dr.max : null,
           lead_mode: mission.lead_mode === "s" ? "s" : "m",
           lead_in: Math.max(0, +mission.lead_in || 0), lead_out: Math.max(0, +mission.lead_out || 0),
-          turn_ease: mission.turn_ease === "eased" ? "eased" : "arc"};
+          turn_ease: mission.turn_ease === "eased" ? "eased" : "arc",
+          reverse: !!patReverse};                 // run backwards (phase 3a)
 }
 /** Put a survey's recorded settings back on the card. A survey recorded before phase 2 has none, and the card keeps
  *  what it holds - said by the caller. */
@@ -8247,6 +8328,7 @@ function applySurveySettings(st){
   if($("#sp_lead_in"))   $("#sp_lead_in").value   = mission.lead_in;
   if($("#sp_lead_out"))  $("#sp_lead_out").value  = mission.lead_out;
   if($("#sp_turn_ease")) $("#sp_turn_ease").value = mission.turn_ease;
+  patReverse = !!st.reverse; if($("#sp_reverse")) $("#sp_reverse").checked = patReverse;   // 3a
   updateLeadNote(); updateEaseNote();
   return true;
 }
@@ -8269,7 +8351,7 @@ function renderSurveyTable(){
   const list = mission.surveys || [];
   const show = list.length > 0;
   tb.style.display = show ? "flex" : "none";
-  $("#sv_head").style.display = show ? "" : "none";
+  $("#sv_head").style.display = show ? "flex" : "none";
   const ed = editingSv ? surveyById(editingSv) : null;
   const note = $("#sv_note");
   note.style.display = ed ? "" : "none";
@@ -8277,32 +8359,70 @@ function renderSurveyTable(){
     + " replaces it where it stands (its number, name and place in the run kept). Reset cancels the edit.";
   if(!show){ if(_svTableKey !== "") { tb.innerHTML = ""; _svTableKey = ""; } return; }
   const pick = cardSurveyId();
-  const rows = list.map((s, i) => ({s, i, f: surveyFigures(s.id)}));
+  const rows = list.map((s, i) => ({s, i, f: surveyFigures(s.id), p: surveyProgress(s.id), t: surveyTideMoved(s)}));
+  const pa = $("#sv_punchall");
+  if(pa){ const can = list.some(s => s.pattern && s.pattern.A && s.pattern.B);
+    pa.disabled = !can || punchAllBusy;
+    pa.title = punchAllBusy ? "Punch all is running" : can
+      ? "PUNCH ALL: re-punch every survey that has a recorded drawing, each with its own settings, against the chart and the water level NOW, and replace each where it stands. A survey the punch refuses is left as it was, and the banner says which and why."
+      : "No survey here has a recorded drawing to punch again."; }
   const key = JSON.stringify([rows.map(r => [r.s.id, r.s.no, r.s.name || "", r.f.lines, Math.round(r.f.m), !!r.s.punched,
-                                            !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B)]), editingSv, pick]);
+                                            !!(r.s.pattern && r.s.pattern.A && r.s.pattern.B), r.p.done, r.p.of, r.p.any,
+                                            r.t == null ? null : r.t.toFixed(2), !!(r.s.settings && r.s.settings.reverse)]),
+                              editingSv, pick]);
   if(key === _svTableKey) return;
   // ⚠ NOT UNDER THE OPERATOR'S CURSOR: a rebuild while a name is being typed would throw the typing away.
   const foc = document.activeElement;
   if(foc && tb.contains(foc) && foc.tagName === "INPUT") return;
   _svTableKey = key;
   const n = list.length;
-  tb.innerHTML = rows.map(({s, i, f}) => {
+  tb.innerHTML = rows.map(({s, i, f, p, t}) => {
     const canEdit = !!(s.pattern && s.pattern.A && s.pattern.B);
+    // DONE / PARTIAL (3a): by drawn line, from what this page saw her run (trackLineCoverage).
+    const state = (p.of && p.done === p.of) ? "✓" : p.any ? p.done + "/" + p.of + " " : "";
+    const stateSay = (p.of && p.done === p.of) ? "DONE - every line run"
+                   : p.any ? "PARTIAL - " + p.done + " of " + p.of + " line(s) run" : "not run yet";
+    // THE TIDE SINCE THE PUNCH (3a): its depth window was judged at the level it was punched at.
+    const tideSay = t == null ? "" : t < 0
+      ? " ⚠ The water has FALLEN " + Math.abs(t).toFixed(2) + " m since it was punched, so its lines were cut for deeper water than there is now - Punch all re-cuts them."
+      : " ⚠ The water has RISEN " + t.toFixed(2) + " m since it was punched, so its lines stop short of water now deep enough - Punch all re-cuts them.";
     const tip = rocEsc(surveyLabel(s) + ": " + f.lines + " line(s), " + fmtDist(f.m) + " of coverage"
-      + (s.punched ? ", punched" : ", NOT punched") + ". Run " + (i + 1) + " of " + n + ". Click the row to show its "
-      + "figures on this card.");
+      + (s.punched ? ", punched" : ", NOT punched")
+      + (s.water_m != null ? " at a water level of " + (s.water_m >= 0 ? "+" : "") + s.water_m.toFixed(2) + " m" : "")
+      + ((s.settings && s.settings.reverse) ? ", run BACKWARDS" : "") + ". " + stateSay + ". Run " + (i + 1) + " of " + n
+      + "." + tideSay + " Click the row to show its figures on this card and its actions.");
+    const on = s.id === pick;
+    const acts = !on ? "" : `<span class="svbr"></span><span class="svacts">`
+      + `<button class="ctl small" id="svr${i}_go" data-act="goto" data-sv="${rocEsc(s.id)}" title="GO-TO this survey's START - the first waypoint of its first line, where the plan enters it - routed as any Go-To. Arm first.">Go-To</button>`
+      + `<button class="ctl small" id="svr${i}_from" data-act="from" data-sv="${rocEsc(s.id)}" title="UPLOAD the plan FROM this survey on: it and everything after it, the approach routed from the boat to its first line. The surveys before it are left out of the plan sent. Start then runs it.">Upload from</button>`
+      + `<button class="ctl small" id="svr${i}_rev" data-act="rev" data-sv="${rocEsc(s.id)}"${canEdit ? "" : " disabled"} title="${canEdit
+          ? "RUN IT BACKWARDS (or forwards again): punch this survey again from its other end - entered at the far end of its last line, the lines in reverse order and each the other way - and replace it where it stands."
+          : "No drawing was recorded for this survey, so it cannot be punched again."}">${(s.settings && s.settings.reverse) ? "Forwards" : "Backwards"}</button>`
+      + `<button class="ctl small" id="svr${i}_clr" data-act="clr" data-sv="${rocEsc(s.id)}"${p.any ? "" : " disabled"} title="CLEAR this survey's progress: forget which of its lines this page has seen run, so it reads as not run.">Clear</button>`
+      + `</span>`;
     return `<div class="svrow${s.id === pick ? " on" : ""}${s.id === editingSv ? " edit" : ""}" id="svr${i}" data-act="pick" data-sv="${rocEsc(s.id)}" title="${tip}">`
       + `<span class="svno">S${s.no}</span>`
       + `<input class="svname" id="svr${i}_name" data-sv="${rocEsc(s.id)}" maxlength="120" placeholder="name" value="${rocEsc(s.name || "")}" title="The survey's name - shown on the chart and in the LINES card. Its number S${s.no} stays with it."/>`
-      + `<span class="svbr"></span><span class="svinfo">${f.lines}L ${fmtDist(f.m).replace(" ", "")}</span>`
+      + `<span class="svbr"></span><span class="svinfo">${t == null ? "" : "⚠"}${state}${f.lines}L ${fmtDist(f.m).replace(" ", "")}</span>`
       + `<button class="ctl small" id="svr${i}_up" data-act="up" data-sv="${rocEsc(s.id)}"${i === 0 ? " disabled" : ""} title="Run this survey one place EARLIER. Upload sends the new order.">▲</button>`
       + `<button class="ctl small" id="svr${i}_dn" data-act="dn" data-sv="${rocEsc(s.id)}"${i === n - 1 ? " disabled" : ""} title="Run this survey one place LATER. Upload sends the new order.">▼</button>`
       + `<button class="ctl small" id="svr${i}_ed" data-act="edit" data-sv="${rocEsc(s.id)}"${canEdit ? "" : " disabled"} title="${canEdit
           ? "EDIT: load this survey's drawing back onto the card - its pattern, boundary, Max depth, leads and turn shape. Punch Out, then Update replaces it where it stands."
           : "No drawing was recorded for this survey (it was planned before surveys were kept), so it cannot be loaded back. Draw it again, Add to plan, and delete this one."}">✎</button>`
       + `<button class="ctl small" id="svr${i}_del" data-act="del" data-sv="${rocEsc(s.id)}" title="DELETE this survey from the plan: its lines and waypoints. The others keep their numbers and order.">✕</button>`
-      + `</div>`;
+      + acts + `</div>`;
   }).join("");
+}
+// THE TIDE SINCE A SURVEY WAS PUNCHED (3a): a quarter meter either way is flagged on its row. Smaller moves are inside
+// what a depth window is drawn to (and the model itself rebuilds at TIDE_REBUILD_M); a falling tide is the one that
+// matters for the boat - her lines were cut for deeper water than there is - and the row's tip says which way it went.
+const SURVEY_TIDE_FLAG_M = 0.25;
+/** The water's move since survey `s` was punched, in meters (negative = fallen), or null when under the flag or
+ *  when nothing was recorded (an un-punched survey, one from before 3a). */
+function surveyTideMoved(s){
+  if(!s || s.water_m == null || !isFinite(+s.water_m)) return null;
+  const d = (sea.waterOffset || 0) - (+s.water_m);
+  return Math.abs(d) >= SURVEY_TIDE_FLAG_M - 1e-9 ? d : null;
 }
 /** The survey the card describes while nothing is being drawn: the one being edited, the row picked, else the last
  *  listed (the one most recently added, on a plan nobody has reordered). Null on a plan with no surveys. */
@@ -8366,6 +8486,96 @@ function renameSurvey(id, name){
   if(v === (s.name || "")) return;
   s.name = v; saveMission(); renderSurveyTable(); renderLineTable(); render();
 }
+// --- THE PICKED ROW'S ACTIONS AND PUNCH ALL (sequenced surveys phase 3a, 2026-10-02) ------------------------------ //
+/** Go-To the survey's START - its first waypoint, where the plan enters it - as any Go-To. */
+async function goToSurvey(id){
+  const s = surveyById(id), i = surveyStartIdx(mission, id);
+  if(!s || i < 0) return;
+  if(!canCommand()){ flashNote("Go-To " + surveyLabel(s) + "'s start: arm first (and clear E-STOP)."); return; }
+  const p = mission.waypoints[i];
+  flashNote("Go-To " + surveyLabel(s) + "'s start - the first waypoint of its first line.");
+  await doGoTo({lat: p.lat, lon: p.lon});
+}
+/** Upload the plan FROM this survey on (doUpload's fromSv), behind the Upload button's own gate and its reason. */
+async function uploadFromSurvey(id){
+  const s = surveyById(id); if(!s) return;
+  const b = $("#b_upload");
+  if(b && b.disabled){ flashNote("Upload from " + surveyLabel(s) + ": not now - " + (b.title || "Upload is not available") + "."); return; }
+  await doUpload({fromSv: id});
+}
+/**
+ * PUNCH ONE SURVEY AGAIN AND PUT IT BACK WHERE IT STANDS - the shared step of Punch all and of running a survey
+ * backwards. Its own drawing and settings onto the card (the ✎ path), backwards toggled if asked, the real Punch Out
+ * (punchNow), and the real Add to plan (commitPattern) ONLY when the punch finished with nothing refused: a refusal,
+ * or a punch that did not finish (no chart - which would otherwise commit the drawing UN-punched), leaves the survey
+ * exactly as it was. Returns {id, label, ok | refused | skip}.
+ */
+async function repunchSurvey(id, opts){
+  const s = surveyById(id);
+  if(!s) return {id, label: id, skip: "no longer in the plan"};
+  const label = surveyLabel(s), P = s.pattern;
+  if(!(P && P.A && P.B)) return {id, label, skip: "no recorded drawing"};
+  resetPattern();
+  applySurveySettings(s.settings);
+  if(opts && opts.flip){ patReverse = !patReverse; if($("#sp_reverse")) $("#sp_reverse").checked = patReverse; }
+  pat = {A: {lat: P.A.lat, lon: P.A.lon}, B: {lat: P.B.lat, lon: P.B.lon},
+         C: P.C ? {lat: P.C.lat, lon: P.C.lon} : null, align: (P.align | 0)};
+  $("#sp_align").value = String(pat.align);
+  editingSv = id;
+  await punchNow();
+  if(editingSv !== id || !surveyById(id)){ resetPattern(); return {id, label, skip: "the edit was ended while it punched"}; }
+  const refused = !patClip ? {short: "the punch did not finish (" + ($("#sp_hint").textContent || "no chart").slice(0, 120) + ")"}
+                           : punchRefusal();
+  if(refused){ resetPattern(); return {id, label, refused: refused.short}; }
+  await commitPattern();
+  return {id, label, ok: true, lines: surveyFigures(id).lines};
+}
+let punchAllBusy = false;
+/** Run `work` with the card's own drawing settings put back after it, whatever it did to them. */
+async function withCardKept(title, why, work){
+  if(punchAllBusy) return null;
+  if(pat.A && !await guiConfirm(title, "The pattern being drawn" + (editingSv ? " (an edit)" : "") + " is DISCARDED. " + why,
+      {always: true})) return null;
+  const keep = surveySettingsNow();
+  punchAllBusy = true; renderSurveyTable();
+  try { return await work(); }
+  finally { punchAllBusy = false; resetPattern(); applySurveySettings(keep); surveysChanged(); }
+}
+/** Punch every survey again against the chart and the water NOW, each with its own settings, each in place. */
+async function punchAll(){
+  const list = (mission.surveys || []).map(x => x.id);
+  if(!list.length) return;
+  const res = await withCardKept("Punch all",
+    "Every survey with a recorded drawing is punched again, with its own settings, against the chart and the water "
+    + "level now, and replaced where it stands.", async () => {
+      const out = [];
+      for(const id of list){ showBanner("Punch all - " + (out.length + 1) + " of " + list.length + "…"); out.push(await repunchSurvey(id)); }
+      return out; });
+  if(!res) return;
+  const ok = res.filter(r => r.ok), bad = res.filter(r => r.refused), skip = res.filter(r => r.skip);
+  showBanner((bad.length ? "⚠ " : "") + "PUNCH ALL - " + ok.length + " of " + res.length + " re-punched"
+    + (ok.length ? " (" + ok.map(r => "S" + (surveyById(r.id) || {}).no + " " + r.lines + "L").join(", ") + ")" : "")
+    + (bad.length ? "; REFUSED, left as it was: " + bad.map(r => r.label + " - " + r.refused).join("; ") : "")
+    + (skip.length ? "; skipped: " + skip.map(r => r.label + " (" + r.skip + ")").join(", ") : "") + ".");
+}
+/** Punch the survey again from its other end (or forwards again), in place. */
+async function reverseSurvey(id){
+  const s = surveyById(id); if(!s) return;
+  const to = (s.settings && s.settings.reverse) ? "forwards" : "BACKWARDS";
+  const r = await withCardKept("Run " + surveyLabel(s) + " " + to.toLowerCase(),
+    surveyLabel(s) + " is punched again " + to.toLowerCase() + " and replaced where it stands.",
+    () => repunchSurvey(id, {flip: true}));
+  if(!r) return;
+  if(r.ok) flashNote(surveyLabel(surveyById(id) || s) + " now runs " + to + " (" + r.lines + " lines). Upload sends it.");
+  else showBanner("⚠ " + r.label + " NOT REVERSED - " + (r.refused || r.skip) + ". It is left as it was.");
+}
+/** Forget the survey's progress (which lines this page has seen run). */
+function clearSurveyProgress(id){
+  const s = surveyById(id); if(!s) return;
+  for(const L of (mission.lines || [])) if((L.sv || "") === id) delete lineCov[lineGeoKey(L)];
+  saveLineCov(true); renderSurveyTable();
+  flashNote(surveyLabel(s) + "'s progress cleared - it reads as not run.");
+}
 { const tb = $("#sv_table");
   if(tb){
     tb.addEventListener("click", e => {
@@ -8376,12 +8586,18 @@ function renameSurvey(id, name){
       else if(act === "dn") moveSurveyRow(id, +1);
       else if(act === "edit") editSurvey(id).catch(err => flashNote("Edit failed: " + ((err && err.message) || err)));
       else if(act === "del") deleteSurvey(id).catch(err => flashNote("Delete failed: " + ((err && err.message) || err)));
+      else if(act === "goto") goToSurvey(id).catch(err => flashNote("Go-To failed: " + ((err && err.message) || err)));
+      else if(act === "from") uploadFromSurvey(id).catch(err => flashNote("Upload failed: " + ((err && err.message) || err)));
+      else if(act === "rev") reverseSurvey(id).catch(err => flashNote("Reverse failed: " + ((err && err.message) || err)));
+      else if(act === "clr") clearSurveyProgress(id);
       else if(act === "pick"){ cardSv = id; updatePatReadout(); }
     });
     tb.addEventListener("change", e => {
       const el = e.target; if(el && el.classList && el.classList.contains("svname")) renameSurvey(el.dataset.sv, el.value);
     });
-  } }
+  }
+  const pa = $("#sv_punchall");
+  if(pa) pa.onclick = () => punchAll().catch(err => flashNote("Punch all failed: " + ((err && err.message) || err))); }
 async function commitPattern(){
   const sp = currentPattern(); if(!sp) return;
   // ⚠ THE PENDING RE-PUNCH IS SETTLED BEFORE ANY OF THIS IS READ. Striking a run
@@ -8463,7 +8679,11 @@ async function commitPattern(){
   const rec = {id: sv, no, name: editing ? (editing.name || "") : "", punched: !!patClip,
     pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
                        : null,
-    settings: surveySettingsNow()};            // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
+    settings: surveySettingsNow(),             // the drawing's own settings, so ✎ can put them back (Andy's per-survey list)
+    // THE WATER IT WAS CUT AT (phase 3a): a punch is thrown away the moment the level moves (applyWaterOffset), so the
+    // level now IS the level its depth window was judged at. The table flags a survey the tide has since left behind.
+    water_m: patClip ? Math.round((sea.waterOffset || 0) * 1000) / 1000 : null,
+    punched_at: patClip ? new Date().toISOString() : null};
   for(let i = firstLine; i < mission.lines.length; i++) mission.lines[i].sv = sv;
   for(let i = firstWp; i < mission.waypoints.length; i++) mission.waypoints[i].sv = sv;
   if(editing){
@@ -10968,6 +11188,9 @@ async function punchOut(){
     const runs = keptRuns(clipped);
     const nStruck = clipped.length - runs.length;
     const ro=regionOrder(runs, ref, sp.direction, sp.spacing, legSafe);
+    // BACKWARDS (phase 3a): the same order walked from its other end, BEFORE the margins, leads and turns below are
+    // built - so each is built for the path she will fly, not reversed after the fact.
+    if(patReverse) ro.ordered = runBackwards(ro.ordered);
     // SHORTEN each survey segment (settle on-line + leave room for the turn to loop
     // within cleared water). Sized for the SEMICIRCLE, whose radius is half the
     // spacing; a teardrop reaches further outboard than this buys, and that is
@@ -12240,6 +12463,8 @@ $("#bnd_clr").onclick = clearBoundary;
 $("#sp_add").onclick = commitPattern;
 $("#sp_reset").onclick = ()=>{ resetPattern(); render(); };
 $("#sp_align").onchange = ()=>{ pat.align = parseInt($("#sp_align").value)||0; patClip=null; updatePatReadout(); render(); };
+// Backwards (3a) is geometry like the alignment: a changed direction is a different plan, so the punch goes with it.
+$("#sp_reverse").onchange = ()=>{ patReverse = !!$("#sp_reverse").checked; patClip=null; updatePatReadout(); render(); };
 // force line spacing: move C to the typed distance along the current direction
 $("#sp_spacing").onchange = ()=>{
   const v = parseFloat($("#sp_spacing").value);
@@ -13815,7 +14040,7 @@ function routeTooLong(n){
   return true;
 }
 // UPLOAD. A named function, and async, because it may have to ASK - see the chart-model branch.
-async function doUpload(){
+async function doUpload(opts){
  try{
   // Set before the first await and cleared in the finally, so every exit - refused,
   // blocked, thrown or sent - puts the button back exactly once.
@@ -13831,7 +14056,13 @@ async function doUpload(){
   // corner walk that yields to the screen by design, and the clearance guard commands the
   // boat at 4 Hz through all of it.
   const was = {gen: planGen, route: runRoute};
-  const wps = mission.waypoints || [];
+  // UPLOAD FROM A SURVEY (phase 3a, 2026-10-02): the survey table's "Upload from here" sends the plan FROM that survey's
+  // first waypoint on - it and everything after it - with the approach routed from the boat to it like any other.
+  // `opts` is the button's click event otherwise, which never carries `fromSv`. A survey with no waypoints is refused
+  // HERE, before the empty-plan branch below could take an empty slice for "clear the plan aboard".
+  const fromSv = (opts && typeof opts.fromSv === "string") ? opts.fromSv : null;
+  const wps = fromSv ? waypointsFrom(mission, fromSv) : mission.waypoints || [];
+  if(fromSv && !wps.length){ flashNote("Upload from that survey: it has no waypoints in the plan - nothing was sent."); return; }
   // The server refuses an empty plan in words, so the clear past this gate will essentially
   // never run - and that is the point rather than dead code: `runRoute` may hold the Go-To or
   // RTH she is still flying (this branch is reachable only while mission.waypoints is empty,
@@ -14157,6 +14388,16 @@ async function doUpload(){
       + "exactly as before, but no corner is being slowed for — the hull rounds every corner "
       + "of a route and this is what measures that.");
   stagedNote(r);
+  if(fromSv){
+    // SAID: the plan aboard is not the whole plan on the chart, and the surveys before this one are not in it.
+    const i = (mission.surveys || []).findIndex(x => x.id === fromSv), sv = (mission.surveys || [])[i];
+    const left = (mission.surveys || []).slice(0, Math.max(0, i)).map(x => "S" + x.no);
+    showBanner("UPLOADED FROM " + (sv ? surveyLabel(sv) : fromSv) + " (" + plan.route.length + " waypoints)"
+      + (left.length ? " - " + left.join(", ") + " " + (left.length === 1 ? "is" : "are") + " NOT in the plan sent" : "")
+      + ". Start runs it from that survey's first line.");
+    if(planIntent) planIntent.why.push({t: "info", s: "uploaded from " + (sv ? surveyLabel(sv) : fromSv)
+      + (left.length ? "; " + left.join(", ") + " left out" : "")});
+  }
   render();
  }catch(e){ flashNote("Upload failed: " + ((e && e.message) || e)); }
  finally{ uploadBusy = false; applyCmdState(S); }
@@ -15972,7 +16213,7 @@ function onState(s){
     // governor reads for the role - so the role describes THIS frame, not the last.
     // The clearance guard runs first of all, because safety outranks the role.
     clearanceGuard();
-    accumLineTime(); speedGovernor(); speedReconcile(s, st); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); renderIntent(); render();
+    accumLineTime(); speedGovernor(); speedReconcile(s, st); logActivityChange(); updateRunTime(); updateMissionCard(); renderLineTable(); trackLineCoverage(); renderSurveyTable(); renderIntent(); render();
   }
   updateMissionCard();                           // the common per-behavior Mission readout
   renderRoc();                                   // ROC · HOME card (from s.roc)

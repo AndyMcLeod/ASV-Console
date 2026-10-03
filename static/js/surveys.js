@@ -211,6 +211,54 @@ export function replaceSurvey(m, id, lines, wps){
   }
 }
 
+// --- PHASE 3a (2026-10-02): run a survey backwards, upload from a survey, its line progress --------------------------
+//
+// Andy's calls: "reverse" means the WHOLE SURVEY BACKWARDS - entered at the far end of its last line, the lines run in
+// reverse order and each the other way: the same coverage, the path the punch made walked from its other end. And
+// the hold before a survey is the NEXT feature, not this one.
+
+/** The punch's ordered runs, walked from the other end: the last run first, each run the other way. Applied BEFORE
+ *  the turns, leads and margins are built, so every one of them is built for the path she will fly. */
+export function runBackwards(ordered){
+  return (ordered || []).slice().reverse().map(s => [s[1], s[0]]);
+}
+
+/** The index of survey `id`'s first waypoint - where the boat enters it - or -1 when it has none. */
+export function surveyStartIdx(m, id){
+  return (m.waypoints || []).findIndex(p => svOf(p) === id);
+}
+
+/** The plan's waypoints FROM survey `id` on: that survey, everything after it (later surveys, free waypoints).
+ *  Empty when the survey has no waypoints - never the whole plan, which would upload the surveys asked to be left. */
+export function waypointsFrom(m, id){
+  const i = surveyStartIdx(m, id);
+  return i < 0 ? [] : (m.waypoints || []).slice(i);
+}
+
+/**
+ * Coverage along one line as a list of [lo, hi] intervals in meters from its `a` end, merged. A run that pauses, or
+ * crosses the line twice, adds pieces; overlapping and touching pieces are one. `gapM` closes a hole smaller than a
+ * telemetry step (a frame dropped while she was on the line) - not a hole she left.
+ */
+export function addCoverage(list, lo, hi, gapM){
+  const g = gapM || 0;
+  if(!(hi > lo)) return (list || []).slice();
+  const all = [...(list || []), [lo, hi]].sort((x, y) => x[0] - y[0]);
+  const out = [];
+  for(const [a, b] of all){
+    const last = out[out.length - 1];
+    if(last && a <= last[1] + g) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+/** How many meters of [from, to] the intervals cover. */
+export function coveredM(list, from, to){
+  let m = 0;
+  for(const [a, b] of (list || [])) m += Math.max(0, Math.min(b, to) - Math.max(a, from));
+  return m;
+}
+
 /** The survey's label, as the table, the chart and the LINES card all print it: "S3" or "S3 Rye ledge". */
 export function surveyLabel(s){
   if(!s) return "";
