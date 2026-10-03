@@ -339,6 +339,9 @@ export function timeToEntry(p, vel, ko, buf, horizonS = HORIZON_S, stepS = STEP_
  * @param {number}  twMs    through-water speed, m/s
  * @param {{e,n}}   drift   ground velocity that would remain with the engines stopped
  * @param {Array}   route   waypoints AHEAD of the boat, {e,n}, nearest first
+ * `opts.twAt(t)` (optional): her through-water speed `t` s from now, for a boat that is SLOWING - coast.js slowProfile,
+ * the in-gear cut as she flies it (2026-10-03). Each step is walked at the speed she has at its START, the faster end.
+ * Without it every step is walked at `twMs`, as it always was.
  * @returns {{t, at, i}|null} when it first enters the buffer, where, and WHICH waypoint of
  *                          `route` it was steering toward at the time. A boat ALREADY inside
  *                          returns t = 0, never null - "we are in it" and "we will never be
@@ -358,9 +361,11 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
   const swing = (opts.turnRateDegS ?? PROJECT_TURN_RATE_DEG_S) * step;
   const approach = opts.approachM ?? PROJECT_APPROACH_M;
   const dr = drift || { e: 0, n: 0 };
+  const twAt = typeof opts.twAt === "function" ? opts.twAt : null;
   let e = p.e, n = p.n, h = hdgDeg, i = 0, prev = { e: p.e, n: p.n };
   for (let t = step; t <= horizon; t += step) {
     const tgt = route[i];
+    const tw = twAt ? twAt(t - step) : twMs;           // a boat slowing: her speed at the step's start
     // ⚠⚠ THE BOW IS CRABBED INTO THE SET, AS THE VESSEL'S OWN LINE-FOLLOWER CRABS IT (2026-09-29, the deviation
     // chatter). The projection swung the bow straight at the waypoint and ADDED the set, so in a cross-set it
     // predicted a boat that bows downstream of every leg - one that pursues the waypoint and is carried off it -
@@ -374,11 +379,11 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
     // projection says so. The swing from her present heading, at the hull's turn rate, is unchanged.
     const brg = Math.atan2(tgt.e - e, tgt.n - n);
     const dCross = dr.e * Math.cos(brg) - dr.n * Math.sin(brg);          // the set, + = right of the way to it
-    const crab = Math.asin(Math.max(-CRAB_MAX_SIN, Math.min(CRAB_MAX_SIN, dCross / twMs)));
+    const crab = Math.asin(Math.max(-CRAB_MAX_SIN, Math.min(CRAB_MAX_SIN, dCross / tw)));
     h = turnToward(h, (brg - crab) / D2R, swing);
     const a = h * D2R;
-    e += (twMs * Math.sin(a) + dr.e) * step;
-    n += (twMs * Math.cos(a) + dr.n) * step;
+    e += (tw * Math.sin(a) + dr.e) * step;
+    n += (tw * Math.cos(a) + dr.n) * step;
     if (blocked({ e, n }, ko, buf)) return { t, at: { e, n }, i };
     // ⚠⚠ CONSUME EVERY WAYPOINT THIS STEP PASSED, NOT ONE OF THEM. The advance used to sit
     // outside any loop, so `i` rose by at most 1 per step while the position rose by

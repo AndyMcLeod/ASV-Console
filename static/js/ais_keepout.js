@@ -47,7 +47,7 @@ import { hullBox, velocityEN } from "./targets.js";
 import { bbOf } from "./geometry.js";
 import { HORIZON_S } from "./guard.js";
 import { clearanceM } from "./keepouts.js";
-import { coastLc, coastRun, slowLaw, slowRun } from "./coast.js";
+import { coastLc, coastRun, slowLaw, slowRun, SLOW_LAG_RAMP_MS } from "./coast.js";
 
 /** The hull assumed for a contact that broadcasts no size, meters. Andy's numbers. */
 export const AIS_DEFAULT_LENGTH_M = 20;
@@ -106,15 +106,21 @@ export function aisInReach(own, polys, m = AIS_LOOKAHEAD_M) {
  * this used to apply allowed 15.4 m and 6.1 s. So a vessel that declares `maneuvering.slowdown` is answered with
  * THAT law (coast.js slowRun); one that declares only `maneuvering.coast` keeps the coast law (coastRun); neither, 50 m.
  * The DriX: ~87 m at her real 6.2 kn through the water (100 m in a 1.75 kn set), ~93 m at a literal 7 kn, ~124 m at
- * 14 kn - and that last is an extrapolation, since her logs never show her above ~10.6 kn through the water.
+ * 14 kn - and that last is an extrapolation, since her logs never show her above ~10.6 kn through the water. The page
+ * asks it with the console's command delay too (`latencyS`, below): ~90 / ~96 / ~131 m.
  *
  * @param {object} man     the vessel's `maneuvering` block ({coast, slowdown}); a bare coast block (it has `from_kn`)
  *                         is still taken, as the coast law alone - the form this function took before 2026-10-03
  * @param {number} twMs    her speed through the water, m/s
  * @param {number} lowMs   the speed the guard slows her to (LOW), m/s
  * @param {number} driftMs the set's speed, m/s
+ * @param {number} latencyS the console's own delay before her SLOW reaches her (the page passes SPEED_CMD_LATENCY_S):
+ *                          she runs on at her speed - and the set with her - for that long first. ⚠ ADDED 2026-10-03
+ *                          (Andy: "fix the guard's model of slowing down"): without it, a contact first in reach at
+ *                          7 kn read 20.1 s to entry against the 20 s HOLD_S - a tenth of a second of margin - and at
+ *                          14 kn the slow-down the guard offered could not be had before the hold fired. 0 = as before.
  */
-export function aisReachM(man, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M) {
+export function aisReachM(man, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M, latencyS = 0) {
   const bare = !!(man && man.from_kn != null);
   const law = bare ? null : slowLaw(man && man.slowdown);
   let run = null;
@@ -124,7 +130,11 @@ export function aisReachM(man, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M
     run = lc ? coastRun(twMs, lowMs, lc.lc) : null;
   }
   if (!run) return baseM;
-  return baseM + run.m + (driftMs > 0 ? driftMs * run.s : 0);
+  const d = driftMs > 0 ? driftMs : 0;
+  // ⚠ RAMPED IN ACROSS THE HALF KNOT ABOVE THE TARGET, as the dead time is (SLOW_LAG_RAMP_MS): charged in full it made the
+  // reach jump 50.0 -> 52.1 m between 4.000 and 4.001 kn - the frame-to-frame flicker at LOW the ramp exists to stop (review)
+  const ramp = Math.min(1, Math.max(0, twMs - (run.v1eff != null ? run.v1eff : lowMs)) / SLOW_LAG_RAMP_MS);
+  return baseM + run.m + d * run.s + (latencyS > 0 ? (twMs + d) * latencyS * ramp : 0);
 }
 
 const D2R = Math.PI / 180;

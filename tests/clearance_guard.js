@@ -647,6 +647,8 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // world it always was (tests/ais_avoid.js is where a contact stands).
   const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
           AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+  // the guard's model of slowing down (2026-10-03): the in-gear profile, and the console's command delay
+  const { slowLaw, slowProfile } = require("../static/js/coast.js"), { SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
   const GUARD_HOLD_S = G4.HOLD_S;                    // the way round's run-out (2026-09-28)
   let aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
   let aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
@@ -725,6 +727,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
                      + grab(H, "sendSpeed") + NL2 + grab(H, "commandSpeed") + NL2
                      // the slow-down that MAKES WAY (2026-09-26): asked by rung 2 and the hold's lieu
                      + grab(H, "slowestMakingWayKey") + NL2 + grab(H, "slowKeyFor") + NL2
+                     // "already slow" by what she is doing, the slow-down flown as she flies it (2026-10-03)
+                     + H.match(/const IN_CUT_MS = [^;]*;/)[0] + NL2 + grab(H, "cutAge") + NL2 + grab(H, "cutUnderWay") + NL2
+                     + grab(H, "slowingOpts") + NL2 + grab(H, "twNowMs") + NL2
                      + grab(H, "setMsNow") + NL2 + grab(H, "makesWayKey") + NL2
                      // ⚠ THE LAUNCH GRANT (2026-09-19). clearanceGuard asks grantNow() on EVERY
                      // frame, above every branch, so a bundle without it is a bare ReferenceError on

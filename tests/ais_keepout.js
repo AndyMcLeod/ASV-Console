@@ -330,6 +330,24 @@ console.log("An AIS contact as a keep-out:");
         + "dead time there made it 56.8 m), and the dead time is whole from half a knot over LOW on",
         () => just > 50 && just < 50.1 && Math.abs(half - halfMinus) < 0.05,
         () => "4.001 kn " + just.toFixed(3) + " m; 4.499 / 4.500 kn " + halfMinus.toFixed(3) + " / " + half.toFixed(3) + " m");
+  // THE CONSOLE'S OWN COMMAND DELAY (2026-10-03, Andy: "fix the guard's model of slowing down"): the page asks the reach with
+  // SPEED_CMD_LATENCY_S, and she runs on - with the set - for that long before the SLOW reaches her. Without it a contact first
+  // in reach at 7 kn read 20.1 s to entry against the 20 s hold threshold. A hull with nothing to shed adds nothing.
+  const LAT = require("../static/js/turns.js").SPEED_CMD_LATENCY_S;
+  const d62 = A.aisReachM(man, 6.2 * KN, low, 0, undefined, LAT), d7 = A.aisReachM(man, 7 * KN, low, 0, undefined, LAT);
+  const d14 = A.aisReachM(man, 14 * KN, low, 0, undefined, LAT), dSet = A.aisReachM(man, 7 * KN, low, 1.75 * KN, undefined, LAT);
+  check("11b3. ... and the page asks it WITH the console's 1 s command delay - her speed and the set run on for it first: "
+        + "90.36 m at 6.2 kn, 96.30 at 7, 131.22 at 14, 111.17 at 7 in a 1.75 kn set - nothing is added at LOW or with no datum, "
+        + "and it stays CONTINUOUS at LOW (the delay ramps in over the half knot, as the dead time does)",
+        () => LAT === 1 && Math.abs(d62 - 90.355) < 0.005 && Math.abs(d7 - 96.301) < 0.005 && Math.abs(d14 - 131.221) < 0.005
+              && Math.abs(dSet - 111.172) < 0.005 && Math.abs((d7 - r7) - 7 * KN * LAT) < 1e-9
+              && A.aisReachM(man, low, low, 0, undefined, LAT) === 50 && A.aisReachM(null, 7 * KN, low, 0, undefined, LAT) === 50
+              // ... and CONTINUOUS at LOW with it: the delay ramps in over the half knot above LOW as the dead time does
+              // (charged in full it jumped 50.0 -> 52.1 m between 4.000 and 4.001 kn - the flicker the ramp exists to stop)
+              && A.aisReachM(man, 4.001 * KN, low, 0, undefined, LAT) < 50.1
+              && A.aisReachM({ coast }, 4.001 * KN, low, 0, undefined, LAT) < 50.1
+              && Math.abs(A.aisReachM(man, 4.5 * KN, low, 0, undefined, LAT) - A.aisReachM(man, 4.499 * KN, low, 0, undefined, LAT)) < 0.05,
+        () => d62.toFixed(3) + " / " + d7.toFixed(3) + " / " + d14.toFixed(3) + " m; in the set " + dSet.toFixed(3) + " m");
   const cBare = A.aisReachM(coast, 7 * KN, low), cOnly = A.aisReachM({ coast }, 7 * KN, low);
   const badSlow = A.aisReachM({ coast, slowdown: { idle_kn: 0 } }, 7 * KN, low);
   check("11b2. ... and a hull with only a COAST datum keeps the coast law (the DriX's measured prop-out coast, 40.3 m "

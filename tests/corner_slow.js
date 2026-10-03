@@ -571,7 +571,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("speedGovernor"),
     grabLet("govLead"), grabFn("leadSpeedKey"),   // the lead (2026-10-03): null at once with no slowdown block
     grabFn("legIsLine"), grabFn("routeSpeedKeys"), grabFn("runLegKeys"),   // ... and what it reads with one (19g-19i)
-    grabFn("leadFor"), grabLet("viewLead"), grabLet("_legKeys"), grabFn("onLineM"),
+    grabFn("leadFor"), grabLet("viewLead"), grabLet("_legKeys"), grabFn("onLineM"), grabFn("twNowMs"),
     grabLet("guardEdgeAt"), grabLet("EDGE_REASSESS_MS"),    // the governor's raise rule: undeclared, a raise was a crash
     grabFn("deleteLineByIndex"),
     "function __commit(lines, patClip, patLead, transits){\n" + COMMIT + "\n}",

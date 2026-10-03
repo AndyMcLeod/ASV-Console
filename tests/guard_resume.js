@@ -203,6 +203,8 @@ var aisVessels = [], aisPolledAt = Infinity, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
 const { aisKeepouts, aisAvoidKeepouts, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
         AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+// the guard's model of slowing down (2026-10-03): the in-gear profile, and the console's command delay
+const { slowLaw, slowProfile } = require("../static/js/coast.js"), { SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
 const { clearanceM, blocked } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
@@ -381,6 +383,8 @@ eval([
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
+  // ... and "already slow" judged by what she is doing, and the slow-down flown as she flies it (2026-10-03)
+  H.match(/const IN_CUT_MS = [^;]*;/)[0], grab("cutAge"), grab("cutUnderWay"), grab("slowingOpts"), grab("twNowMs"),
   grab("patClipBufM"),                                                     // the standoff the resume's run-in is routed at (2026-09-26)
   grab("guardOverrideOk"), grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("aisNearestPoly"), grabDecl("guardKeyLast"),   // the override keyed on the hazard (2026-09-28)
   "const { blockedInfo } = require('../static/js/keepouts.js');",

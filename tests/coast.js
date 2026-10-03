@@ -402,6 +402,59 @@ check("12. a coast shorter than the hold disc the boat may wander anyway is not 
   }
 }
 
+// ── 26-28. THE CUT AS THE GUARD SEES IT COMING (Andy, 2026-10-03: "fix the guard's model of slowing down") ─────────────
+// slowProfile is the speed she will have t seconds on - the same law speedStep steps, with the command's latency and the
+// dead time still to run in front of it - and guard.js projectRoute walks it (`twAt`) where the slow-instead-of-hold
+// used to walk an instant LOW.
+{
+  const drix = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const L = C.slowLaw(drix.maneuvering.slowdown), RAMP = 1.5 * KN, DT = 0.25;
+  const p0 = C.slowProfile(7 * KN, 4 * KN, L);
+  // from 7 kn (the dead time whole) AND from 5.0 and 4.3 kn, where it is ramped in - the guard asks it from mid-cut speeds
+  let worst = 0;
+  for (const v0 of [7, 5.0, 4.3]) {
+    const pv = C.slowProfile(v0 * KN, 4 * KN, L), st = { lag: null }; let v = v0 * KN;
+    for (let k = 1; k <= 80; k++) { v = C.speedStep(v, 4 * KN, DT, st, L, RAMP); worst = Math.max(worst, Math.abs(v - pv(k * DT))); }
+  }
+  check("26. the profile IS the step: cuts to 4 kn from 7, 5.0 and 4.3 kn (the dead time whole, and ramped in) read off "
+        + "slowProfile at every 0.25 s tick equal coast.js speedStep's stepped speeds - the dead time, the decay and the catch "
+        + "at LOW - to a micrometer per second",
+        () => worst < 1e-9, "worst difference " + worst.toExponential(2) + " m/s over 20 s, three cuts");
+  const pL = C.slowProfile(7 * KN, 4 * KN, L, 1.0), pE = C.slowProfile(7 * KN, 4 * KN, L, 1.0, 2.5), pAll = C.slowProfile(7 * KN, 4 * KN, L, 1.0, 99);
+  check("27. the command's latency comes first (the cut begins 1 s later), the time since the cut was commanded comes off "
+        + "the delay still to run, a cut long commanded decays from now - and there is no profile with no law, or nothing to shed",
+        () => [2, 5, 9, 14].every((t) => Math.abs(pL(t) - p0(t - 1)) < 1e-12 && Math.abs(pE(t) - p0(t + 1.5)) < 1e-12)
+              && pAll(0.5) < 7 * KN && pAll(0) === 7 * KN
+              && C.slowProfile(7 * KN, 4 * KN, null) === null && C.slowProfile(4 * KN, 4 * KN, L) === null
+              && C.slowProfile(3.8 * KN, 3.0 * KN, L) === null,
+        "at 5 s: fresh " + (p0(5) / KN).toFixed(3) + " kn, with the latency " + (pL(5) / KN).toFixed(3) + ", commanded 2.5 s ago "
+          + (pE(5) / KN).toFixed(3));
+  const G = require("../static/js/guard.js"), { bbOf } = require("../static/js/geometry.js");
+  const wall = [{ e: 80, n: -50 }, { e: 120, n: -50 }, { e: 120, n: 50 }, { e: 80, n: 50 }];
+  const KO = { polys: [{ ring: wall, bb: bbOf(wall), kind: "a wall" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const route = [{ e: 400, n: 0 }], pj = (o) => G.projectRoute({ e: 0, n: 0 }, 90, 7 * KN, { e: 0, n: 0 }, route, KO, 3, o || {});
+  const fast = pj(), same = pj({ twAt: () => 7 * KN }), gear = pj({ twAt: C.slowProfile(7 * KN, 4 * KN, L, 1.0) }), low = pj({ twAt: () => 4 * KN });
+  // each step walked at the speed she has at its START, the faster end: summed independently here
+  const profG = C.slowProfile(7 * KN, 4 * KN, L, 1.0);
+  let xs = 0, ts = 0; while (xs < 77) { ts += 0.5; xs += profG(ts - 0.5) * 0.5; }      // and WHERE: she runs due east
+  check("28. guard.js projectRoute WALKS the profile: a wall 77 m on is met at 7 kn first, coming down in gear later, at an "
+        + "instant LOW last - each step at the speed she has at its START (the faster end; an independent sum agrees to the "
+        + "step) - and a constant `twAt` is the walk without it, to the step",
+        () => fast && gear && low && fast.t < gear.t && gear.t < low.t && gear.t === ts && Math.abs(gear.at.e - xs) < 1e-9
+              && same && same.t === fast.t
+              && same.at.e === fast.at.e && same.at.n === fast.at.n,
+        "entry at 7 kn " + (fast && fast.t) + " s, in gear " + (gear && gear.t) + " s (summed: " + ts + " s), at LOW " + (low && low.t) + " s");
+  // 28b. AND THE CRAB IS TAKEN FROM THE SPEED SHE IS DOING: coming down from 7 kn along a line with a wall 4 m to the north
+  // and a 1.5 kn set onto it, she crabs harder as she slows and holds the line - a crab kept at the 7 kn angle lets the
+  // set walk her into the wall's buffer.
+  const side = [{ e: -10, n: 4 }, { e: 600, n: 4 }, { e: 600, n: 40 }, { e: -10, n: 40 }];
+  const KS = { polys: [{ ring: side, bb: bbOf(side), kind: "a wall" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const crabbed = G.projectRoute({ e: 0, n: 0 }, 90, 7 * KN, { e: 0, n: 1.5 * KN }, [{ e: 600, n: 0 }], KS, 2, { twAt: profG });
+  check("28b. ... and the crab across a set is taken from the speed she is doing: slowing from 7 kn down a line 4 m off a "
+        + "wall with a 1.5 kn set onto it, she crabs harder as she comes down and holds the line clear of the 2 m buffer",
+        () => crabbed === null, "entry " + JSON.stringify(crabbed));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

@@ -152,6 +152,8 @@ var aisVessels = [], aisPolledAt = 0, aisShow = false, aisAvoid = null;
 var aisKoDrawn = [], aisKoNote = null, aisKoStale = false, aisKoBlindSaid = false, aisKoWantedAt = 0;
 const { aisKeepouts, aisAvoidKeepouts, aisAvoidKeepout, aisRoundKeepout, convexHull, AIS_KO_STALE_S,
         AIS_LOOKAHEAD_M, aisInReach, aisReachM } = require("../static/js/ais_keepout.js");   // the ladder's reach (2026-09-29)
+// the guard's model of slowing down (2026-10-03): the in-gear profile, and the console's command delay
+const { slowLaw, slowProfile } = require("../static/js/coast.js"), { SPEED_CMD_LATENCY_S } = require("../static/js/turns.js");
 const { clearanceM, blocked } = require("../static/js/keepouts.js");
 // The hold rung snapshots its own latches before writing them (2026-09-22), so a refusal
 // can put them back. `slowLieu` is one of them and is READ before anything writes it.
@@ -371,6 +373,10 @@ eval([
   grab("helmStoodDown"), grab("endGrant"),
   grabDecl("SPEED_RESEND_MS"), grabDecl("speedWant"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the slow-down that makes way (2026-09-26)
+  // ... and "already slow" judged by what she is doing, and the slow-down flown as she flies it (2026-10-03)
+  H.match(/const IN_CUT_MS = [^;]*;/)[0], grab("cutAge"), grab("cutUnderWay"), grab("slowingOpts"), grab("twNowMs"),
+  "function __setSpeedWant(v){ speedWant = v; }",            // the world's own record of the last speed sent (24g-24i)
+  "function __getSpeedWant(){ return speedWant; }",
   grab("guardOverrideOk"), grab("guardTrack"), grab("guardOnStation"), grab("onStationWhy"), grab("clearanceGuard"),   // on station: the drift (2026-09-30)
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisNearestPoly"), grab("aisAvoidOpen"),
@@ -2121,12 +2127,17 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   const DRIX = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
   const coastD = DRIX.maneuvering.coast, KN = 0.514444, lowD = DRIX.propulsion.speeds_kn.low * KN;
   const r7 = aisReachM(DRIX.maneuvering, 7 * KN, lowD), r14 = aisReachM(DRIX.maneuvering, 14 * KN, lowD), rLow = aisReachM(DRIX.maneuvering, lowD, lowD);
+  // ... and the console's own command delay on top, as the page asks it (2026-10-03, "fix the guard's model of slowing down")
+  const L7 = aisReachM(DRIX.maneuvering, 7 * KN, lowD, 0, undefined, SPEED_CMD_LATENCY_S);
+  const L14 = aisReachM(DRIX.maneuvering, 14 * KN, lowD, 0, undefined, SPEED_CMD_LATENCY_S);
   const wasM = V.VESSEL.maneuvering;
   V.VESSEL.maneuvering = DRIX.maneuvering;
   surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // her near end 85 m ahead
   const d85 = clearance.level;
-  surveying(7, [contact(110, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 95 m
+  surveying(7, [contact(110, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 95 m: inside 96.3, outside 92.7
   const d95 = clearance.level;
+  surveying(7, [contact(115, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 100 m
+  const d100 = clearance.level;
   surveying(4, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); S.status.speed_key = "low"; frame();  // 85 m, at LOW
   const d85low = clearance.level;
   V.VESSEL.maneuvering = { coast: coastD };                                                 // the coast datum alone
@@ -2135,10 +2146,11 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   V.VESSEL.maneuvering = wasM;
   surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 85 m on a hull with no datum
   const plain85 = clearance.level;
-  check("24c. EXTENDED FOR THE DRIX BY HER MEASURED SLOW-DOWN (2026-10-03: the guard's SLOW is flown in gear, a 3.3 s dead time then a decay toward her 3.65 kn idle) - 92.7 m at 7 kn, 124.0 m at 14 kn, 50 m at LOW. A hull 85 m ahead is answered at 7 kn and not at LOW, one 95 m ahead at neither; with her coast datum alone (the law this replaced, ~70 m) 85 m was out of reach, and on a hull with no datum it is too",
+  check("24c. EXTENDED FOR THE DRIX BY HER MEASURED SLOW-DOWN (2026-10-03: the guard's SLOW is flown in gear, a 3.3 s dead time then a decay toward her 3.65 kn idle) AND THE CONSOLE'S 1 s COMMAND DELAY - 96.3 m at 7 kn (92.7 without the delay), 131.2 m at 14 kn, 50 m at LOW. A hull 85 m ahead is answered at 7 kn and not at LOW, one 95 m ahead too (only the delay reaches her), one 100 m ahead at neither; with her coast datum alone (the law this replaced, ~74 m) 85 m was out of reach, and on a hull with no datum it is too",
         () => Math.abs(r7 - 92.700) < 0.005 && Math.abs(r14 - 124.019) < 0.005 && rLow === 50
-              && d85 !== "clear" && d95 === "clear" && d85low === "clear" && coast85 === "clear" && plain85 === "clear",
-        () => "reach " + r7.toFixed(2) + " / " + r14.toFixed(2) + " / " + rLow + " m; DriX: 85 m at 7 kn " + d85 + ", 95 m " + d95 + ", 85 m at LOW " + d85low + "; coast datum alone, 85 m: " + coast85 + "; no datum, 85 m: " + plain85);
+              && Math.abs(L7 - 96.301) < 0.005 && Math.abs(L14 - 131.221) < 0.005
+              && d85 !== "clear" && d95 !== "clear" && d100 === "clear" && d85low === "clear" && coast85 === "clear" && plain85 === "clear",
+        () => "reach " + L7.toFixed(2) + " / " + L14.toFixed(2) + " m with the delay (" + r7.toFixed(2) + " / " + r14.toFixed(2) + " without) / " + rLow + " m; DriX: 85 m at 7 kn " + d85 + ", 95 m " + d95 + ", 100 m " + d100 + ", 85 m at LOW " + d85low + "; coast datum alone, 85 m: " + coast85 + "; no datum, 85 m: " + plain85);
   // 24d. THE RELEASE ASKS THE REACH AT THE SPEED IT RESTORES (found on the transit rehearsal: slowed to LOW 58 m off
   //      TEST-1 - outside the DriX's 50 m at LOW - she was released, raised toward 7 kn, back inside 70 m and slowed
   //      again a second later). Slowed at 7 kn for a hull 65 m ahead, then at LOW with her 58 m ahead: the ladder reads
@@ -2181,6 +2193,174 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   check("24e. ... and asks it by the SAME law the ladder uses: on the DriX's whole block, slowed to LOW with a hull 80 m ahead (outside 50 m, inside her 92.7 m at 7 kn) she is NOT released - and 80 m is beyond the coast law's 70.5 m, so a release that lost the slowdown block would have let her go",
         () => whole.first && whole.low === "clear" && !whole.released && !whole.said && byCoast < 80 && bySlow > 80,
         () => "whole block: " + JSON.stringify(whole) + "; reach at 7 kn by the coast law " + byCoast.toFixed(1) + " m, by the in-gear law " + bySlow.toFixed(1) + " m");
+
+  // 24e2. ... AND WITH THE CONSOLE'S COMMAND DELAY (2026-10-03): slowed, then at LOW with the hull 94 m ahead - beyond the 92.7 m
+  // her law gives at 7 kn, inside the 96.3 m it gives with the 1 s delay the ladder itself counts - she is not released.
+  {
+    V.VESSEL.maneuvering = DRIX.maneuvering;
+    surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();
+    const first94 = clearance.slowed === true;
+    S = { ...S, status: { ...S.status, sog_kn: 4, speed_key: "low" } };
+    aisVessels = [contact(109, 0, { sog: 0, cog: null, heading: 90 })]; clock += 1000; aisPolledAt = clock; frame();
+    const low94 = clearance.level;
+    clock += 5000; aisPolledAt = clock; notes = []; frame();
+    const rel94 = clearance.slowed === false || guardLevel === "clear";
+    V.VESSEL.maneuvering = wasM;
+    check("24e2. ... and the release asks it WITH the console's 1 s command delay, as the ladder does: slowed, then at LOW "
+          + "with the hull 94 m ahead - beyond her 92.7 m without the delay, inside the 96.3 m with it - she is NOT released",
+          () => first94 && low94 === "clear" && !rel94,
+          () => "slowed first " + first94 + ", level at LOW " + low94 + ", released " + rel94);
+  }
+
+  // ── 24f-24h. THE GUARD'S MODEL OF SLOWING DOWN (Andy, 2026-10-03: "fix the guard's model of slowing down"). On the
+  // DriX's hull a slow-down takes the command's 1 s, a 3.3 s dead time and ~12 s of in-gear decay, and the ladder used to
+  // take it as instant on two counts: the slow-instead-of-hold walked her at LOW from the instant it decided, and both slow
+  // rungs judged "already slow" by the KEY she had been told - which the governor's lead puts on the wire ~15 s before
+  // she is at LOW. The distances below are worked out from the profile itself (coast.js slowProfile), so they move with
+  // the law rather than with this file.
+  {
+    const lawF = slowLaw(DRIX.maneuvering.slowdown);
+    const prof = slowProfile(7 * KN, lowD, lawF, SPEED_CMD_LATENCY_S, 0);
+    let dGear = 0; for (let t = 0.5; t <= 20 + 1e-9; t += 0.5) dGear += prof(t - 0.5) * 0.5;   // what she covers in HOLD_S
+    const dLow = 20 * lowD;                                                                         // ... and an instant LOW
+    const at = (entryM, o = {}) => {
+      surveying(o.kn || 7, [contact(entryM + 18, 0, { sog: 0, cog: null, heading: 90 })]);   // near end entry+15, 3 m buffer
+      S.status.speed_key = o.key || "survey";
+      if (o.headSetKn) { S.status.env_set_kn = o.headSetKn; S.status.env_set_deg = 270; S.status.sog_kn = (o.kn || 7) - o.headSetKn; }
+      // the console's own last speed command: `key`, sent `ago` ms back with her `twAt` kn through the water (cutAge's curve)
+      __setSpeedWant(o.told ? { key: o.wantKey || "low", asked: o.wantKey || "low", at: clock - (o.ago || 0), sends: 1,
+                                told: false, tw: (o.twAt || 7) * KN } : null);
+      frame();
+      return { level: clearance.level, slowed: clearance.slowed, key: clearance.slowKey, sent: paths().slice() };
+    };
+    // what she covers in the hold's 20 s, coming down in gear: with the command's delay `lat`, `el` s of the cut already run
+    const cover = (lat, el, v0 = 7 * KN) => { const pr = slowProfile(v0, lowD, lawF, lat, el); let x = 0;
+      for (let t = 0.5; t <= 20 + 1e-9; t += 0.5) x += pr(t - 0.5) * 0.5; return x; };
+    V.VESSEL.maneuvering = DRIX.maneuvering;
+    const mid = at((dLow + dGear) / 2), room = at(dGear + 8);
+    check("24f. THE SLOW-INSTEAD-OF-HOLD IS FLOWN AS SHE FLIES IT: on the DriX's hull at 7 kn, a hazard " + ((dLow + dGear) / 2).toFixed(1)
+          + " m ahead of the buffer - inside the " + dGear.toFixed(1) + " m she covers in the hold's 20 s coming down in gear, "
+          + "outside the " + dLow.toFixed(1) + " m an instant LOW covers - is HELD, not slowed; with " + (dGear + 8).toFixed(1)
+          + " m she is slowed in lieu, as before",
+          () => mid.level === "hold" && mid.sent.includes("/api/cmd/hold") && !mid.slowed
+                && room.level === "hold" && room.slowed && !room.sent.includes("/api/cmd/hold") && room.sent.includes("/api/cmd/speed"),
+          () => "between the two: " + JSON.stringify(mid) + "; with room: " + JSON.stringify(room));
+    const c0 = cover(0, 0), lat = at((c0 + dGear) / 2);
+    check("24f2. ... and it is flown THROUGH THE CONSOLE'S 1 s COMMAND DELAY: a hazard " + ((c0 + dGear) / 2).toFixed(1) + " m ahead - "
+          + "outside the " + c0.toFixed(1) + " m she would cover if the slow-down reached her at once, inside the " + dGear.toFixed(1)
+          + " m with the delay - is HELD",
+          () => lat.level === "hold" && lat.sent.includes("/api/cmd/hold") && !lat.slowed, () => JSON.stringify(lat));
+    const told = at(dGear + 8, { key: "low", told: true }), atLowNow = at(30, { kn: 4, key: "low" });
+    check("24g. ... and a cut ALREADY UNDER WAY is still offered it: told LOW (the governor's lead) and still at 7 kn through "
+          + "the water, the same hazard is SLOWED in lieu, latched, and nothing is re-sent - where the key alone said she was "
+          + "already slow and the hold fired; a boat that IS at LOW is held, as before",
+          () => told.slowed && told.key === "low" && !told.sent.includes("/api/cmd/hold") && !told.sent.includes("/api/cmd/speed")
+                && atLowNow.sent.includes("/api/cmd/hold") && !atLowNow.slowed,
+          () => "told LOW at 7 kn: " + JSON.stringify(told) + "; at LOW: " + JSON.stringify(atLowNow));
+    const cutSlow = at(80, { key: "low", told: true }), freshSlow = at(80), noisyLow = at(45, { kn: 4.1, key: "low", told: true, twAt: 4.1 });   // within her ~54 m reach at 4.1 kn, 21 s off: SLOW
+    check("24h. ... and the SLOW rung, met mid-cut, TAKES THE THROTTLE without re-sending it - the release check, not the "
+          + "governor, then decides when she speeds up - where it used to see nothing to take off and leave the governor to "
+          + "raise her; with the key at survey it sends LOW, as always; and a boat AT LOW with a tenth of a knot of noise is "
+          + "not mid-cut (IN_CUT_MS): nothing latched",
+          () => cutSlow.level === "slow" && cutSlow.slowed && cutSlow.key === "low" && !cutSlow.sent.includes("/api/cmd/speed")
+                && freshSlow.level === "slow" && freshSlow.slowed && freshSlow.sent.includes("/api/cmd/speed")
+                && noisyLow.level === "slow" && !noisyLow.slowed && !noisyLow.sent.includes("/api/cmd/speed"),
+          () => "told LOW at 7 kn, 80 m: " + JSON.stringify(cutSlow) + "; at survey: " + JSON.stringify(freshSlow)
+                + "; AT LOW with a tenth of a knot of noise (4.1 kn) - not a cut, nothing latched: " + JSON.stringify(noisyLow));
+    // 24g2. A LOW SENT LONG AGO THAT SHE HAS NOT COME DOWN ON BUYS NOTHING: the elapsed time comes off the dead time only
+    // while it is running or once she is slowing - a stale record, or a vessel not answering, gets the whole delay again.
+    const cFull = cover(SPEED_CMD_LATENCY_S, 99), stale = at((cFull + dGear) / 2, { key: "low", told: true, ago: 60000 });
+    check("24g2. ... but a LOW sent a minute ago that she has NOT come down on (still 7 kn) buys no credit off the dead time: "
+          + "a hazard between what full credit and no credit would leave her (" + cFull.toFixed(1) + " / " + dGear.toFixed(1)
+          + " m) is HELD, not slowed on the strength of a cut that never ran",
+          () => stale.level === "hold" && stale.sent.includes("/api/cmd/hold") && !stale.slowed,
+          () => JSON.stringify(stale));
+    // 24g3. AND A LOW SHE HAS NOT TAKEN BUYS NOTHING EITHER: sent 4 s ago (inside its dead time) but the vessel still reports
+    // survey - lost, refused, not yet arrived - the cut has not begun, and the hazard where 4 s of credit would read slowed is HELD.
+    const pCred = slowProfile(7 * KN, lowD, lawF, SPEED_CMD_LATENCY_S, 4);
+    let dCred = 0; for (let t = 0.5; t <= 20 + 1e-9; t += 0.5) dCred += pCred(t - 0.5) * 0.5;
+    const untaken = at((dCred + dGear) / 2, { key: "survey", told: true, ago: 4000 });
+    check("24g3. ... nor does a LOW sent 4 s ago that she has NOT taken (the vessel still reports survey): a hazard "
+          + ((dCred + dGear) / 2).toFixed(1) + " m ahead - outside the " + dCred.toFixed(1) + " m 4 s of credit would leave, inside "
+          + "the " + dGear.toFixed(1) + " m of a cut not begun - is HELD",
+          () => untaken.level === "hold" && untaken.sent.includes("/api/cmd/hold") && !untaken.slowed,
+          () => JSON.stringify(untaken));
+    // 24g4. A CUT IN ITS DEAD TIME IS CREDITED: LOW sent 2 s ago, she is still at 7 kn - on the curve, the dead time not
+    // yet run - and the 2 s come off it: a hazard between what she covers with the credit and without it is slowed in lieu.
+    const c2 = cover(SPEED_CMD_LATENCY_S, 2), inDead = at((c2 + dGear) / 2, { key: "low", told: true, ago: 2000 });
+    check("24g4. ... and a cut STILL IN ITS DEAD TIME is credited what it has run: LOW sent 2 s ago, she still at 7 kn (on the "
+          + "curve), a hazard " + ((c2 + dGear) / 2).toFixed(1) + " m ahead - inside the " + dGear.toFixed(1) + " m of a cut not begun, "
+          + "outside the " + c2.toFixed(1) + " m of one 2 s in - is slowed in lieu, nothing re-sent",
+          () => inDead.slowed && !inDead.sent.includes("/api/cmd/hold") && !inDead.sent.includes("/api/cmd/speed"),
+          () => JSON.stringify(inDead));
+    // 24g5. A FASTER WANT STILL ON ITS WAY IS NO CUT: she reports LOW, but the console's last command is SURVEY (the governor
+    // raising her). The SLOW rung sends LOW again - replacing the raise - and holds the throttle; it does not call it a cut.
+    const raising = at(80, { key: "low", told: true, wantKey: "survey" });
+    check("24g5. ... and a FASTER command still on its way is no cut: she reports LOW, the console last sent SURVEY - the SLOW "
+          + "rung sends LOW again (replacing the raise) and holds the throttle",
+          () => raising.level === "slow" && raising.slowed && raising.sent.includes("/api/cmd/speed"),
+          () => JSON.stringify(raising));
+    // 24h2. MID-DECAY, AND JUDGED THROUGH THE WATER: LOW sent `el` s ago, she has come down the curve to 5.5 kn; calm, and in a
+    // 1.75 kn head set (3.75 kn over the ground). Both are cuts under way: the SLOW rung takes the throttle, nothing re-sent.
+    const pS = slowProfile(7 * KN, lowD, lawF, SPEED_CMD_LATENCY_S, 0);
+    let elM = 0; while (pS(elM) > 5.5 * KN && elM < 60) elM += 0.05;
+    const midCalm = at(65, { kn: 5.5, key: "low", told: true, ago: Math.round(elM * 1000) });
+    const midSet = at(60, { kn: 5.5, key: "low", told: true, ago: Math.round(elM * 1000), headSetKn: 1.75 });
+    check("24h2. ... and MID-DECAY, judged THROUGH THE WATER: " + elM.toFixed(1) + " s into a cut, down the curve to 5.5 kn - in "
+          + "calm water, and in a 1.75 kn head set where she makes only 3.75 kn over the ground - the SLOW rung takes the "
+          + "throttle as a cut under way, nothing re-sent",
+          () => midCalm.level === "slow" && midCalm.slowed && !midCalm.sent.includes("/api/cmd/speed")
+                && midSet.level === "slow" && midSet.slowed && !midSet.sent.includes("/api/cmd/speed"),
+          () => "calm: " + JSON.stringify(midCalm) + "; head set: " + JSON.stringify(midSet));
+    // 24j. SLOW FIRST, THEN HOLD, MID-CUT - the ordinary approach. The SLOW rung sends LOW 80 m out; 6 s on she has come down
+    // her curve and the reading is HOLD: the slow-instead-of-hold is still asked, of the cut already flying, and answers it.
+    at(80);
+    const latched = clearance.slowed && paths().includes("/api/cmd/speed");
+    let x6j = 0; for (let t = 0.5; t <= 6 + 1e-9; t += 0.5) x6j += pS(t - 0.5) * 0.5;
+    S.status.speed_key = "low"; clock += 6000; aisPolledAt = clock;
+    asv = ll(x6j, 0); S.status.sog_kn = pS(6) / KN; sent = []; frame();
+    const j = { level: clearance.level, slowed: clearance.slowed, lieu: !!slowLieu, sent: paths().slice() };
+    check("24j. ... and SLOW FIRST, THEN HOLD, mid-cut - the ordinary approach: LOW sent 80 m out by the SLOW rung, 6 s on she "
+          + "has come down her curve and reads HOLD - the slow-instead-of-hold is still asked of the cut already flying (the "
+          + "SLOW rung's latch no longer shuts it out) and answers it: no hold",
+          () => latched && j.level === "hold" && j.lieu && !j.sent.includes("/api/cmd/hold"),
+          () => "latched by SLOW " + latched + "; 6 s on: " + JSON.stringify(j));
+    // 24h3. A BOAT TOLD A SPEED BELOW THE SET IS STALLED, NOT SLOWED: in a 3.75 kn head set LOW (4 kn) does not make way, so
+    // told LOW and still at 7 kn through the water she is NOT taken as a cut - the SLOW rung says nothing is being taken off.
+    const stalled = at(60, { key: "low", told: true, headSetKn: 3.75 });
+    check("24h3. ... and a boat told a speed BELOW the set is being stalled, not slowed: in a 3.75 kn head set, told LOW at 7 kn "
+          + "through the water, she is not taken as a cut under way - nothing latched",
+          () => stalled.level === "slow" && !stalled.slowed, () => JSON.stringify(stalled));
+    // 24k. THE CURVE STARTS FROM HER SPEED THROUGH THE WATER: the SLOW rung sends LOW in a 1.75 kn head set at 7 kn through the
+    // water (5.25 over the ground) - the record keeps 7 kn, or every later frame would read her as off her own curve.
+    at(80, { headSetKn: 1.75 });
+    const rec = __getSpeedWant();
+    check("24k. ... and the cut's curve starts from her speed THROUGH THE WATER when it was sent: LOW sent in a 1.75 kn head set "
+          + "at 7 kn through the water records 7 kn, not the 5.25 kn she makes over the ground",
+          () => rec && rec.key === "low" && Math.abs(rec.tw - 7 * KN) < 0.01,
+          () => "recorded " + (rec ? (rec.tw / KN).toFixed(2) + " kn for " + rec.key : "nothing"));
+    // 24i. THE EVERY-FRAME RE-CHECK FLIES IT TOO, from where she is, with the cut's elapsed time credited. Slowed in lieu
+    // 70 m from a parked hull; 6 s on she has come down as the law says - and it still answers; 6 s on still at 7 kn,
+    // the slow-down was taken but is not happening - and the hold fires.
+    const reCheck = (follows) => {
+      at(70);
+      const ok1 = clearance.slowed;
+      S.status.speed_key = "low";
+      const x6 = follows ? (() => { let x = 0; for (let t = 0.5; t <= 6 + 1e-9; t += 0.5) x += prof(t - 0.5) * 0.5; return x; })() : 6 * 7 * KN;
+      clock += 6000; aisPolledAt = clock;
+      asv = ll(x6, 0); S.status.sog_kn = follows ? prof(6) / KN : 7;
+      sent = []; frame();
+      return { first: ok1, level: clearance.level, slowed: clearance.slowed, sent: paths().slice(), x6: +x6.toFixed(1) };
+    };
+    const follows = reCheck(true), stalls = reCheck(false);
+    check("24i. ... and the EVERY-FRAME RE-CHECK flies it as well, the cut's elapsed time credited: slowed in lieu 70 m off, "
+          + "6 s on - having come down as her law says - it still answers it; 6 s on still at 7 kn, the slow-down taken but "
+          + "not happening, the hold fires",
+          () => follows.first && !follows.sent.includes("/api/cmd/hold") && follows.slowed
+                && stalls.first && stalls.sent.includes("/api/cmd/hold"),
+          () => "following her law: " + JSON.stringify(follows) + "; still at 7 kn: " + JSON.stringify(stalls));
+    V.VESSEL.maneuvering = wasM; __setSpeedWant(null);
+  }
 }
 
 // ── 25. THE OPERATOR'S WAIT IS TEN SECONDS (Andy, 2026-09-29: "reduce the wait for user input from 30 seconds to 10

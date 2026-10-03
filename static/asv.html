@@ -981,7 +981,7 @@ import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M
 // serve - the floats at Pepperrell Cove (Andy, 2026-09-30). Pure, like chartink.js: features in, gaps out.
 import { skinGaps, skinGapFeature, SKIN_KIND } from "/static/js/skin.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
-import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM, leadWant } from "/static/js/coast.js";
+import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM, leadWant, slowProfile } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
@@ -1415,6 +1415,69 @@ function slowKeyFor(driftMs, runningKey){
   if(!k) return null;
   const run = V.SPEED_KN[runningKey];
   return (run != null && V.SPEED_KN[k] >= run) ? null : k;
+}
+/**
+ * ⚠ "ALREADY SLOW" IS WHAT SHE IS DOING, NOT WHAT SHE WAS TOLD (2026-10-03, Andy: "fix the guard's model of slowing
+ * down"). slowKeyFor answers from the KEY she runs to, and on a hull that slows in gear the key and the speed part for
+ * ~15 s: the governor's lead (and a slow-radius turn, and the SLOW rung's own command) puts LOW on the wire ~46 m before
+ * she is at LOW. In that window the SLOW rung saw nothing to take off and latched nothing - the governor kept the
+ * throttle, and raised it when its slow leg ended with no release check - and the slow-instead-of-hold saw no slow-down
+ * to offer, so a hold reading there held her.
+ *
+ * ⚠⚠ A CUT IS RUNNING ONLY ON EVIDENCE (the review of this change, 2026-10-03). cutAge(key, tw) is the seconds since the
+ * console sent `key`, and null unless ALL of these hold:
+ *   * the hull has a measured in-gear slow-down - every other hull is exactly as it was;
+ *   * the console's OWN last speed command is `key` (speedWant): a faster want still on its way is not a cut, it is a
+ *     speed-up the vessel has not reported yet - judged by the reported key alone, the SLOW rung latched SLOWED and sent
+ *     nothing while the governor's raise arrived;
+ *   * the vessel reports `key` (or reports no key at all);
+ *   * her speed THROUGH THE WATER is on the cut's curve - no more than IN_CUT_MS over what slowProfile, from the speed she
+ *     was doing when it was sent (speedWant.tw), gives at that age. A LOW sent a minute ago that she has not come down on
+ *     is no cut; a boat ahead of the curve (a shorter dead time than the 3.3 s declared) is on it.
+ * The first cut of this judged it by the reported key and speed alone, then patched a stale record with "her speed over
+ * the ground 0.2 kn down since the send" - which a turn against the set fakes or hides, and which dropped a cut flown
+ * exactly to the model for the quarter second after its dead time.
+ * cutUnderWay adds that she is still more than IN_CUT_MS over the key, and that the key is the slowest that makes way
+ * (`making`): a boat told a speed BELOW the set is being stalled, not slowed (clearance_guard 15s4).
+ */
+const IN_CUT_MS = 0.25 * 0.514444;
+function cutAge(key, twMs){
+  const sd = V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown;
+  if(!sd || !key || !speedWant || speedWant.key !== key || !(speedWant.tw > 0) || !(twMs >= 0)) return null;
+  const st = (S && S.status) || {};
+  if(typeof st.speed_key === "string" && st.speed_key !== key) return null;
+  const law = slowLaw(sd), v1 = (V.SPEED_KN[key] || 0) * 0.514444;
+  const prof = law ? slowProfile(speedWant.tw, v1, law, SPEED_CMD_LATENCY_S, 0) : null;
+  if(!prof) return null;                                  // nothing to shed when it was sent: no cut
+  const el = Math.max(0, (Date.now() - speedWant.at) / 1000);
+  return twMs <= prof(el) + IN_CUT_MS ? el : null;
+}
+function cutUnderWay(runningKey, twMs, making){
+  const k = V.SPEED_KN[runningKey];
+  return k != null && runningKey === making && twMs > k * 0.514444 + IN_CUT_MS && cutAge(runningKey, twMs) != null;
+}
+/**
+ * THE SLOW-DOWN AS SHE FLIES IT, for a projection asked "would slowing to `key` answer it" (2026-10-03): {twMs, twAt} for
+ * guard.js projectRoute - her speed through the water from `v0`, held for the command's latency and the dead time still
+ * to run, then decaying in gear (coast.js slowProfile) - or {} on a hull with no measured slow-down, which keeps the
+ * instant-LOW walk it always had (its ramp is a second or two). The time already run comes off the delay only for a cut
+ * cutAge says is RUNNING (see above). Measured before this: at 7 kn the DriX was offered a slow-down from 41 m off the
+ * buffer edge where in gear she needs ~54 m, so in between the hold fired late, ~7 m closer.
+ */
+function slowingOpts(v0, key){
+  const sd = V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown;
+  if(!sd || !key) return {};
+  const v1 = (V.SPEED_KN[key] || 0) * 0.514444;
+  const prof = slowProfile(v0, v1, slowLaw(sd), SPEED_CMD_LATENCY_S, cutAge(key, v0) || 0);
+  return prof ? {twMs: v0, twAt: prof} : {};
+}
+/** Her speed through the water now, m/s (ground velocity less the set, as guardTrack measures it), or null. */
+function twNowMs(){
+  const st = (S && S.status) || {};
+  const gv = groundVel(st.cog_deg, st.sog_kn);
+  if(!gv) return null;
+  const dr = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0};
+  return Math.hypot(gv.e - dr.e, gv.n - dr.n);
 }
 /** The set now running, m/s, from the vessel's own report (0 while unknown - no telemetry is calm). */
 function setMsNow(){
@@ -3632,12 +3695,15 @@ function clearanceGuard(){
   // ... AND FROM FARTHER FOR A HULL THAT NEEDS THE WATER TO COME DOWN TO LOW FIRST ("extend for drix if necessary"):
   // aisReachM adds her own slow-down from the speed she is doing through the water, and the set meanwhile. MEASURED
   // for the DriX 2026-10-03: the guard's SLOW is flown IN GEAR (to idle, clutch in), not as a prop-out coast, and needs
-  // about twice the water - so her `maneuvering.slowdown` block is what answers (~87 m at her real 6.2 kn, ~124 m at
-  // 14 kn); a hull with only a coast datum keeps the coast law; at LOW, or with neither, 50 m. See ais_keepout.js.
+  // about twice the water - so her `maneuvering.slowdown` block is what answers (~90 m at her real 6.2 kn, ~131 m at
+  // 14 kn, the console's 1 s command delay included); a hull with only a coast datum keeps the coast law; at LOW, or
+  // with neither, 50 m. See ais_keepout.js.
   // `aisKo` stays whole for the readout, the return, the way round and the escape; `aisLadder` is what the rungs act on.
   const slowMan = (V.VESSEL && V.VESSEL.maneuvering) || null;   // the WHOLE block: aisReachM picks slowdown or coast
   const aisLowMs = (V.SPEED_KN.low || 0) * 0.514444, setMs = Math.hypot(drift.e, drift.n);
-  const aisReach = aisReachM(slowMan, vel ? Math.hypot(vel.e - drift.e, vel.n - drift.n) : 0, aisLowMs, setMs);
+  // ... AND THE CONSOLE'S OWN DELAY before that SLOW reaches her (2026-10-03): she runs on for SPEED_CMD_LATENCY_S first.
+  const aisReach = aisReachM(slowMan, vel ? Math.hypot(vel.e - drift.e, vel.n - drift.n) : 0, aisLowMs, setMs,
+                             undefined, SPEED_CMD_LATENCY_S);
   const aisLadder = aisInReach(p, aisKo, aisReach);
   // THE LOOK-AHEAD FOLLOWS THE PLAN WHEN THERE IS ONE - see guard.js's header for the two
   // reports that made this necessary and the numbers behind them. `guardTrack()` answers
@@ -3837,11 +3903,11 @@ function clearanceGuard(){
         const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
         const velBack = restoreVel(vel, drift, back);
         // ⚠⚠ AND OF THE CONTACTS IN REACH AT THAT SPEED (2026-09-29). The reach grows with the speed on a hull that
-        // needs water to come down to LOW (aisReachM: the DriX's is 50 m at LOW, ~93 m at 7 kn), and the release is a
+        // needs water to come down to LOW (aisReachM: the DriX's is 50 m at LOW, ~96 m at 7 kn), and the release is a
         // question about the speed it restores. Asked of the slowed boat's model it saw no contact at all: MEASURED on
         // the transit rehearsal, slowed to LOW 58 m off TEST-1 - outside her 50 m - she was released, the governor
         // raised her toward 7 kn, she was back inside 70 m and slowed again a second later (the Go-To run did the same).
-        const reachBack = aisReachM(slowMan, back, aisLowMs, setMs);
+        const reachBack = aisReachM(slowMan, back, aisLowMs, setMs, undefined, SPEED_CMD_LATENCY_S);
         const aisBack = reachBack > aisReach ? aisInReach(p, aisKo, reachBack) : aisLadder;
         const koBack = aisBack === aisLadder ? koAll
                      : aisBack.length ? {...nogo.ko, polys: [...nogo.ko.polys, ...aisBack]} : nogo.ko;
@@ -4053,6 +4119,18 @@ function clearanceGuard(){
         commandSpeed(key);
         flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to " + key
           + (key !== "low" ? " (low would not make way against the " + setTxt + ")" : "") + ".");
+      } else if(vel && cutUnderWay(runningKey, Math.hypot(vel.e - drift.e, vel.n - drift.n), slowestMakingWayKey(driftMs))){
+        // ALREADY TOLD, NOT YET SLOW (2026-10-03): she is coming down to `runningKey` - the governor's lead or a slow turn
+        // commanded it - and is not there yet. The rung TAKES THE THROTTLE without re-sending it (a re-send would restart
+        // the command's clock and nothing else), so the release check, not the governor, decides when she may speed up.
+        clearance.slowed = true; clearance.slowKey = runningKey;
+      } else if(speedWant && speedWant.key !== runningKey && runningKey === slowestMakingWayKey(driftMs)
+                && (V.SPEED_KN[speedWant.key] || 0) > (V.SPEED_KN[runningKey] || 0)){
+        // A FASTER WANT STILL ON ITS WAY (2026-10-03, the review): she reports the slow key, but the console's last command
+        // is faster - the governor raising her - and the vessel has not reported it yet. Seeing "nothing to take off" let that
+        // raise through toward a hazard reading SLOW; the slow key is sent again, which replaces the raise, and the rung holds.
+        clearance.slowed = true; clearance.slowKey = runningKey;
+        commandSpeed(runningKey);
       } else {
         // Nothing to take off: she is at the slowest speed that makes way, or already below it.
         // Said once a minute rather than commanded silently - a boat below the set is standing
@@ -4120,20 +4198,34 @@ function clearanceGuard(){
     // the day the helm rung learns another way in this is the line that stops a slow-down
     // being offered as an answer to being set on. Recorded rather than removed, and
     // recorded rather than claimed as covered.
-    if(trk && !clearance.slowed && vel){
+    // ⚠ AND ASKED OF A CUT UNDER WAY EVEN WHEN THE SLOW RUNG HAS LATCHED (2026-10-03, the review): an approach reads SLOW
+    // first, and on a hull that slows in gear "slowed" then means only that LOW is on the wire - she is still at 6-7 kn for
+    // ~15 s, so "the low speed IS the state being assessed" is false there, and the hold threw the cut away.
+    const runK3 = (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole());
+    const cutOpen = !!(trk && clearance.slowed && !slowLieu && vel)
+                    && cutUnderWay(runK3, trk.twMs, slowestMakingWayKey(drift ? Math.hypot(drift.e, drift.n) : 0));
+    if(trk && vel && (!clearance.slowed || cutOpen)){
       // At the slowest speed that still makes way (2026-09-26, slowKeyFor) - a slow-down below
       // the set answers nothing, it stands her still in front of the same feature.
-      const lieuKey = slowKeyFor(drift ? Math.hypot(drift.e, drift.n) : 0,
-                                 (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole()));
+      // ⚠ AND OFFERED TO A CUT ALREADY UNDER WAY (2026-10-03): told LOW and still well over it, she has a slow-down
+      // coming that the hold would throw away - see cutUnderWay.
+      const runKey = (typeof st.speed_key === "string") ? st.speed_key : roleSpeed(speedRole());
+      const setNow = drift ? Math.hypot(drift.e, drift.n) : 0;
+      const lieuKey = slowKeyFor(setNow, runKey)
+                      || (cutUnderWay(runKey, trk.twMs, slowestMakingWayKey(setNow)) ? runKey : null);
       const lowMs = lieuKey ? (V.SPEED_KN[lieuKey] || 0) * 0.514444 : 0;
       if(lowMs > 0 && lowMs < trk.twMs){
+        // ⚠ FLOWN AS SHE FLIES IT (2026-10-03): from the speed she is doing, through the command's latency and the dead
+        // time, down in gear - not at LOW from this instant (slowingOpts; {} on a hull with no measured slow-down).
         const atLow = guardAssess(p, restoreVel(vel, drift, lowMs), drift, koAll, buf,
-                                  {...trk, twMs: lowMs, edge: false});
+                                  {...trk, twMs: lowMs, edge: false, ...slowingOpts(trk.twMs, lieuKey)});
         if(atLow.level !== "hold" && atLow.level !== "helm"){
           clearance.slowed = true;
           clearance.slowKey = lieuKey;
           slowLieu = {at: Date.now(), sog: st.sog_kn != null ? st.sog_kn : null, key: lieuKey};
-          commandSpeed(lieuKey);
+          // ALREADY ON THE WIRE AT BOTH ENDS - the console's last command and the vessel's report - is not re-sent (a re-send
+          // would restart the cut's clock); anything else is: a faster want still pending is replaced by this one
+          if(!(st.speed_key === lieuKey && speedWant && speedWant.key === lieuKey)) commandSpeed(lieuKey);
           flashNote("Keep-out " + (a.tEntry||0).toFixed(0) + " s ahead — SLOWED to " + lieuKey + " rather "
                     + "than stopping: at that speed the track stays clear (" + atLow.level + ")"
                     + (lieuKey !== "low" ? " — low would not make way against the set" : "") + ".");
@@ -4161,7 +4253,7 @@ function clearanceGuard(){
       const lowMs = (V.SPEED_KN[slowLieu.key || "low"] || 0) * 0.514444;
       const stillAnswers = !!(trk && vel && lowMs > 0) && ["hold", "helm"].indexOf(
         guardAssess(p, restoreVel(vel, drift, lowMs), drift, koAll, buf,
-                    {...trk, twMs: lowMs, edge: false}).level) < 0;
+                    {...trk, twMs: lowMs, edge: false, ...slowingOpts(trk.twMs, slowLieu.key || "low")}).level) < 0;
       const taken = typeof st.speed_key === "string" ? st.speed_key === (slowLieu.key || "low")
                   : (st.sog_kn != null && slowLieu.sog != null && st.sog_kn <= slowLieu.sog - 0.2);
       if(!stillAnswers) lieuFailed = "slowing no longer answers it from here";
@@ -4619,7 +4711,10 @@ function commandSpeed(asked){
     flashNote("Speed " + asked + " cannot make way against the "
       + (st.env_set_kn != null ? (+st.env_set_kn).toFixed(2) : "?") + " kn set " + "—" + " commanding " + key + " instead.");
   }
-  speedWant = {key: key, asked: asked, at: Date.now(), sends: 1, told: false};
+  // `tw`: her speed through the water when it was sent, on a hull that slows in gear - the start of the curve cutAge
+  // holds her to. Not asked of any other hull (no law, no curve).
+  const tw0 = (typeof V !== "undefined" && V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown) ? twNowMs() : null;
+  speedWant = {key: key, asked: asked, at: Date.now(), sends: 1, told: false, tw: tw0};
   return sendSpeed(key);
 }
 function speedReconcile(s, st){

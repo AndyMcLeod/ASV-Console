@@ -237,6 +237,25 @@ export function speedStep(v, want, dt, st, law, rampMs) {
 }
 
 /**
+ * HER SPEED THROUGH THE WATER `t` SECONDS FROM NOW, WHILE A CUT TO `v1` IS FLOWN IN GEAR - a function t -> m/s, or null
+ * with no law or nothing to shed (the caller keeps its constant speed). She holds `v0` for the delay still to run - the
+ * command's latency and the dead time, less the `elapsedS` since the command was sent (a cut already under way has
+ * spent some of it) - then decays exactly as speedStep steps her, caught at the target. The CLEARANCE GUARD's question
+ * (2026-10-03, Andy: "fix the guard's model of slowing down"): its slow-instead-of-hold answer used to walk her at LOW
+ * from the instant it decided, and in gear she needs ~43 m to get there from 7 kn - at 7 kn it accepted a slow-down
+ * from 41 m off the buffer edge where she needs ~54, so the hold fired late, ~7 m closer.
+ * @param elapsedS  seconds since the cut was commanded (0 for a cut not yet sent)
+ */
+export function slowProfile(v0, v1, law, latencyS = 0, elapsedS = 0) {
+  if (!law || !(v0 > v1)) return null;
+  const v1eff = Math.max(v1, law.U + SLOW_IDLE_MARGIN_MS);
+  if (!(v0 > v1eff)) return null;
+  const delay = Math.max(0, (latencyS || 0) + law.lag * Math.min(1, (v0 - v1eff) / SLOW_LAG_RAMP_MS) - (elapsedS || 0));
+  const th0 = Math.atanh(law.U / v0), k = law.U / law.Lg;
+  return (t) => (t <= delay ? v0 : Math.max(v1eff, law.U / Math.tanh(th0 + k * (t - delay))));
+}
+
+/**
  * HOW FAR AHEAD OF A SLOWER LEG THE SLOWER SPEED HAS TO BE COMMANDED, m over the ground: the water the in-gear cut from
  * `v` (through the water) to `v1` takes (slowRun, its dead time included), plus `setMs` - the set ALONG her track, a
  * following set only - carried for the cut's own time, plus `latencyS` of travel at her ground speed for the command to

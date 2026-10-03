@@ -522,8 +522,9 @@ her own Aug 2026 logs): the guard's SLOW is flown at idle with the clutch still 
 prop-out coast - so after a dead time her speed decays toward her idle-in-gear speed (3.6-3.7 kn),
 and 6.2 to 4.0 kn took **32.5 m and 13 s** (n=20), about twice what the coast law allowed. Her
 `maneuvering.slowdown` block (idle 3.65 kn, decay length 23.8 m, lag 3.3 s - the slower measured
-response) now sets her reach: **about 87 m at the 6.2 kn her 7-kn setpoint really makes, 93 m at a
-literal 7 kn, 124 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn), more in a set.
+response) now sets her reach: **about 90 m at the 6.2 kn her 7-kn setpoint really makes, 96 m at a
+literal 7 kn, 131 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn), more in a set -
+the console's own 1 s command delay included, since she runs on for it before the SLOW reaches her.
 It was 65-70 m. Her prop-out coast datum, which the drift-in uses, is measured too: 40.3 m from 6 to
 2 kn (Lc 36.7 m, against the 35.1 m estimate). The simulator flies the same law (see *the lead*
 below), so a sim rehearsal of the guard slows her as the real boat slows. A hull with no datum, or one already at LOW, is
@@ -1758,6 +1759,25 @@ of the operator.
    the hold fires after all.
    It is not offered when the boat is already slow (that answer has been tried) or when the
    drift-only track enters too (that is the helm's case).
+
+   **On a hull that slows in gear the guard asks it as she flies it** (2026-10-03, Andy: "fix the
+   guard's model of slowing down"). The DriX takes the console's 1 s command delay, a 3.3 s dead
+   time and ~12 s of decay to come from 7 kn to LOW, and the guard took all of it as instant: the
+   slow-instead-of-hold walked her at LOW from the moment it decided (at 7 kn it accepted a
+   slow-down 41 m from the buffer edge where she needs ~54 m, so in between the hold fired ~7 m
+   late), and both slow rungs judged "already slow" by the speed she had been TOLD - which the
+   governor's lead puts on the wire ~15 s before she is there. Now the check and its every-frame
+   re-check walk her down from the speed she is doing, through the delay and the dead time still to
+   run, in gear (`slowProfile`); "already slow" is her speed through the water. A cut counts as
+   running - so she is offered the slow-down while she comes down, the slow-instead-of-hold is
+   still asked after the SLOW rung has sent LOW, and the time it has run comes off the delay - only
+   on evidence (`cutAge`): the console's own last command is that speed, the vessel reports it, and
+   her speed through the water is on the curve from the speed she had when it was sent. A LOW sent
+   long ago that she has not come down on, or a faster command still on its way (which the SLOW
+   rung now replaces), is no cut. And the AIS reach counts the console's command delay, ramped in
+   over the last half knot so it stays continuous at LOW (the DriX's ~90 / 96 / 131 m at 6.2 / 7 /
+   14 kn). A hull with no measured slow-down is exactly as it was (`tests/coast.js` 26-28b,
+   `tests/ais_keepout.js` 11b3, `tests/ais_avoid.js` 24c, 24e2, 24f-24k).
 
    The escape is its own behavior, never a Go-To — a Go-To's arrival used to re-chain the
    end-of-plan return straight back toward the hazard — and you can see it on the card, stop
