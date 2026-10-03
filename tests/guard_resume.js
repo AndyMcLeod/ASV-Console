@@ -391,7 +391,7 @@ eval([
   // opens in this world, so it returns at its first line, and these are the names it would reach
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
-  grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"),
+  grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("legOfLine"), grab("lineOfLeg"),
   grabDecl("AIS_RETURN_BACK_M"), grabDecl("AIS_RETURN_DWELL_MS"),
   grab("renderGuardBar"), grab("renderHeldBar"), grab("lowLatched"),
   // took() is the page's ONE test for "did the command land?", carried across verbatim.

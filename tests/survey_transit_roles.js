@@ -108,7 +108,7 @@ eval([
   grabDecl("LINE_PART_OFFSET_M"), grabDecl("_drawnLines"), grab("linePartContinues"), grab("drawnLines"),
   grab("lineNo"), grab("lineCount"), grab("linePartTxt"),
   grab("reversalScaleM"), grab("isReversalGap"),
-  grab("indexedRoute"), grab("currentLegLine"), grab("onLineM"), grab("accumLineTime"),
+  grab("indexedRoute"), grab("currentLegLine"), grab("lineOfLeg"), grab("onLineM"), grab("accumLineTime"),
   // linePhase splits a committed line into lead-in / coverage / lead-out; currentActivity
   // asks it before reporting coverage. The fixtures here carry no lead, so every line is
   // all coverage and the answer is the one it always was — which is the point: adding the
@@ -584,6 +584,99 @@ plan();
         + "scale, the same turn zone, the same answer for every gap",
         () => JSON.stringify(before) === JSON.stringify(after),
         () => JSON.stringify(after));
+}
+
+// --- 17-17d. TIGHT PATTERNS: THE LINE A LEG RUNS IS THE NEAREST MATCH, NOT THE FIRST (2026-10-02) ----------------- //
+// currentLegLine took the FIRST line whose two ends lay within LINE_MATCH_M (5 m) of the leg's, either way round - so on
+// a pattern spaced 5 m or less the line BEFORE, run the other way, matched too and came first: at 4 m every line after
+// the first was credited to the one before it. lineOfLeg - the one rule currentLegLine and legOfLine now share - takes
+// the nearest. Each case runs the OLD rule on the same plan as its CONTROL, written out here from the version it
+// replaced, so the fixture is shown to provoke the fault. Every plan here has its own number of lines: currentLegLine's
+// memo is keyed by the waypoint index and the two list lengths, and a `let` inside this suite's eval cannot be reset
+// from out here.
+{
+  const oldRule = (a, b) => {
+    for (let k = 0; k < mission.lines.length; k++) { const L = mission.lines[k];
+      if ((distTo(a, L.a) <= 5 && distTo(b, L.b) <= 5) || (distTo(a, L.b) <= 5 && distTo(b, L.a) <= 5)) return k; }
+    for (let k = 0; k < mission.lines.length; k++) { const L = mission.lines[k];
+      if ((distTo(b, L.b) <= 5 || distTo(b, L.a) <= 5) && onLineM(L, a)) return k; }
+    return -1;
+  };
+  const tight = (sp, n) => {
+    const L = Array.from({ length: n }, (_, k) => k % 2 ? [P(sp * k, 150), P(sp * k, 0)] : [P(sp * k, 0), P(sp * k, 150)]);
+    plan({ lines: L.map(([a, b]) => ({ a, b })), waypoints: L.flatMap(([a, b]) => [{ ...a }, { ...b }]),
+           arrival_radius_m: 2 });
+    return L;
+  };
+  const named = (sp, n) => {
+    tight(sp, n);
+    const now = [], old = [];
+    for (let k = 0; k < 6; k++) {
+      window._wpIndex = 2 * k + 1;
+      now.push(currentLegLine());
+      old.push(oldRule(mission.waypoints[2 * k], mission.waypoints[2 * k + 1]));
+    }
+    return { now: now.join(","), old: old.join(",") };
+  };
+  const n4 = named(4, 6), n5 = named(5, 7), n55 = named(5.5, 8), n8 = named(8, 9);
+  check("17. on a TIGHT pattern every line's leg names that line - at 4 m and 5 m spacing as at 5.5 m and 8 m; the "
+        + "CONTROL, the old first-match rule on the same plans, credits each line at 4 m to the one before it",
+        () => [n4, n5, n55, n8].every((x) => x.now === "0,1,2,3,4,5") && n4.old === "0,0,1,2,3,4"
+              && n5.old !== "0,1,2,3,4,5" && n55.old === "0,1,2,3,4,5" && n8.old === "0,1,2,3,4,5",
+        () => "4 m: " + n4.now + " (old " + n4.old + "); 5 m: " + n5.now + " (old " + n5.old + "); 5.5 m: " + n55.now
+              + "; 8 m: " + n8.now);
+
+  // FLOWN: line 4 of a 4 m pattern (k = 3, run west, waypoint 7) on the real accumLineTime.
+  tight(4, 10);
+  fly([12, 145], [12, 5], 7);
+  const clocked = lineActual.map((t, k) => (t > 0 ? k : -1)).filter((k) => k >= 0).join(",");
+  const act = currentActivity().detail;
+  check("17b. FLOWN on a 4 m pattern: running line 4 clocks line 4 on the Lines card and the activity says line 4 of 10 "
+        + "(the leg 17's control names as line 3)",
+        () => clocked === "3" && /line 4 of 10/.test(act),
+        () => "clocked line(s) " + clocked + "; activity '" + act + "'");
+
+  // A REMAINDER on a tight pattern: a resumed leg from 60 m along line 4 to its end.
+  tight(4, 11);
+  const Lr = mission.lines, rejoin = P(12, 60);
+  mission.waypoints = [...mission.waypoints.slice(0, 6), rejoin, { ...Lr[3].b }, ...mission.waypoints.slice(8)];
+  window._wpIndex = 7;
+  const rem = currentLegLine(), remOld = oldRule(rejoin, Lr[3].b);
+  check("17c. a RESUMED leg on a 4 m pattern - from 60 m along line 4 to its end - is line 4; the CONTROL credits it to "
+        + "line 3, whose end lies a spacing off and which the rejoin point is 'on' too",
+        () => rem === 3 && remOld === 2,
+        () => "now line index " + rem + "; the old rule " + remOld);
+
+  // THE PLAN-TIME WALK: a turn whose last point lies 1.8 m from the next line's start - where the core's own generator
+  // puts it at every spacing - must not stop the walk. Lines 20 m apart, each reversal four turn points.
+  const L20 = Array.from({ length: 6 }, (_, k) => k % 2 ? [P(20 * k, 150), P(20 * k, 0)] : [P(20 * k, 0), P(20 * k, 150)]);
+  const chain = [];
+  L20.forEach(([a, b], k) => {
+    chain.push({ ...a }, { ...b });
+    if (k < 5) {
+      const y = 20 * k, e = k % 2 ? 0 : 150, s = k % 2 ? -1 : 1;
+      [[4, 6], [10, 10], [16, 6], [19, 1.5]].forEach(([dn, de]) => chain.push({ ...P(y + dn, e + s * de), turn: true }));
+    }
+  });
+  plan({ lines: L20.map(([a, b]) => ({ a, b })), waypoints: chain, arrival_radius_m: 2 });
+  const R17 = committedRoleLengths();
+  const oldWalk = () => {
+    const wps = mission.waypoints, L = mission.lines;
+    let at = 0;
+    for (let k = 0; k < L.length; k++) {
+      let ia = -1;
+      for (let i = at; i < wps.length; i++) if (distTo(wps[i], L[k].a) <= 5) { ia = i; break; }
+      if (ia < 0 || ia + 1 >= wps.length || distTo(wps[ia + 1], L[k].b) > 5) return null;
+      at = ia + 2;
+    }
+    return "walked";
+  };
+  check("17d. the plan-time walk takes a line's two ends as a PAIR, so a turn point 1.8 m from the next line's start does "
+        + "not stop it: the card's survey, turn and transit totals come back (900 m of survey, the five reversals as turns); "
+        + "the CONTROL, the old first-point walk, gives up on the same chain",
+        () => R17 && Math.abs(R17.survey - 900) < 1 && R17.turn > 0 && R17.transit === 0 && oldWalk() === null,
+        () => (R17 ? "survey " + R17.survey.toFixed(0) + ", turn " + R17.turn.toFixed(0) + ", transit "
+                     + R17.transit.toFixed(0) : "null") + "; the old walk: " + oldWalk());
 }
 
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));

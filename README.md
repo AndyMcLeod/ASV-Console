@@ -1197,6 +1197,15 @@ of the operator.
      approach radius, and the End of plan setting applies at the last one. While it
      runs, a leg is a **survey line** only when it runs between the two ends of a
      committed line; everything else is timed and speed-set as a turn or a transit.
+     Where more than one line's ends lie within the 5 m match of a leg's, the
+     **nearest** is the line it runs (2026-10-02). The first one used to win, and on a
+     pattern spaced 5 m or less the line before - run the other way, its ends a spacing
+     off - matched too and came first: at 4 m every line after the first was credited to
+     the one before it, so the LINES table timed the wrong lines, "line N of M" named
+     them, a slow turn and a pause were keyed to them, and **Resume from here** could take
+     the line before's leg and run the chosen line backwards. The plan-time estimate's
+     walk also takes each line's two ends as a pair now, so a turn point close to a line's
+     start no longer makes it give up.
 
    **Speed is chosen per job, not once for the plan.** A survey run is three different
    things and they do not want the same speed, so the SURV card carries three: **Survey**

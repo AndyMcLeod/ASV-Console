@@ -393,7 +393,7 @@ eval([
   grab("aisAroundLegPlan"), grab("renderHeldLegBar"), grab("resumeHeldLeg"),
   "function solveCoastFor(){ return null; }",   // the coast is tests/coast.js's; a leg here powers in
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("cmGate"), grab("linkConnected"), grab("canCommand"),
-  grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
+  grab("resumeHereAt"), grab("legOfLine"), grab("lineOfLeg"), grab("alongAsRun"), grab("gateResumeHere"), grab("resumeFromHere"),
   grab("patClipBufM"), "const guardStandoffM = G.guardStandoffM;",
   grab("aisWanted"), grab("pollAIS"), grab("setAIS"),
   // the escape rung runs to its POST here (guard_resume stops at the refused search), so its helper

@@ -199,7 +199,7 @@ eval([
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the resume at the slowest speed that makes way (2026-09-26)
   grab("patClipBufM"),                                                     // the standoff the upload routes its transits at (2026-09-26)
   // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
-  grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"),
+  grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("lineOfLeg"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
   grab("koWithAis"), grabDecl("AIS_AROUND_AFTER_MS"),                              // the contacts fold into the way in (2026-09-27)
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
@@ -955,6 +955,35 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
           () => "line 1: " + JSON.stringify(legE && { j: legE.j, fwd: legE.fwd }) + "; line 2 a->b: " + JSON.stringify(legW && { j: legW.j, fwd: legW.fwd })
                 + "; line 2 b->a: " + JSON.stringify(legRev && { j: legRev.j, fwd: legRev.fwd }) + "; a remainder: " + JSON.stringify(legRem && { j: legRem.j, fwd: legRem.fwd })
                 + "; flown: " + JSON.stringify(legFlown && { j: legFlown.j }) + "; not run: " + legNone);
+
+    // 18c. A TIGHT PATTERN (2026-10-02): lines 4 m apart. The leg that runs line 4 is line 4's OWN, in the direction the
+    // route runs it. The search took the FIRST leg joining line 4's two ends within LINE_MATCH_M - and line 3's leg, one
+    // spacing over and run the other way, does that and comes first, so the resume ran line 4 BACKWARDS: the mistake 6
+    // exists to keep out. The CONTROL is that old search, written out from the version it replaced and run on the same
+    // route: it takes line 3's leg, which is what makes this fixture a test of the fix.
+    {
+      const SP = 4;
+      const TL = Array.from({ length: 5 }, (_, k) => k % 2 ? { a: ll(400, SP * k), b: ll(0, SP * k) }
+                                                         : { a: ll(0, SP * k), b: ll(400, SP * k) });
+      const TR = TL.flatMap((L) => [L.a, L.b]);
+      const keep = mission;
+      mission = { lines: TL, waypoints: TR.slice(), speeds: { transit: "high", turn: "low", survey: "survey" } };
+      const got = legOfLine(TR, 3, 1);
+      const oldSearch = (rr, k, idx) => {
+        const L = TL[k];
+        const endOf = (j) => { const a = rr[j - 1], b = rr[j];
+          if (distTo(a, L.a) <= 5 && distTo(b, L.b) <= 5) return 1;
+          if (distTo(a, L.b) <= 5 && distTo(b, L.a) <= 5) return -1;
+          return 0; };
+        for (let j = 1; j < rr.length; j++) { const f = endOf(j); if (f && j >= idx) return { j, fwd: f }; }
+        return null;
+      };
+      const old = oldSearch(TR, 3, 1);
+      mission = keep;
+      check("18c. on a TIGHT pattern - lines 4 m apart - the leg that runs line 4 is line 4's OWN, in the direction the route runs it; the CONTROL, the old first-match search on the same route, takes line 3's leg and would run line 4 backwards",
+            () => !!got && got.j === 7 && got.fwd === 1 && near(got.end, TL[3].b) && !!old && old.j === 5 && old.fwd === -1,
+            () => "now " + JSON.stringify(got && { j: got.j, fwd: got.fwd }) + "; the old search " + JSON.stringify(old));
+    }
 
     // 19. THE RESUME, DRIVEN
     world(ROUTE, 1, ll(150, 25));                  // paused 25 m off line 1, steering for its end

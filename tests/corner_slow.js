@@ -521,7 +521,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("indexedRoute"), grabFn("lineSetKey"), grabFn("syncLineStats"), grabFn("turnZoneM"),
     grabFn("nearestEndpointM"), grabFn("linePartContinues"), grabFn("drawnLines"),
     grabFn("lineNo"), grabFn("lineCount"), grabFn("linePartTxt"), grabFn("reversalScaleM"),
-    grabFn("isReversalGap"), grabFn("currentLegLine"), grabFn("accumLineTime"),
+    grabFn("isReversalGap"), grabFn("currentLegLine"), grabFn("lineOfLeg"), grabFn("accumLineTime"),
     grabFn("alongLineM"), grabFn("linePhase"), grabFn("currentActivity"), grabFn("speedRole"),
     grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("sendSpeed"), grabFn("commandSpeed"),
     grabFn("slowestMakingWayKey"), grabFn("setMsNow"), grabFn("makesWayKey"),   // the floor under every command (2026-09-26)

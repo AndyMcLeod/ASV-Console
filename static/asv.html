@@ -6559,10 +6559,35 @@ function currentLegLine(){
   if(idx<1 || idx>=rr.length) return -1;       // pre-first-wp approach, or done
   const key=idx+":"+rr.length+":"+mission.lines.length;
   if(_legLine.key===key) return _legLine.line;
-  const a=rr[idx-1], b=rr[idx]; let found=-1;
-  for(let k=0;k<mission.lines.length;k++){ const L=mission.lines[k];
-    if((distTo(a,L.a)<=LINE_MATCH_M && distTo(b,L.b)<=LINE_MATCH_M) ||
-       (distTo(a,L.b)<=LINE_MATCH_M && distTo(b,L.a)<=LINE_MATCH_M)){ found=k; break; } }
+  const m=lineOfLeg(rr[idx-1], rr[idx]), found=m ? m.line : -1;
+  _legLine={key, line:found};
+  return found;
+}
+/**
+ * WHICH LINE A LEG RUNS - {line, fwd, e} or null - and the ONE place it is decided (2026-10-02): currentLegLine (the
+ * line under way: the Lines card's clock, "line N of M", the slow-turn flag, the pause mark) and legOfLine (the leg that
+ * runs a line: Resume from here, the held resume) both ask it, so the two can never name different lines for one leg.
+ * `fwd` is +1 when the leg runs a -> b, -1 when it runs the line the other way; `e` the match's worst end distance.
+ *
+ * A leg runs a line when both its ends lie within LINE_MATCH_M of the line's two ends, either way round.
+ *
+ * ⚠ THE NEAREST MATCH, NOT THE FIRST. The scan took the FIRST line that passed, and on a pattern spaced LINE_MATCH_M or
+ * less the line BEFORE - run the other way, each end one spacing from this line's - passes too and comes first. Probed
+ * on the page's own function: at 4 m spacing every line after the first was credited to the line before it
+ * (0,0,1,2,3,4), at 5 m every other one - so the Lines card timed the wrong lines, "line N of M" named them, the
+ * slow-turn flag and the pause mark keyed to them, and Resume from here could take the line before's leg and its
+ * direction and run the chosen line BACKWARDS (tests/survey_transit_roles.js 17, tests/pause_resume.js 6c). The small
+ * boat's default pattern is 5 m. A route's waypoints are exact copies of the line ends, so the line a leg really runs
+ * matches to the millimeter: the smallest worst end distance is it, and a tie keeps the first, as before.
+ */
+function lineOfLeg(a, b){
+  const lines = mission.lines || [];
+  if(!a || !b) return null;
+  let best = null;
+  for(let k=0;k<lines.length;k++){ const L=lines[k];
+    const ef=Math.max(distTo(a,L.a), distTo(b,L.b)), er=Math.max(distTo(a,L.b), distTo(b,L.a)), e=Math.min(ef, er);
+    if(e<=LINE_MATCH_M && (!best || e<best.e)) best={line:k, fwd:ef<=er ? 1 : -1, e}; }
+  if(best) return best;
   // A REMAINDER OF A LINE IS THAT LINE (2026-09-25). A resumed leg - after a pause, a guard hold or
   // the AIS return - begins part-way DOWN the line and ends at its end, so neither endpoint pair
   // matches and it read as a turn "between lines": the Lines card clocked nothing for it and the
@@ -6570,11 +6595,12 @@ function currentLegLine(){
   // 300 m of line 1 at 4.0 kn, the activity row saying "turning between lines (off line 1)"). A
   // leg that ends at a line's end and begins ON the line - LINE_MATCH_M clear of both its ends, so
   // the tangent last vertex of a turn INTO the line can never qualify - is a remainder of that line.
-  if(found<0){
-    for(let k=0;k<mission.lines.length;k++){ const L=mission.lines[k];
-      if((distTo(b,L.b)<=LINE_MATCH_M || distTo(b,L.a)<=LINE_MATCH_M) && onLineM(L,a)){ found=k; break; } } }
-  _legLine={key, line:found};
-  return found;
+  // The nearest again: on a tight pattern the line before is "on" the rejoin point too, and its end a spacing off.
+  // (The end test FIRST, as it always was: onLineM is asked only of a line whose end the leg reaches.)
+  for(let k=0;k<lines.length;k++){ const L=lines[k];
+    const db=distTo(b,L.b), da=distTo(b,L.a), e=Math.min(da, db);
+    if(e<=LINE_MATCH_M && (!best || e<best.e) && onLineM(L,a)) best={line:k, fwd:db<=da ? 1 : -1, e}; }
+  return best;
 }
 /** Is `p` ON line L - within LINE_MATCH_M of the segment and LINE_MATCH_M clear of both ends? */
 function onLineM(L, p){
@@ -12160,8 +12186,15 @@ function committedRoleLengths(){
   const idx = []; let at = 0;
   for(let k=0;k<L.length;k++){
     let ia = -1;
-    for(let i=at;i<wps.length;i++){ if(near(wps[i], L[k].a)){ ia = i; break; } }
-    if(ia < 0 || ia+1 >= wps.length || !near(wps[ia+1], L[k].b)) return null;
+    // ⚠ THE LINE'S TWO ENDS AS A PAIR, NOT THE FIRST POINT NEAR ITS START (2026-10-02). The walk took the first
+    // waypoint within LINE_MATCH_M of the line's start and gave up when the next was not its end - so a TURN point that
+    // close stopped it, and the card fell back to one speed for the whole plan. The core's own turn generator puts the
+    // last point of a turn 1-3 m from the next line's start at every spacing (measured: 5, 8, 10, 20 and 80 m); the
+    // turns the punch committed on the live check stayed 9 m or more clear, so no real plan was seen failing - but the
+    // walk should not depend on that. The forward search can only meet this line's own pair: the line before is behind
+    // `at`, and the line after runs the other way.
+    for(let i=at;i+1<wps.length;i++){ if(near(wps[i], L[k].a) && near(wps[i+1], L[k].b)){ ia = i; break; } }
+    if(ia < 0) return null;
     idx.push(ia); at = ia + 2;
   }
   const R = {survey:0, turn:0, transit:0};
@@ -14115,15 +14148,13 @@ function resumeHereAt(ll){
  *  can send her back over it. */
 function legOfLine(rr, k, idx){
   const L = (mission.lines || [])[k]; if(!L || !rr || rr.length < 2) return null;
+  // ⚠ A LEG RUNS LINE k ONLY WHEN k IS THE LINE IT RUNS (2026-10-02) - lineOfLeg, the one rule currentLegLine reads.
+  // Testing line k's own ends found, on a pattern spaced 5 m or less, the line BEFORE's leg first - its ends a spacing
+  // from these and run the other way - and handed back ITS direction, so Resume from here sent her down line k
+  // backwards: the one mistake the pause resume was written to avoid (tests/pause_resume.js 6).
   const endOf = (j) => {
-    const a = rr[j-1], b = rr[j]; if(!a || !b) return 0;
-    if(distTo(a, L.a) <= LINE_MATCH_M && distTo(b, L.b) <= LINE_MATCH_M) return 1;
-    if(distTo(a, L.b) <= LINE_MATCH_M && distTo(b, L.a) <= LINE_MATCH_M) return -1;
-    if(onLineM(L, a)){
-      if(distTo(b, L.b) <= LINE_MATCH_M) return 1;
-      if(distTo(b, L.a) <= LINE_MATCH_M) return -1;
-    }
-    return 0;
+    const m = lineOfLeg(rr[j-1], rr[j]);
+    return (m && m.line === k) ? m.fwd : 0;
   };
   let flown = null;
   for(let j = 1; j < rr.length; j++){
