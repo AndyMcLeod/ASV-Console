@@ -495,6 +495,76 @@ check("15. --mission re-pointed AFTER a read answers from the plan at the NEW pa
       and os.path.abspath(_C.MISSION_PATH) == os.path.abspath(OTHER),
       "before %d wpts, after %d wpts, MISSION_PATH %s" % (len(before_wps), len(after_wps), _C.MISSION_PATH))
 
+# 16-16c. THE SURVEYS (sequenced surveys, phase 1, 2026-10-02). `surveys` lists the plan's surveys in run order and a
+# line or waypoint carries `sv`, its survey's id. Both dicts that build a plan - load_mission's and save_mission's - name
+# their fields, so the field must be in BOTH or the next save drops it (the `speeds` lesson); the types are checked
+# before anything is written; and a save that only TAGS a plan moves nothing, so it takes no backup slot.
+SV_WPS = [dict(w, sv="S1") for w in PLAN["waypoints"][:4]] + [dict(w, sv="S3") for w in PLAN["waypoints"][4:6]] \
+    + [dict(PLAN["waypoints"][6])]
+SV_LINES = [{"a": SV_WPS[0], "b": SV_WPS[1], "sv": "S1"}, {"a": SV_WPS[2], "b": SV_WPS[3], "sv": "S1"},
+            {"a": SV_WPS[4], "b": SV_WPS[5], "sv": "S3"}]
+SURVEYS = [{"id": "S1", "no": 1, "name": "North basin", "punched": True,
+            "pattern": {"A": SV_WPS[0], "B": SV_WPS[3], "C": None, "align": 1}},
+           {"id": "S3", "no": 3, "name": "", "punched": False, "pattern": None}]
+_, sv_err = attempt(_C.save_mission, dict(PLAN, waypoints=SV_WPS, lines=SV_LINES, surveys=SURVEYS))
+back = _C.load_mission()
+on_file = json.load(open(_C.MISSION_PATH, encoding="utf-8"))
+NOWHERE = os.path.join(TMP, "never", "written.json")
+_C.use_mission_path(NOWHERE)
+default_surveys = _C.load_mission().get("surveys")
+_C.use_mission_path(OTHER)
+check("16. the plan's SURVEYS and their TAGS are saved and loaded as they were - names, numbers, pattern and punched "
+      "intact, a free waypoint left free - and a plan with no file lists no surveys",
+      sv_err is None and back.get("surveys") == SURVEYS and on_file.get("surveys") == SURVEYS
+      and [w.get("sv") for w in back["waypoints"]] == ["S1"] * 4 + ["S3"] * 2 + [None]
+      and [L.get("sv") for L in back["lines"]] == ["S1", "S1", "S3"] and default_surveys == [],
+      "save: %s; loaded %s; tags %s; no-file default %r"
+      % (sv_err or "ok", json.dumps(back.get("surveys"))[:80], [w.get("sv") for w in back["waypoints"]],
+         default_surveys))
+sv_before = open(_C.MISSION_PATH, "rb").read()
+
+
+def sv_plan(**over):
+    return dict(dict(PLAN, waypoints=SV_WPS, lines=SV_LINES, surveys=SURVEYS), **over)
+
+
+sv_bad = {"surveys not a list": sv_plan(surveys={"id": "S1"}),
+          "a record that is not a dict": sv_plan(surveys=["S1"]),
+          "no id": sv_plan(surveys=[{"no": 1}]),
+          "an id too long": sv_plan(surveys=[{"id": "S" * 40, "no": 1}]),
+          "no number": sv_plan(surveys=[{"id": "S1"}]),
+          "a number that is a bool": sv_plan(surveys=[{"id": "S1", "no": True}]),
+          "number zero": sv_plan(surveys=[{"id": "S1", "no": 0}]),
+          "a repeated id": sv_plan(surveys=[{"id": "S1", "no": 1}, {"id": "S1", "no": 2}]),
+          "a repeated number": sv_plan(surveys=[{"id": "S1", "no": 1}, {"id": "S2", "no": 1}]),
+          "a name too long": sv_plan(surveys=[{"id": "S1", "no": 1, "name": "x" * 200}]),
+          "a pattern corner that is not a position": sv_plan(surveys=[{"id": "S1", "no": 1,
+                                                                       "pattern": {"A": {"lat": "n"}}}]),
+          "an alignment of 3": sv_plan(surveys=[{"id": "S1", "no": 1, "pattern": {"align": 3}}]),
+          "punched as text": sv_plan(surveys=[{"id": "S1", "no": 1, "punched": "yes"}]),
+          "a waypoint tagged with a number": sv_plan(waypoints=[dict(SV_WPS[0], sv=5)] + SV_WPS[1:]),
+          "a line tagged with nothing": sv_plan(lines=[dict(SV_LINES[0], sv="")] + SV_LINES[1:])}
+sv_said = {k: refused(v) for k, v in sv_bad.items()}
+check("16b. a survey list or tag that is not what it claims is REFUSED in words and nothing is written",
+      all(sv_said.values()) and open(_C.MISSION_PATH, "rb").read() == sv_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:34]) for k, v in sv_said.items()))
+for n in os.listdir(os.path.dirname(OTHER)):
+    if ".bak" in n:
+        os.remove(os.path.join(os.path.dirname(OTHER), n))
+UNTAGGED = [{k: v for k, v in w.items() if k != "sv"} for w in SV_WPS]
+_C.save_mission(dict(PLAN, waypoints=UNTAGGED, lines=[{k: v for k, v in L.items() if k != "sv"} for L in SV_LINES]))
+for n in os.listdir(os.path.dirname(OTHER)):
+    if ".bak" in n:
+        os.remove(os.path.join(os.path.dirname(OTHER), n))
+_C.save_mission(sv_plan())                                       # the same plan, tagged: nothing moved
+tag_only = sorted(n for n in os.listdir(os.path.dirname(OTHER)) if ".bak" in n)
+_C.save_mission(sv_plan(waypoints=list(reversed(SV_WPS))))       # the same waypoints, run the other way: geometry
+moved = sorted(n for n in os.listdir(os.path.dirname(OTHER)) if ".bak" in n)
+check("16c. a save that only TAGS the plan takes no backup slot - a real earlier plan is not pushed out of .bak5 for "
+      "one that has not changed - while one that changes the order the boat flies still keeps the previous plan",
+      tag_only == [] and moved == [os.path.basename(OTHER) + ".bak1"],
+      "after tagging: %s; after reordering: %s" % (tag_only, moved))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

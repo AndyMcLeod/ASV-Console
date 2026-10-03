@@ -1173,6 +1173,21 @@ of the operator.
      committed line removes its two ends but **leaves the turns either side** — so the
      boat still travels that line's track, uncounted. Strike the run off *before* Add to
      plan to have the order, the turns and the transits rebuilt around the gap.
+   - *Each pattern added is a survey* (2026-10-02, the first phase of sequenced surveys;
+     no new controls yet). The plan lists its surveys in the order it runs them, and every
+     line and every waypoint a survey put in the plan carries that survey's id. A survey's
+     **number** is one past the highest the plan holds and **stays with it**: S2 is never handed
+     out again in that plan, and nothing renumbers by order. Two things read the grouping. A
+     gap **between two surveys is always a transit**, flown at the transit speed and timed in
+     the LINES card's transit rows, however close the next survey lies. And each survey's
+     reversals are judged by **its own spacing**: one plan-wide median let a tightly spaced
+     survey set the scale for a wide one, so an 80 m survey added after an 8 m one had every
+     reversal read as a hop and flown at the transit speed. A plan saved before this loads as
+     **one survey, S1**, and is judged exactly as it was. Two patterns added before today stay
+     one survey, because nothing recorded where one ended. A plan whose grouping does not hold
+     (a hand-edited file, a tag naming no survey, one survey's lines split by another's) is
+     flown as one survey, and the page says **PLAN LOADED AS ONE SURVEY** and why. Dragging a
+     waypoint now keeps what it was: its survey, and for a turn point the fact that it is one.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
      channel; every other leg keeps its planned track and gets a detour only if it now
@@ -1912,6 +1927,25 @@ of the operator.
    its head is still a pier. Over the same tiles the read now finds nothing at Bellingham; over
    the Kittery Point, New Castle and Fort Point piers it finds exactly what it found before.
 
+   **Every chart read is kept, and a plan spread over a harbor is read in pieces (2026-10-02).**
+   The page used to keep only the LAST chart-image read. A read of other water replaced it, and
+   a refused read emptied it, so every pier found before left the keep-out model the planners and
+   the clearance guard use. The read's budget is 256 tiles: at 43° N about a 0.9 km square at
+   full detail and about 3.5 km at the coarsest zoom it accepts. An Upload read ONE box over the
+   boat and every waypoint, so a plan spread wider than that read nothing at all and dropped the
+   piers each survey's own punch had found. Now every read of the present chart extract is kept,
+   and the reads are merged: a pier two reads both found counts once, the finer read's (at the
+   same zoom, the later one's). Water already read at the detail it would get, or at zoom 18, is
+   not read again. A refused or failed read adds nothing and takes nothing away; the banner and
+   the Nogo row say which water was not read, and stop saying so once it is. A structure only a
+   coarse read found is kept even where a finer read looked, because a tile that read never
+   received is blank paper and reads exactly like open water. An Upload reads the whole box when
+   it can, and otherwise its **transits leg by leg** (the boat, then each survey's first and last
+   waypoint, in boxes that can each be read, at most 16, and it says so if the route ran past
+   them). It then reads **each survey's own water** at its own detail, unless the punch's read
+   already holds it. A Go-To, a Return-to-Home and a drawn transit still read their one box, and a
+   box too big is refused at once, as before. A new extract still drops every read.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
@@ -2598,6 +2632,26 @@ node tests/ui_split.js
 page (a stale one fails silently: a panel just stops mirroring), and that the vessel-status
 card stays on the chart window — not mirrored into the controls window, and not stripped
 from the chart either.
+
+```
+node tests/survey_blocks.js
+```
+
+**Surveys in the plan** — that a plan saved before surveys were kept loads as one survey, S1;
+that a sound plan is kept as it is, and one whose grouping does not hold is run as one survey
+with the reason given; that Add to plan makes each pattern a survey numbered one past the
+highest the plan holds, never a number handed out before, and tags exactly what it put in the
+plan; and that dragging a waypoint keeps its survey and its turn flag.
+
+```
+node tests/ink_reads.js
+```
+
+**Chart reads kept and merged** — that a pier two chart reads both found counts once, and one
+only a coarse read found is kept; that water already read is recognized; that a plan too big
+for one read is cut into boxes that each fit and between them hold the whole route; and that
+an Upload reads its box (or its transits leg by leg) and then each survey's own water, while a
+Go-To reads its one box as before.
 
 A pre-commit hook runs all of them automatically whenever anything but Markdown is staged, and
 blocks the commit if an invariant regresses. It used to run only for a list of covered paths, and

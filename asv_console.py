@@ -1089,6 +1089,7 @@ def check_plan_body(m):
     boundary = m.get("boundary")
     if boundary is not None and not (isinstance(boundary, list) and all(_is_position(p) for p in boundary)):
         raise PlanRefused("the survey-area boundary is not a list of positions - nothing was saved")
+    _check_surveys(m)
     for k in ("arrival_radius_m", "approach_radius_m", "buffer_m", "min_depth_m", "lead_in", "lead_out"):
         v = m.get(k)
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
@@ -1098,6 +1099,67 @@ def check_plan_body(m):
     if rev is not None and (isinstance(rev, bool) or not isinstance(rev, int) or rev < 0):
         raise PlanRefused("rev must be the revision of the plan this edit was made to (got %r) - "
                           "nothing was saved" % (rev,))
+
+
+SURVEY_ID_MAX = 32          # characters in a survey's id - the page's own bound (static/js/surveys.js)
+SURVEY_NAME_MAX = 120
+
+
+def _is_survey_id(v):
+    return isinstance(v, str) and 0 < len(v) <= SURVEY_ID_MAX
+
+
+def _check_surveys(m):
+    """The plan's SURVEYS and the tags that name them (sequenced surveys, phase 1, 2026-10-02) are what they claim, or
+    nothing is saved. `surveys` lists them in run order, each with an id and a whole-number `no` - the survey's number,
+    which stays with it - both unique; a name, a pattern (its corners positions, its alignment 0-2) and `punched` are
+    optional. A line or waypoint may carry `sv`, its survey's id.
+
+    TYPES ONLY, deliberately. Whether the tags name listed surveys and sit together is the PAGE's to judge on load
+    (normalizeSurveys), and a plan that fails it is flown as ONE survey - the plan as it was before surveys were kept -
+    rather than refused here: the grouping decides how lines are counted and labeled, the positions decide where the
+    boat goes, and only the positions are worth refusing an operator's save over."""
+    surveys = m.get("surveys")
+    if surveys is not None:
+        if not isinstance(surveys, list):
+            raise PlanRefused("the plan's surveys are not a list - nothing was saved")
+        ids, nos = set(), set()
+        for i, s in enumerate(surveys):
+            if not isinstance(s, dict):
+                raise PlanRefused("survey record %d is not a survey - nothing was saved" % (i + 1))
+            sid, no = s.get("id"), s.get("no")
+            if not _is_survey_id(sid):
+                raise PlanRefused("survey record %d has no usable id (%r) - nothing was saved" % (i + 1, sid))
+            if isinstance(no, bool) or not isinstance(no, int) or no < 1:
+                raise PlanRefused("survey %s's number must be a whole number from 1 (got %r) - nothing was saved"
+                                  % (sid, no))
+            if sid in ids or no in nos:
+                raise PlanRefused("two surveys share the id %s or the number %d - nothing was saved" % (sid, no))
+            ids.add(sid)
+            nos.add(no)
+            name = s.get("name")
+            if name is not None and not (isinstance(name, str) and len(name) <= SURVEY_NAME_MAX):
+                raise PlanRefused("survey %s's name must be text of at most %d characters - nothing was saved"
+                                  % (sid, SURVEY_NAME_MAX))
+            pat = s.get("pattern")
+            if pat is not None:
+                if not isinstance(pat, dict):
+                    raise PlanRefused("survey %s's pattern is not a pattern - nothing was saved" % sid)
+                for k in ("A", "B", "C"):
+                    if pat.get(k) is not None and not _is_position(pat[k]):
+                        raise PlanRefused("survey %s's pattern corner %s is not a position - nothing was saved"
+                                          % (sid, k))
+                al = pat.get("align")
+                if al is not None and (isinstance(al, bool) or al not in (0, 1, 2)):
+                    raise PlanRefused("survey %s's pattern alignment must be 0, 1 or 2 (got %r) - nothing was saved"
+                                      % (sid, al))
+            if s.get("punched") is not None and not isinstance(s.get("punched"), bool):
+                raise PlanRefused("survey %s's punched flag must be true or false - nothing was saved" % sid)
+    for what, items in (("waypoint", m.get("waypoints") or []), ("survey line", m.get("lines") or [])):
+        for i, x in enumerate(items):
+            if isinstance(x, dict) and x.get("sv") is not None and not _is_survey_id(x.get("sv")):
+                raise PlanRefused("%s %d's survey tag is not a survey id (%r) - nothing was saved"
+                                  % (what, i + 1, x.get("sv")))
 
 
 def _stored_rev():
@@ -1194,8 +1256,14 @@ def _keep_previous_plan(new_doc):
         _quarantine_mission(raw_b)
         return
 
+    # A survey TAG is not geometry (2026-10-02): the first save of a plan from before surveys were kept tags every
+    # line and waypoint with S1 and moves nothing, and taking a backup slot for it would push a real earlier plan out
+    # of .bak5 for a plan that has not changed.
+    def untagged(items):
+        return [{k: v for k, v in x.items() if k != "sv"} if isinstance(x, dict) else x for x in (items or [])]
+
     def geometry(d):
-        return json.dumps([d.get("waypoints") or [], d.get("lines") or [], d.get("boundary") or []],
+        return json.dumps([untagged(d.get("waypoints")), untagged(d.get("lines")), d.get("boundary") or []],
                           sort_keys=True)
     if (not isinstance(old, dict) or not (old.get("waypoints") or old.get("lines"))
             or geometry(old) == geometry(new_doc)):
@@ -1329,6 +1397,10 @@ def load_mission():
             # plan drawn at the dock survives a reload / a session at sea.
             "boundary": m.get("boundary") or [],
             "boundary_closed": bool(m.get("boundary_closed")),
+            # THE SURVEYS, in run order (sequenced surveys, phase 1, 2026-10-02) - carried here AND in save_mission,
+            # because each builds its dict from a list of names and a field missing from either is dropped on the
+            # next save (the `speeds` lesson). The page judges them (normalizeSurveys); this only carries them.
+            "surveys": m.get("surveys") if isinstance(m.get("surveys"), list) else [],
             # the revision a page sends back with its next save - see save_mission (review #10)
             "rev": (m.get("rev") if isinstance(m.get("rev"), int) and not isinstance(m.get("rev"), bool)
                     and m.get("rev") >= 0 else 0),
@@ -1339,7 +1411,7 @@ def load_mission():
             "speeds": _norm_speeds(None), "completion": "rth",
             "buffer_m": NOGO_BUFFER_DEFAULT_M, "min_depth_m": 2.0,
             "lead_mode": "m", "lead_in": 0, "lead_out": 0, "turn_ease": "arc",
-            "boundary": [], "boundary_closed": False, "rev": 0}
+            "boundary": [], "boundary_closed": False, "surveys": [], "rev": 0}
     return dict(_MISSION_CACHE)
 
 
@@ -1384,6 +1456,7 @@ def save_mission(m):
         "turn_ease": ("eased" if m.get("turn_ease") == "eased" else "arc"),
         "boundary": m.get("boundary") or [],
         "boundary_closed": bool(m.get("boundary_closed")),
+        "surveys": m.get("surveys") or [],          # checked by check_plan_body above; see load_mission
     }
     # ⚠ THE LOCK THE READS NOW HOLD TOO, the previous plan kept (_keep_previous_plan), a temp
     # file per writer, and the replace retried - review #5, see _read_mission_file. The revision is

@@ -503,6 +503,89 @@ plan();
   }
 }
 
+// --- 16-16d. TWO SURVEYS, EACH JUDGED BY ITS OWN LINES (sequenced surveys, phase 1, 2026-10-02) ------------------- //
+// Add to plan makes each committed pattern a survey, and every line carries its survey's id (`sv`). Two things read
+// it, both here: a gap BETWEEN two surveys is never a reversal ("from the last survey waypoint to home OR THE NEXT
+// SURVEY are transit lines"), and each survey's reversals are judged by its OWN spacing. One median over the whole
+// plan let the survey with more gaps set the scale for the other: S1 here is ten lines 5 m apart, S2 five lines 50 m
+// apart - the plan's median gap is 5 m, its threshold 40 m, and every one of S2's 50 m reversals read as a hop to
+// another region and was flown at the TRANSIT speed on a turn built at the turn radius. EACH CASE IS RUN BOTH WAYS:
+// untagged - the plan judged as one, which is exactly how it was judged before - is the CONTROL, and shows the fault
+// the fixture is built to provoke.
+//
+// ⚠ 8 m AND 80 m HERE, NOT 5 m AND 50 m. The first cut used 5 m, and the boat running line 10 was credited with line 9:
+// currentLegLine matches a leg to a line's two ends within LINE_MATCH_M (5 m), so on a pattern spaced 5 m or less the
+// line BEFORE, run the other way, matches too - and it is first in the list. A real limit of the line matching (noted,
+// not changed here), and a fixture that tripped it would be testing it instead of this.
+{
+  // S1's lines are 30 m, S2's 300 m: the turn ZONE (turnZoneM, ~ the line length) differs by ten too, so 16b's wide
+  // swing - 60 m off S2's line ends - is inside S2's zone and outside S1's.
+  const S1L = Array.from({ length: 10 }, (_, k) => k % 2 ? [P(8 * k, 30), P(8 * k, 0)] : [P(8 * k, 0), P(8 * k, 30)]);
+  const two = (tagged, s2north) => {
+    const s2 = s2north == null ? 600 : s2north;
+    const S2L = Array.from({ length: 5 }, (_, k) => k % 2 ? [P(s2 + 80 * k, 300), P(s2 + 80 * k, 0)]
+                                                         : [P(s2 + 80 * k, 0), P(s2 + 80 * k, 300)]);
+    const all = [...S1L.map((l) => [l, "S1"]), ...S2L.map((l) => [l, "S2"])];
+    const tag = (sv) => (tagged ? { sv } : {});
+    plan({ lines: all.map(([[a, b], sv]) => ({ a, b, ...tag(sv) })),
+           waypoints: all.flatMap(([[a, b], sv]) => [{ ...a, ...tag(sv) }, { ...b, ...tag(sv) }]),
+           arrival_radius_m: 2 });
+  };
+  two(true);
+  const tagged = { s1: reversalScaleM(0), s2: reversalScaleM(10), gaps: [10, 11, 12, 13].map((k) => isReversalGap(k)),
+                   s1gaps: [0, 4, 8].map((k) => isReversalGap(k)), across: isReversalGap(9) };
+  two(false);
+  const untagged = { scale: reversalScaleM(10), gaps: [10, 11, 12, 13].map((k) => isReversalGap(k)) };
+  check("16. each survey's reversal scale is its OWN spacing - S1's 8 m, S2's 80 m - so S2's reversals are reversals; "
+        + "the CONTROL, the same plan untagged, has one 8 m scale and reads every one of them as a hop",
+        () => Math.abs(tagged.s1 - 8) < 0.5 && Math.abs(tagged.s2 - 80) < 0.5 && tagged.gaps.every(Boolean)
+              && tagged.s1gaps.every(Boolean) && !tagged.across
+              && Math.abs(untagged.scale - 8) < 0.5 && untagged.gaps.every((g) => !g),
+        () => "tagged: S1 " + tagged.s1.toFixed(1) + " m, S2 " + tagged.s2.toFixed(1) + " m, S2 gaps " + tagged.gaps
+              + " | untagged: scale " + untagged.scale.toFixed(1) + " m, S2 gaps " + untagged.gaps);
+
+  // Fly it: run S2's first line (wp 21), then the reversal onto its second (wp 22), swung WIDE - 60 m off the line
+  // ends at its apex, inside S2's turn zone (~280 m) and outside S1's (~28 m), so a zone taken from the wrong survey
+  // closes the turn half way round.
+  const roleAt = (taggedPlan) => {
+    two(taggedPlan);
+    fly([600, 5], [600, 295], 21);
+    const seen = [...fly([605, 302], [640, 345], 22), ...fly([640, 345], [675, 302], 22)];
+    return { seen, key: roleSpeed(speedRole()) };
+  };
+  const t = roleAt(true), u = roleAt(false);
+  check("16b. FLOWN: through S2's reversal - swung 60 m wide - the role is TURN the whole way and the turn speed is "
+        + "commanded; the CONTROL flies the same reversal at the TRANSIT speed - the fault, measured on the real "
+        + "accumLineTime",
+        () => t.seen.every((r) => r === "turn") && t.key === "low" && u.seen.includes("transit") && u.key === "high",
+        () => "tagged: " + t.seen.join(" -> ") + " at " + t.key + " (" + V.SPEED_KN[t.key] + " kn) | untagged: "
+              + u.seen.join(" -> ") + " at " + u.key + " (" + V.SPEED_KN[u.key] + " kn)");
+
+  // Two surveys side by side: S2's first line 30 m on from S1's last, inside the 40 m floor.
+  two(true, 102);
+  const sideTagged = isReversalGap(9);
+  fly([72, 25], [72, 5], 19);                       // S1's last line (wp 19), so lastRunLine is real
+  const sideSeen = fly([77, -3], [97, -3], 20);     // the leg to S2's first line
+  two(false, 102);
+  const sideUntagged = isReversalGap(9);
+  check("16c. the gap BETWEEN two surveys is a TRANSIT however close they lie - drawn side by side, 30 m apart, the leg "
+        + "from one to the next is flown as a transit; the CONTROL reads it as a reversal",
+        () => !sideTagged && sideSeen.every((r) => r === "transit") && sideUntagged,
+        () => "tagged: reversal=" + sideTagged + ", flown " + sideSeen.join(" -> ") + " | untagged: reversal="
+              + sideUntagged);
+
+  // One survey, tagged, is the plan it always was.
+  plan();
+  const before = { scale: reversalScaleM(), zone: turnZoneM(), gaps: [0, 1, 2, 3, 4].map((k) => isReversalGap(k)) };
+  plan({ lines: LINES.map(([a, b]) => ({ a, b, sv: "S1" })), waypoints: LINES.flatMap(([a, b]) => [
+    { ...a, sv: "S1" }, { ...b, sv: "S1" }]) });
+  const after = { scale: reversalScaleM(), zone: turnZoneM(), gaps: [0, 1, 2, 3, 4].map((k) => isReversalGap(k)) };
+  check("16d. a plan that is ONE survey - every plan before this, loaded as S1 - is judged exactly as before: the same "
+        + "scale, the same turn zone, the same answer for every gap",
+        () => JSON.stringify(before) === JSON.stringify(after),
+        () => JSON.stringify(after));
+}
+
 console.log("\n" + (fails ? fails + " CHECK(S) FAILED" : "all " + ran + " checks passed"));
 process.exit(fails ? 1 : 0);
 

@@ -140,6 +140,23 @@ check("2. a part must lie on the SAME straight line, further along it, in the sa
       () => !beside && !back && !behind && onward,
       () => "beside " + beside + ", back " + back + ", behind " + behind + ", 0.4 m off " + onward);
 
+// 2b. TWO SURVEYS' LINES ARE NEVER ONE DRAWN LINE (sequenced surveys, phase 1, 2026-10-02). Survey S2 drawn as the
+// continuation of S1's last line - the same straight line, further along, the same way - is a second survey's first
+// line, and counting the two as one would number every later line wrong. Untagged, the same pair IS one line: the
+// control, and the rule the cut-line count above depends on.
+const s2cont = { a: P(-60, 20), b: P(-180, 20) };            // on line 2's straight line, 60 m on, run the same way
+page.set({ lines: [{ ...LINES[2], sv: "S1" }, { ...s2cont, sv: "S2" }] });
+const across = page.linePartContinues(0), acrossCount = page.lineCount();
+page.set({ lines: [{ ...LINES[2], sv: "S1" }, { ...s2cont, sv: "S1" }] });
+const within = page.linePartContinues(0), withinCount = page.lineCount();
+page.set({ lines: [LINES[2], s2cont] });
+const plain = page.linePartContinues(0);
+check("2b. the first line of a second survey drawn ON the last line of the first is a line of its own - two surveys' lines "
+      + "are never parts of one drawn line - while the same pair inside one survey, or untagged, is one line as before",
+      () => !across && acrossCount === 2 && within && withinCount === 1 && plain,
+      () => "S1|S2: continues=" + across + " (" + acrossCount + " lines); S1|S1: " + within + " (" + withinCount
+            + "); untagged: " + plain);
+
 // 3-4. the table
 page.set({ lines: LINES, actual: [100, 60, 55, 140], run: 2, S: { run: "running", behavior: "survey" }, turns: [] });
 page.renderLineTable();

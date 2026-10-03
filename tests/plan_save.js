@@ -106,6 +106,9 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   // check that is waiting on it, not stall the suite.
   const within = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 100))]);
   // loadMission's own world, stubbed only so it runs to its end rather than into its catch-all.
+  // normalizeSurveys is the REAL one (2026-10-02): loadMission judges the plan's surveys with it, and check 12 is
+  // about exactly that judgment - a stub here would pass whatever the page did with them.
+  const { normalizeSurveys } = require("../static/js/surveys.js");
   const $ = () => ({ value: 0 }), SPEED_ROLES = [], V = {}, nogo = {};
   const updateSpeedNote = () => {}, bufferFloor = (b) => b, updateLeadNote = () => {};
   const updateEaseNote = () => {}, updatePatReadout = () => {}, render = () => {};
@@ -318,8 +321,9 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
         () => "no: " + JSON.stringify(resetNo) + "; yes: posted " + posted.length + " commanded " + commanded + " reloaded " + replaced.length);
 
   const saves = [];
-  const clearPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2 }, { lat: 1, lon: 3 }], "
-    + "lines: [{ a: { lat: 1, lon: 2 }, b: { lat: 1, lon: 3 } }] }, runRoute = [1], planIntent = {}, runUnsafe = [];"
+  const clearPage = eval("(function(){ let mission = { waypoints: [{ lat: 1, lon: 2, sv: 'S1' }, { lat: 1, lon: 3, sv: 'S1' }], "
+    + "lines: [{ a: { lat: 1, lon: 2 }, b: { lat: 1, lon: 3 }, sv: 'S1' }], surveys: [{ id: 'S1', no: 1 }] }, "
+    + "runRoute = [1], planIntent = {}, runUnsafe = [];"
     + " const resetPattern = () => {}, render = () => {}, saveMission = () => saves.push(1);\n"
     // ⚠ clearPlan counts DRAWN lines now rather than the segments the keep-outs left,
     // so it asks lineCount(). This fixture has one drawn line per segment, so the number it
@@ -337,7 +341,11 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
   const clearNo = { q: asked[q0], kept: clearPage.plan().waypoints.length, saves: saves.length };
   answerYes = true;
   await within(clearPage.clearPlan());
-  const clearYes = { cleared: clearPage.plan().waypoints.length === 0 && clearPage.plan().lines.length === 0, saves: saves.length };
+  // ... and its SURVEYS go with their lines (2026-10-02): a cleared plan listing a survey with nothing in it would carry
+  // that survey's number into the next plan, whose first pattern would then be S2.
+  const clearYes = { cleared: clearPage.plan().waypoints.length === 0 && clearPage.plan().lines.length === 0
+                              && Array.isArray(clearPage.plan().surveys) && clearPage.plan().surveys.length === 0,
+                     saves: saves.length };
   clearPage.empty();
   const q1 = asked.length;
   await within(clearPage.clearPlan());
@@ -361,6 +369,40 @@ console.log("Saving the plan - against a revision, one at a time, and said when 
               && dropPage.held() === null,
         () => "no: asked " + (dropNo.q && dropNo.q.title) + " always=" + (dropNo.q && dropNo.q.opts.always) + " kept=" + dropNo.kept
               + "; yes: held=" + JSON.stringify(dropPage.held()));
+
+  // ── 12. THE SURVEYS COME IN WITH THE PLAN, AND ARE JUDGED (sequenced surveys, phase 1, 2026-10-02) ─────────────
+  // loadMission rebuilds `mission` from an explicit whitelist, so `surveys` has to be named in it or it is dropped -
+  // and written back as none by the next save, the `speeds` defect. Then the plan is judged: a plan from before
+  // surveys were kept is ONE survey, S1; a sound one keeps its surveys and their numbers; a broken one is folded into
+  // one survey and SAID. Driven through the page's own loadMission and the real normalizeSurveys.
+  {
+    const W = (n, sv) => ({ lat: 44.9 + n * 1e-4, lon: -67.0, ...(sv ? { sv } : {}) });
+    const Ln = (i, j, sv) => ({ a: W(i), b: W(j), ...(sv ? { sv } : {}) });
+    const loadPlan = async (plan) => { banners.length = 0; await load(JSON.parse(JSON.stringify(plan))); return mission; };
+    const old = await loadPlan({ waypoints: [W(0), W(1), W(2), W(3)], lines: [Ln(0, 1), Ln(2, 3)], rev: 40 });
+    const oldOk = old.surveys.length === 1 && old.surveys[0].id === "S1" && old.surveys[0].no === 1
+                  && old.lines.every((L) => L.sv === "S1") && old.waypoints.every((p) => p.sv === "S1") && !banners.length;
+    const two = await loadPlan({
+      waypoints: [W(0, "S7"), W(1, "S7"), W(2, "S7"), W(3, "S7"), W(4, "S2"), W(5, "S2"), W(6)],
+      lines: [Ln(0, 1, "S7"), Ln(2, 3, "S7"), Ln(4, 5, "S2")],
+      surveys: [{ id: "S7", no: 7, name: "North basin" }, { id: "S2", no: 2, name: "" }], rev: 41 });
+    const twoOk = two.surveys.map((s) => s.id + "#" + s.no + ":" + s.name).join(",") === "S7#7:North basin,S2#2:"
+                  && two.waypoints[6].sv === undefined && two.lines[2].sv === "S2" && !banners.length;
+    const bad = await loadPlan({
+      waypoints: [W(0, "S1"), W(1, "S1"), W(2, "S2"), W(3, "S2"), W(4, "S1"), W(5, "S1")],
+      lines: [Ln(0, 1, "S1"), Ln(2, 3, "S2"), Ln(4, 5, "S1")],
+      surveys: [{ id: "S1", no: 1 }, { id: "S2", no: 2 }], rev: 42 });
+    const badOk = bad.surveys.length === 1 && bad.surveys[0].id === "S1"
+                  && bad.lines.every((L) => L.sv === "S1") && bad.waypoints.every((p) => p.sv === "S1")
+                  && banners.some((b) => /PLAN LOADED AS ONE SURVEY/.test(b) && /survey S1's lines are not together/.test(b));
+    check("12. the plan's SURVEYS come in through loadMission's whitelist and are judged: a plan from before them loads as "
+          + "ONE survey, S1, everything tagged; a sound one keeps its surveys, numbers and names in run order, a free "
+          + "waypoint free; a broken grouping is folded into one survey and SAID",
+          () => oldOk && twoOk && badOk,
+          () => "old: " + JSON.stringify(old.surveys) + " | two: " + two.surveys.map((s) => s.id + "#" + s.no).join(",")
+                + " free=" + JSON.stringify(two.waypoints[6].sv) + " | broken: " + JSON.stringify(bad.surveys)
+                + " banner: " + (banners[0] || "none").slice(0, 90));
+  }
 
   __finished = true;
   console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

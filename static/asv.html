@@ -968,6 +968,12 @@ import { HAZ_UNKNOWN_EXTENT, MARK_TAIL, WATER_FAR_KM, WATER_REMOTE_KM, WATER_STA
          channelPolys, depthExcluded, effectiveWaterOffset, firstBlockAlong, hazExtent,
          legClear, legReason, legReasons, markId, markSystems, nogoDR, nogoKind,
          nogoKindCounts, pairGates, qualityAt, snapClearLL, systemCenterline, waterTrust } from "/static/js/chart.js";
+// THE SURVEYS IN THE PLAN (sequenced surveys, phase 1, 2026-10-02): which survey each line and waypoint belongs to,
+// the surveys in run order, and the survey's number staying with it. See the module header.
+import { normalizeSurveys, surveyPoints, pathThroughSurveys } from "/static/js/surveys.js";
+// EVERY CHART READ OF THE EXTRACT, KEPT AND MERGED (2026-10-02): what is already read, the reads as one set of
+// structures, and a plan too big for one read cut into boxes that are not. See the module header.
+import { INK_READS_MAX, boxAround, coveringRead, mergeReads, pathBoxes } from "/static/js/inkreads.js";
 "use strict";
 const $ = s => document.querySelector(s);
 
@@ -1282,7 +1288,7 @@ document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState 
 // --- mission plan -------------------------------------------------------- //
 let mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1, speed: "survey",
                speeds: {transit:"survey", turn:"survey", survey:"survey"}, completion: "rth", buffer_m: 3,
-               lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "arc"};
+               lead_mode: "m", lead_in: 0, lead_out: 0, turn_ease: "arc", surveys: []};
 // --- SPEED BY ROLE: transit, turn, survey ----------------------------------------- //
 // Andy, 2026-08-31: "Vessel speed should be selectable for various modes. Allow separate
 // speed selection for transits, turns, and survey. These values may be temporarily
@@ -5253,7 +5259,15 @@ async function loadMission(){
                  // loses its "s" becomes 20 m instead of ~41 m, quietly).
                  lead_mode:(m.lead_mode === "s" ? "s" : "m"),
                  lead_in:m.lead_in ?? 0, lead_out:m.lead_out ?? 0,
-                 turn_ease:(m.turn_ease === "eased" ? "eased" : "arc")};
+                 turn_ease:(m.turn_ease === "eased" ? "eased" : "arc"),
+                 // THE SURVEYS (2026-10-02) ride through this whitelist like everything above - left out, they would
+                 // be dropped here and written back as none by the next save, the `speeds` defect again.
+                 surveys:Array.isArray(m.surveys) ? m.surveys : []};
+      // ... and are JUDGED before anything reads the plan: a plan from before surveys were kept becomes one survey,
+      // S1, everything in it; one whose grouping does not hold is flown as ONE survey - the plan as it was - and that
+      // is SAID, because the operator would otherwise see lines counted and timed as one survey with no reason given.
+      const svFix = normalizeSurveys(mission);
+      if(svFix.note) showBanner("⚠ PLAN LOADED AS ONE SURVEY — " + svFix.note + ".");
       boundary = Array.isArray(m.boundary) ? m.boundary : [];
       boundaryClosed = !!m.boundary_closed;
       // The revision the next save is made against (review #10) - null from a console that keeps none.
@@ -5807,7 +5821,10 @@ function surveyPattern(A, B, C, align){
   }
   return {lines, spacing, direction:(spacingAngle-90+360)%360,
           legLength:Math.abs(legLength), width:Math.abs(width), count,
-          wanted, capped: wanted > count};
+          wanted, capped: wanted > count,
+          // WHAT IT WAS DRAWN FROM (2026-10-02): the three clicks and the alignment are all this function needs to
+          // draw it again, so a committed survey records them (commitPattern) for the editor phase 2 brings.
+          anchors: {A, B, C: C || null, align}};
 }
 
 const mapEl = $("#map"), tilesEl = $("#tiles"), cv = $("#overlay"), ctx = cv.getContext("2d");
@@ -6414,8 +6431,10 @@ function resetLineStats(){ lineActual=mission.lines.map(()=>0); lineClock=null; 
  */
 let lineStatsKey = null;
 function lineSetKey(){
+  // ... and the survey each belongs to (2026-10-02): the drawn-line grouping and the reversal scale both read it, so
+  // lines that stay put while their grouping changes are a different set.
   return mission.lines.map(L=>L.a.lat.toFixed(6)+","+L.a.lon.toFixed(6)+","
-                            + L.b.lat.toFixed(6)+","+L.b.lon.toFixed(6)).join(";");
+                            + L.b.lat.toFixed(6)+","+L.b.lon.toFixed(6)+","+(L.sv || "")).join(";");
 }
 // ⚠ A LINE IS WHAT THE OPERATOR DREW, NOT WHAT THE KEEP-OUTS LEFT OF IT (review #18, 2026-09-15). Punch Out cuts a
 // pattern line around a keep-out into segments, and each segment became a "line" of its own: an 8-line pattern read
@@ -6427,6 +6446,7 @@ function lineSetKey(){
 const LINE_PART_OFFSET_M = 1.0;                 // the parts of one clipped straight line agree to millimeters
 function linePartContinues(k){
   const L = mission.lines; if(!L || k < 0 || k+1 >= L.length) return false;
+  if((L[k].sv || "") !== (L[k+1].sv || "")) return false;    // two surveys' lines are never one drawn line (2026-10-02)
   const ref = L[k].a, en = q => llEN(q.lat, q.lon, ref);
   const a = en(L[k].a), b = en(L[k].b), c = en(L[k+1].a), d = en(L[k+1].b);
   const ux = b.e - a.e, uy = b.n - a.n, len = Math.hypot(ux, uy);
@@ -6473,8 +6493,11 @@ function syncLineStats(){
 // in either direction, so parallel and anti-parallel both read as aligned).
 // turn-zone radius: how close to a line endpoint still counts as a between-lines
 // maneuver vs a long transit. Scaled to the lane spacing so it adapts to the plan.
-function turnZoneM(){
-  let sp=0; if(mission.lines.length>=2){ const g=[]; for(let k=1;k<mission.lines.length;k++) g.push(distTo(mission.lines[k-1].a, mission.lines[k].a)); g.sort((x,y)=>x-y); sp=g[Math.floor(g.length/2)]||0; }
+// ⚠ THE SURVEY'S OWN LINES (2026-10-02): `k` names a line of the survey asked about (line 0's when none is), and only
+// pairs of lines inside that survey are measured - another survey's lines are another scale. See isReversalGap.
+function turnZoneM(k){
+  const L = mission.lines, sv = ((L[k == null ? 0 : k] || {}).sv || "");
+  let sp=0; if(L.length>=2){ const g=[]; for(let j=1;j<L.length;j++) if((L[j-1].sv || "") === sv && (L[j].sv || "") === sv) g.push(distTo(L[j-1].a, L[j].a)); g.sort((x,y)=>x-y); sp=g[Math.floor(g.length/2)]||0; }
   return Math.max(20, (mission.arrival_radius_m||2)*8, sp*0.9);
 }
 function nearestEndpointM(){ let d=1e12; for(const L of mission.lines){ d=Math.min(d, distTo(asv,L.a), distTo(asv,L.b)); } return d; }
@@ -6486,9 +6509,17 @@ function nearestEndpointM(){ let d=1e12; for(const L of mission.lines){ d=Math.m
 // boustrophedon plan (consecutive lines alternate direction, so their `a` ends are at
 // opposite ends of the pattern). That is fine for "am I manoeuvring near a line end", which
 // is all turnZoneM is asked, and useless for "is this gap a reversal".
-function reversalScaleM(){
+//
+// ⚠⚠ AND IT IS THE SURVEY'S OWN SCALE, NOT THE PLAN'S (2026-10-02). `k` names a line of the survey asked about (line
+// 0's when none is), and only the gaps INSIDE that survey are measured. One median over the whole plan let the survey
+// with more gaps set the scale for every other: a 50 m-spaced survey added after a 5 m one has a median of 5, a
+// threshold of 40 m, and every one of its 50 m reversals read as a hop to another region - flown at the TRANSIT speed
+// on a turn built at the turn radius. (The tag is read as `sv || ""`: untagged lines are one survey, which is what a
+// plan with no tags at all - every older plan, every fixture - always was. static/js/surveys.js states the rule.)
+function reversalScaleM(k){
   const L = mission.lines; if(!L || L.length < 2) return 0;
-  const g = []; for(let k=1;k<L.length;k++) g.push(distTo(L[k-1].b, L[k].a));
+  const sv = ((L[k == null ? 0 : k] || {}).sv || "");
+  const g = []; for(let j=1;j<L.length;j++) if((L[j-1].sv || "") === sv && (L[j].sv || "") === sv) g.push(distTo(L[j-1].b, L[j].a));
   g.sort((x,y)=>x-y); return g[Math.floor(g.length/2)] || 0;
 }
 // Is the gap from line k to line k+1 a REVERSAL (the boat swinging round onto the next
@@ -6501,9 +6532,14 @@ function reversalScaleM(){
 // spacing is still a reversal (and the card already names those - "reversal(s) swing across
 // a gap where a line is missing"), while a hop to another region is many times it. The last
 // line has no next line, so nothing after it is ever a reversal.
+//
+// ⚠ AND A GAP BETWEEN TWO SURVEYS IS NEVER A REVERSAL (2026-10-02), however close the next survey's first line lies:
+// his rule names the leg "to the next survey" a transit outright. Two surveys drawn side by side used to make that
+// leg a turn whenever it fell inside four reversals' span.
 function isReversalGap(k){
   const L = mission.lines; if(!L || k < 0 || k+1 >= L.length) return false;
-  const scale = reversalScaleM();
+  if((L[k].sv || "") !== (L[k+1].sv || "")) return false;
+  const scale = reversalScaleM(k);
   return distTo(L[k].b, L[k+1].a) <= Math.max(4*scale, (mission.arrival_radius_m||2)*8, 40);
 }
 // SEQUENCE KEY: which coverage line IS the boat's current route leg? The uploaded
@@ -6580,7 +6616,7 @@ function accumLineTime(){
         if(curHop>=0){ hopSeg[curHop].to=seqLine; curHop=-1; }       // ... or the open hop did
         lastRunLine=seqLine;
       } else lineSwing=seqLine;   // her leg IS this line, and she is not on it yet: swinging onto it (or off its end)
-    } else if(lastRunLine>=0 && isReversalGap(lastRunLine) && nearestEndpointM()<=turnZoneM()){
+    } else if(lastRunLine>=0 && isReversalGap(lastRunLine) && nearestEndpointM()<=turnZoneM(lastRunLine)){
       // no line leg active, but a line was just run, the NEXT line is a reversal away, and
       // we're near a line end: a between-lines maneuver (teardrop / routed turn) = a turn
       if(curTurn<0){ curTurn=turnSeg.length; turnSeg.push({from:lastRunLine, to:-1, sec:0}); }
@@ -8087,6 +8123,7 @@ async function commitPattern(){
   planKind = "survey";                        // the committed plan is a survey (Mission card Type)
   const lines = patClip || patSourceLines();  // punched > boundary-clipped > full
   const transits = patClip ? patTransits : null;   // auto-routed detour waypoints
+  const firstLine = mission.lines.length, firstWp = mission.waypoints.length;   // where this survey begins (below)
   // ⚠ LEADS ONLY EXIST ON A PUNCHED PLAN, and committing an un-punched one must carry
   // NONE. The lead is the one part of the geometry whose safety argument is the chart
   // check that produced it (see extendLead); a lead attached to lines that were never
@@ -8118,6 +8155,21 @@ async function commitPattern(){
     if(transits && k<lines.length-1 && transits[k])       // interleave the turn/detour
       transits[k].forEach(v=> mission.waypoints.push({lat:v.lat, lon:v.lon, turn:true}));
   });
+  // THE PATTERN IS A SURVEY (sequenced surveys, phase 1, 2026-10-02). Everything it has just put in the plan - its
+  // lines, their ends, its turns - is tagged with its id, and it is listed after the surveys already there, which is
+  // the order the plan runs them in. Its NUMBER is one past the highest the plan holds and STAYS WITH IT (Andy: "keep
+  // the number with the survey"): never re-used in this plan and never renumbered by order, so S3 on a label or in the
+  // session log is one survey for the life of the plan. The judgment that reads the tags - a gap between two surveys is
+  // never a reversal, and each survey's reversals are judged by its own spacing - is isReversalGap's.
+  let no = 1 + (mission.surveys || []).reduce((n, s) => Math.max(n, +s.no || 0), 0);
+  while((mission.surveys || []).some(s => s.id === "S" + no)) no++;       // a hand-edited file's odd id
+  const sv = "S" + no, drawnFrom = ((currentPattern() || sp) || {}).anchors || null;
+  const pos = (p) => p ? {lat: p.lat, lon: p.lon} : null;
+  mission.surveys = [...(mission.surveys || []), {id: sv, no, name: "", punched: !!patClip,
+    pattern: drawnFrom ? {A: pos(drawnFrom.A), B: pos(drawnFrom.B), C: pos(drawnFrom.C), align: drawnFrom.align | 0}
+                       : null}];
+  for(let i = firstLine; i < mission.lines.length; i++) mission.lines[i].sv = sv;
+  for(let i = firstWp; i < mission.waypoints.length; i++) mission.waypoints[i].sv = sv;
   // resetPattern() blanks the duration rows along with the pattern; recompute them from
   // the plan that was just committed, so they describe it instead of going to "--" at the
   // moment it becomes real. Same fault the survey card had, one row over.
@@ -8629,7 +8681,9 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     // ⚠ A NEW EXTRACT INVALIDATES THE CHART READ. The scan is keyed on the box AND the band
     // it was taken over; dropping the key here means the next plan re-reads rather than
     // carrying a previous area's findings into water they were never taken over.
+    // ⚠ EVERY READ, since they are kept (2026-10-02): each was taken over THIS extract's explained mask.
     chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
+    chartReads = []; inkRefused = null;
     nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
     nogo.skin = skin;
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
@@ -10081,6 +10135,15 @@ const CHART_INK_KIND = "a structure drawn on the chart but absent from the ENC";
 // description of a thing whose exact edges the console does not know.
 const CHART_INK_AREA_KIND = "a structure footprint read off the chart, not in the ENC";
 let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
+// ⚠⚠ EVERY READ OF THIS EXTRACT IS KEPT (2026-10-02, sequenced surveys phase 1). `chartInk` held the LAST read and
+// nothing else: a read of other water replaced it, and a refused one emptied it, so every structure found before left
+// the model the planners and the guard use. An Upload's one box over the boat and every waypoint is refused past the
+// 256-tile budget (about 3.5 km across at 43 N), so a plan spread over a harbor read nothing - and dropped the piers
+// each survey's own punch had read. `chartReads` holds every read of the present extract ({key, bb, z, seq, lines,
+// areas, detached, ...}), `chartInk` is now their MERGE (refoldInk - the same shape every reader already reads), and
+// `inkRefused` is the last request that could not be read, for the readout. A new extract drops all three, as it
+// always dropped the one. See static/js/inkreads.js.
+let chartReads = [], chartReadSeq = 0, inkRefused = null;
 
 /**
  * Fold the chart-read structures into a keep-out model. Returns how many went in.
@@ -10134,18 +10197,26 @@ function loadTile(z, x, y){
  * the smallest mark it looks for is under two pixels and a "clean" scan would mean nothing
  * at all. Saying so is the answer; a silent empty result is not.
  */
-async function scanChartInk(bb){
-  if(!bb || !nogo.features || !nogo.features.length) return null;
-  let z = CHART_INK_Z, x0, y0, nx, ny;
-  for(;; z--){
+/** The tiles `bb` would be read over: the finest zoom from CHART_INK_Z down to CHART_INK_MIN_Z whose mosaic fits
+ *  CHART_INK_MAX_TILES - {z, x0, y0, nx, ny} - or {refused, z, nx, ny} when even the coarsest does not. One function,
+ *  so the scan and the question "is this water already read at the detail it would get?" (ensureChartInk) and "can
+ *  this box be read at all?" (ensureNogoCovers) cannot disagree about the budget. */
+function inkTileGrid(bb){
+  for(let z = CHART_INK_Z;; z--){
     const tl = worldPx(bb.N, bb.W, z), br = worldPx(bb.S, bb.E, z);
-    x0 = Math.floor(tl.x / TILE); y0 = Math.floor(tl.y / TILE);
-    nx = Math.floor(br.x / TILE) - x0 + 1; ny = Math.floor(br.y / TILE) - y0 + 1;
-    if(nx * ny <= CHART_INK_MAX_TILES) break;
+    const x0 = Math.floor(tl.x / TILE), y0 = Math.floor(tl.y / TILE);
+    const nx = Math.floor(br.x / TILE) - x0 + 1, ny = Math.floor(br.y / TILE) - y0 + 1;
+    if(nx * ny <= CHART_INK_MAX_TILES) return {z, x0, y0, nx, ny};
     if(z <= CHART_INK_MIN_Z)
       return {refused:"the area is too large to read the chart image at a useful scale ("
-                      + (nx*ny) + " tiles at z" + z + ")"};
+                      + (nx*ny) + " tiles at z" + z + ")", z, nx, ny};
   }
+}
+async function scanChartInk(bb){
+  if(!bb || !nogo.features || !nogo.features.length) return null;
+  const grid = inkTileGrid(bb);
+  if(grid.refused) return {refused: grid.refused};
+  const {z, x0, y0, nx, ny} = grid;
   const W = nx * TILE, H = ny * TILE, t0 = Date.now();
   const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
   const ctx = cv.getContext("2d", {willReadFrequently:true});
@@ -10243,41 +10314,68 @@ async function scanChartInk(bb){
  * readout counts them separately - because a keep-out read off a picture is not the same
  * warrant as one published in the ENC and must never be shown as if it were.
  */
+/** The reads MERGED into the one read every reader has always looked at - `chartInk`, the same shape: the readout, the
+ *  keep-out fold, the drawn layer and the punch's memo key go on reading it. Its KEY names every read in it, so a punch
+ *  memo taken before a read landed is never served after it (tests/chart_ink.js 21). */
+function refoldInk(){
+  const m = mergeReads(chartReads);
+  const last = chartReads[chartReads.length - 1] || null;
+  chartInk = {key: chartReads.length ? chartReads.map(r => r.key).join(";") : null,
+              lines: m.lines, areas: m.areas, detached: m.detached, note: inkNote(m, last),
+              z: last ? last.z : null, ms: last ? last.ms : 0, busy: chartInk.busy};
+}
+/** What the readout says about the chart image. ONE read is said exactly as it always was; more say how many areas, and
+ *  a request that could not be read is said beside what was. */
+function inkNote(m, last){
+  const refused = inkRefused ? inkRefused.why : null;
+  if(!last) return refused;
+  const n = chartReads.length, found = m.lines.length + m.areas.length;
+  // ⚠ THE DETACHED MARKS ARE SAID OUT LOUD, and they are the honest edge of this method. They are line-like ink the ENC
+  // does not explain that touches nothing charted, so the console will not enforce them - Andy's rule was ATTACHED -
+  // but "I saw something I could not classify" is information the operator is entitled to, and swallowing it would
+  // make a clean-looking scan out of an ambiguous one.
+  return (found
+      ? found + " structure(s) read off the chart the ENC does not carry ("
+        + m.lines.length + " line(s), " + m.areas.length + " footprint(s))" + (n > 1 ? " over " + n + " chart areas" : "")
+      : (n > 1 ? "chart read over " + n + " areas" : "chart read at z" + last.z) + " - nothing the ENC does not already carry")
+    + (n > 1 ? " (the latest " + last.got + "/" + last.tiles + " tiles at z" + last.z + ", " + last.ms + " ms)"
+             : " (" + last.got + "/" + last.tiles + " tiles, " + last.ms + " ms)")
+    + (m.detached.length ? "; " + m.detached.length + " further unexplained mark(s) touch "
+        + "nothing charted and are NOT enforced - look at them" : "")
+    + (refused ? "; ⚠ the last water asked for was NOT read (" + refused + ") and is checked against the ENC only" : "");
+}
 async function ensureChartInk(bb){
   if(!bb || !nogo.ready || chartInk.busy) return chartInk;
   const key = [bb.W,bb.S,bb.E,bb.N].map(v=>v.toFixed(5)).join(",") + "|" + (nogo.band||"");
-  if(chartInk.key === key) return chartInk;
+  // ALREADY READ HERE, at the detail this water would be read at (or detail enough - INK_GOOD_Z): nothing to do. A box
+  // too large to read at all has no detail to compare; it goes to the scan, which refuses it in words.
+  const grid = inkTileGrid(bb);
+  if(!grid.refused && coveringRead(chartReads, bb, grid.z)) return chartInk;
   chartInk.busy = true;
   try{
     const r = await scanChartInk(bb);
     await inkYield();                  // the analysis and the model rebuild + redraw are separate turns (the freeze)
     if(!r || r.refused){
-      // ⚠ THE KEY IS NOT SET ON A REFUSAL. A refusal is "not read yet", not "read and clean",
-      // and caching it would mean the tiles finish arriving in the background and the next
-      // plan still never looks at them.
-      chartInk = {...chartInk, key:null, lines:[], areas:[], detached:[], busy:false,
-                  note:(r && r.refused) || "no chart to read"};
-      rebuildNogo(); updateNogoUI();
-      if(r && r.refused) showBanner("⚠ CHART IMAGE NOT COMPARED — " + r.refused
-        + ". The plan is checked against the ENC only; command it again once the chart has "
-        + "drawn in.");
+      // ⚠ NOTHING IS KEPT FOR A REFUSAL. A refusal is "not read yet", not "read and clean", and keeping it would mean
+      // the tiles finish arriving in the background and the next plan still never looks at them.
+      // ⚠⚠ AND IT TAKES NOTHING AWAY (2026-10-02). It used to EMPTY the read - every structure found over other water
+      // left the model the planners and the guard use, because THIS water could not be read. Those are as real as
+      // they were a moment ago, so they stay, and the readout says this water was not read (inkRefused).
+      inkRefused = {bb, why: (r && r.refused) || "no chart to read"};
+      refoldInk(); rebuildNogo(); updateNogoUI();
+      if(r && r.refused) showBanner("⚠ CHART IMAGE NOT COMPARED — " + r.refused + ". "
+        + (chartReads.length ? "The structures already read over other water are kept; this water is checked against "
+                               + "the ENC only"
+                             : "The plan is checked against the ENC only")
+        + "; command it again once the chart has drawn in.");
       return chartInk;
     }
-    // ⚠ THE DETACHED MARKS ARE SAID OUT LOUD, and they are the honest edge of this method.
-    // They are line-like ink the ENC does not explain that touches nothing charted, so the
-    // console will not enforce them - Andy's rule was ATTACHED - but "I saw something I could
-    // not classify" is information the operator is entitled to, and swallowing it would make
-    // a clean-looking scan out of an ambiguous one.
+    chartReads.push({key, bb, z: r.z, ms: r.ms, got: r.got, tiles: r.tiles, seq: ++chartReadSeq,
+                     lines: r.lines, areas: r.areas, detached: r.detached});
+    if(chartReads.length > INK_READS_MAX) chartReads.shift();   // the oldest goes; a plan over its water reads it again
+    if(inkRefused && bboxContains(bb, inkRefused.bb)) inkRefused = null;   // the water that was not read now is
+    refoldInk();
     const found = r.lines.length + r.areas.length;
-    chartInk = {key, lines:r.lines, areas:r.areas, detached:r.detached, z:r.z, ms:r.ms,
-      busy:false,
-      note: (found
-        ? found + " structure(s) read off the chart the ENC does not carry ("
-          + r.lines.length + " line(s), " + r.areas.length + " footprint(s))"
-        : "chart read at z" + r.z + " - nothing the ENC does not already carry")
-        + " (" + r.got + "/" + r.tiles + " tiles, " + r.ms + " ms)"
-        + (r.detached.length ? "; " + r.detached.length + " further unexplained mark(s) touch "
-            + "nothing charted and are NOT enforced - look at them" : "")};
     rebuildNogo();                     // fold them in through the ONE builder
     updateNogoUI(); render();
     if(found)
@@ -10292,13 +10390,16 @@ async function ensureChartInk(bb){
   } catch(e){
     // ⚠ A READ THAT THREW IS NOT A CLEAN ONE, AND IT IS NOT CACHED AS ONE (2026-09-30, found reviewing this routine).
     // This kept the key, so the same water was never read again that session, and the failure was said only on
-    // the readout. The rule a refusal already obeys above: no key, a rebuild without what the read was to replace,
-    // and a banner - "I could not look" must not read as "I looked and found nothing".
-    chartInk = {...chartInk, key:null, lines:[], areas:[], detached:[], busy:false,
-                note:"chart read failed: " + e};
-    rebuildNogo(); updateNogoUI();
-    showBanner("⚠ CHART IMAGE NOT COMPARED — the chart read failed (" + e + "). The plan is checked against "
-      + "the ENC only; command it again to retry the read.");
+    // the readout. The rule a refusal obeys above: nothing kept for this water - and, since 2026-10-02, nothing taken
+    // from the reads of other water - a rebuild, and a banner: "I could not look" must not read as "I looked and found
+    // nothing".
+    inkRefused = {bb, why: "chart read failed: " + e};
+    refoldInk(); rebuildNogo(); updateNogoUI();
+    showBanner("⚠ CHART IMAGE NOT COMPARED — the chart read failed (" + e + "). "
+      + (chartReads.length ? "The structures already read over other water are kept; this water is checked against the "
+                             + "ENC only"
+                           : "The plan is checked against the ENC only")
+      + "; command it again to retry the read.");
   } finally { chartInk.busy = false; }
   return chartInk;
 }
@@ -10319,12 +10420,47 @@ async function ensureNogoArea(){
   // on this return.
   return nogo.ready && bboxContains(nogo.bbox, b);
 }
+// How far round each survey's own waypoints the Upload reads that survey's water (2026-10-02). Less than the punch's
+// 120 m-plus-lead box round the drawn pattern, so the read the punch already made usually holds it and nothing is
+// read twice; ample round the turns and leads the waypoints already include. NOT when the turns are TEARDROPS (lines
+// spaced inside the turn's diameter): those reach up to ~2.75 radii past the line ends, past the punch's box, and the
+// survey is read once more - measured live on a 10 m pattern, 108 tiles in 1.9 s, nearly all already cached by the punch.
+const INK_SURVEY_PAD_M = 100;
+/**
+ * READ THE CHART OVER A PLAN'S WATER (2026-10-02, sequenced surveys phase 1). `b` is the plan's one box, as ever; a
+ * Go-To, an RTH, a transit and a Set Home read exactly that (opts absent), and a box too big to read is refused in
+ * words as before - their prompt answer matters more than the water a refusal leaves unread, and the reads already
+ * made stay in the model either way.
+ *
+ * AN UPLOAD (opts.plan; pts = the boat, then the plan's waypoints in order) reads MORE than one box, because one box
+ * over a spread plan reads nothing at all:
+ *   * the whole box when it can be read; when it cannot (past the 256-tile budget), the TRANSITS leg by leg - the path
+ *     from the boat through the plan, each survey cut to its first and last waypoint (pathThroughSurveys), in boxes
+ *     that can each be read (pathBoxes) - and it SAYS SO if the path ran past the most it will read;
+ *   * then EACH SURVEY'S OWN WATER at its own detail (surveyPoints), unless a read already holds it finely enough -
+ *     which the punch's own read usually does, so in the common case nothing more is read than before.
+ */
+async function readPlanInk(b, pad, pts, opts){
+  if(!(opts && opts.plan)){ await ensureChartInk(b); return; }
+  const wps = pts.slice(1);
+  if(inkTileGrid(b).refused){
+    const legs = pathBoxes(pathThroughSurveys(pts[0], wps), pad, bb => !inkTileGrid(bb).refused);
+    for(const lb of legs.boxes) await ensureChartInk(lb);
+    if(legs.dropped)
+      showBanner("⚠ CHART IMAGE NOT COMPARED over the whole route — this plan's transits run past the "
+        + legs.boxes.length + " stretches an Upload reads, and the last " + legs.dropped + " are checked against the "
+        + "ENC only. Verify that water visually.");
+  } else await ensureChartInk(b);
+  for(const s of surveyPoints({surveys: mission.surveys, waypoints: wps}))
+    if(s.pts.length) await ensureChartInk(boxAround(s.pts, INK_SURVEY_PAD_M));
+}
 // COVERAGE FIX: make sure the nogo model covers a set of lat/lon points (the boat +
 // a Go-To / RTH / Transit target that may lie OUTSIDE the ~5 km operating box)
 // before we plan to them. Without this, obstacles near a distant target aren't
 // modelled and the leg is planned as if that water were clear. Extends the fetch to
 // the union (like ensureNogoArea does for surveys). No-op when already covered.
-async function ensureNogoCovers(pts, padM){
+// `opts.plan` marks an Upload's plan (readPlanInk).
+async function ensureNogoCovers(pts, padM, opts){
   pts = (pts || []).filter(p => p && p.lat != null && p.lon != null);
   if(!pts.length) return nogo.ready;
   let S=1e9, N=-1e9, W=1e9, E=-1e9;
@@ -10337,11 +10473,11 @@ async function ensureNogoCovers(pts, padM){
   // operating box is 10 km across, which is thousands of tiles at any scale that could
   // resolve a finger pier. `b` is the plan's own box, already padded, which is both the
   // right water and a few dozen tiles.
-  if(nogo.ready && bboxContains(nogo.bbox, b)){ await ensureChartInk(b); return true; }
+  if(nogo.ready && bboxContains(nogo.bbox, b)){ await readPlanInk(b, pad, pts, opts); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
   await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb);
-  if(nogo.ready) await ensureChartInk(b);
+  if(nogo.ready) await readPlanInk(b, pad, pts, opts);
   // ⚠ THE ANSWER IS ABOUT THIS PLAN'S WATER, not about whether a model exists at all.
   // `nogo.ready` on its own was TRUE while nogo.bbox was a box the TARGET sat outside of,
   // which is how a Go-To 9.8 km away was planned straight through a charted island.
@@ -11421,7 +11557,11 @@ window.addEventListener("mousemove", e=>{
   if(boundDrag!=null){ boundary[boundDrag] = ll; patClip=null; updatePatReadout(); renderSoon(); return; }
   if(searchDrag){ search.datum = {lat:ll.lat, lon:ll.lon}; updateSearchPanel(); renderSoon(); return; }
   if(wpDrag){ const np={lat:ll.lat, lon:ll.lon};                // drag a waypoint (line endpoint follows)
-    syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]=np; wpDrag.prev=np;
+    // A DRAG MOVES A POINT; IT DOES NOT CHANGE WHAT THE POINT IS (2026-10-02). This put a bare {lat, lon} in its place,
+    // which dropped the survey it belongs to - leaving a FREE waypoint inside a survey's run, a grouping the next load
+    // folds into one survey - and dropped a turn point's `turn` flag with it. Everything but the position is kept.
+    syncLineEndpoint(wpDrag.prev, np); mission.waypoints[wpDrag.i]={...mission.waypoints[wpDrag.i], ...np};
+    wpDrag.prev=np;
     $("#lineTip").style.display="none"; renderSoon(); return; }
   // the pending measurement's far end follows the pointer. Deliberately does NOT return:
   // a pan may be live underneath (the chart still drags while the tool is armed), and the
@@ -11962,7 +12102,7 @@ async function clearPlan(){
   if((nW || nL) && !await guiConfirm("Clear the plan",
       "Deletes all " + nW + " waypoint(s) and " + nL + " survey line(s) from the saved plan. The plan as it was "
       + "is kept on the console as mission.json.bak1.", {always: true})) return;
-  mission.waypoints=[]; mission.lines=[]; resetPattern();
+  mission.waypoints=[]; mission.lines=[]; mission.surveys=[]; resetPattern();   // the surveys go with their lines
   giveUpRoute("this page cleared the drawn plan"); saveMission(); render();
 }
 $("#ln_clr").onclick = clearPlan;
@@ -13475,7 +13615,8 @@ async function doUpload(){
   // operator gives while this scan runs bumps the generation and is caught there, exactly as
   // one given during the confirm is. A new await on this path is only safe BECAUSE that
   // snapshot is taken first; anything added above it would not be.
-  await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps]);
+  // ... AND EACH SURVEY'S OWN WATER, and a plan too big for one read read leg by leg (2026-10-02, readPlanInk).
+  await ensureNogoCovers([{lat:asv.lat, lon:asv.lon}, ...wps], null, {plan: true});
   // ⚠ AND A TURN BETWEEN THE CHART READ AND THE ROUTING (2026-09-29, the freeze): the model rebuild and
   // redraw that end the read, then routePlan, certifyDeparture and the first corner slice, were one task.
   // Go-To and RTH already take theirs ("Routing …", 50 ms); fenced by the same snapshot as the await above.
@@ -15185,7 +15326,7 @@ async function resetMission(){
     {always: true})) return;
   // clear the persisted plan + the trail so the reloaded page comes up clean
   mission = {waypoints: [], lines: [], arrival_radius_m: 2, approach_radius_m: 1,
-             speed: "survey", completion: "rth", buffer_m: 3};
+             speed: "survey", completion: "rth", buffer_m: 3, surveys: []};
   boundary = []; boundaryClosed = false;
   clearTrack();
   flashNote("Resetting — reloading fresh…");

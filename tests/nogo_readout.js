@@ -347,6 +347,9 @@ const NOGO_QUEUE_MAX_MS = +(H.match(/const NOGO_QUEUE_MAX_MS = (\d+)/) || [])[1]
 eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
      grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
+     // readPlanInk (2026-10-02) is the step ensureNogoCovers reads the chart through; with no `opts` - every call in this
+     // suite - it is the one ensureChartInk above. What an Upload's plan reads is tests/ink_reads.js's subject.
+     grab("readPlanInk") + "\n" +
      "const M_PER_DEG_LAT = " + M_PER_DEG_LAT + ";" + "\n" + grab("ensureNogoCovers"));
 
 async function drive(fetchResult) {

@@ -482,15 +482,9 @@ check("13b. A FOOTPRINT IS FOLDED AS A POLYGON, not as a line — `blocked` test
       () => /ko\.polys\.push\(\{ring, bb: bbOf\(ring\), kind: CHART_INK_AREA_KIND/.test(FOLD)
             && /A\.ring\.length < 3/.test(FOLD),
       "a line would let the router thread between the fingers");
-check("14. a REFUSAL is not cached as a clean read — \"I found nothing\" and \"I could not " +
-      "look\" must never be the same sentence",
-      () => {
-        const ec = H.slice(H.indexOf("async function ensureChartInk"),
-                           H.indexOf("async function ensureChartInk") + 1800);
-        return /chartInk = \{\.\.\.chartInk, key:null,/.test(ec)
-            && /CHART_INK_MIN_COVER/.test(H) && /CHART_INK_DEADLINE_MS/.test(H);
-      },
-      "an unread tile is blank paper and reads exactly like clear water");
+// 14. A REFUSAL IS NOT CACHED AS A CLEAN READ - it is EXECUTED now, beside 14b at the end of this file, because since
+// 2026-10-02 the reads are KEPT (chartReads) and a refusal must also take nothing AWAY from the reads of other water;
+// a source grep for the line that used to empty the read could only have held the old rule.
 check("15. what was read off a picture is DRAWN DIFFERENTLY from what the ENC published — " +
       "both the lines and the footprints",
       () => {
@@ -915,35 +909,133 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                 && /performance\.now\(\) - slice > INK_SLICE_MS\)\{ await inkYield\(\)/.test(scan)
                 && (scan.match(/await inkYield\(\)/g) || []).length >= 4
                 && /await scanChartInk\(bb\);\s*await inkYield\(\);/.test(ens)
-                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\]\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,300}?const plan = routePlan\(/.test(up),
+                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,300}?const plan = routePlan\(/.test(up),
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");
   }
 
-  // 14b. A READ THAT THREW IS NOT A CLEAN ONE EITHER (2026-09-30, found reviewing this routine for Andy's floats at
-  // Pepperrell Cove). ensureChartInk's catch KEPT THE KEY, so the same water was never read again that session, and
-  // said so only on the readout - check 14 held the refusal path to the rule and nothing held the throw. Run the
-  // shipped function, its leaves stubbed: a scan that throws, then the same box again.
+  // 14, 14b-14f. THE READS ARE KEPT, AND A REFUSAL OR A THROW ADDS NOTHING AND TAKES NOTHING AWAY (2026-10-02).
+  // The page held ONE read: a new one replaced it and a refused one EMPTIED it, so every structure found over other
+  // water left the model the planners and the guard use - the punch's piers, the moment an Upload's box over a spread
+  // plan was refused. Now every read of the extract is kept (chartReads) and merged (refoldInk, static/js/inkreads.js)
+  // into `chartInk`. 14 and 14b are the old rules, kept: a refusal is not cached as a clean read ("I found nothing" and
+  // "I could not look" must never be the same sentence) and neither is a read that THREW (2026-09-30: the catch kept
+  // the key, so the same water was never read again) - plus, now, that neither takes the other reads with it.
+  // THE SHIPPED FUNCTIONS, their leaves stubbed: ensureChartInk, refoldInk, inkNote and inkTileGrid from the page, the
+  // merge and the coverage test from static/js/inkreads.js, and a scan that answers what each check needs.
   {
-    const i = H.indexOf("async function ensureChartInk(bb){");
-    const fn = H.slice(i, H.indexOf("\n}", i) + 2);
-    let scans = 0, rebuilt = 0;
-    const banners = [];
-    const mk = new Function("nogo", "scanChartInk", "inkYield", "rebuildNogo", "updateNogoUI", "render", "showBanner",
-      "let chartInk = {key:null, lines:[{lengthM:9}], areas:[], detached:[], note:null, z:null, ms:0, busy:false};\n"
-      + fn + "\nreturn { run: ensureChartInk, ink: () => chartInk };");
-    const w = mk({ ready: true, band: "enc_harbour" },
-                 async () => { scans++; throw new TypeError("Failed to fetch"); }, async () => {},
-                 () => { rebuilt++; }, () => {}, () => {}, (t) => banners.push(t));
-    const BB = { W: -70.71, S: 43.08, E: -70.70, N: 43.09 };
-    await w.run(BB);
-    const ink = { ...w.ink() };          // a COPY: the second run sets `busy` on this same object before replacing it
-    await w.run(BB);
-    check("14b. ... nor is a read that THREW: no key, nothing left from before, the model rebuilt without it, a "
-          + "banner - and the same water is read again next time",
-          ink.key === null && ink.lines.length === 0 && /chart read failed: TypeError: Failed to fetch/.test(ink.note || "")
-          && ink.busy === false && rebuilt >= 1 && banners.some(b => /CHART IMAGE NOT COMPARED/.test(b)) && scans === 2,
-          () => JSON.stringify({ key: ink.key, lines: ink.lines.length, note: ink.note, rebuilt, banners: banners.length,
-                                 scans }));
+    const G = require("../static/js/geodesy.js");
+    const IR = require("../static/js/inkreads.js");
+    const { bboxContains } = require("../static/js/geometry.js");
+    const fnSrc = (name) => {
+      let i = H.indexOf("function " + name + "(");
+      if (i < 0) throw new Error("anchor gone: function " + name);
+      if (H.slice(i - 6, i) === "async ") i -= 6;
+      let k = H.indexOf("{", i), depth = 0;
+      for (;;) { const c = H[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+      return H.slice(i, k + 1);
+    };
+    const declOf = (re) => { const m = H.match(re); if (!m) throw new Error("anchor gone: " + re); return m[0]; };
+    const PAGE = [declOf(/^const CHART_INK_Z = [^;]*;/m), declOf(/^const CHART_INK_MIN_Z = [^;]*;/m),
+                  declOf(/^const CHART_INK_MAX_TILES = [^;]*;/m),
+                  "let chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};",
+                  declOf(/^let chartReads = [^;]*;/m),
+                  fnSrc("inkTileGrid"), fnSrc("refoldInk"), fnSrc("inkNote"), fnSrc("ensureChartInk")].join("\n");
+    const inkWorld = (scan) => {
+      const banners = [];
+      let scans = 0, rebuilt = 0;
+      // eslint-disable-next-line no-new-func
+      const w = new Function("nogo", "scanChartInk", "inkYield", "rebuildNogo", "updateNogoUI", "render", "showBanner",
+        "worldPx", "TILE", "coveringRead", "mergeReads", "INK_READS_MAX", "bboxContains",
+        "\"use strict\";\n" + PAGE + "\nreturn { run: ensureChartInk, ink: () => chartInk, reads: () => chartReads };")(
+        { ready: true, band: "enc_harbour" }, async (bb) => { scans++; return scan(bb); }, async () => {},
+        () => { rebuilt++; }, () => {}, () => {}, (t) => banners.push(t),
+        G.worldPx, G.TILE, IR.coveringRead, IR.mergeReads, IR.INK_READS_MAX, bboxContains);
+      return { ...w, banners, scans: () => scans, rebuilt: () => rebuilt };
+    };
+    // Boxes small enough to read at the finest zoom, and one only the coarsest will take.
+    const box = (lat, lon, d) => ({ W: lon, S: lat, E: lon + d, N: lat + d });
+    // BIG holds A (and the small boxes inside A below); B lies apart from both.
+    const A = box(43.080, -70.710, 0.003), B = box(43.120, -70.650, 0.003), BIG = box(43.070, -70.720, 0.025);
+    const pier = (lat, lon, m) => ({ a: { lat, lon }, b: { lat: lat + m / 111320, lon }, lengthM: m });
+    const read = (z, lines, extra) => ({ z, tiles: 48, got: 48, ms: 5, lines, areas: [], detached: [], ...(extra || {}) });
+
+    let bTries = 0;                      // B is refused the first time it is asked for, and read the second
+    const w14 = inkWorld((bb) => bb === A ? read(19, [pier(43.081, -70.709, 40)])
+                                          : (++bTries === 1 ? { refused: "only 3 of 48 chart tiles arrived in 15 s" }
+                                                            : read(19, [])));
+    await w14.run(A);
+    await w14.run(B);
+    const after = { lines: w14.ink().lines.length, reads: w14.reads().length, note: w14.ink().note,
+                    banner: w14.banners.find((b) => /NOT COMPARED/.test(b)) || "" };
+    await w14.run(B);
+    const readNow = w14.ink().note || "";
+    check("14. a REFUSAL is not cached as a clean read - the same water is read again next time - and, since the reads "
+          + "are kept, it takes NOTHING from the others: the pier read over other water stays in the model, the banner "
+          + "and the readout both say this water was not read, and once it IS read the readout stops saying so",
+          after.lines === 1 && after.reads === 1 && w14.scans() === 3
+          && /already read over other water are kept/.test(after.banner)
+          && /the last water asked for was NOT read \(only 3 of 48 chart tiles arrived/.test(after.note || "")
+          && w14.reads().length === 2 && !/NOT read/.test(readNow),
+          () => JSON.stringify({ after, scans: w14.scans(), readNow }));
+
+    const throws = async () => { throw new TypeError("Failed to fetch"); };
+    const w14b = inkWorld(throws);
+    await w14b.run(A);
+    const lone = { ...w14b.ink() };      // a COPY: the next run sets `busy` on the same object before replacing it
+    await w14b.run(A);
+    const w14bk = inkWorld((bb) => bb === A ? read(19, [pier(43.081, -70.709, 40)]) : throws());
+    await w14bk.run(A);
+    await w14bk.run(B);
+    check("14b. ... nor is a read that THREW: nothing kept for that water, a banner, the same water read again - and with "
+          + "a read of other water in hand, that read stays",
+          lone.key === null && lone.lines.length === 0 && /^chart read failed: TypeError: Failed to fetch$/.test(lone.note || "")
+          && lone.busy === false && w14b.rebuilt() >= 1 && w14b.banners.some((b) => /CHART IMAGE NOT COMPARED/.test(b))
+          && w14b.scans() === 2
+          && w14bk.ink().lines.length === 1 && /NOT read \(chart read failed/.test(w14bk.ink().note || ""),
+          () => JSON.stringify({ key: lone.key, lines: lone.lines.length, note: lone.note, rebuilt: w14b.rebuilt(),
+                                 scans: w14b.scans(), kept: w14bk.ink().lines.length }));
+
+    // 14c. Water already read is not read again - unless only a COARSER read holds it.
+    const w14c = inkWorld((bb) => bb === BIG ? read(17, []) : bb === A ? read(18, []) : read(19, []));
+    await w14c.run(BIG);
+    const inA = box(43.0805, -70.7095, 0.001);
+    await w14c.run(inA);                 // inside BIG, but BIG was read at z17 and this water reads at z19
+    const n1 = w14c.scans();
+    await w14c.run(A);                   // read at z18 here...
+    const insideA = box(43.0810, -70.7090, 0.001);
+    await w14c.run(insideA);             // ...which is detail enough for any finer request inside it
+    await w14c.run(A);                   // and the same box again
+    check("14c. water already read is NOT read again - inside a z18 read, or the same box - while water only a COARSE "
+          + "read holds (z17) is read again at its own detail",
+          n1 === 2 && w14c.scans() === 3,
+          () => "after BIG and a small box inside it: " + n1 + " scans (2 wanted); at the end " + w14c.scans()
+                + " (3 wanted)");
+
+    // 14d. Two reads that found one pier count it once - the finer read's - and nothing only one read found is lost.
+    const fine = pier(43.0810, -70.7090, 40), coarse = pier(43.08103, -70.70903, 42), onlyCoarse = pier(43.0815, -70.7085, 30);
+    const w14d = inkWorld((bb) => bb === BIG ? read(17, [coarse, onlyCoarse]) : read(19, [fine]));
+    await w14d.run(BIG);
+    await w14d.run(A);
+    const L = w14d.ink().lines;
+    check("14d. two reads that found ONE pier count it once - the finer read's - while a pier only the coarse read found "
+          + "is KEPT even inside the fine read's box (an unread tile is blank paper); the key names both reads",
+          L.length === 2 && L.includes(fine) && L.includes(onlyCoarse) && !L.includes(coarse)
+          && (w14d.ink().key || "").split(";").length === 2 && /2 structure\(s\) .* over 2 chart areas/.test(w14d.ink().note),
+          () => L.length + " lines; key " + w14d.ink().key + "; " + w14d.ink().note);
+
+    // 14e. A long session cannot grow the reads without bound: the oldest goes past INK_READS_MAX.
+    const w14e = inkWorld(() => read(19, []));
+    const boxes = Array.from({ length: IR.INK_READS_MAX + 1 }, (_, n) => box(43.0 + n * 0.004, -70.7, 0.003));
+    for (const bx of boxes) await w14e.run(bx);
+    check("14e. past INK_READS_MAX reads the OLDEST goes - a plan over its water simply reads it again",
+          w14e.reads().length === IR.INK_READS_MAX && w14e.reads()[0].bb === boxes[1],
+          () => w14e.reads().length + " kept, the first is box " + boxes.indexOf(w14e.reads()[0].bb));
+
+    // 14f. A new extract drops every read: each was taken over the old one's explained mask.
+    const rn = fnSrc("refreshNogo");
+    check("14f. a NEW EXTRACT drops every read, not only the merged view of them",
+          /chartInk = \{key:null, lines:\[\], areas:\[\], detached:\[\], note:null, z:null, ms:0, busy:false\};\s*chartReads = \[\]; inkRefused = null;/.test(rn),
+          "refreshNogo in static/asv.html");
   }
 
   // ── 23. A DASH THAT ENDS IN A DOT IS A LINE SYMBOL, NOT A STRUCTURE ─────────────────────────────────────────────
