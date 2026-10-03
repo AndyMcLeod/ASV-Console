@@ -60,6 +60,7 @@ import { blocked, legClear } from "./chart.js";
 import { V } from "./state.js";
 // THE RUNTIME GUARD'S OWN PROJECTION, borrowed at PLAN time - see turnFlyable.
 import { projectRoute } from "./guard.js";
+import { slowLaw, speedStep, leadWant } from "./coast.js";
 // THE SHARED TURN GEOMETRY. Four bodies, four wrappers below; the constants pass straight
 // through because both consoles already agreed on every one of them.
 import { TRACKING_MARGIN, ANTI_PARALLEL_DEG, SKEW_LIMIT_DEG, MAX_HALF_M, SPIRAL_MIN_LS_M,
@@ -604,14 +605,26 @@ export const TRACK_STEP_S = 0.25;
 
 /**
  * THE THROTTLE'S RAMP, kn/s - and it is the ONE number here that is not in the vessel
- * profile, which is a cost and is stated rather than hidden. The governor ramps speed
- * changes at this rate (asv_console.py's tick: `clamp(target - sog, -1.5*dt, 1.5*dt)`),
+ * profile, which is a cost and is stated rather than hidden. The vessel ramps speed
+ * changes at this rate (asv_console.py's tick, `speed_step_kn`: SPEED_RAMP_KN_S there too),
  * and it matters because slowing for a corner is worth nothing if the leg into it is too
  * short for the way to come off: from survey to low is 1.0 s, about 1.2 m of run-in. A
  * corner whose run-in cannot deliver the lower speed is reported as one slowing does not
  * answer, rather than silently marked solved.
+ *
+ * ⚠ ON A HULL WITH A MEASURED SLOW-DOWN (`maneuvering.slowdown`, the DriX since 2026-10-03) A CUT
+ * IS NOT THIS RAMP: it is flown in gear - a dead time, then a decay toward her idle speed - and
+ * from 7 kn to 4 it takes ~43 m and 15.5 s, not the ramp's 5.7 m and 2 s. flownTrack steps it with
+ * coast.js `speedStep`, the same
+ * step the sim takes (asv_console.py speed_step_kn), and flies the governor's LEAD ahead of a
+ * slower leg (coast.js leadWant). This ramp stays the step for a speed-up and for every hull
+ * with no law, byte for byte.
  */
 export const SPEED_RAMP_KN_S = 1.5;
+/** The hull's in-gear slow-down law from the active vessel, or null (coast.js slowLaw). */
+export function hullSlowLaw(){
+  return slowLaw(V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown);
+}
 
 /**
  * HOW LATE THE SLOW COMMAND CAN BE, in seconds - and it is the console's own number, not
@@ -681,15 +694,23 @@ function cornerReachM(twMs, rateDegS, approachM){
  *
  * `speedAt(i)` gives the TARGET through-water speed in m/s for the leg INTO vertex i.
  * It is a target, not a speed: the walk ramps toward it at SPEED_RAMP_KN_S exactly as the
- * governor does, so a corner whose run-in is too short to slow down in is walked at the
- * speed she will really be doing there.
+ * vessel does - or, on a hull with a measured slow-down, cuts toward it in gear (coast.js
+ * speedStep, the sim's own step) - so a corner whose run-in is too short to slow down in is
+ * walked at the speed she will really be doing there.
  *
  * Returns `{pts, corner}`: `pts` is the flown track as {e, n, i} (i = the vertex being
  * steered for), and `corner[i]` is {dev, reach, from, to} - the greatest departure from
  * the commanded polyline while rounding vertex i, the greatest distance from the vertex
  * itself, and the slice of `pts` that rounds it.
+ *
+ * `legMs(i)` (optional) is the PLAN's target for the leg into vertex i with no timing in it -
+ * pure, because the walk asks it of legs ahead. Given it, on a hull with a measured slow-down,
+ * the walk flies the governor's LEAD: the slower target of a leg ahead is taken where the
+ * in-gear cut must begin to reach it by that leg (coast.js leadWant, with no latency - the
+ * governor commands it early by its latency, so it lands here). Without it, or with no law, the
+ * target is `speedAt` alone, exactly as before.
  */
-export function flownTrack(route, ref, speedAt, fly, capMs){
+export function flownTrack(route, ref, speedAt, fly, capMs, legMs){
   const t = followerTerms(fly);
   const EN = route.map(p => ref.toEN(p));
   const pts = [], corner = [];
@@ -699,6 +720,11 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
   // She starts the plan already up to the first leg's speed; everything after is ramped.
   let twMs = speedAt(1, 0), traveled = 0;
   const rampMs = SPEED_RAMP_KN_S * 0.514444 * TRACK_STEP_S;
+  // THE HULL'S OWN WAY OF SHEDDING SPEED (2026-10-03). Null for every hull with no measured
+  // slow-down, and then the ramp line below is the step, as it always was.
+  const law = hullSlowLaw(), slowSt = {lag: null};
+  let leadAt = -1;                                    // the vertex whose leg holds the target down
+  const legLen = j => Math.hypot(EN[j].e - EN[j-1].e, EN[j].n - EN[j-1].n);
   // ⚠ THE TICK ORDER IS THE FOLLOWER'S, AND IT IS LOAD-BEARING. `along` and the range to
   // the waypoint are taken BEFORE the step and the leg advance is decided on those, which
   // is what asv_console.py's tick does. Deciding it on the post-step position instead
@@ -709,10 +735,23 @@ export function flownTrack(route, ref, speedAt, fly, capMs){
   while(k < EN.length && guard < 2e6){
     guard++;
     const tgt = EN[k];
-    const want = speedAt(k, traveled);
-    twMs += clampN(want - twMs, -rampMs, rampMs);      // the governor's ramp, not a step
-    const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
     const distB = Math.hypot(tgt.e - e, tgt.n - n);
+    let want = speedAt(k, traveled);
+    if(law){
+      if(legMs){
+        // THE LEAD: leg j ahead (into vertex k+1+j) starts at vertex k+j, `distB` plus the legs between away
+        if(leadAt <= k) leadAt = -1;                  // she is on that leg now: its own target governs
+        const cum = [distB];                          // cum[j]: meters to where leg j ahead starts
+        const ahead = j => { const i = k + 1 + j; if(i >= EN.length) return null;
+          while(cum.length <= j) cum.push(cum[cum.length - 1] + legLen(k + cum.length));
+          return {d: cum[j], ms: legMs(i)}; };
+        const lw = leadWant(want, twMs, ahead, law, 0, leadAt > k ? leadAt - k - 1 : -1);
+        if(lw.j >= 0){ want = lw.ms; leadAt = k + 1 + lw.j; }
+      }
+      twMs = speedStep(twMs, want, TRACK_STEP_S, slowSt, law, SPEED_RAMP_KN_S * 0.514444);   // in gear, as she is
+    } else
+      twMs += clampN(want - twMs, -rampMs, rampMs);    // the governor's ramp, not a step
+    const de = tgt.e - prev.e, dn = tgt.n - prev.n, segLen = Math.hypot(de, dn);
     let desired, along;
     if(segLen < 1.0){
       // the follower's own degenerate-leg branch: aim at the waypoint
@@ -850,8 +889,12 @@ function cornerBreaches(walk, EN, i, ko, buf){
  * vertex indices whose flown corner enters `buf` of `ko`: empty means the walk cornerSlowPlan
  * runs at Upload accepts this join at these speeds. Pure and synchronous - a join is a dozen
  * points - so punchOut can ask it inside its own ladders.
+ *
+ * `legMs(i)` (optional): the join's PLAN targets with no withholding in them, for a hull with a
+ * measured slow-down - flownTrack then flies the governor's lead onto the join, as cornerSlowPlan's
+ * walk does, and `msAt` should be the same targets (the lead carries the latency).
  */
-export function joinBreaches(local, ref, ko, buf, msAt, fly, capMs){
+export function joinBreaches(local, ref, ko, buf, msAt, fly, capMs, legMs){
   if(!local || local.length < 3 || !ko) return [];
   const EN = local.map(p => ref.toEN(p));
   // ⚠ THE CORNER WINDOW IS SIZED BY `capMs` (cornerReachM), and the upload sizes it by the plan's
@@ -861,7 +904,7 @@ export function joinBreaches(local, ref, ko, buf, msAt, fly, capMs){
   let legStart = 0, lastK = -1;
   const walk = flownTrack(local, ref, (i, traveled) => {
     if(i !== lastK){ lastK = i; legStart = traveled; }
-    return msAt(i, traveled, legStart); }, fly, cap);
+    return msAt(i, traveled, legStart); }, fly, cap, legMs);
   const out = [];
   for(let i = 1; i < local.length - 1; i++) if(cornerBreaches(walk, EN, i, ko, buf)) out.push(i);
   return out;
@@ -891,8 +934,13 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, 
   const EN = route.map(p => ref.toEN(p));
 
   const breaches = (walk, i) => cornerBreaches(walk, EN, i, ko, buf);
+  // A HULL WITH A MEASURED SLOW-DOWN (2026-10-03) is walked with the governor's LEAD: every leg's
+  // plan target goes in as `legMs`, so a slower leg ahead is flown from where her in-gear cut must
+  // begin - which is what the governor commands. Null for every other hull, and both walks below
+  // are then exactly what they were.
+  const law = hullSlowLaw();
 
-  const pass1 = flownTrack(route, ref, (i) => planMsAt(i), fly, planMs);
+  const pass1 = flownTrack(route, ref, (i) => planMsAt(i), fly, planMs, law ? planMsAt : undefined);
   const slow = new Set();
   for(let i = 1; i < route.length - 1; i++){
     const c = pass1.corner[i];
@@ -910,7 +958,14 @@ export async function cornerSlowPlan(route, ref, ko, buf, planKey, lowKey, fly, 
   // target is withheld for SPEED_CMD_LATENCY_S of travel into the leg, on top of the ramp -
   // the page does not know the leg changed until a state frame tells it.
   const lateM = lowMs * SPEED_CMD_LATENCY_S;
+  // ⚠ IN GEAR THE LATE COMMAND IS THE LEAD'S, NOT THIS PER-LEG WITHHOLDING. Withheld at the start of
+  // EVERY slowed leg, the target rose back to the plan speed for a meter each time - and in gear each
+  // rise ends the cut and the next drop starts a fresh 3.3 s dead time, so a slowed arc of 3 m legs
+  // was walked at 7.00 kn all the way round (measured). The governor commands LOW once, ahead of the
+  // first slowed leg by its latency; leadWant carries that, so the slowed targets go in as they are.
+  const slowMsAt = i => slowLeg(i) ? lowMs : planMsAt(i);
   const walkSlowed = () => {
+    if(law) return flownTrack(route, ref, slowMsAt, fly, planMs, slowMsAt);
     let legStart = null, lastK = -1;
     return flownTrack(route, ref, (i, traveled) => {
       if(i !== lastK){ lastK = i; legStart = traveled; }

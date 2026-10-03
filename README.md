@@ -525,7 +525,8 @@ and 6.2 to 4.0 kn took **32.5 m and 13 s** (n=20), about twice what the coast la
 response) now sets her reach: **about 87 m at the 6.2 kn her 7-kn setpoint really makes, 93 m at a
 literal 7 kn, 124 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn), more in a set.
 It was 65-70 m. Her prop-out coast datum, which the drift-in uses, is measured too: 40.3 m from 6 to
-2 kn (Lc 36.7 m, against the 35.1 m estimate). A hull with no datum, or one already at LOW, is
+2 kn (Lc 36.7 m, against the 35.1 m estimate). The simulator flies the same law (see *the lead*
+below), so a sim rehearsal of the guard slows her as the real boat slows. A hull with no datum, or one already at LOW, is
 answered from 50 m. Charted keep-outs keep the whole look-ahead, and the escape,
 the way round and the hold disc still see every contact. A **Go-To, a Return-to-Home or a
 transit** held for a contact is now banked like a survey: the bar says GO-TO / RETURN-TO-HOME /
@@ -1420,6 +1421,31 @@ of the operator.
    refused as `track` and the line ends are pulled back another meter. What Punch Out
    presents is what Upload accepts (`tests/turn_refusal.js` 16–17b, `tests/corner_slow.js`
    14b–14c).
+
+   *And on a hull that slows in gear, the governor slows AHEAD of a slower leg* (2026-10-03,
+   Andy: "Model the in-gear slow-down in the sim", then "Lead + walk + sim"). The DriX does not
+   shed a commanded cut on the 1.5 kn/s ramp the walk used to assume: measured from her own logs
+   she holds her speed for a dead time and then decays in gear toward her idle speed, so 7 to 4 kn
+   takes **~43 m and 15.5 s**, not 2 s. The governor used to command a turn's speed on the frame
+   she reached the turn, so she entered every LOW turn at survey speed. Now, on a hull with a
+   `maneuvering.slowdown` block and on a survey, it commands a slower leg's speed where the cut
+   must begin - her in-gear run from the speed she is doing plus the console's 1 s command latency,
+   **~46 m before a LOW turn at 7 kn** - and the mission card says why ("SLOWING to low 46 m before
+   the leg to waypoint N - in gear she needs that water to come down"). The corner walk flies the
+   same step and the same lead (coast.js `speedStep`, `leadWant`), Punch Out walks a join from
+   where the lead begins, and the simulator sheds speed with the same step (asv_console.py
+   `speed_step_kn`, held to the page's tick for tick). The lead is measured from the faster of her
+   speed and her leg's own target (so it never lets go on the way in, and a run already at LOW is
+   not raised only to be cut again), carries a following set for the cut's time, and latches the leg
+   it is slowing for. Measured on synthetic DriX plans, without the lead every corner Upload answered
+   by slowing came back "EVEN AT THE LOW SPEED"; with it the punch's verdicts are what the ramp gave
+   and Upload answers more. Hulls with no slow-down block - the Z-Boat and the 4 m example USV - are commanded as
+   before, and their walk steps as before; but the walk's table of what each leg is commanded at now
+   keys a slow-radius turn LOW and a routed hop's vias at TRANSIT, which is how the governor has
+   always flown them (it keyed both at the turn speed - the hop an under-flag since 2026-09-24), so a
+   few of their corner verdicts move. A stop is still flown on the ramp: it was never measured
+   (`tests/coast.js` 17, 19–25, `tests/coast_sim.py` 10–15, `tests/corner_slow.js` 14d, 19g–19o,
+   28–30, `tests/turn_refusal.js` 17c).
 
    *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
    coverage and adds a `lead m` column beside it — the `plan` column times the whole run,

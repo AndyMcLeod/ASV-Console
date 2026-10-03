@@ -315,6 +315,10 @@ BOAT_LEN_M = BOAT_BEAM_M = BOAT_ABOVE_H = BOAT_DRAFT_M = 0.0
 WIND_CD = HULL_CD = WIND_A_SIDE = WIND_A_FRONT = HULL_A_LAT = 0.0
 # None until a vessel with a coast datum is applied. None means this hull does not coast.
 COAST_LENGTH_M = None
+# None until a vessel with a measured IN-GEAR slow-down (maneuvering.slowdown) is applied: then
+# {"U": idle m/s, "Lg": decay length m, "lag": dead time s}. None means this hull sheds a commanded
+# speed change on the engine's ramp, as every hull did before 2026-10-03 - see speed_step_kn.
+SLOW_LAW = None
 MAX_TURN_RATE_DEG_S = 60.0
 # Energy model: "battery" (draining voltage) or "fuel" (diesel liters burned).
 POWER_TYPE = "battery"
@@ -744,7 +748,7 @@ def apply_vessel(v):
     global WP_APPROACH_M, WP_LOOKAHEAD_M, XTE_KI_DEG, XTE_I_MAX_DEG
     global BOAT_LEN_M, BOAT_BEAM_M, BOAT_ABOVE_H, BOAT_DRAFT_M, WIND_CD, HULL_CD
     global WIND_A_SIDE, WIND_A_FRONT, HULL_A_LAT, MAX_TURN_RATE_DEG_S, DRAIN_IDLE, DRAIN_LOAD
-    global COAST_LENGTH_M
+    global COAST_LENGTH_M, SLOW_LAW
     global SPAWN_LAT, SPAWN_LON, ARRIVAL_DEFAULT_M, NOGO_BUFFER_DEFAULT_M
     global POWER_TYPE, FUEL_CAPACITY_L, FUEL_BURN_IDLE, FUEL_BURN_FULL, FUEL_BURN_EXP
     global FUEL_WARN_FRAC, FUEL_CRIT_FRAC, UNDER_KEEL_CLEARANCE_M, MIN_NAV_DEPTH_M
@@ -790,6 +794,28 @@ def apply_vessel(v):
                           and float(_c.get("distance_m", 0)) > 0 else None)
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         COAST_LENGTH_M = None
+    # THE HULL'S IN-GEAR SLOW-DOWN (2026-10-03), the same block and the same refusals as coast.js
+    # `slowLaw` - the page's AIS reach and its corner walk read it there, and this model and that
+    # walk must shed a commanded speed change the same way or the walk certifies corners she does
+    # not fly. Anything that is not a positive, finite idle and length and a finite lag of zero or
+    # more is no law: None, and the engine's ramp, exactly as before. REAL NUMBERS ONLY on both
+    # sides (not a bool, not a string): float() and JS `+` coerce different sets of strings and
+    # lists, and on a hand-edited file the two parted (review; tests/coast_sim.py 15 asks both).
+    _s = m.get("slowdown") or {}
+
+    def _real(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+    try:
+        _ok = (isinstance(_s, dict) and _real(_s.get("idle_kn")) and _real(_s.get("length_m"))
+               and (_s.get("lag_s") is None or _real(_s.get("lag_s"))))
+        _idle = float(_s["idle_kn"]) if _ok else 0.0
+        _lg = float(_s["length_m"]) if _ok else 0.0
+        _lag = (0.0 if _s.get("lag_s") is None else float(_s["lag_s"])) if _ok else -1.0
+        SLOW_LAW = ({"U": _idle * 0.514444, "Lg": _lg, "lag": _lag}
+                    if _ok and all(math.isfinite(x) for x in (_idle, _lg, _lag))
+                    and _idle > 0 and _lg > 0 and _lag >= 0 else None)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        SLOW_LAW = None
     NOGO_BUFFER_DEFAULT_M = float(pl["nogo_buffer_m"])
     UNDER_KEEL_CLEARANCE_M = float(pl["under_keel_clearance_m"])
     MIN_NAV_DEPTH_M = BOAT_DRAFT_M + UNDER_KEEL_CLEARANCE_M   # water shallower than this is nogo
@@ -2819,6 +2845,56 @@ WAVE_DRIFT_CD = 0.03          # mean wave-drift coeff (small boat, mostly wave-t
 COAST_END_KN = 1.0            # a coast hands back to powered control here - see the speed
                               # block in SimVcu.tick. Quadratic drag never reaches zero, so
                               # a coast without a speed floor never ends.
+SPEED_RAMP_KN_S = 1.5         # the engine's ramp on a speed change (turns.js SPEED_RAMP_KN_S)
+SLOW_IDLE_MARGIN_KN = 0.25    # coast.js SLOW_IDLE_MARGIN_MS: in gear she cannot be cut below idle + this
+SLOW_LAG_RAMP_KN = 0.5        # coast.js SLOW_LAG_RAMP_MS: the dead time is whole from this far over the target
+
+
+def speed_step_kn(v_kn, want_kn, dt, lag_left=None, law=None):
+    """ONE TICK OF THE THROTTLE: -> (speed kn, dead time left in the cut, or None).
+
+    ⚠ THE SAME STEP AS coast.js `speedStep`, which the page's corner walk (turns.js flownTrack) takes,
+    and the same law as coast.js `slowRun`, which the AIS reach takes. Three places, one law: if this
+    sheds speed faster than the walk, the walk certifies corners she rounds wider than it says; if
+    slower, the sim rehearses a boat the plan was not made for.
+
+    A CUT IN GEAR (Andy, 2026-10-03, measured from the DriX's own logs: 20 of 20 commanded cuts kept the
+    clutch in): when `law` is set and the target is below the speed but at or above idle +
+    SLOW_IDLE_MARGIN_KN, she holds her speed for a dead time - `lag`, ramped in over the
+    SLOW_LAG_RAMP_KN above the target, fixed when the cut begins and NOT restarted while it lasts -
+    then the way comes off against the idle prop's thrust, dv/dt = -(v^2 - U^2)/Lg, stepped by its
+    exact solution v = U / tanh(atanh(U/v0) + U t/Lg) so the answer does not depend on the tick. The
+    governor catches her at the target.
+
+    EVERYTHING ELSE IS THE ENGINE'S RAMP, as it was: a speed-up, a hull with no law, and a cut below
+    idle + margin - a STOP, which she cannot make in gear and which was never measured (the neutral
+    coast is a different maneuver, and the drift-in has its own branch in tick).
+
+    ⚠ A CUT THAT FOLLOWS A STOP STARTS WITH NO DEAD TIME: coming down on the ramp the throttle is
+    already off, so the dead time left is 0, not None, and a target that then rises to LOW while she is
+    still above it (the station-keep's re-approach, half way through her stop) carries on from there.
+    Only holding or gaining speed, or being caught at the target, ends a cut. Without it, in the first
+    cut of this step, the farthest she overshot a hold point grew from 12.4 to 15.7 m arriving at 7 kn
+    and from 24.5 to 33.1 m at 14 (calm water).
+
+    ⚠ THE FLOOR IS TESTED IN THE PAGE'S OWN ARITHMETIC (m/s, the margin times 0.514444): tested in
+    knots after a round trip it fell the other way from coast.js at an exact tie (LOW = idle + 0.25 kn)
+    for 58 of 399 idle speeds - the sim in gear and the walk on the ramp, or the reverse (review)."""
+    if law:
+        if want_kn * 0.514444 >= law["U"] + SLOW_IDLE_MARGIN_KN * 0.514444 and v_kn > want_kn:
+            if lag_left is None:                         # the cut begins: its dead time is fixed now
+                lag_left = law["lag"] * min(1.0, (v_kn - want_kn) / SLOW_LAG_RAMP_KN)
+            used = min(dt, lag_left)
+            lag_left -= used
+            rest = dt - used
+            if rest > 0:
+                u, v = law["U"], v_kn * 0.514444
+                v_kn = u / math.tanh(math.atanh(u / v) + u * rest / law["Lg"]) / 0.514444
+            if v_kn <= want_kn:
+                return want_kn, None                     # caught at the target: the cut is over
+            return v_kn, lag_left
+    return (v_kn + clamp(want_kn - v_kn, -SPEED_RAMP_KN_S * dt, SPEED_RAMP_KN_S * dt),
+            0.0 if want_kn < v_kn else None)             # coming down on the ramp: the throttle is off
 LEEWAY_CAP_MS = 0.9           # cap the set (~1.75 kn) - only bites in extreme conditions,
                               # so normal gusts still modulate the set (-> the wander)
 WAVE_YAW_DEG = 3.0            # peak oscillatory yaw (deg/s) per m Hs, beam seas
@@ -3598,6 +3674,9 @@ class SimVcu(VcuLink):
         self._coasting = False
         self._coast_s0 = None          # (lat,lon) at release, for the run made good
         self._coast_spent = False      # this plan has had its drift-in: no plan speed back
+        # THE DEAD TIME LEFT IN AN IN-GEAR CUT, or None outside one - see speed_step_kn. Only a hull
+        # with a measured slow-down (SLOW_LAW) ever sets it.
+        self._slow_lag = None
         self._laps = 0                 # completed loops (repeat mode)
         self._running = False
         self._paused = False
@@ -4002,11 +4081,13 @@ class SimVcu(VcuLink):
         if self._coast_spent and COAST_END_KN:
             target_kn = min(target_kn, COAST_END_KN)
 
-        # ── SPEED: ENGINE-GOVERNED RAMP, OR HULL-GOVERNED DECAY WHILE COASTING ──────────
+        # ── SPEED: THE THROTTLE (RAMP, OR A CUT IN GEAR), OR HULL-GOVERNED DECAY WHILE COASTING
         #
         # The flat 1.5 kn/s ramp is what an ENGINE does to a speed change, and it stays the
-        # default for every other transition in this model. A coast is not a speed change -
-        # it is the absence of one - and the hull, not the governor, decides how the way
+        # default for a speed-up, for a stop, and for every hull with no measured slow-down. A
+        # hull that declares one (the DriX, 2026-10-03) takes a commanded CUT in gear - a dead
+        # time, then a decay toward her idle speed - see speed_step_kn. A coast is not a speed
+        # change - it is the absence of one - and the hull, not the governor, decides how the way
         # comes off:  m dv/dt = -k v²  ->  dv = -(v²/Lc) dt, one length for the whole curve.
         #
         # ⚠ THE TWO ARE DISTINGUISHABLE AND A SUITE PINS IT. Under drag the distance to HALVE
@@ -4014,6 +4095,7 @@ class SimVcu(VcuLink):
         # from 14 kn would cost four times halving from 7. tests/coast.js check 3 is that
         # discrimination, and it is what stops the ramp quietly standing in for the physics.
         if self._coasting and COAST_LENGTH_M:
+            self._slow_lag = None               # the prop is out: no cut in gear is in progress
             v = self.sog_kn * 0.514444
             v = max(0.0, v - (v * v / COAST_LENGTH_M) * dt)
             self.sog_kn = v / 0.514444
@@ -4039,8 +4121,13 @@ class SimVcu(VcuLink):
                 self._coast_s0 = None
                 self._coast_spent = True        # ...and she does not get the plan speed back
         else:
-            # smooth speed toward target
-            self.sog_kn += clamp(target_kn - self.sog_kn, -1.5 * dt, 1.5 * dt)
+            # THE ENGINE'S RAMP - OR, ON A HULL WITH A MEASURED SLOW-DOWN, A CUT FLOWN IN GEAR (2026-10-03).
+            # Until then every hull came down 1.5 kn/s, and the DriX was taken from 7 to 4 kn in 2 s and
+            # 5.7 m where her own logs say 13 s and 32.5 m - so a sim rehearsal of the AIS guard, which now
+            # budgets the measured law, slowed ~90 m out and crept the rest at LOW. One step, shared with
+            # the page's corner walk: speed_step_kn.
+            self.sog_kn, self._slow_lag = speed_step_kn(self.sog_kn, target_kn, dt,
+                                                        self._slow_lag, SLOW_LAW)
         self._t_sim += dt
         tt = self._t_sim                                  # sim-time phase (tick-rate independent)
 

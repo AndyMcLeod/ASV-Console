@@ -369,8 +369,10 @@ function boxKo(e0, n0, e1, n1) {
       let k = HH.indexOf("{", s), d = 0; for (;;) { const c = HH[k]; if (c === "{") d++; else if (c === "}") { d--; if (!d) break; } k++; }
       return HH.slice(s, k + 1); };
     // eslint-disable-next-line no-new-func
-    const keysOf = new Function("mission", "LINE_MATCH_M", "distTo", "roleSpeed",
-      grabFn("legIsLine") + "\n" + grabFn("routeSpeedKeys") + "\nreturn routeSpeedKeys;")(mission, LINE_MATCH_M, distTo, roleSpeed);
+    const keysOf = new Function("mission", "LINE_MATCH_M", "distTo", "roleSpeed", "llEN",
+      grabFn("legIsLine") + "\n" + grabFn("lineOfLeg") + "\n" + grabFn("onLineM") + "\n" + grabFn("reversalScaleM") + "\n"
+      + grabFn("isReversalGap") + "\n" + grabFn("routeSpeedKeys") + "\nreturn routeSpeedKeys;")(mission, LINE_MATCH_M, distTo,
+      roleSpeed, require("../static/js/geodesy.js").llEN);
     const walk = [ll(-30, -20), ll(0, 0), ll(0, 100), { lat: tpt.lat, lon: tpt.lon }, ll(10, 100), ll(10, 0)];
     const keyAt = keysOf(walk);
     const got = [1, 2, 3, 4, 5].map(keyAt).join(",");
@@ -379,6 +381,47 @@ function boxKo(e0, n0, e1, n1) {
           () => got === "transit,survey,turn,turn,survey" && HH.indexOf("routeSpeedKeys(walkRoute)") > 0
                 && HH.indexOf("routeSpeedKeys(walkRoute)") < HH.indexOf("cs = {slow: raw.slow"),
           "keys " + got + "; wired=" + (HH.indexOf("routeSpeedKeys(walkRoute)") > 0));
+    // 14d. A SLOW-RADIUS TURN IS LOW (2026-10-03). The governor flies the reversal out of a `slow_turn_out` line at
+    // LOW whatever the turn role is; keyed at the turn role here, Upload judged at the turn speed a turn the punch had
+    // certified at low - and the governor's LEAD, which reads this table, would lead to the turn speed and then cut to
+    // LOW at the turn with no lead at all. The turn point belongs to the line whose end came before it.
+    mission.lines[0].slow_turn_out = true;
+    const gotSlow = [1, 2, 3, 4, 5].map(keysOf(walk)).join(",");
+    mission.lines[0].slow_turn_out = false;
+    // a plan of `n` lines `sp` m apart (line 1 STORED the other way round from how it is flown), a turn point between
+    // each pair, and optionally a last line `hop` m east reached by two routed vias (commitPattern flags them `turn` too)
+    const plan = (sp, hop, flip = true) => {
+      const L = [], W = [], route = [ll(-30, -20)];
+      for (let k = 0; k < 4; k++) {
+        const e = k * sp, up = k % 2 === 0, a = ll(e, up ? 0 : 100), bb = ll(e, up ? 100 : 0);
+        L.push(k === 1 && flip ? { a: bb, b: a } : { a, b: bb });
+        W.push(a, bb); route.push(a, bb);
+        if (k < 3) { const t = { ...ll(e + sp / 2, up ? 100 + sp / 2 : -sp / 2), turn: true }; W.push(t); route.push({ lat: t.lat, lon: t.lon }); }
+      }
+      if (hop) { const v1 = { ...ll(3 * sp + hop / 2, 120), turn: true }, v2 = { ...ll(3 * sp + hop - 10, 110), turn: true };
+        const a = ll(3 * sp + hop, 100), bb = ll(3 * sp + hop, 0);
+        L.push({ a, b: bb }); W.push(v1, v2, a, bb);
+        route.push({ lat: v1.lat, lon: v1.lon }, { lat: v2.lat, lon: v2.lon }, a, bb); }
+      return { L, W, route };
+    };
+    const keysWith = (pl, marked) => { mission.lines = pl.L.map((x, k) => ({ ...x, slow_turn_out: k === marked }));
+      mission.waypoints = pl.W; const ka = keysOf(pl.route); return pl.route.slice(1).map((_, i) => ka(i + 1)).join(","); };
+    // (the hop plan stores its lines in flight order: a stored-backwards line inflates the plan's median gap, and the
+    // reversal scale with it, which is isReversalGap's business and not this check's)
+    const p10 = plan(10), p4 = plan(4), pHop = plan(10, 300, false);
+    const NONE = "transit,survey,turn,turn,survey,turn,turn,survey,turn,turn,survey";
+    const k10 = [-1, 0, 1, 2].map((m) => keysWith(p10, m)), k4 = keysWith(p4, 1), kHop = keysWith(pHop, -1);
+    check("14d. ... and a SLOW-RADIUS turn (the line before it marked slow_turn_out) is keyed LOW into and out of THAT "
+          + "join only - the line before it named as lineOfLeg names it (a line flown against its stored direction, a 4 m "
+          + "pattern where the first match is the line before) - and a routed HOP's vias are TRANSIT, as the governor flies "
+          + "them, not turn points",
+          () => gotSlow === "transit,survey,low,low,survey" && k10[0] === NONE
+                && k10[1] === "transit,survey,low,low,survey,turn,turn,survey,turn,turn,survey"
+                && k10[2] === "transit,survey,turn,turn,survey,low,low,survey,turn,turn,survey"
+                && k10[3] === "transit,survey,turn,turn,survey,turn,turn,survey,low,low,survey"
+                && k4 === "transit,survey,turn,turn,survey,low,low,survey,turn,turn,survey"
+                && kHop === NONE + ",transit,transit,transit,survey",
+          "10 m, line k marked: " + k10.slice(1).join(" | ") + "; 4 m, line 1 marked: " + k4 + "; a hop: " + kHop);
   }
 }
 
@@ -526,6 +569,10 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     grabFn("roleSpeed"), grabFn("roleSpeedMS"), grabFn("sendSpeed"), grabFn("commandSpeed"),
     grabFn("slowestMakingWayKey"), grabFn("setMsNow"), grabFn("makesWayKey"),   // the floor under every command (2026-09-26)
     grabFn("speedGovernor"),
+    grabLet("govLead"), grabFn("leadSpeedKey"),   // the lead (2026-10-03): null at once with no slowdown block
+    grabFn("legIsLine"), grabFn("routeSpeedKeys"), grabFn("runLegKeys"),   // ... and what it reads with one (19g-19i)
+    grabFn("leadFor"), grabLet("viewLead"), grabLet("_legKeys"), grabFn("onLineM"),
+    grabLet("guardEdgeAt"), grabLet("EDGE_REASSESS_MS"),    // the governor's raise rule: undeclared, a raise was a crash
     grabFn("deleteLineByIndex"),
     "function __commit(lines, patClip, patLead, transits){\n" + COMMIT + "\n}",
     "function __flagGap(k){ const t = {slow:true}; let nTurnSlow = 0; " + PUNCH
@@ -535,6 +582,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
   // eslint-disable-next-line no-new-func
   const W = new Function("V", "window", "performance", "M_PER_DEG_LAT", "azTo", "distTo",
                          "toEN", "llEN", "alignDeg", "fmtDist",
+                         "slowLaw", "leadWant", "groundVel", "SPEED_CMD_LATENCY_S",
     // ⚠ THE LAUNCH GRANT REACHES THE CLASSIFIER (R8, merged 2026-09-23): currentActivity()
     // returns role "depart" while a grant stands, so `grant` has to exist in this world or
     // speedRole() - which the governor checks here all go through - is a bare ReferenceError.
@@ -558,16 +606,21 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     + "  reset: () => { runRoute = null; window._wpIndex = 0; runLineIdx = -1; turnSeg = [];\n"
     + "    curTurn = -1; lastRunLine = -1; lineActual = []; lineClock = null;\n"
     + "    lineStatsKey = null; _legLine = {key:'', line:-1}; commandedSpeed = null;\n"
-    + "    speedWant = null; sent.length = 0;\n"
+    + "    speedWant = null; sent.length = 0; govLead = null;\n"
     + "    S = {run:'running', armed:true, estop:false, behavior:'survey',\n"
     + "         status:{holding:false, sog_kn:6, cog_deg:0, drifting:false}}; },\n"
     + "  tick: (pt, cog, wp) => { asv = {lat: pt.lat, lon: pt.lon, hdg: cog};\n"
-    + "    S.status.cog_deg = cog; S.status.sog_kn = 6; window._wpIndex = wp;\n"
+    + "    S.status.cog_deg = cog; S.status.sog_kn = 6; window._wpIndex = wp; S.wp_index = wp;\n"
     + "    lineClock = performance.now()/1000 - 0.25; accumLineTime(); },\n"
+    + "  setSog: (k) => { S.status.sog_kn = k; }, setBehavior: (b) => { S.behavior = b; }, lead: () => govLead,\n"
+    + "  setSet: (kn, deg) => { S.status.env_set_kn = kn; S.status.env_set_deg = deg; },\n"
+    + "  setCorners: (set, n) => { cornerSlow = new Set(set); cornerSlowFor = n; S.wp_total = n; },\n"
     + "  ran: () => lastRunLine, turnFrom: () => (curTurn >= 0 && turnSeg[curTurn]\n"
     + "    ? turnSeg[curTurn].from : null), eq: (a, b) => _eqLL(a, b)};")(
       V, { _wpIndex: 0 }, { now: () => Date.now() }, GEO.M_PER_DEG_LAT, GEO.azTo, GEO.distTo,
-      GEO.toEN, GEO.llEN, GEO.alignDeg, (m) => Math.round(m) + " m");
+      GEO.toEN, GEO.llEN, GEO.alignDeg, (m) => Math.round(m) + " m",
+      require("../static/js/coast.js").slowLaw, require("../static/js/coast.js").leadWant,
+      require("../static/js/guard.js").groundVel, SPEED_CMD_LATENCY_S);
 
   const LAT0 = 21.3100, LON0 = -157.8700;                 // his own Honolulu water
   const MLON = GEO.M_PER_DEG_LAT * Math.cos(LAT0 * Math.PI / 180);
@@ -693,6 +746,133 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
         () => marks.join(",") === "true,true,false,false,false,false",
         "slow_turn_out down the six committed lines: " + marks.join(",")
           + " - the punched pattern's two, then three drawn lines with none");
+  // 19g-19i. THE LEAD, DRIVEN (Andy, 2026-10-03: "Lead + walk + sim"). A hull that sheds a commanded cut IN GEAR is
+  // commanded a slower leg's speed where the cut must begin - her in-gear run from the speed she is doing plus
+  // SPEED_CMD_LATENCY_S of travel - not on the frame she reaches it. The real speedGovernor and leadSpeedKey, on the
+  // real committed plan, flown up line 0 toward the reversal at 7 kn with the TURN role at LOW.
+  {
+    const vSaved = V.VESSEL, kSaved = V.SPEED_KN;
+    const drixM = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8")).maneuvering;
+    const C = require("../static/js/coast.js");
+    const flyUp = (sogAt) => {
+      const L = W.mission().lines[0], cog = GEO.azTo(L.a, L.b), wp = wpOf(0), len = GEO.distTo(L.a, L.b);
+      const out = [];
+      for (let s = 0; s <= len - 2; s += 2) {
+        const t = s / len, pt = { lat: L.a.lat + t * (L.b.lat - L.a.lat), lon: L.a.lon + t * (L.b.lon - L.a.lon) };
+        W.tick(pt, cog, wp); W.setSog(sogAt(len - s));
+        out.push({ d: GEO.distTo(pt, L.b), got: W.speedGovernor(), lead: W.lead() });
+      }
+      return out;
+    };
+    try {
+      V.SPEED_KN = { low: 4, survey: 7, high: 14 };
+      V.VESSEL = { ...vSaved, maneuvering: { ...vSaved.maneuvering, slowdown: drixM.slowdown } };
+      blank(); W.mission().speeds.turn = "low"; commit(block(3, 0)); W.reset();
+      const run = flyUp(() => 7);
+      const first = run.find((r) => r.got === "low");
+      const want = C.slowLeadM(7 * 0.514444, 4 * 0.514444, C.slowLaw(drixM.slowdown), SPEED_CMD_LATENCY_S);
+      check("19g. THE LEAD: on the DriX's hull the governor commands the reversal's LOW where her in-gear cut must "
+            + "begin - within a step of slowRun + the command latency (46.3 m) before the line's end - and says so",
+            () => first && first.d <= want && first.d > want - 2.1
+                  && run.filter((r) => r.d > want).every((r) => r.got === "survey")
+                  && first.lead && first.lead.key === "low" && first.lead.idx === wpOf(0) + 1,
+            first ? "LOW first at " + first.d.toFixed(1) + " m before the end (lead " + want.toFixed(1) + " m); survey before; "
+                    + "readout: slowing to " + first.lead.key + " for the leg to waypoint " + (first.lead.idx + 1)
+                  : "never commanded LOW on the line: " + run.slice(-3).map((r) => r.got).join(","));
+      // 19h. IT HOLDS ON THE WAY IN. As she slows her own lead shrinks; the latch keeps the target down.
+      W.reset();
+      const holding = flyUp((d) => (d > want ? 7 : Math.max(4.2, 4 + (d / want) * 3)));
+      const after = holding.filter((r) => r.d <= want);
+      check("19h. ... and HOLDS it all the way in as she slows - never raised back to survey (and so never a fresh dead "
+            + "time) while the lead she would need stands at her leg's own speed",
+            () => after.length > 5 && after.every((r) => r.got === "low"),
+            after.length + " frames inside the lead, all " + [...new Set(after.map((r) => r.got))].join("/"));
+      // 19i. ACCEPTANCE: no law, no lead - the small-class hull is commanded at the leg exactly as before; and off a
+      // survey (a Go-To flies one role throughout) there is no lead either.
+      V.VESSEL = vSaved; W.reset();
+      const zb = flyUp(() => 7);
+      V.VESSEL = { ...vSaved, maneuvering: { ...vSaved.maneuvering, slowdown: drixM.slowdown } };
+      W.reset(); W.setBehavior("goto");
+      const goto = flyUp(() => 7);
+      check("19i. ... and a hull with NO measured slow-down is commanded at the leg, byte for byte - survey to the "
+            + "line's end - and no run but a survey takes a lead",
+            () => zb.every((r) => r.got === "survey" && r.lead === null) && goto.every((r) => r.lead === null),
+            "no-law hull: " + [...new Set(zb.map((r) => r.got))].join("/") + " to " + zb[zb.length - 1].d.toFixed(0)
+              + " m; a Go-To: " + [...new Set(goto.map((r) => r.got))].join("/") + ", no lead");
+      // 19j. THE LATCH HOLDS IT WHEN A FIX JUMPS. Led 44 m out, the next fix lands 48 m out - past the 46.3 m lead (a GPS
+      // jump; a route vertex moved) - and the latch keeps LOW, where a fresh look there at 7 kn would not lead.
+      const atD = (d, sog) => { const L = W.mission().lines[0], len = GEO.distTo(L.a, L.b), t = (len - d) / len;
+        W.tick({ lat: L.a.lat + t * (L.b.lat - L.a.lat), lon: L.a.lon + t * (L.b.lon - L.a.lon) }, GEO.azTo(L.a, L.b), wpOf(0));
+        W.setSog(sog); return W.speedGovernor(); };
+      W.reset(); W.mission().speeds.turn = "low";
+      atD(60, 7); atD(44, 7); const held = atD(48, 7);
+      W.reset(); const fresh = atD(48, 7);
+      check("19j. ... and the LATCH holds it when a fix jumps: led 44 m out, a frame 48 m out - past the lead - keeps LOW, "
+            + "where a fresh look at 48 m would not lead",
+            () => held === "low" && fresh === "survey", "led, then a fix at 48 m: " + held + "; fresh at 48 m: " + fresh);
+      // 19o. AND A RUN ALREADY AT LOW IS NOT RAISED ONLY TO BE CUT AGAIN (review): a stand-down drops the latch, and
+      // governed again 30 m short of the LOW leg at 4 kn she needs no lead at her own speed - measured from the speed
+      // her leg asks for (survey), she is held at LOW instead of sent up the ramp and cut with a fresh dead time.
+      W.reset(); const atLowAgain = atD(30, 4);
+      check("19o. ... and a run already at LOW near the LOW leg, governed afresh, is held at LOW - not raised to survey "
+            + "and cut again",
+            () => atLowAgain === "low", "governed afresh at 4 kn, 30 m short: " + atLowAgain);
+      // 19k. A FLAGGED CORNER IS LED TO AS WELL. The turn role at SURVEY this time, so LOW can only come from Upload's
+      // corner set laid over the table (runLegKeys): the vertex after the line's end flagged.
+      W.reset(); blank(); commit(block(3, 0)); W.reset();
+      W.setCorners([wpOf(0) + 1], W.mission().waypoints.length);
+      const corner = flyUp(() => 7), cFirst = corner.find((r) => r.got === "low");
+      W.setCorners([], -1); W.reset();
+      const noCorner = flyUp(() => 7);
+      check("19k. ... a CORNER Upload flagged is led to as well - the lead reads the corner set over the plan's table - and "
+            + "with no corner flagged the same run is survey to the line's end",
+            () => cFirst && cFirst.d <= want && cFirst.d > want - 2.1 && noCorner.every((r) => r.got === "survey"),
+            (cFirst ? "LOW first at " + cFirst.d.toFixed(1) + " m" : "never LOW") + "; unflagged: "
+              + [...new Set(noCorner.map((r) => r.got))].join("/"));
+      // 19l. A FOLLOWING SET LENGTHENS IT - by the set carried for the cut's own time (found by mutation: a lead taken
+      // from her ground speed and a lead that ignored the set both passed every check above).
+      W.reset(); blank(); W.mission().speeds.turn = "low"; commit(block(3, 0)); W.reset();
+      const cog0 = GEO.azTo(W.mission().lines[0].a, W.mission().lines[0].b);
+      const setRun = (() => { const out = []; const L = W.mission().lines[0], len = GEO.distTo(L.a, L.b);
+        for (let s2 = 0; s2 <= len - 2; s2 += 1) { const t = s2 / len;
+          W.tick({ lat: L.a.lat + t * (L.b.lat - L.a.lat), lon: L.a.lon + t * (L.b.lon - L.a.lon) }, cog0, wpOf(0));
+          W.setSog(8.75); W.setSet(1.75, cog0); out.push({ d: len - s2, got: W.speedGovernor() }); }
+        return out; })();
+      const sFirst = setRun.find((r) => r.got === "low");
+      const wantSet = C.slowLeadM(7 * 0.514444, 4 * 0.514444, C.slowLaw(drixM.slowdown), SPEED_CMD_LATENCY_S, 1.75 * 0.514444);
+      check("19l. ... and a FOLLOWING set lengthens it by the set carried for the cut's own time: 7 kn through the water "
+            + "with 1.75 kn behind her leads LOW " + wantSet.toFixed(1) + " m out, not the calm " + want.toFixed(1) + " m - "
+            + "measured from her way through the water, not her ground speed",
+            () => sFirst && sFirst.d <= wantSet + 0.01 && sFirst.d > wantSet - 1.1,
+            sFirst ? "LOW first at " + sFirst.d.toFixed(1) + " m" : "never LOW");
+      // 19m. THE READOUT KNOWS IT: the command bar's agree test and the RUN block's reason name the lead, or every early
+      // slow-down would read as a DISAGREEMENT between the vessel and the selectors (a readout: pinned in the source).
+      // 19n. A LOW LEG TWO LEGS AHEAD: the lead is measured ALONG the route - her range to the next vertex, then down
+      // the leg between. 30 m lines, the boat on the approach to line 0's start with the reversal after it at LOW: led
+      // once 30 m + her range to the start is within 46.3 m, so 16.3 m short of the start, not 46.3.
+      W.reset(); blank(); W.mission().speeds = { transit: "survey", turn: "low", survey: "survey" };
+      commit([[P(0, 0), P(0, 30)], [P(60, 30), P(60, 0)], [P(120, 0), P(120, 30)]]); W.reset();
+      const a0 = W.mission().waypoints[0];
+      let twoFirst = null;
+      for (let x = -100; x <= -2; x++) {
+        W.tick(P(0, x), 90, 0); W.setSog(7);
+        if (W.speedGovernor() === "low") { twoFirst = GEO.distTo(P(0, x), a0); break; }
+      }
+      check("19n. ... and a LOW leg TWO legs ahead is led to by her range ALONG the route: on the approach to a 30 m "
+            + "line with a LOW reversal after it, LOW first 16.3 m short of the line's start (46.3 m less the 30 m leg)",
+            () => twoFirst !== null && twoFirst <= want - 30 + 0.01 && twoFirst > want - 30 - 1.1,
+            twoFirst !== null ? "LOW first " + twoFirst.toFixed(1) + " m short of the start" : "never LOW on the approach");
+      check("19m. the command bar's agree test and the RUN block's 'for' row both name the lead - and a tab that is not "
+            + "supervising works it out read-only (leadShown), or its card read DISAGREEMENT for every lead",
+            () => /: \(shown && shown\.key\) \? shown\.key {5}\/\/ slowing ahead of a slower leg \(the lead\)/.test(H)
+                  && /else if\(lsh && lsh\.key\)\n\s*\/\/ THE LEAD, SAID/.test(H.replace(/\r\n/g, "\n"))
+                  && /function leadShown\(\)\{\n\s*if\(supervising\(\)\) return govLead;\n\s*viewLead = leadFor\(roleSpeed\(speedRole\(\)\), viewLead\);/
+                       .test(H.replace(/\r\n/g, "\n")),
+            "agree test and 'for' row read leadShown(); a view-only tab computes its own");
+    } finally {
+      V.VESSEL = vSaved; V.SPEED_KN = kSaved;
+    }
+  }
 }
 
 // 21. THE BUSY STATE, AND WHY IT ONLY NOW MATTERS. Measuring the corners is awaited
@@ -880,6 +1060,144 @@ function zigRoute(legM, defl, n, runIn) {
           + ";  with the trim reset the same seven read 3.166 m, and 3.935 m was the"
           + " worst over the full 280-corner sweep");
 }
+
+console.log("\n-- 28-30: a hull that slows IN GEAR, walked as she flies it (2026-10-03) --");
+// ⚠ THE FIXTURES COME FROM THE VESSEL MODEL, AS 1-7 DO. A DriX corner flown through asv_console.py's own
+// SimVcu.tick (its speed_step_kn), LOW commanded where the in-gear cut must begin, then the same route walked here.
+// 300 m north at 7 kn, a corner of `defl` degrees, two legs at LOW: the speed at the leg advance past the corner and
+// the hull's greatest departure inside the corner window, printed by the generator (scratch gen_ingear_fixture.py):
+//                 with the lead                    without it (LOW only at the corner)
+//      90 deg     4.183 kn  1.4765 m               7.000 kn   5.1151 m
+//     120 deg     4.183 kn  4.1245 m               7.000 kn  10.6378 m
+//     150 deg     4.183 kn  8.2900 m               7.000 kn  15.5020 m
+await (async () => {
+  const vSaved = V.VESSEL, kSaved = V.SPEED_KN, rSaved = V.MAX_TURN_RATE_DEG_S;
+  const drix = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const KN = 0.514444;
+  try {
+    V.VESSEL = drix; V.SPEED_KN = { low: 4, survey: 7, high: 14 }; V.MAX_TURN_RATE_DEG_S = 20;
+    const corner = (defl, runIn = 300) => { const h = defl * Math.PI / 180, P = [[0, 0], [0, runIn]];
+      P.push([P[1][0] + 60 * Math.sin(h), P[1][1] + 60 * Math.cos(h)]);
+      P.push([P[2][0] + 80 * Math.sin(h), P[2][1] + 80 * Math.cos(h)]);
+      return P.map(([e, n]) => ll(e, n)); };
+    const ms = (i) => (i === 1 ? 7 : 4) * KN;
+    const SIM = [[90, 1.4765, 5.1151], [120, 4.1245, 10.6378], [150, 8.29, 15.502]];
+    const rows = SIM.map(([defl, lead, none]) => {
+      const r = corner(defl);
+      const wl = flownTrack(r, F, ms, null, 7 * KN, ms), wn = flownTrack(r, F, ms, null, 7 * KN);
+      return { defl, lead, none, gotL: wl.corner[1] ? wl.corner[1].dev : NaN, gotN: wn.corner[1] ? wn.corner[1].dev : NaN };
+    });
+    check("28. the walk takes her IN-GEAR law and the governor's LEAD, and agrees with SimVcu to " + TOL_M + " m at three "
+          + "corners both ways - with the lead each corner flies 29-53% of the departure LOW commanded at the corner gives",
+          () => rows.every((x) => Math.abs(x.gotL - x.lead) <= TOL_M && Math.abs(x.gotN - x.none) <= TOL_M
+                                   && x.gotL < 0.6 * x.gotN),
+          rows.map((x) => x.defl + " deg: " + x.gotL.toFixed(3) + " vs sim " + x.lead + " (no lead " + x.gotN.toFixed(3)
+                          + " vs " + x.none + ")").join("; "));
+    // 28b. A SLOWER LEG TWO LEGS AHEAD is led to from where the cut must begin, measured ALONG the route (the lead
+    // counts the leg between), and after the slow legs she gains speed back on the engine's ramp, 1.5 kn/s.
+    const KN2 = 0.514444, spd = (w, j) => Math.hypot(w.pts[j].e - w.pts[j - 1].e, w.pts[j].n - w.pts[j - 1].n) / TRACK_STEP_S / KN2;
+    const r2 = [[0, 0], [0, 300], [0, 312], [0, 340], [0, 600]].map(([e, n]) => ll(e, n));     // UNEQUAL: 12 m then 28
+    const ms2 = (i) => (i === 3 ? 4 : 7) * KN;
+    const w2 = flownTrack(r2, F, ms2, null, 7 * KN, ms2);
+    // measured where she CROSSES each vertex (the route runs due north) - the walk advances its leg one approach
+    // radius early (6 m on the DriX), and the lead lands LOW at the vertex itself
+    const nOf = (p) => p.n, cross = (n0) => { for (let j = 1; j < w2.pts.length; j++) if (nOf(w2.pts[j]) >= n0) return j; return -1; };
+    const N = (m) => F.toEN(ll(0, m)).n;
+    const at1 = spd(w2, cross(N(300))), at2 = spd(w2, cross(N(312))), j3 = cross(N(340));
+    const up2 = spd(w2, j3 + 8);
+    // where the law puts her at the vertex BEFORE the slow leg: the cut begins slowRun's water short of the slow leg
+    // (312 m), so 300 m is 30.7 m into it - dead time 11.9 m, then 18.8 m of decay
+    const CL = require("../static/js/coast.js"), lawD = CL.slowLaw(drix.maneuvering.slowdown);
+    const x1 = CL.slowRun(7 * KN, 4 * KN, lawD).m - 12, dead = 7 * KN * lawD.lag;
+    const want1 = x1 <= dead ? 7 : Math.sqrt(lawD.U ** 2 + ((7 * KN) ** 2 - lawD.U ** 2) * Math.exp(-2 * (x1 - dead) / lawD.Lg)) / KN;
+    check("28b. a slower leg TWO legs ahead is led to ALONG the route (12 m and 28 m legs, so a wrong-leg sum shows) - at "
+          + "the vertex before it she is where the law puts her 30.7 m into the cut, within a tick of LOW where it starts - "
+          + "and after it she gains speed back on the engine's ramp (2 s: +3.0 kn)",
+          () => Math.abs(at1 - want1) < 0.1 && at2 <= 4.05 && Math.abs(up2 - 7.0) < 0.01,      // 4.05: the cut starts within a tick
+          "at the vertex before " + at1.toFixed(3) + " kn (the law: " + want1.toFixed(3) + "); at the slow leg " + at2.toFixed(3)
+            + " kn; 2 s past it " + up2.toFixed(3) + " kn");
+    // 28c. THE WALK'S LEAD LATCHES TOO. With a 4.5 kn leg between her and the LOW leg, the target of the leg she is on
+    // drops to 4.5 on the way in, and the lead measured from it shrinks below the water left: unlatched it let go and
+    // she met the LOW leg at 4.18 kn (found by mutation: 99 of 525 routes with a leg of another speed between moved,
+    // by up to 3.07 m of corner).
+    const rR = [[0, 0], [0, 300], [0, 320], [0, 345], [0, 600]].map(([e, n]) => ll(e, n));
+    const msR = (i) => (i === 1 ? 7 : i === 2 ? 4.5 : 4) * KN;
+    const wR = flownTrack(rR, F, msR, null, 7 * KN, msR);
+    let atR = null, rises = 0;
+    for (let j = 2; j < wR.pts.length; j++) {
+      if (wR.pts[j].i < 2 && spd(wR, j) > spd(wR, j - 1) + 1e-9) rises++;
+      if (atR === null && wR.pts[j].i >= 2) atR = spd(wR, j);
+    }
+    check("28c. ... and it LATCHES: with a 4.5 kn leg between her and the LOW leg (her own leg's target drops on the "
+          + "way in, and the lead measured from it with it) she slows once, never gains way, and meets the LOW leg at LOW",
+          () => rises === 0 && atR <= 4.0 + 1e-6,
+          "speed-ups before the leg " + rises + "; at the LOW leg " + atR.toFixed(3) + " kn (unlatched: 4.184)");
+    // 29. AND UPLOAD JUDGES A TURN AT THE SPEED THE LEAD DELIVERS. The 120 deg corner at the end of a 300 m survey line,
+    // the legs after it keyed at the TURN role (LOW) as routeSpeedKeys keys a join, a wall 7.5 m past the corner across
+    // the way she overshoots (BUF 5). With the lead she is at LOW when she rounds it (0.43 m past the vertex) and
+    // nothing is flagged; walked in gear WITHOUT the lead she rounds it at 7 kn (5.15 m past) and the corner is flagged
+    // to slow - a plan defect that was never there. With the wall at 3.5 m even LOW reaches it: named, as before.
+    const r120 = corner(120), turnLow = (i) => (i === 1 ? "survey" : "low");
+    const near = await cornerSlowPlan(r120, F, boxKo(-40, 307.5, 40, 347.5), 5, "survey", "low", undefined, turnLow);
+    const close = await cornerSlowPlan(r120, F, boxKo(-40, 303.5, 40, 343.5), 5, "survey", "low", undefined, turnLow);
+    check("29. Upload on the DriX's hull judges a turn at the speed the LEAD delivers - nothing flagged where she comes "
+          + "down on the line before it - and still names a corner that breaches even at LOW",
+          () => near.slow.length === 0 && near.unanswered.length === 0 && close.unanswered.includes(1),
+          "wall 7.5 m out: slow=[" + near.slow + "] unanswered=[" + near.unanswered + "]; 3.5 m out: slow=["
+            + close.slow + "] unanswered=[" + close.unanswered + "]");
+    // 29c. AND UPLOAD'S IN-GEAR SECOND PASS, BY ITS VERDICTS (review: it was pinned only by a source regex). Every leg
+    // keyed survey, so pass 1 flags the corner and pass 2 decides. After a 300 m line, slowing answers it (the lead
+    // brings her down on the line); 20 m into the route she cannot shed 7 kn in gear and it is named - and with the wall
+    // a meter and a half further out the same corner is answered. A walk that never slowed, or slowed everything, or
+    // dropped the leg out of the corner, reads differently on one of the three.
+    const corner2 = (legs, defl = 120) => { const Pp = [[0, 0]]; let nn = 0; for (const Lg of legs) { nn += Lg; Pp.push([0, nn]); }
+      const h = defl * Math.PI / 180, ci = Pp.length - 1;
+      Pp.push([Pp[ci][0] + 60 * Math.sin(h), Pp[ci][1] + 60 * Math.cos(h)]); Pp.push([Pp[ci + 1][0] + 80 * Math.sin(h), Pp[ci + 1][1] + 80 * Math.cos(h)]);
+      return { r: Pp.map(([e, n]) => ll(e, n)), ci, cN: nn }; };
+    const allSurvey = () => "survey";
+    const cA = corner2([300]), cC = corner2([8, 12]);
+    const vA = await cornerSlowPlan(cA.r, F, boxKo(-40, cA.cN + 7.5, 40, cA.cN + 47.5), 5, "survey", "low", undefined, allSurvey);
+    const vC = await cornerSlowPlan(cC.r, F, boxKo(-40, cC.cN + 7.5, 40, cC.cN + 47.5), 5, "survey", "low", undefined, allSurvey);
+    const vC9 = await cornerSlowPlan(cC.r, F, boxKo(-40, cC.cN + 9, 40, cC.cN + 49), 5, "survey", "low", undefined, allSurvey);
+    check("29c. Upload's in-gear SECOND pass: a corner after a 300 m line is answered by slowing; the same corner 20 m "
+          + "into the route, where 7 kn cannot be shed in gear, is named EVEN AT THE LOW SPEED; and with 1.5 m more water "
+          + "it is answered",
+          () => vA.slow.includes(cA.ci) && !vA.unanswered.length && vC.unanswered.includes(cC.ci) && !vC.slow.includes(cC.ci)
+                && vC9.slow.includes(cC.ci) && !vC9.unanswered.length,
+          "300 m line: slow=[" + vA.slow + "] un=[" + vA.unanswered + "]; 20 m in: slow=[" + vC.slow + "] un=["
+            + vC.unanswered + "]; 20 m in, wall 9 m: slow=[" + vC9.slow + "] un=[" + vC9.unanswered + "]");
+    // 29b. THE PUNCH'S JUDGE FLIES IT TOO: joinBreaches hands its `legMs` to the walk, so the join Punch Out judges is
+    // the one Upload walks. The same corner and wall, the join legs at LOW: no breach with the targets, a breach without.
+    const jMs = (i) => (i === 1 ? 7 : 4) * KN, wall = boxKo(-40, 307.5, 40, 347.5);
+    const { joinBreaches } = require("../static/js/turns.js");
+    const jLed = joinBreaches(r120, F, wall, 5, jMs, null, 7 * KN, jMs), jNot = joinBreaches(r120, F, wall, 5, jMs, null, 7 * KN);
+    check("29b. ... and so does the PUNCH's judge: joinBreaches passes the join's targets to the walk - the corner clears "
+          + "with them and breaches without",
+          () => jLed.length === 0 && jNot.includes(1),
+          "with targets [" + jLed + "]; without [" + jNot + "]");
+    // 30. A SLOWED ARC IS WALKED SLOWED. A 180 deg arc of 3 m legs after a 100 m line, every arc leg at LOW, as
+    // cornerSlowPlan's second pass flies a flagged turn. The old per-leg withholding put the plan speed back at the
+    // start of every leg, and in gear each rise ended the cut and restarted the dead time: 7.00 kn round the arc.
+    const R0 = 12, P = [[0, 0], [0, 100]], nSeg = Math.ceil(Math.PI * R0 / 3);
+    for (let k = 1; k <= nSeg; k++) { const a = Math.PI * k / nSeg; P.push([R0 - R0 * Math.cos(a), 100 + R0 * Math.sin(a)]); }
+    P.push([2 * R0, 20]);
+    const arc = P.map(([e, n]) => ll(e, n));
+    const lowA = (i) => (i >= 2 && i <= nSeg + 1) ? 4 * KN : 7 * KN;
+    const apexKn = (w) => { let best = 1; for (let j = 1; j < w.pts.length; j++) if (w.pts[j].n > w.pts[best].n) best = j;
+      const a = w.pts[best - 1], b = w.pts[best]; return Math.hypot(b.e - a.e, b.n - a.n) / TRACK_STEP_S / KN; };
+    const lateM = 4 * KN * SPEED_CMD_LATENCY_S;
+    let legStart = 0, lastK = -1;
+    const perLeg = (i, traveled) => { if (i !== lastK) { lastK = i; legStart = traveled; }
+      return (lowA(i) < 7 * KN && traveled - legStart >= lateM) ? 4 * KN : 7 * KN; };
+    const led = apexKn(flownTrack(arc, F, lowA, null, 7 * KN, lowA)), old = apexKn(flownTrack(arc, F, perLeg, null, 7 * KN));
+    check("30. a slowed ARC is walked slowed - LOW at the apex - where the old per-leg withholding, in gear, never slowed "
+          + "her at all; and cornerSlowPlan's in-gear pass hands the walk its slowed targets with the lead",
+          () => led <= 4.05 && old > 6.5 && /if\(law\) return flownTrack\(route, ref, slowMsAt, fly, planMs, slowMsAt\);/.test(SRC),
+          "apex " + led.toFixed(2) + " kn with the lead; " + old.toFixed(2) + " kn withheld per leg");
+  } finally {
+    V.VESSEL = vSaved; V.SPEED_KN = kSaved; V.MAX_TURN_RATE_DEG_S = rSaved;
+  }
+})();
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");

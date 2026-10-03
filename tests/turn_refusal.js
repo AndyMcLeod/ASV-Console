@@ -179,7 +179,7 @@ function makeWorld(opts) {
   const turnWithRetry = o.turnWithRetry ? o.turnWithRetry(T.turnWithRetry) : T.turnWithRetry;
   const joinBreaches = o.joinBreaches ? o.joinBreaches(T.joinBreaches) : T.joinBreaches;
   // eslint-disable-next-line no-new-func
-  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry", "joinBreaches",
+  const W = new Function("G", "U", "S", "T", "PS", "C", "GU", "GEOM", "$", "document", "log", "turnWithRetry", "joinBreaches", "CO",
     "\"use strict\";\n"
     + "const {azTo, distTo, atDA, llEN, fromEN, toEN} = G; const {fmtDist, fmtDur} = U; const {V, nogo, sea} = S;\n"
     + "const {MAX_HALF_M, SKEW_LIMIT_DEG, minTurnRadiusM, shortenSeg, SPEED_CMD_LATENCY_S, easeOffered} = T;\n"
@@ -189,6 +189,8 @@ function makeWorld(opts) {
     // built", a wrong ANSWER rather than a crash. `no turns` has to be read as `something
     // threw` until proved otherwise.
     + "const {acrossTrackM} = GEOM;\n"
+    // judgeJoin reads a hull's in-gear slow-down (2026-10-03) - only when V.VESSEL carries one (17c)
+    + "const {slowLaw, slowLeadM} = CO;\n"
     + "const {channelLaneRoute, channelSpanKeepouts, channelTurnKeepouts, junctionKnot, pruneJunctionKnots,"
     + " regionOrder, routeAround} = PS;\n"
     + "const {blocked, buildKeepouts, firstBlockAlong, legReasons, effectiveWaterOffset} = C;\n"
@@ -250,7 +252,7 @@ function makeWorld(opts) {
     + " clearClip: () => { patClip = null; },"
     + " setRed: (r, joined) => { patRed = r; patJoined = joined; },"
     + " pending: () => { patRepunchT = setTimeout(() => {}, 0); } };")(
-    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry, joinBreaches);
+    G, U, S, T, PS, C, GU, GEOM, $, document, log, turnWithRetry, joinBreaches, require("../static/js/coast.js"));
   // The vessel and the chart, as the page holds them.
   S.V.SPEED_KN = { low: 1.5, survey: 3.0, high: 6.0 };
   S.V.MAX_TURN_RATE_DEG_S = o.turnRate || 60;
@@ -681,6 +683,62 @@ const redList = (w) => redOf(w.get().patRed);
               && r17b.patTrim.every((T) => !T.in && !T.out),
         () => (p17b.err ? "punch threw: " + p17b.err.message + "; " : "") + "red: " + redList(w17b)
               + "; trims " + JSON.stringify(r17b.patTrim) + "; refusal " + (ref17b ? ref17b.short : "none"));
+
+  // ── 17c. A HULL THAT SLOWS IN GEAR IS JUDGED ONTO THE JOIN FROM WHERE THE LEAD BEGINS (2026-10-03). The governor
+  // commands a slower join's speed where her in-gear cut must begin (leadSpeedKey), so judgeJoin walks the run-in from
+  // that far up the line - 30 m plus her in-gear run from survey to LOW, 42.7 m on the DriX - hands the walk the join's
+  // plan targets so it flies the same lead, and flies the LOW retry as LOW from the lead rather than withheld at the
+  // start of each join leg (in gear each withholding ended the cut and restarted the dead time). A stand-in turn and
+  // walk record what the judge asked; the small hull, with no law, is the control: 30 m, no targets, withheld.
+  {
+    const askOf = async (withLaw) => {
+      const seen = { backs: [], legMs: [], withheld: [], targets: [] };
+      const KNs = 0.514444;
+      const w = makeWorld({ features: [FAR()],
+        turnWithRetry: () => (E, Fp) => ({ kind: "arc", pts: [G.atDA(E, 6, 90), G.atDA(Fp, 6, 90)] }),
+        joinBreaches: () => (local, ref, ko, buf, msAt, fly, cap, legMs) => {
+          seen.backs.push(G.distTo(local[0], local[1]));
+          seen.legMs.push(typeof legMs === "function");
+          seen.withheld.push(msAt(2, 0, 0) !== msAt(2, 50, 0));
+          seen.targets.push(msAt(2, 50, 0));
+          return (msAt(2, 50, 0) > S.V.SPEED_KN.low * KNs + 0.01) ? [2] : [];     // refuse at the turn speed: the retry runs
+        } });
+      w.mission.speeds = { transit: "high", turn: "survey", survey: "survey" };
+      const vSaved = S.V.VESSEL, kSaved = S.V.SPEED_KN;
+      try {
+        if (withLaw) {
+          const drixM = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "vessels", "drix08.json"), "utf8")).maneuvering;
+          S.V.VESSEL = { ...vSaved, maneuvering: { ...(vSaved && vSaved.maneuvering), slowdown: drixM.slowdown } };
+          S.V.SPEED_KN = { low: 4, survey: 7, high: 14 };
+        }
+        const pr = await safely(() => w.punchOut());
+        const g = w.get();
+        return { seen, err: pr.err, red: g.patRed.length, slowAt: Object.keys(g.turnSlowAt).filter((k) => g.turnSlowAt[k]).length,
+                 low: S.V.SPEED_KN.low * KNs, turn: S.V.SPEED_KN.survey * KNs };
+      } finally { S.V.VESSEL = vSaved; S.V.SPEED_KN = kSaved; }
+    };
+    const law = await askOf(true), none = await askOf(false);
+    const drixLaw = require("../static/js/coast.js").slowLaw(JSON.parse(require("fs").readFileSync(
+      require("path").join(__dirname, "..", "vessels", "drix08.json"), "utf8")).maneuvering.slowdown);
+    const leadM = require("../static/js/coast.js").slowLeadM(7 * 0.514444, 4 * 0.514444, drixLaw);
+    const all = (a, f) => a.length > 0 && a.every(f);
+    check("17c. a hull that slows IN GEAR is judged onto every join from where the governor's LEAD begins - 30 m plus "
+          + "her in-gear run to LOW (" + leadM.toFixed(1) + " m on the DriX) - with the join's plan targets handed to the "
+          + "walk and the LOW retry flown from the lead, not withheld per leg; the hull with no law is judged as before",
+          () => !law.err && !none.err && all(law.seen.backs, (d) => Math.abs(d - (30 + leadM)) < 0.05)
+                // the RETRY ran, at LOW (the stand-in refuses the turn speed), and every join shipped slow - nothing red
+                && law.seen.targets.some((t) => Math.abs(t - 4 * 0.514444) < 1e-9)
+                && law.seen.targets.some((t) => Math.abs(t - 7 * 0.514444) < 1e-9)
+                && law.red === 0 && law.slowAt === 4
+                && all(law.seen.legMs, (x) => x) && all(law.seen.withheld, (x) => !x)
+                && all(none.seen.backs, (d) => Math.abs(d - 30) < 0.05) && all(none.seen.legMs, (x) => !x)
+                && none.seen.withheld.some((x) => x),
+          () => (law.err ? "punch threw: " + law.err.message + "; " : "") + "in gear: run-in "
+                + [...new Set(law.seen.backs.map((d) => d.toFixed(2)))] + " m, targets " + [...new Set(law.seen.legMs)]
+                + ", withheld " + [...new Set(law.seen.withheld)] + " (" + law.seen.backs.length + " asks); no law: run-in "
+                + [...new Set(none.seen.backs.map((d) => d.toFixed(2)))] + " m, targets " + [...new Set(none.seen.legMs)]
+                + ", withheld " + [...new Set(none.seen.withheld)]);
+  }
 
   // ── 18. THE FAR END GIVES FIRST (2026-09-24, over a red pair at Salamander Point). A dock across run 3 at
   // y 160 ends it 38 m short of run 4's north end - a stagger INSIDE the reversal gate (past ~50 m the pair is

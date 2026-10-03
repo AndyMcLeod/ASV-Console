@@ -262,7 +262,12 @@ check("12. a coast shorter than the hold disc the boat may wander anyway is not 
         () => C.slowLaw(null) === null && C.slowLaw({}) === null && C.slowLaw({ idle_kn: 0, length_m: 23.8 }) === null
               && C.slowLaw({ idle_kn: 3.65, length_m: 0 }) === null && C.slowLaw({ idle_kn: 3.65, length_m: 23.8, lag_s: -1 }) === null
               && C.slowLaw({ idle_kn: 3.65, length_m: 23.8, lag_s: Infinity }) === null
-              && C.slowLaw({ idle_kn: 3.65, length_m: 23.8 }).lag === 0);
+              && C.slowLaw({ idle_kn: 3.65, length_m: 23.8 }).lag === 0
+              // REAL NUMBERS ONLY (2026-10-03): `+` made "3.65", [3.65], "0x4" and true numbers, Python's float() a
+              // different set - so the sim and the page parted on a hand-edited file (tests/coast_sim.py 15 asks both)
+              && C.slowLaw({ idle_kn: "3.65", length_m: 23.8 }) === null && C.slowLaw({ idle_kn: [3.65], length_m: 23.8 }) === null
+              && C.slowLaw({ idle_kn: 3.65, length_m: "0x4" }) === null && C.slowLaw({ idle_kn: true, length_m: 23.8 }) === null
+              && C.slowLaw({ idle_kn: 3.65, length_m: 23.8, lag_s: "3.3" }) === null && C.slowLaw("slow") === null);
   // THE MEASUREMENT IT WAS FITTED TO (20 commanded 7 -> 4 kn cuts, through the water, from the setpoint message):
   // 4.5 kn in 21.0 m, 4.25 kn in 25.5 m, 4.0 kn in 32.5 m. With the 3.3 s lag (the slower, ramped response) the law
   // must not come in SHORT of any of them - it feeds a reach, and short is the dangerous side.
@@ -274,6 +279,127 @@ check("12. a coast shorter than the hold disc the boat may wander anyway is not 
         () => vs.every(([, m, mod]) => mod >= m) && meas.every(([v1, m]) => C.coastRun(6.2 * KN, v1 * KN, LC).m < m),
         vs.map(([v1, m, mod]) => v1 + " kn: " + mod.toFixed(1) + " m vs measured " + m + " (coast law "
                                  + C.coastRun(6.2 * KN, v1 * KN, LC).m.toFixed(1) + ")").join("; "));
+}
+
+// ── 19-25. ONE STEP FOR THE SIM AND THE WALK, AND THE LEAD ──────────────────────────────────────────────────────────
+//    Andy, 2026-10-03: "Model the in-gear slow-down in the sim", then, with the corner walk taking it too and the
+//    governor slowing AHEAD of a slower leg: "Lead + walk + sim". speedStep is the step the corner walk takes and the
+//    sim's speed_step_kn mirrors (tests/coast_sim.py holds the two to each other tick by tick); slowLeadM / leadWant
+//    are the lead the governor commands and the walk flies.
+{
+  const drix = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const L = C.slowLaw(drix.maneuvering.slowdown);
+  const RAMP = 1.5 * KN, DT = 0.25;
+  // a cut at a constant target from v0, stepped: time and water to reach it, and how long the speed did not move
+  const cut = (v0, target, law, dt = DT, seq) => {
+    const st = { lag: null }; let v = v0, t = 0, x = 0, held = 0;
+    while (v > target + 1e-12 && t < 300) {
+      const want = seq ? seq(t) : target, vn = C.speedStep(v, want, dt, st, law, RAMP);
+      if (vn === v) held += dt;
+      v = vn; t += dt; x += v * dt;
+    }
+    return { t, x, held, v };
+  };
+  const r7 = C.slowRun(7 * KN, 4 * KN, L), c7 = cut(7 * KN, 4 * KN, L), f7 = cut(7 * KN, 4 * KN, L, 0.01);
+  const r62 = C.slowRun(6.2 * KN, 4 * KN, L), c62 = cut(6.2 * KN, 4 * KN, L);
+  check("19. the STEP lands where the closed form says: a 7 -> 4 kn cut stepped at the vessel's 0.25 s tick reaches 4 kn "
+        + "within one tick of slowRun's time and water (6.2 kn too), and converges on it as the step shrinks",
+        () => Math.abs(c7.t - r7.s) <= DT && Math.abs(c7.x - r7.m) <= 7 * KN * DT
+              && Math.abs(c62.t - r62.s) <= DT && Math.abs(c62.x - r62.m) <= 6.2 * KN * DT
+              && Math.abs(f7.x - r7.m) < 0.05 && Math.abs(f7.t - r7.s) < 0.02,
+        "7 kn: " + c7.x.toFixed(2) + " m / " + c7.t.toFixed(2) + " s stepped, " + r7.m.toFixed(2) + " m / " + r7.s.toFixed(2)
+          + " s closed form (" + f7.x.toFixed(2) + " m at 0.01 s); 6.2 kn: " + c62.x.toFixed(2) + " vs " + r62.m.toFixed(2) + " m");
+  // THE DEAD TIME: whole for a cut half a knot or more over the target, ramped below that, and FIXED when the cut
+  // begins - a deeper cut on top (LOW after 4.5, the guard after the governor) carries on, it does not start again.
+  const half = cut(4.25 * KN, 4 * KN, L), deeper = cut(7 * KN, 4 * KN, L, DT, (t) => (t < 2 ? 4.5 : 4.0) * KN);
+  check("20. the DEAD TIME: a 7 -> 4 kn cut holds her speed for exactly the first 13 ticks (3.3 s), a cut 0.25 kn over "
+        + "the target for half that, and a DEEPER cut 2 s in does not start it again",
+        () => Math.abs(c7.held - 3.25) < 1e-9 && Math.abs(half.held - 1.5) < 1e-9 && deeper.held <= 3.25 + 1e-9,
+        "held " + c7.held + " s / " + half.held + " s / deeper cut " + deeper.held + " s");
+  // A STOP KEEPS THE RAMP (she cannot be cut below idle in gear, and a stop was never measured), and a cut that
+  // follows a stop starts with the throttle already off: the station-keep asking LOW half way through her stop.
+  const sStop = { lag: null }; let vs = 7 * KN;
+  for (let i = 0; i < 4; i++) vs = C.speedStep(vs, 0, DT, sStop, L, RAMP);
+  const vAfterStop = vs, vNext = C.speedStep(vs, 4 * KN, DT, sStop, L, RAMP);
+  check("21. a STOP keeps the engine's ramp - 7 kn to 5.5 in 1 s - and a cut to LOW that follows it sheds speed on the "
+        + "very next tick, with no fresh dead time",
+        () => Math.abs(vAfterStop - 5.5 * KN) < 1e-9 && vNext < vAfterStop && sStop.lag === 0,
+        "after 1 s of stop " + (vAfterStop / KN).toFixed(3) + " kn; next tick at LOW " + (vNext / KN).toFixed(3) + " kn");
+  // A SPEED-UP, AND A HULL WITH NO LAW, ARE THE OLD CLAMP BIT FOR BIT - the small-class boat and the 4 m example USV are not touched.
+  const targets = [7, 4, 4, 14, 2, 0, 9, 9, 3.95, 6].map((k) => k * KN);
+  let vOld = 3 * KN, vNew = 3 * KN, same = true; const sN = { lag: null };
+  for (let i = 0; i < 400; i++) {
+    const w = targets[(i / 40) | 0];
+    vOld += Math.max(-RAMP * DT, Math.min(RAMP * DT, w - vOld));
+    vNew = C.speedStep(vNew, w, DT, sN, null, RAMP);
+    if (vNew !== vOld) same = false;
+  }
+  const up = C.speedStep(4 * KN, 7 * KN, DT, { lag: null }, L, RAMP);
+  check("22. a speed-up is the ramp on every hull, and with NO law the step IS the old clamp, bit for bit, over a run "
+        + "of cuts, stops and speed-ups",
+        () => same && Math.abs(up - (4 + 1.5 * DT) * KN) < 1e-12,
+        "no-law step identical over 400 ticks: " + same + "; 4 -> 7 kn first tick " + (up / KN).toFixed(3) + " kn");
+  const set = 1.75 * KN, withSet = C.slowLeadM(7 * KN, 4 * KN, L, 1.0, set);
+  check("23. slowLeadM is her in-gear run plus the latency at her speed - 7 -> 4 kn with 1.0 s is 46.30 m - plus a "
+        + "FOLLOWING set carried for the cut's time and the latency (1.75 kn: 61.17 m), a head set not credited, and 0 "
+        + "with no law (a ramp hull is commanded at the leg, as always) or with nothing to shed",
+        () => Math.abs(C.slowLeadM(7 * KN, 4 * KN, L, 1.0) - (r7.m + 7 * KN)) < 1e-9
+              && Math.abs(C.slowLeadM(7 * KN, 4 * KN, L, 1.0) - 46.30) < 0.01
+              && Math.abs(withSet - (r7.m + set * r7.s + (7 * KN + set))) < 1e-9
+              && C.slowLeadM(7 * KN, 4 * KN, L, 1.0, -set) === C.slowLeadM(7 * KN, 4 * KN, L, 1.0)
+              && C.slowLeadM(7 * KN, 4 * KN, null, 1.0) === 0 && C.slowLeadM(4 * KN, 4 * KN, L, 1.0) === 0
+              && C.slowLeadM(3 * KN, 4 * KN, L, 1.0) === 0,
+        C.slowLeadM(7 * KN, 4 * KN, L, 1.0).toFixed(2) + " m calm, " + withSet.toFixed(2) + " m in a following 1.75 kn set");
+  // leadWant against a scripted route: legs ahead at {d, ms}
+  const lead4 = C.slowLeadM(7 * KN, 4 * KN, L, 1.0);
+  let asked = 0;
+  const legs = (arr) => (j) => { asked = Math.max(asked, j + 1); return j < arr.length ? arr[j] : null; };
+  const inside = C.leadWant(7 * KN, 7 * KN, legs([{ d: lead4 - 0.01, ms: 4 * KN }]), L, 1.0);
+  const outside = C.leadWant(7 * KN, 7 * KN, legs([{ d: lead4 + 0.01, ms: 4 * KN }]), L, 1.0);
+  const noLaw = C.leadWant(7 * KN, 7 * KN, legs([{ d: 1, ms: 4 * KN }]), null, 1.0);
+  const two = C.leadWant(7 * KN, 7 * KN, legs([{ d: 10, ms: 5.5 * KN }, { d: 40, ms: 4 * KN }]), L, 1.0);
+  asked = 0;
+  C.leadWant(7 * KN, 7 * KN, legs([{ d: 10, ms: 7 * KN }, { d: 500, ms: 4 * KN }, { d: 900, ms: 4 * KN }]), L, 1.0);
+  const askedFar = asked;
+  const held = C.leadWant(7 * KN, 6 * KN, legs([{ d: 300, ms: 4 * KN }]), L, 1.0, 0);
+  const setLead = C.leadWant(7 * KN, 7 * KN, legs([{ d: lead4 + 10, ms: 4 * KN }]), L, 1.0, -1, set);
+  // already AT LOW 30 m short of a LOW leg (a stand-down dropped the latch): measured from her leg's own 7 kn, not her 4,
+  // the lead holds her there - from her own speed it raised her to survey and cut her again (review)
+  const atLow = C.leadWant(7 * KN, 4 * KN, legs([{ d: 30, ms: 4 * KN }]), L, 1.0);
+  check("24. leadWant takes a slower leg ahead exactly when it lies within her lead (a centimeter inside, not a "
+        + "centimeter outside), the slowest of two that do, never with no law, never asks past the farthest any cut "
+        + "could need - and a LATCHED leg holds the target however far its start reads",
+        () => inside.j === 0 && Math.abs(inside.ms - 4 * KN) < 1e-12 && outside.j === -1 && outside.ms === 7 * KN
+              && noLaw.j === -1 && noLaw.ms === 7 * KN && two.j === 1 && Math.abs(two.ms - 4 * KN) < 1e-12
+              && askedFar === 2 && held.j === 0 && Math.abs(held.ms - 4 * KN) < 1e-12 && setLead.j === 0 && atLow.j === 0,
+        "lead " + lead4.toFixed(2) + " m; two legs -> leg " + two.j + "; legs asked with one 500 m out: " + askedFar);
+  // 25. THE LEAD LANDS THE SPEED BY THE LEG, and it does not let go on the way in - swept over 401 run-ins (100-500 m),
+  // because one length proves nothing about a tick grid (review: the first cut of this check passed at 300 m and
+  // failed at 82 of 401). Walked in 0.25 s ticks with no latch, so a let-go shows as a flip, both ways: the walk's
+  // (no latency) and the governor's (1 s latency, the command landing at once). Measured from her own speed alone -
+  // the first rule - the governor's let go on every one of them.
+  {
+    const run = (D, lat, fromOwn) => { const st = { lag: null }; let v = 7 * KN, x = 0, began = null, flips = 0, eng = false;
+      while (x < D) {
+        const lw = C.leadWant(fromOwn ? v : 7 * KN, v, (j) => (j === 0 ? { d: D - x, ms: 4 * KN } : null), L, lat);
+        if (lw.j === 0 && !eng) { eng = true; began = D - x; } else if (lw.j !== 0 && eng) flips++;
+        v = C.speedStep(v, lw.ms, DT, st, L, RAMP); x += v * DT;
+      }
+      return { v, began, flips }; };
+    let flipsWalk = 0, flipsGov = 0, worst = 0, beganOff = 0, oldLets = 0;
+    for (let D = 100; D <= 500; D++) {
+      const w = run(D, 0, false), g = run(D, 1.0, false), o = run(D, 1.0, true);
+      flipsWalk += w.flips; flipsGov += g.flips; if (o.flips) oldLets++;
+      worst = Math.max(worst, w.v / KN - 4, g.v / KN - 4);
+      beganOff = Math.max(beganOff, Math.abs(w.began - r7.m));
+    }
+    check("25. the lead LANDS her at the slower speed by the leg on every run-in from 100 to 500 m - the cut begins "
+          + "within a tick of slowRun's water before it - and never lets go on the way in, the walk's or the governor's; "
+          + "measured from her own speed alone it let go on most of them",
+          () => flipsWalk === 0 && flipsGov === 0 && worst <= 0.02 && beganOff <= 7 * KN * DT && oldLets > 300,
+          "let-gos " + flipsWalk + " (walk) / " + flipsGov + " (governor); worst arrival " + (4 + worst).toFixed(3)
+            + " kn; cut begun within " + beganOff.toFixed(2) + " m of slowRun; from her own speed: " + oldLets + " of 401 let go");
+  }
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

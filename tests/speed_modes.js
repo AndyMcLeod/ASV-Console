@@ -194,6 +194,8 @@ eval("let grant = null;" + grabDecl("SPEED_ROLES") + "\n" + grab("alongLineM") +
      // speedGovernor, which the crash guard reports as ONE failed check rather than as a crash.
      grab("indexedRoute") + "\n" +
      grabDecl("commandedSpeed") + "\n" + grab("speedGovernor") + "\n" +
+     // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; null at once with no slowdown block
+     "let govLead = null;\n" + grab("leadSpeedKey") + "\n" + grab("leadFor") + "\n" +
      "function __setCommanded(v){ commandedSpeed = v; }\n" +
      "function __commanded(){ return commandedSpeed; }\n" +
      // A `const` declared inside a direct eval stays in the EVAL's scope - only the
@@ -502,7 +504,9 @@ console.log("Speed by mode - three settings, and the console governs which one i
   // on the SAFETY OVERRIDE row one line up, so a mutation that renamed only the role row
   // left this green. A fragment can be present while the code that uses it is dead.
   check("17b. ... names the ROLE it is running, and why",
-        () => /html \+= row\("for", spRole\.toUpperCase\(\) \+ " — " \+ act\.detail/.test(RI),
+        // ⚠ THE PLAIN ROW, BY ITS COLOR ARGUMENT (2026-10-03): the lead's row ("SLOWING to ...") begins with the same
+        // text, so the bare prefix matched while the role row itself was gone - the trap this check was pinned against.
+        () => /html \+= row\("for", spRole\.toUpperCase\(\) \+ " — " \+ act\.detail,\s*spRole === "survey"/.test(RI),
         "so 14 kn in the middle of a survey reads as TRANSIT — approach to the survey area");
   check("17c. ... and says SAFETY OVERRIDE instead when the clearance guard has the throttle",
         () => /row\("for", "SAFETY OVERRIDE/.test(RI) && /if\(clearance\.slowed\)/.test(RI),

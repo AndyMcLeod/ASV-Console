@@ -48,7 +48,7 @@ for short surveys in constrained waters — not a large survey vessel.
 | **Position** | Starts at **≈42.1371 N, −80.0874 W** (Presque Isle Bay, Erie PA — operator-set launch point), heading 090°. Integrates lat/lon along heading at the current speed. |
 | **Waypoint autonomy** | **Line-following** (look-ahead LOS ~3 m): the boat tracks the survey/transit line between waypoints (pulling out cross-track error) rather than steering point-to-point, turn rate ≤ **60°/s** (nimble small boat). It advances onto the next leg when it passes the waypoint along-track or comes within the **approach radius** (GUI "Appr m", default ~1 m) — following the line to ~1 m of each turn; applies live to a running sim. Ends per the plan's **completion** mode (stop / loiter / repeat). |
 | **Completion / behaviours** | Station-keeps (holds) at the end of a Go-To / RTH / Hold / Transit / Loiter run; loops on Repeat. On **RTH** (the default) the sim HOLDS at the last waypoint and the console chains the real ENC-routed Return-to-Home — so with no console attached the boat stays safely on station instead of running home on an unrouted straight line. |
-| **Speed** | Target set by the plan's speed key — **Low 1.5 kn / Survey 3.0 kn / High 6.0 kn** (manual: survey ≈ 2.8–3.5 kn). Accelerates/decelerates smoothly (≤ 1.5 kn/s). |
+| **Speed** | Target set by the plan's speed key — **Low 1.5 kn / Survey 3.0 kn / High 6.0 kn** (manual: survey ≈ 2.8–3.5 kn). Accelerates/decelerates smoothly (≤ 1.5 kn/s) — except a commanded CUT on a hull with a measured slow-down (the DriX's `maneuvering.slowdown`), which is flown in gear: a 3.3 s dead time, then a decay toward her 3.65 kn idle (7 → 4 kn in ~43 m / 15.5 s), the same step the console's corner walk takes (`speed_step_kn` / coast.js `speedStep`). A stop stays on the ramp. |
 | **Arrival radius** | From the plan, clamped 1–50 m (default **2 m**, ~1 boat length). |
 | **Environment** | **Real wind + sea state push the boat off course** (see §2a) — a steady crab plus a gust-driven wander the line-follower steers out. Pitch/roll are driven by the real sea. |
 | **Battery** | Starts **26.5 V**, drains continuously — light at idle, heavier under thrust (up to ~High-speed rate). Feeds the battery gauge + alarm banding (see §5). |
@@ -304,8 +304,10 @@ the DriX a 1.6 m stopping distance). **A vessel with no coast block does not coa
 which is the shipped default for two of the three. The DriX's is MEASURED (2026-10-03, from her
 own Aug 2026 logs: 40.3 m from 6 to 2 kn with the clutch in neutral, Lc 36.7 m) and says so in
 its own `source` string. Note that this is the PROP-OUT coast: the AIS guard's slow-down to LOW is
-flown in gear and is a different law (`maneuvering.slowdown`, coast.js `slowRun`) - the sim itself
-still sheds a commanded speed change on the engine's ramp, several times faster than the real boat.
+flown in gear and is a different law (`maneuvering.slowdown`, coast.js `slowRun`), and since
+2026-10-03 the sim flies it too: a commanded cut on that hull holds her speed for the dead time and
+then decays toward her idle speed (`speed_step_kn`), where it used to come down on the engine's ramp
+several times faster than the real boat.
 
 **`/api/cmd/amend {route, note}`** DEVIATES A RUNNING PLAN: it replaces the unflown
 remainder and keeps everything else — the flown prefix, the waypoint index, the behaviour,

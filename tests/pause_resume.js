@@ -220,6 +220,8 @@ eval([
   // took() is the page's ONE test for "did the command land?" - carried across rather
   // than restated, so a change to it is a change here.
   grab("took"), grab("speedRole"), grab("speedGovernor"), grab("resumeRun"),
+  // THE LEAD (2026-10-03): speedGovernor asks leadSpeedKey every frame; with no slowdown block on V.VESSEL it answers null at once
+  "let govLead = null;", grab("leadSpeedKey"), grab("leadFor"),
   "function __backLengths(){ return RESUME_BACK_LENGTHS; }",
   "function __setPauseMark(m){ pauseMark = m; }",
   "function __resumeSlow(){ return resumeSlow; }",

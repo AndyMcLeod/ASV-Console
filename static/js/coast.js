@@ -174,8 +174,12 @@ export const SLOW_LAG_RAMP_MS = 0.5 * 0.514444;
  */
 export function slowLaw(slowBlock) {
   const b = slowBlock;
-  if (!b) return null;
-  const idleKn = +b.idle_kn, Lg = +b.length_m, lag = b.lag_s == null ? 0 : +b.lag_s;
+  if (!b || typeof b !== "object") return null;
+  // REAL NUMBERS ONLY, as asv_console.py's parse takes them: `+` would make "3.65", [3.65], "0x4" and "" numbers, and
+  // Python's float() takes a different set, so on a hand-edited vessel file the sim and the page parted (review).
+  const num = (x) => typeof x === "number";
+  if (!num(b.idle_kn) || !num(b.length_m) || !(b.lag_s == null || num(b.lag_s))) return null;
+  const idleKn = b.idle_kn, Lg = b.length_m, lag = b.lag_s == null ? 0 : b.lag_s;
   if (!(idleKn > 0) || !(Lg > 0) || !(lag >= 0) || !isFinite(idleKn) || !isFinite(Lg) || !isFinite(lag)) return null;
   return { U: idleKn * 0.514444, Lg, lag, measured: !!b.measured, source: b.source || null };
 }
@@ -194,6 +198,104 @@ export function slowRun(v0, v1, law) {
   const secs = (Lg / (2 * U)) * Math.log(((v1eff + U) * (v0 - U)) / ((v1eff - U) * (v0 + U)));
   const lagEff = lag * Math.min(1, (v0 - v1eff) / SLOW_LAG_RAMP_MS);   // continuous at the target (SLOW_LAG_RAMP_MS)
   return { m: v0 * lagEff + decay, s: lagEff + secs, v1eff, lagEff };
+}
+
+/**
+ * ONE TICK OF THE THROTTLE, m/s -> m/s: the step the page's corner walk (turns.js flownTrack) takes, and the SAME step
+ * as asv_console.py `speed_step_kn`, which the simulator takes (2026-10-03, Andy: "Model the in-gear slow-down in the
+ * sim", with the corner walk taking it too). One law in three places - the AIS reach (slowRun), the sim and the walk -
+ * because a walk that sheds speed faster than the boat certifies corners she rounds wider than it says.
+ *
+ * A CUT IN GEAR: with `law` set and the target below the speed but at or above idle + SLOW_IDLE_MARGIN_MS, she holds
+ * her speed for a dead time - `law.lag`, ramped in over SLOW_LAG_RAMP_MS above the target, fixed in `st.lag` when the
+ * cut begins and NOT restarted while it lasts - then dv/dt = -(v^2 - U^2)/Lg, stepped by its exact solution
+ * v = U / tanh(atanh(U/v0) + U t/Lg), so a cut at a constant target lands where slowRun says to within a tick. The
+ * governor catches her at the target. EVERYTHING ELSE is the engine's ramp, `rampMs` m/s per second, as it always was:
+ * a speed-up, a hull with no law, and a cut below idle + margin - a STOP, which she cannot make in gear and which was
+ * never measured.
+ *
+ * ⚠ A CUT THAT FOLLOWS A STOP STARTS WITH NO DEAD TIME. Coming down on the ramp (a stop) the throttle is already off,
+ * so `st.lag` is left at 0 there rather than null: when the target then rises to LOW while she is still above it - the
+ * station-keep asking for its re-approach speed half way through her stop - the cut carries on from where the way is,
+ * with no fresh 3.3 s at full speed. Only holding or gaining speed, or being caught at the target, ends a cut (null).
+ * Without it, in the first cut of this step, the farthest she overshot a hold point grew from 12.4 to 15.7 m arriving
+ * at 7 kn and from 24.5 to 33.1 m at 14 kn (calm water).
+ * @param st  {lag: number|null} - the walk's own state, one object per walk
+ */
+export function speedStep(v, want, dt, st, law, rampMs) {
+  if (law && want >= law.U + SLOW_IDLE_MARGIN_MS && v > want) {
+    if (st.lag == null) st.lag = law.lag * Math.min(1, (v - want) / SLOW_LAG_RAMP_MS);   // the cut begins
+    const used = Math.min(dt, st.lag);
+    st.lag -= used;
+    const rest = dt - used;
+    if (rest > 0) v = law.U / Math.tanh(Math.atanh(law.U / v) + law.U * rest / law.Lg);
+    if (v <= want) { st.lag = null; return want; }                // caught at the target: the cut is over
+    return v;
+  }
+  st.lag = want < v ? 0 : null;                                   // coming down on the ramp: the throttle is off
+  return v + Math.max(-rampMs * dt, Math.min(rampMs * dt, want - v));
+}
+
+/**
+ * HOW FAR AHEAD OF A SLOWER LEG THE SLOWER SPEED HAS TO BE COMMANDED, m over the ground: the water the in-gear cut from
+ * `v` (through the water) to `v1` takes (slowRun, its dead time included), plus `setMs` - the set ALONG her track, a
+ * following set only - carried for the cut's own time, plus `latencyS` of travel at her ground speed for the command to
+ * reach her. 0 with no law - a hull that sheds speed on the engine's ramp is commanded at the leg, as it always was -
+ * and 0 when she is already at or under `v1`.
+ *
+ * ⚠ THE SET IS THE SAME TERM aisReachM CARRIES (drift x the cut's time), found by mutation: a following 1.75 kn set
+ * carries her ~14 m further over the ground during a 15.5 s cut, and a lead measured in water alone delivered LOW 14 m
+ * past the turn. A head set would shorten the ground run; it is not credited (setMs < 0 counts as 0), the safe side.
+ */
+export function slowLeadM(v, v1, law, latencyS = 0, setMs = 0) {
+  if (!law || !(v > v1)) return 0;
+  const run = slowRun(v, v1, law), s = setMs > 0 ? setMs : 0;
+  return (run ? run.m + s * run.s : 0) + (v + s) * (latencyS || 0);
+}
+
+/**
+ * THE LEAD (Andy, 2026-10-03: "Lead + walk + sim"). The speed she must ALREADY be heading for: the slowest of the
+ * leg she is on (`want`, m/s) and every leg ahead whose start lies within slowLeadM of her now. One body, two askers -
+ * the page's speed governor, which commands it, and the corner walk (turns.js flownTrack), which flies it - so the
+ * walk certifies the corners she will really round.
+ *
+ * WHY: the governor used to command a turn's speed on the frame she reached the turn. On the engine's ramp that cost
+ * a meter or two; in gear the DriX needs ~43 m to come from 7 kn to 4, so she entered every LOW turn at survey speed,
+ * and the corner walk taking her law reported every corner it had answered by slowing as one slowing does not answer
+ * (measured on DriX plans: 15 slowed / 6 unanswered became 0 / 21). With the lead the punch's verdicts are the ramp's
+ * and Upload answers more (21 / 0).
+ *
+ * ⚠ IT DOES NOT LET GO HALF WAY. The lead is measured from the FASTER of her speed and `want` (her own leg's target),
+ * so it does not shrink as she slows: `d` falls with every meter she makes and the lead stands still, so a leg ahead
+ * once inside it stays inside it. Measured from her speed alone - the first cut of this - the lead shrank faster than
+ * `d` near the end of every cut that charged a latency (the meters were spent early, and the dead time ramps out within
+ * half a knot of the target): unlatched it let go on 401 of 401 run-ins in review, raising the target, ending the cut
+ * and starting a fresh 3.3 s dead time. The same rule means a run that stood down at LOW and is governed again near a
+ * LOW leg is not raised to survey only to be cut again (her own speed is no measure of the lead she would need at it).
+ * The caller still latches - `latched`, the leg ahead that pulled the target down last time, kept until she reaches it
+ * - because `want` changes on the way in when there are legs between, and a fix can jump.
+ *
+ * @param ahead    j -> {d, ms} | null - the j-th leg AHEAD (0 = the next one): `d` = meters from her to where that leg
+ *                 starts, `ms` = its target; null past the route's end. `d` must not decrease with j.
+ * @param latched  the j of a leg ahead that already holds the target down, or -1
+ * @param setMs    the set along her track, m/s (a following set lengthens the lead; see slowLeadM)
+ * @returns {ms, j}  the target, and which leg ahead set it (-1: her own leg's)
+ */
+export function leadWant(want, v, ahead, law, latencyS = 0, latched = -1, setMs = 0) {
+  const out = { ms: want, j: -1 };
+  if (!law) return out;
+  if (latched >= 0) {
+    const a = ahead(latched);
+    if (a && a.ms < out.ms) { out.ms = a.ms; out.j = latched; }
+  }
+  const vLead = Math.max(v, want);                    // the speed the lead is measured from (see above)
+  const reach = slowLeadM(vLead, law.U + SLOW_IDLE_MARGIN_MS, law, latencyS, setMs);   // the most any cut can need
+  for (let j = 0; j < 10000; j++) {
+    const a = ahead(j);
+    if (!a || !(a.d <= reach)) break;
+    if (a.ms < out.ms && a.d <= slowLeadM(vLead, a.ms, law, latencyS, setMs)) { out.ms = a.ms; out.j = j; }
+  }
+  return out;
 }
 
 /**

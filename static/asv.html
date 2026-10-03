@@ -981,7 +981,7 @@ import { scanChartSliced, EXPLAIN_PX as INK_EXPLAIN_PX, ATTACH_M as INK_ATTACH_M
 // serve - the floats at Pepperrell Cove (Andy, 2026-09-30). Pure, like chartink.js: features in, gaps out.
 import { skinGaps, skinGapFeature, SKIN_KIND } from "/static/js/skin.js";
 // Coming in on the drift: where to stop the prop, and whether it is safe to.
-import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS } from "/static/js/coast.js";
+import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM, leadWant } from "/static/js/coast.js";
 import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
@@ -1448,15 +1448,118 @@ function legIsLine(a, b){
  * is flown at the TURN speed, a leg that IS a committed line at the SURVEY speed, everything else - the
  * routed approach, a region hop, a detour - at the TRANSIT speed. Before this every corner was judged at
  * the fastest of the three, which flagged 3 kn survey turns as unflyable at 6 kn.
+ *
+ * ⚠ AND A SLOW-RADIUS TURN IS LOW (2026-10-03). The governor flies the reversal out of a line marked
+ * `slow_turn_out` at LOW whatever the turn role says (speedGovernor), and this table keyed it at the turn
+ * role - so Upload judged at the turn speed a turn the punch had certified at low, which is where the
+ * "EVEN AT THE LOW SPEED" corners on joins the punch had just passed came from (measured: 6 and 9 of them
+ * on synthetic DriX plans, 0 once keyed low). It matters twice now: the governor's LEAD (leadSpeedKey)
+ * reads this same table to slow ahead of a leg, and a lead to the turn speed followed by LOW at the turn
+ * is an un-led cut. A turn point belongs to the line whose end came before it in the plan, the way
+ * commitPattern interleaves them.
  */
 function routeSpeedKeys(route){
-  const turnPts = new Set();
-  (mission.waypoints || []).forEach(p => { if(p.turn) turnPts.add(p.lat + "," + p.lon); });
-  const isTurn = p => !!p && (p.turn || turnPts.has(p.lat + "," + p.lon));
+  // ⚠ A ROUTED HOP'S VIAS ARE NOT TURN POINTS (found reviewing the lead, 2026-10-03). commitPattern flags every point
+  // it interleaves between two lines `turn` - a reversal's turn AND a hop's routed detour alike - and this table keyed
+  // them all at the turn speed, while the governor flies a hop at TRANSIT (isReversalGap false: no turn opens, and
+  // currentActivity says "between coverage regions"). An under-flag of hop corners since 2026-09-24, and with the lead a
+  // pointless cut to LOW before every hop and a run back up to transit on it. A point after a line whose gap is not a
+  // reversal is a hop's: transit.
+  // ⚠ AND THE LINE BEFORE IT IS lineOfLeg's NEAREST MATCH, the one place that decision is made: on a pattern spaced
+  // 5 m or less a first-match search named the line before, and read slow_turn_out one reversal late.
+  const turnPts = new Set(), slowPts = new Set(), hopPts = new Set();
+  let lineK = -1, prev = null;
+  (mission.waypoints || []).forEach(p => {
+    const key = p.lat + "," + p.lon;
+    if(p.turn){
+      if(lineK >= 0 && !isReversalGap(lineK)){ hopPts.add(key); return; }
+      turnPts.add(key);
+      if(lineK >= 0 && ((mission.lines || [])[lineK] || {}).slow_turn_out) slowPts.add(key);
+      return;
+    }
+    if(prev){ const m = lineOfLeg(prev, p); if(m) lineK = m.line; }
+    prev = p;
+  });
+  const keyOf = p => p.lat + "," + p.lon;
+  const isTurn = p => !!p && !hopPts.has(keyOf(p)) && (p.turn || turnPts.has(keyOf(p)));
+  const isSlow = p => !!p && slowPts.has(keyOf(p));
   return i => { const a = route[i-1], b = route[i]; if(!a || !b) return null;
-    if(isTurn(a) || isTurn(b)) return roleSpeed("turn");
+    if(isTurn(a) || isTurn(b)) return (isSlow(a) || isSlow(b)) ? "low" : roleSpeed("turn");
     if(legIsLine(a, b)) return roleSpeed("survey");
     return roleSpeed("transit"); };
+}
+/**
+ * THE KEY THE GOVERNOR WILL COMMAND ON EACH LEG OF THE ROUTE ABOARD: routeSpeedKeys, with the corner set
+ * Upload measured for this route laid over it exactly as speedGovernor reads it (a flagged vertex slows the
+ * leg into it and the leg out). `i` indexes `route`, which is the array the vessel's wp_index counts into.
+ */
+function runLegKeys(route){
+  const base = routeSpeedKeys(route);
+  const sameRoute = cornerSlowFor >= 0 && (S && S.wp_total) === cornerSlowFor;
+  return i => (sameRoute && cornerSlow.size > 0 && (cornerSlow.has(i) || cornerSlow.has(i - 1))) ? "low" : base(i);
+}
+/**
+ * THE LEAD (Andy, 2026-10-03: "Lead + walk + sim"): the SLOWER leg ahead that the governor must already be
+ * commanding - {route, idx, key, d} - or null. A hull that sheds a commanded cut IN GEAR (`maneuvering.slowdown`,
+ * the DriX) needs ~43 m to come from 7 kn to 4, and the governor used to command a turn's speed on the frame she
+ * reached the turn - so she entered every LOW turn at survey speed. Now the cut is commanded where it must begin:
+ * coast.js slowLeadM (her in-gear run from the faster of the speed she is doing through the water and her own leg's
+ * target, dead time included, plus a FOLLOWING set carried for the cut's own time) plus SPEED_CMD_LATENCY_S of
+ * travel for the command to reach her. The corner walk (turns.js flownTrack) flies the same lead from the same
+ * coast.js leadWant, with no set (it has no drift model) and no latency (the governor spends it), so Upload
+ * certifies the corners she rounds.
+ *
+ * ⚠ ONLY ON A HULL WITH THE LAW, AND ONLY ON A SURVEY RUN. With no `slowdown` block this returns null before
+ * anything else is read: every other hull is commanded at the leg, byte for byte. And only a survey run has the
+ * per-leg table the walk judged (routeSpeedKeys + the corner set); a Go-To, an RTH or a transit flies one role
+ * throughout. (A committed SEARCH pattern is uploaded as a survey run too: its legs are no lines, so the table keys
+ * them transit, and the governor flies them at transit as well - the two agree, and the lead leads to nothing.)
+ *
+ * PURE: it reads and commands nothing. leadSpeedKey is the governor's door (it keeps `govLead`, the latch);
+ * leadShown is the readouts' (a tab that is not supervising asks it with a latch of its own, or its card would
+ * read DISAGREEMENT for the ~15 s of every lead).
+ */
+let govLead = null;     // {route, idx, key, d} - the slower leg ahead the governor is slowing her for, or null
+let viewLead = null;    // the same, worked out read-only in a tab that is not supervising (the readouts)
+let _legKeys = null;    // {route, wp, cs, sig, keyAt}: the per-leg table, rebuilt only when the plan, its corner set,
+                        // a slow-turn mark or a role speed changes - it walks the whole plan, and the governor runs at 4 Hz
+function leadFor(want, prev){
+  const sd = V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown;
+  if(!sd) return null;
+  const law = slowLaw(sd), route = indexedRoute(), st = (S && S.status) || {};
+  const wi = (S && S.wp_index) || 0;
+  if(!law || !route || !asv || !(S && S.behavior === "survey") || !(wi >= 0) || wi >= route.length - 1) return null;
+  // her way through the water, as guardTrack measures it: ground velocity less the set - the in-gear cut is a law of the
+  // water - and the set ALONG her track, which carries her further over the ground while the cut takes its 15 s
+  const gv = groundVel(st.cog_deg, st.sog_kn), dr = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0};
+  const v = gv ? Math.hypot(gv.e - dr.e, gv.n - dr.n) : 0;
+  if(!(v > 0.05)) return null;
+  const gs = Math.hypot(gv.e, gv.n), setAlong = gs > 0.05 ? (dr.e * gv.e + dr.n * gv.n) / gs : 0;
+  const lines = mission.lines || [];
+  const sig = [route.length, (mission.waypoints || []).length, lines.length, lines.map(l => l.slow_turn_out ? 1 : 0).join(""),
+               cornerSlowFor, S && S.wp_total, roleSpeed("turn"), roleSpeed("survey"), roleSpeed("transit")].join("|");
+  if(!_legKeys || _legKeys.route !== route || _legKeys.wp !== mission.waypoints || _legKeys.cs !== cornerSlow || _legKeys.sig !== sig)
+    _legKeys = {route, wp: mission.waypoints, cs: cornerSlow, sig, keyAt: runLegKeys(route)};
+  const keyAt = _legKeys.keyAt, ms = k => (V.SPEED_KN[k] || 0) * 0.514444;
+  const cum = [distTo(asv, route[wi])];                // cum[j]: meters to where leg j ahead (into wi+1+j) starts
+  const ahead = j => { const i = wi + 1 + j; if(i >= route.length) return null;
+    while(cum.length <= j) cum.push(cum[cum.length - 1] + distTo(route[wi + cum.length - 1], route[wi + cum.length]));
+    const k = keyAt(i);
+    return {d: cum[j], ms: (k && V.SPEED_KN[k] != null) ? ms(k) : Infinity}; };
+  const latched = (prev && prev.route === route && prev.idx > wi) ? prev.idx - wi - 1 : -1;
+  const lw = leadWant(ms(want), v, ahead, law, SPEED_CMD_LATENCY_S, latched, setAlong);
+  if(lw.j < 0) return null;
+  const idx = wi + 1 + lw.j;
+  return {route, idx, key: keyAt(idx), d: ahead(lw.j).d};
+}
+function leadSpeedKey(want, prev){
+  govLead = leadFor(want, prev);
+  return govLead ? govLead.key : null;
+}
+function leadShown(){
+  if(supervising()) return govLead;
+  viewLead = leadFor(roleSpeed(speedRole()), viewLead);
+  return viewLead;
 }
 // --- LEAD-IN / LEAD-OUT: the RUN is longer than the COVERAGE ---------------------- //
 // Andy, 2026-09-08: "implement lead in and lead out extensions to survey lines ... They
@@ -4547,6 +4650,9 @@ function speedGovernor(){
   // Except on an ESCAPE's hold: that throttle is the escape's claim (escapeThrottle), and it stays exactly as it was.
   const act = !!(S && S.run === "running" && S.armed && !S.estop
                  && !(st.holding && S.behavior === "escape")) && supervising();
+  // The lead is re-asked every frame and stands only while it is being commanded: any stand-down below
+  // drops it, so no readout says "slowing ahead" for a speed something else now owns.
+  const prevLead = govLead; govLead = null;
   if(!act){ commandedSpeed = null; return null; }     // a stopped boat - or a view-only tab - governs nothing
   if(clearance.slowed) return null;                   // safety owns the throttle
   // ⚠ AND THE OPERATOR OWNS IT AFTER A PAUSE. A resumed run is held at low until they say
@@ -4597,8 +4703,13 @@ function speedGovernor(){
   const sameRoute = cornerSlowFor >= 0 && (S && S.wp_total) === cornerSlowFor;
   const atCorner = sameRoute && cornerSlow.size > 0
                    && (cornerSlow.has(wi) || cornerSlow.has(wi - 1));
-  const want = ((role === "turn" && gap >= 0 && (mission.lines[gap] || {}).slow_turn_out) || atCorner)
+  const planned = ((role === "turn" && gap >= 0 && (mission.lines[gap] || {}).slow_turn_out) || atCorner)
                ? "low" : roleSpeed(role);
+  // ⚠⚠ THE LEAD (2026-10-03): a hull that slows IN GEAR is commanded a slower leg's speed where the cut must
+  // begin, not on the frame she reaches it - see leadSpeedKey. Null for every other hull. It only ever lowers,
+  // so the deviation-settling rule below (raise nothing, lower anything) holds for it unchanged.
+  const lead = leadSpeedKey(planned, prevLead);
+  const want = lead || planned;
   // ⚠⚠ AND THE GOVERNOR MAY NOT RAISE THE SPEED WHILE A DEVIATION IS SETTLING. Rungs 2 and
   // 3 both begin `if(settling) return c;` - the deviation is supposed to answer the hazard, so
   // for EDGE_REASSESS_MS the slow and hold rungs are deliberately quiet. Nothing stood the
@@ -4805,7 +4916,7 @@ function renderIntent(){
   // boat running at 14 kn in the middle of a survey reads as "TRANSIT — approach to the
   // survey area" rather than as a fault. And when the clearance guard has taken the
   // throttle it says THAT instead, because then the role is not why the boat is slow.
-  const spRole = act.role || speedRole();
+  const spRole = act.role || speedRole(), lsh = leadShown();
   if(st.sog_kn != null){
     const told = st.speed_key
       ? " · told " + st.speed_key + (V.SPEED_KN[st.speed_key] != null
@@ -4817,6 +4928,11 @@ function renderIntent(){
     html += row("for", "SAFETY OVERRIDE — inside the keep-out buffer, held at low", "#d9958f");
   else if(resumeSlow)
     html += row("for", "HELD AT LOW ON YOUR INSTRUCTION — RELEASE LOW on the guard bar, or change a speed selector", "#e8b46a");
+  else if(lsh && lsh.key)
+    // THE LEAD, SAID (2026-10-03): the speed told is not this leg's role speed, and the reason is ahead of her
+    html += row("for", spRole.toUpperCase() + " — " + act.detail + " · SLOWING to " + lsh.key + " "
+                + fmtDist(lsh.d) + " before the leg to waypoint " + (lsh.idx + 1)
+                + " — in gear she needs that water to come down", "#e8c07a");
   else
     html += row("for", spRole.toUpperCase() + " — " + act.detail,
                 spRole === "survey" ? "#7fd6a0" : (spRole === "turn" ? "#e8c07a" : "var(--ink)"));
@@ -7520,23 +7636,34 @@ const JUDGE_RUN_M = 30;                         // the run-in / run-out the join
 function judgeJoin(runK, runK1, t, ref, ko, buf, fly){
   if(!t || !t.pts || !t.pts.length) return t;
   const E = runK[1], F = runK1[0];
-  const back = Math.min(JUDGE_RUN_M, distTo(runK[0], runK[1])), fwd = Math.min(JUDGE_RUN_M, distTo(runK1[0], runK1[1]));
+  const ms = key => (V.SPEED_KN[key] || V.SPEED_KN.survey || 3) * 0.514444;
+  const survMs = ms(roleSpeed("survey"));
+  // ⚠ A HULL THAT SLOWS IN GEAR (2026-10-03) IS WALKED ONTO THE JOIN FROM WHERE THE GOVERNOR'S LEAD BEGINS. Its
+  // cut to the join's speed starts that far up the line (leadSpeedKey), and a 30 m run-in would start the walk
+  // already inside it, at survey speed, entering the turn faster than she will. So the run-in grows by the in-gear
+  // run to LOW - the longer of the two cuts judged here - as far as the line allows. 0 for every other hull.
+  const sd = V.VESSEL && V.VESSEL.maneuvering && V.VESSEL.maneuvering.slowdown;
+  const law = sd ? slowLaw(sd) : null;
+  const leadM = law ? slowLeadM(survMs, ms("low"), law) : 0;
+  const back = Math.min(JUDGE_RUN_M + leadM, distTo(runK[0], runK[1])), fwd = Math.min(JUDGE_RUN_M, distTo(runK1[0], runK1[1]));
   if(!(back > 0.5) || !(fwd > 0.5)) return t;
   const local = [atDA(E, back, azTo(E, runK[0])), E, ...t.pts, F, atDA(F, fwd, azTo(F, runK1[1]))];
-  const ms = key => (V.SPEED_KN[key] || V.SPEED_KN.survey || 3) * 0.514444;
-  const survMs = ms(roleSpeed("survey")), n = local.length;
+  const n = local.length;
   // The corner window the upload's walk uses: sized by the plan's fastest role speed (doUpload's planKey).
   const capMs = Math.max(...SPEED_ROLES.map(r => ms(roleSpeed(r))));
   const at = joinMs => i => (i === 1 || i === n - 1) ? survMs : joinMs;
   const joinKey = t.slow ? "low" : roleSpeed("turn");     // a slow-radius turn is flown at low already
-  if(!joinBreaches(local, ref, ko, buf, at(ms(joinKey)), fly, capMs).length) return t;
+  if(!joinBreaches(local, ref, ko, buf, at(ms(joinKey)), fly, capMs, law ? at(ms(joinKey)) : undefined).length) return t;
   // THE LOW RETRY IS FLOWN AS THE UPLOAD'S SECOND PASS FLIES IT: the slow command is withheld for
   // SPEED_CMD_LATENCY_S of travel into each join leg and the throttle ramps from the turn speed - a
   // retry that assumed low from the leg's first meter would accept a join cornerSlowPlan then refuses.
+  // ⚠ IN GEAR, AS THAT SECOND PASS NOW FLIES IT: LOW from the lead, not withheld per leg (each withholding
+  // raised the target, ended the cut and started a fresh 3.3 s dead time - measured: 7.0 kn round every arc).
   const lateM = ms("low") * SPEED_CMD_LATENCY_S, turnMs = ms(joinKey), lowMs = ms("low");
-  const late = (i, traveled, legStart) => (i === 1 || i === n - 1) ? survMs
+  const late = law ? at(lowMs)
+             : (i, traveled, legStart) => (i === 1 || i === n - 1) ? survMs
                                          : ((traveled - legStart) < lateM ? turnMs : lowMs);
-  if(joinKey !== "low" && !joinBreaches(local, ref, ko, buf, late, fly, capMs).length) return {...t, slow: true};
+  if(joinKey !== "low" && !joinBreaches(local, ref, ko, buf, late, fly, capMs, law ? late : undefined).length) return {...t, slow: true};
   return {why: "track", seg: [E, F]};
 }
 // ⚠ THE LEAD GIVES WAY TO THE TURN, NOT THE OTHER WAY ROUND (Andy, 2026-09-08). What each
@@ -16718,8 +16845,10 @@ function updateMissionCard(){
       // below computing the role speed - which is exactly what the note above warns against,
       // against the one intervention it matters most for. It is also the claim's ONLY surface:
       // `escapeThrottle` is read in one place and was rendered nowhere at all.
+      const shown = leadShown();
       const agrees = (k === (escapeThrottle ? "high"
                              : (clearance.slowed || resumeSlow) ? "low"
+                             : (shown && shown.key) ? shown.key     // slowing ahead of a slower leg (the lead)
                              : roleSpeed(speedRole())));
       msp.className = "vv" + (agrees ? "" : " warn");
       msp.title = agrees
@@ -16727,11 +16856,15 @@ function updateMissionCard(){
           + "), which is " + (escapeThrottle
             ? "the in-extremis escape's claim on the throttle — it holds until you command "
               + "her somewhere, hold her, or set a speed by hand."
+            : (shown && shown.key)
+            ? "the speed of the slower leg ahead (to waypoint " + (shown.idx + 1) + "), commanded "
+              + fmtDist(shown.d) + " early because she sheds speed in gear and needs that water."
             : "what the command bar has selected.")
         : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
           + (escapeThrottle ? "high (the in-extremis escape's claim)"
              : clearance.slowed ? "low (safety override)"
              : resumeSlow ? "low (held there since the run was resumed; change any speed to release it)"
+             : (shown && shown.key) ? shown.key + " (slowing ahead of the leg to waypoint " + (shown.idx + 1) + ")"
              : roleSpeed(speedRole()) + " for the "
                + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
     }

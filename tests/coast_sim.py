@@ -8,8 +8,9 @@ at idle with the prop stopped, but it take calculation to do it."*
 WHAT THIS GUARDS, and each of these is a way to get it wrong that would look fine:
 
   * THE WAY MUST COME OFF UNDER DRAG, NOT UNDER THE ENGINE RAMP. SimVcu's ordinary speed
-    change is a flat 1.5 kn/s - that is what an engine does to a speed change, and it stays
-    the default everywhere else. A coast is the absence of a commanded speed and the hull
+    change is a flat 1.5 kn/s - that is what an engine does to a speed change - except a
+    commanded CUT on a hull with a measured slow-down, which is flown in gear (checks 10-15,
+    2026-10-03). A coast is the absence of a commanded speed and the hull
     decides: dv = -(v²/Lc) dt. The two are distinguishable and check 2 is the discrimination:
     under drag the distance to HALVE speed is Lc·ln2 from any release speed, while a constant
     deceleration scales it as v0², so halving from 14 kn would cost four times halving from 7.
@@ -306,6 +307,194 @@ check("6d2. ... and the same after a STOP, which is the other way to reach it",
 check("6e. ACCEPTANCE: the drift-in still HAPPENS - none of the above is satisfied by "
       "switching the coast off",
       entered is True, "the leg entered its coast: %s" % entered)
+
+
+# --- 10-15: A COMMANDED CUT IS FLOWN IN GEAR (2026-10-03) ---------------------------- #
+#
+# Andy: "Model the in-gear slow-down in the sim". The DriX's own logs: 20 of 20 commanded cuts from her 7-kn
+# setpoint to LOW kept the clutch in - a dead time, then a decay toward her idle speed - 32.5 m and 13 s where this
+# model's engine ramp took 5.7 m and 2 s. So a sim rehearsal of the AIS guard, which budgets the measured law,
+# slowed ~90 m out and crept. speed_step_kn is now that law, and it is the SAME step as coast.js speedStep, which
+# the page's corner walk takes: check 14 holds the two to each other tick by tick, in their own languages.
+def _cut_run(v0, key, ticks=400, dt=0.25):
+    """The DriX at v0 kn on a long straight leg, then set_speed(key): (time, water) until she is at the key's speed,
+    and how long her speed did not move after the command."""
+    _C.CURRENTS = _FakeCurrents()
+    v = _C.SimVcu(43.07, -70.71)
+    end = _C.dest_point(v.lat, v.lon, 0.0, 5000.0)
+    v.heading = 0.0
+    v.upload_plan([{"lat": end[0], "lon": end[1]}], 5.0, "survey", 2.0, completion="loiter")
+    v.start()
+    v.sog_kn = v0
+    v._speed_key = "survey"
+    want = _C.SPEED_KN[key]
+    v.set_speed(key)
+    t = d = held = 0.0
+    prev = v.sog_kn
+    for _ in range(ticks):
+        p = (v.lat, v.lon)
+        v.tick(dt)
+        t += dt
+        d += _C.range_bearing(p[0], p[1], v.lat, v.lon)[0]
+        if v.sog_kn == prev:
+            held += dt
+        prev = v.sog_kn
+        if v.sog_kn <= want + 1e-9:
+            break
+    return t, d, held, v
+
+
+t7, d7, h7, _v = _cut_run(7.0, "low")
+
+
+def _node(src):
+    """Run a line of Node against the page's own coast.js; None when Node is not there to ask (and the check says so)."""
+    try:
+        return json.loads(subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=60).stdout)
+    except Exception:                       # noqa: BLE001 - the checks name the failure
+        return None
+
+
+_COAST = json.dumps(os.path.join(APP, "static", "js", "coast.js"))
+_DRIX = json.dumps(os.path.join(APP, "vessels", "drix08.json"))
+_sr = _node("const C = require(%s); const L = C.slowLaw(JSON.parse(require('fs').readFileSync(%s, 'utf8')).maneuvering.slowdown);"
+            "console.log(JSON.stringify(C.slowRun(7 * 0.514444, 4 * 0.514444, L)));" % (_COAST, _DRIX))
+check("10. the DriX's SLOW is flown IN GEAR: 7 -> 4 kn takes 42.98 m and 15.75 s at the vessel's 0.25 s tick - "
+      "coast.js slowRun's own answer (asked in Node) to within one tick - where the engine ramp took 5.7 m and 2 s",
+      abs(t7 - 15.75) < 1e-9 and abs(d7 - 42.98) < 0.05 and _sr is not None
+      and abs(d7 - _sr["m"]) <= 7.0 * 0.514444 * 0.25 and abs(t7 - _sr["s"]) <= 0.25,
+      "%.2f m / %.2f s; slowRun %s" % (d7, t7, ("%.2f m / %.2f s" % (_sr["m"], _sr["s"])) if _sr else "NOT ASKED (no node)"))
+check("11. ... and her speed does not move for the dead time: 3.3 s (13 ticks) after the command, at 7.00 kn",
+      abs(h7 - 3.25) < 1e-9, "speed held %.2f s" % h7)
+
+
+def _resend_run():
+    _C.CURRENTS = _FakeCurrents()
+    v = _C.SimVcu(43.07, -70.71)
+    end = _C.dest_point(v.lat, v.lon, 0.0, 5000.0)
+    v.upload_plan([{"lat": end[0], "lon": end[1]}], 5.0, "survey", 2.0, completion="loiter")
+    v.start()
+    v.sog_kn = 7.0
+    v.set_speed("low")
+    held = 0.0
+    prev = v.sog_kn
+    for i in range(40):                     # the page re-sends an untaken speed once a second (SPEED_RESEND_MS)
+        if i % 4 == 0:
+            v.set_speed("low")
+        v.tick(0.25)
+        if v.sog_kn == prev:
+            held += 0.25
+        prev = v.sog_kn
+    return held, v.sog_kn
+
+
+h_re, v_re = _resend_run()
+check("12. a RE-SENT speed command does not start the dead time again - the page re-sends an unconfirmed speed "
+      "every second, and a dead time restarted by each would keep her at survey speed for ever",
+      abs(h_re - 3.25) < 1e-9 and v_re < 6.0, "held %.2f s; %.2f kn after 10 s" % (h_re, v_re))
+
+# 13. A STOP KEEPS THE RAMP, and a hull with no law is the ramp exactly as before.
+_C.CURRENTS = _FakeCurrents()
+_vs = _C.SimVcu(43.07, -70.71)
+_end = _C.dest_point(_vs.lat, _vs.lon, 0.0, 5000.0)
+_vs.upload_plan([{"lat": _end[0], "lon": _end[1]}], 5.0, "survey", 2.0, completion="loiter")
+_vs.start()
+_vs.sog_kn = 7.0
+_vs._running = False                        # complete: the target is 0
+for _ in range(4):
+    _vs.tick(0.25)
+stop_kn = _vs.sog_kn
+_C.apply_vessel(_C.load_vessel("zboat_1800hs"))
+zb = _C.SLOW_LAW
+zt = _C.speed_step_kn(3.0, 1.5, 0.25, None, _C.SLOW_LAW)
+_C.apply_vessel(_C.load_vessel("drix08"))
+check("13. a STOP keeps the engine's ramp (7 -> 5.5 kn in 1 s), and a hull with no measured slow-down - the small-class boat - "
+      "has no law and sheds speed on the ramp exactly as before",
+      abs(stop_kn - 5.5) < 1e-9 and zb is None and zt[0] == 2.625,      # the lag slot is never read without a law
+      "stop %.3f kn after 1 s; small-class boat's law %s, 3.0 -> 1.5 kn first tick %s" % (stop_kn, zb, zt))
+
+# 14. THE SIM AND THE WALK SHED SPEED THE SAME WAY, tick by tick. One scripted run of targets - cuts, a deeper cut, a
+# stop, LOW asked half way through the stop, speed-ups - through speed_step_kn here and coast.js speedStep in Node.
+_SCRIPT = [7.0] * 4 + [4.0] * 30 + [5.0] * 6 + [4.5] * 4 + [4.0] * 30 + [14.0] * 40 + [7.0] * 10 + [4.0] * 70 \
+    + [0.0] * 5 + [4.0] * 40 + [7.0] * 20 + [0.0] * 3 + [4.0] * 40 \
+    + [7.0] * 20 + [3.9] * 40       # a stop from 7 kn then LOW at 5.9; and a cut to 3.9 kn - EXACTLY idle + 0.25, the tie
+_py = []
+_v, _lag = 7.0, None
+for _w in _SCRIPT:
+    _v, _lag = _C.speed_step_kn(_v, _w, 0.25, _lag, _C.SLOW_LAW)
+    _py.append(_v)
+_js_src = (
+    "const C = require(%s); const fs = require('fs');"
+    "const L = C.slowLaw(JSON.parse(fs.readFileSync(%s, 'utf8')).maneuvering.slowdown);"
+    "const KN = 0.514444, st = {lag: null}; let v = 7 * KN; const out = [];"
+    "for (const w of %s) { v = C.speedStep(v, w * KN, 0.25, st, L, 1.5 * KN); out.push(v / KN); }"
+    "console.log(JSON.stringify(out));"
+    % (json.dumps(os.path.join(APP, "static", "js", "coast.js")), json.dumps(os.path.join(APP, "vessels", "drix08.json")),
+       json.dumps(_SCRIPT)))
+try:
+    _js = json.loads(subprocess.run(["node", "-e", _js_src], capture_output=True, text=True, timeout=60).stdout)
+except Exception as _e:                     # noqa: BLE001 - the check says what happened
+    _js = None
+_worst = max(abs(a - b) for a, b in zip(_py, _js)) if _js and len(_js) == len(_py) else None
+check("14. the SIM and the page's CORNER WALK shed speed the same way: %d ticks of cuts, a deeper cut, a stop, LOW "
+      "asked half way through the stop and speed-ups, through speed_step_kn here and coast.js speedStep in Node, "
+      "agree to a millionth of a knot" % len(_SCRIPT),
+      _worst is not None and _worst < 1e-6 and min(_py) < 4.5 and max(_py) > 13.9,
+      ("worst difference %.2e kn over %d ticks" % (_worst, len(_py))) if _worst is not None
+      else "node gave no answer: %r" % (_js,))
+
+# 14b. AND AT THE FLOOR ITSELF, where the two arithmetics part. A target EXACTLY idle + 0.25 kn is in gear on both sides
+# or on neither: tested in knots after a round trip through m/s, the sim's floor fell the other way from coast.js's for
+# 58 of 399 idle speeds (review) - the DriX's 3.65 happens not to be one of them, so three that are: 2.75, 1.25, 3.95.
+_tie_bad = []
+for _idle in (2.75, 1.25, 3.95):
+    _law = {"U": _idle * 0.514444, "Lg": 23.8, "lag": 3.3}
+    _seq = [7.0] * 2 + [_idle + 0.25] * 20
+    _pv, _pl, _ptr = 7.0, None, []
+    for _w in _seq:
+        _pv, _pl = _C.speed_step_kn(_pv, _w, 0.25, _pl, _law)
+        _ptr.append(_pv)
+    _jtr = _node("const C = require(%s); const L = C.slowLaw({idle_kn: %r, length_m: 23.8, lag_s: 3.3}); const KN = 0.514444;"
+                 "const st = {lag: null}; let v = 7 * KN; const o = []; for (const w of %s) { v = C.speedStep(v, w * KN, 0.25, st, L, 1.5 * KN);"
+                 " o.push(v / KN); } console.log(JSON.stringify(o));" % (_COAST, _idle, json.dumps(_seq)))
+    if not _jtr or max(abs(a - b) for a, b in zip(_ptr, _jtr)) > 1e-6:
+        _tie_bad.append(_idle)
+check("14b. ... and at the FLOOR ITSELF - a target exactly idle + 0.25 kn, at three idle speeds where knots and m/s "
+      "round apart - the sim and the walk take the same branch",
+      not _tie_bad, "idle speeds where they parted: %s" % (_tie_bad or "none"))
+
+# 15. THE BLOCK IS READ AS coast.js slowLaw READS IT: a malformed one is no law (the ramp), not a crash.
+_bad = []
+_drix = _C.load_vessel("drix08")
+for _blk in ({"idle_kn": 0, "length_m": 23.8}, {"idle_kn": 3.65, "length_m": 0}, {"idle_kn": 3.65, "length_m": 23.8,
+             "lag_s": -1}, {"idle_kn": "abc", "length_m": 23.8}, {"idle_kn": 3.65, "length_m": float("inf")},
+             [1, 2], "slow"):
+    _drix["maneuvering"]["slowdown"] = _blk
+    _C.apply_vessel(_drix)
+    _bad.append(_C.SLOW_LAW)
+_drix["maneuvering"]["slowdown"] = {"idle_kn": 3.65, "length_m": 23.8}
+_C.apply_vessel(_drix)
+_nolag = _C.SLOW_LAW
+# THE SAME REFUSALS AS THE PAGE'S, ASKED OF THE PAGE: every shape through apply_vessel here and coast.js slowLaw in Node -
+# coerced types too (a string number, a one-item list, a bool, hex), where float() and `+` used to part (review)
+_SHAPES = [{"idle_kn": 0, "length_m": 23.8}, {"idle_kn": 3.65, "length_m": 0}, {"idle_kn": 3.65, "length_m": 23.8, "lag_s": -1},
+           {"idle_kn": "abc", "length_m": 23.8}, {"idle_kn": "3.65", "length_m": 23.8}, {"idle_kn": [3.65], "length_m": 23.8},
+           {"idle_kn": True, "length_m": 23.8}, {"idle_kn": 3.65, "length_m": "0x4"}, {"idle_kn": 3.65, "length_m": 23.8, "lag_s": "3.3"},
+           {"idle_kn": 3.65, "length_m": 23.8}, {"idle_kn": 3.65, "length_m": 23.8, "lag_s": 3.3}, [1, 2], "slow", {}]
+_py_laws = []
+for _blk in _SHAPES:
+    _drix["maneuvering"]["slowdown"] = _blk
+    _C.apply_vessel(_drix)
+    _py_laws.append(None if _C.SLOW_LAW is None else [round(_C.SLOW_LAW["U"], 9), _C.SLOW_LAW["Lg"], _C.SLOW_LAW["lag"]])
+_C.apply_vessel(_C.load_vessel("drix08"))
+_js_laws = _node("const C = require(%s); console.log(JSON.stringify(%s.map((b) => { const l = C.slowLaw(b); "
+                 "return l ? [+l.U.toFixed(9), l.Lg, l.lag] : null; })));" % (_COAST, json.dumps(_SHAPES)))
+check("15. a slow-down block that is not one is NO law - the engine's ramp - never a crash, and the sim and the page "
+      "refuse the SAME blocks (%d shapes, coerced types included, asked of coast.js slowLaw in Node); a block with no "
+      "lag reads as none" % len(_SHAPES),
+      all(b is None for b in _bad) and _nolag is not None and _nolag["lag"] == 0.0
+      and _C.SLOW_LAW is not None and _C.SLOW_LAW["lag"] == 3.3 and _js_laws == _py_laws,
+      "sim %s; page %s" % (_py_laws, _js_laws if _js_laws is not None else "NOT ASKED (no node)"))
 
 
 # --- 7-8: the wire ------------------------------------------------------------------ #
