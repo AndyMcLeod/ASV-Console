@@ -1155,11 +1155,37 @@ def _check_surveys(m):
                                       % (sid, al))
             if s.get("punched") is not None and not isinstance(s.get("punched"), bool):
                 raise PlanRefused("survey %s's punched flag must be true or false - nothing was saved" % sid)
+            _check_survey_settings(sid, s.get("settings"))
     for what, items in (("waypoint", m.get("waypoints") or []), ("survey line", m.get("lines") or [])):
         for i, x in enumerate(items):
             if isinstance(x, dict) and x.get("sv") is not None and not _is_survey_id(x.get("sv")):
                 raise PlanRefused("%s %d's survey tag is not a survey id (%r) - nothing was saved"
                                   % (what, i + 1, x.get("sv")))
+
+
+def _check_survey_settings(sid, st):
+    """A survey's own SETTINGS (sequenced surveys phase 2, 2026-10-02): what its drawing was punched with - its
+    boundary, Max depth, leads and turn shape (Andy's per-survey list) - so the page's edit can put them back. TYPES
+    ONLY, like the rest of the survey record: nothing the boat flies reads them (the lines already carry their effect),
+    so the only thing worth refusing is a value the page could not put back on its card."""
+    if st is None:
+        return
+    if not isinstance(st, dict):
+        raise PlanRefused("survey %s's settings are not settings - nothing was saved" % sid)
+    b = st.get("boundary")
+    if b is not None and not (isinstance(b, list) and all(_is_position(p) for p in b)):
+        raise PlanRefused("survey %s's boundary must be a list of positions - nothing was saved" % sid)
+    for k, said in (("max_depth_m", "Max depth"), ("lead_in", "lead-in"), ("lead_out", "lead-out")):
+        v = st.get(k)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))
+                              or not math.isfinite(v) or v < 0):
+            raise PlanRefused("survey %s's %s must be a finite, non-negative number (got %r) - nothing was saved"
+                              % (sid, said, v))
+    if st.get("lead_mode") is not None and st.get("lead_mode") not in ("m", "s"):
+        raise PlanRefused("survey %s's lead mode must be m or s (got %r) - nothing was saved" % (sid, st.get("lead_mode")))
+    if st.get("turn_ease") is not None and st.get("turn_ease") not in ("arc", "eased"):
+        raise PlanRefused("survey %s's turn shape must be arc or eased (got %r) - nothing was saved"
+                          % (sid, st.get("turn_ease")))
 
 
 def _stored_rev():

@@ -197,6 +197,8 @@ const commitWorld = new Function("\"use strict\";\n"
   + "const currentPattern = () => ({}); const patSourceLines = () => drawn;\n"
   + "const resetPattern = () => {}; const recalcCommittedForSpeed = () => {}; const saveMission = () => {};\n"
   + "const render = () => {}; const showBanner = () => {}; const flashNote = () => {};\n"
+  // phase 2 (2026-10-02): no survey is being edited here (tests/survey_table.js drives the edit)
+  + "let editingSv = null, cardSv = null; const surveySettingsNow = () => null; const replaceSurvey = () => {};\n"
   + grab(H, "emptyPunchRefusal") + "\n" + grab(H, "punchRefusal") + "\n"
   + grab(H, "commitPattern")
   + "\nreturn { mission, commitPattern, set: (o) => { patClip = o.clip || null; patTransits = o.transits || [];"
@@ -245,15 +247,16 @@ check("7b. ... and deleting a committed line removes only its two ENDS: the turn
 
 // 8. upload
 const routePlan = grab(PJ, "routePlan"), upload = grab(H, "doUpload");
-check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg 0 - the approach - unless the whole "
-      + "route is a transit, and sends positions only",
+check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg 0 - the approach - and the leg into "
+      + "each later survey (2026-10-02) unless the whole route is a transit, and sends positions only",
       () => /const wps = mission\.waypoints \|\| \[\];/.test(upload)
-            && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\);/.test(upload)   // at the guard's standoff (2026-09-26)
+            && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\), surveyEntries\(wps\)\);/.test(upload)   // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
             && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, transit \? want : buf\)/.test(routePlan)
-            && /if\(keepRightAll \|\| i===0\)\{/.test(routePlan)
+            && /const transit = keepRightAll \|\| i===0 \|\| !!\(transitAt && transitAt\.has\(i\)\);/.test(routePlan)
+            && /if\(transit\)\{/.test(routePlan)
             && /out\.push\(\{lat:seg\[k\]\.lat, lon:seg\[k\]\.lon\}\)/.test(routePlan),
-      "routePlan(fix, wps); lane on i===0; {lat, lon} out");
+      "routePlan(fix, wps, ..., surveyEntries(wps)); lane on i===0 and each survey's entry; {lat, lon} out");
 
 // 9. what counts as a line while it runs
 // eslint-disable-next-line no-new-func

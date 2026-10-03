@@ -222,7 +222,8 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // resume from a chosen point, the held resume's way in (which the way round a contact rides), and
             // the running plan's way round - and those three are FLY-THROUGH targets (flyThrough: true, 7e):
             // a rejoin point is passed through, never held in, so it takes the buffer and not a berth's margin.
-            && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\)/g) || []).length === 2
+            // (the second also hands it surveyEntries(wps), 2026-10-02: each later survey's approach is a transit)
+            && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)(?:, surveyEntries\(wps\))?\)/g) || []).length === 2
             && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\)/.test(H)
             && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 2
             // the SEVENTH (2026-09-29): the routed re-approach onto station hands the router the charted model PLUS

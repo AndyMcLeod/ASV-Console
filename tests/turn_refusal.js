@@ -217,6 +217,11 @@ function makeWorld(opts) {
     + "const setViolations = (r) => log.violations.push(r); const clearViolation = () => {};\n"
     + "const saveMission = () => { log.saves++; }; const recalcCommittedForSpeed = () => {};\n"
     + "const committedPatternInfo = () => null; const restoreStruckRuns = () => false;\n"
+    // The survey table (sequenced surveys phase 2, 2026-10-02) is tests/survey_table.js's subject: inert here, and with
+    // no survey being edited every Add to plan is the ordinary new survey this suite has always committed.
+    + "let editingSv = null, cardSv = null; const renderSurveyTable = () => {}; const cardSurveyId = () => null;\n"
+    + "const surveySettingsNow = () => null; const replaceSurvey = () => {}; const surveyById = () => null;\n"
+    + "const surveyLabel = () => '';\n"
     + "const rebuildNogo = () => { nogo.builtOffset = sea.waterOffset; };   // the model's own rebuild is not under test\n"
     + PAGE_FUNCS.map(grab).join("\n")
     // The ladder exactly as punchOut asks it, over the model punchOut builds (a dock has no channel and no chart ink,

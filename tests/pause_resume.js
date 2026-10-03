@@ -729,6 +729,9 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // page's own `inkYield`, its right-hand side only - a `const` declared inside a direct eval stays there.
     // eslint-disable-next-line no-eval
     const inkYield = eval("(" + grabDecl("inkYield").replace(/^const\s+inkYield\s*=\s*/, "").replace(/;\s*$/, "") + ")");
+    // EACH LATER SURVEY'S APPROACH IS A TRANSIT (2026-10-02): doUpload hands routePlan the page's own surveyEntries -
+    // the real one; this world's plan has no survey tags, so it is empty and the routing below is unchanged.
+    const { surveyEntries } = require("../static/js/surveys.js");
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;

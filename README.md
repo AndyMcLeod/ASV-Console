@@ -1188,9 +1188,31 @@ of the operator.
      (a hand-edited file, a tag naming no survey, one survey's lines split by another's) is
      flown as one survey, and the page says **PLAN LOADED AS ONE SURVEY** and why. Dragging a
      waypoint now keeps what it was: its survey, and for a turn point the fact that it is one.
+   - *The survey table* (2026-10-02, the second phase of sequenced surveys). The top of the
+     Survey card lists the plan's surveys **in the order they run**, one row each: the number,
+     a **name** you type (shown on the chart and in the LINES card), its line count and
+     coverage, and four buttons. **▲ ▼** run it a place earlier or later - its lines and every
+     waypoint it put in the plan move with it, a free waypoint (a `WPT`, a search) between two
+     surveys stays between them, and Upload sends the new order. **✎** loads the survey back
+     onto the card - its drawing **and its own settings**: its boundary, Max depth, leads and
+     turn shape, which each survey now records at Add to plan. Punch Out, and the button reads
+     **Update S*n***: it replaces that survey **where it stands**, keeping its number, name and
+     place in the run. Reset cancels. **✕** deletes the survey (it asks; the others keep their
+     numbers and order, and the plan as it was is kept as `mission.json.bak1`). The buffer, the
+     three speeds, End of plan and Min depth stay **plan-wide** - Min depth is the routing floor
+     every behavior and the guard use. Click a row to have the card's Spacing, Direction, Line
+     len and Lines describe that survey; a plan of surveys at different headings used to read
+     blank there. A survey added before 2 October has no recorded drawing, so its ✎ is grayed:
+     draw it again and delete the old one. On the chart each survey is labeled at its first
+     line ("S2 Rye ledge"; cyan, "editing", while ✎ has it), and the LINES card puts a heading
+     with the survey's own plan and actual times in front of each survey's lines when there is
+     more than one.
    - *Upload* walks the waypoints in order from where the boat is **now**. The
      **approach** is routed clear of the chart and keeps to the starboard side of any
-     channel; every other leg keeps its planned track and gets a detour only if it now
+     channel, and so is the **leg into each later survey** (2026-10-02: routed exactly as a
+     Go-To over that leg would be - at the guard's standoff where the water allows, keeping
+     right in a buoyed channel - where it used to keep the bare buffer like a hop inside a
+     pattern); every other leg keeps its planned track and gets a detour only if it now
      crosses a keep-out (a survey line that needs one is no longer counted as a line —
      punch again instead). A leg with no way through blocks the upload. The boat then
      runs the waypoints strictly in order, turning onto each next leg within the

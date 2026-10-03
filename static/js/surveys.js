@@ -134,6 +134,90 @@ export function surveyPoints(m){
   return [...by.values()];
 }
 
+// --- PHASE 2 (2026-10-02): the survey TABLE's edits, and the legs between surveys ------------------------------------
+//
+// Andy's calls for phase 2: each survey keeps its own pattern, boundary, Max depth, leads and turn shape (the buffer,
+// the three speeds, End of plan and Min depth - the routing floor - stay plan-wide); the transits between surveys keep
+// right in a buoyed channel (Rule 9), as every other transit does; no hold between surveys yet (phase 3).
+//
+// Every edit below works on a plan whose grouping HOLDS (normalizeSurveys has run on it - the page never holds any
+// other), and keeps it holding: each survey's entries stay together, in one order in both lists. A FREE waypoint
+// (a WPT, a search pattern) is never moved by them - it keeps its place between whatever runs either side of it.
+
+/** Where survey `id`'s entries sit in `list`: {from, to} inclusive, or null when it has none there. */
+function blockOf(list, id){
+  let from = -1, to = -1;
+  (list || []).forEach((x, i) => { if(svOf(x) === id){ if(from < 0) from = i; to = i; } });
+  return from < 0 ? null : {from, to};
+}
+
+/**
+ * The waypoint indexes where the plan ENTERS a survey from something else - another survey, or a free waypoint.
+ * The leg INTO each of them is a TRANSIT (Andy, 2026-09-05: the legs "from home to the first survey line ... or the
+ * next survey are transit lines"), so Upload routes it as it routes the approach: at the guard's standoff where the
+ * water allows, keeping right in a buoyed channel. Index 0 is the approach itself and is not listed - routePlan
+ * already treats it so.
+ */
+export function surveyEntries(wps){
+  const out = new Set(), w = wps || [];
+  for(let i = 1; i < w.length; i++){
+    const sv = svOf(w[i]);
+    if(sv && sv !== svOf(w[i - 1])) out.add(i);
+  }
+  return out;
+}
+
+/**
+ * Run survey `id` one place earlier (dir < 0) or later (dir > 0): it changes places with its neighbor in the run
+ * order, in `surveys` AND in both lists - the lines are what is counted, the waypoints what the boat flies, and the
+ * two may never disagree about the order. Whatever lies BETWEEN the two (free waypoints) stays between them. Returns
+ * false, changing nothing, at either end of the list or for an unknown id.
+ */
+export function moveSurvey(m, id, dir){
+  const list = m.surveys || [], i = list.findIndex(s => s.id === id), j = i + (dir < 0 ? -1 : 1);
+  if(i < 0 || j < 0 || j >= list.length) return false;
+  const first = list[Math.min(i, j)].id, second = list[Math.max(i, j)].id;     // `first` runs before `second`
+  for(const key of ["lines", "waypoints"]){
+    const L = m[key] || [], a = blockOf(L, first), b = blockOf(L, second);
+    if(!a || !b) continue;                                     // one of them has nothing in this list: nothing to swap
+    m[key] = [...L.slice(0, a.from), ...L.slice(b.from, b.to + 1), ...L.slice(a.to + 1, b.from),
+              ...L.slice(a.from, a.to + 1), ...L.slice(b.to + 1)];
+  }
+  const out = list.slice();
+  [out[i], out[j]] = [out[j], out[i]];
+  m.surveys = out;
+  return true;
+}
+
+/** Take survey `id` out of the plan: its record, its lines and every waypoint it put there. Free waypoints stay.
+ *  Returns false, changing nothing, for an unknown id. */
+export function removeSurvey(m, id){
+  if(!(m.surveys || []).some(s => s.id === id)) return false;
+  m.surveys = m.surveys.filter(s => s.id !== id);
+  m.lines = (m.lines || []).filter(x => svOf(x) !== id);
+  m.waypoints = (m.waypoints || []).filter(x => svOf(x) !== id);
+  return true;
+}
+
+/**
+ * Put `lines` and `wps` (already tagged `id`) IN PLACE of survey `id`'s entries - where its old ones were, so an
+ * edited survey keeps its place in the run order - or at the end of a list where it had none. The record itself is
+ * the caller's to update.
+ */
+export function replaceSurvey(m, id, lines, wps){
+  for(const [key, add] of [["lines", lines || []], ["waypoints", wps || []]]){
+    const L = m[key] || [], b = blockOf(L, id);
+    m[key] = b ? [...L.slice(0, b.from), ...add, ...L.slice(b.to + 1)] : [...L, ...add];
+  }
+}
+
+/** The survey's label, as the table, the chart and the LINES card all print it: "S3" or "S3 Rye ledge". */
+export function surveyLabel(s){
+  if(!s) return "";
+  const name = (typeof s.name === "string") ? s.name.trim() : "";
+  return "S" + s.no + (name ? " " + name : "");
+}
+
 /**
  * The path a plan's TRANSITS take, for reading the chart over: the start, then every waypoint - except that a
  * survey's run of waypoints is cut to its first and its last, because the water INSIDE a survey is read as a survey

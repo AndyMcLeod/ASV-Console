@@ -218,8 +218,11 @@ const ENF = { land: true, depth: true, haz: true, area: false };
 // ---- 6-8. AND ONLY ON A TRANSIT ---------------------------------------------------- //
 {
   const RP = grab(PASSAGE, "routePlan");
-  check("6. a plan lanes only pure-transit routes and the APPROACH to a pattern",
-        () => /if\(keepRightAll \|\| i===0\)\{/.test(RP) && !/leg\.length>1\)\{/.test(RP),
+  // (2026-10-02, sequenced surveys phase 2: a plan of several surveys is several patterns, and the leg INTO each later
+  // one is that pattern's approach - `transitAt`, the page's surveyEntries. Behaviour: tests/survey_table.js.)
+  check("6. a plan lanes only pure-transit routes and the APPROACH to a pattern (each survey's: transitAt)",
+        () => /const transit = keepRightAll \|\| i===0 \|\| !!\(transitAt && transitAt\.has\(i\)\);/.test(RP)
+              && /if\(transit\)\{/.test(RP) && !/leg\.length>1\)\{/.test(RP),
         "`leg.length>1` meant 'routeAround inserted a detour', which is as true between two "
           + "coverage lines as anywhere else — that clause laned survey patterns");
   // Go-To / RTH / a drawn transit still pass keepRightAll, or the rule would apply nowhere.

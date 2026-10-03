@@ -565,6 +565,41 @@ check("16c. a save that only TAGS the plan takes no backup slot - a real earlier
       tag_only == [] and moved == [os.path.basename(OTHER) + ".bak1"],
       "after tagging: %s; after reordering: %s" % (tag_only, moved))
 
+# 16d-16e. A SURVEY'S OWN SETTINGS (sequenced surveys phase 2, 2026-10-02): what its drawing was punched with - its
+# boundary, Max depth, leads and turn shape, Andy's per-survey list - recorded on the survey so the page's edit can put
+# them back. They ride the survey record through both dicts (16 already proves the record does) and are type-checked.
+ST = {"boundary": [SV_WPS[0], SV_WPS[1], SV_WPS[3]], "max_depth_m": 40, "lead_mode": "s", "lead_in": 10,
+      "lead_out": 0, "turn_ease": "eased"}
+ST_SURVEYS = [dict(SURVEYS[0], settings=ST), dict(SURVEYS[1], settings=None)]
+_, st_err = attempt(_C.save_mission, sv_plan(surveys=ST_SURVEYS))
+st_back = _C.load_mission().get("surveys")
+check("16d. a survey's SETTINGS - boundary, Max depth, leads in their unit, turn shape - are saved and loaded as they "
+      "were, and a survey with none (one from before phase 2) is saved too",
+      st_err is None and st_back == ST_SURVEYS,
+      "save: %s; loaded %s" % (st_err or "ok", json.dumps(st_back)[:120]))
+st_before = open(_C.MISSION_PATH, "rb").read()
+
+
+def st_plan(**bad):
+    return sv_plan(surveys=[dict(SURVEYS[0], settings=dict(ST, **bad))])
+
+
+st_bad = {"settings that are a list": sv_plan(surveys=[dict(SURVEYS[0], settings=[1])]),
+          "a boundary that is not a list": st_plan(boundary={"lat": 1}),
+          "a boundary point that is not a position": st_plan(boundary=[SV_WPS[0], {"lat": "x"}]),
+          "a negative Max depth": st_plan(max_depth_m=-1),
+          "a Max depth that is a bool": st_plan(max_depth_m=True),
+          "an infinite lead": st_plan(lead_in=float("inf")),
+          "a lead as text": st_plan(lead_out="5"),
+          "a lead mode of km": st_plan(lead_mode="km"),
+          "a turn shape of spline": st_plan(turn_ease="spline")}
+st_said = {k: refused(v) for k, v in st_bad.items()}
+check("16e. a survey's settings that are not what they claim are REFUSED in words, naming the survey, and nothing "
+      "is written",
+      all(st_said.values()) and all("S1" in v for v in st_said.values())
+      and open(_C.MISSION_PATH, "rb").read() == st_before,
+      "; ".join("%s: %s" % (k, (v or "NOT REFUSED")[:40]) for k, v in st_said.items()))
+
 # 10. None of it touched the operator's own plan.
 check("10. nothing in this suite wrote, replaced or removed the app directory's own plan files",
       not _WRITES_TO_APP, "; ".join(_WRITES_TO_APP[:3]) or "no write named them")

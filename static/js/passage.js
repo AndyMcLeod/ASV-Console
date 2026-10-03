@@ -446,8 +446,12 @@ function keepStandoff(kr, fallback, ref, ko, want){
  * geometry, already built at the standoff where it matters (lines, leads, turns, and the hops
  * the same way as here), and re-routing a turn arc at the standoff it was built to would
  * mangle it.
+ *
+ * `transitAt` (2026-10-02, sequenced surveys phase 2): a Set of waypoint indexes whose INCOMING leg is a transit too -
+ * the leg into each later survey (surveys.js surveyEntries). Routed exactly as the approach is: at the standoff where
+ * the water allows, keeping right in a buoyed channel (Rule 9, Andy's call). Absent, nothing changes.
  */
-export function routePlan(start, wps, keepRightAll, standoffM){
+export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
   const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
@@ -457,7 +461,7 @@ export function routePlan(start, wps, keepRightAll, standoffM){
   let lane = false, partial = false, insideStandoff = 0;
   const want = (standoffM > buf + 0.05) ? standoffM : buf;
   wps.forEach((wp, i)=>{
-    const transit = keepRightAll || i===0;                      // the legs the page routes itself
+    const transit = keepRightAll || i===0 || !!(transitAt && transitAt.has(i));   // the legs the page routes itself
     let leg = legPath(prev, wp, ref, ko, transit ? want : buf);  // the standoff first (2026-09-26)
     let atStandoff = transit && want > buf + 0.05;               // ... and whether the leg was FOUND there
     if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, ko, buf); if(leg){ insideStandoff++; atStandoff = false; } }
@@ -478,8 +482,10 @@ export function routePlan(start, wps, keepRightAll, standoffM){
     // It is resolved the other way now, and needs no new information: a plan that
     // is not a pure transit is a PATTERN, and the only leg of a pattern that is a
     // transit in Rule 9's sense is the approach to it. Coverage lines and the hops
-    // between them stay on their planned track.
-    if(keepRightAll || i===0){
+    // between them stay on their planned track. (2026-10-02: a plan of several
+    // surveys is several patterns, and the leg INTO each later one is that
+    // pattern's approach - `transitAt`.)
+    if(transit){                                    // the approach, a pure transit, and the leg into a later survey
       // ⚠ AND THE STANDOFF SURVIVES THE LANE PASS HERE TOO (2026-09-28), for planNogoRoute's reason: the lane, the
       // smoothing, the gate and the knot prune run at the BUFFER, and a transit leg found at the 19.5 m standoff came
       // out of them 6.3-14.1 m off a hull-sized block across it (tests/planner_guard_seam.js 7g). A leg found only at
