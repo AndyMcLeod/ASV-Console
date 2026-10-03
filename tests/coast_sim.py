@@ -108,10 +108,10 @@ print("The hull coasts, and the coast ends:")
 
 _C.apply_vessel(_C.load_vessel("drix08"))
 LC = _C.COAST_LENGTH_M
-check("1. the DriX's coast length comes off its own headreach datum, not off the leeway "
-      "constants (which would give this hull a 1.6 m stopping distance)",
-      LC is not None and abs(LC - 44.0 / math.log(3.5)) < 1e-6,
-      "Lc = %.2f m from 44 m between 7 and 2 kn" % (LC or 0))
+check("1. the DriX's coast length comes off its own headreach datum - MEASURED from her logs 2026-10-03, 40.3 m "
+      "between 6 and 2 kn - not off the leeway constants (which would give this hull a 1.6 m stopping distance)",
+      LC is not None and abs(LC - 40.3 / math.log(3.0)) < 1e-6,
+      "Lc = %.2f m from 40.3 m between 6 and 2 kn" % (LC or 0))
 
 
 def rundown(v0_kn, to_kn, coast=True):

@@ -2114,25 +2114,29 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   check("24b. ... and it is her KEEP-OUT that must come within reach, not her position: a workboat 150 m south of the line, northbound at 6 kn, whose 45 s sweep crosses the line 30 m ahead, holds her",
         () => lSweep === "hold" && sSweep.includes("/api/cmd/hold"),
         () => "level " + lSweep + ", sent " + JSON.stringify(sSweep));
-  // THE DRIX: her own coast datum extends the reach by the water she needs to come down to LOW
+  // THE DRIX: her MEASURED in-gear slow-down (2026-10-03, her logs; the 3.3 s lag) extends the reach by the water she
+  // needs to come down to LOW - the WHOLE maneuvering block, as the page hands it (asv.html `slowMan`)
   const DRIX = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
   const coastD = DRIX.maneuvering.coast, KN = 0.514444, lowD = DRIX.propulsion.speeds_kn.low * KN;
-  const r7 = aisReachM(coastD, 7 * KN, lowD), r14 = aisReachM(coastD, 14 * KN, lowD), rLow = aisReachM(coastD, lowD, lowD);
+  const r7 = aisReachM(DRIX.maneuvering, 7 * KN, lowD), r14 = aisReachM(DRIX.maneuvering, 14 * KN, lowD), rLow = aisReachM(DRIX.maneuvering, lowD, lowD);
   const wasM = V.VESSEL.maneuvering;
-  V.VESSEL.maneuvering = { coast: coastD };
-  surveying(7, [contact(80, 0, { sog: 0, cog: null, heading: 90 })]); frame();          // her near end 65 m ahead
-  const d65 = clearance.level;
-  surveying(7, [contact(90, 0, { sog: 0, cog: null, heading: 90 })]); frame();          // 75 m
-  const d75 = clearance.level;
-  surveying(4, [contact(80, 0, { sog: 0, cog: null, heading: 90 })]); S.status.speed_key = "low"; frame();   // 65 m, at LOW
-  const d65low = clearance.level;
+  V.VESSEL.maneuvering = DRIX.maneuvering;
+  surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // her near end 85 m ahead
+  const d85 = clearance.level;
+  surveying(7, [contact(110, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 95 m
+  const d95 = clearance.level;
+  surveying(4, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); S.status.speed_key = "low"; frame();  // 85 m, at LOW
+  const d85low = clearance.level;
+  V.VESSEL.maneuvering = { coast: coastD };                                                 // the coast datum alone
+  surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();
+  const coast85 = clearance.level;
   V.VESSEL.maneuvering = wasM;
-  surveying(7, [contact(80, 0, { sog: 0, cog: null, heading: 90 })]); frame();          // 65 m on a hull with no datum
-  const plain65 = clearance.level;
-  check("24c. EXTENDED FOR THE DRIX (\"extend for drix if necessary\"): her own coast datum - ESTIMATED, 44 m from 7 kn to 2 kn, Lc 35.1 m - adds the water she needs to come down to LOW (4 kn): 69.7 m at her 7 kn survey speed, 94.0 m at 14 kn, 50 m at LOW. A hull 65 m ahead is answered at 7 kn and not at LOW, one 75 m ahead at neither; on a hull with no coast datum 65 m is out of reach",
-        () => Math.abs(r7 - 69.66) < 0.05 && Math.abs(r14 - 94.0) < 0.05 && rLow === 50
-              && d65 !== "clear" && d75 === "clear" && d65low === "clear" && plain65 === "clear",
-        () => "reach " + r7.toFixed(2) + " / " + r14.toFixed(2) + " / " + rLow + " m; DriX: 65 m at 7 kn " + d65 + ", 75 m " + d75 + ", 65 m at LOW " + d65low + "; no datum, 65 m: " + plain65);
+  surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();         // 85 m on a hull with no datum
+  const plain85 = clearance.level;
+  check("24c. EXTENDED FOR THE DRIX BY HER MEASURED SLOW-DOWN (2026-10-03: the guard's SLOW is flown in gear, a 3.3 s dead time then a decay toward her 3.65 kn idle) - 92.7 m at 7 kn, 124.0 m at 14 kn, 50 m at LOW. A hull 85 m ahead is answered at 7 kn and not at LOW, one 95 m ahead at neither; with her coast datum alone (the law this replaced, ~70 m) 85 m was out of reach, and on a hull with no datum it is too",
+        () => Math.abs(r7 - 92.700) < 0.005 && Math.abs(r14 - 124.019) < 0.005 && rLow === 50
+              && d85 !== "clear" && d95 === "clear" && d85low === "clear" && coast85 === "clear" && plain85 === "clear",
+        () => "reach " + r7.toFixed(2) + " / " + r14.toFixed(2) + " / " + rLow + " m; DriX: 85 m at 7 kn " + d85 + ", 95 m " + d95 + ", 85 m at LOW " + d85low + "; coast datum alone, 85 m: " + coast85 + "; no datum, 85 m: " + plain85);
   // 24d. THE RELEASE ASKS THE REACH AT THE SPEED IT RESTORES (found on the transit rehearsal: slowed to LOW 58 m off
   //      TEST-1 - outside the DriX's 50 m at LOW - she was released, raised toward 7 kn, back inside 70 m and slowed
   //      again a second later). Slowed at 7 kn for a hull 65 m ahead, then at LOW with her 58 m ahead: the ladder reads
@@ -2146,11 +2150,35 @@ const LEG_NAME = { goto: "Go-To", rth: "Return-to-Home", transit: "transit" };
   clock += 5000; aisPolledAt = clock; notes = []; frame();                              // past the release's dwell
   const released = clearance.slowed === false || guardLevel === "clear";
   V.VESSEL.maneuvering = wasM;
-  check("24d. THE RELEASE ASKS THE REACH AT THE SPEED IT RESTORES: the DriX slowed to LOW with a hull 58 m ahead - outside her 50 m at LOW, inside her 70 m at 7 kn - reads clear at LOW and is NOT released past the dwell: 'not yet at the plan's speed', no 'Clear ahead again'",
+  check("24d. THE RELEASE ASKS THE REACH AT THE SPEED IT RESTORES: on the DriX's coast datum alone (the law before 2026-10-03), slowed to LOW with a hull 58 m ahead - outside 50 m at LOW, inside the coast law's ~70 m at 7 kn - she reads clear at LOW and is NOT released past the dwell: 'not yet at the plan's speed', no 'Clear ahead again' (24e: the same on her whole block)",
         () => slowedFirst && lowLevel === "clear" && !released && !notes.some(n => /Clear ahead again/.test(n))
               && /not yet at the plan's speed/.test($("#gb_why").textContent),
         () => "slowed first " + slowedFirst + ", level at LOW " + lowLevel + ", released " + released + " (slowed " + clearance.slowed + ", guardLevel " + guardLevel
             + "), notes " + JSON.stringify(notes) + ", bar '" + $("#gb_why").textContent.slice(-80) + "'");
+  // 24e. ... AND THE RELEASE ASKS IT OF THE SAME LAW THE LADDER USES (2026-10-03, the measured in-gear slow-down). Found by
+  //      mutation: handing the release only the coast datum survived every check above, because 24d's vessel has no
+  //      slowdown block. On her WHOLE block: slowed at 7 kn for a hull 85 m ahead, then at LOW with her 80 m ahead - outside
+  //      her 50 m at LOW, inside her 92.7 m at 7 kn - she must NOT be released. The scenario discriminates because 80 m is
+  //      BEYOND the coast law's 70.5 m at 7 kn: a release asked by the coast datum would let her go (the mutation that
+  //      survived before this check existed, and is killed by it).
+  const releaseAt80 = (man) => {
+    V.VESSEL.maneuvering = man;
+    surveying(7, [contact(100, 0, { sog: 0, cog: null, heading: 90 })]); frame();       // 85 m at 7 kn: slowed in lieu
+    const first = clearance.slowed === true;
+    S = { ...S, status: { ...S.status, sog_kn: 4, speed_key: "low" } };
+    aisVessels = [contact(95, 0, { sog: 0, cog: null, heading: 90 })]; clock += 1000; aisPolledAt = clock; frame();   // 80 m, at LOW
+    const low = clearance.level;
+    clock += 5000; aisPolledAt = clock; notes = []; frame();                            // past the release's dwell
+    const out = { first, low, released: clearance.slowed === false || guardLevel === "clear",
+                  said: notes.some(n => /Clear ahead again/.test(n)) };
+    V.VESSEL.maneuvering = wasM;
+    return out;
+  };
+  const whole = releaseAt80(DRIX.maneuvering);
+  const byCoast = aisReachM(coastD, 7 * KN, lowD), bySlow = aisReachM(DRIX.maneuvering, 7 * KN, lowD);
+  check("24e. ... and asks it by the SAME law the ladder uses: on the DriX's whole block, slowed to LOW with a hull 80 m ahead (outside 50 m, inside her 92.7 m at 7 kn) she is NOT released - and 80 m is beyond the coast law's 70.5 m, so a release that lost the slowdown block would have let her go",
+        () => whole.first && whole.low === "clear" && !whole.released && !whole.said && byCoast < 80 && bySlow > 80,
+        () => "whole block: " + JSON.stringify(whole) + "; reach at 7 kn by the coast law " + byCoast.toFixed(1) + " m, by the in-gear law " + bySlow.toFixed(1) + " m");
 }
 
 // ── 25. THE OPERATOR'S WAIT IS TEN SECONDS (Andy, 2026-09-29: "reduce the wait for user input from 30 seconds to 10

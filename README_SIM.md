@@ -301,8 +301,11 @@ run up to `from_kn` in slack water, stop the prop, and log the distance to `to_k
 be derived from anything else the profiles hold — mass is absent from two of the three hulls
 and prose-only in the third, and the leeway constants are lateral (used fore-and-aft they give
 the DriX a 1.6 m stopping distance). **A vessel with no coast block does not coast at all**,
-which is the shipped default for two of the three. The DriX's is ESTIMATED, not measured, and
-says so in its own `source` string.
+which is the shipped default for two of the three. The DriX's is MEASURED (2026-10-03, from her
+own Aug 2026 logs: 40.3 m from 6 to 2 kn with the clutch in neutral, Lc 36.7 m) and says so in
+its own `source` string. Note that this is the PROP-OUT coast: the AIS guard's slow-down to LOW is
+flown in gear and is a different law (`maneuvering.slowdown`, coast.js `slowRun`) - the sim itself
+still sheds a commanded speed change on the engine's ramp, several times faster than the real boat.
 
 **`/api/cmd/amend {route, note}`** DEVIATES A RUNNING PLAN: it replaces the unflown
 remainder and keeps everything else — the flown prefix, the waypoint index, the behaviour,

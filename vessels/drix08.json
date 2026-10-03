@@ -25,11 +25,18 @@
     "lookahead_m": 20.0,
     "arrival_radius_m": 5.0,
     "coast": {
-      "from_kn": 7.0,
+      "from_kn": 6.0,
       "to_kn": 2.0,
-      "distance_m": 44.0,
-      "measured": false,
-      "source": "ESTIMATED, NOT MEASURED - no coast-down trial has been flown with this hull. Four independent derivations from the published 1,380 kg and the 38 HP / 14 kn fuel curve span Lc 21-52 m; 44 m from 7 kn to 2 kn puts Lc at 35.1 m, near the centre of that bracket. TO REPLACE IT WITH A REAL NUMBER: in slack water run up to 7 kn, stop the prop, and read off the recorded track the distance to the moment she is down to 2 kn - then set measured true. A vessel with no coast block does not coast at all, which is why the other two hulls have none."
+      "distance_m": 40.3,
+      "measured": true,
+      "source": "MEASURED from the DriX-8's own logs, Aug 5-15 2026 (EM2040 gondola, Lewes and Delaware Bay; analyzed 2026-10-03). A coast here is the clutch put in neutral while under way on a steady heading (autopilot or RC, never docking mode, engine on, no turn over 15 deg). 16 such coasts in 6 sessions passed down through 6 kn and on to 2 kn; the water run between the two crossings was 40.3 m median (IQR 38.2-41.9 m, range 28-52 m; 22.6 s), so Lc = 36.7 m (IQR 34.8-38.1). The tidal set was removed with a current fitted, session by session, to her own powered running on many headings; it predicts the coasts' sideways drift to 0.00 m/s median (IQR -0.02 to 0.03, n=145). All 145 clean coasts in 10 sessions fit Lc 35.6 m (IQR 32.4-39.2), but Lc rises with speed - about 22 m at 1-2 kn, 31 m at 2-3 kn, 37 m at 3-5 kn, 45 m at 5-6 kn - so this one number runs long below 4 kn (4 to 2 kn measured 23.1 m, n=56; law 25.4 m) and short above it (6 to 4 kn measured 16.5 m, n=29; law 14.9 m). This is the PROP-OUT coast, which the drift-in flies. It replaces an estimate of 44 m from 7 to 2 kn (Lc 35.1 m), which it confirms in form. It is NOT the guard's slow-down to LOW: see slowdown."
+    },
+    "slowdown": {
+      "idle_kn": 3.65,
+      "length_m": 23.8,
+      "lag_s": 3.3,
+      "measured": true,
+      "source": "MEASURED from the DriX-8's own logs, Aug 11-15 2026 (analyzed 2026-10-03): how she flies a commanded cut from her 7-kn setpoint to her 4-kn LOW, the AIS guard's SLOW. 20 straight cuts in AUTO in 6 sessions (12 single setpoint steps, 8 guidance ramps): the rpm starts down toward idle 0.3-0.7 s after the setpoint message and the clutch STAYS IN GEAR (20 of 20), so she decays toward her idle-in-gear speed - idle_kn, 3.6-3.7 kn through the water (IQR 3.52-3.71) - not toward zero. Her '7 kn' setpoint is 1656 rpm, 6.2 kn through the water (IQR 6.12-6.26). From the setpoint message, through the water: 4.5 kn in 21.0 m (IQR 18.9-23.9) and 7.4 s; 4.0 kn in 32.5 m (IQR 29.1-35.5) and 13.0 s. Law (coast.js slowRun): a dead time lag_s, then v dv/dx = (U^2 - v^2)/length_m with U = idle_kn; length_m 23.8 is the in-gear decay length two methods fitted independently (23.9 and 23.8 m). lag_s 3.3 is the slower measured response (a guidance ramp; a single step is 1.2 s) - chosen by Andy 2026-10-03 because it is not yet known whether a console SLOW reaches her as a step or a ramp. With each cut's own lag (1.2 s for a step, 3.3 s for a ramp) the law reproduces the 20 cuts to +0.1, +0.3 and -0.7 m at 4.5, 4.25 and 4.0 kn (IQR about +-1-3 m); with 3.3 s on every cut, as declared here, it needs MORE water than the measured median - 37.2 m to 4.0 kn against 32.5 m - so the guard's reach errs long, the safe side. Within half a knot of the target the dead time ramps in (coast.js SLOW_LAG_RAMP_MS), so the reach is continuous at LOW. Nothing above about 8 kn was measured - she never exceeded about 10.6 kn through the water - so the law is an extrapolation there."
     }
   },
   "autopilot": {

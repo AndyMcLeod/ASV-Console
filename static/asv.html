@@ -3527,12 +3527,14 @@ function clearanceGuard(){
   // approach to an AIS target appears to be 150m. confirm distance and modify to 50m." - see ais_keepout.js). It was
   // the 45 s look-ahead at the plan's speed: his 17:23 session slowed for TEST-1 132 m out and crept at LOW to her.
   // ... AND FROM FARTHER FOR A HULL THAT NEEDS THE WATER TO COME DOWN TO LOW FIRST ("extend for drix if necessary"):
-  // aisReachM adds her own coast-down from the speed she is doing through the water, and the set meanwhile - the DriX
-  // at her 7 kn survey speed ~70 m, at 14 kn ~94 m; at LOW, or on a hull with no coast datum, 50 m.
+  // aisReachM adds her own slow-down from the speed she is doing through the water, and the set meanwhile. MEASURED
+  // for the DriX 2026-10-03: the guard's SLOW is flown IN GEAR (to idle, clutch in), not as a prop-out coast, and needs
+  // about twice the water - so her `maneuvering.slowdown` block is what answers (~87 m at her real 6.2 kn, ~124 m at
+  // 14 kn); a hull with only a coast datum keeps the coast law; at LOW, or with neither, 50 m. See ais_keepout.js.
   // `aisKo` stays whole for the readout, the return, the way round and the escape; `aisLadder` is what the rungs act on.
-  const coastBlock = ((V.VESSEL && V.VESSEL.maneuvering) || {}).coast;
+  const slowMan = (V.VESSEL && V.VESSEL.maneuvering) || null;   // the WHOLE block: aisReachM picks slowdown or coast
   const aisLowMs = (V.SPEED_KN.low || 0) * 0.514444, setMs = Math.hypot(drift.e, drift.n);
-  const aisReach = aisReachM(coastBlock, vel ? Math.hypot(vel.e - drift.e, vel.n - drift.n) : 0, aisLowMs, setMs);
+  const aisReach = aisReachM(slowMan, vel ? Math.hypot(vel.e - drift.e, vel.n - drift.n) : 0, aisLowMs, setMs);
   const aisLadder = aisInReach(p, aisKo, aisReach);
   // THE LOOK-AHEAD FOLLOWS THE PLAN WHEN THERE IS ONE - see guard.js's header for the two
   // reports that made this necessary and the numbers behind them. `guardTrack()` answers
@@ -3732,11 +3734,11 @@ function clearanceGuard(){
         const back = (V.SPEED_KN[roleSpeed(speedRole())] || 0) * 0.514444;
         const velBack = restoreVel(vel, drift, back);
         // ⚠⚠ AND OF THE CONTACTS IN REACH AT THAT SPEED (2026-09-29). The reach grows with the speed on a hull that
-        // needs water to come down to LOW (aisReachM: the DriX's is 50 m at LOW, ~70 m at 7 kn), and the release is a
+        // needs water to come down to LOW (aisReachM: the DriX's is 50 m at LOW, ~93 m at 7 kn), and the release is a
         // question about the speed it restores. Asked of the slowed boat's model it saw no contact at all: MEASURED on
         // the transit rehearsal, slowed to LOW 58 m off TEST-1 - outside her 50 m - she was released, the governor
         // raised her toward 7 kn, she was back inside 70 m and slowed again a second later (the Go-To run did the same).
-        const reachBack = aisReachM(coastBlock, back, aisLowMs, setMs);
+        const reachBack = aisReachM(slowMan, back, aisLowMs, setMs);
         const aisBack = reachBack > aisReach ? aisInReach(p, aisKo, reachBack) : aisLadder;
         const koBack = aisBack === aisLadder ? koAll
                      : aisBack.length ? {...nogo.ko, polys: [...nogo.ko.polys, ...aisBack]} : nogo.ko;

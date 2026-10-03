@@ -517,9 +517,16 @@ look-ahead: a contact was a keep-out like a pier, so she was answered wherever t
 track reached her hull - 139 m at 6 kn - and his session slowed for TEST-1 132 m out and crept at
 LOW to her. The ladder now answers a contact only once her keep-out (her hull, swept along her own
 track while she is under way) is within **50 m** of the boat - and from further out on a hull that
-needs the water to come down to LOW first: the DriX's coast datum (estimated, 44 m from 7 to 2 kn)
-makes it **70 m at her 7 kn survey speed and 94 m at 14 kn**. A hull with no coast datum, or one
-already at LOW, is answered from 50 m. Charted keep-outs keep the whole look-ahead, and the escape,
+needs the water to come down to LOW first. For the DriX that water is **measured** (2026-10-03, from
+her own Aug 2026 logs): the guard's SLOW is flown at idle with the clutch still in gear - not a
+prop-out coast - so after a dead time her speed decays toward her idle-in-gear speed (3.6-3.7 kn),
+and 6.2 to 4.0 kn took **32.5 m and 13 s** (n=20), about twice what the coast law allowed. Her
+`maneuvering.slowdown` block (idle 3.65 kn, decay length 23.8 m, lag 3.3 s - the slower measured
+response) now sets her reach: **about 87 m at the 6.2 kn her 7-kn setpoint really makes, 93 m at a
+literal 7 kn, 124 m at 14 kn** (an extrapolation - she never logged above ~10.6 kn), more in a set.
+It was 65-70 m. Her prop-out coast datum, which the drift-in uses, is measured too: 40.3 m from 6 to
+2 kn (Lc 36.7 m, against the 35.1 m estimate). A hull with no datum, or one already at LOW, is
+answered from 50 m. Charted keep-outs keep the whole look-ahead, and the escape,
 the way round and the hold disc still see every contact. A **Go-To, a Return-to-Home or a
 transit** held for a contact is now banked like a survey: the bar says GO-TO / RETURN-TO-HOME /
 TRANSIT HELD, with ROUTE ROUND HER NOW, RESUME <leg> AT LOW SPEED and LEAVE IT HOLDING; once the

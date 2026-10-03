@@ -220,6 +220,62 @@ check("12. a coast shorter than the hold disc the boat may wander anyway is not 
       () => !C.coastWorthIt(3, 8) && C.coastWorthIt(40, 8),
       "the manoeuvre has to buy more than the berth already allows");
 
+// ── 13-18. SLOWING DOWN IN GEAR IS NOT A COAST (measured from the DriX-8's logs, 2026-10-03; Andy: "Build the fix
+//    with the 3.3 s lag"). The guard's SLOW is flown at idle with the clutch in: a dead time, then a decay toward her
+//    idle-in-gear speed U. The closed form is checked against a NUMERICAL integration of its own ODE - something outside
+//    the formula - and against the coast law it must reduce to.
+{
+  const drix = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const L = C.slowLaw(drix.maneuvering.slowdown);
+  // v dv/dx = (U^2 - v^2)/Lg, integrated by RK4 in x from v0 down to v1, timing dt = dx/v
+  const integrate = (v0, v1, law) => {
+    let v = v0, x = v0 * law.lag, t = law.lag;
+    const h = 0.001, f = (vv) => (law.U * law.U - vv * vv) / (law.Lg * vv);
+    while (v > v1) {
+      const k1 = f(v), k2 = f(v + h * k1 / 2), k3 = f(v + h * k2 / 2), k4 = f(v + h * k3);
+      const vn = v + h * (k1 + 2 * k2 + 2 * k3 + k4) / 6;
+      t += h / ((v + vn) / 2); x += h; v = vn;
+    }
+    return { m: x, s: t };
+  };
+  const r = C.slowRun(6.2 * KN, 4.0 * KN, L), n = integrate(6.2 * KN, 4.0 * KN, L);
+  check("13. the in-gear law's closed form IS its own ODE: 6.2 -> 4.0 kn on the DriX's block matches a numerical "
+        + "integration of v dv/dx = (U^2 - v^2)/Lg plus the dead time, distance and time both within 0.1%",
+        () => L && Math.abs(r.m - n.m) / n.m < 1e-3 && Math.abs(r.s - n.s) / n.s < 1e-3,
+        r.m.toFixed(2) + " m / " + r.s.toFixed(2) + " s against " + n.m.toFixed(2) + " m / " + n.s.toFixed(2) + " s");
+  const zero = C.slowRun(7 * KN, 4 * KN, { U: 1e-9, Lg: LC, lag: 0 }), coast = C.coastRun(7 * KN, 4 * KN, LC);
+  check("14. ... and with no idle thrust and no dead time it IS the coast law, to the millimeter",
+        () => Math.abs(zero.m - coast.m) < 1e-3 && Math.abs(zero.s - coast.s) < 1e-3,
+        zero.m.toFixed(3) + " / " + coast.m.toFixed(3) + " m");
+  const lag0 = C.slowRun(6.2 * KN, 4.0 * KN, Object.assign({}, L, { lag: 0 }));
+  check("15. the dead time adds exactly v0 x lag of water and lag of time once she is half a knot or more over the target - 3.3 s at 6.2 kn is 10.5 m",
+        () => Math.abs((r.m - lag0.m) - 6.2 * KN * 3.3) < 1e-9 && Math.abs((r.s - lag0.s) - 3.3) < 1e-9,
+        (r.m - lag0.m).toFixed(2) + " m, " + (r.s - lag0.s).toFixed(2) + " s");
+  const below = C.slowRun(6.2 * KN, 3.0 * KN, L), at = C.slowRun(3.8 * KN, 3.0 * KN, L);
+  check("16. she cannot be slowed below idle in gear: a target at or under it is answered as idle + 0.25 kn (3.9 kn), "
+        + "never as water the law would need without end - and from below that there is nothing to shed",
+        () => below && Math.abs(below.v1eff / KN - 3.9) < 1e-9 && isFinite(below.m) && at === null
+              && C.slowRun(4.0 * KN, 4.0 * KN, L) === null,
+        "asked 3.0 kn, answered " + (below ? (below.v1eff / KN).toFixed(2) + " kn in " + below.m.toFixed(1) + " m" : "null"));
+  check("17. a slow-down block that is not one is refused (no idle speed, no length, a negative or non-finite lag) - "
+        + "the vessel then keeps its coast law - and a block with no lag reads as none",
+        () => C.slowLaw(null) === null && C.slowLaw({}) === null && C.slowLaw({ idle_kn: 0, length_m: 23.8 }) === null
+              && C.slowLaw({ idle_kn: 3.65, length_m: 0 }) === null && C.slowLaw({ idle_kn: 3.65, length_m: 23.8, lag_s: -1 }) === null
+              && C.slowLaw({ idle_kn: 3.65, length_m: 23.8, lag_s: Infinity }) === null
+              && C.slowLaw({ idle_kn: 3.65, length_m: 23.8 }).lag === 0);
+  // THE MEASUREMENT IT WAS FITTED TO (20 commanded 7 -> 4 kn cuts, through the water, from the setpoint message):
+  // 4.5 kn in 21.0 m, 4.25 kn in 25.5 m, 4.0 kn in 32.5 m. With the 3.3 s lag (the slower, ramped response) the law
+  // must not come in SHORT of any of them - it feeds a reach, and short is the dangerous side.
+  const meas = [[4.5, 21.0], [4.25, 25.5], [4.0, 32.5]];
+  const vs = meas.map(([v1, m]) => [v1, m, C.slowRun(6.2 * KN, v1 * KN, L).m]);
+  check("18. against her own logs: from 6.2 kn (her real speed at the 7-kn setpoint) the law with the DriX's 3.3 s lag "
+        + "needs at least the measured MEDIAN water to reach 4.5, 4.25 and 4.0 kn - it is not short of the middle cut - and "
+        + "the coast law it replaces was short of all three",
+        () => vs.every(([, m, mod]) => mod >= m) && meas.every(([v1, m]) => C.coastRun(6.2 * KN, v1 * KN, LC).m < m),
+        vs.map(([v1, m, mod]) => v1 + " kn: " + mod.toFixed(1) + " m vs measured " + m + " (coast law "
+                                 + C.coastRun(6.2 * KN, v1 * KN, LC).m.toFixed(1) + ")").join("; "));
+}
+
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"
                   : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

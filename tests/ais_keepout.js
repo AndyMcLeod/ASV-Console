@@ -313,15 +313,35 @@ console.log("An AIS contact as a keep-out:");
               && A.aisInReach(null, [inside]).length === 0 && A.aisInReach(own, [inside, outside], 60).length === 2,
         () => "reach " + A.AIS_LOOKAHEAD_M + ", kept " + got.length + " of 2 (near ends " + nearM(inside).toFixed(1) + " / " + nearM(outside).toFixed(1) + " m)");
   const drix = JSON.parse(require("fs").readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
-  const coast = drix.maneuvering.coast, low = drix.propulsion.speeds_kn.low * KN;
-  const r7 = A.aisReachM(coast, 7 * KN, low), r14 = A.aisReachM(coast, 14 * KN, low), rLow = A.aisReachM(coast, low, low);
-  const rSet = A.aisReachM(coast, 7 * KN, low, 1.0);
-  check("11b. EXTENDED FOR THE DRIX: 50 m plus the water her own coast datum (ESTIMATED: 44 m from 7 kn to 2 kn) says she needs to come down to LOW (4 kn) - 69.7 m at 7 kn, 94.0 m at 14 kn, 50 m at LOW - and more in a set, which carries her the while (7.3 s of it from 7 kn)",
-        () => Math.abs(r7 - 69.66) < 0.05 && Math.abs(r14 - 94.0) < 0.05 && rLow === 50 && Math.abs(rSet - r7 - 7.31) < 0.05,
-        () => "7 kn " + r7.toFixed(2) + ", 14 kn " + r14.toFixed(2) + ", LOW " + rLow + ", 7 kn in a 1 m/s set " + rSet.toFixed(2));
-  check("11c. ... and a hull with no coast datum (every vessel file but the DriX's), a malformed one, or no LOW to come down to, is seen from 50 m at any speed",
-        () => A.aisReachM(null, 14 * KN, low) === 50 && A.aisReachM(undefined, 7 * KN, low) === 50
-              && A.aisReachM({ from_kn: 2, to_kn: 7, distance_m: 44 }, 7 * KN, low) === 50 && A.aisReachM(coast, 7 * KN, 0) === 50,
+  const man = drix.maneuvering, coast = man.coast, low = drix.propulsion.speeds_kn.low * KN;
+  // MEASURED 2026-10-03 (her logs): the guard's SLOW is flown in gear, so her `slowdown` block answers - a 3.3 s dead
+  // time, then a decay toward her 3.65 kn idle-in-gear speed. 6.2 kn is what her "7 kn" setpoint really makes.
+  const r62 = A.aisReachM(man, 6.2 * KN, low), r7 = A.aisReachM(man, 7 * KN, low), r14 = A.aisReachM(man, 14 * KN, low);
+  const rLow = A.aisReachM(man, low, low), rSet = A.aisReachM(man, 6.2 * KN, low, 1.0);
+  check("11b. EXTENDED FOR THE DRIX, BY HER MEASURED SLOW-DOWN: 50 m plus the water she needs to come down to LOW (4 kn) IN GEAR - 87.2 m at her real 6.2 kn, 92.7 m at 7 kn, 124.0 m at 14 kn, 50 m at LOW - and more in a set, which carries her the while (14.3 s of it from 6.2 kn)",
+        () => Math.abs(r62 - 87.166) < 0.005 && Math.abs(r7 - 92.700) < 0.005 && Math.abs(r14 - 124.019) < 0.005 && rLow === 50
+              && Math.abs(rSet - r62 - 14.284) < 0.005,
+        () => "6.2 kn " + r62.toFixed(2) + ", 7 kn " + r7.toFixed(2) + ", 14 kn " + r14.toFixed(2) + ", LOW " + rLow
+            + ", 6.2 kn in a 1 m/s set +" + (rSet - r62).toFixed(2));
+  // CONTINUOUS AT LOW (found reviewing this change): the dead time ramps in over the first half knot above the target,
+  // or a hundredth of a knot of speed noise at LOW moved the ladder's horizon by 7 m (50.0 -> 56.8 m at 4.001 kn)
+  const just = A.aisReachM(man, 4.001 * KN, low), half = A.aisReachM(man, 4.5 * KN, low), halfMinus = A.aisReachM(man, 4.499 * KN, low);
+  check("11b1. ... and it is CONTINUOUS at LOW: a thousandth of a knot over LOW reaches less than 0.1 m past 50 m (a full "
+        + "dead time there made it 56.8 m), and the dead time is whole from half a knot over LOW on",
+        () => just > 50 && just < 50.1 && Math.abs(half - halfMinus) < 0.05,
+        () => "4.001 kn " + just.toFixed(3) + " m; 4.499 / 4.500 kn " + halfMinus.toFixed(3) + " / " + half.toFixed(3) + " m");
+  const cBare = A.aisReachM(coast, 7 * KN, low), cOnly = A.aisReachM({ coast }, 7 * KN, low);
+  const badSlow = A.aisReachM({ coast, slowdown: { idle_kn: 0 } }, 7 * KN, low);
+  check("11b2. ... and a hull with only a COAST datum keeps the coast law (the DriX's measured prop-out coast, 40.3 m "
+        + "from 6 to 2 kn: 70.5 m at 7 kn), whether handed its maneuvering block or the bare coast block - the slow-down "
+        + "law is preferred only where one is declared, and a malformed one falls back to the coast",
+        () => Math.abs(cBare - 70.53) < 0.05 && Math.abs(cOnly - cBare) < 1e-9 && Math.abs(badSlow - cBare) < 1e-9 && r7 > cBare + 20,
+        () => "bare coast " + cBare.toFixed(2) + ", {coast} " + cOnly.toFixed(2) + ", malformed slowdown " + badSlow.toFixed(2)
+            + ", with slowdown " + r7.toFixed(2));
+  check("11c. ... and a hull with no datum (every vessel file but the DriX's), a malformed one, or no LOW to come down to, is seen from 50 m at any speed",
+        () => A.aisReachM(null, 14 * KN, low) === 50 && A.aisReachM(undefined, 7 * KN, low) === 50 && A.aisReachM({}, 7 * KN, low) === 50
+              && A.aisReachM({ from_kn: 2, to_kn: 7, distance_m: 44 }, 7 * KN, low) === 50 && A.aisReachM(coast, 7 * KN, 0) === 50
+              && A.aisReachM(man, 7 * KN, 0) === 50,
         () => "no datum " + A.aisReachM(null, 14 * KN, low) + ", reversed " + A.aisReachM({ from_kn: 2, to_kn: 7, distance_m: 44 }, 7 * KN, low)
             + ", no LOW " + A.aisReachM(coast, 7 * KN, 0));
 }

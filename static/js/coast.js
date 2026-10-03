@@ -69,8 +69,11 @@ const D2R = Math.PI / 180;
  */
 export const COAST_ARRIVE_MS = 0.5;
 
-/** Fractional uncertainty on Lc. The fleet's own estimates span 21-52 m about a ~35 m
- *  center; a third is that bracket rounded outward, not a comfortable margin. */
+/** Fractional uncertainty on Lc. The fleet's own estimates spanned 21-52 m about a ~35 m
+ *  center; a third is that bracket rounded outward, not a comfortable margin. MEASURED since
+ *  (2026-10-03, the DriX's own logs, 145 prop-out coasts): 35.6 m median, IQR 32.4-39.2 - and
+ *  speed-dependent, ~22 m at 1-2 kn to ~45 m at 5-6 kn. A third covers that above ~2 kn; below
+ *  it the law runs LONG (the real tail decays faster), which is the drift-in's safe side. */
 export const COAST_LC_TOL = 1 / 3;
 
 /** Fractional uncertainty on the set. The sim's gust envelope is 1 ± 0.22·1.5 = ±33%, and
@@ -124,6 +127,73 @@ export function coastLc(coastBlock) {
 export function coastRun(v0, v1, lc) {
   if (!(v0 > v1) || !(v1 > 0) || !(lc > 0)) return null;
   return { m: lc * Math.log(v0 / v1), s: lc * (1 / v1 - 1 / v0) };
+}
+
+// ── SLOWING DOWN IN GEAR IS NOT A COAST (measured 2026-10-03) ─────────────────────────────
+//
+// The coast law above is the PROP-OUT run: clutch in neutral, nothing pushing, way shed to zero. The AIS guard's SLOW
+// is a different maneuver, and the DriX-8's own logs (Aug 2026, 16 sessions) show how she flies it: a cut from her
+// 7-kn setpoint to her 4-kn LOW goes to IDLE WITH THE CLUTCH STILL IN GEAR, 20 cuts of 20. Two things follow, and
+// neither is in the coast law:
+//   * the idle prop still pushes, so her speed decays toward her IDLE-IN-GEAR speed (3.6-3.7 kn), not toward zero -
+//     and LOW sits just above that floor, which is exactly where the last of the shedding is slowest;
+//   * a DEAD TIME passes between the command and real deceleration (1.2 s for a single setpoint step, 3.3 s when her
+//     guidance ramps the setpoint down).
+// Measured from the setpoint message, through the water: 6.2 -> 4.0 kn in 32.5 m and 13.0 s (IQR 29.1-35.5 m, n=20, 6
+// sessions). The coast law allowed 15.4 m and 6.1 s for the same run, so the AIS reach it fed was short by 13-17 m.
+// No single coast length fixes that (the equivalent Lc runs 57-92 m by speed band) - the SHAPE is wrong, not the
+// constant - and a bigger Lc in the coast block would break the drift-in it really belongs to (COAST_MAX_S).
+//
+// THE LAW: a dead time `lag`, then quadratic drag against the idle prop's residual thrust:
+//     v dv/dx = (U^2 - v^2) / Lg            U = idle-in-gear speed, Lg = the in-gear decay length
+//     x(v0->v1) = v0*lag + (Lg/2) * ln((v0^2 - U^2) / (v1^2 - U^2))
+//     t(v0->v1) = lag + (Lg/(2U)) * ln(((v1+U)(v0-U)) / ((v1-U)(v0+U)))
+// With U -> 0 and lag = 0 it is exactly coastRun. Fitted to the 20 cuts it reproduces them to within about a meter at
+// the median (4.5, 4.25 and 4.0 kn). The vessel declares it as `maneuvering.slowdown` = {idle_kn, length_m, lag_s};
+// the lag the DriX carries is the slower measured response, 3.3 s (Andy, 2026-10-03: "Build the fix with the 3.3 s
+// lag") - whether a console SLOW reaches her as a step or a ramp is not yet known, and a ramp is the longer case.
+
+/** How far above her idle-in-gear speed the in-gear law is asked to bring her, at least, m/s (0.25 kn). She cannot be
+ *  slowed below idle in gear, and the decay toward it is asymptotic - so a LOW at or under idle is answered as idle
+ *  plus this, never as a target the law would need infinite water to reach. */
+export const SLOW_IDLE_MARGIN_MS = 0.25 * 0.514444;
+
+/** Over how much speed above the target the dead time comes in, m/s (0.5 kn).
+ *  ⚠ WITHOUT IT THE REACH JUMPED AT LOW (found reviewing this change, 2026-10-03): the decay term goes to zero as she
+ *  nears the target, but a dead time charged in full does not - at 4.001 kn the DriX's reach was 56.8 m where 4.000 kn
+ *  gave 50.0 m, and in the sim, which holds LOW at exactly 4.00 kn through the water, a hundredth of a knot of noise
+ *  flipped the ladder's horizon by 7 m frame to frame. A boat within half a knot of LOW arrives at the 50 m line a few
+ *  tenths over it, which the coast law always accepted; so the dead time's water ramps in across that half knot and
+ *  is whole from there on. Every measured case (from 6.2 kn, 2.2 kn over LOW) carries the full lag. */
+export const SLOW_LAG_RAMP_MS = 0.5 * 0.514444;
+
+/**
+ * The in-gear slow-down law from a vessel's `maneuvering.slowdown` block, or null - the same honest degrade as
+ * coastLc: a vessel without the block (every hull but the DriX today) falls back to the coast law.
+ * @returns {{U, Lg, lag, measured, source}|null}  U in m/s, Lg in m, lag in s
+ */
+export function slowLaw(slowBlock) {
+  const b = slowBlock;
+  if (!b) return null;
+  const idleKn = +b.idle_kn, Lg = +b.length_m, lag = b.lag_s == null ? 0 : +b.lag_s;
+  if (!(idleKn > 0) || !(Lg > 0) || !(lag >= 0) || !isFinite(idleKn) || !isFinite(Lg) || !isFinite(lag)) return null;
+  return { U: idleKn * 0.514444, Lg, lag, measured: !!b.measured, source: b.source || null };
+}
+
+/**
+ * Distance and time to slow from `v0` to `v1` (m/s) IN GEAR, under law `law` (slowLaw) - or null when there is
+ * nothing to shed (she is already at or below the speed it would leave her at). `v1` is raised to idle + the margin
+ * when it asks for less: `v1eff` says what was actually answered.
+ */
+export function slowRun(v0, v1, law) {
+  if (!law || !(v1 > 0)) return null;
+  const U = law.U, Lg = law.Lg, lag = law.lag;
+  const v1eff = Math.max(v1, U + SLOW_IDLE_MARGIN_MS);
+  if (!(v0 > v1eff)) return null;
+  const decay = (Lg / 2) * Math.log((v0 * v0 - U * U) / (v1eff * v1eff - U * U));
+  const secs = (Lg / (2 * U)) * Math.log(((v1eff + U) * (v0 - U)) / ((v1eff - U) * (v0 + U)));
+  const lagEff = lag * Math.min(1, (v0 - v1eff) / SLOW_LAG_RAMP_MS);   // continuous at the target (SLOW_LAG_RAMP_MS)
+  return { m: v0 * lagEff + decay, s: lagEff + secs, v1eff, lagEff };
 }
 
 /**

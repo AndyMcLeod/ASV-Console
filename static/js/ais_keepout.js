@@ -47,7 +47,7 @@ import { hullBox, velocityEN } from "./targets.js";
 import { bbOf } from "./geometry.js";
 import { HORIZON_S } from "./guard.js";
 import { clearanceM } from "./keepouts.js";
-import { coastLc, coastRun } from "./coast.js";
+import { coastLc, coastRun, slowLaw, slowRun } from "./coast.js";
 
 /** The hull assumed for a contact that broadcasts no size, meters. Andy's numbers. */
 export const AIS_DEFAULT_LENGTH_M = 20;
@@ -98,19 +98,31 @@ export function aisInReach(own, polys, m = AIS_LOOKAHEAD_M) {
  * THE REACH A HULL NEEDS (Andy, 2026-09-29, when the stopping margin was raised: "extend for drix if necessary").
  * AIS_LOOKAHEAD_M is where the answer to a contact BEGINS. A hull that sheds way slowly has to be seen earlier by the
  * water it takes her to come down to LOW first, or she arrives at the 50 m still at speed. That water is her own
- * coast-down law (coast.js coastRun: v0 -> v1 takes Lc·ln(v0/v1) through the water, in Lc·(1/v1 - 1/v0) seconds) plus
- * what the set carries her in those seconds. The DriX's datum is ESTIMATED, not measured (44 m from 7 kn to 2 kn:
- * Lc 35.1 m), and her LOW is 4 kn: seen from 50 m at LOW, ~70 m at her 7 kn survey speed, ~94 m at 14 kn. A hull
- * with no coast datum, or already at LOW, from 50 m.
+ * slow-down law plus what the set carries her in those seconds. A hull with no datum, or already at LOW, from 50 m.
  *
- * @param {object} coastBlock the vessel's `maneuvering.coast` block (coast.js coastLc), or null
- * @param {number} twMs       her speed through the water, m/s
- * @param {number} lowMs      the speed the guard slows her to (LOW), m/s
- * @param {number} driftMs    the set's speed, m/s
+ * ⚠ THE GUARD'S SLOW IS FLOWN IN GEAR, AND ON THE DriX THAT IS NOT A COAST (measured from her logs 2026-10-03; Andy:
+ * "Build the fix with the 3.3 s lag"). A cut to LOW goes to idle with the clutch in, so she decays toward her
+ * idle-in-gear speed after a dead time - 6.2 -> 4.0 kn took 32.5 m and 13.0 s (n=20), where the prop-out coast law
+ * this used to apply allowed 15.4 m and 6.1 s. So a vessel that declares `maneuvering.slowdown` is answered with
+ * THAT law (coast.js slowRun); one that declares only `maneuvering.coast` keeps the coast law (coastRun); neither, 50 m.
+ * The DriX: ~87 m at her real 6.2 kn through the water (100 m in a 1.75 kn set), ~93 m at a literal 7 kn, ~124 m at
+ * 14 kn - and that last is an extrapolation, since her logs never show her above ~10.6 kn through the water.
+ *
+ * @param {object} man     the vessel's `maneuvering` block ({coast, slowdown}); a bare coast block (it has `from_kn`)
+ *                         is still taken, as the coast law alone - the form this function took before 2026-10-03
+ * @param {number} twMs    her speed through the water, m/s
+ * @param {number} lowMs   the speed the guard slows her to (LOW), m/s
+ * @param {number} driftMs the set's speed, m/s
  */
-export function aisReachM(coastBlock, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M) {
-  const lc = coastLc(coastBlock);
-  const run = lc ? coastRun(twMs, lowMs, lc.lc) : null;
+export function aisReachM(man, twMs, lowMs, driftMs = 0, baseM = AIS_LOOKAHEAD_M) {
+  const bare = !!(man && man.from_kn != null);
+  const law = bare ? null : slowLaw(man && man.slowdown);
+  let run = null;
+  if (law) run = slowRun(twMs, lowMs, law);
+  else {
+    const lc = coastLc(bare ? man : (man && man.coast));
+    run = lc ? coastRun(twMs, lowMs, lc.lc) : null;
+  }
   if (!run) return baseM;
   return baseM + run.m + (driftMs > 0 ? driftMs * run.s : 0);
 }
