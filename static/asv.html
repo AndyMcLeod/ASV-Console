@@ -1884,9 +1884,29 @@ function setPlanIntent(kind, plan, route){
                         + (plan.coast.lc && !plan.coast.lc.measured
                            ? " (on an ESTIMATED coast length, never measured on this hull)" : "")});
   if(plan.lane){
-    w.push(plan.partial
-      ? {t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"}
-      : {t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centerline to port"});
+    // WHICH KEEP-RIGHT IT WAS (2026-10-03). There are three, and they put her in different water: the chart's own
+    // channel, the lane off a pair of buoy lines or a narrow cut's banks, and lateral marks left one by one on their
+    // proper hand. `plan.how` says which (passage.js laneHow words the banner from the same field); a plan that
+    // carries none reads as it always did.
+    const how = plan.how, mk = how && how.marks;
+    const gaps = plan.partial && (!how || how.gaps);
+    if(how && how.charted)
+      w.push({t:"lane", s:"riding the Rule 9 lane in the CHARTED channel - a quarter of its width in from its starboard edge"});
+    if(how ? (how.pairs || how.narrow) : !plan.partial)
+      w.push({t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centerline to port"});
+    // "PASSED CLOSE" IS SAID OF THE BUOYS THAT WERE (`buoys`, `close`: marksKept): said of every one, it
+    // covered a buoy there was no clear water to bring her to, shipped 35 m off. No cause is named for the
+    // rest - the stage has several, and the route is on the map.
+    if(mk && mk.kept)
+      w.push({t:"lane", s:"riding the Rule 9 marks - " + [mk.stbd ? mk.stbd + " left to starboard" : "", mk.port ? mk.port + " left to port" : ""].filter(Boolean).join(", ")
+                          + (mk.buoys == null ? " (a buoy kept to starboard is passed close)"
+                             : !mk.buoys ? ""
+                             : mk.close === mk.buoys ? (mk.buoys === 1 ? " (the buoy kept to starboard passed close)" : " (each buoy kept to starboard passed close)")
+                             : " (" + mk.close + " of the " + mk.buoys + " buoys kept to starboard passed close)")});
+    if(mk && mk.wrong)
+      w.push({t:"warn", s:mk.wrong + " lateral mark" + (mk.wrong === 1 ? "" : "s") + " NOT left on the proper hand - check the route against the chart"});
+    if(gaps)
+      w.push({t:"warn", s:"Rule 9 lane ridden, but PARTIAL - some of this route is not laned (a second channel, or a stretch handed back to the router)"});
   }
   const un = (plan.unroutable||[]).length;
   if(un){ planIntent.unsafe = un;
@@ -9744,7 +9764,7 @@ async function doGoTo(target){
   if(planGen === wasGen) releaseEscapeClaim("Go-To replaced it");
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
-  const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
+  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -9900,7 +9920,7 @@ async function doRTH(opts){
   if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");     // see doGoTo
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
-  const note = buoyageNote(plan.lane, plan.partial);   // this plan's lane, not the last plan's
+  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10099,7 +10119,7 @@ async function doTransit(){
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
-  const note = buoyageNote(plan.lane, plan.partial);   // accumulated over every leg of THIS plan
+  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }
@@ -12772,8 +12792,9 @@ function identifyAt(ll){
         if(!chain || chain.length < 2) continue;
         scan(chain.map(enAt), false, "buoyline",
           "the " + side + " chain of a CHANNEL the console found in the chart — a dashed line "
-          + "joining its lateral marks in order, not anything the vessel runs. It is what the "
-          + "Rule 9 keep-right lane is measured from; the marks themselves carry their own "
+          + "joining its lateral marks in order, not anything the vessel runs. Where the chart "
+          + "draws no fairway or dredged area, the Rule 9 keep-right lane is measured from these "
+          + "chains; inside one, from the charted channel itself. The marks carry their own "
           + "numbers.");
       }
   }
@@ -13413,8 +13434,10 @@ async function reapproachIfSetOff(s, st){
     // ROUTED ROUND THE CONTACTS TOO (2026-09-29): this is the vessel's own way back onto station, a safety maneuver
     // like the guard's rather than a plan, and the disc it answers now stops short of a contact (holdClearAt) - so the
     // way back is routed through the same model, the charted world plus this frame's hulls, and certifies its disc there.
+    // (`maneuver`, 2026-10-03: and so it is laned as it always was - not brought to a charted channel's starboard
+    // quarter, not sent off to a buoy to pass it on its proper hand. Those are for passages. See planNogoRoute.)
     const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:st.hold.lat, lon:st.hold.lon},
-                               {...holdOpts(), standoffM: patClipBufM(), ko: koWithAis() || nogo.ko});
+                               {...holdOpts(), standoffM: patClipBufM(), ko: koWithAis() || nogo.ko, maneuver: true});
     if(plan.error){
       setViolation(plan.reason);
       showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and "

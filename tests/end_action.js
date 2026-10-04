@@ -348,6 +348,34 @@ check("16. ... and a stopped boat does not re-arm anything either",
         part.why.some(w => /PARTIAL/.test(w.s)),
         "full: " + full.why[1].s.slice(0, 30) + " | partial: " + part.why[1].s.slice(0, 30));
 
+  // 19b-19d. WHICH KEEP-RIGHT IT WAS (2026-10-03). There are three now - the chart's own channel, the lane off buoy
+  // pairs or a narrow cut's banks, and lateral marks left one by one on their proper hand - and `plan.how` says
+  // which. Each gets its own row; a mark on the WRONG hand is a warning in its own words; and "PARTIAL" is said only
+  // of a route with a stretch that is not laned, never of one whose only fault is such a mark.
+  const mk = (kept, wrong, stbd, port) => ({kept, wrong, stbd, port});
+  const rows = (how, partial) => setPlanIntent("goto", {routed: true, lane: true, partial: !!partial, how}, R(9)).why;
+  const chartedOnly = rows({charted: true, pairs: false, narrow: false, marks: mk(0, 0, 0, 0), gaps: false});
+  check("19b. a route in a CHARTED channel says so, and does not also claim the buoy lane it did not ride",
+        chartedOnly.some(w => w.t === "lane" && /CHARTED channel/.test(w.s)) &&
+        !chartedOnly.some(w => /channel lane - a quarter width/.test(w.s)) &&
+        !chartedOnly.some(w => /Rule 9 marks/.test(w.s)) && !chartedOnly.some(w => w.t === "warn"),
+        chartedOnly.map(w => w.t + ":" + w.s.slice(0, 44)).join(" | "));
+  const marksOnly = rows({charted: false, pairs: false, narrow: false, marks: mk(5, 0, 3, 2), gaps: false});
+  check("19c. a route shaped by lateral marks counts them by hand: 3 left to starboard, 2 left to port",
+        marksOnly.some(w => w.t === "lane" && /riding the Rule 9 marks - 3 left to starboard, 2 left to port/.test(w.s)) &&
+        !marksOnly.some(w => /CHARTED channel/.test(w.s)) && !marksOnly.some(w => /channel lane - a quarter width/.test(w.s)),
+        marksOnly.map(w => w.t + ":" + w.s.slice(0, 60)).join(" | "));
+  const wrongOnly = rows({charted: true, pairs: false, narrow: false, marks: mk(2, 1, 2, 0), gaps: false}, true);
+  const gapsToo = rows({charted: true, pairs: true, narrow: false, marks: mk(2, 1, 2, 0), gaps: true}, true);
+  check("19d. a mark on the WRONG hand is a warning in its own words, and PARTIAL is said only of a stretch not laned",
+        wrongOnly.some(w => w.t === "warn" && /1 lateral mark NOT left on the proper hand/.test(w.s)) &&
+        !wrongOnly.some(w => /PARTIAL/.test(w.s)) &&
+        gapsToo.some(w => w.t === "warn" && /PARTIAL/.test(w.s)) &&
+        gapsToo.some(w => /NOT left on the proper hand/.test(w.s)) &&
+        gapsToo.some(w => /channel lane - a quarter width/.test(w.s)),
+        "wrong only: " + wrongOnly.filter(w => w.t === "warn").map(w => w.s.slice(0, 40)).join(" | ")
+          + " || gaps too: " + gapsToo.filter(w => w.t === "warn").map(w => w.s.slice(0, 24)).join(" | "));
+
   // 20. UNROUTABLE LEGS ARE THE LOUD CASE - not safe to run, and the count must reach the
   // card rather than living only as a red line on the chart.
   pi = setPlanIntent("survey", {routed: true, unroutable: [[{}, {}], [{}, {}]]}, R(40));

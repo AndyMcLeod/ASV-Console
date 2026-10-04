@@ -229,7 +229,8 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // the SEVENTH (2026-09-29): the routed re-approach onto station hands the router the charted model PLUS
             // the contacts, as the disc it answers now counts them (holdClearAt) - and it is NOT a fly-through: its
             // target is the hold point she is going back to hold in, so a berth's margin is the right one
-            && /planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:st\.hold\.lat, lon:st\.hold\.lon\},\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koWithAis\(\) \|\| nogo\.ko\}\)/.test(H)
+            // (and since 2026-10-03 it says it is a MANEUVER, so the charted lane and the buoys leave it alone)
+            && /planNogoRoute\(\{lat:asv\.lat,lon:asv\.lon\}, \{lat:st\.hold\.lat, lon:st\.hold\.lon\},\s*\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koWithAis\(\) \|\| nogo\.ko, maneuver: true\}\)/.test(H)
             // the EIGHTH (2026-09-29): a held Go-To / RTH / transit's way in (resumeHeldLeg) - the leg's way round and
             // its return ride it - with the contacts in the model and a fly-through target, as the held survey's is
             && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\), ko: koIn, flyThrough: true\}/g) || []).length === 4

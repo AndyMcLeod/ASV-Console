@@ -152,14 +152,29 @@ function grabDecl(name) {
 const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist",
                  "blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
-                 "blockedInfo", "firstBlockAlong", "gateLegClear",
+                 "blockedInfo", "firstBlockAlong", "clearButEnds", "gateLegClear",
                  "smoothTrack", "systemCenterline", "extendCenterline",
                  // A PRIVATE HELPER OF asv_core's routing module. The lane bodies grabbed
                  // above call it; this console's old copy inlined the same arc-length
                  // resampling, so it has to be in the shared scope the way the module
                  // graph puts it.
                  "resampleEN",
+                 // THE CHART'S OWN CHANNELS AND THE MARKS THAT STAND ALONE (2026-10-03): two more
+                 // lane stages and what they call. A helper missing here is "FAIL 0. the suite
+                 // itself CRASHED" at the first route, which is how this list was found short.
+                 "tangentsEN", "slewField", "median", "chartOwnership", "chartedChannelLane",
+                 "chartedRide", "cumEN", "projectEN",
+                 "runPast", "uniqueMarks", "markPassRoute", "marksKept", "markVerdicts", "tallyMarks", "markCounted",
                  "buoyChannelLane", "narrowChannelLane", "channelLaneRoute"];
+// ... and their tuning, read from the module like every other number here.
+const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "CHART_ALONG_RATIO",
+                    "LANE_SLEW", "CHART_INTERP_M", "CHART_GAP_M", "CHART_OPENING_M", "CHART_OPENING_FRAC",
+                    "CHART_EDGE_WINDOW_M", "CHART_OPEN_PARALLEL_COS", "CHART_BASE_ROUND_M", "CHART_TAN_M", "CHART_END_SLIVER", "CHART_CONE_REACH_M", "CHART_CONE_STRAIGHT_COS",
+                    "MARK_REACH_M", "MARK_NEIGHBOR_M", "MARK_ROUTE_NEIGHBOR_M", "MARK_STEP_MAX",
+                    "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
+                    "MARK_STAGE_LEGS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
+                    "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
+                    "markName"];
 const M_PER_DEG_LAT = 111320.0;
 
 // One classic scope, exactly like the browser (routing.js + the inline script share
@@ -192,6 +207,7 @@ eval("const M_PER_DEG_LAT=" + M_PER_DEG_LAT + ";\n" +
      // laneCenterline is an ARROW CONST in asv_core, not a `function` declaration, so it
      // comes through grabDecl (which reads `const X = ...;`) rather than grab().
      grabDecl("laneCenterline") + "\n" +
+     LANE_DECLS.map(grabDecl).join("\n") + "\n" +
      // The core pipeline under the name passage.js's wrapper imports it as. A NAMED
      // function expression: the inner name binds only inside itself, so it does not
      // shadow the wrapper grabbed from passage.js below.
@@ -571,7 +587,7 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
     const pts = base.map((p) => enLL(p.e, p.n));
     const r = channelLaneRoute(pts, ref, w || CH, 3);
     return { track: [pts[0], ...r.route].map((p) => ({ e: toE(p), n: toN(p) })),
-             lane: r.lane, partial: r.partial };
+             lane: r.lane, partial: r.partial, how: r.how };
   };
   const fmt = (es) => es.map((e) => e == null ? "null" : e.toFixed(1)).join(",");
 
@@ -633,16 +649,44 @@ check("19b. ... and channelLaneRoute demotes the lane fact on abandonment",
                marks: [...A.port, ...A.stbd, ...B.port, ...B.stbd], sys: [A, B] };
     })();
     const r = runEnds([{ e: 0, n: -200 }, { e: 0, n: 2000 }], two);
-    const gap = [900, 1100].map((n) => eAtN(r.track, n));
+    // (n = 900 and 1000 since 2026-10-03, not 900 and 1100: the second channel's first
+    // starboard-hand buoy stands at n = 1300, and she now begins to ease out to it at about
+    // n = 1100 - see 26. The middle of the gap is still the routed path.)
+    const gap = [900, 1000].map((n) => eAtN(r.track, n));
     check("25. ONLY THAT CHANNEL: the lane is not held across the gap between two separate channels",
           gap.every((e) => e != null && Math.abs(e) < 5),
-          "e@900,1100 (mid-gap) = " + fmt(gap) + " (want ~0 — a chained centreline would hold ±" + WANT + ")");
-    // 26. ... and the banner says so. Only ONE buoy system is laned per leg, so a route
-    // down two channels rides the second DEAD ON ITS CENTRELINE - the head-on position.
-    // The plan may not describe that as a clean Rule 9 transit.
-    check("26. HONEST BANNER: a route that laned only one of two channels reports `partial`",
-          r.lane === true && r.partial === true,
-          "lane=" + r.lane + " partial=" + r.partial + " (a lane was ridden, but not over all of it)");
+          "e@900,1000 (mid-gap) = " + fmt(gap) + " (want ~0 — a chained centreline would hold ±" + WANT + ")");
+    // 26. THE SECOND CHANNEL IS KEPT RIGHT IN TOO (2026-10-03). Only ONE buoy system is laned
+    // per leg, and a route down two channels used to ride the second DEAD ON ITS CENTRELINE -
+    // the head-on position - and say `partial`, which was the honest thing to say about it.
+    // Its marks are kept one by one now (routing.js markPassRoute): each starboard-hand buoy
+    // passed MARK_PASS_M off, on her starboard hand, with the port-hand ones left to port. So
+    // she is 10 m inside the starboard buoy line (e = HALF - 10) where she was at e = 0, all
+    // six marks are counted as kept, and there is nothing left to call partial.
+    const inB = [1300, 1500, 1700].map((n) => eAtN(r.track, n));
+    const mk = (r.how && r.how.marks) || {};
+    check("26. THE SECOND CHANNEL: its buoys are kept one by one, the starboard-hand ones close, and "
+          + "the route is no longer `partial`",
+          r.lane === true && r.partial === false && mk.kept === 6 && mk.wrong === 0
+            && mk.stbd === 3 && mk.port === 3
+            && inB.every((e) => e != null && Math.abs(e - (HALF - 10)) < 3),
+          "lane=" + r.lane + " partial=" + r.partial + " marks " + JSON.stringify(mk) + "; e@1300,1500,1700 = "
+            + fmt(inB) + " (want " + (HALF - 10) + ": 10 m inside the starboard-hand buoys at e=" + HALF
+            + "; it rode e=0 before)");
+    // 26b. ... AND THE CONTROL: with the marks stage switched off (`marks:false`, what a way
+    // round a contact asks for) the second channel is ridden down its middle again, and the
+    // route says `partial` again. So 26 is the marks stage's doing, and the banner's honesty
+    // about an un-laned second channel is still there for the routes that do not get it.
+    {
+      const pts = [{ e: 0, n: -200 }, { e: 0, n: 2000 }].map((p) => enLL(p.e, p.n));
+      const q = channelLaneRoute(pts, ref, two, 3, { marks: false });
+      const tq = [pts[0], ...q.route].map((p) => ({ e: toE(p), n: toN(p) }));
+      const eq = [1500, 1700].map((n) => eAtN(tq, n));
+      check("26b. THE CONTROL: without the marks stage the second channel is ridden down its middle and "
+            + "the route reports `partial`",
+            q.lane === true && q.partial === true && eq.every((e) => e != null && Math.abs(e) < 3),
+            "lane=" + q.lane + " partial=" + q.partial + "; e@1500,1700 = " + fmt(eq) + " (want ~0)");
+    }
   }
   // 27. THE WIDENING KNOB MAY ONLY WIDEN. channel_reach_m was added to REACH FURTHER so
   // keep-right would engage in a wide fairway; the rework rewired it as a REPLACEMENT

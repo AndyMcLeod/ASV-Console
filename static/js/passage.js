@@ -60,11 +60,13 @@ import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial }
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
+         chartedChannelLane, markPassRoute, marksKept, markVerdicts, tallyMarks, chartedRide,
          gateLegClear, channelSpanKeepouts, channelTurnKeepouts,
          routeAround, routeAroundSeg, pruneStitch, legPath,
          channelLaneRoute as coreChannelLaneRoute,
          stampSeg, dilateGrid, rasterKeepouts } from "./routing.js";
 export { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
+         chartedChannelLane, markPassRoute, marksKept,
          gateLegClear, channelSpanKeepouts, channelTurnKeepouts,
          routeAround, routeAroundSeg, pruneStitch, legPath,
          stampSeg, dilateGrid, rasterKeepouts };
@@ -186,7 +188,23 @@ export function regionOrder(segs, ref, legHeading, spacing, legSafe){
 }
 // How the console read the buoyage on THE ROUTE PASSED IN - `lane` comes off that plan's
 // own result, not off a flag describing whichever route was planned most recently.
-export function buoyageNote(lane, partial){
+//
+// `how` (2026-10-03) SAYS WHICH KEEP-RIGHT IT WAS, because there are three now and they put
+// her in different water: three quarters of the way across a channel the CHART draws; the
+// lane off a pair of buoy lines or the banks of a narrow cut; and lateral marks left one by
+// one on their proper hand. A plan that carries no `how` reads as it always did.
+export function laneHow(how){
+  const parts = [];
+  if(how && how.charted) parts.push("right of center in the charted channel");
+  if(!how || how.pairs || how.narrow) parts.push("channel lane, centerline to port");
+  const mk = how && how.marks;
+  if(mk && mk.kept){
+    const n = (k, hand) => k + " mark" + (k === 1 ? "" : "s") + " left to " + hand;
+    parts.push([mk.stbd ? n(mk.stbd, "starboard") : "", mk.port ? n(mk.port, "port") : ""].filter(Boolean).join(", "));
+  }
+  return parts;
+}
+export function buoyageNote(lane, partial, how){
   // Go-To / RTH / Transit ride the CHANNEL LANE: offset to starboard of the buoy-pair
   // centerline, so the centerline stays to port and the starboard-hand marks to
   // starboard - either direction of travel.
@@ -196,8 +214,13 @@ export function buoyageNote(lane, partial){
   // channel's centerline dead on, or that lost the lane to a spliced detour, is worse
   // than no banner: it is a claim they would otherwise have checked.
   if(!lane) return "";
-  return partial ? "Rule 9: channel lane, centerline to port — PARTIAL: some of this route is not laned"
-                 : "Rule 9: channel lane, centerline to port";
+  const wrong = (how && how.marks && how.marks.wrong) || 0;
+  // ⚠ A MARK ON THE WRONG HAND IS SAID AS THAT, not folded into "not laned": it is the one
+  // thing here the operator can check against the chart at a glance, and the one a pilot
+  // would ask about first.
+  return "Rule 9: " + laneHow(how).join("; ")
+       + (wrong ? " — " + wrong + " mark" + (wrong === 1 ? "" : "s") + " NOT left on the proper hand" : "")
+       + (partial && (!how || how.gaps) ? " — PARTIAL: some of this route is not laned" : "");
 }
 // One entry point, applied to EVERY mode: lane off the buoys where a channel is marked,
 // off the water's own edges where it isn't, then smooth + set the waypoint spacing.
@@ -481,8 +504,19 @@ export function planNogoRoute(from, to, opts){
   // came out passed 7.9 m off her hull - inside the guard's standoff, where the helm rung takes the boat. The
   // result is re-gated at the margin the leg was FOUND at: the lane stands wherever it is clear of that, the
   // search's own route is spliced back where it is not. (routePlan has the same pass; see CLAUDE.md.)
-  const kr = insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(path, ref, ko, buf)
-                                                     : keepStandoff(channelLaneRoute(path, ref, ko, buf), path, ref, ko, want);
+  // ⚠ AND A BUOY SHE KEEPS CLOSE IS PASSED OUTSIDE THAT STANDOFF (2026-10-03). The gate below has no
+  // notion of a side: measured on a mark with a bank 30 m beyond it, a leg passing it 10 m off on the
+  // proper hand came back from the re-gate 29 m off on the OTHER. So the lane is told the margin it will
+  // be re-gated at and stands her off the mark by that and a little more (MARK_PASS_M), and the marks are
+  // counted again on the route that ships.
+  // A MANEUVER IS LANED AS IT ALWAYS WAS. The way round a contact and the way back onto a line
+  // (`flyThrough`) and the way back onto station (`maneuver`) are a few hundred meters of avoidance,
+  // not a passage up a channel: neither is brought to a charted channel's starboard quarter nor sent
+  // off to a buoy half a kilometer away. Go-To, RTH, a transit and the ETA rows are passages.
+  const passage = !(opts && (opts.flyThrough || opts.maneuver));
+  const laneOpts = {standoffM: insideStandoff ? 0 : want, marks: passage, charted: passage};
+  const kr = insideStandoff || !(want > buf + 0.05) ? channelLaneRoute(path, ref, ko, buf, laneOpts)
+                                                     : keepStandoff(channelLaneRoute(path, ref, ko, buf, laneOpts), path, ref, ko, want);
   // (the knot prune that used to run here moved INTO channelLaneRoute — the producer —
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
@@ -494,15 +528,28 @@ export function planNogoRoute(from, to, opts){
   if(out) return {error: beyondChartSay(out), uncharted: {...out, route},
                   reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: out.at, near: !(out.outM > 0)}};
   return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
+          how: kr.how, marks: kr.marks,
           heldOff, holdClear, insideStandoff, standoffM: want};
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
 function keepStandoff(kr, fallback, ref, ko, want){
-  const g = gateLegClear(kr.route, fallback, ref, ko, want);
-  const route = pruneStitch(g.route, ref, ko, want);
+  const g = gateLegClear(kr.route, fallback, ref, ko, want, {floor: nogo.buffer});   // (a patch out of her start, at its own radius)
+  const route = pruneStitch(g.route, ref, ko, want, {keep: kr.keep, stubs: kr.stubs});   // (the marks' runs: see channelLaneRoute)
+  // The marks are counted on THIS route: a splice has no notion of a side (see planNogoRoute).
+  const mk = marksKept(route, ref, kr.marks);
+  // ⚠ A LANE THE GATE ABANDONED SHIPS THE SEARCH'S OWN ROUTE, and nothing the lane claimed is true of it.
   const lane = !!kr.lane && !g.abandoned;
-  return {route, lane, partial: lane && (!!kr.partial || g.splices > 0)};
+  const h = kr.how || {};
+  // ... and the chart's lane is measured on THIS route too (chartedRide), and not claimed where most of the water it
+  // owns was crossed short of it: carried over from the buffer's route, "right of center in the charted channel" was
+  // said of a re-gated route that crossed 225 of 350 m short of it, outside its port edge.
+  const ride = lane && kr.chartOwn ? chartedRide(route, ref, kr.chartOwn) : null;
+  const short = !!ride && ride.shortM > Math.max(2 * kr.chartOwn.STEP, 0.05 * ride.ownedM);
+  const how = {pairs: lane && !!h.pairs, charted: lane && !!h.charted && (!ride || ride.shortM <= ride.ownedM / 2),
+               narrow: lane && !!h.narrow, marks: mk, gaps: lane && (!!h.gaps || g.splices > 0 || short),
+               chartedShortM: ride ? ride.shortM : (h.chartedShortM || 0)};
+  return {route, lane, partial: lane && (how.gaps || mk.wrong > 0), how, marks: kr.marks, keep: kr.keep};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -531,7 +578,18 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
   // report only whichever leg happened to be last.
   let lane = false, partial = false, insideStandoff = 0;
+  const how = {pairs: false, charted: false, narrow: false, gaps: false, marks: {kept: 0, wrong: 0, stbd: 0, port: 0}};
   const want = (standoffM > buf + 0.05) ? standoffM : buf;
+  // ⚠ EACH LEG'S MARKS ARE JUDGED ON THAT LEG'S OWN PART OF THE ROUTE THAT SHIPS, and every pass
+  // counts - but ONE pass, of a mark beside the waypoint two legs share, is counted once (both
+  // legs excused it there: `nearEnd`), and wrong if either leg's part leaves it wrong. Summed
+  // as each leg said, a mark beside a waypoint, excused by both legs, was counted by neither (a
+  // red 100 m on her wrong hand under "2 marks left to starboard, 2 marks left to port"); judged
+  // instead by its first leg's hand against the nearest point of the WHOLE plan, an out-and-back
+  // transit up a channel of singles - every mark on its proper hand both ways - read "6 marks
+  // NOT left on the proper hand", and an approach whose survey lines ran back down the channel
+  // the same (`legVerdicts`).
+  const legVerdicts = [];
   wps.forEach((wp, i)=>{
     const transit = keepRightAll || i===0 || !!(transitAt && transitAt.has(i));   // the legs the page routes itself
     let leg = legPath(prev, wp, ref, ko, transit ? want : buf);  // the standoff first (2026-09-26)
@@ -562,18 +620,38 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       // smoothing, the gate and the knot prune run at the BUFFER, and a transit leg found at the 19.5 m standoff came
       // out of them 6.3-14.1 m off a hull-sized block across it (tests/planner_guard_seam.js 7g). A leg found only at
       // the buffer - counted in insideStandoff - keeps the buffer's pass.
-      const kr0 = channelLaneRoute(seg, ref, ko, buf);
+      const kr0 = channelLaneRoute(seg, ref, ko, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
       const kr = atStandoff ? keepStandoff(kr0, seg, ref, ko, want) : kr0;
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
+      if(kr.how){
+        for(const f of ["pairs", "charted", "narrow", "gaps"]) if(kr.how[f]) how[f] = true;
+      }
+      // (a mark too near this leg's start or end is counted where that end is a waypoint between two of its legs - not
+      // at the transit's own start, the vessel's position, nor at its last waypoint: see markPassRoute's `reach`)
+      legVerdicts.push({leg: i, v: markVerdicts(seg, ref, kr.marks || [], {start: i > 0, end: i < wps.length - 1})});
     }
     for(let k=1;k<seg.length;k++) out.push({lat:seg[k].lat, lon:seg[k].lon});
     prev = wp;
   });
+  const passes = [];
+  legVerdicts.forEach((L, a) => {
+    const before = legVerdicts[a - 1], seam = before && before.leg === L.leg - 1;
+    for(const e of L.v){
+      const twin = seam && e.k.nearStart ? before.v.find((f) => f.k.m === e.k.m && f.k.nearEnd) : null;
+      if(!twin){ passes.push(e); continue; }
+      if((!e.proper && twin.proper) || (e.proper === twin.proper && Math.abs(e.x) < Math.abs(twin.x))) Object.assign(twin, e);
+    }
+  });
+  if(legVerdicts.length){
+    how.marks = tallyMarks(passes);
+    if(how.marks.kept) lane = true;
+    if(lane && how.marks.wrong) partial = true;
+  }
   // A plan is only fully laned if EVERY laned leg was: one partial leg makes the plan
   // partial, the same way one laned leg makes it laned.
   // ⚠ AND THE WHOLE ROUTE IS JUDGED AGAINST THE BOX THE CHART WAS READ OVER (beyondChart): every leg, the survey's own
   // included, since a survey line over water nobody read is no more checked than a transit over it. `uncharted` is null
   // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
   const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox);
-  return {route: out, unroutable, lane, partial, insideStandoff, standoffM: want, uncharted};
+  return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted};
 }

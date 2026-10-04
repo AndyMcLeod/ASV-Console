@@ -39,6 +39,12 @@
  *          only with marks of its own channel, by the prefix merge markSystems uses
  *          (now `markRoots`, one rule for both). asv_core pairs the nearest mark of
  *          the other hand whatever channel it marks. Covered by tests/turn_channel.js.
+ *       7. A CHARTED CHANNEL SAYS SO, AND SO DOES A BEACON (2026-10-03): channelPolys
+ *          marks each fairway and dredged ring `charted`, which the buoy-gate corridors
+ *          are not, and buildKeepouts marks a lateral BEACON `fixed`. routing.js rides
+ *          the Rule 9 lane across the first by its own polygon, and brings a vessel
+ *          close to a buoy she keeps to starboard but never to a beacon. asv_core has
+ *          neither flag. Covered by tests/enc_channel.js.
  *
  * The fix is covered by tests/clearance_guard.js, which runs in this repo's own
  * pre-commit hook. If it is ever wanted upstream, carry it there as its own
@@ -643,9 +649,12 @@ export function channelPolys(frame, feats, marks) {
     // recommended tracks are deliberately NOT here: those are Rule 10 and good
     // practice respectively, not Rule 9. See ENC_ROLES in asv_console.py.
     if (f.role !== 'dredged' && f.role !== 'fairway') continue;
+    // `charted` (2026-10-03) is what tells a channel the CHART draws from a corridor swept
+    // between two buoys below. The Rule 9 lane rides the first by its own polygon
+    // (`chartedChannelLane`); the second is still only where a rule applies.
     eachRing(f.geometry, (rg) => {
       const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
-      if (ring.length >= 3) chans.push({ ring, bb: bbOf(ring) });
+      if (ring.length >= 3) chans.push({ ring, bb: bbOf(ring), charted: true, src: f.role });   // src: 'fairway' | 'dredged'
     });
   }
   // Sweep each gate line along the channel axis - one gate width each way, or until it would touch charted water.
@@ -795,9 +804,21 @@ export function buildKeepouts(frame, feats, opts = {}) {
       const cat = f.props?.CATLAM;
       const side = (cat === 2 || cat === 4) ? 1 : (cat === 1 || cat === 3) ? -1 : 0;
       const id = markId(f.props);
+      // A BEACON IS FIXED: a light or a daybeacon stands ON the rock or the shore it marks,
+      // where a buoy floats at the edge of the water it marks. A vessel is brought close to
+      // a buoy she keeps to starboard and never to a beacon (`markPassRoute`).
+      const fixed = f.cls === 'Beacon_Lateral_point';
+      // A PREFERRED-CHANNEL MARK (CATLAM 3/4) stands where a channel divides: which hand she
+      // keeps it on depends on the branch she takes, and nothing here knows that, so the marks
+      // stage leaves it alone (2026-10-04: a route taking the side creek was sent round the
+      // wrong side of one). It still pairs into a gate as the side it is given.
+      const junction = cat === 3 || cat === 4;
       eachPoint(g, (c) => {
         const q = frame.toEN({ lon: c[0], lat: c[1] });
-        marks.push({ e: q.e, n: q.n, side, num: id.num, sys: id.sys });
+        const m = { e: q.e, n: q.n, side, num: id.num, sys: id.sys };
+        if (fixed) m.fixed = true;
+        if (junction) m.junction = true;
+        marks.push(m);
         if (enf.haz) points.push({ e: q.e, n: q.n, r: 0, kind: 'a channel buoy' });
       });
       continue;

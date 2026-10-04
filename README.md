@@ -2112,15 +2112,16 @@ of the operator.
 
    The lane itself:
 
-   > offset to **starboard of the channel centreline**, half way out to the edge on
+   > offset to **starboard of the channel centerline**, half way out to the edge on
    > that side — a **quarter of the channel width in from the edge**.
 
-   So the **centreline always stays to port**. Outbound that puts the green marks to
-   starboard; inbound it puts the red ones there ("red right returning") — but
-   **colour is never an input to the calculation**. It falls out, because lateral
+   So the **centerline always stays to port**. Outbound that puts the green marks to
+   starboard; inbound it puts the red ones there ("red right returning") — but for a
+   lane **color is never an input to the calculation**. It falls out, because lateral
    marks sit on fixed sides. Which side is "starboard" comes from the **direction of
    travel**, so the two directions ride opposite halves of the same channel and
-   opposing traffic passes **port-to-port**.
+   opposing traffic passes **port-to-port**. (A single mark, with no channel drawn
+   round it, is the one place the color and the numbering are read - see 4 below.)
 
    **Where it does NOT apply**, and this is as much of the rule as the offset is:
    an **open bay or open ocean** transit, and **anything inside a survey or search
@@ -2160,15 +2161,84 @@ of the operator.
    a channel — while leaving one **contained within** it alone, because surveying a
    channel is a normal thing to be asked for.
 
-   **What defines the channel geometrically.** Two sources, one rule:
+   **What defines the channel, in order** (2026-10-04 — Andy: *"Any given ASV should
+   recognize a channel from the ENC before relying on buoy placement"*, and *"Often,
+   there are not paired buoys but single buoys of a particular color"*):
+
+   1. **The chart's own channel.** Where she proceeds along a charted fairway or
+      dredged area, she rides **three quarters of the way across the polygon** — a
+      quarter of its width in from its starboard edge — whatever the buoys or the
+      banks would make of that water. The cross-section is the polygon's, taken square
+      to her **course** (over 75 m either way, so a short jog of the routed path does
+      not tilt it). A fairway is measured on its own rings, so a dredged berth or patch
+      beside it is not part of it. Side water that opens abeam — a berth, a side
+      channel, a basin — is an *opening*, and the channel's edges are carried across
+      it; a short gap between two rings is bridged; and the lane is capped so it never
+      stands outside a narrower stretch ahead or behind. She holds the line to the
+      channel's **end** and eases off past it; leaving through its **side**, she eases
+      off inside it. A crossing, a path beside the channel that never enters it, a
+      basin about as wide as it is long, and a patch shorter than 120 m are not water
+      she is proceeding along. A cross-section cut by the channel's own end — where her
+      path turns within 75 m of it — is the end's, not the channel's, and does not
+      narrow the lane; a channel that really narrows at its end (an entrance channel)
+      is laned to its end. The cap reads each stretch's limits as that stretch measured
+      them across its own track, round a bend too, so a narrowing just round a bend is
+      eased toward before it - but not a cross-section where her path is still turning,
+      or one that does not hold her: where two charted rings join at a bend, those are
+      cut short by the ring she is leaving, and are no narrowing. It takes the lane to
+      port of the channel's middle only for a narrowing on the stretch she runs straight
+      along, where staying in the charted water needs it; a routed path that steps off
+      the channel cannot drag the lane to port.
+      An end is her lane leaving that end's own polygon, even into a dredged basin
+      beyond it; but where her route itself ends in the channel, she
+      leaves the lane inside it rather than carry it to the end and hook back. Where a
+      mark's run brings her into the channel, the chart's line is the line from there.
+      In a set, the lane's points are laid clear of the guard's standoff wherever the
+      channel has such a point right of its middle.
+   2. **Buoy pairs**, where the chart draws no channel — the paired-buoy centerline,
+      below.
+   3. **Unmarked narrow water** — the banks, below.
+   4. **Single marks** — lateral buoys and beacons standing alone, in water the chart
+      does not own. *Red right returning*: each is read from the numbered marks **of
+      its own hand** before and after it along her route, its own named channel first.
+      A buoy kept to starboard is passed **close** — `max(10 m, 2 × buffer)`, and
+      outside the guard's standoff in a set; one kept to port gets a wider berth; a
+      beacon is never brought close. A mark is **left alone** — neither passed close nor
+      counted; the plan's own list (`plan.marks`) records why —
+      when it is a junction mark, in charted water (the chart's lane governs), across
+      land, unnumbered or alone, when the marks either side of it disagree, when its
+      own named channel crosses her route, and when her channel goes on without her past
+      it or she joins its channel only beyond it. Each pass is put in **one at a time**
+      and kept only if no mark she already has on its proper hand ends up on its wrong
+      hand — a mark it would cross brings its own pass along, or the pass is refused —
+      and a mark on its wrong hand is seen to before a close pass is made. A mark that
+      cannot be kept is **counted and said**. One too near her route's start or end to be
+      moved for is excused the move — and the count too where it lies beside her berth
+      or her destination (no further along than 1.5 times its distance off); one
+      further along is counted, and so is one at a waypoint between two legs of a
+      drawn transit, so a waypoint beside a mark does not hide it. Each transit leg's
+      marks are judged on
+      that leg's own part of the route, and every pass counts (up a channel and back, each
+      mark twice); a mark beside the waypoint two legs share is one pass, counted once. A
+      gate partner — the other hand's mark numbered one off, within 400 m, however her
+      track crosses the line between them — is never read as the mark before or after,
+      and another named channel's numbers speak for a mark only where they continue its
+      count, numbered on from it (a cove numbered again from 1 beside a harbor's red does
+      not). A pass is tried along the channel's course and, failing that, along her own
+      track there. The stage is bounded by **work** (80 routed legs), not by the clock,
+      so the same Go-To plans the same route on a busy machine as on an idle one.
+
+   **The two buoy-made channels, geometrically:**
 
    * **Marked channels** — each port-hand buoy is paired with its nearest
-     starboard-hand buoy; the pair midpoints, in number order, are the centreline,
+     starboard-hand buoy; the pair midpoints, in number order, are the centerline,
      and half the pair spacing is the local half-width. The console picks the
      channel by the **longest stretch of the routed path that actually runs along
-     it**, so a channel merely passed nearby is ignored.
+     it**, so a channel merely passed nearby is ignored. A mark of the pairs is
+     "ridden as a pair" only where that lane really leaves it on its proper hand;
+     otherwise it is read as a single mark.
    * **Unmarked, channel-like water** — a basin exit, a canal, a cut between banks.
-     The centreline comes from **the water's own edges**: the console looks out both
+     The centerline comes from **the water's own edges**: the console looks out both
      sides and takes the middle of what it finds. This engages **only where both
      edges answer** within the vessel's channel reach — genuinely confined water.
      Open water and a single bank nearby are left alone, so a plain open-water Go-To
@@ -2179,7 +2249,7 @@ of the operator.
 
    **Where the lane lets go.** A channel does not end at its last buoy, and neither
    may the lane — releasing at the final mark cuts back across the fairway exactly
-   where converging traffic expects the vessel to stand on. So the centreline is
+   where converging traffic expects the vessel to stand on. So the centerline is
    **extended** along its own terminal axis before the lane is built on it, and the
    full quarter-width offset is held right through that extension, **entering and
    leaving alike**. How far: as far as the **charted channel** continues, or **one
@@ -2197,29 +2267,60 @@ of the operator.
    largest that keeps the boat in **clear water**, rate-limited so the track eases in
    and out where one side is shoal. Every leg is clearance-checked; if a leg cannot
    be routed the lane is **abandoned entirely** and the plain routed path is used.
+   A leg that can be routed only the long way round — more than twice the search's
+   own way between the same two points, plus 200 m — takes the search's own way there
+   instead (a lane leg 89 m long was once patched round the land, 10.6 km). A boat
+   starting or arriving **inside the buffer** is led out of the water she lies in
+   without a splice, as long as the leg does not close on what she lies beside; past
+   that water the leg is checked like any other, so a pile or a dolphin a few meters
+   beyond her berth is not waved through with it. In a set, the standoff's re-gate lets
+   that water come as near as the buffer (the law the route has already passed), and
+   routes a patch out of her start, or into her goal, at that endpoint's own clearance,
+   so it neither hooks round her nor jumps to the far side of a point of land. A leg
+   into or out of an endpoint inside the margin never runs through a keep-out: where
+   the only way in at the standoff would, the route is found at the buffer and the
+   plan says it runs inside the standoff.
    And every shipped route is **flyable**: a splice seam can fold a reversal a few
-   metres long — a turn no hull can make, which a vessel answers by orbiting the
-   waypoint — so the producer prunes any such fold whose neighbours connect clear.
+   meters long — a turn no hull can make, which a vessel answers by orbiting the
+   waypoint — so the producer prunes any such fold whose neighbors connect clear (a
+   mark's run gives way at its ends; its pass point never does).
    The clear-water condition means a corner that exists to dodge an obstacle stays.
    The console never plans a leg it has not verified. Survey coverage lines and
    teardrop turns are never offset (planned geometry). The track is resampled at a
    fixed spacing and lightly smoothed, and generated Go-To / RTH / Transit waypoints
-   draw as unlabelled diamonds.
+   draw as unlabeled diamonds.
 
-   **The banner says how much of the route was laned, not just that some of it was.**
-   Only one buoy system is laned per leg, so a route down two successive channels
-   rides the second on its centreline rather than to starboard of it. A plan whose
-   lane was interrupted — a second channel left un-laned, or a stretch handed back to
-   the router — reports **PARTIAL** rather than a clean Rule 9 transit. A banner
-   claiming keep-right over a route that is not keeping right is worse than no
-   banner: it is a claim you would otherwise have checked yourself.
+   **The banner says what was ridden, and how much of it** — for example *"Rule 9:
+   right of center in the charted channel; channel lane, centerline to port; 7 marks
+   left to starboard, 6 marks left to port"*. Each part is claimed only where it
+   stands on the route that ships (after the smoothing, the gate and, in a set, the
+   standoff re-gate): the chart's lane where the finished route crosses its water
+   more than half way over (and not at all where most of that water was crossed short
+   of it), the pair lane and the banks' lane only where their moves lie outside water
+   the chart owns, and the marks counted where the finished route leaves them. The
+   Intent card says how many of the buoys kept to starboard were passed close —
+   *"(5 of the 6 buoys kept to starboard passed close)"* — rather than claiming it of
+   every one. A mark on
+   its wrong hand is said as that — *"1 mark NOT left on the proper hand"*. **PARTIAL**
+   is said when a stretch was handed back to the router, a second buoyed channel was
+   neither kept mark by mark nor ridden by the chart, or the charted water was ridden
+   less than half way across for more than a few samples. A banner claiming
+   keep-right over a route that is not keeping right is worse than no banner: it is a
+   claim you would otherwise have checked yourself.
+
+   **A maneuver is laned as it always was.** The way round a contact, the way back
+   onto a line and the way back onto station are a few hundred meters of avoidance,
+   not a passage up a channel: no chart lane, no marks.
 
    > **History.** This replaced two earlier designs that both rode the *wrong side of
-   > the buoys* on the water: a colour buoy lane that inferred direction from IALA
+   > the buoys* on the water: a color buoy lane that inferred direction from IALA
    > numbering, and a geometric keep-right that measured its offset by probing for the
-   > channel edges. Measuring from a **paired-buoy centreline** instead is what made it
+   > channel edges. Measuring from a **paired-buoy centerline** instead is what made it
    > hold. Retired with them, and not currently implemented: standing on past a channel
    > mouth by the channel's own width, and steering through the outermost buoy gate.
+   > On 2026-10-03 his Go-To up the Piscataqua kept right only where there were buoy
+   > pairs; the chart's channel and the single marks came first and fourth in the
+   > order above on 2026-10-04.
 
 2. **Behaviours (no survey plan needed).** Beyond a survey/search plan, the command
    bar drives one-off autonomy behaviours, all available once **Armed**:
