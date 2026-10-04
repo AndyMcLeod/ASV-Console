@@ -344,7 +344,16 @@ function logClient() {}
 // as well as inside the bundle, because a `const` in a direct eval stays in the eval's own
 // scope and check 19g could not see it.
 const NOGO_QUEUE_MAX_MS = +(H.match(/const NOGO_QUEUE_MAX_MS = (\d+)/) || [])[1];
+// ⚠ AND THE SERVER'S SPAN LIMIT, which refreshNogo now asks before it fetches (2026-10-03): a box the server would
+// refuse is not asked for. Read from the page as well; tests/chart_box.js holds it equal to the server's own.
+const ENC_MAX_SPAN_DEG = +(H.match(/const ENC_MAX_SPAN_DEG = ([\d.]+);/) || [])[1];
+// ⚠ AND THE KEPT CHART READS, which a WIDER extract of the same chart now keeps (2026-10-03, checks 28-28b): the page's
+// own refoldInk and inkNote merge them back into `chartInk` (the real mergeReads), so they must resolve here.
+const { mergeReads } = require("../static/js/inkreads.js");
+var chartReads = [], inkRefused = null;
 eval("const NOGO_QUEUE_MAX_MS = " + NOGO_QUEUE_MAX_MS + ";" + "\n" +
+     "const ENC_MAX_SPAN_DEG = " + ENC_MAX_SPAN_DEG + ";" + "\n" + grab("encSpanRefusal") + "\n" +
+     grab("refoldInk") + "\n" + grab("inkNote") + "\n" +
      grab("foldChartInk") + "\n" + grab("rebuildNogo") + "\n" + grab("nogoStatus") + "\n" +
      grab("updateNogoUI") + "\n" + grab("refreshNogo") + "\n" +
      // readPlanInk (2026-10-02) is the step ensureNogoCovers reads the chart through; with no `opts` - every call in this
@@ -667,16 +676,152 @@ async function drive(fetchResult) {
           + "survey path and the plan path came to give different answers about the same sea");
   }
 
-  // ⚠ AND ONE HALF OF THE FIX IS RECORDED AS UNCOVERED RATHER THAN CLAIMED. ensureNogoArea
+  // ⚠ AND ONE HALF OF THE FIX WAS RECORDED AS UNCOVERED RATHER THAN CLAIMED. ensureNogoArea
   // and ensureNogoCovers now end `return nogo.ready && bboxContains(nogo.bbox, b)`, and with
-  // the queue above in place no fixture can reach a state where those two disagree: after
-  // refreshNogo the model either covers the asked box or the extract failed and `ready` is
-  // false. Measured, not assumed - reverting the `&& bboxContains` alone leaves every check
+  // the queue above in place no fixture could reach a state where those two disagree: after
+  // refreshNogo the model either covered the asked box or the extract failed and `ready` was
+  // false. Measured, not assumed - reverting the `&& bboxContains` alone left every check
   // here green, and reverting the QUEUE alone turns the answer from true into false, which
   // is what shows the two halves do different jobs: the queue makes the answer true for the
   // right reason, and the bboxContains makes it honest if anything ever returns early again.
-  // It costs one comparison and is the difference between "cannot happen" and "must not
-  // happen"; it is kept for the same reason edgeAround keeps its astern test.
+  // It cost one comparison and was the difference between "cannot happen" and "must not
+  // happen". SINCE 2026-10-03 SOMETHING DOES RETURN EARLY - refreshNogo's refusal of a box the
+  // server would refuse (26 below), which keeps a READY model of other water - and 26 is the
+  // fixture that reaches it: the `&& bboxContains` is now the half that answers.
+
+  // 26-26b. A BOX THE SERVER WILL REFUSE IS NOT ASKED FOR (2026-10-03). The server answers a box over
+  // ENC_MAX_SPAN_DEG on a side with a 400, and the no-band branch above took that answer as "no chart":
+  // `nogo.ready = false`, so a Go-To to a point 170 km off threw away the model of the water she was IN and
+  // planned the leg straight, unchecked. A route that runs past the box is refused now and the page reads the
+  // chart over it (tests/chart_box.js), so a wider read is asked for routinely - and one that cannot be had must
+  // leave the model alone. Driven: a model of her water, then a plan reaching 1.6 degrees north of it.
+  {
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    let fetches = 0;
+    FETCH = async () => { fetches++; return { band: "enc_5" }; };
+    await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+    const had = { ready: nogo.ready, features: nogo.features, bbox: nogo.bbox, ko: nogo.ko, frame: nogo.frame };
+    const f0 = fetches;
+    banners = [];
+    const answer = await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }, { lat: 44.70, lon: -70.70 }], 300);
+    check("26. a plan whose box would be wider than the server extracts is NOT fetched: the model of the water "
+          + "already read stays - ready, its features, its box, its keep-outs - the plan is told its water is "
+          + "not covered (false), and the banner names the extract it would take",
+          answer === false && fetches === f0 && had.ready === true && nogo.ready === true
+          && nogo.features === had.features && nogo.bbox === had.bbox && nogo.ko === had.ko && nogo.frame === had.frame
+          && banners.some((t) => /^Chart NOT read over that water: it would take an extract of 0\.40° × 1\.7\d°, and the console reads at most 1\.5° on a side\. The model of the water already read is kept\.$/.test(t)),
+          "answered " + answer + ", " + (fetches - f0) + " fetch(es), ready " + nogo.ready + "; banners "
+          + JSON.stringify(banners));
+  }
+  {
+    const said = await drive(() => ({ error: "the requested area spans 2.10 x 0.40 degrees; the console extracts at most 1.5 degrees on a side (about 166 km) - set home nearer, or transit in legs" }));
+    check("26b. an extract the server REFUSED is named by the server's own words, not as 'no coverage / offline'",
+          nogo.ready === false && /^the requested area spans 2\.10 x 0\.40 degrees/.test(nogo.note) && !/offline/.test(said.last),
+          "note: " + JSON.stringify(nogo.note) + "; final paint: " + JSON.stringify(said.last));
+  }
+  // 26c. THE READ SAYS WHAT IT IS (2026-10-03). The reading of the chart along a refused route ran 53 s on the live check
+  // under "Extracting ENC nogo boundaries for the operating area…" - its own banner, raised a moment before, gone. A
+  // caller's `opts.say` is the banner while the extract runs; without one, the stock words, as ever.
+  {
+    setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+              note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+    sea.enc = { features: [{}], band: "enc_5" };
+    FETCH = async () => ({ band: "enc_5" });
+    await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+    banners = [];
+    const SAY = "Go-To: the route ran past the water the chart was read over - reading the chart along it (1 of 3)…";
+    await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }, { lat: 43.30, lon: -70.70 }], 300, { say: SAY });
+    const own = banners.slice();
+    banners = [];
+    await ensureNogoCovers([{ lat: 43.07, lon: -70.70 }, { lat: 43.40, lon: -70.70 }], 300);
+    const stock = banners.slice();
+    check("26c. a caller's own words are the banner while its extract runs, and without them the stock words",
+          own.indexOf(SAY) >= 0 && !own.some((t) => /operating area/.test(t))
+          && stock.indexOf("Extracting ENC nogo boundaries for the operating area…") >= 0,
+          "with say: " + JSON.stringify(own) + "; without: " + JSON.stringify(stock));
+  }
+
+  // 27-27d. A `keep` READ THAT FAILS LEAVES THE MODEL AS IT WAS (2026-10-03, found by the review). planInsideChart asks
+  // its reads with `keep`: they are reads asked only to plan a route FURTHER, and an offline NOAA used to turn one into
+  // `nogo.ready = false` - the guard stood down over the plan she was running, the automatic re-extract (which needs a
+  // model) never came, and the next command went out degraded and straight. Driven through the real refreshNogo and
+  // ensureNogoCovers: a model of her water, then a read reaching north that fails each of three ways - and, as the
+  // control, the same failure WITHOUT `keep`, which still says "no model" as the operating area's own read always has.
+  {
+    const base = async () => {
+      setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+                note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+      sea.enc = { features: [{}], band: "enc_5" };
+      FETCH = async () => ({ band: "enc_5" });
+      await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+      return { ready: nogo.ready, features: nogo.features, bbox: nogo.bbox, ko: nogo.ko, frame: nogo.frame, enc: sea.enc };
+    };
+    const same = (had) => nogo.ready === true && had.ready === true && nogo.features === had.features
+      && nogo.bbox === had.bbox && nogo.ko === had.ko && nogo.frame === had.frame && sea.enc === had.enc && nogo.busy === false;
+    const far = [{ lat: 43.07, lon: -70.70 }, { lat: 43.30, lon: -70.70 }];
+    const ways = [
+      ["no band (offline)", async () => { sea.enc = { features: [], band: undefined }; return { band: null, note: "ENC offline (no cache for this area)" }; },
+       /^ENC offline \(no cache for this area\)$/],
+      ["a throw", async () => { throw new Error("connection reset"); }, /^chart read failed: Error: connection reset$/],
+      ["a partial extract", async () => ({ band: "enc_5", partial: ["Depth_Area"] }), /^the extract arrived without Depth_Area$/],
+    ];
+    const got = [];
+    for (const [name, fetch, failedRe] of ways) {
+      const had = await base();
+      banners = [];
+      FETCH = fetch;
+      const ask = { keep: true };
+      const answer = await ensureNogoCovers(far, 300, ask);
+      got.push({ name, answer, kept: same(had), failed: ask.failed, ok: answer === false && same(had) && failedRe.test(ask.failed || "")
+                 && banners.some((t) => t === "Chart NOT read over that water: " + ask.failed + ". The model of the water already read is kept.") });
+    }
+    check("27. a `keep` read that FAILS - no band (offline), a throw, or an extract missing a layer - leaves the model "
+          + "of the water already read exactly as it was (ready, features, box, keep-outs, frame, sea.enc), answers false, "
+          + "says why in `failed`, and says the model was kept",
+          got.every((g) => g.ok),
+          JSON.stringify(got.map((g) => ({ way: g.name, answer: g.answer, kept: g.kept, failed: g.failed }))));
+    const had = await base();
+    FETCH = async () => ({ band: null, note: "ENC offline (no cache for this area)" });
+    const plain = await ensureNogoCovers(far, 300);
+    check("27b. ... and WITHOUT `keep` the same failure still drops the model, as the operating area's own read always has",
+          plain === false && had.ready === true && nogo.ready === false,
+          "answered " + plain + ", ready " + nogo.ready);
+  }
+
+  // 28-28b. A WIDER EXTRACT OF THE SAME CHART KEEPS ITS CHART READS (2026-10-03, found by the review). Every read lies in
+  // the extract it was taken over, and one that CONTAINS it at the same band holds the same features over every read's
+  // water. Dropping them was a regression once planInsideChart began widening the extract along a refused route: a float
+  // found earlier left the model the replan and the guard read. Another area, or another band, still drops them.
+  {
+    const read = { key: "k1", bb: { W: -70.72, S: 43.06, E: -70.71, N: 43.07 }, z: 18, ms: 5, got: 4, tiles: 4, seq: 1,
+                   lines: [], areas: [], detached: [] };
+    const withRead = async (encBand) => {
+      setNogo({ ready: false, busy: false, frame: null, ko: null, band: null,
+                note: "nogo not loaded", enf: {}, features: null, bbox: null, center: null });
+      sea.enc = { features: [{}], band: "enc_5" };
+      FETCH = async () => ({ band: "enc_5" });
+      await refreshNogo(null, { W: -70.90, S: 43.00, E: -70.50, N: 43.20 });
+      chartReads = [read]; inkRefused = null; refoldInk();
+      sea.enc = { features: [{}], band: encBand };
+      FETCH = async () => ({ band: encBand });
+    };
+    await withRead("enc_5");
+    await refreshNogo(null, { W: -70.95, S: 42.95, E: -70.45, N: 43.40 });     // contains the first, same band
+    const kept = { n: chartReads.length, key: chartInk.key };
+    await withRead("enc_5");
+    await refreshNogo(null, { W: -71.40, S: 43.30, E: -71.00, N: 43.60 });     // other water
+    const other = chartReads.length;
+    await withRead("enc_4");
+    await refreshNogo(null, { W: -70.95, S: 42.95, E: -70.45, N: 43.40 });     // contains it, another band
+    const band = chartReads.length;
+    check("28. a WIDER extract of the same chart (it contains the last one, at the same band) keeps every chart read and "
+          + "merges them back into the model",
+          kept.n === 1 && kept.key === "k1", JSON.stringify(kept));
+    check("28b. ... while one over OTHER water, or at ANOTHER band, drops them all, as every new extract used to",
+          other === 0 && band === 0, "other water: " + other + " read(s) kept; another band: " + band);
+  }
 
   summary();
 })();

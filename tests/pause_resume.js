@@ -204,6 +204,17 @@ eval([
   grab("koWithAis"), grabDecl("AIS_AROUND_AFTER_MS"),                              // the contacts fold into the way in (2026-09-27)
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
   "const { blocked, clearanceM } = require('../static/js/keepouts.js');",
+  // THE WAY IN IS PLANNED THROUGH planInsideChart (2026-10-03) - the page's own - with her and the contacts' model taken
+  // again inside the plan. This world's model has no box and its router never runs past one, so it hands the plan
+  // straight back; reading further and planning again is tests/chart_box.js's subject. tautRoundHer judges its routes
+  // against the box with the real beyondChart.
+  "const { beyondChart, beyondChartSay } = require('../static/js/passage.js');",
+  "const { boxAround } = require('../static/js/inkreads.js');",
+  grabDecl("CHART_WIDEN_ROUNDS"), grabDecl("CHART_WIDEN_PAD_M"), grabDecl("bbUnion"),
+  // ... and the words a refusal is said in (1y drives the Upload's)
+  grabDecl("STALL_TICK_MS"), grabDecl("ENC_MAX_SPAN_DEG"), grab("encSpanRefusal"), grab("sizeWhy"), grab("unchartedTip"),
+  "function aisKeepoutsNow(){ return aisKoDrawn; }",
+  grab("planInsideChart"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",
   // speedGovernor reads the JUNCTION corner set (2026-09-19, tests/corner_slow.js) and
@@ -690,9 +701,12 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // eslint-disable-next-line no-eval
     const notTookSay = eval("(" + grab("notTookSay") + ")");
     let detour = false;                  // 1h: routing adds a waypoint, so the ROUTE crosses the limit, not the plan
+    // 1y: a route that runs past the water the chart was read over (`uncharted`, as routePlan returns one)
+    let pastNext = null, violated = null;
+    const setViolation = (r) => { violated = r || null; };
     const routePlan = (start, wps) => (routedAfterCover = covered !== null, { route: wps.map((p) => ({ lat: p.lat, lon: p.lon }))
                                                    .concat(detour ? [{ lat: 43.085, lon: -70.70 }] : []),
-                                          unroutable: [], degraded: !nogo.ready });
+                                          unroutable: [], degraded: !nogo.ready, uncharted: pastNext ? pastNext() : null });
     const guiConfirm = (title, msg, opts) => { asked = { title, msg, opts }; return Promise.resolve(answer); };
     // ⚠ RECORDS, DOES NOT SWALLOW (2026-09-22). doUpload now covers the water the plan will
     // use before it routes, the way every other commanded motion does. A stub that just
@@ -738,6 +752,7 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
     // survey's banner names it.
     let pendingHold = null; const setPendingHold = (v) => { pendingHold = v; };
     const surveyById = (id) => (mission.surveys || []).find((x) => x.id === id) || null;
+    // (doUpload plans through planInsideChart since 2026-10-03 - the page's own, in this world's bundle above.)
     // eslint-disable-next-line no-eval
     const doUpload = eval("(" + grab("doUpload") + ")");
     const up = async (setup) => { calls.length = 0; unotes.length = 0; banners.length = 0; asked = null;
@@ -875,6 +890,21 @@ function cmd(p, b) { sent.push({ p, speed: b && b.speed });
           () => JSON.stringify(calls.map((c) => c.b)));
     mission.surveys[1].hold = false; nogo = { ready: true, busy: false, band: "enc_harbour" }; answer = false;
     mission = { ...mission, waypoints: keptW }; delete mission.surveys;
+    // 1y. AN UPLOAD WHOSE ROUTE RUNS PAST THE CHART (2026-10-03, the chart box; the review found this refusal pinned by
+    // TEXT only). routePlan answers `uncharted`, planInsideChart reads further - this world's read answers nothing, a
+    // failed read - and the Upload must refuse: nothing posted, nothing drawn, the spot marked, the reason said.
+    violated = null;
+    pastNext = () => ({ at: { lat: 43.0905, lon: -70.70 }, outM: 429, edgeM: 100,
+                        pts: [{ lat: 43.07, lon: -70.76 }, { lat: 43.0905, lon: -70.70 }] });
+    await up(() => { nogo = { ready: true, busy: false, band: "enc_harbour" }; });
+    const pastSaid = banners.join(" | ");
+    pastNext = null;
+    check("1y. an Upload whose route STILL runs past the chart after it read further is BLOCKED: nothing posted, "
+          + "nothing drawn, the spot marked as uncharted, and the banner says why and what to do",
+          () => calls.length === 0 && runRoute === null && violated && violated.mode === "uncharted" && violated.near === false
+                && /UPLOAD BLOCKED: the route runs 429 m beyond the water the chart was read over - the chart could not be read over it \(no extract\) — the spot is highlighted on the chart\. Command it again once the chart can be read there\./.test(pastSaid),
+          () => calls.length + " post(s); violation " + JSON.stringify(violated && { mode: violated.mode, near: violated.near })
+                + "; banners: " + pastSaid);
   // ⚠⚠ 1n. AND AN ACCEPTED UPLOAD MAY NOT OVERTAKE A COMMAND GIVEN SINCE. The vessel
   // took the plan, so the upload is real - but the operator or the guard has commanded her
   // somewhere in the meantime, and that command owns the picture. Drawing the survey over it

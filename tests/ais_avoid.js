@@ -387,6 +387,9 @@ eval([
   // the way round a contact that stays, and the operator's point beyond her (2026-09-27)
   grabDecl("AIS_AROUND_AFTER_MS"), grabDecl("AIS_AROUND_STEP_M"), grab("koWithAis"), grab("aisAroundPlan"), grab("aisAroundTick"),
   grab("sameContact"), grab("aisHerPoly"), grab("koRoundHer"), grab("tautRoundHer"),   // the tighter way round (2026-09-28)
+  // ... which judges every route it returns against the box the chart was read over (2026-10-03) - the real one; this
+  // world's model has no box, so nothing is judged past it (tests/chart_box.js 9 is that rule's own check)
+  "const { beyondChart } = require('../static/js/passage.js');",
   // the way round ON DEMAND (2026-09-27): the held path split out of the tick, the bar's button, the row over a
   // contact, and the running plan amended round her - aisAroundTick calls aisAroundGo every minute, so the
   // bundle needs it or the automatic way round (14-14d) is a swallowed ReferenceError inside frame()
@@ -411,6 +414,9 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // a refusal the planner made is said in the operator's units (planWhy, 2026-10-03) - the page's own
+  "const { beyondChartSay } = require('../static/js/passage.js');",
+  grab("planWhy"),
   // the hold before a survey (3b): no split is aboard in this world, so every remainder takes the plan's own end
   "let pendingHold = null; const surveyStartIdx = () => -1;", grab("tailEndsAtHold"),
   grab("dropHeldSurvey"),

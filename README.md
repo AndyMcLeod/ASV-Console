@@ -2061,6 +2061,32 @@ of the operator.
    already holds it. A Go-To, a Return-to-Home and a drawn transit still read their one box, and a
    box too big is refused at once, as before. A new extract still drops every read.
 
+   **A route stays inside the water the chart was read over (2026-10-03).** The keep-out model
+   holds the features of one box, the extract's, and outside that box it holds nothing, which
+   every clearance test reads as open water. A Go-To, an RTH, a transit or an Upload reads the
+   chart over a box round the boat and the target (padded 300 m and joined to the operating
+   area), but the router's search can reach kilometers past the straight line between them. On
+   a fresh console, a Go-To from New Castle up the Piscataqua to Adams Point ran 429 m past its
+   box; replayed against the full chart, 21 of its 402 legs crossed land, rocks or water too
+   shallow. The planner now refuses any route that comes within 100 m of the box's edge, and the
+   command reads the chart over the route it was refused (padded 1 km) and plans again: up to
+   three reads, each over the water the last route used, with the banner saying which read it is
+   on. On that Go-To one read was enough, and the replanned route is clear on the full chart. Over
+   96 commands on his chart, the old code sent foul legs on 28 of them; no route the new code
+   sends has any, and none is more than 2% longer than a plan on the full chart. Go-To, RTH, a
+   drawn transit, Upload and Resume-from-here all read further this way. A read that fails (the
+   chart service offline, an extract missing a layer) leaves the model of the water already read
+   in place, and the command is refused, saying why. A wider read of the same chart keeps the
+   piers and floats the chart-image reads found earlier. A command whose own target lies past what
+   the console can read (the server extracts at most 1.5° on a side) is refused at once, without
+   planning, and the refusal names the extract it would take. A box that size used to be asked
+   for anyway: the server refused it, the refusal emptied the model, and the Go-To was planned
+   straight, unchecked, with the guard blind. The hold disc a command carries is kept inside the
+   water read, too. The transit estimate on the Lines card marks a route over water not yet read
+   as an estimate, not as unroutable. The automatic way round an AIS contact and the vessel's
+   re-approach to her hold do not read further: a way that runs past the chart is refused by
+   name, and she stays where she is.
+
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
@@ -2664,7 +2690,24 @@ path that ends in a working model), and that *"clear water"* and *"no chart at a
 of which look like zero keep-outs — never read as the same thing. The seabed's gaps are
 counted from the model (so a gap the structures toggle has switched off isn't claimed). A
 refused check warns, and an extract replaced by another fetch while the check waits is
-not the one the model is built from.
+not the one the model is built from. A box wider than the server will extract is not asked for, so the
+model of the water already read survives it, and an extract the server refused is named in
+the server's own words.
+
+```
+node tests/chart_box.js
+```
+
+**Chart box** — that a route is judged against the box the chart was read over (every point at
+least 100 m inside every edge) and refused when it is not, with no route left in the refusal
+for a caller to fly by mistake. On a miniature world, a wall of land the small extract only
+half holds, the router shown that half goes round the wrong end, through land it was never
+shown; the page's own loop reads the chart over that route and plans the right way round.
+It also checks that a read too wide for the server is never asked for, that a command whose
+own target cannot be read is refused without planning, that a read which fails leaves the model
+up, that the hold disc stays inside the water read, and that every command path plans through
+the loop and refuses before it draws or sends anything. (The Transit's, the Upload's and the
+end-of-plan RTH's refusals are driven in `command_result.js` and `pause_resume.js`.)
 
 ```
 node tests/skin_gaps.js

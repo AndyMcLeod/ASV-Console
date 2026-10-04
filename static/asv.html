@@ -985,7 +985,7 @@ import { coastLc, coastWorthIt, solveCoast, COAST_ARRIVE_MS, slowLaw, slowLeadM,
 import { easeOffered } from "/static/js/turns.js";
 import { MAX_HALF_M, SKEW_LIMIT_DEG, arcPts, cornerSlowPlan, minTurnRadiusM, shortenSeg,
          teardropTurn, turnWithRetry, joinBreaches, SPEED_CMD_LATENCY_S } from "/static/js/turns.js";
-import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, buoyageNote, channelLaneRoute,
+import { LANE_FRAC, SEG_LEN_M, beyondChart, beyondChartSay, buoyChannelLane, buoyageNote, channelLaneRoute,
          channelSpanKeepouts, channelTurnKeepouts, dilateGrid, gateLegClear,
          holdTarget, junctionKnot, legPath, narrowChannelLane, planNogoRoute, pruneJunctionKnots,
          pruneStitch, rasterKeepouts, regionOrder,
@@ -3363,8 +3363,12 @@ function tautRoundHer(fromLL, toLL, herRing, ko, std){
   if(!herRing || !herRing.ring || !herRing.ring.length || !nogo.frame || !ko || !fromLL || !toLL) return null;
   const Fr = nogo.frame, A0 = Fr.toEN(fromLL), B0 = Fr.toEN(toLL);
   if(blocked(B0, ko, nogo.buffer || 0)) return null;        // a target in a keep-out: the router refuses it by name
+  // A TAUT WAY PAST THE WATER THE CHART WAS READ OVER IS NOT ONE (2026-10-03, found by the review): it went straight to
+  // the amend, the one route on these paths beyondChart never saw. Null hands it to the router, which refuses it by name.
   const done = (viaEN) => { const via = viaEN.map(p => { const q = Fr.fromEN(p.e, p.n); return {lat: q.lat, lon: q.lon}; });
-    return {route: [...via, {lat: toLL.lat, lon: toLL.lon}], direct: !via.length, routed: via.length > 0, taut: true, standoffM: std}; };
+    const route = [...via, {lat: toLL.lat, lon: toLL.lon}];
+    if(beyondChart([{lat: fromLL.lat, lon: fromLL.lon}, ...route], nogo.bbox)) return null;
+    return {route, direct: !via.length, routed: via.length > 0, taut: true, standoffM: std}; };
   if(legClear(fromLL, toLL, Fr, ko, std)) return done([]);
   const need = std + 0.05;                                    // a hair over the standoff, so a leg along it certifies
   const r = need / Math.cos(Math.PI / 8);                     // octagons that CONTAIN the circle: no edge cuts inside `need`
@@ -7249,8 +7253,11 @@ function transitEstKey(boat, wps, home){
   // the boat's cell only re-keys past TRANSIT_REKEY_M of real motion (~50 m in lat/lon)
   const cell = boat ? Math.round(boat.lat*M_PER_DEG_LAT/TRANSIT_REKEY_M)+","+
                       Math.round(boat.lon*M_PER_DEG_LAT*Math.cos(boat.lat*Math.PI/180)/TRANSIT_REKEY_M) : "-";
+  // ... and the box the chart was read over (2026-10-03): a wider read can make a route that ran past it a route inside
+  // it, and the row must not go on saying "not yet read" until the boat has moved 50 m.
+  const bb = nogo.bbox ? [nogo.bbox.W, nogo.bbox.S, nogo.bbox.E, nogo.bbox.N].map(v => v.toFixed(5)).join(",") : "-";
   return [cell, w0.lat,w0.lon, wL.lat,wL.lon, home?home.lat+","+home.lon:"-",
-          nogo.ready, nogo.band, nogo.buffer, wps.length].join("|");
+          nogo.ready, nogo.band, nogo.buffer, wps.length, bb].join("|");
 }
 function transitEstCompute(boat, wps, home){
   // Pure of the DOM and of the cache: route the two legs and report honestly.
@@ -7259,16 +7266,21 @@ function transitEstCompute(boat, wps, home){
   //   null         an input is missing (no fix / no home / no plan)
   // No ensureNogoCovers here: a passive readout must not trigger chart extraction. The
   // command paths (Upload / RTH) still widen the extract before flying.
+  //   {m, uncharted}  a route that runs past the water the chart was read over (2026-10-03): the planner refuses it
+  //                   to a COMMAND, which reads the chart over it and plans again (planInsideChart) - so it is not an
+  //                   "unroutable" here, it is an estimate over water not yet read, and the row says so
   const out = {transit:null, rth:null};
   if(!wps || !wps.length) return out;
   if(boat){
     const p = planNogoRoute({lat:boat.lat,lon:boat.lon}, {lat:wps[0].lat,lon:wps[0].lon});
-    out.transit = p.error ? {err:p.error} : {m:routeLenM(boat, p.route), direct:!!p.degraded};
+    out.transit = p.uncharted ? {m:routeLenM(boat, p.uncharted.route), uncharted:true, outM:p.uncharted.outM}
+                : p.error ? {err:p.error} : {m:routeLenM(boat, p.route), direct:!!p.degraded};
   }
   if(home){
     const last = wps[wps.length-1];
     const q = planNogoRoute({lat:last.lat,lon:last.lon}, {lat:home.lat,lon:home.lon});
-    out.rth = q.error ? {err:q.error} : {m:routeLenM(last, q.route), direct:!!q.degraded};
+    out.rth = q.uncharted ? {m:routeLenM(last, q.uncharted.route), uncharted:true, outM:q.uncharted.outM}
+            : q.error ? {err:q.error} : {m:routeLenM(last, q.route), direct:!!q.degraded};
   }
   return out;
 }
@@ -7295,7 +7307,7 @@ function transitRowHtml(label, est, spd, spdKey, actualS){
   if(!est) txt = `<span style="color:var(--ink-faint)">--</span>`;
   else if(est.err) txt = `<span class="warn" style="color:#d9958f">unroutable — ${est.err}</span>`;
   else { const t = (spd>0) ? fmtMS(Math.round(est.m/spd)) : "--";
-    txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}</span>`; }
+    txt = `${t} <span style="color:var(--ink-faint)">${spdKey?"@ "+spdKey+" ":""}(${fmtDist(est.m)})${est.direct?" · direct — nogo not loaded":""}${est.uncharted?(est.outM > 0 ? " · part of it over water the chart is not yet read over" : " · it runs near the edge of the water the chart was read over")+" - the command reads it first":""}</span>`; }
   // ... and the ACTUAL beside it once the leg has been flown (the approach and the RTH are clocked in accumLineTime).
   const act = actualS > 0 ? ` <span style="color:#e8d9a0">· actual ${fmtMS(Math.round(actualS))}</span>` : "";
   return `<div style="margin-top:4px"><span style="color:var(--ink-faint)">${label}</span> ${txt}${act}</div>`;
@@ -9423,7 +9435,42 @@ let nogoPending = null;
 // resetForNewArea bounds ITS wait at, and for the same reason: /api/enc is fetched with no
 // timeout, so an extract that never returns must not take the console's planning with it.
 const NOGO_QUEUE_MAX_MS = 8000;
-async function refreshNogo(centerLL, bbox){     // extract ENC for the operating area + rebuild nogo
+// THE MOST THE SERVER EXTRACTS ON A SIDE - asv_console.py's ENC_MAX_SPAN_DEG, which refuses a wider box with a 400.
+// tests/chart_box.js reads both files and holds them equal.
+const ENC_MAX_SPAN_DEG = 1.5;
+/** Why the server would refuse to extract `b`, in words - or null when it would extract it. */
+function encSpanRefusal(b){
+  const w = Math.abs(b.E - b.W), h = Math.abs(b.N - b.S);
+  // ROUNDED UP, so a box just past the limit never reads "1.50°, and the console reads at most 1.5°" (4p).
+  const up = v => (Math.ceil(v * 100 - 1e-9) / 100).toFixed(2);
+  return (w > ENC_MAX_SPAN_DEG || h > ENC_MAX_SPAN_DEG)
+    ? "an extract of " + up(w) + "° × " + up(h) + "°, and the console reads at most "
+      + ENC_MAX_SPAN_DEG + "° on a side"
+    : null;
+}
+// `ask` (2026-10-03), what a caller that READS FURTHER for a plan asks of the extract:
+//   * `say` - the banner while it reads, when the caller has a better sentence than "the operating area" (the reading
+//     of the chart along a refused route took 53 s on the throwaway console that checked it, under a banner about the
+//     operating area);
+//   * `keep` - a read that FAILS leaves the model as it was: no band (offline, no coverage, a refusal), a throw, or an
+//     extract that arrived without some of its layers. Without it a failure sets `nogo.ready = false`, as it always
+//     has for the operating area's own read - and for a read asked only to plan a route further, that threw away the
+//     model of the water she was IN: the guard stood down, the automatic re-extract (which needs a model) never came,
+//     and the next command went out degraded and straight (found by the review: an offline NOAA did it);
+//   * `failed` - written here: why a `keep` read, or a box too big to ask for, did not land.
+async function refreshNogo(centerLL, bbox, ask){     // extract ENC for the operating area + rebuild nogo
+  // ⚠⚠ A BOX THE SERVER WILL REFUSE IS NOT ASKED FOR (2026-10-03). It answers 400, and the branch below that takes an
+  // answer with no band set `nogo.ready = false` - so a Go-To to a point 170 km off threw away the model of the water
+  // she was IN, and planned the leg straight, unchecked, with the guard blind. Since a route that runs past the box is
+  // refused (passage.js beyondChart) and the page reads the chart over it and plans again (planInsideChart), a wider
+  // read is now asked for routinely - and a read that cannot be had must leave the model it would have replaced.
+  // The caller's coverage test (ensureNogoCovers' last line) then answers false, and the plan is refused in words.
+  // (Only a box a caller hands in can be too big: the operating area's own is 10 km.)
+  if(ask) ask.failed = null;
+  const tooBig = bbox ? encSpanRefusal(bbox) : null;
+  if(tooBig){ if(ask) ask.failed = "it would take " + tooBig;
+              nogoStatus("Chart NOT read over that water: it would take " + tooBig
+                         + ". The model of the water already read is kept."); return; }
   // ⚠⚠ AN EXTRACT IN FLIGHT IS SOMETHING TO WAIT FOR, NOT A REASON TO REPORT "DONE". This
   // used to `return` at once, which left ensureNogoCovers / ensureNogoArea handing their
   // callers the PREVIOUS box's `nogo.ready` as coverage of water nobody had fetched. And
@@ -9453,16 +9500,25 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
   const ll = centerLL || (asv?{lat:asv.lat,lon:asv.lon}:(S.home||center));
   const b = bbox || bboxAround(ll, NOGO_RADIUS_M);
   nogo.busy=true; nogo.since=Date.now();         // `since` drives the row's elapsed counter
-  updateNogoUI(); nogoStatus("Extracting ENC nogo boundaries for the operating area…");
+  updateNogoUI(); nogoStatus((ask && ask.say) || "Extracting ENC nogo boundaries for the operating area…");
+  // A `keep` read that fails: the extract it replaced stands (fetchENCBbox has already written sea.enc - put back).
+  const keep = !!(ask && ask.keep), encWas = sea.enc;
+  const keptOn = (why) => { sea.enc = encWas; nogo.busy = false; ask.failed = why; updateNogoUI();
+    nogoStatus("Chart NOT read over that water: " + why + ". The model of the water already read is kept."); render(); };
   // CLAIMED ON THE LAST LINE BEFORE THE `try`, so it is claimed if and only if the `finally`
   // below will release it. A throw in updateNogoUI / nogoStatus already stranded `busy` at
   // true; it must not also strand a waiter on a promise nobody settles.
   let settle; nogoPending = new Promise(r => settle = r);
   try{
     const d = await fetchENCBbox(b, V.NOGO_MIN_DEPTH_M);
+    if(keep && (!d || !d.band)){ keptOn((d&&(d.note || d.error)) || "no ENC coverage / offline"); return; }
+    // ... and one that arrived WITHOUT SOME OF ITS LAYERS (the server serves such an extract once): a missing depth
+    // layer reads as deep water, and the extract it would replace covers the boat's own water whole.
+    if(keep && d.partial && d.partial.length){ keptOn("the extract arrived without " + d.partial.join(", ")); return; }
     if(!d || !d.band){
       nogo.ready=false; nogo.busy=false;
-      nogo.note = (d&&d.note) || "no ENC coverage / offline";
+      // The server's own refusal, when it gave one (a 400 or a 502 answers {error}), not a guess at it.
+      nogo.note = (d&&(d.note || d.error)) || "no ENC coverage / offline";
       updateNogoUI(); nogoStatus("Nogo: "+nogo.note+" — behaviors will route DIRECT (verify the plan manually).");
       render(); return;
     }
@@ -9484,11 +9540,20 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     // it was taken over; dropping the key here means the next plan re-reads rather than
     // carrying a previous area's findings into water they were never taken over.
     // ⚠ EVERY READ, since they are kept (2026-10-02): each was taken over THIS extract's explained mask.
+    // ⚠⚠ EXCEPT OVER A WIDER EXTRACT OF THE SAME CHART (2026-10-03). Every read lies inside the extract it was taken
+    // over, and an extract that CONTAINS that one at the same band holds the same features over every read's water (an
+    // intersects query returns whole features), so the reads stand. Dropping them was a regression the moment
+    // planInsideChart began widening the extract to read along a refused route: a float found earlier left the model
+    // the replan and the guard read, and the plan's own re-read was refused for size and could not bring it back
+    // (found by the review). Another area, or another band, still drops them all.
+    const wider = !!(nogo.bbox && bboxContains(b, nogo.bbox) && nogo.band === enc.band
+                     && encWas && encWas.minDepth === enc.minDepth);   // ... at the same floor the server tagged them at
     chartInk = {key:null, lines:[], areas:[], detached:[], note:null, z:null, ms:0, busy:false};
-    chartReads = []; inkRefused = null;
+    if(!wider){ chartReads = []; inkRefused = null; }
     nogo.features = feats;                              // shared feature snapshot (behaviors + survey build from this)
     nogo.skin = skin;
     nogo.band = enc.band; nogo.bbox = b; nogo.center = {lat:ll.lat, lon:ll.lon};
+    if(wider) refoldInk();                              // the kept reads, merged again before the model is built
     // CLEAR `busy` BEFORE rebuilding: rebuildNogo() ends with its own updateNogoUI(), so
     // painting the row while this was still true left it reading "loading…" forever on
     // the SUCCESS path - the one path that never repainted afterwards. The model was
@@ -9499,9 +9564,11 @@ async function refreshNogo(centerLL, bbox){     // extract ENC for the operating
     encShow=true; $("#chrtBtn").classList.add("on");
     nogoStatus("Nogo established ("+nogo.note+"). Go-To / RTH / search / survey all clip to these zones.");
     render();
-  }catch(e){ nogo.busy=false; nogo.ready=false;
-    nogo.note = "chart read failed: "+e;          // say WHY, don't leave the previous note standing
-    updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); }
+  }catch(e){
+    if(keep) keptOn("chart read failed: " + e);
+    else { nogo.busy=false; nogo.ready=false;
+      nogo.note = "chart read failed: "+e;          // say WHY, don't leave the previous note standing
+      updateNogoUI(); nogoStatus("Nogo extraction failed: "+e); } }
   // EVERY path releases the waiters - the early no-coverage return, the throw and the
   // success - because a FAILED extract must end a waiting Go-To in the ordinary refusal,
   // never in an await that never returns.
@@ -9640,11 +9707,14 @@ async function doGoTo(target){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, target]);   // model obstacles near a distant target
   showBanner("Routing to the point… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: patClipBufM()});
+  // Planned INSIDE THE WATER THE CHART WAS READ OVER: a route that runs past it is read over and planned again.
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, target], undefined,
+    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: patClipBufM()}), "Go-To");
   if(plan.error){
     setViolation(plan.reason);
-    const tip = (plan.reason && plan.reason.mode==="target")
-      ? "Pick a point nearer open water."
+    const mode = plan.reason && plan.reason.mode;
+    const tip = mode==="target" ? "Pick a point nearer open water."
+      : mode==="uncharted" ? unchartedTip(plan.uncharted, "Go-To a point part of the way there first.")
       : "Try a point on the near side of it, or lower the Buf m / relax the nogo enforce toggles.";
     showBanner("Go-To refused: "+plan.error+" — highlighted on the chart. "+tip);
     flashNote("Go-To refused: "+plan.error); render(); return;
@@ -9775,11 +9845,14 @@ async function doRTH(opts){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}]);
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
-  const plan = planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: patClipBufM()});
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], undefined,   // see doGoTo
+    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: patClipBufM()}), "RTH");
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
-    showBanner("RTH refused: "+plan.error+" — highlighted on the chart. Reposition Home to clear water, or relax the nogo (Buf m / enforce toggles).");
+    showBanner("RTH refused: "+plan.error+" — highlighted on the chart. "
+      + (plan.reason && plan.reason.mode==="uncharted" ? unchartedTip(plan.uncharted, "Go-To a point on the way home first, or set Home nearer.")
+                                                      : "Reposition Home to clear water, or relax the nogo (Buf m / enforce toggles)."));
     flashNote("RTH refused: "+plan.error); render(); return;
   }
   clearViolation();
@@ -9977,14 +10050,27 @@ async function doTransit(){
   await ensureNogoCovers([{lat:asv.lat,lon:asv.lon}, ...transit]);   // cover distant transit vertices
   // The LAST vertex is where the boat will hold, so it is a hold point like any other: a
   // vertex dropped in a keep-out is held OFF at the nearest clear water rather than refused.
-  const ht = holdTarget(transit[transit.length-1], holdOpts());
-  if(ht.error){
+  // Worked out INSIDE the plan below, so a wider read of the chart (planInsideChart) holds it on the model the route
+  // is judged by; a refusal of it ends the planning (null) and is said here.
+  let ht = null;
+  const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, ...transit], undefined, () => {
+    ht = holdTarget(transit[transit.length-1], holdOpts());
+    if(ht.error) return null;
+    const line = [...transit.slice(0,-1), ht.to];
+    return routePlan({lat:asv.lat,lon:asv.lon}, line, true, patClipBufM());   // pure transit: keep right (Rule 9), at the guard's standoff where the water allows
+  }, "Transit");
+  if(ht !== null && ht.error){        // (null: refused before any planning - its own points past the chart, below)
     setViolation(ht.reason); render();
     showBanner("Transit refused: "+ht.error+" — highlighted on the chart. Move the last point nearer open water.");
     flashNote("Transit refused: "+ht.error); return;
   }
-  const line = [...transit.slice(0,-1), ht.to];
-  const plan = routePlan({lat:asv.lat,lon:asv.lon}, line, true, patClipBufM());   // pure transit: keep right (Rule 9), at the guard's standoff where the water allows
+  // A route that still runs past the water the chart was read over is refused, drawn as nothing and sent nowhere.
+  if(plan.uncharted){
+    setViolation({mode:"uncharted", info:{kind:"water the chart was not read over"}, at:plan.uncharted.at, near:!(plan.uncharted.outM > 0)}); render();
+    showBanner("Transit refused: "+plan.uncharted.say+" — the spot is highlighted on the chart. "
+      + unchartedTip(plan.uncharted, "Transit to a point part of the way first, or edit the line."));
+    flashNote("Transit refused: "+plan.uncharted.say); return;
+  }
   plan.heldOff = ht.heldOff; plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear);   // + the contacts (2026-09-29)
   if(plan.unroutable && plan.unroutable.length){
     // Refuse to drive a transit that crosses a nogo zone with no clear detour.
@@ -10815,7 +10901,7 @@ function violationFromReason(reason){
     else if(info.type==="line") poly=info.pts.map(q=>fromEN(q.e,q.n,ref));
     else if(info.type==="point")pt=fromEN(info.pt.e,info.pt.n,ref);
   }
-  return {kind: info?info.kind:"a nogo zone", mode:reason.mode, closed:!!(info&&info.type==="poly"),
+  return {kind: info?info.kind:"a nogo zone", mode:reason.mode, near:!!reason.near, closed:!!(info&&info.type==="poly"),
           poly, pt, at:reason.at||reason.target||null};
 }
 function setViolations(reasons){
@@ -10854,7 +10940,8 @@ function drawViolation(toScreen){
       ctx.fillStyle="rgba(255,70,50,0.92)"; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="#160d02"; ctx.stroke();
       ctx.beginPath(); ctx.moveTo(s.x-3,s.y-3); ctx.lineTo(s.x+3,s.y+3); ctx.moveTo(s.x+3,s.y-3); ctx.lineTo(s.x-3,s.y+3);
       ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke();
-      const label=(V.mode==="target"?"target in ":"blocked by ")+V.kind;
+      const label=V.mode==="uncharted" ? (V.near ? "near the edge of the chart read" : "past the water the chart was read over")
+                                       : (V.mode==="target"?"target in ":"blocked by ")+V.kind;
       ctx.font="bold 11px Consolas,monospace"; const tw=ctx.measureText(label).width;
       ctx.fillStyle="rgba(20,10,4,0.85)"; ctx.fillRect(s.x+11, s.y-9, tw+8, 16);
       ctx.fillStyle="#ff8a5c"; ctx.fillText(label, s.x+15, s.y+3);
@@ -11278,12 +11365,128 @@ async function ensureNogoCovers(pts, padM, opts){
   if(nogo.ready && bboxContains(nogo.bbox, b)){ await readPlanInk(b, pad, pts, opts); return true; }
   const fb = nogo.bbox ? {W:Math.min(b.W,nogo.bbox.W), S:Math.min(b.S,nogo.bbox.S),
                           E:Math.max(b.E,nogo.bbox.E), N:Math.max(b.N,nogo.bbox.N)} : b;
-  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb);
+  await refreshNogo(asv?{lat:asv.lat,lon:asv.lon}:{lat:mid,lon:(b.W+b.E)/2}, fb, opts);   // `say` / `keep` / `failed`: see refreshNogo
   if(nogo.ready) await readPlanInk(b, pad, pts, opts);
   // ⚠ THE ANSWER IS ABOUT THIS PLAN'S WATER, not about whether a model exists at all.
   // `nogo.ready` on its own was TRUE while nogo.bbox was a box the TARGET sat outside of,
   // which is how a Go-To 9.8 km away was planned straight through a charted island.
   return nogo.ready && bboxContains(nogo.bbox, b);
+}
+// ⚠⚠ AND THE ROUTE STAYS INSIDE THE WATER THAT WAS READ (2026-10-03, found on the live check of the ENC-first Rule 9
+// lane). The box above holds the boat and the TARGET; the route between them is the router's, and its search reaches
+// 900 m to 8 km past the straight line, where the model holds nothing and reads as clear. A fresh console's Go-To from
+// New Castle up the Piscataqua ran 429 m past the box's north edge, and replayed on his full chart 21 of its 402 legs
+// were not clear (10 land, 7 shallow, 4 hazards). The planners now refuse a route that runs past the box (passage.js beyondChart:
+// `uncharted`), and this is the other half: read the chart over the route that was refused and plan again - each round
+// over the water the last route used, since the route the chart is read over may turn out to cross what the read finds.
+//
+// `pts` and `opts` are what the command's own ensureNogoCovers was asked (its boat and target, and an Upload's
+// `{plan: true}`): after a wider extract they are read again, because a new extract drops every chart-image read
+// (refreshNogo) and the wider box's own read may be refused for its size - the plan's own water must not lose the
+// structures its first read found. `plan` re-plans from scratch, so the hold point and the lane are worked out on the
+// model the route is judged by. `what` names the command in the banner.
+//
+// It returns the last plan. One still `uncharted` gains `uncharted.say`, the whole reason in words - and, from
+// planNogoRoute, `error` set to the same - so every caller refuses it in the operator's units and says why:
+//   * the read it would need is wider than the server extracts (encSpanRefusal) - never asked for, so the model of the
+//     water already read is kept;
+//   * the read failed (nogo.note says how);
+//   * CHART_WIDEN_ROUNDS reads and the route still ran past - a route still searching unread water after that is one to
+//     plan in shorter legs, not to keep chasing.
+//
+// ⚠ A NEW EXTRACT MOVES THE FRAME (rebuildNogo centers it on the features read), and the contacts' polygons are taken
+// in the frame of the last telemetry tick (aisKeepoutsNow) - so until the next tick they stand where they stood in the
+// OLD frame, and the hold disc the command carries (holdClearWithContacts) is measured against contacts tens of meters
+// to kilometers from where they are. This takes them again in the frame the plan is about to be made in, before every
+// plan: what the tick does, once more.
+//
+// ⚠⚠ AND THE COMMAND'S OWN POINTS COME FIRST. A route to a point the chart was not read over cannot stay inside the
+// read water, so it is refused before anything is planned: planning one is the router searching 100+ km of empty
+// model, measured at 15-31 s for a Go-To 1.5-2 degrees off - all of it on the page's one thread, the clearance guard's
+// included. Their water is read once more when that can be had (the caller's own read may have been queued out); when
+// it cannot - wider than the server extracts, or the read failed - the refusal says which. With no model at all
+// (`nogo.ready` false) nothing here is asked, and the planners' own degraded answer stands, as it always has.
+//
+// ⚠⚠ EVERY READ IT ASKS FOR IS A `keep` READ (refreshNogo): one that fails leaves the model as it was. Without that, an
+// offline NOAA turned a widening read into `nogo.ready = false` - the guard stood down over the plan she was running,
+// and the pre-check's refusal fell through to a DEGRADED, straight plan (found by the review; the suite's stand-in had
+// kept the model the real code dropped). The refusal names the failure from the read's own answer (`failed`).
+const CHART_WIDEN_ROUNDS = 3;
+// THE PAD ROUND A WIDENING READ, wider than ensureNogoCovers' own 300 m: a re-planned route that drifted only into the
+// 100 m margin of a 300 m pad needed a SECOND read (a second extract and a second route search) in all four such runs
+// of the review's fuzz on his chart, and with 1 km none did - the same routes, to the meter. The span check bounds it.
+const CHART_WIDEN_PAD_M = 1000;
+const bbUnion = (a, b) => a ? {W:Math.min(a.W,b.W), S:Math.min(a.S,b.S), E:Math.max(a.E,b.E), N:Math.max(a.N,b.N)} : b;
+/** Why a read was not asked for. Every read is JOINED to the water already read, so when that is what makes it too big
+ *  - the box `b` alone would read - it is said (the review: a 2.9 km Go-To refused for "an extract of 1.51 degrees"). */
+function sizeWhy(b, tooBig){
+  const span = bb => Math.abs(bb.E - bb.W).toFixed(2) + "° × " + Math.abs(bb.N - bb.S).toFixed(2) + "°";
+  return (encSpanRefusal(b) || !nogo.bbox) ? "reading the chart over it would take " + tooBig
+    : "reading the chart over it as well as the water already read (" + span(nogo.bbox) + ") would take " + tooBig;
+}
+/** What the operator can do about an uncharted refusal: a read that FAILED is not a distance (the review). */
+function unchartedTip(u, partWay){
+  return u && u.cause === "failed" ? "Command it again once the chart can be read there." : partWay;
+}
+/** A planner's refusal in the operator's units: a route past the chart read is said through fmtDist (the planner's own
+ *  words are meters), anything else as the planner said it. For the paths that plan without planInsideChart. */
+function planWhy(p){ return p && p.uncharted ? (p.uncharted.say || beyondChartSay(p.uncharted, fmtDist)) : (p && p.error); }
+async function planInsideChart(pts, opts, plan, what){
+  let own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox) : null;
+  if(own){
+    const ownBox = boxAround(pts, CHART_WIDEN_PAD_M);
+    const tooBig = encSpanRefusal(bbUnion(nogo.bbox, ownBox));
+    const ask = {...(opts || {}), keep: true};
+    if(!tooBig){
+      await ensureNogoCovers(pts, null, ask);
+      own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox) : null;
+    }
+    if(own){
+      // NOTHING WAS PLANNED, so it is the command's own point that is said, not a route (the review).
+      own.subject = what === "Upload" ? "the plan" : what === "Transit" ? "the transit" : what === "RTH" ? "home" : "the target";
+      const say = beyondChartSay(own, fmtDist) + " - " + (tooBig ? sizeWhy(ownBox, tooBig)
+                                                                 : "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")");
+      return {error: say, reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: own.at, near: !(own.outM > 0)},
+              uncharted: {...own, route: [], say, rounds: 0, cause: tooBig ? "size" : "failed"}};
+    }
+  }
+  aisKeepoutsNow();
+  let p = plan(), why = null, cause = null, round = 0;
+  while(p && p.uncharted){
+    // THE STALL WATCHDOG SPEAKS FIRST. The plan just made held the thread for seconds, and the watchdog says so on its
+    // next tick - which, live, landed over this read's own banner and stood there through the whole 65 s read (a bare
+    // turn here was not enough: it landed 100 ms after the read's banner on the next live run). One tick and a margin,
+    // and the read's words then replace it.
+    await new Promise(r => setTimeout(r, STALL_TICK_MS + 100));
+    if(round >= CHART_WIDEN_ROUNDS){
+      why = "it still did after the chart was read over the route " + CHART_WIDEN_ROUNDS + " times - plan it in shorter legs";
+      cause = "rounds"; break;
+    }
+    const want = [...pts, ...p.uncharted.pts];
+    const wantBox = boxAround(want, CHART_WIDEN_PAD_M);
+    const tooBig = encSpanRefusal(bbUnion(nogo.bbox, wantBox));
+    if(tooBig){ why = sizeWhy(wantBox, tooBig); cause = "size"; break; }
+    round++;                                            // counted as a READ: a refusal above reads nothing
+    // THE READ SAYS WHAT IT IS (refreshNogo's banner while it fetches - 53 s on the live check), and the planning after it
+    // says so too: the route search holds the page's thread for seconds, and the banner up then is the one they read.
+    const n = " (" + round + " of " + CHART_WIDEN_ROUNDS + ")…";
+    const ask = {say: what + ": the route ran past the water the chart was read over - reading the chart along it" + n, keep: true};
+    if(!await ensureNogoCovers(want, CHART_WIDEN_PAD_M, ask)){
+      why = "the chart could not be read over it (" + (ask.failed || nogo.note || "no extract") + ")";
+      cause = "failed"; break;
+    }
+    await ensureNogoCovers(pts, null, {...(opts || {}), keep: true});   // the plan's own water, read again if a new extract dropped it
+    showBanner(what + ": planning again over the chart read along the route" + n);
+    await new Promise(r=>setTimeout(r,50));             // the rebuild's paint, and this banner's, before the routing takes the thread
+    aisKeepoutsNow();                                   // the contacts, in the frame the new extract set
+    p = plan();
+  }
+  if(p && p.uncharted){
+    p.uncharted.say = beyondChartSay(p.uncharted, fmtDist) + (why ? " - " + why : "");
+    p.uncharted.rounds = round; p.uncharted.cause = cause;
+    if(p.error) p.error = p.uncharted.say;
+  } else if(round) takeDownBanner(/planning again over the chart read along the route/);
+  return p;
 }
 /**
  * Push `from` OUTWARD along the line, away from `toward`, by up to `want` meters of
@@ -13214,7 +13417,9 @@ async function reapproachIfSetOff(s, st){
                                {...holdOpts(), standoffM: patClipBufM(), ko: koWithAis() || nogo.ko});
     if(plan.error){
       setViolation(plan.reason);
-      showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and NO clear route back — holding where it is with the way off. "+plan.error);
+      showBanner("Set "+fmtDist(st.off_station_m||0)+" off station and "
+        + (plan.uncharted ? "the way back runs past the water the chart was read over" : "NO clear route back")
+        + " — holding where it is with the way off. "+planWhy(plan) + (plan.uncharted ? ". A Go-To or RTH reads the chart further." : ""));
       return;
     }
     const r = await cmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
@@ -14400,6 +14605,14 @@ async function doUpload(opts){
         + "have NOT been checked against the chart, and the clearance guard has no model to watch "
         + "the track with. Waiting until the NOGO row shows a zone count routes them properly.",
         {always: true})) return;
+    // ⚠ THE MODEL MAY HAVE LANDED WHILE THEY DECIDED (the confirm is unbounded; 2026-10-03, found by the review): routePlan
+    // below would then ROUTE - and judge the route against the chart box, and find legs it cannot route - while this
+    // branch sends whatever it returns and says nothing was checked. Asked again, the Upload takes the routed way.
+    if(nogo.ready){
+      showBanner("The chart model finished loading while Upload was waiting - NOTHING WAS UPLOADED. Press Upload again "
+        + "to route the plan against it.");
+      render(); return;
+    }
     const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM());          // degraded: the waypoints as they are
     // ⚠ THE WIDEST WINDOW ON THE PAGE IS THE `guiConfirm` ABOVE THIS LINE. It is unbounded
     // operator time, so the telemetry frame the Upload button's own gate was drawn from can
@@ -14473,11 +14686,23 @@ async function doUpload(opts){
   // Route the whole run path clear of ENC obstacles: the transit from the boat to
   // the first waypoint AND every leg between waypoints. Detours are inserted so the
   // ASV never crosses land / a nogo zone on a transit.
-  const plan = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM(), surveyEntries(wps));
+  // INSIDE THE WATER THE CHART WAS READ OVER (planInsideChart, 2026-10-03): a route that runs past it is read over and
+  // planned again, and the plan's own water - each survey's included ({plan: true}) - is read again after a wider extract.
+  const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true},
+    () => routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM(), surveyEntries(wps)), "Upload");
   // ⚠ AND THE LEG INTO EACH LATER SURVEY IS A TRANSIT (sequenced surveys phase 2, 2026-10-02): routed as the approach
   // is - at the guard's standoff where the water allows, keeping right in a buoyed channel (Rule 9, Andy's call) -
   // where it used to keep the buffer and its straight track like a hop inside a pattern. A one-survey plan has no
   // such leg and routes exactly as before. Its speed was already the transit speed (isReversalGap, phase 1).
+  // A ROUTE STILL PAST THE CHART READ IS REFUSED HERE, before anything is drawn or posted: the operator's plan stays as
+  // it was on the chart, and the spot where the route left the read water is highlighted.
+  if(plan.uncharted){
+    setViolation({mode:"uncharted", info:{kind:"water the chart was not read over"}, at:plan.uncharted.at, near:!(plan.uncharted.outM > 0)}); render();
+    showBanner("UPLOAD BLOCKED: "+plan.uncharted.say+" — the spot is highlighted on the chart. "
+      + unchartedTip(plan.uncharted, "Move the boat nearer the plan, or split the plan, then Upload again."));
+    flashNote("Upload blocked: "+plan.uncharted.say+".");
+    return;
+  }
   if(routeTooLong(plan.route.length)) return;         // the approach and the detours count too
   // ⚠⚠ NOTHING IS DRAWN UNTIL THE VESSEL HAS TAKEN IT. Two lines here used to install the
   // route, the Intent card, its generation and the unsafe legs SEVENTY LINES IN FRONT OF A
@@ -15103,11 +15328,23 @@ async function resumeFromHere(ll){
   const from = {lat: asv.lat, lon: asv.lon};
   showBanner("Routing to the point on line " + line + '…' + " a long way round obstacles can take several seconds.");
   await ensureNogoCovers([from, target]);
-  const pin = (her ? tautRoundHer(from, target, aisRoundKeepout(her, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
-           || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+  // ⚠ PLANNED ON THE MODEL THE READ LEFT, AND INSIDE THE WATER IT READ (2026-10-03, found by the review). `koIn` and
+  // `her` above were taken BEFORE that read: when it extracted, the way in was planned on the previous model while the
+  // planner judged it against the NEW box - so a route over land the old model never held passed as read. They are
+  // taken again inside the plan, after every read (planInsideChart takes the contacts again before each), and a way in
+  // that runs past the chart is read along and planned again like a Go-To's.
+  const pin = await planInsideChart([from, target], undefined, () => {
+    const ais = aisKoDrawn || [];
+    const her = !ais.length ? null : aisHerPoly(ais, null, {lat: asv.lat, lon: asv.lon}, hit.to, std);
+    const koIn = koRoundHer(ais, her, std);
+    return (her ? tautRoundHer(from, target, aisRoundKeepout(her, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
+        || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
+  }, "Resume from here");
   takeDownBanner(/^Routing to the point on line/);
   if(pin.error){
-    showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; pick a point nearer open water, or Go-To first.");
+    showBanner('⚠ CANNOT RESUME FROM THERE ' + '—' + " " + pin.error + ". She is still paused; "
+      + (pin.reason && pin.reason.mode === "uncharted" ? unchartedTip(pin.uncharted, "Go-To first - a Go-To reads the chart further.")
+                                                       : "pick a point nearer open water, or Go-To first."));
     render(); return;
   }
   // ⚠ A RELOCATED TARGET IS A DIFFERENT COMMAND (resumeHeldRun's rule): holdTarget MOVES a target that sits
@@ -15264,7 +15501,7 @@ async function aisAroundRunning(polys, q, why){
     const pin = (herQ ? tautRoundHer(from, target, aisRoundKeepout(herQ, std, nogo.buffer || 0), koIn, std) : null)   // taut round her first
              || planNogoRoute(from, target, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
-      showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (pin.error || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
+      showBanner('⚠ NO WAY ROUND ' + kind + ' — ' + (planWhy(pin) || heldOffWhy(pin.heldOff)) + '. Nothing was sent; the guard still watches.');
       return false;
     }
     // The router's route EXCLUDES the start and ENDS at the target, which is tail[0] already (resumeFromHere's
@@ -15577,7 +15814,7 @@ async function resumeHeldLeg(opts){
     const pin = (at && at.her ? tautRoundHer(from, tail[0], aisRoundKeepout(at.her, std, nogo.buffer || 0), koIn, std) : null)
              || planNogoRoute(from, tail[0], {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error || pin.heldOff){
-      showBanner("⚠ CANNOT RESUME THE " + NAME + " FROM HERE — " + (pin.error || heldOffWhy(pin.heldOff))
+      showBanner("⚠ CANNOT RESUME THE " + NAME + " FROM HERE — " + (planWhy(pin) || heldOffWhy(pin.heldOff))
         + ". She is still station-keeping and the " + name + " is still held; "
         + (aisAvoid || auto ? "ROUTE ROUND HER NOW tries again, and the console tries again itself in " + waitS + " s." : "re-command her."));
       render(); return;
@@ -15773,7 +16010,7 @@ async function resumeHeldRun(opts){
     const pin = (at && at.her ? tautRoundHer(backFrom, firstWp, aisRoundKeepout(at.her, stdIn, nogo.buffer || 0), koIn, stdIn) : null)
              || planNogoRoute(backFrom, firstWp, {...holdOpts(), standoffM: patClipBufM(), ko: koIn, flyThrough: true});
     if(pin.error){
-      showBanner("⚠ CANNOT RESUME FROM HERE - " + pin.error + ". The boat is still "
+      showBanner("⚠ CANNOT RESUME FROM HERE - " + planWhy(pin) + ". The boat is still "
         + "station-keeping and the remainder is still held; Go-To open water first, or Stop "
         + "and re-plan.");
       render(); return;

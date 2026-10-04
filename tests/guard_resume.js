@@ -403,6 +403,9 @@ eval([
   // sendSpeed is the one door a speed command reaches the wire by (2026-09-22).
   grab("took"), grab("sendSpeed"), grab("continueAtLow"), grab("resumeHeldSurvey"),
   grab("resumeHeldRun"),
+  // a refusal the planner made is said in the operator's units (planWhy, 2026-10-03) - the page's own
+  "const { beyondChartSay } = require('../static/js/passage.js');",
+  grab("planWhy"),
   // the hold before a survey (3b): no split is aboard in this world, so every remainder takes the plan's own end
   "let pendingHold = null, __svStart = -1; const surveyStartIdx = () => __svStart;", grab("tailEndsAtHold"),
   "function __setHold(p, i){ pendingHold = p; __svStart = i; }",

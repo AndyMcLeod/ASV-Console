@@ -909,7 +909,9 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
                 && /performance\.now\(\) - slice > INK_SLICE_MS\)\{ await inkYield\(\)/.test(scan)
                 && (scan.match(/await inkYield\(\)/g) || []).length >= 4
                 && /await scanChartInk\(bb\);\s*await inkYield\(\);/.test(ens)
-                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,300}?const plan = routePlan\(/.test(up),
+                // (the routing goes through planInsideChart since 2026-10-03 - read the chart over a route that runs
+                // past it and plan again - and the yield must still stand between the read and the FIRST routing)
+                && /await ensureNogoCovers\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], null, \{plan: true\}\);[\s\S]{0,400}?await inkYield\(\);[\s\S]{0,500}?const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\},\s*\(\) => routePlan\(/.test(up),
           "scanChartInk, ensureChartInk and doUpload in static/asv.html");
   }
 
@@ -1031,10 +1033,16 @@ check("20e. ... and a SMALL comb is not a footprint either — a keep-out area h
           w14e.reads().length === IR.INK_READS_MAX && w14e.reads()[0].bb === boxes[1],
           () => w14e.reads().length + " kept, the first is box " + boxes.indexOf(w14e.reads()[0].bb));
 
-    // 14f. A new extract drops every read: each was taken over the old one's explained mask.
+    // 14f. A new extract drops every read: each was taken over the old one's explained mask - UNLESS it is a WIDER
+    // extract of the same chart (2026-10-03): it contains the last one at the same band and floor, so it holds the same
+    // features over every read's water, and planInsideChart's widening reads must not take the floats found earlier
+    // out of the model (the review's finding). Driven through the real refreshNogo in tests/nogo_readout.js 28-28b.
     const rn = fnSrc("refreshNogo");
-    check("14f. a NEW EXTRACT drops every read, not only the merged view of them",
-          /chartInk = \{key:null, lines:\[\], areas:\[\], detached:\[\], note:null, z:null, ms:0, busy:false\};\s*chartReads = \[\]; inkRefused = null;/.test(rn),
+    check("14f. a NEW EXTRACT drops every read, not only the merged view of them - unless it is a wider extract of the "
+          + "same chart, which keeps them and merges them back",
+          /const wider = !!\(nogo\.bbox && bboxContains\(b, nogo\.bbox\) && nogo\.band === enc\.band\s*&& encWas && encWas\.minDepth === enc\.minDepth\);/.test(rn)
+          && /chartInk = \{key:null, lines:\[\], areas:\[\], detached:\[\], note:null, z:null, ms:0, busy:false\};\s*if\(!wider\)\{ chartReads = \[\]; inkRefused = null; \}/.test(rn)
+          && /if\(wider\) refoldInk\(\);[^\n]*\n[\s\S]{0,700}?rebuildNogo\(\);/.test(rn),
           "refreshNogo in static/asv.html");
   }
 

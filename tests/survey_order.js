@@ -254,7 +254,9 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
       // (3b: and cut at the first held survey's start - splitAtHold; the rest goes on Continue)
       () => /const wpsAll = fromSv \? waypointsFrom\(mission, fromSv\) : mission\.waypoints \|\| \[\];/.test(upload)
             && /const wps = hold \? hold\.part : wpsAll;/.test(upload)
-            && /const plan = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\), surveyEntries\(wps\)\);/.test(upload)   // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02)
+            // at the guard's standoff (2026-09-26); each later survey's approach (2026-10-02); inside the water the chart
+            // was read over, read again and re-planned when the route runs past it (planInsideChart, 2026-10-03)
+            && /const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\},\s*\(\) => routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\), surveyEntries\(wps\)\), "Upload"\);/.test(upload)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
             && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, transit \? want : buf\)/.test(routePlan)
             && /const transit = keepRightAll \|\| i===0 \|\| !!\(transitAt && transitAt\.has\(i\)\);/.test(routePlan)

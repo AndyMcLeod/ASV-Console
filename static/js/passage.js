@@ -52,7 +52,7 @@
 // The core takes the returned form, and `channelLaneRoute` below MIRRORS it back into
 // `sea.*` so anything inspecting that state still sees the truth. The side-channel is gone
 // from the producers; the fields are now a report, not a channel.
-import { azTo, distTo, llEN } from "./geodesy.js";
+import { M_PER_DEG_LAT, azTo, distTo, llEN } from "./geodesy.js";
 import { V, nogo, sea } from "./state.js";
 import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
 // Where a boat is asked to hold, and how much water it has there (the hold DISC).
@@ -323,7 +323,7 @@ export function holdTarget(to, opts){
     const en0 = llEN(to.lat,to.lon,ref);
     const bi0 = blockedInfo(en0, ko, buf);
     if(bi0) return {error:"the target sits in "+bi0.kind, reason:{mode:"target", info:bi0, at:to}};
-    return {to:{lat:to.lat,lon:to.lon}, heldOff:null, need:null, holdClear: holdClearM(en0, ko, buf)};
+    return {to:{lat:to.lat,lon:to.lon}, heldOff:null, need:null, holdClear: discInChart(holdClearM(en0, ko, buf), to, buf)};
   }
   const holdR = Math.max(HOLD_RADIUS_MIN_M, (opts && opts.holdR) || 0);
   // THE MARGIN IS THE ENVIRONMENT'S. A hold point must hold the boat for as long as the
@@ -378,11 +378,77 @@ export function holdTarget(to, opts){
     }
   }
   return {to:{lat:to.lat,lon:to.lon}, heldOff, need,
-          holdClear: holdClearM(llEN(to.lat,to.lon,ref), ko, buf)};
+          holdClear: discInChart(holdClearM(llEN(to.lat,to.lon,ref), ko, buf), to, buf)};
+}
+// ⚠ THE HOLD DISC STAYS INSIDE THE WATER THE CHART WAS READ OVER TOO (2026-10-03, found by the review). `holdClearM`
+// measures out to 500 m, and past the box edge the model is empty, so a target 300 m inside the box (ensureNogoCovers'
+// pad) with a breakwater 350 m off, outside the extract, shipped a 497 m disc - inside which the vessel drives a
+// STRAIGHT chord back - where the true clear water was 347 m. Capped at the point's distance to the box edge, less the
+// buffer, so the disc and the boat in it lie wholly in read water. Every disc after this one is capped by it: the
+// contacts' (holdClearWithContacts) take the smaller, and the re-certification never grows past the disc the hold began with.
+function discInChart(m, ll, buf){
+  if(m == null || !nogo.bbox) return m;
+  return Math.max(0, Math.min(m, insideBoxM(ll, nogo.bbox) - (buf || 0)));
+}
+// ⚠⚠ A ROUTE RUNS ONLY OVER WATER THE CHART WAS READ OVER (2026-10-03, found on the live check of the ENC-first
+// Rule 9 lane). The keep-out model holds the features of ONE box - `nogo.bbox`, the extract's own - and OUTSIDE it the
+// model holds NOTHING, which every test here reads as clear water rather than as unknown. A command reads the chart
+// over a box round the boat and the target, padded 300 m and joined to the operating area (ensureNogoCovers); the
+// router's search reaches 900 m to 8 km past the straight line between them. So a route could leave the box and be
+// certified clear over water nobody read: a fresh console's Go-To from New Castle up the Piscataqua ran 429 m past the
+// box's north edge, and replayed on his full chart 21 of its 402 legs were not clear - 10 over land, 7 over water
+// shallower than the floor, 4 through charted hazards. His own
+// console flew the same Go-To clear only because an earlier command had already widened its box past them.
+//
+// So the planners REFUSE such a route rather than return it: planNogoRoute as an error, mode "uncharted"; routePlan as
+// `uncharted` beside the route, which its two callers (the page's doTransit and doUpload) refuse on. The page then
+// reads the chart over the route it was refused and plans again (planInsideChart in asv.html). A planner given no box
+// - the suites' own worlds - is not asked: it has nothing to judge the route against.
+//
+// CHART_EDGE_M IS HOW FAR INSIDE THE BOX EDGE THE ROUTE MUST STAY. The extract holds every feature that reaches into
+// the box, so a route point this far inside is judged against everything within this distance of it - well past the
+// guard's standoff (19.5 m at 1.75 kn of set) and the leg's own buffer, with room for the boat to be off her track.
+// A box is convex, so a route whose every point is inside it has every leg inside it too.
+export const CHART_EDGE_M = 100;
+/**
+ * Where `pts` (a route, its start first) runs past the water the chart was read over: null when every point stands
+ * at least `edgeM` inside `box`, else {at, outM, edgeM, pts} - where it LEAVES the box (its first point beyond it), or,
+ * when it never does, its first point inside the margin; the farthest any point stands BEYOND the box itself (0 when
+ * the route only reaches into the margin); the margin; and every point of the route: the water a wider read must
+ * cover. Meters by the same flat degree ensureNogoCovers pads its box with.
+ */
+/** How far `p` stands inside `box`, in meters to its nearest edge (negative outside). */
+export function insideBoxM(p, box){
+  const k = M_PER_DEG_LAT * Math.cos(p.lat * Math.PI / 180);
+  return Math.min((p.lat - box.S) * M_PER_DEG_LAT, (box.N - p.lat) * M_PER_DEG_LAT,
+                  (p.lon - box.W) * k, (box.E - p.lon) * k);
+}
+export function beyondChart(pts, box, edgeM = CHART_EDGE_M){
+  if(!box || !pts || !pts.length) return null;
+  let near = null, out = null, outM = 0;
+  for(const p of pts){
+    const inside = insideBoxM(p, box);
+    if(!(inside >= edgeM)){
+      if(!near) near = {lat: p.lat, lon: p.lon};
+      if(!out && inside < 0) out = {lat: p.lat, lon: p.lon};
+      if(-inside > outM) outM = -inside;
+    }
+  }
+  return near ? {at: out || near, outM, edgeM, pts: pts.map(p => ({lat: p.lat, lon: p.lon}))} : null;
+}
+/** What `beyondChart` found, in words; `fmt` formats meters (the page passes its own km / NM-aware fmtDist). `u.subject`
+ *  names something other than a route ("the target" - a command refused before any route was planned). */
+export function beyondChartSay(u, fmt){
+  const f = fmt || (m => Math.round(m) + " m");
+  const said = u.subject ? u.subject + " lies " : "the route runs ";
+  return u.outM > 0 ? said + f(u.outM) + " beyond the water the chart was read over"
+                    : said + "within " + f(u.edgeM) + " of the edge of the water the chart was read over";
 }
 // Plan an ENC-aware path from -> to ending at `to` - or at the nearest clear water to
 // `to` when it sits in a keep-out (see holdTarget). {route} on success, {error} when no
 // clear route exists (refuse + warn). Keeps to the starboard side of channels (Rule 9).
+// A route that runs past the water the chart was read over is refused too - `uncharted`
+// carries it, its route included, for the page to read the chart over and plan again.
 export function planNogoRoute(from, to, opts){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
   const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
@@ -421,7 +487,13 @@ export function planNogoRoute(from, to, opts){
   // after the Upload path, which never pruned, shipped a splice-seam knot to the boat)
   // `lane` travels WITH the plan. A refusal above returns before this point and so carries
   // no lane at all, which is the honest answer: there is no route to describe.
-  return {route: kr.route.slice(1), direct: !routed, routed, lane: kr.lane, partial: kr.partial,
+  const route = kr.route.slice(1);
+  // THE ROUTE AS FLOWN, judged against the box the chart was read over (beyondChart, above) - after the lane pass,
+  // because that is the route the boat is sent. Refused with no `route`, so a caller that reads only `error` cannot fly it.
+  const out = beyondChart([{lat: from.lat, lon: from.lon}, ...route], nogo.bbox);
+  if(out) return {error: beyondChartSay(out), uncharted: {...out, route},
+                  reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: out.at, near: !(out.outM > 0)}};
+  return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
           heldOff, holdClear, insideStandoff, standoffM: want};
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
@@ -499,5 +571,9 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   });
   // A plan is only fully laned if EVERY laned leg was: one partial leg makes the plan
   // partial, the same way one laned leg makes it laned.
-  return {route: out, unroutable, lane, partial, insideStandoff, standoffM: want};
+  // ⚠ AND THE WHOLE ROUTE IS JUDGED AGAINST THE BOX THE CHART WAS READ OVER (beyondChart): every leg, the survey's own
+  // included, since a survey line over water nobody read is no more checked than a transit over it. `uncharted` is null
+  // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
+  const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox);
+  return {route: out, unroutable, lane, partial, insideStandoff, standoffM: want, uncharted};
 }

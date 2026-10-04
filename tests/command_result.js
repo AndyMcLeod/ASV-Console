@@ -285,7 +285,8 @@ const PRELUDE = [
   "const distTo = (a, b) => Math.hypot((b.lat - a.lat) * 111320, (b.lon - a.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));",
   "const legReasons = (u) => u.map(() => ({kind:'land'}));",
   "const kindsSummary = () => 'land';",
-  "const setViolation = () => {}; const setViolations = () => { out.violations++; };",
+  // setViolation RECORDS what it was handed (2026-10-03): an uncharted refusal must mark the spot, mode and all (51-52)
+  "const setViolation = (r) => { out.violation = r || null; }; const setViolations = () => { out.violations++; };",
   "const clearViolation = () => {}; const render = () => { out.renders++; };",
   "const setMode = () => {};",
 ].join("\n");
@@ -323,9 +324,10 @@ function bannerEl() {
   return { style: { display: "none" }, textContent: "" };
 }
 
+const IR = require("../static/js/inkreads.js"), PS = require("../static/js/passage.js");
 function world(opts) {
   const o = opts || {};
-  const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0,
+  const out = { notes: [], recorded: [], renders: 0, card: 0, violations: 0, violation: null,
                 posts: [], bodies: [], banner: bannerEl(), aborts: 0, resumed: 0 };
   // THE FETCH, not the command. `reply` decides what the console answers.
   const fetchStub = (url, init) => {
@@ -390,6 +392,7 @@ function world(opts) {
       json: async () => ({ ok: true, state: { behavior: "rth", note: "Return-to-Home." } }) });
   };
   const W = { out, supervising: o.viewOnly ? false : true, fetch: fetchStub, holdClearAt: o.holdClearAt || null,
+              nogo: o.nogo || null, boxAround: IR.boxAround, beyondChart: PS.beyondChart, beyondChartSay: PS.beyondChartSay,
               transit: o.transit || [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }],
               S: { home: { lat: 43.0, lon: -70.5 }, note: "" },
               asv: o.noFix ? null : { lat: 43.02, lon: -70.48 },
@@ -432,6 +435,21 @@ function world(opts) {
                            + grab("routeSayWhy") + "\n"
                            // the disc a planned hold ships with - the page's own, reading the holdClearAt above
                            + grab("holdClearWithContacts") + "\n"
+                           // GO-TO, RTH AND THE TRANSIT PLAN THROUGH planInsideChart (2026-10-03) - the page's own:
+                           // this world's plans never run past the chart, so it hands each straight back, and the
+                           // reading-and-replanning it does when one does is tests/chart_box.js's subject.
+                           + grabDecl("CHART_WIDEN_ROUNDS") + "\n" + grabDecl("CHART_WIDEN_PAD_M") + "\n"
+                           + 'const aisKeepoutsNow = () => [];' + "\n"
+                           // its first question - are the command's own points inside the box the chart was read
+                           // over? - needs a model; this one has no box, so nothing is judged (as with no extract)
+                           + 'const nogo = W.nogo || {ready: true, bbox: null};' + "\n"
+                           // ... and when a plan runs past the box it reads further and words the refusal: the
+                           // page's own helpers, the real boxAround / beyondChart / beyondChartSay (handed in W: a
+                           // new Function cannot require), so 51-53 drive the refusals rather than pin their text
+                           + 'const boxAround = W.boxAround, beyondChart = W.beyondChart, beyondChartSay = W.beyondChartSay;' + "\n"
+                           + grabDecl("STALL_TICK_MS") + "\n" + grabDecl("ENC_MAX_SPAN_DEG") + "\n" + grab("encSpanRefusal") + "\n" + grabDecl("bbUnion") + "\n"
+                           + grab("sizeWhy") + "\n" + grab("unchartedTip") + "\n" + grab("planWhy") + "\n"
+                           + grab("planInsideChart") + "\n"
                            + grab("doRTH") + "\n" + grab("doGoTo") + "\n" + grab("doTransit")
                            + EPILOGUE)(W, setTimeout, clearTimeout, AbortController);
   W.api = api;              // so a fetch stub can act INSIDE the bundle mid-round-trip
@@ -1550,6 +1568,58 @@ function codeOnlyH(){ return H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/
           + "; 2 drawn vs 40 aboard -> " + (whenDisagree ? "MEASURED ANYWAY" : "refused")
           + ". indexedRoute lets the drawn route past on its early return, which is the "
           + "half that was never applied");
+}
+
+console.log("\n-- 51-53: a route past the water the chart was read over is refused, and nothing goes out --");
+
+// 51-53 (2026-10-03, the chart box; the review found these refusals pinned by TEXT only - drop a `return` and an
+// uncharted route was drawn and sent with every suite green). The planners refuse a route that runs past the box the
+// chart was read over; planInsideChart reads further and plans again; a plan STILL past is refused by its command.
+// Here the planner's answer stays past whatever is read (W.plan carries `uncharted` every round), so the loop reads
+// its CHART_WIDEN_ROUNDS times and the command must refuse: no post, nothing drawn, the spot marked, the reason said.
+const PAST = () => ({ route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }], holdClear: 12, unroutable: [],
+                      routed: true, lane: null, partial: false, heldOff: null,
+                      error: "the route runs 429 m beyond the water the chart was read over",
+                      reason: { mode: "uncharted", info: { kind: "water the chart was not read over" }, at: { lat: 43.01, lon: -70.49 } },
+                      uncharted: { at: { lat: 43.01, lon: -70.49 }, outM: 429, edgeM: 100,
+                                   pts: [{ lat: 43.02, lon: -70.48 }, { lat: 43.01, lon: -70.49 }],
+                                   route: [{ lat: 43.0, lon: -70.5 }, { lat: 43.01, lon: -70.49 }] } });
+{
+  const w = world({ plan: PAST() });
+  let threw = null;
+  try { await w.doTransit(); } catch (e) { threw = e; }
+  const a = w.after();
+  check("51. a Transit whose route STILL runs past the chart after the reads is refused: nothing posted, nothing drawn, "
+        + "the spot marked as uncharted, and the banner says why and what to do",
+        !threw && w.out.posts.length === 0 && a.runRoute === null && a.planIntent === null
+        && w.out.violation && w.out.violation.mode === "uncharted" && w.out.violation.near === false
+        && /^Transit refused: the route runs 429 m beyond the water the chart was read over - it still did after the chart was read over the route 3 times - plan it in shorter legs — the spot is highlighted on the chart\. Transit to a point part of the way first, or edit the line\.$/.test(w.banner()),
+        (threw ? "THREW " + threw.message + "; " : "") + w.out.posts.length + " post(s); violation "
+          + JSON.stringify(w.out.violation && { mode: w.out.violation.mode, near: w.out.violation.near })
+          + "; banner: " + w.banner());
+}
+{
+  // its OWN points past the box (the read box elsewhere): refused before anything is planned - and the hold point,
+  // worked out inside the plan, was never worked out at all (ht stays null), which must not throw
+  const w = world({ nogo: { ready: true, bbox: { W: -70.60, S: 42.90, E: -70.55, N: 42.95 }, note: "ENC offline (no cache for this area)" } });
+  let threw = null;
+  try { await w.doTransit(); } catch (e) { threw = e; }
+  check("52. a Transit whose own points lie past the chart, unread, is refused before any planning - no hold point was "
+        + "worked out, and that does not throw - with nothing posted",
+        !threw && w.out.posts.length === 0 && w.after().runRoute === null
+        && /^Transit refused: the transit lies \d+ m beyond the water the chart was read over - the chart could not be read over it \(ENC offline \(no cache for this area\)\) — the spot is highlighted on the chart\. Command it again once the chart can be read there\.$/.test(w.banner()),
+        (threw ? "THREW " + threw.message + "; " : "") + w.out.posts.length + " post(s); banner: " + w.banner());
+}
+{
+  const w = world({ plan: PAST() });
+  await w.doRTH({ chained: true });
+  const a = w.after();
+  check("53. the END-OF-PLAN RTH refused because its route runs past the chart retracts the promise of a return home "
+        + "(rthChainFailed) and posts nothing",
+        w.out.posts.length === 0 && a.rthChainFailed === true && a.runRoute === null
+        && w.out.violation && w.out.violation.mode === "uncharted"
+        && /^RTH refused: the route runs 429 m beyond the water the chart was read over - it still did after the chart was read over the route 3 times - plan it in shorter legs — highlighted on the chart\. Go-To a point on the way home first, or set Home nearer\.$/.test(w.banner()),
+        w.out.posts.length + " post(s), chain retracted " + a.rthChainFailed + "; banner: " + w.banner());
 }
 
 finished = true;
