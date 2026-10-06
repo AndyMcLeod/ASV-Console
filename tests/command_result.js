@@ -418,6 +418,9 @@ function world(opts) {
                            // the standoff RTH / Go-To route at (2026-09-26): the guard's own seam number
                            // (this world has neither require nor nogo: the standoff IS the buffer here, 2026-09-26)
                            + 'const patClipBufM = () => 0;' + "\n"
+                           // ... and the TRANSIT standoff Go-To / RTH / Transit hand the router since 2026-10-06 (the
+                           // turn radius at the plan speed): this world has no vessel speed either, so it is the buffer too
+                           + 'const transitStandoffM = () => 0;' + "\n"
                            + grabDecl("SPEED_RESEND_MS") + "\n"
                            + grab("speedReconcile") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"

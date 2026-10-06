@@ -619,6 +619,58 @@ check("25. the deviation says what it did, in words, on the banner and the Inten
       },
       "a boat that is not where the plan says must say so, and why");
 
+// ── 28. A TARGET ALREADY REACHED IS CONSUMED BEFORE THE FIRST STEP (2026-10-06) ─────────────
+// Andy's Go-To at Little Bay, 10:25:04: 13.6 kn down a straight route of 65 m legs, 0.6 m short of waypoint 130 with
+// the vessel's index still on it (it advances by its own two tests once a tick, reported once a second), a charted
+// rock of unknown extent - a 50 m disc - 30 m abeam to starboard. The projection's first step carried the model boat
+// 3.5 m past the waypoint, the along-track test from HER OWN position then read negative, turnToward swung her back
+// toward a point astern, and the loop entered the disc in 5 s: HOLD, on a route that cleared the rock by 26 m. The
+// same geometry here, in the model's frame: north-going legs, the rock at (74, 31) r 50 (its edge 30 m off her bow),
+// the stale target 0.6 m astern and a hair to starboard, so the swing is to starboard - toward the rock.
+{
+  const ROCK = { polys: [], lines: [], points: [{ e: 74, n: 31, r: 50, kind: "a charted hazard" }], marks: [] };
+  const legs = (from, k) => { const r = []; for (let i = 0; i < k; i++) r.push({ e: 0.1, n: from + 65 * i }); return r; };
+  const AT = { e: 0, n: 0.6 }, TW = KN(13.6), OPTS = { turnRateDegS: 20, approachM: 1 };
+  const stale = G.projectRoute(AT, 0, TW, SLACK, legs(0, 5), ROCK, BUF, OPTS);            // the target 0.6 m astern
+  const fresh = G.projectRoute(AT, 0, TW, SLACK, legs(65, 4), ROCK, BUF, OPTS);           // the vessel's next index
+  // ⚠ THE PAIRED REFUSAL: with the approach radius shrunk under the 0.6 m, the first target is NOT reached by the
+  // vessel's rule, the walk steers back to it, and the loop enters the rock - the shipped reading, reproduced.
+  const loop = G.projectRoute(AT, 0, TW, SLACK, legs(0, 5), ROCK, BUF, { turnRateDegS: 20, approachM: 0.3 });
+  check("28. a first target inside the approach radius is consumed before the first step: the index a frame late " +
+        "reads the same as the vessel's next one - CLEAR down the route - instead of a loop astern into the rock",
+        () => stale === null && fresh === null && !!loop && loop.t > 0 && loop.t < 8,
+        "stale index -> " + (stale ? "entry in " + stale.t + " s" : "clear") + "; next index -> "
+            + (fresh ? "entry in " + fresh.t + " s" : "clear") + "; the same with the target outside a 0.3 m approach -> "
+            + (loop ? "entry in " + loop.t.toFixed(1) + " s at " + loop.at.e.toFixed(0) + "," + loop.at.n.toFixed(0) : "clear")
+            + " (the shipped projection: entry in 5 s, the guard held her)");
+  // ⚠ AND THE ALONG-TRACK HALF OF THE VESSEL'S RULE NEEDS THE WAYPOINT SHE WAS STEERED FROM. At 7 m/s a frame can put
+  // her up to 7 m past the waypoint her index still names; that is outside the approach radius, and from her own
+  // position along-track reads 0. `opts.prev` is that waypoint - guardTrack hands it over - and with it the target
+  // four meters astern is read as passed exactly as the vessel reads it.
+  const AT4 = { e: 0, n: 4 };
+  const noPrev = G.projectRoute(AT4, 0, TW, SLACK, legs(0, 5), ROCK, BUF, OPTS);
+  const withPrev = G.projectRoute(AT4, 0, TW, SLACK, legs(0, 5), ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
+  const notYet = G.projectRoute({ e: 0, n: -3 }, 0, TW, SLACK, legs(0, 5), ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
+  check("28b. ... and a target astern beyond the approach radius is read as passed only by the along-track rule from " +
+        "the waypoint she was steered from (opts.prev): without it the loop, with it the route; a target 3 m AHEAD on " +
+        "that leg is not yet reached and the walk still steers to it",
+        () => !!noPrev && noPrev.t > 0 && withPrev === null && notYet === null,
+        "4 m past it, no prev -> " + (noPrev ? "entry in " + noPrev.t.toFixed(1) + " s" : "clear")
+            + "; with prev -> " + (withPrev ? "entry in " + withPrev.t.toFixed(1) + " s" : "clear")
+            + "; 3 m short of it with prev -> " + (notYet ? "entry in " + notYet.t.toFixed(1) + " s" : "clear"));
+  // ⚠ AND A ROUTE EVERY WAYPOINT OF WHICH IS ALREADY REACHED HAS ENDED. The commanded motion is over and she
+  // station-keeps - the hold point's question, which hold.js certifies - so the walk ends CLEAR, as it does when the
+  // route runs out mid-walk. The mutation that answered it with a hit at t = 0 ("we are in it") survived the first
+  // sweep: it would raise the hold or the helm on a boat sitting at her own destination.
+  const over = G.projectRoute({ e: 0, n: 0.5 }, 0, TW, SLACK, [{ e: 0.1, n: 0 }], ROCK, BUF, OPTS);
+  const overPrev = G.projectRoute({ e: 0, n: 4 }, 0, TW, SLACK, [{ e: 0.1, n: 0 }], ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
+  check("28c. a route whose every waypoint is already reached ends CLEAR before the first step - the motion is over, " +
+        "and the hold point's water is hold.js's question, not an entry at t = 0",
+        () => over === null && overPrev === null,
+        "last waypoint 0.5 m astern -> " + (over ? "entry in " + over.t + " s" : "clear")
+            + "; 4 m astern with prev -> " + (overPrev ? "entry in " + overPrev.t + " s" : "clear"));
+}
+
 console.log("");
 console.log(fails ? (fails + " CHECK(S) FAILED of " + ran) : ("all " + ran + " checks pass"));
 process.exit(fails ? 1 : 0);

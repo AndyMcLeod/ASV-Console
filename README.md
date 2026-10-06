@@ -1602,6 +1602,28 @@ of the operator.
    purpose only ever commands a **speed**, is permitted the helm at this one rung — and why
    it is not permitted it anywhere else.
 
+   **What the look-ahead walks, and from where (2026-10-06).** On a plan the projection
+   does not fly a straight line: it walks the boat down the route the vessel is steering,
+   from the waypoint the vessel reports it is steering toward, swinging the bow at the
+   hull's turn rate and advancing waypoints by the vessel's own two tests (inside the
+   approach radius, or past it along the leg). Two things about that index had to be
+   learned on the water. The vessel reports it once a second and advances it once a tick,
+   so between two frames it can still name a waypoint she is at, or a few meters past; the
+   walk used to ask the two tests only *after* its first step, from her own position, so
+   a waypoint 0.6 m astern read as not yet reached, the bow was swung back toward it, and
+   the model boat flew a loop astern — into a charted rock's 50 m disc 30 m abeam, on a
+   Go-To whose route cleared that rock by 26 m: a HOLD at 13.6 kn, and a 4 s slow-down on
+   the Return-to-Home through the same water. Now the first target is judged by the same
+   two tests before the first step, measured from the waypoint she was steered *from*,
+   which the page hands over with the route. And a plan's index belongs to its plan: when
+   a new Go-To, Return-to-Home or transit is taken by the vessel, its reply frame carries
+   the new plan's index before the page has swapped the drawn route, and the console once
+   sliced the old 106-point route at the new plan's index 0 — a waypoint 130 m astern — and
+   held her 80 ms after the vessel had taken the new plan, which the hold then replaced.
+   Every state frame says how many waypoints the plan it is counting into has; a route of
+   any other length is not projected, and the straight projection stands in for the frame
+   or two until the handler lands.
+
    **⚠ "Would not answer it" is a test about danger, and until 2026-09-19 it was a test
    about reach.** The top rung fired on the mere *existence* of a drift-only entry anywhere
    inside the 45 s look-ahead, with no margin and no dwell — so its trigger distance was
@@ -1685,8 +1707,22 @@ of the operator.
    set, and that is the helm rung's band. The approach, a Go-To, RTH, the transit line and
    the punch's own hops are now routed at the guard's standoff where the water allows it and
    at the buffer only where it does not — counted and said on the card and in the banner
-   ("N transit leg(s) run inside the guard's 19.5 m standoff — expect the guard to slow or
-   hold her there"), so a hug is a stated decision rather than a surprise. The legs between a
+   ("N transit leg(s) run inside the 19.5 m transit standoff — expect the guard to slow or
+   hold her there"), so a hug is a stated decision rather than a surprise. **And since
+   6 October 2026 a transit's standoff is also the water she needs to turn away at the
+   speed she will be flown** — his call after two holds at Little Bay ("if the ASV is near
+   a danger, it should open the distance from said danger by workable distances within
+   constraints toward deeper water"; of the numbers offered, "use the turn radius at the
+   plan speed"): the guard's standoff or the hull's turn radius at the transit role's speed,
+   whichever is larger (`transitStandoffM` in `static/js/guard.js`, read by the page and
+   never re-derived). On the DriX at 20°/s that is 5.9 m at 4 kn, 10.3 m at 7 and 20.6 m at
+   14 — where a transit in calm water used to be laid at the bare 5 m buffer, passing a
+   charted rock's 50 m disc 5.9 m off at 13.7 kn in a river 400 m wide. It applies to a
+   Go-To, a Return-to-Home, a drawn transit and the Upload's transit legs; the coverage
+   lines keep the guard's standoff (coverage is the operator's, and a line's turns are built
+   on the radius already), and so do the re-approach onto station and the way round a
+   contact. Where the water will not allow it the leg is found at the buffer and said, as
+   before. The legs between a
    plan's own waypoints keep the buffer: they are the punch's geometry, already built at the
    standoff where it matters. **And the standoff survives the finishing pass** (2026-09-28): the
    Go-To / RTH / resume router searched at the standoff and then ran the Rule 9 lane, the
@@ -2090,7 +2126,7 @@ of the operator.
    The vessel-status card's **Nogo** row names which of four things is true, because they
    are not interchangeable: *reading chart… 6 s* (with the seconds climbing, so a chart
    service that has stopped answering doesn't look like a slow first fetch), *334 zones ·
-   floor 2.3 m* (the depth floor is **this vessel's** — draft + under-keel clearance — and
+   floor 2.9 m* (the depth floor is **this vessel's** — draft + under-keel clearance — and
    the tooltip breaks the count down by kind: docks, shoreline, hazards, shallow water,
    land, buoys), *clear — none charted*, or the reason there is **no model at all**. That
    last one is the one that matters: "the chart was read and there's nothing to avoid" and

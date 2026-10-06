@@ -198,6 +198,11 @@ eval([
   grab("sendSpeed"), grab("commandSpeed"),
   grab("slowestMakingWayKey"), grab("slowKeyFor"), grab("setMsNow"), grab("makesWayKey"),   // the resume at the slowest speed that makes way (2026-09-26)
   grab("patClipBufM"),                                                     // the standoff the upload routes its transits at (2026-09-26)
+  // ... and since 2026-10-06 the Upload hands routePlan the TRANSIT standoff (the turn radius at the plan speed); this
+  // world drives the resume's sequencing, not that number, so the coverage clip stands in for it here.
+  // ⚠ A FUNCTION DECLARATION, NOT A const: this bundle is a direct eval, and a const declared inside one stays inside
+  // it (the note at inkYield below) - doUpload is eval'd separately and reached a ReferenceError, 16 checks red.
+  "function transitStandoffM(){ return patClipBufM(); }",
   // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("lineOfLeg"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),

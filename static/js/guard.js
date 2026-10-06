@@ -195,6 +195,33 @@ export function guardStandoffM(bufM, driftMs) {
   const d = driftMs > 0 ? driftMs : 0;
   return Math.max(b, b * HELM_ENTRY_FRAC + HELM_S * d);
 }
+/**
+ * THE STANDOFF A TRANSIT IS PLANNED AT (Andy, 2026-10-06, after his two holds at Little Bay: *"if the ASV is near a
+ * danger, it should open the distance from said danger by workable distances within constraints toward deeper
+ * water"* - and, of the numbers offered, *"use the turn radius at the plan speed"*).
+ *
+ * A transit is laid no closer to a keep-out than the water the hull needs to TURN AWAY from it at the speed the plan
+ * will be flown: the guard's standoff above (the helm rung's immunity in the set) or the turn radius at that speed,
+ * whichever is the larger - v / omega at the hull's `maneuvering.max_turn_rate_deg_s`, the same radius the look-ahead
+ * integrates (PROJECT_TURN_RATE_DEG_S / V.MAX_TURN_RATE_DEG_S) and the turns are built on. The DriX at 20 deg/s: 5.9 m
+ * at 4 kn, 10.3 at 7, 20.6 at 14. Before this, a transit in calm water was laid at the bare buffer: his 10:32:20 Go-To
+ * at 13.7 kn passed a charted rock's 50 m disc 5.9 m off in a river 400 m wide. The planner still falls back to the
+ * buffer where the water will not allow the standoff, and says so (`insideStandoff`); the coverage lines are not
+ * transits and keep `guardStandoffM` (coverage is the operator's, and a line's turns are built on the radius already).
+ *
+ * ⚠ THE SAME RULE AS ABOVE: the planner reads THIS rather than a copy. A speed or a turn rate of zero (no plan speed,
+ * a hull with no rate) leaves the guard's standoff alone.
+ *
+ * @param {number} bufM          the operator's keep-clear buffer, meters
+ * @param {number} driftMs       the set now running, meters per second (0 if unknown)
+ * @param {number} twMs          the plan's through-water speed, meters per second
+ * @param {number} turnRateDegS  the hull's turn rate, degrees per second
+ */
+export function transitStandoffM(bufM, driftMs, twMs, turnRateDegS) {
+  const v = twMs > 0 ? twMs : 0, w = (turnRateDegS > 0 ? turnRateDegS : 0) * D2R;
+  const radius = (v > 0 && w > 0) ? v / w : 0;
+  return Math.max(guardStandoffM(bufM, driftMs), radius);
+}
 /** Sampling step along the projection. Fine enough not to step over a pile. */
 export const STEP_S = 0.5;
 /**
@@ -342,6 +369,9 @@ export function timeToEntry(p, vel, ko, buf, horizonS = HORIZON_S, stepS = STEP_
  * `opts.twAt(t)` (optional): her through-water speed `t` s from now, for a boat that is SLOWING - coast.js slowProfile,
  * the in-gear cut as she flies it (2026-10-03). Each step is walked at the speed she has at its START, the faster end.
  * Without it every step is walked at `twMs`, as it always was.
+ * `opts.prev` (optional): the waypoint the boat was steered FROM - the one before `route[0]` - so the first target is
+ * judged by the vessel's own along-track rule exactly as every later one is (2026-10-06). Without it the boat's own
+ * position stands in, and only a first target inside the approach radius can be read as already reached.
  * @returns {{t, at, i}|null} when it first enters the buffer, where, and WHICH waypoint of
  *                          `route` it was steering toward at the time. A boat ALREADY inside
  *                          returns t = 0, never null - "we are in it" and "we will never be
@@ -362,7 +392,27 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
   const approach = opts.approachM ?? PROJECT_APPROACH_M;
   const dr = drift || { e: 0, n: 0 };
   const twAt = typeof opts.twAt === "function" ? opts.twAt : null;
-  let e = p.e, n = p.n, h = hdgDeg, i = 0, prev = { e: p.e, n: p.n };
+  let e = p.e, n = p.n, h = hdgDeg, i = 0;
+  let prev = (opts.prev && Number.isFinite(opts.prev.e) && Number.isFinite(opts.prev.n))
+    ? { e: opts.prev.e, n: opts.prev.n } : { e: p.e, n: p.n };
+  // ⚠⚠ A TARGET THE VESSEL HAS ALREADY REACHED IS CONSUMED BEFORE THE FIRST STEP (2026-10-06, Andy's two holds at
+  // Little Bay). The vessel reports the waypoint it is steering toward once a second and advances it by two tests -
+  // inside the approach radius, or past it along the leg (asv_console.py, the plan tick) - so between two of its
+  // frames the console's index can name a waypoint she is at, or just past. The loop below asked those two tests only
+  // AFTER each step: from 0.6 m short of waypoint 130 at 13.6 kn the first step carried the model boat 3.5 m past it,
+  // along-track measured from HER OWN position read negative, and `turnToward` swung her back toward a point astern -
+  // the loop the comment below was written against, flown from the first step instead of the second. It entered a
+  // charted rock's 50 m disc 30 m abeam in 5 s, and the guard held a Go-To whose route cleared that rock by 26 m. So
+  // the vessel's own rule is asked of the first target FIRST, measured from the waypoint she was steered from where
+  // the caller knows it (`opts.prev`), and the walk begins toward the first target she has not reached.
+  for (;;) {
+    const tg = route[i];
+    const de = tg.e - prev.e, dn = tg.n - prev.n, segLen = Math.hypot(de, dn);
+    const along = segLen > 1e-6 ? ((p.e - prev.e) * de + (p.n - prev.n) * dn) / segLen : Infinity;
+    if (!(Math.hypot(tg.e - p.e, tg.n - p.n) <= approach || along >= segLen - approach)) break;
+    prev = tg;
+    if (++i >= route.length) return null;           // every waypoint already reached: the commanded motion is over
+  }
   for (let t = step; t <= horizon; t += step) {
     const tgt = route[i];
     const tw = twAt ? twAt(t - step) : twMs;           // a boat slowing: her speed at the step's start

@@ -1759,6 +1759,57 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
         "\"4.2 m to a dock / pier · CLOSING · SLOWED\" - the state, not just the number");
 }
 
+// ── 19. THE INDEX MUST COUNT INTO THIS ROUTE, AND THE FIRST TARGET IS JUDGED AS THE VESSEL JUDGES IT (2026-10-06) ──
+// Andy's two holds at Little Bay, both on Go-To routes that cleared a charted rock's 50 m disc by 26 m, both the
+// guard's projection chasing a waypoint astern. 10:25:04: 13.6 kn, 0.6 m short of waypoint 130, the vessel's index
+// (reported once a second, advanced by its own two tests once a tick) still on it - the walk swung back toward it and
+// looped into the disc in 5 s. 10:32:45: the automatic re-plan after a chart read sent a new 103-point route while she
+// ran the old 106-point one; the reply's state frame carried the NEW plan's index 0, `guardTrack` sliced the OLD route
+// at 0 - a waypoint 130 m astern - and the loop again; the hold then replaced the plan the vessel had just taken. So
+// guardTrack now hands projectRoute the waypoint she was steered FROM (`prev`), and projects no route the state frame's
+// `wp_total` says the index does not count into. The geometry below is the first hold's, in the model's frame.
+{
+  const Gx = require("../static/js/guard.js");
+  const ref = planeFrame({ lat: 43.07, lon: -70.76 });
+  const NM = 111320, NE = NM * Math.cos(43.07 * Math.PI / 180);
+  const ll = (e, n) => ({ lat: ref.lat + n / NM, lon: ref.lon + e / NE });
+  // five legs of 65 m north; the rock abeam of waypoint 2 (n 130), its disc's edge 30 m off her bow to starboard
+  const ko = { polys: [], lines: [], points: [{ e: 74, n: 161, r: 50, kind: "a charted hazard" }], marks: [], sys: [], chans: [] };
+  let nogo = { ready: true, frame: ref, ko, buffer: 5 };
+  let S = null, runRoute = [0, 65, 130, 195, 260].map((n) => ll(0.1, n)), asv = null;
+  const V = { MAX_TURN_RATE_DEG_S: 20 }, mission = { approach_radius_m: 1 };
+  globalThis.window = globalThis;
+  // eslint-disable-next-line no-eval
+  const guardTrack = eval("(" + grab(H, "guardTrack") + ")");
+  const frameAt = (n, idx, total, stripPrev) => {
+    asv = ll(0, n);
+    S = { run: "running", behavior: "goto", wp_total: total,
+          status: { heading_deg: 0, cog_deg: 0, sog_kn: 13.6, env_set_kn: 0, env_set_deg: 0, holding: false } };
+    window._wpIndex = idx;
+    const p = ref.toEN(asv), vel = Gx.groundVel(0, 13.6), drift = { e: 0, n: 0 };
+    const trk = guardTrack(p, vel, drift);
+    const opts = trk ? { ...trk, edge: false, ...(stripPrev ? { prev: null } : {}) } : {};
+    return { trk, a: Gx.assess(p, vel, drift, ko, 5, opts) };
+  };
+  const late = frameAt(130.6, 2, 5), past4 = frameAt(134, 2, 5), past4NoPrev = frameAt(134, 2, 5, true);
+  const prevOk = !!late.trk && late.trk.idx === 2 && !!late.trk.prev
+    && Math.hypot(late.trk.prev.e - ref.toEN(runRoute[1]).e, late.trk.prev.n - ref.toEN(runRoute[1]).n) < 0.01;
+  check("19. the index a frame late - on the waypoint she is at, or 4 m past - reads CLEAR down the route: guardTrack " +
+        "hands projectRoute the waypoint she was steered from, and without it the 4 m case loops astern into the rock",
+        () => prevOk && late.a.level === "clear" && past4.a.level === "clear" && past4NoPrev.a.level === "hold",
+        "prev is wp1 " + prevOk + "; 0.6 m past wp2 -> " + late.a.level + "; 4 m past -> " + past4.a.level
+            + "; 4 m past with prev stripped -> " + past4NoPrev.a.level + " (the shipped reading: hold, entry in 5 s)");
+  const race = frameAt(134, 0, 8), same = frameAt(134, 0, 5), noTotal = frameAt(130.6, 2, null);
+  check("19b. a state frame whose wp_total is not this route's length is another plan's index: no track, the " +
+        "straight projection (CLEAR here) stands in - the 10:32:45 race; the same index 0 read as THIS route's is the " +
+        "loop, which is why the length is asked; a frame with no wp_total projects as before",
+        () => race.trk === null && race.a.level === "clear" && !race.a.onPlan
+              && !!same.trk && same.a.level === "hold" && !!noTotal.trk && noTotal.a.level === "clear",
+        "wp_total 8 on a 5-point route -> track " + (race.trk ? "yes" : "none") + ", " + race.a.level
+            + "; wp_total 5 at index 0 (130 m astern) -> " + same.a.level + "; no wp_total -> track "
+            + (noTotal.trk ? "yes" : "none") + ", " + noTotal.a.level);
+}
+
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.

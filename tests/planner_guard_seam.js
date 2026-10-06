@@ -223,9 +223,14 @@ check("7. lines, leads and turns take the standoff; hops and transits try it fir
             // the running plan's way round - and those three are FLY-THROUGH targets (flyThrough: true, 7e):
             // a rejoin point is passed through, never held in, so it takes the buffer and not a berth's margin.
             // (the second also hands it surveyEntries(wps), 2026-10-02: each later survey's approach is a transit)
-            && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)(?:, surveyEntries\(wps\))?\)/g) || []).length === 2
-            && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\)/.test(H)
-            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/g) || []).length === 2
+            // ... and since 2026-10-06 (his call after the two holds at Little Bay) those TRANSITS - the approach,
+            // the drawn transit line, Go-To and RTH - carry transitStandoffM(): the guard's standoff or the turn
+            // radius at the transit role's speed, whichever is larger (check 9); the coverage clip, the re-approach
+            // and the way round a contact keep patClipBufM()
+            && (H.match(/routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)(?:, surveyEntries\(wps\))?\)/g) || []).length === 2
+            && /routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, transitStandoffM\(\)\)/.test(H)
+            && (H.match(/\{\.\.\.holdOpts\(\), standoffM: transitStandoffM\(\)\}/g) || []).length === 2
+            && !/routePlan\([^)]*patClipBufM\(\)/.test(H) && !/\{\.\.\.holdOpts\(\), standoffM: patClipBufM\(\)\}/.test(H)
             // the SEVENTH (2026-09-29): the routed re-approach onto station hands the router the charted model PLUS
             // the contacts, as the disc it answers now counts them (holdClearAt) - and it is NOT a fly-through: its
             // target is the hold point she is going back to hold in, so a berth's margin is the right one
@@ -586,6 +591,83 @@ check("8. the card says when the set widened the clip, with the number and the s
             && /setKnNow\.toFixed\(2\)\} kn set/.test(H),
       "the hint line carries the standoff actually used, the buffer it replaced and the set "
         + "that caused it - a thin survey with no explanation reads as a chart problem");
+
+// ── 9. THE TRANSIT STANDOFF: THE TURN RADIUS AT THE PLAN SPEED (Andy, 2026-10-06) ────────────────────────────────
+// After his two holds at Little Bay: "if the ASV is near a danger, it should open the distance from said danger by
+// workable distances within constraints toward deeper water" - and, of the numbers offered, "use the turn radius at
+// the plan speed". A transit in calm water was laid at the bare buffer (his 10:32:20 Go-To at 13.7 kn passed a charted
+// rock's 50 m disc 5.9 m off in a river 400 m wide). Now it is laid no closer than the water the hull needs to turn
+// away at the speed it will be flown: guard.js transitStandoffM = max(guardStandoffM, v / omega at the hull's turn
+// rate), the same radius the look-ahead integrates; the buffer as the fallback where the water will not allow it.
+{
+  const kn = (k) => k * 0.514444;
+  const r = (k, w) => kn(k) / (w * Math.PI / 180);
+  const drix = [4, 7, 14].map((k) => G.transitStandoffM(5, 0, kn(k), 20));
+  check("9. transitStandoffM(buf, set, speed, turn rate) = max(guardStandoffM(buf, set), speed / turn rate): the DriX at 20 deg/s "
+        + "stands 5.9 m off at 4 kn, 10.3 at 7, 20.6 at 14 (a 5 m buffer, calm); in a 1.75 kn set at 4 kn the guard's 20.5 m wins; "
+        + "a zero speed or turn rate leaves the guard's standoff; never below the buffer",
+        () => drix.every((d, i) => Math.abs(d - Math.max(5, r([4, 7, 14][i], 20))) < 1e-9)
+              && Math.abs(G.transitStandoffM(5, kn(1.75), kn(4), 20) - G.guardStandoffM(5, kn(1.75))) < 1e-9
+              && G.transitStandoffM(5, 0, 0, 20) === 5 && G.transitStandoffM(5, 0, kn(14), 0) === 5
+              && G.transitStandoffM(5, 0, undefined, undefined) === 5 && G.transitStandoffM(3, 0, kn(2), 20) === 3,
+        () => "DriX 4/7/14 kn -> " + drix.map((d) => d.toFixed(1)).join(" / ") + " m; 1.75 kn set at 4 kn -> "
+            + G.transitStandoffM(5, kn(1.75), kn(4), 20).toFixed(1) + " (guard's " + G.guardStandoffM(5, kn(1.75)).toFixed(1) + ")"
+            + "; 2 kn at a 3 m buffer -> " + G.transitStandoffM(3, 0, kn(2), 20).toFixed(1));
+  check("9b. the page's transitStandoffM reads the guard's transitStandoffM (imported from guard.js), hands it the role's speed and the "
+        + "hull's turn rate, and does no arithmetic of its own - and patClipBufM, the coverage clip, is untouched (no radius in it)",
+        () => {
+          const i = H.indexOf("function transitStandoffM(role){");
+          const body = i >= 0 ? H.slice(i, H.indexOf("\n}", i)) : "";
+          const j = H.indexOf("function patClipBufM(){");
+          const clip = j >= 0 ? H.slice(j, H.indexOf("\n}", j)) : "";
+          const k = H.indexOf("transitStandoffM as guardTransitStandoffM");
+          return i >= 0 && /guardTransitStandoffM\(nogo\.buffer \|\| 0,/.test(body) && /roleSpeed\(role \|\| "transit"\)/.test(body)
+              && /V\.MAX_TURN_RATE_DEG_S/.test(body) && !/Math\.PI|D2R|\/ *\(/.test(body)
+              && k >= 0 && H.slice(k, k + 200).indexOf("/static/js/guard.js") >= 0
+              && /guardStandoffM\(nogo\.buffer \|\| 0,/.test(clip) && !/MAX_TURN_RATE|transitStandoff/.test(clip);
+        },
+        "the same discipline as check 6: where the planner and the guard must agree about a number, only one of them may own it");
+  // the real router at the transit standoff, on 7f's block (buffer 3, calm): 14 kn stands 20.6 m off where the water allows it,
+  // 4 kn 5.9 m; and in 7h's 30 m channel at 14 kn no line keeps 20.6 m, so the leg is found at the buffer and SAID
+  const { nogo } = require("../static/js/state.js");
+  const { planNogoRoute } = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { planeFrame } = require("../static/js/geodesy.js");
+  const F = planeFrame({ lat: 43.07, lon: -70.71 });
+  const at = (e, n) => F.fromEN(e, n);
+  const rect = (e0, e1, n0, n1, kind) => { const q = [{ e: e0, n: n0 }, { e: e1, n: n0 }, { e: e1, n: n1 }, { e: e0, n: n1 }];
+    return { ring: q, bb: bbOf(q), kind }; };
+  const model = (polys) => ({ polys, lines: [], points: [], marks: [], sys: [], chans: [] });
+  const minClear = (route, from, ko) => { let m = Infinity, prev = F.toEN(from);
+    for (const w of route) { const q = F.toEN(w), n = Math.max(1, Math.ceil(Math.hypot(q.e - prev.e, q.n - prev.n) / 0.5));
+      for (let i = 0; i <= n; i++) { const t = i / n; m = Math.min(m, K.clearanceM({ e: prev.e + (q.e - prev.e) * t, n: prev.n + (q.n - prev.n) * t }, ko, 200)); }
+      prev = q; }
+    return m; };
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer };
+  let fast, slow, narrow;
+  try {
+    nogo.ready = true; nogo.frame = F; nogo.buffer = 3;
+    const ko = model([rect(-13, 13, -7, 7, "a hull-sized block")]); nogo.ko = ko;
+    const A = at(-58, 0), B = at(37, 0);
+    const s14 = G.transitStandoffM(3, 0, kn(14), 20), s4 = G.transitStandoffM(3, 0, kn(4), 20);
+    const f = planNogoRoute(A, B, { standoffM: s14, ko }), s = planNogoRoute(A, B, { standoffM: s4, ko });
+    fast = { std: s14, m: f.route ? minClear(f.route, A, ko) : -1, inside: f.insideStandoff, err: f.error || null };
+    slow = { std: s4, m: s.route ? minClear(s.route, A, ko) : -1, inside: s.insideStandoff, err: s.error || null };
+    nogo.ko = model([rect(-80, -15, -200, 1200, "a bank"), rect(15, 80, -200, 1200, "a bank")]);
+    const n = planNogoRoute(at(0, 0), at(0, 1000), { standoffM: s14, ko: nogo.ko });
+    narrow = { m: n.route ? minClear(n.route, at(0, 0), nogo.ko) : -1, inside: n.insideStandoff, err: n.error || null, std: n.standoffM };
+  } finally {
+    nogo.ready = saved.ready; nogo.frame = saved.frame; nogo.ko = saved.ko; nogo.buffer = saved.buffer;
+  }
+  check("9c. the router at the transit standoff: past a hull-sized block at a 3 m buffer a 14 kn transit stands 20.6 m off and a 4 kn one 5.9 m; "
+        + "in a 30 m channel at 14 kn no line keeps 20.6 m, so the leg is found at the buffer and the plan says so (insideStandoff)",
+        () => fast && !fast.err && !fast.inside && fast.m >= fast.std - 0.05
+              && slow && !slow.err && !slow.inside && slow.m >= slow.std - 0.05 && slow.m < fast.std
+              && narrow && !narrow.err && narrow.inside === true && narrow.m >= 3 - 0.05 && narrow.m < 20.6,
+        () => "14 kn: " + (fast ? (fast.err || fast.m.toFixed(1) + " m off (standoff " + fast.std.toFixed(1) + ", inside " + fast.inside + ")") : "?")
+            + "; 4 kn: " + (slow ? (slow.err || slow.m.toFixed(1) + " m off (standoff " + slow.std.toFixed(1) + ")") : "?")
+            + "; 30 m channel at 14 kn: " + (narrow ? (narrow.err || narrow.m.toFixed(1) + " m off the banks, inside " + narrow.inside) : "?"));
+}
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED" : "\nall checks passed");
 process.exit(fails ? 1 : 0);

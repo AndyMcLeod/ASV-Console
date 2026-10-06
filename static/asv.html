@@ -966,7 +966,7 @@ import { berthClearM, berthNeedM, corridorGate, corridorHalfM, grantClockMs, gra
          grantProved, grantedFeatures, inCorridor, isBerth, isDepthKind,
          recessionGiveM } from "/static/js/berth.js";
 import { assess as guardAssess, escapeCourse, groundVel, restoreVel, edgeText,
-         HORIZON_S as GUARD_HORIZON_S, edgeCapM, guardStandoffM,
+         HORIZON_S as GUARD_HORIZON_S, edgeCapM, guardStandoffM, transitStandoffM as guardTransitStandoffM,
          HELM_S as GUARD_HELM_S, HOLD_S as GUARD_HOLD_S } from "/static/js/guard.js";
 // Where a boat is asked to hold, and how much water it has there - the command-time half
 // of the same work: the hold DISC the vessel is told about with every holding command.
@@ -2424,6 +2424,15 @@ function guardTrack(p, vel, drift){
   const st = (S && S.status) || {};
   if(!(S && S.run === "running") || st.holding) return null;
   if(!runRoute || !runRoute.length || !nogo.frame) return null;
+  // ⚠⚠ THE INDEX MUST COUNT INTO THIS ROUTE (2026-10-06, Andy's 10:32:45 hold at Little Bay). `_wpIndex` is the
+  // vessel's, taken from every state frame; `runRoute` is swapped by the command's handler when its await resumes.
+  // The automatic re-plan after a chart read sent a new 103-point Go-To while she ran the old 106-point one at 13.7 kn:
+  // the reply's state frame carried the NEW plan's index 0, this function sliced the OLD route at 0 - a waypoint 130 m
+  // astern - the projection looped back toward it into a rock's disc, and the hold rung stopped her 80 ms after the
+  // vessel had taken the new plan, which the hold then replaced. The state frame says how long the plan it is counting
+  // into is, so an index that does not count into the route the page holds is projected along nothing: the straight
+  // projection stands in for the frame or two until the handler lands, as it does for any boat not on a plan.
+  if(S.wp_total != null && S.wp_total !== runRoute.length) return null;
   const idx = Math.min(window._wpIndex || 0, runRoute.length);
   const ahead = runRoute.slice(idx);
   if(!ahead.length) return null;
@@ -2433,7 +2442,10 @@ function guardTrack(p, vel, drift){
   return {route: ahead.map(w=>nogo.frame.toEN(w)), idx, ahead,
           hdgDeg: st.heading_deg, twMs,
           turnRateDegS: V.MAX_TURN_RATE_DEG_S,
-          approachM: Math.max(0.5, +(mission.approach_radius_m) || 1)};
+          approachM: Math.max(0.5, +(mission.approach_radius_m) || 1),
+          // the waypoint she was steered FROM, so projectRoute judges the first target by the vessel's own rule
+          // (2026-10-06, the 10:25:04 hold: the index on a waypoint 0.6 m astern, reported a frame late)
+          prev: idx > 0 ? nogo.frame.toEN(runRoute[idx - 1]) : null};
 }
 /**
  * THE ON-STATION READING, SAID IN ITS OWN TERMS (2026-09-30). On station the ladder judges the DRIFT (see onStation in
@@ -7861,6 +7873,22 @@ function patClipBufM(){
   const d = groundVel(st.env_set_deg, st.env_set_kn);
   return guardStandoffM(nogo.buffer || 0, d ? Math.hypot(d.e, d.n) : 0);
 }
+/**
+ * THE STANDOFF A TRANSIT IS PLANNED AT (Andy, 2026-10-06, after his two holds at Little Bay: "if the ASV is near a
+ * danger, it should open the distance from said danger by workable distances within constraints toward deeper water"
+ * - "use the turn radius at the plan speed"): the guard's standoff above, or the hull's turn radius at the speed the
+ * plan will be flown, whichever is the larger - guard.js transitStandoffM, read and never re-derived, the same
+ * discipline as patClipBufM. The speed is the ROLE's: a Go-To, a Return-to-Home, a drawn transit and the Upload's
+ * transit legs run at the transit role's speed (HIGH, 14 kn on his DriX: 20.6 m). Not the coverage lines (they keep
+ * patClipBufM - coverage is the operator's, and a line's turns are built on the radius already), not the re-approach
+ * (the hold speed) and not the way round a contact (its own ring, tuned on the water).
+ */
+function transitStandoffM(role){
+  const st = (S && S.status) || {};
+  const d = groundVel(st.env_set_deg, st.env_set_kn);
+  const kn = V.SPEED_KN[roleSpeed(role || "transit")] || 0;
+  return guardTransitStandoffM(nogo.buffer || 0, d ? Math.hypot(d.e, d.n) : 0, kn * 0.514444, V.MAX_TURN_RATE_DEG_S);
+}
 
 function patStrikeKey(){
   if(!(pat.A && pat.B && pat.C)) return null;
@@ -9734,7 +9762,7 @@ async function doGoTo(target){
   await new Promise(r=>setTimeout(r,50));
   // Planned INSIDE THE WATER THE CHART WAS READ OVER: a route that runs past it is read over and planned again.
   const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, target], undefined,
-    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: patClipBufM()}), "Go-To");
+    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, target, {...holdOpts(), standoffM: transitStandoffM()}), "Go-To");
   if(plan.error){
     setViolation(plan.reason);
     const mode = plan.reason && plan.reason.mode;
@@ -9772,7 +9800,7 @@ async function doGoTo(target){
   const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
-  else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
+  else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
   else if(plan.degraded) flashNote("Go-To: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -9871,7 +9899,7 @@ async function doRTH(opts){
   showBanner("Routing home… a long transit around obstacles can take several seconds.");
   await new Promise(r=>setTimeout(r,50));
   const plan = await planInsideChart([{lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}], undefined,   // see doGoTo
-    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: patClipBufM()}), "RTH");
+    () => planNogoRoute({lat:asv.lat,lon:asv.lon}, {lat:S.home.lat,lon:S.home.lon}, {...holdOpts(), standoffM: transitStandoffM()}), "RTH");
   if(plan.error){
     if(chained) rthChainFailed=true;
     setViolation(plan.reason);
@@ -9928,7 +9956,7 @@ async function doRTH(opts){
   const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
-  else if(plan.routed || note || plan.insideStandoff) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the guard\'s "+(+plan.standoffM).toFixed(1)+" m standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
+  else if(plan.routed || note || plan.insideStandoff) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
   else if(plan.degraded) flashNote("RTH: nogo not loaded — driving direct. Verify the path manually.");
   render();
 }
@@ -10082,7 +10110,7 @@ async function doTransit(){
     ht = holdTarget(transit[transit.length-1], holdOpts());
     if(ht.error) return null;
     const line = [...transit.slice(0,-1), ht.to];
-    return routePlan({lat:asv.lat,lon:asv.lon}, line, true, patClipBufM());   // pure transit: keep right (Rule 9), at the guard's standoff where the water allows
+    return routePlan({lat:asv.lat,lon:asv.lon}, line, true, transitStandoffM());   // pure transit: keep right (Rule 9), at the transit standoff where the water allows
   }, "Transit");
   if(ht !== null && ht.error){        // (null: refused before any planning - its own points past the chart, below)
     setViolation(ht.reason); render();
@@ -14644,7 +14672,7 @@ async function doUpload(opts){
         + "to route the plan against it.");
       render(); return;
     }
-    const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM());          // degraded: the waypoints as they are
+    const raw = routePlan({lat:asv.lat, lon:asv.lon}, wps, false, transitStandoffM());     // degraded: the waypoints as they are
     // ⚠ THE WIDEST WINDOW ON THE PAGE IS THE `guiConfirm` ABOVE THIS LINE. It is unbounded
     // operator time, so the telemetry frame the Upload button's own gate was drawn from can
     // be minutes old - which is how "ARM before uploading a plan" and "clear E-STOP first"
@@ -14720,7 +14748,7 @@ async function doUpload(opts){
   // INSIDE THE WATER THE CHART WAS READ OVER (planInsideChart, 2026-10-03): a route that runs past it is read over and
   // planned again, and the plan's own water - each survey's included ({plan: true}) - is read again after a wider extract.
   const plan = await planInsideChart([{lat:asv.lat, lon:asv.lon}, ...wps], {plan: true},
-    () => routePlan({lat:asv.lat, lon:asv.lon}, wps, false, patClipBufM(), surveyEntries(wps)), "Upload");
+    () => routePlan({lat:asv.lat, lon:asv.lon}, wps, false, transitStandoffM(), surveyEntries(wps)), "Upload");
   // ⚠ AND THE LEG INTO EACH LATER SURVEY IS A TRANSIT (sequenced surveys phase 2, 2026-10-02): routed as the approach
   // is - at the guard's standoff where the water allows, keeping right in a buoyed channel (Rule 9, Andy's call) -
   // where it used to keep the buffer and its straight track like a hop inside a pattern. A one-survey plan has no
@@ -14878,8 +14906,8 @@ async function doUpload(opts){
   }
   if(added > 0 || plan.insideStandoff)
     showBanner("Transits routed clear of ENC obstacles: "+added+" detour waypoint(s) added (incl. the approach to the survey)."
-      + (plan.insideStandoff ? " ⚠ " + plan.insideStandoff + " transit leg(s) run inside the guard's " + (+plan.standoffM).toFixed(1)
-         + " m standoff (no route at that clearance) — expect the guard to slow or hold her there." : ""));
+      + (plan.insideStandoff ? " ⚠ " + plan.insideStandoff + " transit leg(s) run inside the " + (+plan.standoffM).toFixed(1)
+         + " m transit standoff (no route at that clearance) — expect the guard to slow or hold her there." : ""));
   // SAID, OR IT IS A SILENT INTERVENTION. The boat is about to be slowed at places the
   // operator did not ask for it, and a corner slowing does NOT answer is a plan defect they
   // can still do something about - move the waypoint, widen the spacing, lower the speed.

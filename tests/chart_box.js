@@ -485,7 +485,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   check("6c. the Transit works out its hold point INSIDE the plan (on the model the route is judged by), and refuses "
         + "an uncharted plan before it draws or posts anything",
         () => iTrPlan > 0 && iTrHt > iTrPlan && iTrUn > iTrPlan && iTrUn < iTrPost && iTrUn < iTrDraw
-              && /return routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, patClipBufM\(\)\);/.test(tr)
+              && /return routePlan\(\{lat:asv\.lat,lon:asv\.lon\}, line, true, transitStandoffM\(\)\);/.test(tr)
               && /if\(ht !== null && ht\.error\)\{/.test(tr),                   // null when refused before any planning (4h)
         "planInsideChart " + iTrPlan + ", holdTarget " + iTrHt + ", uncharted refusal " + iTrUn + ", post " + iTrPost + ", draw " + iTrDraw);
   const iUpPlan = up.indexOf("await planInsideChart("), iUpUn = up.indexOf("if(plan.uncharted){"),
@@ -498,7 +498,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
   const rpCalls = (H.match(/routePlan\(/g) || []).length - (H.match(/function routePlan\(/g) || []).length;
   check("6e. no other routePlan caller on the page: three calls - the Transit's, the Upload's, and the Upload's "
         + "degraded one with no model (which routePlan answers before it judges anything)",
-        () => rpCalls === 3 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, patClipBufM\(\)\);/.test(up),
+        () => rpCalls === 3 && /const raw = routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\)\);/.test(up),
         rpCalls + " routePlan( calls");
   const pv = fs.readFileSync(path.join(__dirname, "..", "static", "js", "passage.js"), "utf8").split("\r\n").join("\n");
   check("6f. planNogoRoute judges the route AS FLOWN - after the lane pass, from the start - and routePlan the whole "
