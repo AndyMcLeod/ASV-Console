@@ -2502,8 +2502,9 @@ export const ROCK_MARKED_M = 50;
 export const ROCK_CLASSES = new Set(['Underwater_Awash_Rock_point', 'Obstruction_point', 'Obstruction_area',
   'Obstruction_line', 'Wreck_point', 'Wreck_area', 'Land_Area', 'Coastline_line', 'Depth_Area']);
 
-/** How many times the lane is laid again round its rocks before what is left is the backstop's to judge. */
-export const ROCK_ROUNDS = 8;
+/** How many times the lane is laid again round its rocks before what is left is the backstop's to judge. (A run of
+ *  seven rocks, each near pass laying the line onto the next and the smoothing's widenings on top, took more than 8.) */
+export const ROCK_ROUNDS = 12;
 
 /** A turn over MARK_JOIN_MAX_DEG on the route with the reach lane is the LANE'S unless the route without it turns as
  *  sharply (within 5 degrees) within this many meters of it. */
@@ -3171,10 +3172,11 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   let { E, pts } = layLine();
   // ⚠ AND THEN THE ROCKS: each one the lane brings her nearer than its floor (FLOOR, its model's),
   // and nearer than her own path was, is passed on whichever side is the smaller move from the line
-  // - the FAR side by raising the lane past it (inside a reach only, and only within the bank's cap
-  // there), the NEAR side by capping the lane short of it - over the rock's length, its floor and two
-  // smoothing steps either side, and the line is laid again (ROCK_ROUNDS at most). A rock the line
-  // already clears by the floor, on either side, moves nothing: she holds her lane and passes it wide.
+  // - the FAR side by moving the lane's own line up past it (inside a reach only, and only within the
+  // bank's cap there), the NEAR side by moving it down short of it, as far as her own path - over the
+  // rock's length, its floor and two smoothing steps either side, and the line is laid again (ROCK_ROUNDS
+  // at most). A rock the line already clears by the floor, on either side, moves nothing: she holds her
+  // lane and passes it wide.
   //   ⚠ ASKED OF THE ROUTE AS IT WILL BE SMOOTHED, not only of the line: where the line bends - a bend
   // in the river, the knee where the lane eases in or off - the smoothing rounds it sideways onto a
   // rock the line cleared by its floor (review, 2026-10-05: passed 0.2-3.9 m off, the lane then lost
@@ -3196,49 +3198,89 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
       }
       return m;
     };
-    // the rock across her cross-section at its own station - its OUTLINE, each vertex and a point's extent -
-    // and the samples it spans: over its length, its floor and the reach of the smoothing either side (two
-    // of its steps), so the smoothing that follows rounds nothing back toward it
+    // the rock's station on her route; the samples ABEAM of it (its length along her route), each reading the
+    // rock across its own cross-section - its OUTLINE, each vertex and a point's extent; and the samples its pass
+    // spans: its length, its floor and the reach of the smoothing either side (two of its steps), so the smoothing
+    // that follows rounds nothing back toward it.
+    //   ⚠ THE PASS MOVES THE LANE'S OWN LINE, it does not cap the lane at the rock's offset from her path: offsets
+    // are measured across the path the lane is laid on, and where that path crosses the river on a diagonal (short
+    // of a charted fairway it eases toward the fairway's line) a flat cap from it is a line parallel to the
+    // diagonal - it held the lane 61-73 m toward her path for hundreds of meters before the rock (review,
+    // 2026-10-05). Now the near side moves the line down by what the rock needs abeam (d), the far side up by it
+    // (u), over the window, and the samples abeam are held to the rock's own limit there.
     const geo = new Map();
     const geoOf = (rk) => {
       if (geo.has(rk)) return geo.get(rk);
       let ic = 0, bd = Infinity;
       for (let i = 0; i < N; i++) { const d = Math.hypot(samp[i].e - rk.c.e, samp[i].n - rk.c.n); if (d < bd) { bd = d; ic = i; } }
-      let xa = Infinity, xb = -Infinity, along = 0;
+      let along = 0;
       for (const it of rk.members) for (const v of it.V) {
-        const de = v.e - samp[ic].e, dn = v.n - samp[ic].n;
-        const x = de * SB[ic][0] + dn * SB[ic][1], s = de * TAN[ic][0] + dn * TAN[ic][1];
-        xa = Math.min(xa, x - it.r); xb = Math.max(xb, x + it.r); along = Math.max(along, Math.abs(s) + it.r);
+        along = Math.max(along, Math.abs((v.e - samp[ic].e) * TAN[ic][0] + (v.n - samp[ic].n) * TAN[ic][1]) + it.r);
       }
-      const win = [];
-      for (let j = 0; j < N; j++) if (Math.abs(cum[j] - cum[ic]) <= along + FLOOR + 2 * HOLD + STEP) win.push(j);
-      const g = { ic, xa, xb, win };
+      const win = [], abeam = [], xa = new Map(), xb = new Map();
+      for (let j = 0; j < N; j++) {
+        const s = Math.abs(cum[j] - cum[ic]);
+        if (s > along + FLOOR + 2 * HOLD + STEP) continue;
+        win.push(j);
+        if (s > along + STEP / 2) continue;
+        let a = Infinity, z = -Infinity;
+        for (const it of rk.members) for (const v of it.V) {
+          const x = (v.e - samp[j].e) * SB[j][0] + (v.n - samp[j].n) * SB[j][1];
+          a = Math.min(a, x - it.r); z = Math.max(z, x + it.r);
+        }
+        abeam.push(j); xa.set(j, a); xb.set(j, z);
+      }
+      const g = { ic, xa, xb, win, abeam };
       geo.set(rk, g);
       return g;
     };
     const side = new Map(), more = new Map();
-    const loOf = (rk) => Math.max(0, geoOf(rk).xa - FLOOR - (more.get(rk) || 0)), hiOf = (rk) => geoOf(rk).xb + FLOOR + (more.get(rk) || 0);
+    const loAt = (rk, j) => Math.max(0, geoOf(rk).xa.get(j) - FLOOR - (more.get(rk) || 0));
+    const hiAt = (rk, j) => geoOf(rk).xb.get(j) + FLOOR + (more.get(rk) || 0);
+    // (how far the line must come down, or go up, abeam of the rock - the most any abeam sample needs. Down is
+    // measured to the rock's limit even where that lies past her path: where her own path runs inside the floor the
+    // abeam samples sit on it after the first pass, a need clamped at her path is then 0, and the widening never
+    // lowered the approach again - it stayed 11 m to starboard 33 m short of the rock and the smoothing cut 6 m from it.)
+    const downBy = (rk) => Math.max(0, ...geoOf(rk).abeam.map((j) => E[j] - (geoOf(rk).xa.get(j) - FLOOR - (more.get(rk) || 0))));
+    const upBy = (rk) => Math.max(0, ...geoOf(rk).abeam.map((j) => hiAt(rk, j) - E[j]));
+    const passNear = (rk) => {
+      const g = geoOf(rk), d = downBy(rk);
+      for (const j of g.win) cap[j] = Math.min(cap[j], Math.max(0, E[j] - d));
+      for (const j of g.abeam) cap[j] = Math.min(cap[j], loAt(rk, j));
+    };
+    const passFar = (rk) => {
+      const g = geoOf(rk), u = upBy(rk);
+      for (const j of g.win) T[j] = Math.max(T[j], E[j] + u);
+      for (const j of g.abeam) T[j] = Math.max(T[j], hiAt(rk, j));
+    };
     const smoothed = () => smoothTrack(spliceShifted(en, samp, st, TAN, STEP, E, pts).map((p) => frame.fromEN(p.e, p.n)), frame, ko, buf)
       .map((p) => frame.toEN(p));
+    // (a rock passed on the near side that her own path passes inside its floor: the lane comes no nearer her path
+    // than her path, and the rounds stop there - but the route without the lane, gated and smoothed, passes it wider,
+    // and the backstop dropped the whole lane for it (Shoal in a 12 m set: 11.9 m off to 16.7). Such a rock is passed
+    // as her path passes it: the lane rides her path over its whole window, once.)
+    const onPath = new Set();
     for (let pass = 0; pass < ROCK_ROUNDS; pass++) {
       const sm = smoothed();
-      const bad = [];
+      const bad = [], ride = [];
       for (const rk of rocks) {
         const dl = Math.min(near(pts, rk, FLOOR + 1), near(sm, rk, FLOOR + 1));
         if (dl < FLOOR - 0.5 && dl < near(samp, rk, FLOOR + 1) - 0.5) bad.push({ rk, dl });
+        else if (dl < FLOOR - 0.5 && side.get(rk) === 'near' && !onPath.has(rk)) ride.push(rk);
       }
-      if (!bad.length) break;
+      if (!bad.length && !ride.length) break;
+      for (const rk of ride) { onPath.add(rk); for (const j of geoOf(rk).win) cap[j] = 0; }
       for (const { rk, dl } of bad) {
         const g = geoOf(rk);
         let s0 = side.get(rk);
         if (!s0) {
-          const lo = loOf(rk), hi = hiOf(rk);
-          const farOK = hi <= Math.min(...g.win.map((j) => cap[j])) && g.win.every((j) => have[j]);
-          s0 = farOK && hi - E[g.ic] <= E[g.ic] - lo ? 'far' : 'near';
+          const u = upBy(rk), d = downBy(rk);
+          const farOK = g.win.every((j) => have[j] && E[j] + u <= cap[j]) && g.abeam.every((j) => hiAt(rk, j) <= cap[j]);
+          s0 = farOK && u <= d ? 'far' : 'near';
           side.set(rk, s0);
         } else more.set(rk, (more.get(rk) || 0) + Math.max(0.5, FLOOR - dl));   // (passed, and still cut into)
-        if (side.get(rk) === 'far') { const hi = hiOf(rk); for (const j of g.win) T[j] = Math.max(T[j], hi); }
-        else { const lo = loOf(rk); for (const j of g.win) cap[j] = Math.min(cap[j], lo); }
+        if (side.get(rk) === 'far') passFar(rk);
+        else passNear(rk);
       }
       close();
       // (a far pass another rock's near cap has made impossible gives way, until none does)
@@ -3246,11 +3288,10 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
         changed = false;
         for (const [rk, s0] of side) {
           if (s0 !== 'far') continue;
-          const g = geoOf(rk), hi = hiOf(rk);
-          if (g.win.some((j) => T[j] < hi - 0.5)) {
+          const g = geoOf(rk);
+          if (g.abeam.some((j) => T[j] < hiAt(rk, j) - 0.5)) {
             side.set(rk, 'near');
-            const lo = loOf(rk);
-            for (const j of g.win) cap[j] = Math.min(cap[j], lo);
+            passNear(rk);
             changed = true;
           }
         }

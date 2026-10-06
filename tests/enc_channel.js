@@ -2567,7 +2567,7 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
   const stair = []; for (let k = 0; k < 7; k++) stair.push(hazard(line + 2 - 11 * k, 1500 + 25 * k));
   const wS = model({ polys: banks, marks: greens, points: stair }), rS = lane(wS, UP), oS = stair.map((q) => nearestTo(rS.track, pt(q)));
   check("93n. ... AND A RUN OF SEVEN ROCKS, each lane laid onto the next, is passed: every one at its floor, the lane kept",
-        rS.how.reach === true && oS.every((x) => x >= floorL - 0.5) && legsClear(rS, wS) && R.ROCK_ROUNDS === 8,
+        rS.how.reach === true && oS.every((x) => x >= floorL - 0.5) && legsClear(rS, wS) && R.ROCK_ROUNDS === 12,
         "the rocks passed " + oS.map(f1).join(", ") + " m off (the floor " + floorL + "); reach " + rS.how.reach);
   // (o) A ROCK'S OWN WIDTH, FROM ITS OUTLINE: a shoal 15 m wide and 140 m long lying along her course, 2 m to port of
   // the lane's line in the reach of 69, is passed at its floor - as one 15 m square is. Read as its bounding box's
@@ -2662,6 +2662,71 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
         + "to starboard abeam of it, in both models",
         mk40.every((q) => q.e > line + 4 && q.r.how.reach === true && legsClear(q.r, q.w)) && R.ROCK_MARKED_M === 50,
         mk40.map((q) => q.m + ": e " + f1(q.e)).join("; ") + " (with no shoal, the line " + f1(line) + ")");
+  // (v) THE PASS MOVES THE LANE'S OWN LINE. The river of 93 runs into a charted fairway at n 2000, and the chart's lane eases
+  // her path across the river toward the fairway's line from n 1150: the path the reach lane is laid on runs on a
+  // diagonal there. A rock on the lane's line at n 1750, 250 m short of the fairway: capped at its offset from that
+  // diagonal path, flat over its window, the lane was held 61-73 m toward her path for hundreds of meters before it
+  // (review, 2026-10-05). Now she leaves her line by what the rock needs and no more, in both models, at a 5 m buffer. And
+  // a rock 6 m to starboard of the line there, whose near side is the smaller move, as Land: the near pass capped flat at
+  // its offset from the diagonal path held the lane 55 m toward her path (as shipped; the mutation sweep found it unpinned,
+  // 2026-10-06); moved, 5 m.
+  const fair = { ring: rect(-200, 2000, 300, 4600), bb: bbOf(rect(-200, 2000, 300, 4600)), charted: true };
+  const wF = (pts) => Object.assign(model({ polys: banks, marks: greens, points: pts }), { chans: [fair] });
+  const noRock = lane(wF([]), UP, { rockModel: "land" }, 5);
+  const pull = [];
+  for (const re of [175, 181.7]) for (const m of both) {
+    const rk = hazard(re, 1750), w = wF([rk]), r = lane(w, UP, { rockModel: m }, 5);
+    let worst = 0;
+    for (let n = 800; n <= 2800; n += 10) { const a = eAtN(r.track, n), b = eAtN(noRock.track, n); if (a != null && b != null) worst = Math.max(worst, b - a); }
+    pull.push({ re, m, r, w, worst, off: nearestTo(r.track, pt(rk)), floor: m === "bottom" ? 5 + Math.max(2, 5 / 2) : 5 + Math.max(5 + 2, 6) });
+  }
+  check("93v. ... AND THE PASS MOVES THE LANE'S OWN LINE: a rock on the reach lane's line 250 m short of a charted fairway, where "
+        + "her path is eased across the river toward it - and one 6 m to starboard of the line, passed on its near side - is passed "
+        + "at its floor without the lane leaving its line early",
+        pull.every((q) => q.worst < 25 && q.off >= q.floor - 0.5 && q.r.how.reach === true && legsClear(q.r, q.w)),
+        pull.map((q) => "e " + q.re + " " + q.m + ": at most " + f1(q.worst) + " m to port of the lane with no rock, the rock " + f1(q.off)
+          + " m off (floor " + q.floor + ")").join("; ") + " (capped flat from her diagonal path: 69-73 m on the line, 55 m off it, for hundreds of meters)");
+  // (w) ... AND WHERE HER OWN PATH RUNS INSIDE THE FLOOR. Nearer the fairway her eased path passes the lane's line closer
+  // than the floor: a rock there on the line at n 1875 is 11.9 m from her path at a 5 m buffer, and one on the fairway's
+  // edge at n 2000 leaves a dogleg the smoothing cuts toward it. The flat cap of 93v kept the lane at both (51-66 m toward
+  // her path). The line moved, as first built, did not: its near pass sat on her path abeam after its first round, its
+  // need, clamped at her path, was then 0, and the widening never lowered the approach again - the line stayed 9.3 m off
+  // (the smoothing 6) and the backstop dropped the lane, at both as Land and at n 1875 as Shoal (sweep, 2026-10-06). The
+  // need is measured past her path now, and the lane is kept, at its floor.
+  const inside = [];
+  for (const n of [1875, 2000]) for (const m of both) {
+    const rk = hazard(175, n), w = wF([rk]), r = lane(w, UP, { rockModel: m }, 5);
+    inside.push({ n, m, r, w, off: nearestTo(r.track, pt(rk)), floor: m === "bottom" ? 5 + Math.max(2, 5 / 2) : 5 + Math.max(5 + 2, 6) });
+  }
+  check("93w. ... AND WHERE HER OWN PATH RUNS INSIDE THE FLOOR: a rock on the lane's line 125 m short of the fairway, and one on "
+        + "its edge, keep the lane, each passed within half a meter of its floor",
+        inside.every((q) => q.r.how.reach === true && q.off >= q.floor - 0.5 && legsClear(q.r, q.w)),
+        inside.map((q) => "n " + q.n + " " + q.m + ": reach " + q.r.how.reach + ", " + f1(q.off) + " m off (floor " + q.floor + ")").join("; ")
+          + " (the line moved, its need clamped at her path: the lane dropped at both as Land, at n 1875 as Shoal)");
+  // (x) ... AND WHERE THE LANE CAN COME NO NEARER HER PATH THAN HER PATH. A rock her own path passes inside its floor,
+  // passed on the near side. The flat cap of 93v laid the lane on her path over the rock's whole window and kept it. The
+  // line moved came down onto her path abeam of it only, and the rounds stopped there; the route without the lane -
+  // smoothed and gated - passes it wider, and the backstop dropped the whole lane: at a 5 m buffer a rock at n 1900,
+  // 5.3 m off her path (both models); in a 12 m set as Shoal one at n 1875 (11.9 m off her path, the route without the
+  // lane 16.7) and one at n 1975 (1.3 m off it, dropped by the turn test) (sweep, 2026-10-06). Such a rock is ridden on
+  // her path over its whole window again, and the lane is kept - no nearer the rock than its floor allows or the route
+  // without the lane passes it, less the backstop's slack.
+  const ridden = [[1900, 0, "land"], [1900, 0, "bottom"], [1875, 12, "bottom"], [1975, 12, "bottom"]].map(([n, so, m]) => {
+    const rk = hazard(175, n), w = wF([rk]), o = { rockModel: m };
+    if (so) o.standoffM = so;
+    const r = lane(w, UP, o, 5), nr = lane(wF([]), UP, o, 5), clr = Math.max(5, so);
+    const wo = r.withoutReach ? r.withoutReach.route.map((p) => F.toEN(p)) : null;
+    let worst = 0;
+    for (let k = 800; k <= 2800; k += 10) { const a = eAtN(r.track, k), c = eAtN(nr.track, k); if (a != null && c != null) worst = Math.max(worst, c - a); }
+    return { n, so, m, r, w, worst, off: nearestTo(r.track, pt(rk)), offWo: wo ? nearestTo(wo, pt(rk)) : null,
+      floor: m === "bottom" ? clr + Math.max(2, 5 / 2) : clr + Math.max(5 + 2, 6) };
+  });
+  check("93x. ... AND WHERE THE LANE CAN COME NO NEARER HER PATH THAN HER PATH: a rock her own path passes inside its floor keeps "
+        + "the lane, passed no nearer than the route without it, less the backstop's slack",
+        ridden.every((q) => q.r.how.reach === true && q.offWo != null && q.off >= Math.min(q.floor - 0.5, q.offWo - 3) && legsClear(q.r, q.w)),
+        ridden.map((q) => "n " + q.n + " " + q.m + (q.so ? " (set " + q.so + ")" : "") + ": reach " + q.r.how.reach + ", " + f1(q.off)
+          + " m off (floor " + q.floor + "; without the lane " + f1(q.offWo) + "), at most " + f1(q.worst) + " m to port of the lane with no rock").join("; ")
+          + " (the line moved, stopped on her path abeam of it only: the lane dropped at all four)");
 }
 // ── 95-98. THE REACH'S OLDER MUTATION SURVIVORS (2026-10-05): each check fails on the mutant it pins ──
 // 95. A MARK NO COUNT SPEAKS FOR IS ASKED OF THE ROUTE THAT SHIPS TOO. A mark with no number says nothing about the

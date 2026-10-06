@@ -2299,12 +2299,19 @@ of the operator.
       than her path without the lane passed it, is it passed — asked of the lane's line
       and of the route **as it will be smoothed**, because the smoothing rounds a bend
       in the river, or the knee where the lane eases in or off, sideways onto a rock the
-      line cleared. It is passed on whichever side is the smaller move from the line:
-      the far side by raising the lane past it (only inside a reach, and only where
-      the lane may stand that far over), the near side by holding the lane short of
-      it. Its width across her line is read from its outline, so a shoal 15 m wide and 140 m
-      long lying along her course is passed at its floor, not as if it were 141 m
-      wide. The pass runs over the rock's own length along her route and, beyond it
+      line cleared. It is passed on whichever side is the smaller move from the line,
+      by moving **the lane's own line** over by what the rock needs abeam of it and no
+      more: up past it on the far side (only inside a reach, and only where the lane
+      may stand that far over), down short of it on the near side, as far as her own
+      path. (Held instead at the rock's offset from her path, a rock on the lane's line
+      where her path crosses the river on a diagonal toward a charted fairway held the
+      lane 61 to 73 m off its line for hundreds of meters before it.) Where her own path
+      passes the rock inside its floor, the lane can come no nearer her path than her
+      path, so it rides her path past the rock over the whole of the pass, as the route
+      without the lane would, rather than be given up for it. Its width across her
+      line is read from its outline, so a shoal 15 m wide and 140 m long lying along
+      her course is passed at its floor, not as if it were 141 m wide. The pass runs
+      over the rock's own length along her route and, beyond it
       either side, its floor, two smoothing steps and a sample step (outside a set,
       about 120 m either side of a rock of no extent at a 3 m buffer, 175 m at 5; a
       charted rock with no sounding over it is sized by the assumed radius above, 50 m
@@ -2312,12 +2319,15 @@ of the operator.
       back toward it. A far pass that another rock's near pass has made
       impossible gives way to a near one (a side only ever changes far to near), a
       pass the smoothing still cuts into is widened by what it cut, and the line is
-      laid again — eight rounds at most (`ROCK_ROUNDS`). What is left after them is
+      laid again — twelve rounds at most (`ROCK_ROUNDS`). What is left after them is
       for the test above that keeps or drops the lane, at the rock's floor.
 
       **Channel rocks**, under *Turn shape* on the survey card, picks that floor, for
-      trying both. *Land* (the default) passes a rock at the lane's own clearance from
-      a bank: the keep-clear (the buffer, or the guard's standoff in a set) and a
+      trying both — for the lane between single marks (4, above) and nothing else: in
+      the chart's own channel, between buoy pairs and in unmarked narrow water a rock is
+      passed at the ordinary keep-clear whichever is chosen. *Land* (the default)
+      passes a rock at the lane's own clearance from a bank: the keep-clear (the
+      buffer, or the guard's standoff in a set) and a
       further buffer and two meters, 6 m at the least — 9 m off at a 3 m buffer, and
       12 m at 5. *Shoal* passes it at the keep-clear and a march step, 2 m or half the
       buffer where that is more, as any spot of water shallower than the floor — 5 m
