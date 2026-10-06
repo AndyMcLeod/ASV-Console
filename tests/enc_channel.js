@@ -98,7 +98,8 @@
 //          own width; 93p, the chart's classes; 93q, an unknown-extent rock on the line; 93r, a shoal patch and an
 //          islet with its shoreline; 93s, her own path; 93t, the re-lay threshold; 93u, the marked distance; and its
 //          gap round: 93v, the pass moves the lane's own line - short of a charted fairway, on the line and off it;
-//          93w, the near need measured past her path; 93x, a rock her own path passes inside its floor ridden on it).
+//          93w, the near need measured past her path; 93x, a rock her own path passes inside its floor ridden on it;
+//          93y, the rock rule only between single marks - his call, 2026-10-06).
 //   94     THE LEG BUDGET IS A HARD STOP (his call, 2026-10-06): the buoy-to-buoy re-aim is bounded by MARK_STAGE_LEGS
 //          too - past it a mark is counted where it stands, and said.
 //   95-98  THE REACH'S OLDER MUTATION SURVIVORS (2026-10-05): 95-95c, the route that ships asked of a mark no count
@@ -2731,6 +2732,35 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
         ridden.map((q) => "n " + q.n + " " + q.m + (q.so ? " (set " + q.so + ")" : "") + ": reach " + q.r.how.reach + ", " + f1(q.off)
           + " m off (floor " + q.floor + "; without the lane " + f1(q.offWo) + "), at most " + f1(q.worst) + " m to port of the lane with no rock").join("; ")
           + " (the line moved, stopped on her path abeam of it only: the lane dropped at all four)");
+  // (y) ... AND ONLY BETWEEN SINGLE MARKS (his call, 2026-10-06: "keep the rock rule to single marks only"). The rock
+  // review's gap round asked whether his rule should reach the other lanes: in an unbuoyed cut the banks' lane reads a
+  // rock a ray passes within the buffer of as its edge, and in a charted fairway and between buoy pairs a rock is a
+  // keep-out like any other. It stays so: Channel rocks changes no route in those lanes - Land and Shoal give the SAME
+  // route there, though the rock stands inside Land's floor of it - and still changes the single-marks lane's.
+  const scope = [];
+  const cutW = model({ polys: [land(rect(-400, -1000, -70, 4000)), land(rect(70, -1000, 400, 4000))], points: [hazard(25, 1500)] });
+  const fairBanks = [land(rect(-600, -1000, -200, 4000)), land(rect(200, -1000, 600, 4000))];
+  const fairC = [chan(rect(-150, -500, 150, 3500), true)];
+  const fairW = Object.assign(model({ polys: fairBanks, points: [hazard(75, 1500)] }), { chans: fairC });
+  const fairPW = Object.assign(model({ polys: fairBanks, marks: pairsAt([-300, 300, 900, 1200, 1800, 2400, 3000], 145, "fair ch"),
+    points: [hazard(75, 1500)] }), { chans: fairC });
+  const pairW = model({ polys: [land(rect(-900, -1000, -300, 4500)), land(rect(300, -1000, 900, 4500))],
+    marks: pairsAt([-500, 0, 500, 1000, 1500, 2000, 2500, 3000, 3500], 100, "pair ch"), points: [hazard(50, 1750)] });
+  for (const [tag, w, rk] of [["an unbuoyed cut", cutW, hazard(25, 1500)], ["a charted fairway", fairW, hazard(75, 1500)],
+                              ["a fairway with buoy pairs", fairPW, hazard(75, 1500)], ["a buoy-pair channel", pairW, hazard(50, 1750)]]) {
+    for (const b of [3, 5]) {
+      const tL = lane(w, [{ e: 0, n: 0 }, { e: 0, n: 3000 }], { rockModel: "land" }, b);
+      const tB = lane(w, [{ e: 0, n: 0 }, { e: 0, n: 3000 }], { rockModel: "bottom" }, b);
+      const same = tL.track.length === tB.track.length && tL.track.every((p, i) => Math.abs(p.e - tB.track[i].e) < 1e-6 && Math.abs(p.n - tB.track[i].n) < 1e-6);
+      scope.push({ tag, b, same, off: nearestTo(tL.track, pt(rk)), floorL: b + Math.max(b + 2, 6), clear: legsClear(tL, w) && legsClear(tB, w) });
+    }
+  }
+  const ctl = both.map((m) => nearestTo(lane(model({ polys: banks, marks: greens, points: [hazard(line, 1500)] }), UP, { rockModel: m }).track, pt(hazard(line, 1500))));
+  check("93y. ... AND ONLY BETWEEN SINGLE MARKS (his call): in an unbuoyed cut, a charted fairway, a fairway with buoy pairs and a "
+        + "buoy-pair channel, Land and Shoal give the same route past a rock inside Land's floor of it - and in the single-marks lane they do not",
+        scope.every((q) => q.same && q.clear && q.off < q.floorL) && Math.abs(ctl[0] - ctl[1]) > 2,
+        scope.map((q) => q.tag + " at " + q.b + " m: " + (q.same ? "the same route" : "DIFFERENT routes") + ", " + f1(q.off) + " m off (Land's floor "
+          + q.floorL + ")").join("; ") + "; the single-marks lane: " + f1(ctl[0]) + " m as Land, " + f1(ctl[1]) + " m as Shoal");
 }
 // ── 94. THE LEG BUDGET IS A HARD STOP (his call, 2026-10-06: "keep MARK_STAGE_LEGS as a hard stop") ──
 // THE STAGE'S LEG BUDGET BOUNDS THE BUOY-TO-BUOY RE-AIM TOO. MARK_STAGE_LEGS is the work the whole marks stage may route -

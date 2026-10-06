@@ -2325,10 +2325,10 @@ of the operator.
       for the test above that keeps or drops the lane, at the rock's floor.
 
       **Channel rocks**, under *Turn shape* on the survey card, picks that floor, for
-      trying both — for the lane between single marks (4, above) and nothing else: in
-      the chart's own channel, between buoy pairs and in unmarked narrow water a rock is
-      passed at the ordinary keep-clear whichever is chosen. *Land* (the default)
-      passes a rock at the lane's own clearance from a bank: the keep-clear (the
+      trying both — for the lane between single marks (4, above) and nothing else, by
+      design: in the chart's own channel, between buoy pairs and in unmarked narrow
+      water a rock is passed at the ordinary keep-clear whichever is chosen. *Land*
+      (the default) passes a rock at the lane's own clearance from a bank: the keep-clear (the
       buffer, or the guard's standoff in a set) and a
       further buffer and two meters, 6 m at the least — 9 m off at a 3 m buffer, and
       12 m at 5. *Shoal* passes it at the keep-clear and a march step, 2 m or half the
