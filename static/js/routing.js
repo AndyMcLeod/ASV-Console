@@ -193,7 +193,7 @@
 // `chart.js` re-export from those. tests/geometry.py asserts that hop BY IDENTITY.
 import { inBB, pinp, segSamplesEN } from './geometry.js';
 import {
-  blocked, legClear, firstBlockAlong,
+  blocked, legClear, firstBlockAlong, clearanceM,
   extendCenterline, systemCenterline, channelPolys,
 } from './keepouts.js';
 import { stampSeg, dilateGrid, rasterKeepouts } from './raster.js';
@@ -1602,8 +1602,17 @@ export function chartedChannelLane(pathLL, frame, ko, buf, opts = {}) {
     pts.push(p);
   }
   if (!E.some((v) => Math.abs(v) > 0.5)) return { ...nil, own: O };
-  // SPLICED, NOT RESAMPLED: the path's own vertices stand outside every stretch the lane moved.
-  const cum = cumEN(en), out = [];
+  const out = spliceShifted(en, samp, st, TAN, STEP, E, pts);
+  return { path: out.map((p) => frame.fromEN(p.e, p.n)), used: true, own: O, E };
+}
+
+/**
+ * A lane's shifted samples SPLICED into the path they were measured on, NOT RESAMPLED: the
+ * path's own vertices stand outside every stretch the lane moved (`E`, the shift at each
+ * sample; `pts`, where that puts it; `st`, each sample's station along `en`).
+ */
+function spliceShifted(en, samp, st, TAN, STEP, E, pts) {
+  const N = samp.length, cum = cumEN(en), out = [];
   const push = (p) => {
     const q = out[out.length - 1];
     if (!q || Math.hypot(p.e - q.e, p.n - q.n) > 0.25) out.push(p);
@@ -1627,7 +1636,7 @@ export function chartedChannelLane(pathLL, frame, ko, buf, opts = {}) {
     i = j;
   }
   while (vi < en.length) push(en[vi++]);
-  return { path: out.map((p) => frame.fromEN(p.e, p.n)), used: true, own: O, E };
+  return out;
 }
 
 /**
@@ -1718,6 +1727,12 @@ export const MARK_COURSE_LOOK_M = 150;
  *  load, and at 4x it left 6 of his Go-To's marks on their wrong hand. (His 29 km Go-To from
  *  offshore to Adams Point routes 20.) */
 export const MARK_STAGE_LEGS = 80;
+
+/** ... and how many times each phase of the stage may go round its marks: until a round places
+ *  nothing, and no further than this (the legs above are what bound the work). At two, a pass
+ *  refused "no join" before the LAST pass was placed was never asked again: a red was left 190 m
+ *  on her wrong hand that one more round places (seeded fuzz 1484). */
+export const MARK_STAGE_ROUNDS = 8;
 
 /** How much further off a mark than her pass distance clear water is looked for. */
 export const MARK_CLEAR_SEARCH_M = 150;
@@ -2111,6 +2126,21 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     gov.push({ ...k, dir, uIn, uOut, keepStbd, pull: keepStbd && !k.m.fixed });
   }
 
+  // The run past her is two smoothing steps of straight water each way (see runPast), and
+  // there is no shorter one than 1.5: where the water has no room for that she is not
+  // brought to the mark. (`k.want`: her pass distance off this mark, below.)
+  const place = (k, uIn, uOut) => {
+    for (const half of [2 * SMOOTH, 1.5 * SMOOTH]) {
+      for (let off = k.want; off <= k.want + MARK_CLEAR_SEARCH_M; off += MS) {
+        const r = runPast(k.m, uIn, uOut, k.keepStbd ? -1 : 1, off, half, SMOOTH);
+        let ok = r.pts.every((p) => !blocked(p, ko, clr));
+        for (let i = 1; ok && i < r.pts.length; i++) ok = clearEN(r.pts[i - 1], r.pts[i], clr);
+        if (ok) return { via: r.pts, apex: r.apex, len: r.len, off, rIn: uIn, rOut: uOut,
+                         span: Math.max(2 * STEP, Math.abs(projectEN(samp, cum, r.apex).x) / LANE_SLEW) + r.len / 2 };
+      }
+    }
+    return null;
+  };
   // Her pass point at each: D off a mark kept to starboard; a wider berth off one kept to
   // port, but never across the pass line of a buoy kept to starboard beside it (a gate).
   const pulls = gov.filter((k) => k.pull);
@@ -2124,29 +2154,15 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
         if (gap < want + D) want = Math.max(D, gap - D);
       }
     }
-    // The run past her is two smoothing steps of straight water each way (see runPast), and
-    // there is no shorter one than 1.5: where the water has no room for that she is not
-    // brought to the mark.
-    const place = (uIn, uOut) => {
-      for (const half of [2 * SMOOTH, 1.5 * SMOOTH]) {
-        for (let off = want; off <= want + MARK_CLEAR_SEARCH_M; off += MS) {
-          const r = runPast(k.m, uIn, uOut, k.keepStbd ? -1 : 1, off, half, SMOOTH);
-          let ok = r.pts.every((p) => !blocked(p, ko, clr));
-          for (let i = 1; ok && i < r.pts.length; i++) ok = clearEN(r.pts[i - 1], r.pts[i], clr);
-          if (ok) return { via: r.pts, apex: r.apex, len: r.len, off,
-                           span: Math.max(2 * STEP, Math.abs(projectEN(samp, cum, r.apex).x) / LANE_SLEW) + r.len / 2 };
-        }
-      }
-      return null;
-    };
+    k.want = want;
     // ⚠ TWO WAYS PAST IT: along the channel's course (from the marks either side), and along
     // HER OWN track there. The first is tried first; the second is there for a pass whose run,
     // laid along a course up to 37 degrees off her track, meets her route at more than
     // MARK_JOIN_MAX_DEG - with the DriX's 5 m buffer on his Go-To, Gangway Rocks Lighted Buoy
     // 13 was left on its wrong hand for want of it.
     const tIn = tanAt(k.s - MARK_COURSE_LOOK_M), tOut = tanAt(k.s + MARK_COURSE_LOOK_M);
-    k.runs = [place(k.uIn, k.uOut)];
-    if (dot(k.uIn, tIn) < MARK_TRACK_COS || dot(k.uOut, tOut) < MARK_TRACK_COS) k.runs.push(place(tIn, tOut));
+    k.runs = [place(k, k.uIn, k.uOut)];
+    if (dot(k.uIn, tIn) < MARK_TRACK_COS || dot(k.uOut, tOut) < MARK_TRACK_COS) k.runs.push(place(k, tIn, tOut));
     k.runs = k.runs.filter(Boolean);
     k.min = D;                                               // nearer than this is not "kept"
     if (!k.runs.length) { k.unplaced = 'no clear water to pass her in'; continue; }
@@ -2287,22 +2303,28 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
     if (k.pull) return !(x >= k.off - 0.5 && x <= k.off + 5);
     return !proper(k, x) || (k.keepStbd ? x < k.min - 0.5 : x > -(k.min - 0.5));
   };
+  const NO_JOIN = 'no join to her route under ' + MARK_JOIN_MAX_DEG + ' degrees';
   let res = { out: samp.slice(), use: [], joins: [] };
   let xs = xsOf(res.out);
   // ⚠ A MARK ON ITS WRONG HAND IS SEEN TO BEFORE ONE THAT IS ONLY NOT CLOSE: the wrong hand
   // is the breach, the close pass a courtesy. With the set at 1.75 kn Eight-Foot Rock Buoy 2's
   // close pass was placed first, and Fox Point Rock Buoy 3, round the bend 210 m on, could no
   // longer be joined and was left on its wrong hand.
-  for (const wrongOnly of [true, false]) for (let round = 0; round < 2; round++) {
+  for (const wrongOnly of [true, false]) for (let round = 0; round < MARK_STAGE_ROUNDS; round++) {
     let grew = false;
     for (const k of live) {
+      // (a pass that could not be JOINED is tried again once another has been placed: the marks
+      // are taken in the order she passes them, so The Rocks Buoy 4's run was judged while her
+      // way on from it was still the search's - a 52 degree turn back toward it - and before
+      // Little Bay Buoy 4A, 660 m on, had given it somewhere to go; it was never asked again)
+      if (k.clash === NO_JOIN && k.clashN !== res.use.length && legs < MARK_STAGE_LEGS) delete k.clash;
       if (res.use.includes(k) || k.clash || !wants(k, xs.get(k)) || (wrongOnly && proper(k, xs.get(k))) || !reach(k)) continue;
       if (legs >= MARK_STAGE_LEGS) { k.unplaced = 'past the stage\'s limit of routed legs'; continue; }
-      let done = null;
-      for (const run of k.runs) {
-        Object.assign(k, run); delete k.unplaced; delete k.clash;   // (each way past it judged afresh)
+      // One way past it, tried with everything already placed: the route and where every
+      // watched mark then lies, or why not (`clash`); null where her pass point cannot be reached.
+      const attempt = () => {
         let t = build(res.use.concat(k));
-        if (!t.use.includes(k)) continue;                       // unplaced: counted where it stands (or the next way)
+        if (!t.use.includes(k)) return null;                    // unplaced: counted where it stands (or the next way)
         let nx = xsOf(t.out);
         // ⚠ A PASS POINT THAT WOULD PUT A MARK SHE ALREADY KEEPS ON ITS WRONG HAND BRINGS THAT
         // MARK'S OWN PASS POINT WITH IT, and the two are tried together. Out of Little Bay the run
@@ -2321,17 +2343,67 @@ export function markPassRoute(pathLL, frame, ko, buf, opts = {}) {
         const breaks = watch.find((q) => proper(q, xs.get(q)) && !proper(q, nx.get(q)));
         const clash = breaks ? 'it would put ' + markName(breaks.m) + ' on the wrong hand'
           : !t.use.every((q) => proper(q, nx.get(q))) ? 'its pass point and another\'s cannot both be kept'
-          : !joinsOK(t) ? 'no join to her route under ' + MARK_JOIN_MAX_DEG + ' degrees' : null;
-        if (clash) { k.clash = clash; continue; }
-        done = { t, nx }; break;
+          : !joinsOK(t) ? NO_JOIN : null;
+        return clash ? { clash } : { t, nx };
+      };
+      let done = null;
+      for (const run of k.runs) {
+        Object.assign(k, run); delete k.unplaced; delete k.clash;   // (each way past it judged afresh)
+        const a = attempt();
+        if (!a) continue;
+        if (a.clash) { k.clash = a.clash; continue; }
+        done = a; break;
       }
-      if (!done) { Object.assign(k, k.runs[0]); continue; }
+      // ⚠ BUOY TO BUOY (2026-10-05). A run is laid along the channel's course where the marks
+      // either side give one, and otherwise along HER OWN track - the search's shortest way,
+      // which is what cut inside the mark in the first place. Bound into Little Bay with the
+      // DriX's 5 m buffer, the run round Fox Point Rock Buoy 3 ended heading south down that
+      // track, across The Rocks; the east side of The Rocks Buoy 4 was then a 51 degree turn
+      // from its last vertex, and the red was left on her wrong hand, counted and said. Where a
+      // pass cannot be joined, the pass before it (and then the one after) is laid again with
+      // the two aimed at each other - the course from the one pass point to the next, which is
+      // the channel's - and both are kept only if everything above still holds.
+      //   ⚠ FOR THE BREACH, ALONG HER ROUTE, AND AT NOBODY'S EXPENSE. (1) Only for a mark on
+      // its WRONG hand: the close pass is a courtesy, and each re-aim rebuilds every placed pass
+      // (on a 20 km route with a shoal beside each of 47 marks the courtesy re-aims spent the
+      // stage's legs, and a red the committed code had right shipped 95 m on her wrong hand).
+      // (2) Only where the line from the one pass point to the other runs ALONG her route
+      // (MARK_ALONG_COS of her track from the one mark's station to the other's): two marks
+      // abeam of each other across the channel give the gate's own line, and aimed along it she
+      // crossed beam-on to the far buoy and ran back - 108 degrees off her route, 400 m longer,
+      // every mark "kept". (So a mark on her wrong hand that only such a crossing would put
+      // right stays where it is, counted and said, as it did before there was a re-aim.)
+      if (!done && k.clash === NO_JOIN && !proper(k, xs.get(k)) && legs < MARK_STAGE_LEGS) {
+        const seq = res.use.concat(k).sort((a, b) => a.s - b.s), at = seq.indexOf(k);
+        const fields = ['via', 'apex', 'len', 'off', 'span', 'rIn', 'rOut'];
+        const snap = (q) => Object.fromEntries(fields.map((f) => [f, q[f]]));
+        for (const [p, q] of [[seq[at - 1], k], [k, seq[at + 1]]]) {
+          if (done || !p || !q || !p.apex || !q.apex || !p.rIn || !q.rOut) continue;
+          const sp = snap(p), sq = snap(q), up = p.unplaced, uq = q.unplaced;
+          let ok = true;
+          for (let pass = 0; ok && pass < 2; pass++) {              // (the pass points move a little as the runs turn)
+            const u0 = unit(p.apex, q.apex), trk = unit(atS(p.s), atS(q.s)) || tanAt((p.s + q.s) / 2);
+            const u = u0 && dot(u0, trk) >= MARK_ALONG_COS ? u0 : null;
+            const rp = u && place(p, p.rIn, u), rq = u && place(q, u, q.rOut);
+            ok = !!(rp && rq);
+            if (ok) { Object.assign(p, rp); Object.assign(q, rq); }
+          }
+          delete k.unplaced;
+          const a = ok ? attempt() : null;
+          if (a && !a.clash) { done = a; delete k.clash; break; }
+          Object.assign(p, sp); Object.assign(q, sq);
+          for (const [m, was] of [[p, up], [q, uq]]) { if (was === undefined) delete m.unplaced; else m.unplaced = was; }
+        }
+        if (!done) { delete k.unplaced; k.clash = NO_JOIN; }
+      }
+      if (!done) { Object.assign(k, k.runs[0]); if (k.clash === NO_JOIN) k.clashN = res.use.length; continue; }
       delete k.clash;
       res = done.t; xs = done.nx; grew = true;
     }
     if (!grew) break;
   }
   const used = res.use.length > 0;
+  for (const k of res.use) k.placed = true;                    // (her run past it is in the path: buoyedReachLane)
   return { path: used ? res.out.map((p) => frame.fromEN(p.e, p.n)) : pathLL, used, marks: gov,
            keep: res.use.flatMap((k) => k.via), pass: res.use.flatMap((k) => (k.via.length > 2 ? k.via.slice(1, -1) : k.via)),
            passM: D };
@@ -2386,6 +2458,813 @@ export function markCounted(k, ends = null) {
   const start = k.nearStart && ((ends && ends.start) || !k.besideStart);
   const end = k.nearEnd && ((ends && ends.end) || !k.besideEnd);
   return !!(start || end);
+}
+
+// ── A buoyed reach ──────────────────────────────────────────────────────────
+
+/**
+ * How far either side of her path the edge of a buoyed reach is looked for, in meters.
+ *
+ * ⚠ A POLICY NUMBER, SAID OUT LOUD. The banks' lane looks max(120, 30 x buffer) m either way
+ * and takes water no wider than NARROW_MAX_M, because two banks alone do not make a channel
+ * (Andy, 2026-08-31). Here the MARKS have said there is one, and the
+ * question is only where its edges are: between Seavey Island and the shoals off Peirce
+ * Island the Piscataqua is 350-500 m across, with her path up to 400 m from the far bank.
+ */
+export const REACH_EDGE_M = 600;
+
+/** ... and water wider than this between its edges is not a narrow channel, whatever marks
+ *  stand along it: she is left where the marks' own pass points put her. */
+export const REACH_MAX_WIDTH_M = 800;
+
+/** ... and a stretch of cross-sections shorter than this along her route is no channel
+ *  either - one rock abeam of her in open water, two buoys of a hand forty meters apart. */
+export const REACH_MIN_M = 150;
+
+/**
+ * A ROCK: a keep-out no bigger than this across - a charted rock, wreck or obstruction, a small shoal
+ * patch or islet, or a cluster of them - standing at least twice the lane's floor off everything else.
+ * It is a shallow point on the sea bottom to be passed, on either side, and not an edge of the
+ * channel (Andy, 2026-10-05: "do not use a rock as an assumed buoy for path planning purposes.
+ * treat it as land that may be avoided to either side" - "a shallow point to be avoided").
+ */
+export const ROCK_MAX_M = 150;
+
+/** ... unless a lateral mark stands within this of it: then it is the edge of the channel the mark marks. */
+export const ROCK_MARKED_M = 50;
+
+/** The chart classes a rock may be (with a natural kind): a rock awash or under water, a wreck, an obstruction, an
+ *  islet and its coastline, a shoal patch. Every other class charted as 'a charted hazard' - a pile, a dolphin, a
+ *  bridge pylon, a hulk, a shore construction, a cardinal, isolated-danger, safe-water or special-purpose buoy or
+ *  beacon - is built, or marks a danger, and is the bank (review, 2026-10-05: piles and dolphins charted as points
+ *  were passed on their shore side, a west cardinal on its east). A keep-out with no class (a synthetic world) is
+ *  judged by its kind alone. */
+export const ROCK_CLASSES = new Set(['Underwater_Awash_Rock_point', 'Obstruction_point', 'Obstruction_area',
+  'Obstruction_line', 'Wreck_point', 'Wreck_area', 'Land_Area', 'Coastline_line', 'Depth_Area']);
+
+/** How many times the lane is laid again round its rocks before what is left is the backstop's to judge. */
+export const ROCK_ROUNDS = 8;
+
+/** A turn over MARK_JOIN_MAX_DEG on the route with the reach lane is the LANE'S unless the route without it turns as
+ *  sharply (within 5 degrees) within this many meters of it. */
+export const NEW_TURN_NEAR_M = 30;
+
+/** Does route B (EN points) turn more than MARK_JOIN_MAX_DEG anywhere route A does not turn as sharply (within 5
+ *  degrees) within NEW_TURN_NEAR_M? - the reach lane's own turns, judged where they are (channelLaneRoute's `finish`). */
+export function newLaneTurn(A, B) {
+  const turnsOf = (t) => {
+    const o = [];
+    for (let i = 1; i < t.length - 1; i++) {
+      const a1 = Math.atan2(t[i].e - t[i - 1].e, t[i].n - t[i - 1].n), a2 = Math.atan2(t[i + 1].e - t[i].e, t[i + 1].n - t[i].n);
+      o.push({ p: t[i], d: Math.abs((((a2 - a1) * 180 / Math.PI + 540) % 360) - 180) });
+    }
+    return o;
+  };
+  const tA = turnsOf(A);
+  return turnsOf(B).some((q) => q.d > MARK_JOIN_MAX_DEG + 0.5
+    && !tA.some((r) => r.d >= q.d - 5 && Math.hypot(r.p.e - q.p.e, r.p.n - q.p.n) <= NEW_TURN_NEAR_M));
+}
+
+/** Two marks of one hand give the channel's edge between them where the water's course from
+ *  the one to the other turns no more than this (10 degrees); round a bend the edge is the
+ *  bank. (At 20, the 21 degree bend at Henderson Point read as straight on one sampling of
+ *  her route and as a bend on the next.) */
+export const REACH_STRAIGHT_COS = Math.cos(10 * Math.PI / 180);
+
+/** ... and one mark's own edge runs on along the water's course, as far as the next mark,
+ *  while that course turns no more than this (20 degrees). */
+export const REACH_RUN_COS = Math.cos(20 * Math.PI / 180);
+
+/**
+ * A charted restricted area no bigger than this is LOCAL - a facility's waterfront, a
+ * security zone, a barrier - and a lane is not laid into one her routed path stays out of.
+ *
+ * ⚠ A POLICY NUMBER, SAID OUT LOUD. The same chart layer holds regulations that cover a whole
+ * waterway and bar nobody from it: the Piscataqua's no-discharge zone (40 CFR 140) is one
+ * polygon of 18 km2 whose edge runs down the middle of the river, and read as a limit it
+ * would hold every lane to one half of it. The service publishes no attribute that tells the
+ * two apart (no RESTRN; CATREA blank on the Naval Shipyard's own area), so they are told
+ * apart by size: the shipyard's restricted area is 0.16 km2, its security barriers 0.04.
+ */
+export const RESTRICTED_LOCAL_M2 = 1e6;
+
+/**
+ * THE SAME RULE WHERE SINGLE MARKS BUOY A CHANNEL THE CHART DOES NOT DRAW (Andy, 2026-10-04,
+ * of the Piscataqua between Henderson Point and Badgers Island: "through this section along
+ * Seavey Island, the ASV moves to the far side of the channel both outbound and inbound").
+ *
+ * `markPassRoute` leaves each mark on its proper hand, and that is all it does: a buoy kept
+ * to starboard is passed close, but a mark kept to PORT is only given a berth, and a beacon
+ * on the starboard hand is never brought close. Where a reach's starboard-hand marks are
+ * beacons on the shore - Henderson Point Light 10, Seavey Island Daybeacons 12A and 12B -
+ * nothing put her on the starboard side of the water those marks buoy: bound up the river she
+ * rounded the green buoys 11 and 13 thirty meters off, on the PORT edge of the channel, and
+ * bound down it she cut the inside of the bend at Henderson Point, on her port hand again.
+ * No fairway is charted there, no two of its marks pair, and the river is too wide for the
+ * banks' lane.
+ *
+ * A BUOYED REACH is the stretch of her route between two marks no more than MARK_NEIGHBOR_M
+ * apart along it, the hand of at least one of them read by `markPassRoute` (the other may be
+ * one the chart's lane or the pair lane rides). The marks are what make it a channel; its
+ * EDGES, each side of her, are the nearest of
+ *   - the BANK: the keep-outs at her margin, STANDOFF in, as far as REACH_EDGE_M - side water
+ *     read across, as the chart's lane reads an opening;
+ *   - a LOCAL charted restricted area (RESTRICTED_LOCAL_M2), wherever she is outside it:
+ *     the Naval Shipyard's along Seavey Island (33 CFR 334.50) lies on the starboard hand of
+ *     every vessel bound up the river, and three quarters of the way across the WATER there
+ *     is inside it (where she is inside one, she is moved only toward its nearer edge); and
+ *   - that hand's MARKS: the line from one to the next where the water runs straight between
+ *     them, and in the stretch either side of a mark the line through it along the water's
+ *     course (MARK_PASS_M inside a buoy kept to starboard; a beacon's berth inside a beacon).
+ * She rides three quarters of the way across (LANE_FRAC), eased no steeper than LANE_SLEW,
+ * over a stretch of cross-sections at least REACH_MIN_M long - a channel has length, and an
+ * obstruction in water that is no channel is something to stay off, not its edge.
+ *
+ * ⚠ ONLY EVER TO STARBOARD. Where she already stands to starboard of that line - a buoy
+ * passed close, a path the search laid along the starboard bank - she is left there: "as
+ * near to the outer limit ... on her starboard side as is safe and practicable" is not a
+ * line to be brought BACK to.
+ *
+ * ⚠ AND NEVER ACROSS A MARK. A sample from which a starboard-hand mark's line lies to PORT,
+ * or a port-hand mark to starboard, is on the wrong side of it, which is `markPassRoute`'s to
+ * say and not this lane's to mend; the lane is capped at every lateral mark on her starboard
+ * hand, its hand read or not (THE CONE, below); and the route that SHIPS is asked what
+ * `markPassRoute` asks of every pass - no mark on its wrong hand that the route without this
+ * lane has right - and where it fails the lane is not kept (channelLaneRoute's `finish`, and
+ * again where the planner re-gates at the standoff, passage.js keepStandoff).
+ *
+ * Runs AFTER the chart's own lane, on the path that lane left, and in the water it rides
+ * moves her no further than that lane's own line (`opts.owns`): the chart still comes first.
+ *
+ * @param {object} opts
+ * @param {Array}  opts.marks       `markPassRoute`'s own list (each mark, its hand or why not)
+ * @param {function} [opts.owns]    (EN point) -> in water the chart's lane rides, how far short of
+ *                                  its own line that lane left her there (meters); else null
+ * @param {number} [opts.standoffM] the guard's standoff in this set
+ * @returns {{path:Array, used:boolean}}
+ */
+export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
+  const nil = { path: pathLL, used: false };
+  const gov = opts.marks || [];
+  if (!pathLL || pathLL.length < 2 || !ko || !gov.length) return nil;
+  const en = pathLL.map((p) => frame.toEN(p));
+  const STEP = Math.max(25, buf * 7), MS = Math.max(2, buf / 2), STANDOFF = Math.max(buf + 2, 6);
+  const rs = resampleEN(en, STEP);
+  if (!rs || !(rs.total > 3 * STEP)) return nil;
+  const samp = rs.pts, N = samp.length;
+  if (N < 4) return nil;
+  const cum = cumEN(samp), st = samp.map((_, i) => (i < N - 1 ? i * STEP : rs.total));
+  const { SB, TAN } = tangentsEN(samp, Math.max(1, Math.round(CHART_TAN_M / STEP)));
+  const at = (i, x) => ({ e: samp[i].e + SB[i][0] * x, n: samp[i].n + SB[i][1] * x });
+  const D = MARK_PASS_M(buf, opts.standoffM), clr = Math.max(buf, opts.standoffM || 0);
+  // (a beacon on her starboard hand is given the berth of a mark left to port, as markPassRoute gives it none)
+  const BEACON = Math.max(D, MARK_PORT_BERTH * MARK_PASS_M(buf, 0));
+  const g = LANE_SLEW * STEP;
+  // The water the chart's lane rides, and how far short of its own line that lane left her
+  // there (`slack`, meters to starboard; -1 where the water is not the chart's).
+  const slack = new Float64Array(N).fill(-1);
+  if (opts.owns) for (let i = 0; i < N; i++) { const v = opts.owns(samp[i]); if (v != null) slack[i] = Math.max(0, v); }
+  const owned = (i) => slack[i] >= 0;
+
+  // ── WHICH WATER: the marks against THIS path (the passes have moved it since they were read),
+  // and the stretches of it between them.
+  const notHers = /goes on without her|joins its channel beyond/;
+  const ms = gov.map((k) => ({ k, ...projectEN(samp, cum, k.m) })).filter((q) => !q.beyond).sort((a, b) => a.s - b.s);
+  const known = (q) => q.k.keepStbd !== undefined && !(q.k.skip && (notHers.test(q.k.skip) || q.k.skip === 'ridden as a pair'));
+  const delim = ms.filter((q) => known(q) || /charted channel|ridden as a pair/.test(q.k.skip || ''));
+  const spans = [];
+  for (let i = 1; i < delim.length; i++) {
+    const a = delim[i - 1], c = delim[i];
+    if ((known(a) || known(c)) && c.s - a.s <= MARK_NEIGHBOR_M && c.s - a.s > 1) spans.push([a.s, c.s]);
+  }
+  if (!spans.length) return nil;
+  const inReach = (i) => spans.some(([a, c]) => cum[i] >= a && cum[i] <= c);
+  const iAt = (s) => { let i = 0; while (i < N - 1 && cum[i + 1] <= s) i++; return i; };
+
+  // ── THE BANKS either side of each sample of a reach the chart's lane does not ride.
+  // INVARIANT 1, as in every lane: a mark is not a wall.
+  const koAll = {
+    polys: ko.polys || [], lines: ko.lines || [],
+    points: (ko.points || []).filter((p) => p.kind !== 'a channel buoy'),
+  };
+  // ⚠ A ROCK IS A SHALLOW POINT ON THE SEA BOTTOM, NOT AN EDGE OF THE CHANNEL (Andy, 2026-10-05: "hold
+  // the lane and pass the rock wide. do not use a rock as an assumed buoy for path planning purposes.
+  // treat it as land that may be avoided to either side" - "a shallow point to be avoided"). Read as a
+  // bank, a charted rock 130 m off her path in a 500 m buoyed river pulled the lane in from 276 m to
+  // 112 m, to pass it 18 m off on the side her path had passed it, where holding the lane passes it
+  // 146 m off. A ROCK is a keep-out no bigger than ROCK_MAX_M across - a charted rock, wreck or
+  // obstruction, a small shoal patch or islet, or a cluster of them - with water all round it: at
+  // least twice its floor off everything else - measured from its OUTLINE (a circle round its bounding box
+  // read a 100 m shoal with 40 m of water to the bank as the bank) - so she can pass it either side with
+  // the floor both ways. A rock off a bank, a ledge of rocks longer than ROCK_MAX_M, and a hazard a lateral mark
+  // stands beside (ROCK_MARKED_M: the mark says that is the channel's edge) are the bank. So is anything
+  // built, however small - a pier, a float, a bridge support - and any kind of keep-out not named here
+  // (`natural`, by kind and by chart class - ROCK_CLASSES: a pile, a dolphin, a pylon is charted as 'a
+  // charted hazard' point just as a rock is): the chart serves no floats, so a pier head standing off on
+  // its own may be joined to the shore by one that is not drawn, and the water behind it is a marina's (on
+  // the Piscataqua, three charted piers 35-45 m across were read as rocks). The banks the lane reads
+  // (`koWall`) leave the rocks out; the rocks are avoided once the line is laid.
+  //   TWO MODELS, for Andy to try both (opts.rockModel; the page's "Channel rocks"): 'land' (the
+  // default) gives a rock the lane's own clearance from a bank, clr + STANDOFF - "land that may be
+  // avoided to either side"; 'bottom' gives it the planner's ordinary keep-clear, clr (the buffer, or the
+  // guard's standoff in a set) and a march step, MS, as any spot of water shallower than the floor - "sea
+  // bottom - a shallow point to be avoided".
+  // (the keep-clear and a march step, MS: laid at the buffer itself, the smoothing and the gate
+  // made a 31 degree jog of a 3 m step round a rock on the lane's line)
+  const FLOOR = opts.rockModel === 'bottom' ? clr + MS : clr + STANDOFF;
+  const rocks = [];
+  {
+    let e0 = Infinity, e1 = -Infinity, n0 = Infinity, n1 = -Infinity;
+    for (const q of samp) { e0 = Math.min(e0, q.e); e1 = Math.max(e1, q.e); n0 = Math.min(n0, q.n); n1 = Math.max(n1, q.n); }
+    const M = REACH_EDGE_M + ROCK_MAX_M;
+    const nearRoute = (c) => c.e > e0 - M && c.e < e1 + M && c.n > n0 - M && c.n < n1 + M;
+    const items = [], big = { polys: [], lines: [], points: [] };
+    const natural = (f) => {
+      const k = f.kind || '';
+      return (k === 'a charted hazard' || k === 'land' || k === 'the shoreline' || k.startsWith('water shallower than'))
+        && (f.cls == null || ROCK_CLASSES.has(f.cls));
+    };
+    // (each keep-out as its OUTLINE: its vertices, and a point's own extent)
+    const vertsOf = (f, kind) => (kind === 'polys' ? f.ring : kind === 'lines' ? f.pts : [{ e: f.e, n: f.n }]);
+    const radOf = (f, kind) => (kind === 'points' ? f.r || 0 : 0);
+    const bbOfF = (f, kind) => {
+      if (kind !== 'points') return f.bb;
+      const r = f.r || 0;
+      return { x0: f.e - r, x1: f.e + r, y0: f.n - r, y1: f.n + r };
+    };
+    const oneOf = (f, kind) => ({ polys: kind === 'polys' ? [f] : [], lines: kind === 'lines' ? [f] : [], points: kind === 'points' ? [f] : [] });
+    const one = (it) => oneOf(it.f, it.kind);
+    const item = (f, kind) => {
+      const bb = bbOfF(f, kind), w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+      return { f, kind, c: { e: (bb.x0 + bb.x1) / 2, n: (bb.y0 + bb.y1) / 2 }, R: Math.hypot(w, h) / 2, V: vertsOf(f, kind), r: radOf(f, kind), bb };
+    };
+    const sized = (f, kind) => {
+      const it = item(f, kind), w = it.bb.x1 - it.bb.x0, h = it.bb.y1 - it.bb.y0;
+      if (natural(f) && Math.max(w, h) <= ROCK_MAX_M && nearRoute(it.c)) items.push(it);
+      else big[kind].push(f);
+    };
+    for (const q of koAll.points) {
+      if (!nearRoute(q)) continue;
+      if (natural(q)) items.push(item(q, 'points'));
+      else big.points.push(q);
+    }
+    for (const P of koAll.polys) sized(P, 'polys');
+    for (const L of koAll.lines) sized(L, 'lines');
+    // ⚠ HOW FAR APART TWO KEEP-OUTS ARE, MEASURED OUTLINE TO OUTLINE (to `cap`): the nearest two points
+    // of two outlines lie at a vertex of one of them. Measured from a circle round each bounding box, a
+    // shoal 100 m across with 40 m of water to the bank had none (review, 2026-10-05), and a shoal 15 m
+    // wide and 140 m long lying along her course was passed 59 m off as if it were 141 m wide.
+    const bbDist = (a, b) => Math.hypot(Math.max(a.x0 - b.x1, b.x0 - a.x1, 0), Math.max(a.y0 - b.y1, b.y0 - a.y1, 0));
+    const ptBB = (v, b) => Math.hypot(Math.max(b.x0 - v.e, 0, v.e - b.x1), Math.max(b.y0 - v.n, 0, v.n - b.y1));
+    const gapTo = (it, f, kind, cap) => {
+      const fb = bbOfF(f, kind);
+      if (bbDist(it.bb, fb) >= cap) return cap;
+      const fK = oneOf(f, kind), iK = one(it), fr = radOf(f, kind);
+      let g = cap;
+      for (const v of it.V) { if (ptBB(v, fb) - it.r < g) g = Math.min(g, clearanceM(v, fK, g + it.r) - it.r); }
+      for (const v of vertsOf(f, kind)) { if (ptBB(v, it.bb) - fr < g) g = Math.min(g, clearanceM(v, iK, g + fr) - fr); }
+      return Math.max(0, g);
+    };
+    // (a hazard a lateral mark stands beside is the channel's edge that mark marks, not a rock in it)
+    const lat = uniqueMarks(ko.marks || []);
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (lat.some((m) => Math.hypot(m.e - it.c.e, m.n - it.c.n) - it.R <= ROCK_MARKED_M
+          && clearanceM(m, one(it), ROCK_MARKED_M + 1) <= ROCK_MARKED_M)) { big[it.kind].push(it.f); items.splice(i, 1); }
+    }
+    // (clusters: items within twice the floor of each other can't be passed between with the floor both ways)
+    const par = items.map((_, i) => i);
+    const root = (i) => { while (par[i] !== i) i = par[i] = par[par[i]]; return i; };
+    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+      const a = items[i], c = items[j];
+      if (gapTo(a, c.f, c.kind, 2 * FLOOR) < 2 * FLOOR) par[root(i)] = root(j);
+    }
+    const groups = new Map();
+    items.forEach((it, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(it); });
+    const clearOfBig = (it) => {
+      for (const kind of ['polys', 'lines', 'points']) for (const f of big[kind]) if (gapTo(it, f, kind, 2 * FLOOR) < 2 * FLOOR) return false;
+      return true;
+    };
+    for (const g of groups.values()) {
+      const gb = { x0: Math.min(...g.map((it) => it.bb.x0)), x1: Math.max(...g.map((it) => it.bb.x1)),
+                   y0: Math.min(...g.map((it) => it.bb.y0)), y1: Math.max(...g.map((it) => it.bb.y1)) };
+      const span = Math.max(gb.x1 - gb.x0, gb.y1 - gb.y0);
+      const free = span <= ROCK_MAX_M && g.every(clearOfBig);
+      if (free) {
+        const K1 = { polys: [], lines: [], points: [] };
+        for (const it of g) K1[it.kind].push(it.f);
+        rocks.push({ members: g, ko: K1, c: { e: g.reduce((s, it) => s + it.c.e, 0) / g.length, n: g.reduce((s, it) => s + it.c.n, 0) / g.length } });
+      } else for (const it of g) big[it.kind].push(it.f);
+    }
+  }
+  const isRock = new Set(rocks.flatMap((rk) => rk.members.map((it) => it.f)));
+  const koWall = {
+    polys: koAll.polys.filter((q) => !isRock.has(q)), lines: koAll.lines.filter((q) => !isRock.has(q)),
+    points: koAll.points.filter((q) => !isRock.has(q)),
+  };
+  // (and the hold past a stretch's end is not stopped by a rock either: the rocks are passed below)
+  const koKeep = {
+    polys: (ko.polys || []).filter((q) => !isRock.has(q)), lines: (ko.lines || []).filter((q) => !isRock.has(q)),
+    points: (ko.points || []).filter((q) => !isRock.has(q)),
+  };
+  // The restricted areas that bound a lane: the LOCAL ones, from outside.
+  //   ⚠ WHERE SHE IS, NOT WHETHER SHE EVER IS. An area her path runs through is no limit to
+  // her there - it is advisory, and the route is the search's to make - and it is one wherever
+  // she is outside it. Excused whole because ONE 25 m sample of her path stood inside it, an
+  // area with a spur reaching 1 m past her path let the lane ride 1,460 m of route through the
+  // rest of it, a hundred meters deep.
+  const inRing = (p, c) => inBB(p, c.bb, 0) && pinp(p, c.ring);
+  const limits = (ko.restricted || []).filter((c) => c.area <= RESTRICTED_LOCAL_M2);
+  //   ⚠ AND INSIDE ONE, ONLY TOWARD ITS NEARER EDGE. Where she is in an area her own ray does
+  // not meet it - and moving her to starboard takes her out of it where its nearer edge is on
+  // that hand (bound down the river past Henderson Point the search clips the shipyard's area
+  // with the rest of it to PORT, and the lane takes her clear of it), and further INTO it
+  // where its nearer edge is to port: there she is not moved at all (`deeper`).
+  const within = limits.map((c) => samp.map((p) => inRing(p, c)));   // [area][sample]: she is in it there
+  const deeper = new Uint8Array(N);
+  limits.forEach((c, k) => {
+    const out = (i, sg) => {                                  // how far along that hand's ray she leaves it
+      for (let d = MS; d <= REACH_EDGE_M; d += MS) if (!inRing({ e: samp[i].e + sg * SB[i][0] * d, n: samp[i].n + sg * SB[i][1] * d }, c)) return d;
+      return Infinity;
+    };
+    for (let i = 0; i < N; i++) if (within[k][i] && out(i, 1) > out(i, -1) + MS) deeper[i] = 1;
+  });
+  const bank = (i, sg) => {
+    const P = samp[i], u = [sg * SB[i][0], sg * SB[i][1]], lim = limits.filter((_, k) => !within[k][i]);
+    for (let d = MS; d <= REACH_EDGE_M; d += MS) {
+      const p = { e: P.e + u[0] * d, n: P.n + u[1] * d };
+      if (blocked(p, koWall, clr) || lim.some((c) => inRing(p, c))) return d - MS / 2;
+    }
+    return Infinity;
+  };
+  // ⚠ ... AND WHAT STANDS BETWEEN TWO RAYS. A ray is one line every STEP along her route and
+  // sees `clr` either side of itself: a pier 8 m wide, a corner of a local restricted area,
+  // stands between two of them unseen. What crosses neither ray has every corner of it between
+  // them, so each corner of a keep-out of the bank (not a rock: those are passed, below), each
+  // charted line vertex and each corner of a local restricted area on her starboard hand is
+  // read as well, at the samples either side of it (`obs`: its distance off her path).
+  const obs = new Float64Array(N).fill(Infinity);
+  {
+    const C = REACH_EDGE_M, cell = (e, n) => (Math.floor(e / C) + 32768) * 65536 + Math.floor(n / C) + 32768;
+    const cells = new Map();
+    for (let i = 0; i < N; i++) { const k = cell(samp[i].e, samp[i].n); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(i); }
+    let e0 = Infinity, e1 = -Infinity, n0 = Infinity, n1 = -Infinity;
+    for (const p of samp) { e0 = Math.min(e0, p.e); e1 = Math.max(e1, p.e); n0 = Math.min(n0, p.n); n1 = Math.max(n1, p.n); }
+    const nearBB = (bb) => !bb || !(bb.x0 > e1 + C || bb.x1 < e0 - C || bb.y0 > n1 + C || bb.y1 < n0 - C);
+    const see = (q, r, mine) => {
+      let best = -1, bd = C * C;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        const L = cells.get(cell(q.e + a * C, q.n + b * C));
+        if (L) for (const i of L) { const d = (samp[i].e - q.e) ** 2 + (samp[i].n - q.n) ** 2; if (d < bd) { bd = d; best = i; } }
+      }
+      if (best < 0) return;
+      let x = Infinity, j = -1;                                 // her nearest leg to it, and how far off
+      for (let i = Math.max(1, best - 1); i <= Math.min(N - 1, best + 2); i++) {
+        const A = samp[i - 1], B = samp[i], dx = B.e - A.e, dy = B.n - A.n, l2 = dx * dx + dy * dy;
+        if (!(l2 > 0)) continue;
+        const t0 = ((q.e - A.e) * dx + (q.n - A.n) * dy) / l2;
+        if ((i === 1 && t0 < 0) || (i === N - 1 && t0 > 1)) continue;   // (beyond her route's own ends)
+        const t = Math.max(0, Math.min(1, t0)), d = Math.hypot(q.e - A.e - t * dx, q.n - A.n - t * dy);
+        if (d < Math.abs(x)) { x = dx * (q.n - A.n) - dy * (q.e - A.e) > 0 ? -d : d; j = i; }
+      }
+      if (j < 0 || !(x > 0) || x > C) return;                   // (to port of her, or out of the lane's reach)
+      for (const i of [j - 1, j]) if (!(mine && mine[i])) obs[i] = Math.min(obs[i], Math.max(0, x - r));
+    };
+    for (const p of koWall.polys) if (nearBB(p.bb)) for (const v of p.ring) see(v, 0, null);
+    for (const l of koWall.lines) if (nearBB(l.bb)) for (const v of l.pts) see(v, 0, null);
+    for (const p of koWall.points) see(p, p.r || 0, null);
+    limits.forEach((c, k) => { if (nearBB(c.bb)) for (const v of c.ring) see(v, 0, within[k]); });
+  }
+  // (her starboard bank, then: the ray's reading or the nearest thing between the rays - and
+  // none at all where the lane would take her further into a restricted area she is in)
+  const bankS = (i) => (deeper[i] ? 0 : Math.min(bank(i, 1), Math.max(0, obs[i] - clr)));
+  const isCand = new Uint8Array(N);
+  const bS = new Float64Array(N).fill(Infinity), bP = new Float64Array(N).fill(Infinity);
+  for (let i = 1; i < N - 1; i++) {
+    if (!inReach(i) || owned(i) || blocked(samp[i], ko, buf)) continue;
+    isCand[i] = 1;
+    bS[i] = bankS(i); bP[i] = bank(i, -1);
+  }
+  // ⚠ AN OPENING IS NOT THE CHANNEL'S EDGE, as in the chart's lane: where the WATER is wider
+  // than it is along the window round it (CHART_EDGE_WINDOW_M either way) by more than the
+  // greater of CHART_OPENING_M and CHART_OPENING_FRAC of that width - a basin, a back channel, the gap between two islands -
+  // the excess is side water, and it is taken off the side that stands further off than it
+  // does along the window. West of Seavey Island her starboard bank is the Back Channel's far
+  // shore, 330 m off, for 150 m of her route: read as the channel's edge it took the lane
+  // 200 m toward the shipyard's piers.
+  //   ⚠ THE WATER'S WIDTH, NOT EITHER BANK'S DISTANCE. The banks are measured from HER, and
+  // she is the search's: crossing a river on the chord of a bend, or swung 130 m round a buoy
+  // in mid-water, one bank draws off as the other closes and the water is no wider. Judged a
+  // side at a time, that was an "opening" on the outside of every bend she cut.
+  const WIN = Math.max(2, Math.round(CHART_EDGE_WINDOW_M / STEP)), FAR = 2 * REACH_EDGE_M;
+  const far = (v) => (Number.isFinite(v) ? v : FAR);
+  const typical = (f, i) => {
+    const a = [];
+    for (let j = Math.max(1, i - WIN); j <= Math.min(N - 2, i + WIN); j++) if (isCand[j]) a.push(f(j));
+    return median(a);
+  };
+  // (`tS`, `tP`: each bank's own typical distance over the same window - Infinity where that side
+  // is open water for most of it. They say whether the water is a channel at all, below.)
+  const eS = new Float64Array(N).fill(Infinity), eP = new Float64Array(N).fill(Infinity);
+  const tS = new Float64Array(N).fill(Infinity), tP = new Float64Array(N).fill(Infinity);
+  for (let i = 1; i < N - 1; i++) {
+    if (!isCand[i]) continue;
+    let s = far(bS[i]), p = far(bP[i]);
+    const mS = typical((j) => far(bS[j]), i), mP = typical((j) => far(bP[j]), i);
+    const mW = typical((j) => far(bS[j]) + far(bP[j]), i), over = s + p - mW;
+    if (over > Math.max(CHART_OPENING_M, CHART_OPENING_FRAC * mW)) {
+      const dS = Math.max(0, s - mS), dP = Math.max(0, p - mP);
+      if (dS + dP > 0) { s -= over * dS / (dS + dP); p -= over * dP / (dS + dP); }
+    }
+    eS[i] = s >= FAR ? Infinity : s; eP[i] = p >= FAR ? Infinity : p;
+    tS[i] = mS >= FAR ? Infinity : mS; tP[i] = mP >= FAR ? Infinity : mP;
+  }
+
+  // ── THE WATER'S COURSE at each sample: the way the middle of the water between her banks
+  // runs, over MARK_COURSE_LOOK_M either way; her own course where she has no two banks (a
+  // buoyed channel across open water).
+  //   ⚠ NOT HER COURSE WHERE THERE ARE BANKS TO READ. Her course is the search's - the shortest
+  // way, which is what this lane is here to mend. Between two buoys on the outside of a bend
+  // it is the straight line from the one pass to the other, and by that line "straight" the
+  // bend is not there at all.
+  const LOOK = MARK_COURSE_LOOK_M, H = Math.max(1, Math.round(LOOK / STEP));
+  const mid = samp.map((_, i) => (isCand[i] && Number.isFinite(eS[i]) && Number.isFinite(eP[i]) ? at(i, (eS[i] - eP[i]) / 2) : null));
+  const W = TAN.map((t, i) => {
+    let a = null, c = null;
+    for (let j = i; j >= Math.max(0, i - H); j--) if (mid[j]) a = mid[j];
+    for (let j = i; j <= Math.min(N - 1, i + H); j++) if (mid[j]) c = mid[j];
+    const L = a && c ? Math.hypot(c.e - a.e, c.n - a.n) : 0;
+    return L > STEP ? [(c.e - a.e) / L, (c.n - a.n) / L] : t;
+  });
+  const along = (i, j) => W[i][0] * W[j][0] + W[i][1] * W[j][1];
+
+  // ── A HAND'S LINE OF MARKS at a sample of her route, as an offset from it (+ to starboard):
+  // between two of its marks, the line from the one to the other; and in the stretch from one
+  // mark of ANY hand to the next, the line through the mark at either end of it, run along
+  // the water's course there. `fixed`: the nearer of the two is a beacon, which stands on
+  // what it marks.
+  //   ⚠ ONLY WHERE THE WATER RUNS STRAIGHT (REACH_STRAIGHT_COS between two marks of a hand,
+  // REACH_RUN_COS for the one stretch beside a mark). Round a bend the line between two marks
+  // is no edge of the channel: South Beacon Shoal Buoy 11 and Goat Island Ledge Buoy 9 stand
+  // on the same side of the Piscataqua either side of Henderson Point, and the line between
+  // them passes 40 m off the point, on the far side of the deep water from both. Read as the
+  // channel's edge it left her no room to starboard of the search's own path there, bound
+  // down the river, and bound up it a channel a hundred meters wide against the point.
+  //   ⚠ AND A MARK'S OWN EDGE ONLY AS FAR AS THE NEXT MARK, OF EITHER HAND. Between two marks
+  // the channel is the water between THEM: read only beside it, a red buoy in mid-water
+  // (Eight-Foot Rock Buoy 2) left the far bank as the channel's edge until 150 m short of it,
+  // and she swung 135 m toward that bank and back to pass it. Run on past the next mark, it
+  // held her to the line of a buoy she had passed where the channel had turned away from it.
+  const SL = ms.filter((q) => known(q) && q.k.keepStbd === true), PL = ms.filter((q) => known(q) && q.k.keepStbd === false);
+  for (const q of ms) {
+    // How far the water's course INTO each mark runs straight behind it, and OUT of it straight
+    // on: read LOOK either side of the mark, not at it (her own run past a mark the channel
+    // turns at is an arc, and its heading there is neither).
+    const ib = iAt(Math.max(0, q.s - LOOK)), ia = iAt(Math.min(cum[N - 1], q.s + LOOK));
+    const reachOf = (cos) => {
+      let lo = ib, hi = ia;
+      while (lo > 0 && q.s - cum[lo - 1] <= MARK_NEIGHBOR_M && along(lo - 1, ib) >= cos) lo--;
+      while (hi < N - 1 && cum[hi + 1] - q.s <= MARK_NEIGHBOR_M && along(hi + 1, ia) >= cos) hi++;
+      return [cum[lo], cum[hi]];
+    };
+    q.ib = ib; q.ia = ia;
+    [q.lo, q.hi] = reachOf(REACH_RUN_COS);
+    [q.slo, q.shi] = reachOf(REACH_STRAIGHT_COS);
+  }
+  //   ⚠ MEASURED IN THE PLANE, ACROSS THE SAMPLE'S OWN CROSS-SECTION: where the line from the
+  // one mark to the other, or the line through a mark along the water's course, meets it. Read
+  // as each mark's offset from her path at the mark's OWN station, a red beacon 120 m off her
+  // path 500 m back was "120 m off" a sample her pass round a green buoy had since moved 90 m
+  // toward it, and the lane was laid 14 m beyond the line of beacons.
+  const meets = (i, A, r) => {                                // sample i's cross-section and the line A + t r
+    const sb = SB[i], den = sb[0] * r[1] - sb[1] * r[0];
+    if (Math.abs(den) < 1e-9) return null;
+    const ax = A.e - samp[i].e, ay = A.n - samp[i].n;
+    return { x: (ax * r[1] - ay * r[0]) / den, t: (ax * sb[1] - ay * sb[0]) / den };
+  };
+  const lineAt = (L, i) => {
+    const s = cum[i];
+    let a = null, c = null;
+    for (const q of L) { if (q.s <= s) a = q; else { c = q; break; } }
+    if (a && c && c.s - a.s <= MARK_NEIGHBOR_M && a.shi >= c.s - LOOK && c.slo <= a.s + LOOK) {
+      const h = meets(i, a.k.m, [c.k.m.e - a.k.m.e, c.k.m.n - a.k.m.n]);
+      if (h && h.t >= -0.1 && h.t <= 1.1) return { x: h.x, fixed: !!(h.t <= 0.5 ? a : c).k.m.fixed, by: [a, c] };
+    }
+    let p = null, n = null;                                   // the stretch she is in: from mark p to mark n
+    for (const q of ms) { if (q.s <= s) p = q; else { n = q; break; } }
+    const by = (q) => !!q && L.includes(q) && s >= q.lo && s <= q.hi;
+    const q = by(p) && by(n) ? (s - p.s <= n.s - s ? p : n) : by(p) ? p : by(n) ? n : null;
+    if (!q) return null;
+    const h = meets(i, q.k.m, W[s < q.s ? q.ib : q.ia]);       // (the water's course into it, or out of it)
+    return h ? { x: h.x, fixed: !!q.k.m.fixed, by: [q] } : null;
+  };
+
+  // ⚠ NO BANK STANDS BETWEEN HER PATH AND HER LANE: at any sample she is moved no further than
+  // the water on her starboard hand there (`room`: the bank as the reach's own samples read
+  // it - the ray, or what stands between two rays - STANDOFF in; a rock is not the bank, and
+  // is passed either side below). A sample with a
+  // cross-section has that in its own starboard edge; the others are the ones the lane is HELD
+  // across - past a stretch's end while it eases off, or over a short stretch with no
+  // cross-section between two that have one. Asked only whether the lane's POINT was clear,
+  // it was laid 135 m to starboard of her path short of Hen Island Ledge Buoy 1 with a charted
+  // islet 70 m off that path between the two: bound up the Piscataqua for Little Bay she was
+  // taken round the far side of the islet, 27 m off it.
+  const roomAt = new Float64Array(N).fill(-1);
+  const room = (i) => {
+    if (roomAt[i] < 0) roomAt[i] = Math.max(0, (isCand[i] ? bS[i] : bankS(i)) - STANDOFF);
+    return roomAt[i];
+  };
+
+  // ── EACH SAMPLE'S CROSS-SECTION and the line three quarters of the way across it; `cap`, the
+  // furthest to starboard she may stand there, and `capB`, the part of that a bank sets.
+  const HOLD = Math.max(45, buf * 13), KH = Math.ceil(HOLD / STEP);
+  const T = new Float64Array(N), have = new Uint8Array(N), cap = new Float64Array(N).fill(Infinity);
+  const capB = new Float64Array(N).fill(Infinity);
+  for (let i = 1; i < N - 1; i++) {
+    if (!isCand[i]) continue;
+    capB[i] = Math.max(0, eS[i] - STANDOFF);
+    const S = lineAt(SL, i), Pm = lineAt(PL, i);
+    // (a starboard-hand mark's line to PORT of her: she is on its wrong side, and that is not this lane's;
+    // and the two lines crossed over are no channel)
+    if (S && (S.x <= 0 || (Pm && Pm.x >= S.x))) continue;
+    // ⚠ ... NOR IS A PORT-HAND MARK THAT STANDS TO STARBOARD OF HER, by the same rule: she is on
+    // its wrong side, and the stretch its line governs is not this lane's to mend. Laned, the
+    // channel's port edge was a line on her starboard hand through the mark itself, and she was
+    // steered AT it: a green buoy 40 m to starboard of a route that began too near it to be
+    // moved for was shipped 5.6 m off, close to starboard, with a turn to starboard round it.
+    if (Pm && Pm.by.some((q) => q.x > 0)) continue;
+    const xR = Math.min(eS[i] - STANDOFF, S ? S.x - (S.fixed ? BEACON : D) : Infinity);
+    // (the port-hand marks' line to STARBOARD of her, the marks themselves to port: she is outside
+    // the channel as their line runs on, to port of it)
+    const xL = Pm && Pm.x > 0 ? Pm.x : -Math.min(eP[i] - STANDOFF, Pm ? -Pm.x : Infinity);
+    if (!Number.isFinite(xR) || !Number.isFinite(xL)) continue;
+    const w = xR - xL;
+    if (!(w > 0) || w > REACH_MAX_WIDTH_M) continue;
+    // ⚠ AND AN OBSTRUCTION IN WATER THAT IS NO CHANNEL IS NOT ONE'S EDGE - the mirror of the
+    // opening rule. Whether the water is a channel is asked of its edges as they TYPICALLY
+    // stand over the window (`tS`, `tP`), not as they stand abeam of this one sample: a rock
+    // 300 m to starboard of her in a river a kilometer wide, an islet off an open shore, is
+    // something to stay off (`capB`), and no cross-section of a channel.
+    const tR = Math.min(tS[i] - STANDOFF, S ? S.x - (S.fixed ? BEACON : D) : Infinity);
+    const tL = Pm && Pm.x > 0 ? Pm.x : -Math.min(tP[i] - STANDOFF, Pm ? -Pm.x : Infinity);
+    if (!(tR - tL <= REACH_MAX_WIDTH_M)) continue;
+    T[i] = Math.max(0, Math.min(xR, w > 2 * STANDOFF ? xL + (0.5 + LANE_FRAC / 2) * w : (xL + xR) / 2));
+    cap[i] = Math.max(0, xR); have[i] = 1;
+  }
+  // ⚠ A CHANNEL HAS LENGTH. Whether there are two edges is asked a sample at a time, and one
+  // sample can answer yes where there is no channel: a rock abeam of her in a river a
+  // kilometer wide gave ONE sample a cross-section and 575 m of her route was swung 90 m
+  // toward the rock; two green buoys 40 m apart moved 2.5 km of it 430 m across a river and
+  // back. A stretch of cross-sections (no gap in it over a smoothing step) shorter than
+  // REACH_MIN_M is none, and a lane over a longer one stands no further off her path than
+  // that stretch is long at LANE_SLEW.
+  for (let i = 0; i < N; i++) {
+    if (!have[i]) continue;
+    let last = i;
+    for (let j = i + 1; j < N && j - last <= KH; j++) if (have[j]) last = j;
+    const L = (last - i + 1) * STEP;
+    for (let k = i; k <= last; k++) {
+      if (!have[k]) continue;
+      if (L < REACH_MIN_M) { have[k] = 0; T[k] = 0; } else T[k] = Math.min(T[k], LANE_SLEW * L);
+    }
+    i = last;
+  }
+  // ⚠ THE CONE, as in the chart's lane: eased no steeper than LANE_SLEW, she is inside every
+  // starboard limit ahead and astern by the time she reaches it - above all a mark she keeps
+  // to starboard, measured or not. Without it the easing itself carried the lane across the
+  // marks: 100 m to starboard of her path 150 m short of a buoy passed 10 m off is still 47 m
+  // to starboard of it at the buoy (Eight-Foot Rock Buoy 2, The Rocks Buoy 4 and Little Bay
+  // Buoy 4A, each put on her wrong hand - and the whole lane stood down for it).
+  //   ⚠ AND NOT ALONG HER PATH ALONE. Her run round a buoy the channel turns at is an arc with
+  // the buoy inside it, and the samples either side of the one abeam of it point their
+  // starboard hands AT the buoy: 12 m of shift each, allowed by the cone, cut the corner and
+  // left Fox Point Rock Buoy 3 seven meters on her wrong hand, bound out of Little Bay. So
+  // (1) the pass points of a run past a mark she keeps to starboard are not moved at all -
+  // they are laid where they are for that mark (HOLD round each; the run's two ends give
+  // way, as they do everywhere: held too, 200 m of the lane either side of every buoy was
+  // spent easing off it, and round Henderson Point the two ways met in mid-channel); and (2)
+  // no sample is moved toward a mark on its starboard hand by more than the water between
+  // them, less that mark's pass distance.
+  //   ⚠ EVERY MARK ON THE CHART, NOT ONLY THE ONES WHOSE HAND WAS READ. A mark with no number
+  // in its name, a junction mark, one the stage did not govern has no hand to keep - and is a
+  // mark all the same: left out of the cone, an unnumbered red buoy 140 m to starboard of her
+  // path in mid-water was shipped 42 m to PORT, with nothing counted and nothing said. A mark
+  // that stands to starboard of her path stays there, whatever it is; one she is not keeping
+  // close to starboard (no hand read, or a port-hand mark she is on the wrong side of) is
+  // given a mark's berth (BEACON), not a pass distance.
+  const govOf = new Map(gov.map((k) => [k.m, k]));
+  const every = uniqueMarks(ko.marks).map((m) => ({ m, k: govOf.get(m) || null, ...projectEN(samp, cum, m) }))
+    .filter((q) => !q.beyond && q.x > 0 && q.x <= REACH_EDGE_M);
+  const offOf = (q) => (q.k && q.k.keepStbd === true && !q.m.fixed ? D : BEACON);
+  for (const q of every) {
+    const i = iAt(q.s), lim = Math.max(0, q.x - offOf(q));
+    for (const j of [i, i + 1]) if (j >= 0 && j < N) capB[j] = Math.min(capB[j], lim);
+  }
+  // ⚠ A LIMIT READ AT ONE SAMPLE HOLDS OVER THE SMOOTHING STEP EITHER SIDE OF IT. A pier's head, a
+  // rock or a mark abeam of one sample is a notch one sample wide, and the cone closes on it as
+  // a V whose point is that sample; the smoothing that follows cuts the point off. The pier of
+  // check 72c, which the search cleared by 60 m, shipped 3.5 m off its head (3.0 to 8.0 m as it
+  // slid along the bank, the gate splicing six times in eleven) - at the buffer, not at the
+  // lane's own limit. So every such limit has a flat bottom the smoothing cannot cut (KH
+  // samples either side), and the cone eases down to that.
+  {
+    const c0 = Float64Array.from(capB);
+    for (let i = 0; i < N; i++) {
+      if (c0[i] === Infinity) continue;
+      for (let j = Math.max(0, i - KH); j <= Math.min(N - 1, i + KH); j++) capB[j] = Math.min(capB[j], c0[i]);
+    }
+    for (let i = 0; i < N; i++) cap[i] = Math.min(cap[i], capB[i]);
+  }
+  for (const q of every) {
+    const m = q.m, off = offOf(q);
+    for (let i = 0; i < N; i++) {
+      const de = m.e - samp[i].e, dn = m.n - samp[i].n;
+      if (de * SB[i][0] + dn * SB[i][1] > 0) cap[i] = Math.min(cap[i], Math.max(0, Math.hypot(de, dn) - off));
+    }
+  }
+  for (const q of ms) {
+    if (q.k.keepStbd !== true) continue;
+    const m = q.k.m, off = m.fixed ? BEACON : D;
+    const via = q.k.placed && q.k.via ? q.k.via : [];
+    const run = via.length > 2 ? via.slice(1, -1) : via;
+    // (3) ... and a mark she keeps to starboard that has NO run of its own - its pass could not
+    // be laid - and stands nearer her path than its pass distance has nothing moved within two
+    // smoothing steps of it either side, the straight water a run would have had. A run's pass
+    // point is a kept vertex; this has none, and the smoothing rounds the foot of the lane's
+    // own ease-in: 25 m short of a red buoy 4.7 m off her path it rounded her 8 m to starboard,
+    // across the buoy (seeded fuzz 9107, in a 19.5 m set).
+    const bare = !q.k.placed && q.x > 0 && q.x <= off + MS;
+    for (let i = 0; i < N; i++) {
+      if (run.some((v) => Math.hypot(v.e - samp[i].e, v.n - samp[i].n) < HOLD)) cap[i] = 0;
+      if (bare && Math.abs(cum[i] - q.s) <= 2 * HOLD) cap[i] = 0;
+    }
+  }
+  // ... and IN THE CHART'S WATER, NO FURTHER THAN THE CHART'S OWN LINE: where that lane is still
+  // easing her onto its line - she came into its channel through the side - this one may hold
+  // her as far to starboard as that line and no further (`slack`), and where she is on it,
+  // not at all.
+  for (let i = 0; i < N; i++) if (owned(i)) cap[i] = Math.min(cap[i], slack[i]);
+  const close = () => {
+    for (let i = 1; i < N; i++) cap[i] = Math.min(cap[i], cap[i - 1] + g);
+    for (let i = N - 2; i >= 0; i--) cap[i] = Math.min(cap[i], cap[i + 1] + g);
+    for (let i = 0; i < N; i++) T[i] = Math.min(T[i], cap[i]);
+  };
+  close();
+  if (!T.some((v, i) => have[i] && v > 0.5)) return nil;
+
+  // ── THE LINE: held past each stretch's end while it eases off, eased everywhere no steeper
+  // than LANE_SLEW, and spliced into her path.
+  //   ⚠ HELD TO THE END OF THE REACH, AND EASED OFF PAST IT in the open water beyond the last
+  // mark, as the chart's own lane is at a channel's end; and into the water the chart's lane
+  // rides only as far as that lane's own line (`cap`, above). This lane is laid on the path
+  // the chart's lane left (channelLaneRoute), so "no shift" there is the chart's line and
+  // not the search's. A short stretch with no cross-section between two that have one is
+  // held across the same way, from either side.
+  const layLine = () => {
+  const tgt = Float64Array.from(T), free = Uint8Array.from(have);
+  for (const sg of [1, -1]) {
+    for (let i = sg > 0 ? 1 : N - 2; i > 0 && i < N - 1; i += sg) {
+      if (!have[i] || have[i + sg] || free[i + sg]) continue;
+      const v = tgt[i], n = Math.ceil(v / g);
+      for (let k = 1; k <= n; k++) {
+        const j = i + sg * k;
+        if (j <= 0 || j >= N - 1 || have[j] || (free[j] && tgt[j] > v)) break;
+        // (held past a stretch's end she stands no further off her path than the ease leaves her
+        // there, n + 1 - k samples from where it ends; held ACROSS a short gap to another stretch,
+        // the whole of it - but every sample of a reach is capped by its own bank already, `capB`)
+        const vj = Math.min(v, cap[j]), dj = Math.min(vj, g * (n + 1 - k));
+        // (the water is open that far - there, and a smoothing step either side, because the
+        // smoothing rounds the foot of an ease toward whatever stands beside it)
+        let open = Infinity;
+        for (let m = Math.max(1, j - KH); m <= Math.min(N - 2, j + KH); m++) open = Math.min(open, room(m));
+        if (open < dj || blocked(at(j, dj), koKeep, buf)) break;
+        tgt[j] = Math.max(tgt[j], vj); free[j] = 1;
+      }
+    }
+  }
+  const pin = new Uint8Array(N), Tb = new Float64Array(N);
+  for (let i = 0; i < N; i++) pin[i] = free[i] ? 0 : 1;
+  for (let i = 0; i < N; i++) {
+    if (pin[i]) continue;
+    let s = 0, c = 0;
+    for (let k = -1; k <= 1; k++) {
+      const j = i + k;
+      if (j >= 0 && j < N && !pin[j]) { s += tgt[j]; c++; }
+    }
+    Tb[i] = s / c;
+  }
+  const E = slewField(Tb, g, pin, null);
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    // ⚠ IN A SET HER LANE POINTS ARE LAID CLEAR OF THE GUARD'S STANDOFF (`clr`), as the chart's
+    // lane's are and the marks' runs: laid at the buffer, a point 16 m off a buoy of another
+    // channel was the standoff re-gate's to splice, and its patch shipped a leg 3 m inside
+    // the standoff (claim fuzz 117). Where her own path is inside it, nothing is moved.
+    let d = Math.min(E[i], cap[i]), p = at(i, d), k = 0;
+    // (a rock is not shrunk away from here - a notch one sample wide - but passed below, either side)
+    while (d > 0.5 && blocked(p, koKeep, clr) && k < 8) { d *= 0.6; p = at(i, d); k++; }
+    if (blocked(p, koKeep, clr)) { E[i] = 0; p = samp[i]; } else E[i] = d;
+    pts.push(p);
+  }
+  return { E, pts };
+  };
+  let { E, pts } = layLine();
+  // ⚠ AND THEN THE ROCKS: each one the lane brings her nearer than its floor (FLOOR, its model's),
+  // and nearer than her own path was, is passed on whichever side is the smaller move from the line
+  // - the FAR side by raising the lane past it (inside a reach only, and only within the bank's cap
+  // there), the NEAR side by capping the lane short of it - over the rock's length, its floor and two
+  // smoothing steps either side, and the line is laid again (ROCK_ROUNDS at most). A rock the line
+  // already clears by the floor, on either side, moves nothing: she holds her lane and passes it wide.
+  //   ⚠ ASKED OF THE ROUTE AS IT WILL BE SMOOTHED, not only of the line: where the line bends - a bend
+  // in the river, the knee where the lane eases in or off - the smoothing rounds it sideways onto a
+  // rock the line cleared by its floor (review, 2026-10-05: passed 0.2-3.9 m off, the lane then lost
+  // to the backstop or shipped with a 45 degree dart). A pass the smoothing cuts into is widened by
+  // what it cut, round after round.
+  //   ⚠ AND A SIDE GIVES WAY: each rock's side is chosen once, but a FAR pass another rock's NEAR cap
+  // has made impossible (the line capped short of it over its own window) becomes a near pass - two
+  // rocks either side of the line 30-240 m apart, one sent each way, locked the first inside its floor
+  // and lost the whole lane. Sides only ever change far to near, so the rounds converge.
+  if (rocks.length) {
+    const near = (poly, rk, cap0) => {
+      let m = cap0;
+      for (let i = 1; i < poly.length; i++) {
+        const a = poly[i - 1], c = poly[i], L = Math.hypot(c.e - a.e, c.n - a.n);
+        if (Math.min(a.e, c.e) > rk.c.e + cap0 + ROCK_MAX_M || Math.max(a.e, c.e) < rk.c.e - cap0 - ROCK_MAX_M
+            || Math.min(a.n, c.n) > rk.c.n + cap0 + ROCK_MAX_M || Math.max(a.n, c.n) < rk.c.n - cap0 - ROCK_MAX_M) continue;
+        const n = Math.max(1, Math.ceil(L / 2.5));
+        for (let k = 0; k <= n; k++) m = Math.min(m, clearanceM({ e: a.e + (c.e - a.e) * k / n, n: a.n + (c.n - a.n) * k / n }, rk.ko, m));
+      }
+      return m;
+    };
+    // the rock across her cross-section at its own station - its OUTLINE, each vertex and a point's extent -
+    // and the samples it spans: over its length, its floor and the reach of the smoothing either side (two
+    // of its steps), so the smoothing that follows rounds nothing back toward it
+    const geo = new Map();
+    const geoOf = (rk) => {
+      if (geo.has(rk)) return geo.get(rk);
+      let ic = 0, bd = Infinity;
+      for (let i = 0; i < N; i++) { const d = Math.hypot(samp[i].e - rk.c.e, samp[i].n - rk.c.n); if (d < bd) { bd = d; ic = i; } }
+      let xa = Infinity, xb = -Infinity, along = 0;
+      for (const it of rk.members) for (const v of it.V) {
+        const de = v.e - samp[ic].e, dn = v.n - samp[ic].n;
+        const x = de * SB[ic][0] + dn * SB[ic][1], s = de * TAN[ic][0] + dn * TAN[ic][1];
+        xa = Math.min(xa, x - it.r); xb = Math.max(xb, x + it.r); along = Math.max(along, Math.abs(s) + it.r);
+      }
+      const win = [];
+      for (let j = 0; j < N; j++) if (Math.abs(cum[j] - cum[ic]) <= along + FLOOR + 2 * HOLD + STEP) win.push(j);
+      const g = { ic, xa, xb, win };
+      geo.set(rk, g);
+      return g;
+    };
+    const side = new Map(), more = new Map();
+    const loOf = (rk) => Math.max(0, geoOf(rk).xa - FLOOR - (more.get(rk) || 0)), hiOf = (rk) => geoOf(rk).xb + FLOOR + (more.get(rk) || 0);
+    const smoothed = () => smoothTrack(spliceShifted(en, samp, st, TAN, STEP, E, pts).map((p) => frame.fromEN(p.e, p.n)), frame, ko, buf)
+      .map((p) => frame.toEN(p));
+    for (let pass = 0; pass < ROCK_ROUNDS; pass++) {
+      const sm = smoothed();
+      const bad = [];
+      for (const rk of rocks) {
+        const dl = Math.min(near(pts, rk, FLOOR + 1), near(sm, rk, FLOOR + 1));
+        if (dl < FLOOR - 0.5 && dl < near(samp, rk, FLOOR + 1) - 0.5) bad.push({ rk, dl });
+      }
+      if (!bad.length) break;
+      for (const { rk, dl } of bad) {
+        const g = geoOf(rk);
+        let s0 = side.get(rk);
+        if (!s0) {
+          const lo = loOf(rk), hi = hiOf(rk);
+          const farOK = hi <= Math.min(...g.win.map((j) => cap[j])) && g.win.every((j) => have[j]);
+          s0 = farOK && hi - E[g.ic] <= E[g.ic] - lo ? 'far' : 'near';
+          side.set(rk, s0);
+        } else more.set(rk, (more.get(rk) || 0) + Math.max(0.5, FLOOR - dl));   // (passed, and still cut into)
+        if (side.get(rk) === 'far') { const hi = hiOf(rk); for (const j of g.win) T[j] = Math.max(T[j], hi); }
+        else { const lo = loOf(rk); for (const j of g.win) cap[j] = Math.min(cap[j], lo); }
+      }
+      close();
+      // (a far pass another rock's near cap has made impossible gives way, until none does)
+      for (let changed = true; changed;) {
+        changed = false;
+        for (const [rk, s0] of side) {
+          if (s0 !== 'far') continue;
+          const g = geoOf(rk), hi = hiOf(rk);
+          if (g.win.some((j) => T[j] < hi - 0.5)) {
+            side.set(rk, 'near');
+            const lo = loOf(rk);
+            for (const j of g.win) cap[j] = Math.min(cap[j], lo);
+            changed = true;
+          }
+        }
+        if (changed) close();
+      }
+      ({ E, pts } = layLine());
+    }
+  }
+  if (!E.some((v) => v > 0.5)) return nil;
+  // (Whether a mark ends on its wrong hand is asked of the route that SHIPS - channelLaneRoute's
+  // `finish` - after the smoothing, the gate and the prune have had their say: asked of this
+  // line as well, nothing was ever found that the cone had not already kept.)
+  const out = spliceShifted(en, samp, st, TAN, STEP, E, pts);
+  return { path: out.map((p) => frame.fromEN(p.e, p.n)), used: true, E, rocks: isRock, rockFloor: FLOOR };
 }
 
 // ── The unmarked lane ───────────────────────────────────────────────────────
@@ -2764,8 +3643,10 @@ export function gateLegClear(route, fallback, frame, ko, buf, opts = {}) {
 
 /**
  * The whole pipeline: the buoy-pair lane and the unmarked lane as they always were, the
- * marks in water the chart does not ride, the chart's own lane over the water it does,
- * then smooth, then the gate, then the knot prune.
+ * marks in water the chart does not ride, the chart's own lane over the water it does, the
+ * buoyed reach between single marks where the chart draws none, then smooth, then the gate,
+ * then the knot prune - run on the route with the reach lane and, where that lane was used,
+ * on the route without it (`finish`).
  *
  * THE CHART COMES FIRST BY GOING LAST (2026-10-04, "any given ASV should recognize a channel
  * from the ENC before relying on buoy placement"). `chartOwnership` decides once which
@@ -2785,11 +3666,14 @@ export function gateLegClear(route, fallback, frame, ko, buf, opts = {}) {
  * @returns {{route:Array, lane:boolean, partial:boolean, how:object, marks:Array, keep:Array}}
  *   `partial` = a lane was ridden but NOT over every channel this route ran along, the
  *   chart's lane was not delivered over some of the water it owns, or a mark was left on the
- *   wrong hand. `how` says which: `pairs`, `charted`, `narrow`, the count of `marks` kept and
- *   wrong, `chartedShortM` (owned water crossed left of its middle) and `gaps` (the part of
- *   `partial` that is not about a mark). `marks` is `markPassRoute`'s own list, for a caller
- *   that changes the route afterwards and has to count again (`marksKept`); `keep` the runs'
- *   pass points (their ends give way), for the same caller's own knot prune.
+ *   wrong hand. `how` says which: `pairs`, `charted`, `narrow`, `reach`, the count of `marks`
+ *   kept and wrong, `chartedShortM` (owned water crossed left of its middle) and `gaps` (the
+ *   part of `partial` that is not about a mark). `marks` is `markPassRoute`'s own list, for a
+ *   caller that changes the route afterwards and has to count again (`marksKept`); `keep` the
+ *   runs' pass points (their ends give way), for the same caller's own knot prune; and
+ *   `withoutReach` (where the reach lane was kept) the route without it and its own pass
+ *   points, for a caller that re-gates the route to ask again whether the lane is kept there
+ *   (passage.js keepStandoff).
  */
 export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
   // ⚠ `opts.lane === false` RUNS THE PIPELINE WITHOUT RULE 9, and that is not the
@@ -2826,21 +3710,125 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
   const passed = marksOn
     ? markPassRoute(unmarked.path, frame, ko, buf, { standoffM: opts.standoffM, laned: marked.laned, own })
     : { path: unmarked.path, used: false, marks: [], keep: [] };
-  const keep = passed.keep || [];
+  const keep0 = passed.keep || [];
   const charted = chartOn
-    ? chartedChannelLane(passed.path, frame, ko, buf, { hold: keep, own: passed.used ? null : own, base: pathLL, clr })
+    ? chartedChannelLane(passed.path, frame, ko, buf, { hold: keep0, own: passed.used ? null : own, base: pathLL, clr })
     : { path: passed.path, used: false, own: null };
-  const smoothed = smoothTrack(charted.path, frame, ko, buf, { keep });
-  const g = gateLegClear(smoothed, pathLL, frame, ko, buf);
+  // THE BUOYED REACH (2026-10-05): where those marks buoy a channel the chart does not draw, she
+  // rides its starboard side between them. Laid LAST, on the path the chart's lane left, and
+  // held in the water that lane rides to that lane's own line (`owns`: within a step of a
+  // sample it owns, where it put it, how far short of its line it left her) - so the chart's
+  // lane is handed exactly the path it always was. (Laid before it, this lane shifted the
+  // chart's samples 10 m along her route, and a fairway's end that had been held to and eased
+  // off past was eased off 140 m inside.)
+  const owns = (() => {
+    const O = charted.used ? charted.own : null;
+    if (!O) return null;
+    const Q = [];
+    for (let i = 0; i < O.N; i++) {
+      if (!O.own[i]) continue;
+      const e = charted.E ? charted.E[i] : 0;
+      Q.push({ p: O.at(i, e), slack: Math.max(0, O.T[i] - e) });
+    }
+    return (p) => {
+      let best = null, bd = O.STEP + 1;
+      for (const q of Q) { const d = Math.hypot(q.p.e - p.e, q.p.n - p.n); if (d <= bd) { bd = d; best = q; } }
+      return best ? best.slack : null;
+    };
+  })();
+  const reach = marksOn
+    ? buoyedReachLane(charted.path, frame, ko, buf, { marks: passed.marks, owns, standoffM: opts.standoffM, rockModel: opts.rockModel })
+    : { path: charted.path, used: false };
+  // (a run the reach lane moved is no longer a run: only the vertices still on her path are kept)
+  const onPath = (() => {
+    if (!reach.used) return () => true;
+    const pe = reach.path.map((p) => frame.toEN(p));
+    return (q) => pe.some((p) => Math.hypot(p.e - q.e, p.n - q.n) < 0.3);
+  })();
   const stubs = marksOn || chartOn;                          // (see pruneStitch: a maneuver prunes as it did)
+  // The smoothing, the gate and the knot prune, and the marks counted on what comes out.
+  const finish = (path, keepV, passV) => {
+    const g = gateLegClear(smoothTrack(path, frame, ko, buf, { keep: keepV }), pathLL, frame, ko, buf);
+    const clean = pruneStitch(g.route, frame, ko, buf, { keep: passV, stubs });
+    return { g, clean, mk: marksKept(clean, frame, passed.marks) };
+  };
+  let keep = keep0.filter(onPath), pass = passed.pass ? passed.pass.filter(onPath) : keep;
+  let fin = finish(reach.path, keep, pass);
+  // ⚠ AND THE REACH LANE IS KEPT ONLY WHERE THE ROUTE THAT SHIPS IS NO WORSE FOR IT: no mark on
+  // its wrong hand that the route without it has right, no lane the gate had to abandon, no
+  // lateral mark of ANY kind between the two routes (a mark with no hand read is counted by
+  // nobody, and the lane has carried her across it), and no turn over the marks stage's own
+  // limit for a kept vertex that the route without it does not have. The lane's own cone is
+  // there to see that none of this happens; the smoothing, the gate and the prune come after
+  // it and may round or splice what it laid, so it is asked of the route.
+  //   (Mark by mark, not by the count: a lane that put one mark wrong and another right would
+  // pass a comparison of counts. And where the lane is kept, the route without it goes back
+  // with it (`withoutReach`), for a caller that re-gates the route at the standoff to ask
+  // again of the route IT ships - passage.js keepStandoff.)
+  const worseFor = (laned, without) => {
+    const a = markVerdicts(laned, frame, passed.marks), b = markVerdicts(without, frame, passed.marks);
+    return a.some((v, i) => !v.proper && b[i] && b[i].proper);
+  };
+  let reachUsed = !!reach.used, withoutReach = null;
+  if (reachUsed) {
+    const plain = finish(charted.path, keep0, passed.pass || keep0);
+    const A = plain.clean.map((p) => frame.toEN(p)), B = fin.clean.map((p) => frame.toEN(p));
+    const between = A.concat(B.slice().reverse());              // (the water the lane moved her across)
+    // (a mark NO count speaks for - no number, a junction mark: a counted one is judged mark by mark
+    // above, and asked here as well, every lane that put a counted mark RIGHT lay across it and
+    // was vetoed: green 15, seed 2194, shipped on her wrong hand for it)
+    const counted = new Set(markVerdicts(fin.clean, frame, passed.marks).map((v) => v.k.m));
+    const crossed = uniqueMarks(ko.marks).some((m) => !counted.has(m) && pinp(m, between));
+    // ⚠ AND NO NEARER A HAZARD THAN ITS OWN FLOOR - BY MORE THAN THE BUFFER OR 3 M - THAN THE ROUTE WITHOUT IT.
+    // The lane lays its points at least clr + STANDOFF off what bounds it; the smoothing that follows
+    // rounds the V the lane makes round a rock and can cut inside that - a rock 15 m off her path
+    // was passed 6.2 m off (the lane's floor 9 m, the route without it 17.5). (By more than the
+    // buffer or 3 m, the less: where the search's own route is already inside the floor - near
+    // land at a route's end - the two differ by a meter or two for reasons that are not the lane's;
+    // over the cached real search paths the most was 2.5 m.)
+    const floorM = Math.max(buf, opts.standoffM || 0) + Math.max(buf + 2, 6), slackM = Math.min(buf, 3);
+    const dense = (t) => {
+      const o = [];
+      for (let i = 1; i < t.length; i++) {
+        const a = t[i - 1], c = t[i], L = Math.hypot(c.e - a.e, c.n - a.n), n = Math.max(1, Math.ceil(L / 2.5));
+        for (let k = 0; k < n; k++) o.push({ e: a.e + (c.e - a.e) * k / n, n: a.n + (c.n - a.n) * k / n });
+      }
+      if (t.length) o.push(t[t.length - 1]);
+      return o;
+    };
+    const dA = dense(A), dB = dense(B);
+    const one = (f) => (f.ring ? { polys: [f], lines: [], points: [] } : f.pts ? { polys: [], lines: [f], points: [] } : { polys: [], lines: [], points: [f] });
+    const bbOfF = (f) => f.bb || { x0: f.e - (f.r || 0), x1: f.e + (f.r || 0), y0: f.n - (f.r || 0), y1: f.n + (f.r || 0) };
+    const nearest = (pts, f, cap) => {
+      const bb = bbOfF(f), K1 = one(f);
+      let m = cap;
+      for (const q of pts) if (inBB(q, bb, m)) m = Math.min(m, clearanceM(q, K1, m));
+      return m;
+    };
+    const walls = [...(ko.polys || []), ...(ko.lines || []), ...(ko.points || []).filter((q) => q.kind !== 'a channel buoy')];
+    const grazes = walls.some((f) => {
+      // (a rock at its own floor: the lane passes it, either side, at that - `rockModel`)
+      const fl = reach.rocks && reach.rocks.has(f) ? reach.rockFloor : floorM;
+      const dl = nearest(dB, f, fl);
+      if (!(dl < fl - 0.5)) return false;
+      return dl < nearest(dA, f, fl + slackM + 1) - slackM;
+    });
+    // (a turn is the lane's where the route without it has none as sharp near it: compared as
+    // whole-route maxima, a 57 degree S-turn the lane laid beside Seavey Island shipped because
+    // the route without it turned 75 degrees 3.4 km away)
+    if (worseFor(fin.clean, plain.clean) || (fin.g.abandoned && !plain.g.abandoned) || crossed || grazes
+        || newLaneTurn(A, B)) {
+      fin = plain; reachUsed = false; keep = keep0; pass = passed.pass || keep0;
+    } else if (!plain.g.abandoned) {
+      withoutReach = { route: plain.clean, keep: passed.pass || keep0 };
+    }
+  }
+  const { g, clean, mk } = fin;
   // ⚠ THE KNOT PRUNE KEEPS A RUN'S PASS POINT, NOT ITS ENDS (`pass`) - an end gives way and the
   // pass point never does (markPassRoute). With every vertex kept, a standoff splice that
   // overshot a run's first vertex and turned back onto it shipped a Z: 101 degrees, 12.6 m,
   // 106 degrees; pruned, the marks are counted the same. (The smoothing and the chart's hold
   // keep them all: neither may bend a run.)
-  const pass = passed.pass || keep;
-  const clean = pruneStitch(g.route, frame, ko, buf, { keep: pass, stubs });
-  const mk = marksKept(clean, frame, passed.marks);
   // An abandoned lane ships the pre-lane input, and no claim about it stands (see gateLegClear).
   const ridden = !g.abandoned;
   const ride = ridden && charted.used ? chartedRide(clean, frame, charted.own) : { ownedM: 0, shortM: 0 };
@@ -2848,7 +3836,7 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
   // (and the chart's lane is not CLAIMED where most of the water it owns was crossed short of
   // it: "right of center in the charted channel" over a route that rode 2,225 m of 2,225 m
   // short of it is a claim the operator would have checked - PARTIAL says the rest)
-  const used = ridden && (marked.used || charted.used || unmarked.used || mk.kept > 0);
+  const used = ridden && (marked.used || charted.used || unmarked.used || reachUsed || mk.kept > 0);
   // A SECOND BUOYED CHANNEL IS NO LONGER RIDDEN DOWN ITS MIDDLE UNSAID: its marks are kept
   // one by one, or the chart's lane rides it. It is still a gap where neither did.
   const sameMark = (a, b) => a.side === b.side && Math.hypot(a.e - b.e, a.n - b.n) < 3;
@@ -2875,17 +3863,20 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
   })());
   const pairsStand = !!marked.used && stands(marked.path, pathLL);
   const narrowStand = !!unmarked.used && stands(unmarked.path, marked.path);
+  const reachStand = reachUsed && stands(reach.path, charted.path);
   return {
     route: clean,
     lane: used,
     partial: (gaps || mk.wrong > 0) && used,
     how: { pairs: ridden && pairsStand, charted: ridden && !!charted.used && ride.shortM <= ride.ownedM / 2,
-           narrow: ridden && narrowStand, marks: mk, gaps: gaps && used,
+           narrow: ridden && narrowStand, reach: ridden && reachStand, marks: mk, gaps: gaps && used,
            chartedShortM: ride.shortM },
     marks: passed.marks,
     keep: pass,
     stubs,
     chartOwn: ridden && charted.used ? charted.own : null,   // (for a caller that re-gates: chartedRide)
+    withoutReach: ridden ? withoutReach : null,              // (... and asks again whether the reach lane is kept)
+    reachLaid: !!reach.used,                                 // (the reach lane was laid, kept or not: `how.reach` says if it ships)
   };
 }
 

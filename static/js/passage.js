@@ -91,6 +91,7 @@ export { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
 export function channelLaneRoute(pathLL, ref, ko, buf, opts){
   const r = coreChannelLaneRoute(pathLL, ref, ko, buf,
                                  {channelReachM: V.CHANNEL_REACH_M != null ? V.CHANNEL_REACH_M : 0,
+                                  rockModel: V.REACH_ROCK === 'bottom' ? 'bottom' : 'land',
                                   ...(opts || {})});
   sea.laneUsed = r.lane;
   sea.lanePartial = r.partial;
@@ -196,6 +197,8 @@ export function regionOrder(segs, ref, legHeading, spacing, legSafe){
 export function laneHow(how){
   const parts = [];
   if(how && how.charted) parts.push("right of center in the charted channel");
+  // (the stretch of her route between single marks, where the chart draws no channel: routing.js buoyedReachLane)
+  if(how && how.reach) parts.push("right of center in the buoyed channel");
   if(!how || how.pairs || how.narrow) parts.push("channel lane, centerline to port");
   const mk = how && how.marks;
   if(mk && mk.kept){
@@ -533,11 +536,28 @@ export function planNogoRoute(from, to, opts){
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
-function keepStandoff(kr, fallback, ref, ko, want){
-  const g = gateLegClear(kr.route, fallback, ref, ko, want, {floor: nogo.buffer});   // (a patch out of her start, at its own radius)
-  const route = pruneStitch(g.route, ref, ko, want, {keep: kr.keep, stubs: kr.stubs});   // (the marks' runs: see channelLaneRoute)
+export function keepStandoff(kr, fallback, ref, ko, want){
+  const gate = (r) => {
+    const g = gateLegClear(r.route, fallback, ref, ko, want, {floor: nogo.buffer});   // (a patch out of her start, at its own radius)
+    const route = pruneStitch(g.route, ref, ko, want, {keep: r.keep, stubs: kr.stubs});   // (the marks' runs: see channelLaneRoute)
+    return {g, route, keep: r.keep, v: markVerdicts(route, ref, kr.marks)};
+  };
+  let shipped = gate(kr), reach = !!(kr.how && kr.how.reach);
+  // ⚠ THE BUOYED REACH IS ASKED AGAIN OF THE ROUTE THAT SHIPS HERE. channelLaneRoute kept it only
+  // where its route at the BUFFER was no worse for it - and the splices made here, at the
+  // standoff, have no notion of a side: a green buoy that both the lane's route and the route
+  // without it had on its proper hand at the buffer came back from this re-gate 15.5 m on her
+  // WRONG hand with the lane, and on its proper hand without it (a 0.9 kn set at the DriX's
+  // 5 m buffer). So the route without it is re-gated too, and ships where the laned one has a
+  // mark wrong that it has right, or was abandoned where it was not.
+  if(reach && kr.withoutReach){
+    const plain = gate(kr.withoutReach);
+    const worse = shipped.v.some((x, i) => !x.proper && plain.v[i] && plain.v[i].proper);
+    if(worse || (shipped.g.abandoned && !plain.g.abandoned)){ shipped = plain; reach = false; }
+  }
+  const {g, route} = shipped;
   // The marks are counted on THIS route: a splice has no notion of a side (see planNogoRoute).
-  const mk = marksKept(route, ref, kr.marks);
+  const mk = tallyMarks(shipped.v);
   // ⚠ A LANE THE GATE ABANDONED SHIPS THE SEARCH'S OWN ROUTE, and nothing the lane claimed is true of it.
   const lane = !!kr.lane && !g.abandoned;
   const h = kr.how || {};
@@ -547,9 +567,9 @@ function keepStandoff(kr, fallback, ref, ko, want){
   const ride = lane && kr.chartOwn ? chartedRide(route, ref, kr.chartOwn) : null;
   const short = !!ride && ride.shortM > Math.max(2 * kr.chartOwn.STEP, 0.05 * ride.ownedM);
   const how = {pairs: lane && !!h.pairs, charted: lane && !!h.charted && (!ride || ride.shortM <= ride.ownedM / 2),
-               narrow: lane && !!h.narrow, marks: mk, gaps: lane && (!!h.gaps || g.splices > 0 || short),
+               narrow: lane && !!h.narrow, reach: lane && reach, marks: mk, gaps: lane && (!!h.gaps || g.splices > 0 || short),
                chartedShortM: ride ? ride.shortM : (h.chartedShortM || 0)};
-  return {route, lane, partial: lane && (how.gaps || mk.wrong > 0), how, marks: kr.marks, keep: kr.keep};
+  return {route, lane, partial: lane && (how.gaps || mk.wrong > 0), how, marks: kr.marks, keep: shipped.keep};
 }
 // Route an ENTIRE run plan clear of nogo: the approach from `start` (present
 // position) to wp0, plus every inter-waypoint transit. Detour waypoints are
@@ -578,7 +598,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
   // report only whichever leg happened to be last.
   let lane = false, partial = false, insideStandoff = 0;
-  const how = {pairs: false, charted: false, narrow: false, gaps: false, marks: {kept: 0, wrong: 0, stbd: 0, port: 0}};
+  const how = {pairs: false, charted: false, narrow: false, reach: false, gaps: false, marks: {kept: 0, wrong: 0, stbd: 0, port: 0}};
   const want = (standoffM > buf + 0.05) ? standoffM : buf;
   // ⚠ EACH LEG'S MARKS ARE JUDGED ON THAT LEG'S OWN PART OF THE ROUTE THAT SHIPS, and every pass
   // counts - but ONE pass, of a mark beside the waypoint two legs share, is counted once (both
@@ -624,7 +644,7 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       const kr = atStandoff ? keepStandoff(kr0, seg, ref, ko, want) : kr0;
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
       if(kr.how){
-        for(const f of ["pairs", "charted", "narrow", "gaps"]) if(kr.how[f]) how[f] = true;
+        for(const f of ["pairs", "charted", "narrow", "reach", "gaps"]) if(kr.how[f]) how[f] = true;
       }
       // (a mark too near this leg's start or end is counted where that end is a waypoint between two of its legs - not
       // at the transit's own start, the vessel's position, nor at its last waypoint: see markPassRoute's `reach`)

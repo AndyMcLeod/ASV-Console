@@ -860,18 +860,18 @@ export function buildKeepouts(frame, feats, opts = {}) {
     if (isLand || depthbad || isArea) {
       eachRing(g, (rg) => {
         const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
-        if (ring.length > 2) polys.push({ ring, bb: bbOf(ring), kind });
+        if (ring.length > 2) polys.push({ ring, bb: bbOf(ring), kind, cls: f.cls });
       });
     } else if (isShore) {
       eachPath(g, (p) => {
         const pts = p.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
-        if (pts.length > 1) lines.push({ pts, bb: bbOf(pts), kind });
+        if (pts.length > 1) lines.push({ pts, bb: bbOf(pts), kind, cls: f.cls });
       });
     } else if (isHaz) {
       const radius = hazExtent(f, o);
       eachPoint(g, (c) => {
         const q = frame.toEN({ lon: c[0], lat: c[1] });
-        points.push({ e: q.e, n: q.n, r: radius, kind });
+        points.push({ e: q.e, n: q.n, r: radius, kind, cls: f.cls });
       });
     }
     // Everything else — depth areas inside the window, contours, soundings —
@@ -884,10 +884,51 @@ export function buildKeepouts(frame, feats, opts = {}) {
   // not depend on the first — a dredged area is only a keep-out when the
   // operator enforces it, yet its EXTENT is what tells the lane how far the
   // fairway runs past the last buoy. Built unconditionally for that reason.
+  // `restricted` is THE CHART'S RESTRICTED AREAS AS FACTS (2026-10-05), carried the same way and
+  // for the same reason: whether one is a keep-out is the operator's `area` toggle, but WHERE it
+  // lies is what tells a keep-right lane not to take her into one (routing.js buoyedReachLane -
+  // the Naval Shipyard's restricted area along Seavey Island, 33 CFR 334.50, lies on the
+  // starboard hand of every vessel bound up the Piscataqua). Outer rings only, with each ring's
+  // area: the same layer holds a no-discharge zone covering half the river, which is no limit
+  // on where she rides (RESTRICTED_LOCAL_M2).
+  const restricted = [];
+  for (const f of feats || []) {
+    if (f.role !== 'restricted' || !f.geometry) continue;
+    const outers = f.geometry.type === 'Polygon' ? [f.geometry.coordinates[0]]
+      : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates.map((p) => p[0]) : [];
+    for (const rg of outers) {
+      if (!rg || rg.length < 3) continue;
+      const ring = rg.map((c) => frame.toEN({ lon: c[0], lat: c[1] }));
+      let a2 = 0;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) a2 += ring[j].e * ring[i].n - ring[i].e * ring[j].n;
+      const pr = f.props || {};
+      restricted.push({ ring, bb: bbOf(ring), area: Math.abs(a2) / 2, name: pr.OBJNAM || '',
+                        key: [pr.OBJNAM || '', pr.CATREA || '', pr.INFORM || ''].join('|') });
+    }
+  }
+  // ⚠ ONE AREA, CUT AT THE CHART'S CELL SEAMS, IS STILL ONE AREA. The service cuts a feature at
+  // each cell's edge, and judged a ring at a time, 11 pieces of the Right Whale Critical
+  // Habitat (210 km2) passed as "local" (124 m2 to 0.12 km2). Rings of the same named area
+  // (OBJNAM, CATREA, INFORM) that touch are one area, and each carries the area of the whole
+  // (`area`; its own is `ringArea`). (A hole in a ring is read as part of the area.)
+  const parent = restricted.map((_, i) => i);
+  const root = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+  for (let i = 0; i < restricted.length; i++) {
+    for (let j = i + 1; j < restricted.length; j++) {
+      const a = restricted[i], c = restricted[j];
+      if (a.key !== c.key || a.key === '||') continue;
+      if (a.bb.x0 > c.bb.x1 + 1 || c.bb.x0 > a.bb.x1 + 1 || a.bb.y0 > c.bb.y1 + 1 || c.bb.y0 > a.bb.y1 + 1) continue;
+      parent[root(i)] = root(j);
+    }
+  }
+  const total = new Map();
+  restricted.forEach((c, i) => total.set(root(i), (total.get(root(i)) || 0) + c.area));
+  restricted.forEach((c, i) => { c.ringArea = c.area; c.area = total.get(root(i)); delete c.key; });
   return {
     polys, lines, points, marks, passed, wrecksOff,
     sys: markSystems(marks),
     chans: channelPolys(frame, feats, marks),
+    restricted,
   };
 }
 

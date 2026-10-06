@@ -247,8 +247,11 @@ const ENF = { land: true, depth: true, haz: true, area: false };
   const CLR = grab(ROUTING, "channelLaneRoute");
   check("8. `lane:false` skips the OFFSET, never the smooth / gate / prune pipeline",
         () => /const laneWanted = opts\.lane !== false;/.test(CLR) &&
-              /smoothTrack\(charted\.path/.test(CLR) && /gateLegClear\(smoothed/.test(CLR) &&
-              /pruneStitch\(g\.route/.test(CLR),
+              // (2026-10-05: the three run in `finish`, asked of the reach lane's path and, where that lane is
+              // not kept, of the path without it - never of neither)
+              /gateLegClear\(smoothTrack\(path, frame, ko, buf, \{ keep: keepV \}\), pathLL, frame, ko, buf\)/.test(CLR) &&
+              /pruneStitch\(g\.route/.test(CLR) && /let fin = finish\(reach\.path, keep, pass\);/.test(CLR) &&
+              /const \{ g, clean, mk \} = fin;/.test(CLR),
         "the gate is a per-leg keep-out re-check and every route needs it, laned or not");
 }
 

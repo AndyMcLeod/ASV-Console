@@ -539,6 +539,7 @@
         <option value="arc" selected>Arc</option><option value="eased">Eased</option>
       </select></div>
     <div class="phint" id="sp_ease_note">turns: arc</div>
+    <div class="prow" title="HOW A ROCK IN A BUOYED CHANNEL IS PASSED by the Rule 9 lane - a charted rock, wreck or obstruction, a small shoal patch or islet with water all round it. It is never the channel's edge: the lane holds its line and passes it to EITHER side. LAND gives it the lane's own clearance from a bank (twice the buffer and two meters, or more). SHOAL gives it only the ordinary keep-clear buffer (and a couple of meters), as a shallow point of the sea bottom - any spot of water shallower than the floor. A pier, a float or a bridge support is the bank either way. For trying both: the next Go-To, RTH or transit is planned with what this says (a fresh page starts on Land)."><label>Channel rocks</label><select id="enf_rock"><option value="land" selected>Land</option><option value="bottom">Shoal</option></select></div>
     <div class="enf" title="Which ENC features form the NOGO model — SHARED by every behavior (Go-To / RTH / search / survey), not just Punch Out. Toggling these re-routes all behaviors.">
       <label><input type="checkbox" id="enf_land" checked/>Land / shore / docks</label>
       <label><input type="checkbox" id="enf_depth" checked/>Water shallower than floor</label>
@@ -1884,14 +1885,16 @@ function setPlanIntent(kind, plan, route){
                         + (plan.coast.lc && !plan.coast.lc.measured
                            ? " (on an ESTIMATED coast length, never measured on this hull)" : "")});
   if(plan.lane){
-    // WHICH KEEP-RIGHT IT WAS (2026-10-03). There are three, and they put her in different water: the chart's own
-    // channel, the lane off a pair of buoy lines or a narrow cut's banks, and lateral marks left one by one on their
-    // proper hand. `plan.how` says which (passage.js laneHow words the banner from the same field); a plan that
+    // WHICH KEEP-RIGHT IT WAS (2026-10-03). There are four, and they put her in different water: the chart's own
+    // channel, the water single marks buoy where the chart draws none (2026-10-05), the lane off a pair of buoy
+    // lines or a narrow cut's banks, and lateral marks left one by one on their proper hand. `plan.how` says which (passage.js laneHow words the banner from the same field); a plan that
     // carries none reads as it always did.
     const how = plan.how, mk = how && how.marks;
     const gaps = plan.partial && (!how || how.gaps);
     if(how && how.charted)
       w.push({t:"lane", s:"riding the Rule 9 lane in the CHARTED channel - a quarter of its width in from its starboard edge"});
+    if(how && how.reach)
+      w.push({t:"lane", s:"riding the Rule 9 lane in the BUOYED channel - right of center between the marks and the banks"});
     if(how ? (how.pairs || how.narrow) : !plan.partial)
       w.push({t:"lane", s:"riding the Rule 9 channel lane - a quarter width to starboard, centerline to port"});
     // "PASSED CLOSE" IS SAID OF THE BUOYS THAT WERE (`buoys`, `close`: marksKept): said of every one, it
@@ -7277,7 +7280,9 @@ function transitEstKey(boat, wps, home){
   // it, and the row must not go on saying "not yet read" until the boat has moved 50 m.
   const bb = nogo.bbox ? [nogo.bbox.W, nogo.bbox.S, nogo.bbox.E, nogo.bbox.N].map(v => v.toFixed(5)).join(",") : "-";
   return [cell, w0.lat,w0.lon, wL.lat,wL.lon, home?home.lat+","+home.lon:"-",
-          nogo.ready, nogo.band, nogo.buffer, wps.length, bb].join("|");
+          nogo.ready, nogo.band, nogo.buffer, wps.length, bb].join("|")
+    // (and the rock model the route is laid with: the page's "Channel rocks" changes the route, not the chart)
+    + "|" + V.REACH_ROCK;
 }
 function transitEstCompute(boat, wps, home){
   // Pure of the DOM and of the cache: route the two legs and report honestly.
@@ -13108,6 +13113,9 @@ function updateEaseNote(){
     + "Costs a little outboard water and about twice the waypoints; Punch Out reports both.";
 }
 $("#sp_turn_ease").onchange = ()=>setTurnEase($("#sp_turn_ease").value);
+// How a rock in a buoyed reach is passed - for trying both (state.js V.REACH_ROCK). The keep-out model does not
+// change, only the lane laid through it, so nothing is rebuilt: the next plan reads it.
+$("#enf_rock").onchange = ()=>{ V.REACH_ROCK = $("#enf_rock").value === "bottom" ? "bottom" : "land"; };
 // enforce toggles rebuild the shared nogo (affect Go-To / RTH / search too)
 ["#enf_land","#enf_depth","#enf_haz","#enf_area","#enf_wreck","#enf_chan"].forEach(id=>{
   $(id).onchange = ()=>{ applyNogoControls(); patClip=null; updatePatReadout(); render(); };

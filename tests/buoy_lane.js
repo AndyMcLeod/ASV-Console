@@ -150,7 +150,7 @@ function grabDecl(name) {
 // THE RING INDEX (2026-09-26): blocked / clearanceM / blockedInfo answer through ringInside and
 // ringDist now, so a world that lifts their bodies has to lift those and the index they share.
 const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist",
-                 "blocked", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
+                 "blocked", "clearanceM", "stampSeg", "dilateGrid", "rasterKeepouts", "routeAround", "snapClearLL",
                  "routeAroundSeg", "pruneStitch", "legClear", "legPath",
                  "blockedInfo", "firstBlockAlong", "clearButEnds", "gateLegClear",
                  "smoothTrack", "systemCenterline", "extendCenterline",
@@ -165,6 +165,8 @@ const HELPERS = ["bandIndex", "indexFor", "ringIndexed", "ringInside", "ringDist
                  "tangentsEN", "slewField", "median", "chartOwnership", "chartedChannelLane",
                  "chartedRide", "cumEN", "projectEN",
                  "runPast", "uniqueMarks", "markPassRoute", "marksKept", "markVerdicts", "tallyMarks", "markCounted",
+                 // THE BUOYED REACH (2026-10-05): one more lane stage, and the splice it shares with the chart's.
+                 "spliceShifted", "buoyedReachLane", "newLaneTurn",
                  "buoyChannelLane", "narrowChannelLane", "channelLaneRoute"];
 // ... and their tuning, read from the module like every other number here.
 const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "CHART_ALONG_RATIO",
@@ -172,8 +174,9 @@ const LANE_DECLS = ["chartRings", "CHART_MARCH_MAX_M", "CHART_BRIDGE_REACH_M", "
                     "CHART_EDGE_WINDOW_M", "CHART_OPEN_PARALLEL_COS", "CHART_BASE_ROUND_M", "CHART_TAN_M", "CHART_END_SLIVER", "CHART_CONE_REACH_M", "CHART_CONE_STRAIGHT_COS",
                     "MARK_REACH_M", "MARK_NEIGHBOR_M", "MARK_ROUTE_NEIGHBOR_M", "MARK_STEP_MAX",
                     "MARK_ALONG_COS", "MARK_COURSE_COS", "MARK_COURSE_LOOK_M",
-                    "MARK_STAGE_LEGS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
+                    "MARK_STAGE_LEGS", "MARK_STAGE_ROUNDS", "MARK_CLEAR_SEARCH_M", "GATE_PATCH_RATIO", "GATE_PATCH_SLACK_M", "END_CLEAR_M",
                     "MARK_PORT_BERTH", "MARK_PASS_M", "MARK_RUN_TURN_DEG", "MARK_JOIN_MAX_DEG", "MARK_TRACK_COS", "MARK_GATE_M", "MARK_BESIDE_RATIO",
+                    "REACH_EDGE_M", "REACH_MAX_WIDTH_M", "REACH_MIN_M", "ROCK_MAX_M", "ROCK_MARKED_M", "ROCK_CLASSES", "ROCK_ROUNDS", "NEW_TURN_NEAR_M", "REACH_STRAIGHT_COS", "REACH_RUN_COS", "RESTRICTED_LOCAL_M2",
                     "markName"];
 const M_PER_DEG_LAT = 111320.0;
 

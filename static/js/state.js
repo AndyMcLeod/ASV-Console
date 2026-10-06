@@ -58,6 +58,12 @@ export const V = {
   // COLREGS Rule 9 keep-right wall-detection reach (m): a channel engages keep-right only
   // when BOTH walls are within this on each side. null -> the buf*10 tight-marina default.
   CHANNEL_REACH_M: null,
+  // HOW A ROCK IN A BUOYED REACH IS PASSED (2026-10-05, Andy: "model either way for testing purposes"):
+  // 'land' - either side, at the lane's own clearance from a bank; 'bottom' - either side, at the
+  // planner's ordinary keep-clear (and a march step), as a shallow point of the sea bottom. Never as the
+  // channel's edge.
+  // The page's "Channel rocks" sets it; a fresh page starts on 'land' (routing.js buoyedReachLane, ROCK_MAX_M).
+  REACH_ROCK: 'land',
   // Shortest survey line worth running, in meters, AS RUN (after the turn margin is taken
   // off both ends). A survey line costs two turns whatever its length, so below some
   // length the boat spends more time manoeuvring onto the line than surveying it - and
