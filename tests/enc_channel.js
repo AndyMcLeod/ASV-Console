@@ -96,7 +96,11 @@
 //          review of it: 93k, water all round measured from the outline; 93l, two rocks either side of the line;
 //          93m, the smoothed route at a bend and at the ease's knees; 93n, a run of rocks; 93o, a long thin rock's
 //          own width; 93p, the chart's classes; 93q, an unknown-extent rock on the line; 93r, a shoal patch and an
-//          islet with its shoreline; 93s, her own path; 93t, the re-lay threshold; 93u, the marked distance).
+//          islet with its shoreline; 93s, her own path; 93t, the re-lay threshold; 93u, the marked distance; and its
+//          gap round: 93v, the pass moves the lane's own line - short of a charted fairway, on the line and off it;
+//          93w, the near need measured past her path; 93x, a rock her own path passes inside its floor ridden on it).
+//   94     THE LEG BUDGET IS A HARD STOP (his call, 2026-10-06): the buoy-to-buoy re-aim is bounded by MARK_STAGE_LEGS
+//          too - past it a mark is counted where it stands, and said.
 //   95-98  THE REACH'S OLDER MUTATION SURVIVORS (2026-10-05): 95-95c, the route that ships asked of a mark no count
 //          speaks for, mark by mark, and so where the planner re-gates; 96-96c, a run's pass points held (in a set too),
 //          a starboard mark holding the lane off by the water between them round a hard turn, a close mark with no run
@@ -2727,6 +2731,45 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
         ridden.map((q) => "n " + q.n + " " + q.m + (q.so ? " (set " + q.so + ")" : "") + ": reach " + q.r.how.reach + ", " + f1(q.off)
           + " m off (floor " + q.floor + "; without the lane " + f1(q.offWo) + "), at most " + f1(q.worst) + " m to port of the lane with no rock").join("; ")
           + " (the line moved, stopped on her path abeam of it only: the lane dropped at all four)");
+}
+// ── 94. THE LEG BUDGET IS A HARD STOP (his call, 2026-10-06: "keep MARK_STAGE_LEGS as a hard stop") ──
+// THE STAGE'S LEG BUDGET BOUNDS THE BUOY-TO-BUOY RE-AIM TOO. MARK_STAGE_LEGS is the work the whole marks stage may route -
+// past it the rest of the marks are counted where they stand - and a re-aim rebuilds every pass already placed. 76's
+// water at the DriX's 5 m buffer, bound in, with a straight reach east of it whose reds (Long Reach Buoys 22-28, 800 m
+// apart) stand 60 m on her WRONG hand behind a charted hazard each way: every build routes their joins again, so each pass
+// placed makes every later one dearer. With three of them the re-aim that puts The Rocks Buoy 4 right (76) is within the
+// budget; with four, The Rocks' own second-round pass, refused "no join", is the one that spends it (66 legs before it, 84
+// after), and the buoy is counted where it stands, on her wrong hand, and said. Routed past the limit all the same (the
+// mutation sweep's M5), the re-aim cost 9 legs more (93 of 80) and shipped the buoy 10.0 m to starboard - the better
+// route in this world. He kept the budget a hard stop (2026-10-06), and nothing else holds the re-aim to it.
+{
+  const pt = (e, n, CATLAM, OBJNAM) => { const q = ll(e, n);
+    return { role: "chan_mark", cls: "Buoy_Lateral_point", props: { CATLAM, OBJNAM }, geometry: { type: "Point", coordinates: [q.lon, q.lat] } }; };
+  const REDS = [1569, 769, -31, -831];                      // e of Long Reach Buoys 22, 24, 26, 28 (n -548; her path n -488)
+  const PATH = [[1969, -488], [-1231, -488], [-2804.2, -95.8], [-3313.5, 31.6], [-3343.8, 78.3], [-3382.8, 38.5], [-3416.7, 31.4],
+                [-3906.0, -158.9], [-3917.6, -190.4], [-3967.9, -642.7], [-4012.0, -674.9], [-4007.8, -711.7], [-4002.6, -747.0],
+                [-3973.5, -782.4], [-3987.3, -1657.3], [-4013, -3399]].map(([e, n]) => ({ e, n }));
+  const run = (reds) => {
+    const ko = K.buildKeepouts(F, [pt(-3387, -9, 1, "Hen Island Ledge Buoy 1"), pt(-3985, -6, 2, "Eight-Foot Rock Buoy 2"),
+      pt(-4103, -183, 1, "Fox Point Rock Buoy 3"), pt(-3819, -712, 2, "The Rocks Buoy 4"), pt(-3653, -1376, 2, "Little Bay Buoy 4A"),
+      pt(-4376, -4229, 2, "Great Bay Entrance Buoy 6"), ...reds.map((e) => pt(e, -548, 2, "Long Reach Buoy " + (22 + 2 * REDS.indexOf(e))))], {});
+    for (const [e, n, r] of [[-3947.2, -1037.2, 0], [-3803.5, -1250.6, 0], [-3856.4, -1232.0, 0], [-3708.7, -1439.8, 0], [-3673.5, -1447.3, 0],
+                             [-3998.7, -1024.2, 0], [-4035.5, 18.0, 50], [-3368.0, -33.1, 50], [-4071.2, -737.5, 50], [-3897.9, -712.9, 50],
+                             [-4096.1, -659.6, 50], [-3918.2, 294.1, 50], [-3724.8, 360.0, 50]]) ko.points.push({ e, n, r, kind: "a charted hazard" });
+    for (const e of reds) for (const de of [230, -230]) ko.points.push({ e: e + de, n: -523, r: 10, kind: "a charted hazard" });
+    const r = lane(ko, PATH, {}, 5), m4 = ko.marks.find((m) => /rocks/.test(m.sys));
+    return { r, ko, x: offOf(r.track, m4), lim: r.marks.filter((k) => /limit of routed legs/.test(k.unplaced || "")).map((k) => k.m.sys + " " + k.m.num) };
+  };
+  const within = run(REDS.slice(1)), past = run(REDS), pass5 = R.MARK_PASS_M(5, 0);
+  check("94. THE LEG BUDGET IS A HARD STOP, FOR THE BUOY-TO-BUOY RE-AIM TOO: with three reds on her wrong hand up the reach east "
+        + "of Fox Point the re-aim puts The Rocks Buoy 4 right within MARK_STAGE_LEGS; with four, the pass that refused it spent "
+        + "the limit, and the buoy is counted where it stands - on her wrong hand, and said - not re-aimed past the limit",
+        R.MARK_STAGE_LEGS === 80 && Math.abs(within.x - pass5) < 2 && within.r.how.marks.wrong === 0 && within.lim.length === 0
+          && past.x < -100 && past.r.how.marks.wrong === 1 && past.r.partial === true && past.lim.length > 0
+          && legsClear(within.r, within.ko) && legsClear(past.r, past.ko),
+        "three reds: The Rocks Buoy 4 " + f1(within.x) + " m (+ = to starboard), " + JSON.stringify(within.r.how.marks) + "; four: "
+          + f1(past.x) + " m, " + JSON.stringify(past.r.how.marks) + ", partial " + past.r.partial + ", past the stage's limit: "
+          + (past.lim.join(", ") || "none") + " (re-aimed past the limit: 93 legs of 80, and the buoy 10.0 m to starboard)");
 }
 // ── 95-98. THE REACH'S OLDER MUTATION SURVIVORS (2026-10-05): each check fails on the mutant it pins ──
 // 95. A MARK NO COUNT SPEAKS FOR IS ASKED OF THE ROUTE THAT SHIPS TOO. A mark with no number says nothing about the

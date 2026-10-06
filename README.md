@@ -2234,7 +2234,9 @@ of the operator.
       the far one. A pass that could not be joined is asked again each time another has
       been placed, until a round places nothing. The stage is bounded by **work** (80
       routed legs), not by the clock, so the same Go-To plans the same route on a busy
-      machine as on an idle one.
+      machine as on an idle one. The bound is a **hard stop**: once it is spent no pass
+      is tried again, not even one laid buoy to buoy to put a mark right — that mark is
+      counted where it stands, and said.
    5. **A buoyed reach** — the stretch of her route between two such marks (no more
       than 1.5 km apart along it), where the chart draws no channel. The marks are
       what make it a channel; leaving each on its proper hand does not by itself put
