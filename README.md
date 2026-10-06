@@ -2295,7 +2295,10 @@ of the operator.
       however small — a pier, a float, a bridge support: the chart serves no floats, so
       a pier head standing off on its own may be joined to the shore by one that is not
       drawn — and so is a rock off a bank, a ledge longer than 150 m, and a hazard a
-      lateral mark stands beside.
+      lateral mark stands beside. The one exception is something built that the chart
+      gives only as an obstruction, with nothing to say what it is: a fish weir, or a
+      tidal turbine, cannot be told from a rock on the chart the console reads, and is
+      passed as one, on either side (kept so for now, 2026-10-06).
 
       Only where the lane would bring her nearer to a rock than its floor, and nearer
       than her path without the lane passed it, is it passed — asked of the lane's line
