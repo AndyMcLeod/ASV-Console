@@ -2225,8 +2225,120 @@ of the operator.
       and another named channel's numbers speak for a mark only where they continue its
       count, numbered on from it (a cove numbered again from 1 beside a harbor's red does
       not). A pass is tried along the channel's course and, failing that, along her own
-      track there. The stage is bounded by **work** (80 routed legs), not by the clock,
-      so the same Go-To plans the same route on a busy machine as on an idle one.
+      track there; and where a mark would be left on its **wrong hand** because its pass
+      cannot be joined to the one before it (or after it) within the turn limit, the two
+      are laid again **aimed at each other** — buoy to buoy, which is the channel's
+      course, where her own track is the shortest way and may cut across what the buoy
+      guards. Only where the line between the two runs along her route: two marks
+      abeam of each other across the channel are a gate, and she is not sent across to
+      the far one. A pass that could not be joined is asked again each time another has
+      been placed, until a round places nothing. The stage is bounded by **work** (80
+      routed legs), not by the clock, so the same Go-To plans the same route on a busy
+      machine as on an idle one.
+   5. **A buoyed reach** — the stretch of her route between two such marks (no more
+      than 1.5 km apart along it), where the chart draws no channel. The marks are
+      what make it a channel; leaving each on its proper hand does not by itself put
+      her on the starboard side of the water between them (a mark kept to port is only
+      given a berth, and a beacon on the starboard hand is never brought close). So
+      between the marks she rides **three quarters of the way across** the water they
+      buoy, only ever moved to starboard. Its edge on each hand is the nearest of the
+      **bank** (side water — a basin, a back channel — read across: what is judged is
+      the water's *width* against its width nearby, never one bank's distance from her,
+      which changes with every swing of her own path), a **local charted restricted
+      area** wherever she is outside it, and that hand's **marks**: the line from one to
+      the next where the water runs straight between them, and beside a mark the line
+      through it along the water's course. Round a bend the line between two marks is
+      no edge — the bank is. A stretch of it must be a channel: water two edges bound
+      along at least 150 m, laned no further off her path than it is long at the
+      lane's slope — a rock or an islet off an open shore, or two buoys forty meters
+      apart, make no channel.
+
+      *Never across a mark, never round the far side of the bank.* Every lateral mark
+      on her starboard hand stays there — a buoy kept to starboard is passed close, any
+      other mark (a beacon, an unnumbered or junction buoy, a mark she is already on
+      the wrong side of) is given a mark's berth. What of the bank she stands off is
+      read between her cross-sections as well as along them — a pier's head, a point
+      of the shore — and held over the smoothing, so it is rounded at the lane's own
+      clearance (twice the buffer and two meters, or more), on the side the shortest
+      route passed it. The chart still comes first: this lane is laid after the
+      chart's own, and in charted water moves her no further than the chart's line.
+      And it is kept only where the route that ships is no worse for it: no mark on its
+      wrong hand that the route without it has right (mark by mark, not by the count),
+      no lane the gate had to abandon where the route without it was not, no uncounted
+      mark (no number, a junction buoy) between the two routes, no turn over the marks'
+      own 45 degree limit where the route without it has none as sharp (within 5
+      degrees) within 30 m, and no keep-out passed nearer than the lane's own clearance
+      (a rock: its model's floor, below) and nearer, by more than the buffer or 3 m
+      (the less), than the route without it passed it. In a set, where the planner
+      re-gates the route at the standoff, the route without the lane is re-gated too,
+      and two of these are asked again of what comes out — a mark on its wrong hand
+      that the other has right, and a lane the gate abandoned — but not the turn, the
+      uncounted marks or the clearance. A restricted area the chart cuts into pieces
+      at its cell boundaries is judged whole.
+
+      *A rock is a shallow point, not an edge* (his call on the review: "hold the lane
+      and pass the rock wide. do not use a rock as an assumed buoy for path planning
+      purposes"). A charted rock, wreck or obstruction, a shoal patch or a small islet —
+      no more than 150 m across, with water all round it (twice its floor clear of
+      anything else, measured from its outline) and no lateral mark within 50 m of its
+      outline — neither bounds the lane nor stops it where it is held past a reach's
+      end: she holds her lane and passes it wide. (Read as a bank, a rock 130 m off her
+      path in a 500 m buoyed river pulled the lane in from 276 m to 112 m off her path,
+      to pass it 18 m off; held, the lane passes it 146 m off.) Rocks closer together
+      than twice the floor, outline to outline, are one rock. Which hazards may be
+      rocks is read from the chart's class, because the chart charts a pile as a hazard
+      point just as it does a rock: a pile, a dolphin, a bridge pylon, a hulk, a shore
+      construction and every aid charted as a hazard point (a cardinal, isolated-danger,
+      safe-water or special-purpose buoy or beacon) are the bank. So is anything built,
+      however small — a pier, a float, a bridge support: the chart serves no floats, so
+      a pier head standing off on its own may be joined to the shore by one that is not
+      drawn — and so is a rock off a bank, a ledge longer than 150 m, and a hazard a
+      lateral mark stands beside.
+
+      Only where the lane would bring her nearer to a rock than its floor, and nearer
+      than her path without the lane passed it, is it passed — asked of the lane's line
+      and of the route **as it will be smoothed**, because the smoothing rounds a bend
+      in the river, or the knee where the lane eases in or off, sideways onto a rock the
+      line cleared. It is passed on whichever side is the smaller move from the line:
+      the far side by raising the lane past it (only inside a reach, and only where
+      the lane may stand that far over), the near side by holding the lane short of
+      it. Its width across her line is read from its outline, so a shoal 15 m wide and 140 m
+      long lying along her course is passed at its floor, not as if it were 141 m
+      wide. The pass runs over the rock's own length along her route and, beyond it
+      either side, its floor, two smoothing steps and a sample step (outside a set,
+      about 120 m either side of a rock of no extent at a 3 m buffer, 175 m at 5; a
+      charted rock with no sounding over it is sized by the assumed radius above, 50 m
+      by default, and that is added too), so the smoothing that follows rounds nothing
+      back toward it. A far pass that another rock's near pass has made
+      impossible gives way to a near one (a side only ever changes far to near), a
+      pass the smoothing still cuts into is widened by what it cut, and the line is
+      laid again — eight rounds at most (`ROCK_ROUNDS`). What is left after them is
+      for the test above that keeps or drops the lane, at the rock's floor.
+
+      **Channel rocks**, under *Turn shape* on the survey card, picks that floor, for
+      trying both. *Land* (the default) passes a rock at the lane's own clearance from
+      a bank: the keep-clear (the buffer, or the guard's standoff in a set) and a
+      further buffer and two meters, 6 m at the least — 9 m off at a 3 m buffer, and
+      12 m at 5. *Shoal* passes it at the keep-clear and a march step, 2 m or half the
+      buffer where that is more, as any spot of water shallower than the floor — 5 m
+      off at a 3 m buffer, 7.5 m at 5; where a set puts the guard's standoff at 12 m,
+      at a 3 m buffer, 14 m to Land's 18 m. Twice the floor is also what makes a
+      cluster and what water all round means, so the two can read the same water
+      differently: at a 3 m buffer two rocks 15 m apart are one rock as Land and two
+      as Shoal. It changes no keep-out
+      and rebuilds nothing: the next Go-To, RTH, transit, survey approach or leg into
+      a later survey is planned with what it says, the transit and RTH estimates on
+      the Lines card are worked out again for it, and a fresh page starts on *Land*
+      (it is not saved with the mission).
+
+      *Restricted areas are facts, not walls.* Whether one is a keep-out is still the
+      operator's **Dredged / restricted** toggle. But the lane between single marks is
+      not laid **into** a local one (no bigger than 1 km²) — a shipyard's waterfront, a
+      security zone, a barrier — wherever she is outside it; where the shortest route
+      runs through one she is moved there only toward its nearer edge. A regional one
+      (a no-discharge zone covering half a river) bounds nothing. The chart's own
+      channel, a buoy-pair lane, the banks' lane and a mark's own pass are laid where
+      the chart, the buoys or the banks put them, restricted area or not.
 
    **The two buoy-made channels, geometrically:**
 
@@ -2296,8 +2408,10 @@ of the operator.
    stands on the route that ships (after the smoothing, the gate and, in a set, the
    standoff re-gate): the chart's lane where the finished route crosses its water
    more than half way over (and not at all where most of that water was crossed short
-   of it), the pair lane and the banks' lane only where their moves lie outside water
-   the chart owns, and the marks counted where the finished route leaves them. The
+   of it), the pair lane, the banks' lane and the buoyed reach's lane (*"right of
+   center in the buoyed channel"*) only where their moves lie outside water the chart
+   owns — the last only where it was kept — and the marks counted where the finished
+   route leaves them. The
    Intent card says how many of the buoys kept to starboard were passed close —
    *"(5 of the 6 buoys kept to starboard passed close)"* — rather than claiming it of
    every one. A mark on
@@ -2633,8 +2747,8 @@ Four documents in `docs/`, each aimed at a different reader:
 
 | Document | For | Covers |
 |---|---|---|
-| **Quick Start** | first-time users | Running it, a first commanded behaviour, a first survey — about twenty minutes |
-| **Operations Manual** | operators | Safety model, the display, chart awareness, every behaviour, planning depth, contingencies, checklists, glossary |
+| **Quick Start** | first-time users | Running it, a first commanded behavior, a first survey — about twenty minutes |
+| **Operations Manual** | operators | Safety model, the display, chart awareness, every behavior, planning depth, contingencies, checklists, glossary |
 | **Technical Manual** | engineers | Architecture, the vessel-configuration system, subsystems, the HTTP API, formats, constants, extension recipes |
 | **Development Guide** | contributors | How the project is built and verified: testing philosophy and its failure modes, recurring defect shapes, worked case studies, extension recipes |
 
@@ -2647,6 +2761,21 @@ cd tools && npm install && node build_docs.js
 
 Each generator is standalone (`build_quickstart.js`, `build_ops_manual.js`,
 `build_tech_manual.js`, `build_dev_guide.js`) if you only want to rebuild one.
+
+Then, from the repository root, check what was built:
+
+```
+python tests/docs_valid.py
+node tests/spelling.js
+python tests/sanitization.py
+```
+
+`docs_valid.py` asks whether each document will open — every part well-formed and
+declared, every relationship resolving — and whether its content reached it;
+`spelling.js` holds the builders to American spelling, the only place a spelling fix
+survives the next rebuild; `sanitization.py` keeps the vendor's name out of the code,
+the builders and the generated documents. **No PDF is made**, and none is needed to
+confirm a change: the rebuilt text reads straight out of the `.docx` (python-docx).
 
 `docs/` also holds `ASV-Console-Programming-by-Conversation.pptx`, a
 presentation on this project and the Domain-Expert Specification (DES) schema

@@ -2346,9 +2346,10 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
 // that may be avoided to either side" - "maybe treat a rock as sea bottom - a shallow point to be avoided" - "model
 // either way for testing purposes"). A straight buoyed river 500 m wide, greens on her port hand, the lane 276 m to
 // starboard of her path. (a) A charted rock 130 m to starboard of her path, 146 m to port of the lane's line: in both
-// models she holds the lane and passes it wide - read as an edge, the lane came back to 111 m to pass it 19 m off.
+// models she holds the lane and passes it wide - read as an edge, the lane came back to 112 m to pass it 18 m off.
 // (b) A rock ON the lane's line: 'land' passes it at the lane's own clearance from a bank (clr + STANDOFF), 'bottom'
-// at the planner's ordinary keep-clear (clr), each on whichever side is the smaller move - and the two differ.
+// at the planner's ordinary keep-clear and a march step (clr + MS), each on whichever side is the smaller move - and
+// the two differ.
 {
   const banks = [land(rect(-900, -1600, -200, 4600)), land(rect(300, -1600, 900, 4600))];
   const greens = [-1300, -900, -500, -100, 300, 700, 1100, 1500, 1900, 2300, 2700, 3100].map((n, i) => mark(-170, n, GREEN, 1 + 2 * i, "row " + i));
@@ -2361,7 +2362,7 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
   check("93. A ROCK IN MID-REACH: she holds the lane and passes it wide, in both models (land, shallow point)",
         [midL, midB].every((q) => Math.abs(q.e - q.line) < 2 && q.off > 140 && q.r.how.reach === true && legsClear(q.r, q.w)),
         "land: e " + f1(midL.e) + ", " + f1(midL.off) + " m off; shallow point: e " + f1(midB.e) + ", " + f1(midB.off) + " m off (the lane's line: e "
-          + f1(midL.line) + "; read as an edge it came back to e 11, 19 m off)");
+          + f1(midL.line) + "; read as an edge it came back to e 11.7, 18.3 m off)");
   const line = midL.line, onL = run(line, "land"), onB = run(line, "bottom");
   const floorL = BUF + Math.max(BUF + 2, 6), floorB = BUF + Math.max(2, BUF / 2);   // (the keep-clear and a march step)
   check("93b. A ROCK ON THE LANE'S LINE is passed either side: 'land' at the lane's own clearance from a bank, 'bottom' at "

@@ -1,8 +1,11 @@
 // Build: ASV Simulator - Development Guide (contributors & maintainers)
 //
 // GENERATED - edit this script and rebuild; never hand-edit the docx.
-//   cd tools && npm install && node build_dev_guide.js
+//   cd tools && npm install && node build_dev_guide.js     (node build_docs.js: all four)
 // Writes ../docs/asv-simulator-development-guide.docx (path is script-relative).
+// Then, from the repository root: python tests/docs_valid.py, node tests/spelling.js,
+// python tests/sanitization.py. Section 7.2 below is the whole procedure. No PDF, and no
+// Word automation in the loop.
 //
 // AUDIENCE: whoever works on this codebase next. The Technical Manual describes WHAT
 // the system is; this describes HOW IT IS BUILT AND VERIFIED, and why the practices are
@@ -16,7 +19,7 @@ const c = [];
 
 c.push(TITLE("ASV Simulator"));
 c.push(P("Development Guide — how this project is built, verified and extended", { size: 24, color: "2e5f8a" }));
-c.push(P("For contributors and maintainers. Covers the constraints the codebase deliberately accepts, the development loop, the testing philosophy and its failure modes, how to verify things tests cannot reach, the recurring defect shapes worth checking for first, documentation discipline, and worked recipes for extending the system.", { italics: true }));
+c.push(P("For contributors and maintainers. Covers the constraints the codebase deliberately accepts, the development loop, the testing philosophy and its failure modes, how to verify things tests cannot reach, the recurring defect shapes worth checking for first, documentation discipline and how the documents are rebuilt, and worked recipes for extending the system.", { italics: true }));
 c.push(SP());
 
 c.push(H1("Contents"));
@@ -27,7 +30,7 @@ c.push(H1("Contents"));
   "4  Testing — and what makes a test worth having",
   "5  Verification beyond tests",
   "6  Recurring defect shapes",
-  "7  Documentation discipline",
+  "7  Documentation discipline — and how the documents are rebuilt",
   "8  Case studies",
   "9  Extension recipes",
   "10  House rules",
@@ -46,13 +49,15 @@ c.push(NOTE("THE COST, STATED HONESTLY", "The client page is large, and it will 
 c.push(H2("1.1  The client's modules"));
 c.push(P("The page began as one file in one global scope. Its lowest layer now lives in `static/js/` as ES modules, loaded by the page with `<script type=\"module\">` and served by a whitelisted route — a basename from one directory with one extension, guarded exactly like the session-log route, because both turn a URL into a file read."));
 c.push(TBL(["Module", "Holds", "Depends on"], [
-  ["`geodesy.js`", "Azimuth, distance, ENU, Web Mercator. No DOM, no state, no imports.", "nothing"],
-  ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers.", "geodesy"],
+  ["`geodesy.js`", "Azimuth, distance, ENU, Web Mercator. No DOM, no state; the flat model itself is the shared core's, in `core_geodesy.js`.", "core_geodesy"],
+  ["`geometry.js`", "Clipping, bounding boxes, segments, point-in-polygon, GeoJSON walkers.", "geodesy, core_geometry"],
   ["`units.js`", "The distance DISPLAY EDGE. Owns the km/nm preference outright.", "nothing"],
   ["`state.js`", "Shared mutable state: the vessel parameter block, the keep-out model, live chart state.", "nothing"],
-  ["`chart.js`", "What the chart SAYS: hazard extent, corrected depth, clearance tests, the fairway's identity.", "geodesy, geometry, state"],
-  ["`passage.js`", "How the vessel GETS THERE: the Rule 9 keep-right lane and the keep-out router.", "chart + the above"],
+  ["`chart.js`", "What the chart SAYS: hazard extent, corrected depth, clearance tests, the fairway's identity.", "geodesy, geometry, keepouts, routing, state"],
+  ["`passage.js`", "How the vessel GETS THERE: this console's seam onto the router and the Rule 9 keep-right lane in `routing.js`, which it hands the console's own settings (the channel reach, the rock model), and the planners built on them — a route to a point (Go-To, RTH), a whole plan's route, the re-gate at the standoff.", "routing, chart, hold, state, geodesy"],
+  ["`routing.js`", "The router and the Rule 9 lane's stages, run in order by `channelLaneRoute`: the buoy-pair lane, the narrow-water lane, the marks, the charted channel, then the buoyed reach between single marks (`buoyedReachLane`), kept only where the route is no worse with it. No DOM, no shared state: a path, a keep-out model and options in, a route out.", "geometry, keepouts, raster"],
 ], [1700, 5600, 1500]));
+c.push(P("The table is not the whole directory: more of the page has moved into `static/js/` since, and each module's header says what it holds and why."));
 c.push(P("Two rules make this work, and both are the same rule in different clothes. FUNCTIONS are imported by name, because a function binding is never reassigned — so moving one costs no call-site change anywhere. SHARED MUTABLE STATE is reached through an object and never destructured: an ES module namespace is sealed, so `import * as S` cannot be written to at all, and `const {x} = V` copies a value that a vessel switch will later change without telling you."));
 c.push(P("The layer is pure on purpose. A suite can require these directly and exercise the SHIPPED function rather than an eval of its source text, which is what made the older harnesses fragile: they matched their own comments, went stale against renames, and could not tell a missing helper from a broken one."));
 
@@ -77,7 +82,7 @@ c.push(CODE([
   "4.  Fix it structurally where you can, so the whole class dies.",
   "5.  Write the test. Then MUTATE the code and confirm the test fails.",
   "6.  Verify what the test cannot reach (chapter 5).",
-  "7.  Update the docs in the SAME change. Rebuild the generated set.",
+  "7.  Update the docs in the SAME change: edit the generators, rebuild, check (7.2).",
   "8.  Commit. The pre-commit hook runs every suite.",
 ]));
 c.push(H2("3.1  Running it"));
@@ -158,21 +163,47 @@ c.push(P("One of those unguarded branches survived past twenty-eight suites that
 c.push(P("The suite that finally covered it runs the console WITH the feature enabled and cleans up the artifacts it thereby creates. The general form: when a harness disables a subsystem for convenience, list what that mask hides, and make sure at least one suite runs with the mask off."));
 
 c.push(H2("6.7  A check that cannot report the fault it exists for"));
-c.push(P("THE STRUCTURAL FIX, applied to all 37 suites: a CRASH GUARD. Each one registers an uncaught-exception handler (an excepthook on the Python side) before anything that can throw, including its own imports. A death then prints a FAIL line naming the exception and its location, and exits non-zero — reportable rather than silent. A check asserts every suite still carries one, because a guard that can be quietly deleted is not a guarantee."));
+c.push(P("THE STRUCTURAL FIX, applied to every suite (thirty-seven when it was made): a CRASH GUARD. Each one registers an uncaught-exception handler (an excepthook on the Python side) before anything that can throw, including its own imports. A death then prints a FAIL line naming the exception and its location, and exits non-zero — reportable rather than silent. A check asserts every suite still carries one, because a guard that can be quietly deleted is not a guarantee."));
 c.push(P("It removed a fragility in the RUNNER as well, which is the more general lesson. The suites end with five different summary wordings, so a runner sniffing summary text to decide whether a suite FINISHED gets it wrong somewhere — and did, reading a perfectly healthy failure as a crash and reporting the wrong thing about the code under test. With the guard, a death always prints a FAIL line, so FAIL lines alone are a sufficient signal and the wording stops mattering. Prefer a signal the subject EMITS over one the observer has to infer."));
 c.push(P("A suite that dies part-way prints no failure line at all — and \"no failures printed\" is indistinguishable from \"everything passed\" to anything reading its output, including the mutation runner grading it. So a check that proves a guard exists has to survive that guard being gone."));
 c.push(P("The instructive part is how easily the WRONG symptom gets fixed. A range guard on the home coordinate was removed as a mutation and the suite crashed rather than failing. The obvious repair was to assert the console was still answering afterwards — and it was: a non-finite coordinate serializes perfectly happily and the state endpoint hands it straight back. That check passed, the suite took the value as its Return-to-Home target, and died four checks later. The invariant that mattered was never \"the console survived\"; it was \"HOME is still a usable coordinate\", because every remaining check steered to it. Name the property the rest of the suite DEPENDS on, then abort through the normal summary path so the failure is scored as a failure rather than as a crash. When a harness dies, fix what killed it — not the first plausible symptom visible from where you are standing."));
 
 // 7 ---------------------------------------------------------------------------
-c.push(H1("7  Documentation discipline"));
+c.push(H1("7  Documentation discipline — and how the documents are rebuilt"));
 c.push(H2("7.1  Same change, not later"));
 c.push(P("When a change alters user-facing behavior, the relevant documents are updated in the SAME change. Documentation that lags is documentation nobody trusts, and untrusted documentation gets ignored rather than fixed."));
-c.push(H2("7.2  The generated set"));
-c.push(P("Every document in the output directory is GENERATED from a build script that shares one formatting module. NEVER hand-edit a generated document: edit the script and rebuild. If one is hand-edited in a word processor anyway, diff the text against the generated version, fold the edits back into the script marked as the author's, and rebuild."));
+c.push(H2("7.2  The generated set: rebuilding and checking it"));
+c.push(P("Every Word document in `docs/` is GENERATED from a build script in `tools/`, and the four scripts share one formatting module, `tools/docx_kit.js`. NEVER hand-edit a generated document: the next rebuild destroys the edit. Edit the script and rebuild. If one is hand-edited in a word processor anyway, diff the text against the generated version, fold the edits back into the script marked as the author's, and rebuild."));
+c.push(TBL(["Generator, in tools/", "Writes, in docs/"], [
+  ["`build_quickstart.js`", "`asv-simulator-quick-start.docx`"],
+  ["`build_ops_manual.js`", "`asv-simulator-operations-manual.docx`"],
+  ["`build_tech_manual.js`", "`asv-simulator-technical-manual.docx`. Its suite table is read from `tests/` as it builds, so it changes when a suite does, and a new suite needs an entry in its GUARDS table."],
+  ["`build_dev_guide.js`", "`asv-simulator-development-guide.docx`, this guide"],
+], [2600, 6760]));
+c.push(P("The procedure is one command to build and three to check, and nothing in it opens Word. Build from `tools/`:"));
 c.push(CODE([
-  "cd tools && npm install       # once",
-  "node build_docs.js            # rebuild the whole set",
+  "cd tools",
+  "npm install               # once per clone: the docx library",
+  "node build_docs.js        # all four documents",
+  "node build_dev_guide.js   # or any one generator on its own",
 ]));
+c.push(P("Then check from the repository root:"));
+c.push(CODE([
+  "python tests/docs_valid.py",
+  "node tests/spelling.js",
+  "python tests/sanitization.py",
+]));
+c.push(TBL(["Check", "Asks"], [
+  ["`docs_valid.py`", "Will each document OPEN: a readable ZIP, every part well-formed XML and declared in `[Content_Types].xml`, every relationship target present and every r:id resolving. These are the package rules a reader applies before it will open a file; 8.6's documents were refused for not being well-formed. And is its CONTENT in it: the code lines the generators ask for (parsed out of them), a full body of text, and no note addressed to a maintainer — a generator's to-do or fix-me marker, or the technical manual's placeholder for a suite with no GUARDS entry. (So a marker of that kind cannot be written into a document even to describe it.)"],
+  ["`spelling.js`", "American spelling in the generators, the only place a spelling fix survives the next rebuild, and in the page and the server."],
+  ["`sanitization.py`", "No vendor identity in any source file, the generators included, nor in any generated document."],
+], [2600, 6760]));
+c.push(B("COUNT THE `written:` LINES. Each generator prints `written: <file> <N> bytes` once its document is on disk, so a full rebuild prints four. A document that was not written is the OLD one, still valid, and the checks above can all pass on it."));
+c.push(B("CLOSE THE DOCUMENTS IN WORD FIRST. Windows will not let a file be replaced while a program such as Word holds it open against writing. Measured with one document held open that way: its write failed with EBUSY, the run stopped there, the documents still to finish were not written either, and `build_docs.js` still printed “Document set rebuilt (4 documents)” while exiting with status 1. Trust the `written:` lines and the exit status, not the summary."));
+c.push(B("READ THE TEXT OUT OF THE FILE. The checks ask whether a document opens and holds its content, never whether the text is RIGHT. To confirm a change, read the rebuilt text straight out of the `.docx`: python-docx does it in a line (`docx.Document(path).paragraphs`, each with its `.text`; the tables are under `.tables`, read by their `.rows` and each row's `.cells`). It is a reading aid only; nothing in the project depends on it."));
+c.push(B("A REBUILD REWRITES WHAT IT BUILDS, changed or not. Measured on this guide: rebuilt with no change to its text, it differs from the last build only in `docProps/core.xml`, which carries the time it was built. Compare `word/document.xml` to tell which documents really moved; one that did not need not be committed for a new timestamp."));
+c.push(NOTE("NO PDF, AND NO WORD IN THE LOOP", "Do not make PDFs of the documents, and do not drive Word to open, render or export one as a check. Nothing here needs it: the package rules a reader enforces are what `docs_valid.py` checks, and the text reads straight out of the `.docx`. Word driven from a script has hung the session driving it, leaving a hidden Word process that only Task Manager could end."));
+c.push(P("ADDING A DOCUMENT: write `tools/build_<name>.js` against `docx_kit.js`, add it to the list in `build_docs.js`, to the builders `tests/spelling.js` names in its first check (it reads no other), and to the document-set tables in the technical manual and the README, and raise the count in `docs_valid.py`'s first check, which expects four. `docs/` also holds a presentation, `ASV-Console-Programming-by-Conversation.pptx`, which is not part of this set: `node build_deck.js` rebuilds it on its own, `docs_valid.py` does not read it, and `sanitization.py` does."));
 c.push(H2("7.3  The maintainer notes are the authoritative log"));
 c.push(P("The START HERE handoff at the top carries the current commit, the suite inventory, what changed this session, the recurring defect shapes and the open threads. Refresh it when it drifts. Two habits earn their keep: cite code by CONTENT rather than line number, because line numbers rot; and record a DIVERGENCE from the sibling console explicitly, because a future port will otherwise undo it silently."));
 c.push(H2("7.4  Write down where a rule's line falls"));
@@ -212,7 +243,7 @@ c.push(P("SYMPTOM: an operator tried to open the generated Word documents. None 
 c.push(P("CAUSE: the formatting module's code-block helper returns an ARRAY of paragraphs, one per line, while every other helper returns a single object. Every generator wrote `c.push(CODE([...]))`, pushing the array itself as ONE child. The document serializer emitted it as the literal element `<0/>` — an element name cannot begin with a digit — so the main document part was not well-formed XML and Word refused the file outright. The array's CONTENTS went with it, so every code block in every document was missing: the Quick Start, whose whole job is to tell a new operator which commands to type, did not contain them."));
 c.push(P("It shipped that way from the day the first document was generated until an operator tried to read one — eighteen commits and four documents later."));
 c.push(P("WHY IT SURVIVED is the part worth keeping. Three separate signals all said “fine”:"));
-c.push(B("The build printed “written: <name>, N bytes” for every document. A file appeared, and its size was plausible."));
+c.push(B("The build printed “written: <name> N bytes” for every document. A file appeared, and its size was plausible."));
 c.push(B("The set was rebuilt many times and the process never errored — a malformed child element is still a perfectly valid ZIP entry."));
 c.push(B("A refactor of the shared module was checked by confirming the main document part came out BYTE-IDENTICAL before and after, and that was reported as evidence the refactor was safe. It was byte-identical. It was also identically broken."));
 c.push(NOTE("THE LESSON", "A hash proves STABILITY, never CORRECTNESS. Comparing output against previous output can only tell you that nothing changed; it cannot tell you the output was ever right. Compare against a READER instead — something that has to consume the artifact and is entitled to refuse it."));
@@ -276,7 +307,7 @@ c.push(B("Keep the console core vendor-neutral. Vessel files may name real vesse
 c.push(B("Never weaken the safety model: arm-gating, emergency stop, link-loss failsafe, and refusal-with-a-reason."));
 c.push(B("Every new suite is mutation-verified before it is trusted, and records its mutations in its own header."));
 c.push(B("A refusal test is paired with an acceptance test."));
-c.push(B("Update the relevant documents in the same change, and rebuild the generated set from its scripts."));
+c.push(B("Update the relevant documents in the same change: edit their scripts, rebuild the generated set, and check it (7.2)."));
 c.push(B("Cite code by content, not line number."));
 c.push(B("Record divergences from the sibling console explicitly."));
 c.push(B("Treat a crashed harness as loudly as a failed check."));
