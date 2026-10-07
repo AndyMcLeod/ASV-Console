@@ -377,6 +377,9 @@ eval([
   H.match(/const IN_CUT_MS = [^;]*;/)[0], grab("cutAge"), grab("cutUnderWay"), grab("slowingOpts"), grab("twNowMs"),
   "function __setSpeedWant(v){ speedWant = v; }",            // the world's own record of the last speed sent (24g-24i)
   "function __getSpeedWant(){ return speedWant; }",
+  // the look-ahead's two facts beside the route, and the amend splice at the vessel's index (2026-10-06): guardTrack reads
+  // the first two, the edge rung / the way round / resume-from-here splice with the real spliceAt and record the leg start
+  "let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;", grab("spliceAt"), "function legStartsHere(){}",
   grab("guardOverrideOk"), grab("guardTrack"), grab("guardOnStation"), grab("onStationWhy"), grab("clearanceGuard"),   // on station: the drift (2026-09-30)
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisNearestPoly"), grab("aisAvoidOpen"),

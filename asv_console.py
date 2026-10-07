@@ -3563,7 +3563,7 @@ class VcuLink:
     def upload_plan(self, waypoints, arrival_radius_m, speed, approach_radius_m=None,
                     completion="complete", hold_clear_m=None, coast_from_m=None,
                     name="unknown"): ...
-    def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run
+    def amend_plan(self, waypoints): ...     # replace the UNFLOWN remainder, keep the run; returns the index it spliced at
     def start(self): ...
     def pause(self): ...
     def stop(self): ...
@@ -3799,6 +3799,15 @@ class SimVcu(VcuLink):
         one already flown to its end, has no unflown remainder; silently accepting would
         leave the caller believing a deviation had been taken when the boat is
         station-keeping and about to do nothing of the kind.
+
+        ⚠ IT RETURNS THE INDEX IT SPLICED AT (2026-10-06, the review of the Little Bay fix).
+        The console planned the tail at the index it read from its last state frame; this
+        splices at the LIVE index, which is one later whenever the boat advanced a waypoint
+        between that frame and this call (one tick in ~36 per 65 m leg at 14 kn). The two
+        splices then differ by one, the console's drawn route is one shorter than the plan
+        aboard for the rest of the motion, and its clearance guard - which projects no route
+        whose length is not the plan's - has no route to walk. With the index returned the
+        Engine knows the plan's new length exactly, and the console splices where the boat did.
         """
         wps = [{"lat": w["lat"], "lon": w["lon"]} for w in (waypoints or [])]
         if not wps:
@@ -3807,7 +3816,8 @@ class SimVcu(VcuLink):
             raise VcuProtocolError("no running plan to amend")
         if self._wp_index >= len(self._plan):
             raise VcuProtocolError("the plan has no unflown remainder")
-        self._plan = self._plan[:self._wp_index] + wps
+        at = self._wp_index                 # the LIVE index, which the console's may trail by one
+        self._plan = self._plan[:at] + wps
         self._seg_start = {"lat": self.lat, "lon": self.lon}
         self._xte_i = 0.0              # a new leg: the old cross-track trim is not its trim
         # ⚠ AN AMENDMENT ENDS THE DRIFT-IN, AND DOES NOT RE-ARM IT. coast.js's own rule is
@@ -3820,6 +3830,7 @@ class SimVcu(VcuLink):
         self._coasting = False
         self._coast_s0 = None
         self._coast_spent = False
+        return at
 
     def set_approach(self, m):             # live tuning of the approach radius
         self._approach_m = clamp(float(m), 0.5, 50.0)
@@ -5196,10 +5207,22 @@ class Engine:
         with self._lock:
             link = self._link
             self._require(link is not None, "not connected")
-            link.amend_plan(r)
-            # wp_total is read back from the LINK's own state on the next tick; setting it
-            # here from the amendment alone would be a guess about a plan whose flown prefix
-            # this layer does not hold.
+            at = link.amend_plan(r)
+            # ⚠⚠ THE REPLY SAYS HOW LONG THE PLAN ABOARD NOW IS (2026-10-06, the review of the Little
+            # Bay fix, findings LT-1 and LT-4). The link splices at ITS live index and says which, so
+            # the plan is that prefix plus this amendment and its length is a fact, not a guess: it
+            # used to be read back on the next tick, and the frame this call pushed carried the OLD
+            # count for one tick. The console needs the count NOW: it planned the tail at the index
+            # it read from its last frame, the vessel splices at its live one, and when she advanced
+            # a waypoint in between the console's drawn route was one shorter than the plan aboard
+            # for the rest of the motion - and its guard projects no route whose length is not the
+            # plan's. From the count in this reply the console splices where the boat did
+            # (asv.html spliceAt). The index itself stays the tick's to report.
+            if isinstance(at, int) and at >= 0:
+                self.wp_total = at + len(r)
+            # A frame read across this command carries the pre-amend count and position: dropped,
+            # as for every other command that changes what the run is doing (see _run_loop).
+            self._commanded()
             self.note = note or ("Deviation: the remaining track was amended (%d wpts) to keep clear." % len(r))
         self._push_state()
 

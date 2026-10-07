@@ -1695,6 +1695,19 @@ function linePhase(k, p){
   if(lo > 0 && s > runLen - lo) return {phase:"lead-out", toCoverM: 0, li, lo};
   return {phase:"coverage", toCoverM:0, li, lo};
 }
+// ⚠⚠ TWO FACTS THE GUARD'S LOOK-AHEAD NEEDS BESIDE THE ROUTE (2026-10-06, the review of the Little Bay fix).
+// `routeCmdsInFlight`: a Go-To, RTH, transit or re-approach POST is between send and reply (routeCmd). The vessel's
+// reply FRAME reaches onState before the handler's await resumes and swaps `runRoute`, carrying the NEW plan's index 0
+// and count; guardTrack's length test catches it only when the counts differ (103 against 106 at 10:32:45), and two
+// plans of the same length in that window would loop the look-ahead astern on the old route exactly as before. While
+// one is in flight no route is projected. `legStart`: where the vessel began the leg its index names, when that is
+// NOT the waypoint before it. The vessel measures its along-track advance from `_seg_start` - the waypoint reached on
+// every advance, but HER POSITION at a start and at every amend (asv_console.py SimVcu.start, amend_plan). The page
+// used the waypoint before the index for every leg; after a Pause/Resume the backtrack target lies astern, between
+// that waypoint and her, so the look-ahead read it as passed and ran UP the line while she turned to run down it.
+let routeCmdsInFlight = 0;
+let legStart = null;                             // {idx, lat, lon} - the vessel's leg start while the index is `idx`
+let lastWpIndex = null;                          // the index of the last frame, so trackLegStart sees it move
 let runRoute = null;                             // last uploaded ENC-routed run path (drawn)
 // ⚠⚠ `runRoute === null` HAS BEEN PRINTING TWO DIFFERENT PIECES OF NEWS AS ONE. This page
 // NEVER held the route - loaded mid-run, and nothing in /api/state restores it - and this page
@@ -2427,11 +2440,14 @@ function guardTrack(p, vel, drift){
   // ⚠⚠ THE INDEX MUST COUNT INTO THIS ROUTE (2026-10-06, Andy's 10:32:45 hold at Little Bay). `_wpIndex` is the
   // vessel's, taken from every state frame; `runRoute` is swapped by the command's handler when its await resumes.
   // The automatic re-plan after a chart read sent a new 103-point Go-To while she ran the old 106-point one at 13.7 kn:
-  // the reply's state frame carried the NEW plan's index 0, this function sliced the OLD route at 0 - a waypoint 130 m
+  // the reply's state frame carried the NEW plan's index 0, this function sliced the OLD route at 0 - a waypoint 80 m
   // astern - the projection looped back toward it into a rock's disc, and the hold rung stopped her 80 ms after the
-  // vessel had taken the new plan, which the hold then replaced. The state frame says how long the plan it is counting
-  // into is, so an index that does not count into the route the page holds is projected along nothing: the straight
-  // projection stands in for the frame or two until the handler lands, as it does for any boat not on a plan.
+  // vessel had taken the new plan, which the hold then replaced. Two gates, because each sees what the other cannot:
+  // while a route-replacing command is IN FLIGHT (routeCmd: Go-To, RTH, transit, re-approach) no route is projected,
+  // since the frame answering it is the new plan's whatever its length; and a frame whose plan is not the length of
+  // the route the page holds is another plan's index however it got there (the review found the length alone could
+  // not see two plans of the same length). The straight projection stands in, as for any boat not on a plan.
+  if(routeCmdsInFlight > 0) return null;
   if(S.wp_total != null && S.wp_total !== runRoute.length) return null;
   const idx = Math.min(window._wpIndex || 0, runRoute.length);
   const ahead = runRoute.slice(idx);
@@ -2439,13 +2455,56 @@ function guardTrack(p, vel, drift){
   if(st.heading_deg == null || !vel) return null;
   const twMs = Math.hypot(vel.e - drift.e, vel.n - drift.n);
   if(!(twMs > 0.05)) return null;                 // no way on: nothing is being steered
+  // THE LEG SHE IS ON BEGINS WHERE THE VESSEL SAYS IT DOES. projectRoute judges the first target by the vessel's own
+  // along-track rule, measured from the start of the leg (2026-10-06, the 10:25:04 hold: the index on a waypoint 0.6 m
+  // astern, reported a frame late). The vessel measures from `_seg_start`: the waypoint it reached on every advance -
+  // runRoute[idx-1], the default - but HER POSITION at a start and at every amend (asv_console.py SimVcu.start,
+  // amend_plan), which `legStart` records (legStartsHere, trackLegStart). After a Pause/Resume the backtrack target lies
+  // astern of her, between runRoute[idx-1] and her: measured from that waypoint it read as already passed, and the
+  // look-ahead ran up the line while she turned to run twelve lengths down it (the review's finding SR-2).
+  const from = (legStart && legStart.idx === idx) ? legStart : (idx > 0 ? runRoute[idx - 1] : null);
   return {route: ahead.map(w=>nogo.frame.toEN(w)), idx, ahead,
           hdgDeg: st.heading_deg, twMs,
           turnRateDegS: V.MAX_TURN_RATE_DEG_S,
           approachM: Math.max(0.5, +(mission.approach_radius_m) || 1),
-          // the waypoint she was steered FROM, so projectRoute judges the first target by the vessel's own rule
-          // (2026-10-06, the 10:25:04 hold: the index on a waypoint 0.6 m astern, reported a frame late)
-          prev: idx > 0 ? nogo.frame.toEN(runRoute[idx - 1]) : null};
+          prev: from ? nogo.frame.toEN(from) : null};
+}
+/** A route-replacing command's round trip, counted so guardTrack projects no route while the frame answering it may be
+ *  the new plan's (`routeCmdsInFlight`, 2026-10-06). Only the await is covered, and that is enough: once the reply is in
+ *  hand the handler runs synchronously to its `runRoute = plan.route`, and no frame is processed in between. */
+async function routeCmd(path, body){
+  routeCmdsInFlight++;
+  try { return await cmd(path, body); }
+  finally { routeCmdsInFlight = Math.max(0, routeCmdsInFlight - 1); }
+}
+/** The vessel begins the leg at index `idx` where she is now - a start, or an amend (SimVcu sets `_seg_start` to her
+ *  position in both). Her position from the reply's state when there is one, else the last frame's; the record clears
+ *  itself when the index moves on (trackLegStart). */
+function legStartsHere(idx, r){
+  const st = (r && r.state && r.state.status) || (S && S.status) || {};
+  legStart = (st.lat_deg != null && st.lon_deg != null) ? {idx, lat: +st.lat_deg, lon: +st.lon_deg} : null;
+  lastWpIndex = idx;
+}
+/** Asked of every state frame (onState): an index that moved on begins its leg at the waypoint reached - the default,
+ *  so the record is dropped - unless it moved to 0, a new motion's first frame or a repeat's new lap (asv_console.py
+ *  completion "repeat"), which begins where she is. A new motion with the index unchanged (`run_seq` moved) is the
+ *  same case. */
+function trackLegStart(s, seqMoved){
+  const wi = s.wp_index || 0;
+  if(wi === lastWpIndex && !seqMoved) return;
+  lastWpIndex = wi;
+  const st = s.status || {};
+  legStart = (wi === 0 && st.lat_deg != null && st.lon_deg != null) ? {idx: 0, lat: +st.lat_deg, lon: +st.lon_deg} : null;
+}
+/** The index the vessel spliced an amendment at, from its reply: the plan aboard is that prefix plus the tail it was
+ *  sent, and the reply's `wp_total` is its length (Engine.amend sets it from the index the link reports). The page
+ *  planned the tail at the index it read from the last frame; the vessel splices at its LIVE index, one later if she
+ *  advanced meanwhile, and a drawn route spliced at the page's index was then one shorter than the plan for the rest of
+ *  the motion - which guardTrack's length test turns into no route at all. A reply without a usable count: the page's. */
+function spliceAt(r, idx, tailLen){
+  const total = r && r.state && r.state.wp_total;
+  const at = Number.isFinite(total) ? total - tailLen : NaN;
+  return (Number.isFinite(at) && at >= 0) ? at : idx;
 }
 /**
  * THE ON-STATION READING, SAID IN ITS OWN TERMS (2026-09-30). On station the ladder judges the DRIFT (see onStation in
@@ -4117,7 +4176,9 @@ function clearanceGuard(){
         }
         // The drawn route follows the vessel's, or the chart shows a track the boat is not
         // flying and every derived figure on the cards is measured off the wrong line.
-        runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];
+        const spliced = spliceAt(r, trkNow.idx, tail.length);   // where the VESSEL spliced - one later if she advanced meanwhile
+        runRoute = [...runRoute.slice(0, spliced), ...tail];
+        legStartsHere(spliced, r);                              // her leg to the via begins where she is (SimVcu.amend_plan)
         // ⚠⚠ AND THE CORNER SET GOES WITH THE ROUTE IT INDEXED - in this statement list, in
         // front of every await and every render, because speedGovernor is asked again on the
         // next state frame. Until this line, one accepted deviation left the set indexing a
@@ -9780,7 +9841,7 @@ async function doGoTo(target){
   const gCoast = solveCoastFor(plan);
   // The same rule doRTH carries, for the same reason: the button's gate was read off an
   // earlier state frame, and this function has spent the extract since. See doRTH.
-  const r = await cmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
+  const r = await routeCmd("/api/cmd/goto", {lat:hp.lat, lon:hp.lon, route:plan.route, hold_clear_m:plan.holdClear,
                         coast_from_m: gCoast ? gCoast.groundM : null});
   if(!took(r)){
     const say = notTookSay(r, "GO-TO");
@@ -9797,6 +9858,7 @@ async function doGoTo(target){
   if(planGen === wasGen) releaseEscapeClaim("Go-To replaced it");
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
+  legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
   const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
@@ -9913,7 +9975,7 @@ async function doRTH(opts){
   // there (holdTarget) - and the vessel is told how much water is clear round that point.
   plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear);   // + the contacts (2026-09-29)
   const rCoast = solveCoastFor(plan);
-  const r = await cmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
+  const r = await routeCmd("/api/cmd/rth", {route:plan.route, hold_clear_m:plan.holdClear,
                        coast_from_m: rCoast ? rCoast.groundM : null});
   // ⚠⚠ A COMMAND THE BOAT NEVER TOOK IS NOT A PLAN. This posted and never looked. The
   // button is gated on armed / no E-STOP / supervising, but those are read off a state
@@ -9953,6 +10015,7 @@ async function doRTH(opts){
   if(planGen === wasGen) releaseEscapeClaim("RTH replaced it");     // see doGoTo
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
+  legStartsHere(0, r);                           // see doGoTo
   const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
@@ -10140,7 +10203,7 @@ async function doTransit(){
   clearViolation();
   // The same rule doRTH carries. See doRTH: the answer has three states and only a REFUSAL
   // is a fact about the vessel.
-  const r = await cmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
+  const r = await routeCmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
   if(!took(r)){
     const say = notTookSay(r, "TRANSIT");
     if(say) showBanner(say + " - the boat is still on her previous plan.");
@@ -10150,6 +10213,7 @@ async function doTransit(){
   // posting - "NOT started. Edit the line." A motion that never happened replaced nothing.
   if(planGen === wasGen) releaseEscapeClaim("the transit replaced it");   // see doGoTo
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
+  legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
   const note = buoyageNote(plan.lane, plan.partial, plan.how);   // accumulated over every leg of THIS plan
@@ -13481,12 +13545,13 @@ async function reapproachIfSetOff(s, st){
         + " — holding where it is with the way off. "+planWhy(plan) + (plan.uncharted ? ". A Go-To or RTH reads the chart further." : ""));
       return;
     }
-    const r = await cmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
+    const r = await routeCmd("/api/cmd/reapproach", {route: plan.route, hold_clear_m: plan.holdClear});
     if(!took(r)) return;                           // cmd() already said why
     // A committed route captures its reasoning (end_action 23b): the re-approach is one,
     // under the run's own kind, and it says why it exists.
     const kind = (planIntent && planIntent.kind) || S.behavior || "goto";
     runRoute = plan.route; runUnsafe = []; setPlanIntent(kind, plan, plan.route);
+    legStartsHere(0, r);                           // see doGoTo
     planIntent.why.unshift({t:"warn", s:"set "+fmtDist(st.off_station_m||0)
       +" off station, beyond the "+fmtDist(st.hold_clear_m||0)+" certified clear — re-approaching on a routed path of "
       +plan.route.length+" waypoint(s) rather than a bearing"});
@@ -15148,7 +15213,9 @@ async function resumeRun(){
                          + "cannot say which route she is flying");
       }
       else {
-        runRoute = [...rr.slice(0, idx), ...tail];
+        const spliced = spliceAt(r, idx, tail.length);   // where the VESSEL spliced (spliceAt)
+        runRoute = [...rr.slice(0, spliced), ...tail];
+        legStartsHere(spliced, r);                       // her leg to the backtrack point begins where she lies (SimVcu.amend_plan)
         // ⚠ AND THE CORNER SET GOES WITH THE ROUTE IT INDEXED. The tail starts at a REJOIN
         // POINT cornerSlowPlan never walked, and inserting it changes the geometry of the
         // corner either side of it - the flags are stale in VALUE where they are right in
@@ -15437,7 +15504,9 @@ async function resumeFromHere(ll){
         + "). Check the route on the chart against the vessel's waypoint count before pressing anything.");
     render(); return;
   }
-  runRoute = [...rr0.slice(0, idx), ...route];
+  const spliced = spliceAt(r, idx, route.length);     // where the VESSEL spliced (spliceAt)
+  runRoute = [...rr0.slice(0, spliced), ...route];
+  legStartsHere(spliced, r);                           // her leg to the way in begins where she lies (SimVcu.amend_plan)
   dropCornerSlow("the survey was resumed from a point on line " + line + ", which amended the plan");
   // THE GOVERNOR'S THROTTLE, NOT A LOW LATCH (see the header): `commandedSpeed` is cleared so the governor
   // re-asserts the role's speed on the first frame - the transit role on the way in, the survey speed on
@@ -15586,7 +15655,9 @@ async function aisAroundRunning(polys, q, why){
       return false;
     }
     stage = "taken";
-    runRoute = [...rr.slice(0, idx), ...route];
+    const spliced = spliceAt(r, idx, route.length);   // where the VESSEL spliced (spliceAt) - the planner's seconds are the window
+    runRoute = [...rr.slice(0, spliced), ...route];
+    legStartsHere(spliced, r);                         // her leg to the first via begins where she is (SimVcu.amend_plan)
     dropCornerSlow("the plan was routed round " + kind);
     flashNote("Routed round " + kind + " (" + why + ") — " + said + ".");
     if(planIntent) planIntent.why.push({t:"warn", s:"ROUTED ROUND " + kind + " " + why + " — " + said + "; one ship-length off her; the console is still watching"});
@@ -16653,6 +16724,7 @@ function onState(s){
   accumRunTime();                                // accrue the motion's elapsed, and the job's (ticks while running)
   const st = s.status || {};
   window._wpIndex = s.wp_index || 0;
+  trackLegStart(s, seqMoved);                    // where the leg the index names began - the guard's look-ahead reads it
   // The tide / weather windows follow the station on every poll, so a port change, a long
   // transit and a gauge dropping out of service are all the same event to them.
   syncStationWindows();

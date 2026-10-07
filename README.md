@@ -1606,23 +1606,30 @@ of the operator.
    does not fly a straight line: it walks the boat down the route the vessel is steering,
    from the waypoint the vessel reports it is steering toward, swinging the bow at the
    hull's turn rate and advancing waypoints by the vessel's own two tests (inside the
-   approach radius, or past it along the leg). Two things about that index had to be
-   learned on the water. The vessel reports it once a second and advances it once a tick,
-   so between two frames it can still name a waypoint she is at, or a few meters past; the
-   walk used to ask the two tests only *after* its first step, from her own position, so
-   a waypoint 0.6 m astern read as not yet reached, the bow was swung back toward it, and
-   the model boat flew a loop astern — into a charted rock's 50 m disc 30 m abeam, on a
-   Go-To whose route cleared that rock by 26 m: a HOLD at 13.6 kn, and a 4 s slow-down on
-   the Return-to-Home through the same water. Now the first target is judged by the same
-   two tests before the first step, measured from the waypoint she was steered *from*,
-   which the page hands over with the route. And a plan's index belongs to its plan: when
-   a new Go-To, Return-to-Home or transit is taken by the vessel, its reply frame carries
-   the new plan's index before the page has swapped the drawn route, and the console once
-   sliced the old 106-point route at the new plan's index 0 — a waypoint 130 m astern — and
-   held her 80 ms after the vessel had taken the new plan, which the hold then replaced.
-   Every state frame says how many waypoints the plan it is counting into has; a route of
-   any other length is not projected, and the straight projection stands in for the frame
-   or two until the handler lands.
+   approach radius, or past it along the leg). Three things about that index had to be
+   learned on the water. Every 4 Hz state frame carries it and the vessel advances it once
+   a tick, so a frame can still name a waypoint she is at, or up to 1.8 m past at 14 kn;
+   the walk used to ask the two tests only *after* its first step, from her own position,
+   so a waypoint 0.6 m astern read as not yet reached, the bow was swung back toward it,
+   and the model boat flew a loop astern — into a charted rock's 50 m disc 30 m abeam, on
+   a Go-To whose route passed that rock 26 m off: a HOLD at 13.6 kn (and a 4 s slow-down
+   on the Return-to-Home at a bend 2.3 km away, off another charted rock). Now the first
+   target is judged by the same two tests before the first step, measured from where the
+   leg began, which the page hands over with the route: the waypoint she was steered
+   *from*, or, exactly as the vessel measures it, her own position at a start and at every
+   amendment — after a Pause/Resume the backtrack point lies astern, between the waypoint
+   before and her, and measured from that waypoint it read as already passed, so the walk
+   ran up the line while she turned to run down it. And a plan's index belongs to its
+   plan: when a new Go-To, Return-to-Home, transit or re-approach is taken by the vessel,
+   its reply frame carries the new plan's index before the page has swapped the drawn
+   route, and the console once sliced the old 106-point route at the new plan's index 0 —
+   a waypoint 80 m astern — and held her 80 ms after the vessel had taken the new plan,
+   which the hold then replaced. So no route is projected while one of those commands is
+   in flight, nor for a frame whose plan is not the length of the route the page holds;
+   the straight projection stands in, as for any boat not on a plan. For the lengths to
+   agree the page and the vessel must splice an amendment at the same waypoint, and the
+   vessel's reply now says how long the plan aboard is, so the page splices where the
+   vessel did even when she advanced a waypoint while the amendment was on its way.
 
    **⚠ "Would not answer it" is a test about danger, and until 2026-09-19 it was a test
    about reach.** The top rung fired on the mere *existence* of a drift-only entry anywhere

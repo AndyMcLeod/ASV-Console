@@ -388,6 +388,8 @@ eval([
   grab("patClipBufM"),                                                     // the standoff the resume's run-in is routed at (2026-09-26)
   grab("guardOverrideOk"), grabDecl("OVERRIDE_STALE_MS"), grab("guardHazardKey"), grab("aisNearestPoly"), grabDecl("guardKeyLast"),   // the override keyed on the hazard (2026-09-28)
   "const { blockedInfo } = require('../static/js/keepouts.js');",
+  // the look-ahead's two facts beside the route, and the amend splice at the vessel's index (2026-10-06)
+  "let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;", grab("spliceAt"), "function legStartsHere(){}",
   grab("guardTrack"), grab("guardOnStation"), grab("onStationWhy"), grab("clearanceGuard"),   // on station: the drift (2026-09-30)
   // the AIS keep-outs and the return (2026-09-25) - asked every frame, above every branch
   grab("aisGuardWanted"), grab("aisKeepoutsNow"), grab("aisNearestKind"), grab("aisAvoidOpen"),

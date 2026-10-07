@@ -396,15 +396,16 @@ export function projectRoute(p, hdgDeg, twMs, drift, route, ko, buf, opts = {}) 
   let prev = (opts.prev && Number.isFinite(opts.prev.e) && Number.isFinite(opts.prev.n))
     ? { e: opts.prev.e, n: opts.prev.n } : { e: p.e, n: p.n };
   // ⚠⚠ A TARGET THE VESSEL HAS ALREADY REACHED IS CONSUMED BEFORE THE FIRST STEP (2026-10-06, Andy's two holds at
-  // Little Bay). The vessel reports the waypoint it is steering toward once a second and advances it by two tests -
-  // inside the approach radius, or past it along the leg (asv_console.py, the plan tick) - so between two of its
-  // frames the console's index can name a waypoint she is at, or just past. The loop below asked those two tests only
-  // AFTER each step: from 0.6 m short of waypoint 130 at 13.6 kn the first step carried the model boat 3.5 m past it,
+  // Little Bay). The vessel advances the waypoint it is steering toward by two tests - inside the approach radius, or
+  // past it along the leg (asv_console.py, the plan tick) - once a tick, and every 4 Hz frame carries the index, so a
+  // frame can name a waypoint she is at, or up to 1.8 m past at 14 kn. The loop below asked those two tests only AFTER
+  // each step: from 0.6 m past waypoint 130 at 13.6 kn the first step carried the model boat to 4.1 m past it,
   // along-track measured from HER OWN position read negative, and `turnToward` swung her back toward a point astern -
   // the loop the comment below was written against, flown from the first step instead of the second. It entered a
-  // charted rock's 50 m disc 30 m abeam in 5 s, and the guard held a Go-To whose route cleared that rock by 26 m. So
-  // the vessel's own rule is asked of the first target FIRST, measured from the waypoint she was steered from where
-  // the caller knows it (`opts.prev`), and the walk begins toward the first target she has not reached.
+  // charted rock's 50 m disc 30 m abeam in 5 s, and the guard held a Go-To whose route passed that rock 26 m off. So
+  // the vessel's own rule is asked of the first target FIRST, measured from where the leg began where the caller knows
+  // it (`opts.prev`: the waypoint before, or her own position at a start or an amend - the vessel's `_seg_start`), and
+  // the walk begins toward the first target she has not reached.
   for (;;) {
     const tg = route[i];
     const de = tg.e - prev.e, dn = tg.n - prev.n, segLen = Math.hypot(de, dn);

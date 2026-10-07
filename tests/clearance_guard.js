@@ -720,6 +720,9 @@ check("15e. the dwell is asked once a frame, above the branch, so no path can sk
   // unhandled rejection that the summary can beat to process.exit, so the retraction
   // silently does nothing and the checks go red for a reason that looks like the page.
   const guard = eval("(function(){ " + grab(H, "took") + NL2 + grab(H, "notTookSay") + NL2
+                     // the look-ahead's two facts beside the route, and the amend splice at the vessel's index (2026-10-06)
+                     + "let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;" + NL2 + grab(H, "spliceAt") + NL2
+                     + "function legStartsHere(){}" + NL2
                      + grab(H, "guardTrack") + NL2 + grab(H, "releaseSettled") + NL2
                      // ON STATION the ladder judges the drift and says so in its own words (2026-09-30)
                      + grab(H, "guardOnStation") + NL2 + grab(H, "onStationWhy") + NL2
@@ -1760,61 +1763,189 @@ check("17. the guard runs on every telemetry frame, before the readouts are draw
 }
 
 // ── 19. THE INDEX MUST COUNT INTO THIS ROUTE, AND THE FIRST TARGET IS JUDGED AS THE VESSEL JUDGES IT (2026-10-06) ──
-// Andy's two holds at Little Bay, both on Go-To routes that cleared a charted rock's 50 m disc by 26 m, both the
-// guard's projection chasing a waypoint astern. 10:25:04: 13.6 kn, 0.6 m short of waypoint 130, the vessel's index
-// (reported once a second, advanced by its own two tests once a tick) still on it - the walk swung back toward it and
-// looped into the disc in 5 s. 10:32:45: the automatic re-plan after a chart read sent a new 103-point route while she
-// ran the old 106-point one; the reply's state frame carried the NEW plan's index 0, `guardTrack` sliced the OLD route
-// at 0 - a waypoint 130 m astern - and the loop again; the hold then replaced the plan the vessel had just taken. So
-// guardTrack now hands projectRoute the waypoint she was steered FROM (`prev`), and projects no route the state frame's
-// `wp_total` says the index does not count into. The geometry below is the first hold's, in the model's frame.
+// Andy's two holds at Little Bay, both on Go-To routes that were clear of the rock they stopped for, both the guard's
+// projection chasing a waypoint astern. 10:25:04: 13.6 kn, 0.6 m PAST waypoint 130, the vessel's index still on it (it
+// advances by its own two tests once a tick and every 4 Hz frame carries it, so a frame can show her up to 1.8 m past
+// the waypoint it still names) - the walk swung back toward it and looped into the rock's 50 m disc, 30 m abeam, in 5 s,
+// on a route that passed that disc 26 m off. 10:32:45: the automatic re-plan after a chart read sent a new 103-point
+// route while she ran the old 106-point one; the reply's state frame carried the NEW plan's index 0, `guardTrack`
+// sliced the OLD route at 0 - a waypoint 80 m astern - and the loop again, into a second rock's disc that route passed
+// 5.9 m off; the hold then replaced the plan the vessel had just taken. So guardTrack hands projectRoute the point she
+// was steered FROM (`prev`), projects no route the state frame's `wp_total` says the index does not count into, and -
+// the review of that fix, the same day (findings LT-2, SR-1, SR-2, T1, T2) - projects no route while a route-replacing
+// command is in flight, and takes the leg's start from `legStart` where the vessel began it at her own position (a
+// start, an amend). The geometry below is the first hold's, in the model's frame.
 {
   const Gx = require("../static/js/guard.js");
   const ref = planeFrame({ lat: 43.07, lon: -70.76 });
   const NM = 111320, NE = NM * Math.cos(43.07 * Math.PI / 180);
   const ll = (e, n) => ({ lat: ref.lat + n / NM, lon: ref.lon + e / NE });
   // five legs of 65 m north; the rock abeam of waypoint 2 (n 130), its disc's edge 30 m off her bow to starboard
-  const ko = { polys: [], lines: [], points: [{ e: 74, n: 161, r: 50, kind: "a charted hazard" }], marks: [], sys: [], chans: [] };
+  const rockAt = (n) => ({ polys: [], lines: [], points: [{ e: 74, n, r: 50, kind: "a charted hazard" }], marks: [], sys: [], chans: [] });
+  const ko = rockAt(161);
   let nogo = { ready: true, frame: ref, ko, buffer: 5 };
   let S = null, runRoute = [0, 65, 130, 195, 260].map((n) => ll(0.1, n)), asv = null;
+  let routeCmdsInFlight = 0, legStart = null, lastWpIndex = null;       // the page's two facts beside the route
   const V = { MAX_TURN_RATE_DEG_S: 20 }, mission = { approach_radius_m: 1 };
   globalThis.window = globalThis;
   // eslint-disable-next-line no-eval
   const guardTrack = eval("(" + grab(H, "guardTrack") + ")");
-  const frameAt = (n, idx, total, stripPrev) => {
-    asv = ll(0, n);
+  // eslint-disable-next-line no-eval
+  const legStartsHere = eval("(" + grab(H, "legStartsHere") + ")"), trackLegStart = eval("(" + grab(H, "trackLegStart") + ")");
+  // a frame: her at (o.e, n), the index, the frame's plan count; `o` also carries the world (ko), her speed and heading
+  const frameAt = (n, idx, total, o = {}) => {
+    asv = ll(o.e || 0, n);
+    const kn = o.kn || 13.6, hdg = o.hdg || 0;
     S = { run: "running", behavior: "goto", wp_total: total,
-          status: { heading_deg: 0, cog_deg: 0, sog_kn: 13.6, env_set_kn: 0, env_set_deg: 0, holding: false } };
+          status: { heading_deg: hdg, cog_deg: hdg, sog_kn: kn, env_set_kn: 0, env_set_deg: 0, holding: false } };
     window._wpIndex = idx;
-    const p = ref.toEN(asv), vel = Gx.groundVel(0, 13.6), drift = { e: 0, n: 0 };
+    const p = ref.toEN(asv), vel = Gx.groundVel(hdg, kn), drift = { e: 0, n: 0 };
     const trk = guardTrack(p, vel, drift);
-    const opts = trk ? { ...trk, edge: false, ...(stripPrev ? { prev: null } : {}) } : {};
-    return { trk, a: Gx.assess(p, vel, drift, ko, 5, opts) };
+    const opts = trk ? { ...trk, edge: false, ...(o.stripPrev ? { prev: null } : {}) } : {};
+    return { trk, a: Gx.assess(p, vel, drift, o.ko || ko, 5, opts) };
   };
-  const late = frameAt(130.6, 2, 5), past4 = frameAt(134, 2, 5), past4NoPrev = frameAt(134, 2, 5, true);
-  const prevOk = !!late.trk && late.trk.idx === 2 && !!late.trk.prev
-    && Math.hypot(late.trk.prev.e - ref.toEN(runRoute[1]).e, late.trk.prev.n - ref.toEN(runRoute[1]).n) < 0.01;
+  const near = (a, b) => !!a && !!b && Math.hypot(a.e - b.e, a.n - b.n) < 0.01;
+  const late = frameAt(130.6, 2, 5), past4 = frameAt(134, 2, 5), past4NoPrev = frameAt(134, 2, 5, { stripPrev: true });
+  const prevOk = !!late.trk && late.trk.idx === 2 && near(late.trk.prev, ref.toEN(runRoute[1]));
+  // ... and on the SECOND leg (index 1, prev = runRoute[0]): the one line that tells index 0 from index >= 1 had no check
+  // on its near side, and `idx > 1` passed every suite (the review's T2). The rock abeam waypoint 1 for this one.
+  const idx1 = frameAt(69, 1, 5, { ko: rockAt(96) }), idx1NoPrev = frameAt(69, 1, 5, { ko: rockAt(96), stripPrev: true });
+  const prev1Ok = !!idx1.trk && idx1.trk.idx === 1 && near(idx1.trk.prev, ref.toEN(runRoute[0]));
   check("19. the index a frame late - on the waypoint she is at, or 4 m past - reads CLEAR down the route: guardTrack " +
-        "hands projectRoute the waypoint she was steered from, and without it the 4 m case loops astern into the rock",
-        () => prevOk && late.a.level === "clear" && past4.a.level === "clear" && past4NoPrev.a.level === "hold",
+        "hands projectRoute the waypoint she was steered from, on the second leg as on the third, and without it the 4 m " +
+        "case loops astern into the rock",
+        () => prevOk && late.a.level === "clear" && past4.a.level === "clear" && past4NoPrev.a.level === "hold"
+              && prev1Ok && idx1.a.level === "clear" && idx1NoPrev.a.level === "hold",
         "prev is wp1 " + prevOk + "; 0.6 m past wp2 -> " + late.a.level + "; 4 m past -> " + past4.a.level
-            + "; 4 m past with prev stripped -> " + past4NoPrev.a.level + " (the shipped reading: hold, entry in 5 s)");
-  const race = frameAt(134, 0, 8), same = frameAt(134, 0, 5), noTotal = frameAt(130.6, 2, null);
-  check("19b. a state frame whose wp_total is not this route's length is another plan's index: no track, the " +
-        "straight projection (CLEAR here) stands in - the 10:32:45 race; the same index 0 read as THIS route's is the " +
-        "loop, which is why the length is asked; a frame with no wp_total projects as before",
+            + "; 4 m past with prev stripped -> " + past4NoPrev.a.level + " (the shipped reading: hold, entry in 5 s)"
+            + "; index 1: prev is wp0 " + prev1Ok + ", 4 m past wp1 -> " + idx1.a.level + ", prev stripped -> " + idx1NoPrev.a.level);
+  // THE LENGTH GATE, BOTH WAYS. The live race was the frame's plan SHORTER than the drawn route (103 on 106); this check
+  // first pinned only the longer direction, and a gate firing only on a longer plan passed every suite while reproducing
+  // the hold (the review's T1).
+  const race = frameAt(134, 0, 8), shorter = frameAt(134, 0, 3), same = frameAt(134, 0, 5), noTotal = frameAt(130.6, 2, null);
+  check("19b. a state frame whose wp_total is not this route's length is another plan's index, SHORTER or longer: no " +
+        "track, the straight projection (CLEAR here) stands in - the 10:32:45 race was 103 on 106; the same index 0 read " +
+        "as THIS route's is the loop, which is why the length is asked; a frame with no wp_total projects as before",
         () => race.trk === null && race.a.level === "clear" && !race.a.onPlan
+              && shorter.trk === null && shorter.a.level === "clear" && !shorter.a.onPlan
               && !!same.trk && same.a.level === "hold" && !!noTotal.trk && noTotal.a.level === "clear",
         "wp_total 8 on a 5-point route -> track " + (race.trk ? "yes" : "none") + ", " + race.a.level
-            + "; wp_total 5 at index 0 (130 m astern) -> " + same.a.level + "; no wp_total -> track "
+            + "; wp_total 3 -> track " + (shorter.trk ? "yes" : "none") + ", " + shorter.a.level
+            + "; wp_total 5 at index 0 (80 m astern) -> " + same.a.level + "; no wp_total -> track "
             + (noTotal.trk ? "yes" : "none") + ", " + noTotal.a.level);
+  // THE SAME LENGTH IN THE SWAP WINDOW. Two plans of equal length pass the length gate, and the frame answering a Go-To
+  // is the new plan's index 0 on the OLD drawn route until the handler swaps it - the loop the gate above cannot see
+  // (the review's LT-2). routeCmd counts the POST in flight and guardTrack projects nothing while one is; the counter
+  // comes back down when the reply lands, taken, refused or lost - a stuck counter would stand the route-aware guard
+  // down for the rest of the session (19f, read once both round trips below have settled).
+  routeCmdsInFlight = 1;
+  const inFlight = frameAt(134, 0, 5);
+  routeCmdsInFlight = 0;
+  check("19c. while a Go-To / RTH / transit / re-approach is in flight no route is projected - the frame answering it " +
+        "is the new plan's whatever its length - and the same frame with nothing in flight is the loop 19b pins",
+        () => inFlight.trk === null && inFlight.a.level === "clear" && !!same.trk && same.a.level === "hold",
+        "in flight: track " + (inFlight.trk ? "yes" : "none") + ", " + inFlight.a.level
+            + "; nothing in flight: track " + (same.trk ? "yes" : "none") + ", " + same.a.level);
+  // THE LEG'S START IS THE VESSEL'S. (a) The first leg: the vessel measures it from where she was at Start (SimVcu.start),
+  // and route[0] is a real waypoint passed at speed - a frame can show her 0.8 m past it with the index still 0, a late
+  // tick more (the review's SR-1); 1.2 m past and 0.7 m abeam is outside the approach radius, and only the along-track
+  // half of the rule - which needs the leg's start - reads it as passed. (b) After a Pause/Resume the backtrack target lies ASTERN, between
+  // runRoute[idx-1] and her: measured from that waypoint it reads as passed and the walk runs UP the line while she turns
+  // to run down it (the review's SR-2) - a false hold on anything beyond the pause mark, and a miss on the water she
+  // will turn through. The vessel measures that leg from her position at the amend (SimVcu.amend_plan).
+  legStart = { idx: 0, ...ll(0, -65) };                                // Start was 65 m back down the first leg
+  const start0 = frameAt(1.2, 0, 5, { ko: rockAt(31), e: -0.6 });      // the stale target to starboard: the swing is toward the rock
+  const staleRec = frameAt(134, 2, 5);                                 // a record for index 0 says nothing about index 2
+  const staleOk = near(staleRec.trk && staleRec.trk.prev, ref.toEN(runRoute[1]));
+  legStart = null;
+  const start0None = frameAt(1.2, 0, 5, { ko: rockAt(31), e: -0.6 });
+  // the resume: paused at n 120 on leg 1 -> 2, the backtrack point 48 m back down the line (n 72) spliced in at index 2
+  const rrLine = runRoute;
+  runRoute = [...rrLine.slice(0, 2), ll(0.1, 72), ...rrLine.slice(2)];
+  const beyond = { polys: [], lines: [], points: [{ e: 4, n: 135, r: 1, kind: "a pile" }], marks: [], sys: [], chans: [] };
+  legStart = { idx: 2, ...ll(0, 120) };
+  const resumed = frameAt(120, 2, 6, { ko: beyond, kn: 4 });
+  const resumedPrev = near(resumed.trk && resumed.trk.prev, ref.toEN(ll(0, 120)));
+  legStart = null;
+  const resumedNone = frameAt(120, 2, 6, { ko: beyond, kn: 4 });
+  runRoute = rrLine;
+  check("19d. the leg's start is the vessel's: at index 0 her position at Start reads a first waypoint 1.2 m astern and " +
+        "0.7 m abeam as passed (without it the loop into the rock); after a Resume the walk is measured from where she lies, " +
+        "turns down the line to the backtrack point, and a pile 15 m beyond the pause mark is NOT a hold (measured from " +
+        "the waypoint before, the backtrack point reads as passed and the walk runs up the line into the pile)",
+        () => start0.a.level === "clear" && start0None.a.level === "hold" && staleOk && staleRec.a.level === "clear"
+              && resumedPrev && resumed.a.level === "clear" && resumedNone.a.level === "hold",
+        "index 0, 1.2 m past and 0.7 m abeam of wp0: from the start -> " + start0.a.level + ", from her position -> "
+            + start0None.a.level + "; that record read at a frame on index 2: prev is wp1 " + staleOk
+            + "; the resume backtrack at 4 kn: prev is her position " + resumedPrev
+            + ", the pile beyond the mark -> " + resumed.a.level + ", measured from wp1 -> " + resumedNone.a.level);
+  // THE RECORD ITSELF: set by a command's reply at its index, kept while the index stands, dropped when it moves on,
+  // and set again - at her position - when the index returns to 0 (a new motion, a repeat's lap).
+  const fr = (idx, lat, lon, seqMoved) => trackLegStart({ wp_index: idx, status: { lat_deg: lat, lon_deg: lon } }, !!seqMoved);
+  legStart = null; lastWpIndex = null;
+  fr(0, 43.1, -70.8);                 const t1 = !!legStart && legStart.idx === 0 && legStart.lat === 43.1;
+  fr(0, 43.2, -70.8);                 const t2 = !!legStart && legStart.lat === 43.1;          // the same index: kept
+  fr(1, 43.3, -70.8);                 const t3 = legStart === null;                          // moved on: the waypoint before
+  legStartsHere(2, { state: { status: { lat_deg: 43.4, lon_deg: -70.9 } } });               // an amend the vessel spliced at 2: she had advanced
+  fr(2, 43.5, -70.8);                 const t4 = !!legStart && legStart.idx === 2 && legStart.lat === 43.4;   // its record stands on the next frame
+  fr(3, 43.6, -70.8);                 const t5 = legStart === null;
+  fr(3, 43.7, -70.8, true);           const t6 = legStart === null;                          // a new motion at index 3 (a re-approach): no record
+  fr(0, 43.8, -70.8);                 const t7 = !!legStart && legStart.idx === 0 && legStart.lat === 43.8;   // back to 0: a new lap
+  fr(0, 43.9, -70.8, true);           const t8 = !!legStart && legStart.lat === 43.9;        // a new motion from index 0 to index 0: where she is NOW
+  check("19e. the leg-start record: a frame at index 0 sets it at her position, the same index keeps it, a later index " +
+        "drops it, a command's reply sets it at its own index (one the frames have not reached yet) and the next frame at " +
+        "that index keeps it, the index returning to 0 sets it again, and a new motion at the same index sets it afresh",
+        () => t1 && t2 && t3 && t4 && t5 && t6 && t7 && t8,
+        [t1, t2, t3, t4, t5, t6, t7, t8].map((x, i) => "t" + (i + 1) + ":" + (x ? "ok" : "NO")).join(" "));
+  legStart = null; lastWpIndex = null;
+  // THE SPLICE INDEX FROM THE REPLY, AND THE SITES. spliceAt reads the plan's new count from the amend reply (Engine.amend
+  // sets it from the index the link spliced at): the count less the tail is where the vessel spliced - the page's own
+  // index when she did not advance between the frame and the amend landing, one later when she did; a reply without a
+  // usable count falls back to the page's index. The four route-replacing POSTs go through routeCmd and record her first
+  // leg's start, onState asks trackLegStart of every frame, and the four amend sites splice at `spliced` - pinned at the
+  // sites, since no world here drives those round trips.
+  // eslint-disable-next-line no-eval
+  const spliceAt = eval("(" + grab(H, "spliceAt") + ")");
+  const sA = spliceAt({ state: { wp_total: 7 } }, 2, 4) === 3, sB = spliceAt({ state: { wp_total: 6 } }, 2, 4) === 2,
+        sC = spliceAt({}, 2, 4) === 2, sD = spliceAt({ state: { wp_total: 2 } }, 2, 4) === 2, sE = spliceAt(null, 5, 1) === 5;
+  const posts = ["goto", "rth", "transit", "reapproach"].map((c) => new RegExp('await routeCmd\\("/api/cmd/' + c + '"').test(H));
+  const starts = (H.match(/legStartsHere\(0, r\);/g) || []).length;
+  const asked = /window\._wpIndex = s\.wp_index \|\| 0;\s*\n\s*trackLegStart\(s, seqMoved\);/.test(H);
+  const splices = ["runRoute.slice(0, spliced), ...tail", "rr.slice(0, spliced), ...tail",
+                   "rr0.slice(0, spliced), ...route", "rr.slice(0, spliced), ...route"]
+    .map((s) => H.indexOf("runRoute = [..." + s + "];") >= 0);
+  check("19g. spliceAt: the reply's count less the tail (7 - 4 at index 2 -> 3, the vessel had advanced; 6 - 4 -> 2), the " +
+        "page's index without a usable count; Go-To, RTH, transit and re-approach post through routeCmd and record her first " +
+        "leg's start; onState asks trackLegStart of every frame; the four amend sites splice at `spliced`",
+        () => sA && sB && sC && sD && sE && posts.every(Boolean) && starts === 4 && asked && splices.every(Boolean),
+        "spliceAt " + [sA, sB, sC, sD, sE].map((x) => x ? "ok" : "NO").join("/") + "; routeCmd at " + posts.filter(Boolean).length
+            + " of 4 posts; legStartsHere(0, r) x" + starts + "; trackLegStart from onState " + asked + "; splice sites "
+            + splices.filter(Boolean).length + " of 4");
+  // THE COUNTER ITSELF, through the real routeCmd over a cmd() this block controls - LAST in the block, because the
+  // decrement lands on a microtask and every frame above would otherwise read a command still in flight.
+  let release = null, cmd = () => new Promise((res) => { release = res; });   // routeCmd awaits the page's cmd()
+  // eslint-disable-next-line no-eval
+  const routeCmd = eval("(async " + grab(H, "routeCmd") + ")");
+  const taken = routeCmd("/api/cmd/goto", {});                             // the increment runs before its first await
+  const during = routeCmdsInFlight;
+  release({ ok: true });
+  cmd = () => Promise.reject(new Error("lost"));
+  const lost = routeCmd("/api/cmd/goto", {}).catch(() => "lost");
+  const both = routeCmdsInFlight;
+  globalThis.__routeCmdSettled = Promise.allSettled([taken, lost]).then(() => {
+    check("19f. routeCmd counts the POST in flight from before its first await, and the counter comes back to zero once " +
+          "the reply has landed, taken or lost",
+          () => during === 1 && both === 2 && routeCmdsInFlight === 0,
+          "during the first: " + during + "; with the second sent: " + both + "; after both settled: " + routeCmdsInFlight);
+  });
 }
 
 // ⚠ WAIT FOR THE ASYNC SECTION. Five of the checks above resolve on a microtask (the
 // guard's rungs retract a refused command in a `.then`), and a summary printed before they
 // have run would report a pass for checks that never executed.
 const RAN_FLOOR = 13;                // the retraction block's own, 15z4b/15z10-14 included
-Promise.resolve(globalThis.__guardRetract).then((n) => {
+// ... and 19f reads routeCmd's counter once its two round trips have settled (2026-10-06)
+Promise.all([Promise.resolve(globalThis.__guardRetract), Promise.resolve(globalThis.__routeCmdSettled)]).then(([n]) => {
   if (n !== RAN_FLOOR) {
     console.log("  FAIL 0. the async retraction block did not finish - " + n
                 + " of " + RAN_FLOOR + " checks ran");

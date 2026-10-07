@@ -421,6 +421,11 @@ function world(opts) {
                            // ... and the TRANSIT standoff Go-To / RTH / Transit hand the router since 2026-10-06 (the
                            // turn radius at the plan speed): this world has no vessel speed either, so it is the buffer too
                            + 'const transitStandoffM = () => 0;' + "\n"
+                           // ... and since 2026-10-06 Go-To / RTH / Transit post through routeCmd (the in-flight count the
+                           // guard's look-ahead reads) and record where her first leg begins (legStartsHere - the guard is
+                           // not in this world, so a stub): the real routeCmd, over this world's own cmd()
+                           + 'let routeCmdsInFlight = 0;' + "\n" + grab("routeCmd") + "\n"
+                           + 'function legStartsHere(){}' + "\n"
                            + grabDecl("SPEED_RESEND_MS") + "\n"
                            + grab("speedReconcile") + "\n"
                            + grab("cmdLabel") + "\n" + grab("cmd") + "\n"
@@ -1343,8 +1348,9 @@ function codeOnlyH(){ return H.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/
 // and at neither of the two that amend one.
 {
   const spi = grab("setPlanIntent");
-  const amenders = ["runRoute = [...runRoute.slice(0, trkNow.idx), ...tail];",
-                    "runRoute = [...rr.slice(0, idx), ...tail];"];
+  // (since 2026-10-06 each splices at `at`, the index the VESSEL spliced at, read from the reply - spliceAt)
+  const amenders = ["runRoute = [...runRoute.slice(0, spliced), ...tail];",
+                    "runRoute = [...rr.slice(0, spliced), ...tail];"];
   check("36. the picture's generation is bumped inside setPlanIntent, and the two AMEND sites "
         + "do not call it",
         /^function setPlanIntent\([^)]*\)\{\s*planGen\+\+;/m.test(spi)

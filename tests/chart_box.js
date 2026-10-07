@@ -481,7 +481,7 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
               && /plan\.reason\.mode==="uncharted" \? unchartedTip\(plan\.uncharted, "Go-To a point on the way home first, or set Home nearer\."\)/.test(rth),
         "doGoTo / doRTH");
   const iTrPlan = tr.indexOf("await planInsideChart("), iTrHt = tr.indexOf("ht = holdTarget("),
-        iTrUn = tr.indexOf("if(plan.uncharted){"), iTrPost = tr.indexOf('cmd("/api/cmd/transit"'), iTrDraw = tr.indexOf("runRoute = plan.route");
+        iTrUn = tr.indexOf("if(plan.uncharted){"), iTrPost = tr.indexOf('routeCmd("/api/cmd/transit"'), iTrDraw = tr.indexOf("runRoute = plan.route");
   check("6c. the Transit works out its hold point INSIDE the plan (on the model the route is judged by), and refuses "
         + "an uncharted plan before it draws or posts anything",
         () => iTrPlan > 0 && iTrHt > iTrPlan && iTrUn > iTrPlan && iTrUn < iTrPost && iTrUn < iTrDraw

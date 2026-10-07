@@ -335,7 +335,8 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   check("9. Go-To commands the ROUTE'S END - the hold point - not the operator's point, and "
         + "sends the certified disc with it",
         () => /const hp = plan\.route\[plan\.route\.length-1\]/.test(goTo)
-              && /cmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(goTo)
+              // posted through routeCmd since 2026-10-06 (the in-flight count the guard's look-ahead reads)
+              && /routeCmd\("\/api\/cmd\/goto", \{lat:hp\.lat, lon:hp\.lon, route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(goTo)
               && !/\{lat:target\.lat, lon:target\.lon, route/.test(goTo)
               && /planNogoRoute\([^;]*holdOpts\(\), standoffM: transitStandoffM\(\)\}\)/.test(goTo),   // the hold options plus the transit standoff (2026-09-26; the turn radius at the plan speed, 2026-10-06)
         "a Go-To that names the pier as its target would hold ON the pier");
@@ -343,9 +344,9 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   const BH = PAGE.indexOf('$("#b_hold").onclick');
   const BHOLD_SRC = noComments(PAGE.slice(BH, PAGE.indexOf('$("#', BH + 10)));
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
-        () => /cmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
+        () => /routeCmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
               && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
-              && /cmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
+              && /routeCmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
               // ⚠ THE WHOLE HANDLER, NOT A 300-CHARACTER WINDOW. #b_hold grew a comment
               // when it started reading its command's answer, and the post fell outside
@@ -360,11 +361,11 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
     return i >= 0 && later.every((l) => { const j = src.indexOf(l); return j >= 0 && i < j; }); };
   check("9b2. Go-To, RTH and Transit correct the plan's disc for the contacts BEFORE the coast solve and the command read it",
         () => before(goTo, "plan.holdClear = holdClearWithContacts(hp, plan.holdClear)",
-                     "solveCoastFor(plan)", 'cmd("/api/cmd/goto", {lat:hp.lat')
+                     "solveCoastFor(plan)", 'routeCmd("/api/cmd/goto", {lat:hp.lat')
               && before(rth, "plan.holdClear = holdClearWithContacts(plan.route[plan.route.length-1] || S.home, plan.holdClear)",
-                        "solveCoastFor(plan)", 'cmd("/api/cmd/rth", {route:plan.route')
+                        "solveCoastFor(plan)", 'routeCmd("/api/cmd/rth", {route:plan.route')
               && before(tran, "plan.holdClear = holdClearWithContacts(ht.to, ht.holdClear)",
-                        'cmd("/api/cmd/transit", {route: plan.route'),
+                        'routeCmd("/api/cmd/transit", {route: plan.route'),
         "a disc measured against the chart alone lets a boat set off station drive back through a moored ship");
   // 9c. EVERY hold point is chosen against the SAME water. Four call sites reach the
   // planner; if one of them forgets the set, a berth commanded from that button is sized by
@@ -392,7 +393,7 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
         + "never under a moving home or a pending end-of-plan RTH",
         () => /st\.hold_wants_route/.test(re) && /s\.armed && !s\.estop/.test(re)
               && /s\.home_following/.test(re) && /rthPending\(\)/.test(re)
-              && /cmd\("\/api\/cmd\/reapproach", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(re)
+              && /routeCmd\("\/api\/cmd\/reapproach", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(re)
               && /planNogoRoute\(/.test(re),
         "a re-approach sent to a boat the operator is driving is a control the console was never given");
   check("11b. ... one in flight at a time, with a floor between them",

@@ -373,8 +373,8 @@ try:
     before = (s.get("wp_index"), s.get("wp_total"), d.get("behavior"))
 
     api_via = {"lat": api_route[0]["lat"], "lon": api_route[0]["lon"] - 40 * M / 0.73}
-    _post("/api/cmd/amend", {"route": [api_via] + api_route[s["wp_index"]:],
-                             "note": "suite"})
+    rep = _post("/api/cmd/amend", {"route": [api_via] + api_route[s["wp_index"]:],
+                                   "note": "suite"})
     time.sleep(0.6)
     d, s = _state()
     check("10. THE RUN IS THE SAME RUN: made PAST a waypoint, the behaviour is not renamed, "
@@ -384,6 +384,17 @@ try:
           and s["wp_total"] == before[1] + 1 and d["run"] == "running",
           "behavior %s->%s, wp %s/%s -> %s/%s"
           % (before[2], d["behavior"], before[0], before[1], s["wp_index"], s["wp_total"]))
+    # 10b. THE REPLY ITSELF SAYS HOW LONG THE PLAN ABOARD NOW IS (2026-10-06, the review of the
+    # Little Bay fix). The console splices its drawn route at the reply's count less the tail
+    # it sent, so the two splice at the same waypoint even when the boat advanced one between
+    # the console's frame and this landing. A count read back on the next tick was a frame
+    # late, and the frame this command pushed carried the OLD count (Engine.amend).
+    rs = (rep or {}).get("state") or {}
+    check("10b. the amend's REPLY carries the plan's new count - the prefix the link spliced "
+          "at plus the amendment - not the count read back on the next tick",
+          rs.get("wp_total") == before[1] + 1,
+          "reply wp %s/%s against %s/%s before" % (rs.get("wp_index"), rs.get("wp_total"),
+                                                   before[0], before[1]))
 
     # 11. A MALFORMED ROUTE IS A 409 IN WORDS. Every other route-taking endpoint in this
     # console answers that way, and a 500 kills the handler thread's session-log entry.

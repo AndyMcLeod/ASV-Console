@@ -510,9 +510,12 @@ check("18. the edge rung AMENDS the running plan — it does not command a Go-To
 check("19. and the DRAWN route follows the amendment — the chart may not show a track the " +
       "boat is not flying",
       () => /const tail = \[\.\.\.trkNow\.ahead\.slice\(0, at\), w,\s*\.\.\.trkNow\.ahead\.slice\(at \+ a\.edge\.drop\)\]/.test(H)
-            && /runRoute = \[\.\.\.runRoute\.slice\(0, trkNow\.idx\), \.\.\.tail\]/.test(H),
+            // ... spliced at the index the VESSEL spliced at, read from its reply (spliceAt, 2026-10-06): the page's own
+            // index whenever she did not advance a waypoint between the frame and the amend landing, one later when she did
+            && /const spliced = spliceAt\(r, trkNow\.idx, tail\.length\);/.test(H)
+            && /runRoute = \[\.\.\.runRoute\.slice\(0, spliced\), \.\.\.tail\]/.test(H),
       "every figure on the cards is measured off runRoute - and the splice is at the index " +
-      "the search named, so the waypoints between the boat and the amendment survive");
+      "the vessel named, so the waypoints between the boat and the amendment survive");
 
 // ── 20-24. THE OPERATOR'S OVERRIDE ──────────────────────────────────────────────────
 // Andy: "generate a button that allows continued forward progress override. As if a user
@@ -620,13 +623,14 @@ check("25. the deviation says what it did, in words, on the banner and the Inten
       "a boat that is not where the plan says must say so, and why");
 
 // ── 28. A TARGET ALREADY REACHED IS CONSUMED BEFORE THE FIRST STEP (2026-10-06) ─────────────
-// Andy's Go-To at Little Bay, 10:25:04: 13.6 kn down a straight route of 65 m legs, 0.6 m short of waypoint 130 with
-// the vessel's index still on it (it advances by its own two tests once a tick, reported once a second), a charted
-// rock of unknown extent - a 50 m disc - 30 m abeam to starboard. The projection's first step carried the model boat
-// 3.5 m past the waypoint, the along-track test from HER OWN position then read negative, turnToward swung her back
-// toward a point astern, and the loop entered the disc in 5 s: HOLD, on a route that cleared the rock by 26 m. The
-// same geometry here, in the model's frame: north-going legs, the rock at (74, 31) r 50 (its edge 30 m off her bow),
-// the stale target 0.6 m astern and a hair to starboard, so the swing is to starboard - toward the rock.
+// Andy's Go-To at Little Bay, 10:25:04: 13.6 kn down a straight route of 65 m legs, 0.6 m PAST waypoint 130 with the
+// vessel's index still on it (it advances by its own two tests once a tick and every 4 Hz frame carries it, so a frame
+// can show her up to 1.8 m past the waypoint it still names), a charted rock of unknown extent - a 50 m disc - 30 m
+// abeam to starboard. The projection's first step carried the model boat 3.5 m on, to 4.1 m past the waypoint; the
+// along-track test from HER OWN position then read negative, turnToward swung her back toward a point astern, and the
+// loop entered the disc in 5 s: HOLD, on a route that cleared the rock by 26 m. The same geometry here, in the model's
+// frame: north-going legs, the rock at (74, 31) r 50 (its edge 30 m off her bow), the stale target 0.6 m astern and a
+// hair to starboard, so the swing is to starboard - toward the rock.
 {
   const ROCK = { polys: [], lines: [], points: [{ e: 74, n: 31, r: 50, kind: "a charted hazard" }], marks: [] };
   const legs = (from, k) => { const r = []; for (let i = 0; i < k; i++) r.push({ e: 0.1, n: from + 65 * i }); return r; };
@@ -642,18 +646,19 @@ check("25. the deviation says what it did, in words, on the banner and the Inten
         "stale index -> " + (stale ? "entry in " + stale.t + " s" : "clear") + "; next index -> "
             + (fresh ? "entry in " + fresh.t + " s" : "clear") + "; the same with the target outside a 0.3 m approach -> "
             + (loop ? "entry in " + loop.t.toFixed(1) + " s at " + loop.at.e.toFixed(0) + "," + loop.at.n.toFixed(0) : "clear")
-            + " (the shipped projection: entry in 5 s, the guard held her)");
-  // ⚠ AND THE ALONG-TRACK HALF OF THE VESSEL'S RULE NEEDS THE WAYPOINT SHE WAS STEERED FROM. At 7 m/s a frame can put
-  // her up to 7 m past the waypoint her index still names; that is outside the approach radius, and from her own
-  // position along-track reads 0. `opts.prev` is that waypoint - guardTrack hands it over - and with it the target
-  // four meters astern is read as passed exactly as the vessel reads it.
+            + " (the shipped code reads 4.5 s on this geometry, 5 s on the live frame - the guard held her)");
+  // ⚠ AND THE ALONG-TRACK HALF OF THE VESSEL'S RULE NEEDS THE WAYPOINT SHE WAS STEERED FROM. At 7 m/s one 4 Hz tick
+  // puts her up to 1.8 m past the waypoint her index still names, and a late tick further; past the approach radius,
+  // and from her own position along-track reads 0. `opts.prev` is that waypoint - guardTrack hands it over - and with
+  // it the target four meters astern is read as passed exactly as the vessel reads it.
   const AT4 = { e: 0, n: 4 };
   const noPrev = G.projectRoute(AT4, 0, TW, SLACK, legs(0, 5), ROCK, BUF, OPTS);
   const withPrev = G.projectRoute(AT4, 0, TW, SLACK, legs(0, 5), ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
   const notYet = G.projectRoute({ e: 0, n: -3 }, 0, TW, SLACK, legs(0, 5), ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
   check("28b. ... and a target astern beyond the approach radius is read as passed only by the along-track rule from " +
         "the waypoint she was steered from (opts.prev): without it the loop, with it the route; a target 3 m AHEAD on " +
-        "that leg is not yet reached and the walk still steers to it",
+        "that leg reads clear too (it is not consumed - but the route reads clear either way there, so the teeth are the " +
+        "two cases before it)",
         () => !!noPrev && noPrev.t > 0 && withPrev === null && notYet === null,
         "4 m past it, no prev -> " + (noPrev ? "entry in " + noPrev.t.toFixed(1) + " s" : "clear")
             + "; with prev -> " + (withPrev ? "entry in " + withPrev.t.toFixed(1) + " s" : "clear")
@@ -664,11 +669,27 @@ check("25. the deviation says what it did, in words, on the banner and the Inten
   // sweep: it would raise the hold or the helm on a boat sitting at her own destination.
   const over = G.projectRoute({ e: 0, n: 0.5 }, 0, TW, SLACK, [{ e: 0.1, n: 0 }], ROCK, BUF, OPTS);
   const overPrev = G.projectRoute({ e: 0, n: 4 }, 0, TW, SLACK, [{ e: 0.1, n: 0 }], ROCK, BUF, { ...OPTS, prev: { e: 0.1, n: -65 } });
+  // ⚠ AND "WE ARE IN IT" STILL COMES FIRST. The exhaustion return sits BEHIND the already-inside check: a boat inside a
+  // hazard at her reached destination answers t = 0, never clear. The two boats above stand 80 m from the rock, so they
+  // cannot see the order of the two returns; the mutant that moved the inside check below the start loop answered
+  // clear here and survived sixteen suites (the review's T3).
+  const HERE = { polys: [], lines: [], points: [{ e: 0, n: 0, r: 3, kind: "a pile" }], marks: [] };
+  const inside = G.projectRoute({ e: 0, n: 0.5 }, 0, TW, SLACK, [{ e: 0.1, n: 0 }], HERE, BUF, OPTS);
   check("28c. a route whose every waypoint is already reached ends CLEAR before the first step - the motion is over, " +
-        "and the hold point's water is hold.js's question, not an entry at t = 0",
-        () => over === null && overPrev === null,
+        "and the hold point's water is hold.js's question, not an entry at t = 0 - unless she is already INSIDE a " +
+        "hazard there, which is t = 0 as it is for every boat already inside",
+        () => over === null && overPrev === null && !!inside && inside.t === 0 && inside.i === 0,
         "last waypoint 0.5 m astern -> " + (over ? "entry in " + over.t + " s" : "clear")
-            + "; 4 m astern with prev -> " + (overPrev ? "entry in " + overPrev.t + " s" : "clear"));
+            + "; 4 m astern with prev -> " + (overPrev ? "entry in " + overPrev.t + " s" : "clear")
+            + "; inside a pile at her reached destination -> " + (inside ? "t = " + inside.t : "clear"));
+  // TEETH for 28-28c (scratchpad/mut_guard_idx.py, 2026-10-06; the header table above records the ORIGINAL sweep and the
+  // suite's convention since is a note beside the block): nine mutants, eight killed - the start rule removed (28), prev
+  // ignored (28b), a target ten radii off consumed (28, 28b), a reached route answered as a hit (28c), the page's length
+  // test removed / inverted / prev not handed / the wrong neighbor as prev (clearance_guard 19-19b) - and one kept as an
+  // EQUIVALENT: the start rule's along-track half dropped, which the walk's own test makes good one step later. The
+  // review's survivors and the case each one got: the inside check moved behind the exhaustion return (28c's pile), the
+  // length test one-sided (clearance_guard 19b's shorter frame), no prev on the second leg (19's index 1), the first
+  // leg's start at the waypoint before it (19d), the in-flight gate removed (19c), the counter not decremented (19f).
 }
 
 console.log("");

@@ -203,6 +203,9 @@ eval([
   // ⚠ A FUNCTION DECLARATION, NOT A const: this bundle is a direct eval, and a const declared inside one stays inside
   // it (the note at inkYield below) - doUpload is eval'd separately and reached a ReferenceError, 16 checks red.
   "function transitStandoffM(){ return patClipBufM(); }",
+  // ... and since 2026-10-06 the resume's amend splices at the index the VESSEL spliced at (the real spliceAt, reading
+  // the reply's count) and records where her leg begins (legStartsHere - the guard is not in this world, so a stub)
+  grab("spliceAt"), "function legStartsHere(){}",
   // RESUME FROM HERE (2026-09-26): the snap, the leg search and the resume itself - the real ones, driven in 18-19k.
   grabDecl("IDENTIFY_PX"), grabDecl("LINE_MATCH_M"), grab("onLineM"), grab("lineOfLeg"),
   grab("resumeHereAt"), grab("legOfLine"), grab("alongAsRun"), grab("resumeFromHere"),
