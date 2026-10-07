@@ -3,7 +3,8 @@
 Andy, 2026-10-07: *"move forward with implementation as you suggest. The bottom line goal is to simulate wind/wave/
 current effects on the passage of a given ASV through the water."* The console used to read ONE value from ONE
 regional forecast model (an OFS, currents.py) at the boat's position and apply it uniformly. Measured that day: the
-Piscataqua's model (gomofs) is 3-hourly and this build cannot read it, so his Little Bay session ran with NO stream
+Piscataqua's model (gomofs) is 3-hourly and the build of that day could not read it (the shared reader can since,
+2026-10-07), so his Little Bay session ran with NO stream
 while NOAA predicted 3.8 kn of flood and 4.0 kn of ebb at the General Sullivan Bridge - and the Gulf of Maine model has
 no water cells from the Memorial Bridge up, so no fix to the reader would ever have filled it.
 

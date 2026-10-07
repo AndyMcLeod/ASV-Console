@@ -7,7 +7,7 @@
       "lat": 43.073,
       "lon": -70.71,
       "ofs": "gomofs",
-      "note": "Piscataqua River channel ~200 m off the UNH Judd Gregg Marine Research Complex pier - ENC-verified 9.1-18.2 m (the pierside position first tried sits in a 1.8 m area, inside the DriX's floor). CURRENTS: gomofs is the right model for the Gulf of Maine, but it publishes 3-HOURLY frames and the vendored currents.py assumes hourly (both at fetch and in its frame indexing), so the readout reports the limit rather than a number. Fixing it means changing the vendored module - do it UPSTREAM in the Fuel planner and re-vendor, not here."
+      "note": "Piscataqua River channel ~200 m off the UNH Judd Gregg Marine Research Complex pier - ENC-verified 9.1-18.2 m (the pierside position first tried sits in a 1.8 m area, inside the DriX's floor). CURRENTS: gomofs is the right model for the Gulf of Maine. It publishes 3-HOURLY frames, which the vendored currents.py reads since 2026-10-07 (asv_core e02018d; a cubic in time between frames). The NOAA station predictions carry the stream near the stations and wherever the model has no water; the model, calibrated to them where it fits, carries it away from them."
     },
     {
       "id": "lewes_de",

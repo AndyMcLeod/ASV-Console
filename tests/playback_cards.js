@@ -72,7 +72,7 @@ const state = (t, over) => ({ t, kind: "state", state: Object.assign({
   status: { lat_deg: 43.0731, lon_deg: -70.7101, heading_deg: 100, sog_kn: 2.9, battery_v: 26.1, battery_pct: 88, env_set_kn: 0.31, env_set_deg: 120, crab_deg: -3 },
   env: { ok: true, enabled: true, age_s: 600, wind: { speed_kn: 6.9, dir_from_deg: 300 }, sea: { hs_m: 0.19, tp_s: 3.5, dir_from_deg: 300, derived: true } },
   water: { ok: true, offset_m: 1.086, name: "Seavey Island", data_kind: "observed", age_s: 300 },
-  current: { ok: false, note: "gomofs frames are not hourly" },
+  current: { ok: false, note: "gomofs does not cover this position" },
   comms: { mode: "none", ok: false, note: "no link reachable" },
   roc: { rocs: [{ id: "ship-1", name: "Mothership", kind: "ship", lat: 43.08, lon: -70.72 }] },
   supervisor: { holder: "8a29303b", tabs: 1, stale: false } }, over || {}) });

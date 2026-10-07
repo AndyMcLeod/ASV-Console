@@ -3269,7 +3269,8 @@ class CurrentsMonitor:
 
     ⚠⚠ AND SINCE 2026-10-07 THE OFS IS ONE LAYER OF THREE (stream_fusion.py; Andy: "The bottom line goal is to simulate
     wind/wave/current effects on the passage of a given ASV through the water"). His Little Bay session ran with NO
-    stream - the Piscataqua's model is 3-hourly, unreadable here, and has no water cells from the Memorial Bridge up -
+    stream - the Piscataqua's model is 3-hourly, which the shared reader could not read until later that day (see
+    _ensure_cycle), and has no water cells from the Memorial Bridge up -
     while NOAA predicted 3.8 kn of flood and 4.0 kn of ebb at the General Sullivan Bridge. Now NOAA's own tidal current
     PREDICTIONS at the stations round the boat (26 within 25 km of New Castle) come first, a gridded model (this OFS, or
     a PacIOOS model at Honolulu and Samoa) gives the pattern away from them, CALIBRATED to them where it reaches them,
@@ -3483,9 +3484,10 @@ class CurrentsMonitor:
         except Exception as e:
             # EVERY LOOKUP FAILURE IS A READOUT STATE, NOT A LOG LINE. What can go wrong
             # here is a property of the DATA, not a bug in the console: the position is
-            # outside a regional model's domain, NOAA has posted nothing yet, or the model
-            # is shaped in a way the vendored reader does not handle (GOMOFS publishes
-            # 3-hourly frames and currents.py assumes hourly - see the note in ports.json).
+            # outside a regional model's domain, NOAA has posted nothing yet, or a cycle is
+            # missing frames. (Until 2026-10-07 a 3-hourly model like GOMOFS landed here too,
+            # as "not hourly"; the shared reader reads any OFS now, so a FRAME refusal can
+            # only be a hole - frames more than currents.MAX_FRAME_GAP_S apart.)
             # None of that is an exception in serving a request, and printing it as one
             # both spammed the server log every poll AND tripped the "console logged no
             # exception" check four suites rightly enforce. The operator learns about it
@@ -3493,8 +3495,8 @@ class CurrentsMonitor:
             msg = "%s" % e
             if "does not overlap" in msg or "outside" in msg:
                 note = "%s does not cover this position" % self._ofs
-            elif "not hourly" in msg:
-                note = "%s frames are not hourly - unreadable by this build" % self._ofs
+            elif msg.startswith("frames are more than"):
+                note = "%s cycle is missing frames - %s" % (self._ofs, msg.split(": ", 1)[-1])
             else:
                 note = "%s: %s" % (type(e).__name__, msg[:90])
             with self._lock:
@@ -3540,7 +3542,7 @@ class CurrentsMonitor:
             # first version of this did, and the row went back to "no cycle cached yet" a minute later.
             #
             # ⚠ AND ON A FUSED READING IT IS NOT THE READING'S NOTE (2026-10-07). Since the stations came in, a reading
-            # can be good with no cycle at all (New Castle: the NOAA predictions, with gomofs unreadable); the page reads
+            # can be good with no cycle at all (New Castle with no gomofs cycle: the NOAA predictions alone); the page reads
             # a note on a good reading as the projection warning, so the model's reason rides in its own field there.
             # On a refusal it replaces the generic "no cycle cached yet" wherever that stands in the sentence.
             if res.get("ok"):

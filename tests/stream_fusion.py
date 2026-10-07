@@ -430,7 +430,7 @@ check("15. the simulator is set by the stream at HER OWN position, every tick: w
 import threading
 mon3 = C.CurrentsMonitor.__new__(C.CurrentsMonitor)
 mon3._lock, mon3._ofs, mon3._tag, mon3._cur = threading.Lock(), "gomofs", None, None
-mon3._no_cycle_why = "gomofs frames are not hourly - unreadable by this build"
+mon3._no_cycle_why = "gomofs cycle is missing frames - a gap of 6.00 h at 2026-10-07T03:00:00Z"
 mon3._sources = SF.StreamSources(os.path.join(TMP, "mon3"), fetch=dead_fetch, start=False)
 mon3._sources.stations._tables = (table("FTP", 43.0712, -70.7098, 300.0, 120.0, [NOWT - 3600, NOWT + 3600], [1.0, 1.0],
                                         name="Fort Point"),)
@@ -438,12 +438,12 @@ mon3._pass((43.0712, -70.7098), False)
 good = dict(mon3._last)
 mon3._pass((43.20, -70.50), False)                          # no station in reach, no model: a refusal
 bad = dict(mon3._last)
-check("16. at New Castle - stations, gomofs unreadable - the good reading carries the model's reason in model_note, NOT "
+check("16. at New Castle - stations, no gomofs cycle - the good reading carries the model's reason in model_note, NOT "
       "in note (the page reads a note on a good reading as the projection warning); a refusal names every reason: no "
       "station in reach AND why there is no model",
-      lambda: good.get("ok") and not good.get("note") and "not hourly" in (good.get("model_note") or "")
+      lambda: good.get("ok") and not good.get("note") and "missing frames" in (good.get("model_note") or "")
       and bad.get("ok") is False and "no NOAA current-prediction station" in bad.get("note", "")
-      and "not hourly" in bad.get("note", "") and "no cycle cached yet" not in bad.get("note", ""),
+      and "missing frames" in bad.get("note", "") and "no cycle cached yet" not in bad.get("note", ""),
       lambda: "good note %r model_note %r; refusal %r" % (good.get("note"), good.get("model_note"), bad.get("note")))
 
 # ── 17. THE CALM SWITCH IS CALM ─────────────────────────────────────────────────────────────

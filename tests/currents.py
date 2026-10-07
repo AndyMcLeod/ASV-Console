@@ -188,6 +188,46 @@ check("6b. an unexpected error is contained, and named by type",
       res.get("ok") is False and "RuntimeError" in (res.get("note") or ""),
       json.dumps(res))
 
+# 6c. A CYCLE WITH A HOLE is the one FRAME refusal the shared reader still makes (2026-10-07: it reads 3-hourly
+# models now, so the old "frames are not hourly" can no longer happen, and New Castle's gomofs is readable). The
+# message is the READER'S OWN - raised by the vendored frame_order on a cycle missing a frame, not typed here - so
+# this fails if either side changes its words. Paired with the acceptance: 3-hourly frames are NOT refused, and a
+# position outside the model still reads as outside.
+import threading as _th                                     # noqa: E402
+mon._lock, mon._last, mon._tag, mon._cur, mon._ofs = _th.Lock(), {}, None, None, "gomofs"
+try:
+    A.currents.frame_order([0.0, 3 * 3600.0, 9 * 3600.0])   # 0 h, 3 h, then 9 h: frame 6 h missing
+    hole = None
+except RuntimeError as e:
+    hole = e
+
+
+def _raising(exc):
+    def f(*a, **k):
+        raise exc
+    return f
+
+
+_real_ensure = A.currents.ensure_cycle_covering
+try:
+    A.currents.ensure_cycle_covering = _raising(hole or RuntimeError("frame_order raised nothing"))
+    why_hole = mon._ensure_cycle(43.073, -70.71)
+    note_hole = mon._last.get("note")
+    A.currents.ensure_cycle_covering = _raising(RuntimeError("bbox does not overlap the model box (x)"))
+    why_out = mon._ensure_cycle(43.073, -70.71)
+finally:
+    A.currents.ensure_cycle_covering = _real_ensure
+try:
+    three_hourly = A.currents.frame_order([0.0, 3 * 3600.0, 6 * 3600.0, 9 * 3600.0])
+except RuntimeError as e:                                   # a reader that refuses 3-hourly again: a FAIL, named
+    three_hourly = "refused: %s" % e
+check("6c. a cycle missing a frame is named in words - the gap and where - while a 3-hourly cycle is read, not "
+      "refused; outside the model still reads as outside",
+      hole is not None and why_hole == note_hole
+      and why_hole == "gomofs cycle is missing frames - a gap of 6.00 h at 2016-01-01T03:00:00Z"
+      and three_hourly == [0, 1, 2, 3] and why_out == "gomofs does not cover this position",
+      "hole %r; 3-hourly order %r; outside %r" % (why_hole, three_hourly, why_out))
+
 # --- 7-10: the real console ---------------------------------------------------------- #
 port = free_port()
 srvlog = tempfile.TemporaryFile(mode="w+")
