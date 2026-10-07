@@ -100,7 +100,12 @@ def until(pred, limit):
 print("The console knows which version it is running, and which one is on disk:")
 
 COPY = tempfile.mkdtemp(prefix="asv_build_copy_")
-for name in ("asv_console.py", "currents.py", "roc_tracks.py", "gps_sim.py", "ais_service.py", "ports.default.json"):
+# THE PROGRAM'S MODULES ARE THE CONSOLE'S OWN LIST (asv_console.BUILD_PY), read from its source, not restated here: a
+# hand-kept list here missed stream_fusion.py (2026-10-07) and the copied console died at import.
+import ast as _ast
+_BUILD_PY = _ast.literal_eval(re.search(r"^BUILD_PY = (\([^)]*\))",
+                                        open(os.path.join(APP, "asv_console.py"), encoding="utf-8").read(), re.M).group(1))
+for name in tuple(_BUILD_PY) + ("ports.default.json",):
     shutil.copy2(os.path.join(APP, name), os.path.join(COPY, name))
 for name in ("vessels", "static"):
     shutil.copytree(os.path.join(APP, name), os.path.join(COPY, name))
@@ -189,7 +194,7 @@ try:
     import asv_console as A  # noqa: E402
     A.use_state_dir(STATE.dir)
     twin = tempfile.mkdtemp(prefix="asv_build_twin_")
-    for name in ("asv_console.py", "currents.py", "roc_tracks.py", "gps_sim.py", "ais_service.py"):
+    for name in _BUILD_PY:
         shutil.copy2(os.path.join(APP, name), os.path.join(twin, name))
     shutil.copytree(os.path.join(APP, "static"), os.path.join(twin, "static"))
     here, there = A.BuildWatch(APP).boot, A.BuildWatch(twin).boot

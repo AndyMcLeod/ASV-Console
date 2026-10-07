@@ -83,7 +83,7 @@ function setTip(el, text){ if(el) el.title = text; }
 const page = eval("(function(){ \"use strict\"; const $ = world.$, waterTrust = world.waterTrust, WATER_STALE_S = world.WATER_STALE_S,"
   + " document = world.document, fmtDist = world.fmtDist; let roseEnv = null, roseCur = null;\n"
   + decl("^const CURRENT_AGE_SHOW_S = [^;]*;") + "\n"
-  + ["fmtAge", "monitorErrTxt", "dirTxt", "updateWaterUI", "updateEnvUI", "updateCurrentUI"].map(grab).join("\n")
+  + ["fmtAge", "monitorErrTxt", "dirTxt", "updateWaterUI", "updateEnvUI", "currentBasisTxt", "updateCurrentUI"].map(grab).join("\n")
   + "\nreturn { fmtAge, updateWaterUI, updateEnvUI, updateCurrentUI, CURRENT_AGE_SHOW_S }; })()");
 
 const station = (extra) => Object.assign({ ok: true, offset_m: 0.19, datum: "MLLW", method: "idw3", data_kind: "observed",
@@ -166,6 +166,20 @@ check("7. the current - recomputed every minute - shows its age only once it is 
             && /The last update failed: RuntimeError: boom/.test(curErr),
       () => "fresh '" + curFresh.row + "'; old '" + curOld.row + "' " + curOld.col + "; not-ok tooltip '"
             + curErr.replace(/\n/g, " ").slice(0, 120) + "'");
+
+// 7b. THE FUSED READING SAYS WHAT IT WAS BUILT FROM (2026-10-07, stream_fusion.py): the NOAA prediction stations with
+//     their distance and share, and the model with the gain and lag that calibrated it - while an OFS-only reading's
+//     tooltip still names the model and its cycle (7 above).
+page.updateCurrentUI(cur({ source: "NOAA predictions + dbofs calibrated", tag: null, w_stations: 0.37,
+  stations: [["PIR0710", "General Sullivan Bridge", 1000, 0.8], ["ACT0791", "Dover Point, west of", 1500, 0.2]],
+  model: { label: "dbofs", gain: 1.3, lag_s: 720, calibrated_by: 2 } }));
+const fusedTip = els["#v_current"].title;
+check("7b. a fused reading's tooltip names the prediction stations with distance and share, and the model with its "
+      + "calibration and weight",
+      () => /NOAA tidal current predictions: General Sullivan Bridge .* off \(80%\), Dover Point, west of .* off \(20%\)/.test(fusedTip)
+            && /model dbofs, calibrated to 2 stations \(gain 1\.30, lag \+12 min\), weight 63%/.test(fusedTip)
+            && !/cycle \?/.test(fusedTip) && els["#v_current"].textContent === "0.45 kn @ 120°",
+      () => "tooltip '" + fusedTip.slice(0, 220) + "'");
 
 // 8. THE SET SAYS WHERE IT CAME FROM (2026-09-29): on a link that reports none the console fills in the tidal-stream
 //    FORECAST under the boat (with_forecast_set), and the row says so - it is what the guard is using, and it is not

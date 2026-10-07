@@ -34,8 +34,11 @@ class ConsoleState:
         atexit.register(shutil.rmtree, self.dir, True)
 
     def args(self):
-        """The command-line arguments that keep a console's state in this folder."""
-        return ["--state-dir", self.dir]
+        """The command-line arguments that keep a console's state in this folder - and its surface current to the OFS
+        alone (2026-10-07). With the NOAA station predictions the stream at New Castle, the default port, is the
+        river's own, up to ~4 kn: a suite driving the boat there would pass at slack water and fail at full ebb. A
+        suite that wants the fused stream drives stream_fusion.py in-process (tests/stream_fusion.py)."""
+        return ["--state-dir", self.dir, "--no-stream-predictions"]
 
     def path(self, *parts):
         return os.path.join(self.dir, *parts)

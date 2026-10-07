@@ -17251,12 +17251,34 @@ function updateCurrentUI(cur){
                  + (stale ? " · " + fmtAge(cur.age_s) : "");
   // A projected value is an ESTIMATE and must not read like a measurement - nor an old one like a current one.
   el.style.color = (proj || stale) ? "var(--warn, #e8d9a0)" : "";
-  el.title = "Surface current at the vessel's position, set = where the water GOES (true). "
-           + "Model " + (cur.source||"?") + ", cycle " + (cur.tag||"?")
-           + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : "")
+  el.title = "Surface current at the vessel's position, set = where the water GOES (true). " + currentBasisTxt(cur)
            + (proj ? ". ~ = " + cur.note : "")
            + (typeof cur.age_s==="number" ? ". Computed " + fmtAge(cur.age_s) + " ago" : "")
            + monitorErrTxt(cur);
+}
+/** WHAT THE READING WAS BUILT FROM (2026-10-07, stream_fusion.py). NOAA's tidal current predictions at the stations
+ *  round the boat come first, each with its distance and its share; a gridded model gives the pattern away from them,
+ *  with the gain and time lag that calibrated it to them; the two are blended by distance to the nearest station. A
+ *  reading from the OFS alone reads as it always did: the model and its cycle. */
+function currentBasisTxt(cur){
+  const st = Array.isArray(cur.stations) ? cur.stations : [];
+  const parts = [];
+  if(st.length)
+    parts.push("NOAA tidal current predictions: " + st.map(s => s[1] + " " + fmtDist(s[2]) + " off ("
+      + Math.round((s[3] || 0) * 100) + "%)").join(", "));
+  const m = cur.model;
+  if(m && (cur.w_stations == null || cur.w_stations < 0.995)){
+    const lagMin = Math.round((m.lag_s || 0) / 60);
+    parts.push("model " + (m.label || cur.source || "?")
+      + (m.calibrated_by ? ", calibrated to " + m.calibrated_by + " station" + (m.calibrated_by === 1 ? "" : "s")
+          + " (gain " + (+m.gain).toFixed(2) + (lagMin ? ", lag " + (lagMin > 0 ? "+" : "") + lagMin + " min" : "") + ")" : "")
+      + (cur.w_stations != null ? ", weight " + Math.round((1 - cur.w_stations) * 100) + "%" : ""));
+  }
+  if(!parts.length || cur.tag)
+    parts.push("Model " + ((m && m.label) || cur.source || "?") + ", cycle " + (cur.tag || "?")
+      + (cur.cycle_start_utc ? " covering " + cur.cycle_start_utc + " to " + cur.cycle_end_utc : ""));
+  if(cur.model_note) parts.push("No model in it: " + cur.model_note);
+  return parts.join(". ");
 }
 // --- RUN block (inside the Mission Status card) ---------------------------- //
 // One readout paradigm for EVERY commanded run. Survey / Search / Go-To / RTH / Transit

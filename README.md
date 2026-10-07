@@ -61,7 +61,8 @@ and the safety gates. Sim mode also runs an **environmental simulator**: it pull
 course (a steady crab + a gust-driven wander the autopilot steers out) — toggle or
 read the effect on the vessel card's **Wind / Sea / Set·crab** rows (sim only; a real
 boat feels real weather). There is no ENV card — override or disable the forcing over
-the API (`POST /api/env`). A **wind rose** sits on the chart itself — a graduated
+the API (`POST /api/env`); disabled, the simulator applies no wind, no waves and no tidal
+stream, which is what a calm, repeatable rehearsal needs. A **wind rose** sits on the chart itself — a graduated
 compass ring with the wind needle and the speed and from-direction at its centre,
 drawn with a transparent background (no card, no chip) and **draggable anywhere on
 the chart**; it remembers where you put it and is clamped back into view if the
@@ -253,9 +254,33 @@ stay two lines (`Nogo established (583 nogo zone(s) …) ×3`). Commands are nev
 the newest line, because their order is the record. Hover a line for the full text and date.
 
 **Surface current** (Mission Status card, `Current` row). The console also reads the surface
-current **forecast at the boat's own position**, from a NOAA **Operational Forecast
-System** — `dbofs` (Delaware Bay) by default, `--currents-ofs` for a hull working
-elsewhere. Set is **where the water goes**, degrees true. Unlike the wind rows this is
+current **at the boat's own position**, and since 7 October 2026 it is **fused** from
+station predictions and a model (`stream_fusion.py`) rather than read from one model:
+
+- **NOAA's tidal current predictions** at the stations round the boat
+  (tidesandcurrents.noaa.gov) come first. Each station gives a signed speed on its own
+  flood and ebb axis, at its shallowest published depth. The tables are fetched a week ahead
+  and kept under `charts/coops_currents/`, so the stream is there at sea and for any time a
+  plan reaches. A subordinate station publishes only its slacks and strengths; between them
+  the curve is the tide's own shape, a quarter sine from slack and a quarter cosine to it,
+  not a straight line. Between stations the vectors are weighted by inverse distance
+  squared, out to 3 km.
+- **A gridded model** gives the pattern away from the stations: the NOAA **Operational
+  Forecast System** the port names (`dbofs` by default, `--currents-ofs` otherwise), or a
+  **PacIOOS** regional ocean model at Honolulu, Samoa, the main Hawaiian Islands and the
+  western North Pacific. Where stations lie inside it, the model is **calibrated** to them
+  by a gain and a time lag along each station's axis, and only where the fit is a fit.
+- The two are **blended by distance** to the nearest station.
+
+The simulator is **set by this stream at her own position, every tick**, so a boat running
+up a river meets the river's own current as it changes, instead of one value for the whole
+run. The row's tooltip names what the reading was built from: the stations with their
+distances and shares, the model with its gain and lag, or why no model is in it. River
+discharge is not a layer (it adds about 0.01 kn in the tidal water measured), nor yet the
+global ocean model or live current meters; a position with no station in reach and no
+model water still reads `--` with the reason. `--no-stream-predictions` runs on the model
+alone, as before: a deterministic or offline rehearsal, and what every test harness's
+console is given, so no suite passes at slack water and fails at full ebb. Set is **where the water goes**, degrees true. Unlike the wind rows this is
 **not** simulator-only: a real hull sits in real water, and while the simulator invents
 the wind, nobody invents the tide. It is a *model prediction*, not a measurement, and a
 different question from the **Set / crab** row above it — that is the leeway the boat is

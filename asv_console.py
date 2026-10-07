@@ -70,6 +70,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import currents                            # NOAA OFS surface currents (vendored - see its header)
+import stream_fusion                       # NOAA tidal current predictions + PacIOOS models, fused with the OFS
 import roc_tracks                          # Remote Operations Center tracking + moving HOME
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,10 @@ BOOT_ID = "%d-%d" % (os.getpid(), int(time.time() * 1000))
 # page and the modules it serves): once at start (`build`), and again whenever one of them changes on disk
 # (`build_on_disk`). The state carries both, the page is served with the fingerprint it was read at, and the page
 # says which one is behind - restart the console, or reload the page.
-BUILD_PY = ("asv_console.py", "currents.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
+# ⚠ EVERY MODULE THE CONSOLE IMPORTS FROM BESIDE ITSELF IS LISTED HERE, and the suites that start a console from a COPY
+# of the program (tests/state_dir.py, tests/build_id.py) copy THIS list - so a new module is added here or a copied
+# console dies at import (stream_fusion.py, 2026-10-07: both suites hung on a console that never came up).
+BUILD_PY = ("asv_console.py", "currents.py", "stream_fusion.py", "roc_tracks.py", "ais_service.py", "gps_sim.py")
 BUILD_RECHECK_S = 5.0                   # how often the files are looked at again (a stat of each, not a read)
 PAGE_BUILD_TOKEN = "__ASV_PAGE_BUILD__"  # replaced in asv.html with the fingerprint it was served at
 
@@ -3122,6 +3126,12 @@ class EnvMonitor:
         with self._lock:
             self._enabled = bool(on)
 
+    def is_enabled(self):
+        """The rehearsal switch (POST /api/env {"enabled": false}): off is a DETERMINISTIC CALM run - no wind, no
+        waves, and since 2026-10-07 no tidal stream applied either (SimVcu.tick asks this before it asks CURRENTS)."""
+        with self._lock:
+            return self._enabled
+
     def set_manual(self, fields):
         """fields: dict possibly with wind_kn, wind_from, hs_m, tp_s, wave_from;
         None/'' clears a field; {'clear': True} drops the whole override."""
@@ -3256,6 +3266,16 @@ class CurrentsMonitor:
         non-zero, flagged: `at_best` shifts by whole M2 tidal cycles (0.14-0.21 kt RMS
         against the model's own output, capped at 3 cycles), which beats holding the
         last value or assuming slack. Past the cap it refuses instead of guessing.
+
+    ⚠⚠ AND SINCE 2026-10-07 THE OFS IS ONE LAYER OF THREE (stream_fusion.py; Andy: "The bottom line goal is to simulate
+    wind/wave/current effects on the passage of a given ASV through the water"). His Little Bay session ran with NO
+    stream - the Piscataqua's model is 3-hourly, unreadable here, and has no water cells from the Memorial Bridge up -
+    while NOAA predicted 3.8 kn of flood and 4.0 kn of ebb at the General Sullivan Bridge. Now NOAA's own tidal current
+    PREDICTIONS at the stations round the boat (26 within 25 km of New Castle) come first, a gridded model (this OFS, or
+    a PacIOOS model at Honolulu and Samoa) gives the pattern away from them, CALIBRATED to them where it reaches them,
+    and the two are blended by distance to the nearest station. A position with neither still refuses in words.
+    `field_at` is the same answer at ANY position, cheap enough for the simulator to ask every tick, so the stream
+    she is set by changes as she moves through it - from one value for the whole run to the river's own.
     """
 
     POLL_S = 900.0                       # how often the cycle is looked for - the model is hourly
@@ -3278,17 +3298,88 @@ class CurrentsMonitor:
         self._no_cycle_why = None        # why the last look found no cycle - see _pass
         self._force = threading.Event()
         self._stop = threading.Event()
+        # THE OTHER LAYERS, ON THEIR OWN THREAD (stream_fusion.StreamSources): NOAA's station predictions and a PacIOOS
+        # window, cached under charts/ beside the other shared lookups. Their fetches take seconds and must never hold
+        # up this monitor's minute or the simulator's tick.
+        self._sources = stream_fusion.StreamSources(os.path.join(CHART_DIR, "coops_currents"),
+                                                    model_provider=self._ofs_provider)
         threading.Thread(target=self._loop, daemon=True).start()
 
     def update_position(self, lat, lon):
         with self._lock:
             old = self._pos
             self._pos = (lat, lon)
+        src = getattr(self, "_sources", None)
+        if src is not None:
+            src.update_position(lat, lon)
         if old is None or _haversine_km(old[0], old[1], lat, lon) > self.REFETCH_KM:
             self._force.set()
 
     def refresh_now(self):
+        src = getattr(self, "_sources", None)
+        if src is not None:
+            src.refresh_now()
         self._force.set()
+
+    def disable_sources(self):
+        """The OFS alone, as before the fusion: no station predictions, no PacIOOS window (`--no-stream-predictions`).
+        A deterministic or offline rehearsal - and every test harness's console (tests/lib/console_state.py): thirty
+        suites drive a console at New Castle, where the stream is now the river's own, and a suite that passes at slack
+        water and fails at full ebb proves nothing either way."""
+        src = getattr(self, "_sources", None)
+        self._sources = None
+        if src is not None:
+            src.stop()
+
+    # -- the fusion -----------------------------------------------------------------
+    def _ofs_uv(self, cur):
+        """The OFS as a field (lat, lon, epoch) -> (east, north) m/s | None: `at_best`, so past the cached span it is
+        projected by whole tidal cycles as the readout has always been, and refused past the cap."""
+        def uv(lat, lon, t):
+            try:
+                vals, _shift = cur.at_best(lat, lon, datetime.fromtimestamp(t, timezone.utc))
+            except Exception:
+                return None
+            return (vals[2], vals[3]) if vals is not None else None
+        return uv
+
+    def _ofs_provider(self):
+        """For the sources thread's calibration: the OFS held now, as (field, label, key)."""
+        cur = self._cur
+        if cur is None:
+            return None, None, None
+        return self._ofs_uv(cur), self._ofs, ("ofs", self._ofs, self._tag)
+
+    def _model(self):
+        """The gridded layer at the boat: the OFS where it has water, else the PacIOOS window. (field, label)."""
+        cur = getattr(self, "_cur", None)
+        src = getattr(self, "_sources", None)
+        patch = src.patch() if src is not None else None
+        if cur is None and patch is None:
+            return None, None
+        ofs_uv = self._ofs_uv(cur) if cur is not None else None
+        if patch is None:
+            return ofs_uv, self._ofs
+        if ofs_uv is None:
+            return patch.at, patch.label
+
+        def uv(lat, lon, t):
+            r = ofs_uv(lat, lon, t)
+            return r if r is not None else patch.at(lat, lon, t)
+        return uv, "%s / %s" % (self._ofs, patch.label)
+
+    def field_at(self, lat, lon, t=None):
+        """THE STREAM AT ANY POSITION - what the simulator is set by, asked every tick at her own position. (knots,
+        set degrees true) or None where no layer has water. Never raises and never touches the network."""
+        try:
+            src = getattr(self, "_sources", None)
+            uv, label = self._model()
+            f = stream_fusion.fuse(lat, lon, time.time() if t is None else t,
+                                   src.tables() if src is not None else (), uv,
+                                   src.cals() if src is not None else {}, label)
+        except Exception:
+            return None
+        return (f["speed_kn"], f["set_deg"]) if f else None
     def set_ofs(self, ofs):
         """Point at another NOAA model - an operating port carries its own (see
         validate_port). Drops the cached cycle: it belongs to the old grid."""
@@ -3312,7 +3403,48 @@ class CurrentsMonitor:
         return out
 
     def _sample(self, lat, lon):
-        """The reading at (lat, lon) NOW, or an honest refusal. Never raises."""
+        """The reading at (lat, lon) NOW - the fused stream, or an honest refusal. Never raises.
+
+        Where no station is in reach, no PacIOOS window is held and no station has calibrated the OFS here, this IS the
+        OFS reading, field for field, as it always was. Otherwise it is the fusion, carrying what it was built from: the
+        stations and their weights, the model and its gain and lag, and the OFS cycle's span and projection flag where
+        the OFS took part."""
+        ofs = self._ofs_sample(lat, lon)
+        src = getattr(self, "_sources", None)
+        if src is None:
+            return ofs
+        now_t = time.time()
+        tables, cals = src.tables(), src.cals()
+        st = stream_fusion.stations_field(tables, lat, lon, now_t)
+        _g, _lag, ncal = stream_fusion.calibration_at(cals, lat, lon)
+        if st is None and src.patch() is None and ncal == 0:
+            if ofs.get("ok"):
+                return ofs
+            # a refusal says that the stations were looked for too, and why they are not in it
+            why = ["no NOAA current-prediction station within %d km" % int(stream_fusion.STATION_REACH_M / 1000),
+                   src.status().get("note"), ofs.get("note")]
+            return dict(ofs, note="; ".join(w for w in why if w))
+        uv, label = self._model()
+        f = stream_fusion.fuse(lat, lon, now_t, tables, uv, cals, label)
+        status = src.status()
+        if f is None:
+            why = ["no NOAA current-prediction station within %d km" % int(stream_fusion.STATION_REACH_M / 1000)]
+            if status.get("note"):
+                why.append(status["note"])
+            if not ofs.get("ok") and ofs.get("note"):
+                why.append(ofs["note"])
+            return {"ok": False, "source": label or self._ofs, "note": "; ".join(why)}
+        out = {"ok": True, "source": f["source"], "speed_kn": round(f["speed_kn"], 2), "set_deg": round(f["set_deg"], 1),
+               "projected_h": 0.0, "w_stations": f["w_stations"], "stations": f["stations"],
+               "near_station_m": f["near_station_m"], "model": f["model"], "sources": status}
+        if ofs.get("ok") and f["model"] is not None and f["w_stations"] < 0.995 and (label or "").startswith(self._ofs):
+            for k in ("tag", "cycle_start_utc", "cycle_end_utc", "projected_h", "note"):
+                if ofs.get(k) is not None:
+                    out[k] = ofs[k]
+        return out
+
+    def _ofs_sample(self, lat, lon):
+        """The OFS reading at (lat, lon) NOW, or an honest refusal. Never raises."""
         cur = self._cur
         if cur is None:
             return {"ok": False, "source": self._ofs, "note": "no cycle cached yet"}
@@ -3406,7 +3538,17 @@ class CurrentsMonitor:
             # that had merely not filled yet (seen live at New Castle, 2026-09-14). Kept from the last look
             # through every sample until the next one - not only on the pass that looked, which is what a
             # first version of this did, and the row went back to "no cycle cached yet" a minute later.
-            res = dict(res, note=self._no_cycle_why)
+            #
+            # ⚠ AND ON A FUSED READING IT IS NOT THE READING'S NOTE (2026-10-07). Since the stations came in, a reading
+            # can be good with no cycle at all (New Castle: the NOAA predictions, with gomofs unreadable); the page reads
+            # a note on a good reading as the projection warning, so the model's reason rides in its own field there.
+            # On a refusal it replaces the generic "no cycle cached yet" wherever that stands in the sentence.
+            if res.get("ok"):
+                res = dict(res, model_note=self._no_cycle_why)
+            elif "no cycle cached yet" in (res.get("note") or ""):
+                res = dict(res, note=res["note"].replace("no cycle cached yet", self._no_cycle_why))
+            else:
+                res = dict(res, note=self._no_cycle_why)
         with self._lock:
             self._last = res
             self._sampled_at = time.time()
@@ -4230,12 +4372,22 @@ class SimVcu(VcuLink):
         # This is also what makes "stop the boat" an unsafe answer near a structure, which
         # is the whole reason the run-time guard is allowed the helm: with way off, the
         # vessel does not hold - it is set, bodily, at the stream's own rate.
-        cur = CURRENTS.snapshot()
+        #
+        # ⚠⚠ THE STREAM AT HER OWN POSITION, EVERY TICK (2026-10-07). This read the monitor's ONE reading at the boat,
+        # recomputed once a minute, so a boat running up the Piscataqua at 14 kn - 430 m a minute, past stations whose
+        # predictions differ by 2 kn a kilometer apart - was set by a single value, and in his Little Bay session by
+        # none at all. `field_at` is the fused stream (NOAA's station predictions, the model calibrated to them) at
+        # whatever position she has reached, at the present moment.
+        #
+        # ⚠ AND THE CALM SWITCH IS CALM. The operations manual has always called the environment switch off "a
+        # deterministic calm run"; with the stream at New Castle now the river's own (up to ~4 kn), a calm run that
+        # still carried the tide was neither. The READOUT still reports the forecast - the switch is the simulator's.
+        fld = CURRENTS.field_at(self.lat, self.lon) if ENV.is_enabled() else None
         cur_e = cur_n = 0.0
-        if cur and cur.get("ok") and cur.get("speed_kn"):
-            # `set_deg` is the mariner's SET: the direction the stream flows TOWARD.
-            cv = float(cur["speed_kn"]) * 0.514444
-            ct = math.radians(float(cur.get("set_deg") or 0.0))
+        if fld and fld[0]:
+            # the second value is the mariner's SET: the direction the stream flows TOWARD.
+            cv = float(fld[0]) * 0.514444
+            ct = math.radians(float(fld[1] or 0.0))
             cur_e, cur_n = cv * math.sin(ct), cv * math.cos(ct)
         # ⚠⚠ REPORTED ALWAYS, INTEGRATED ONLY WHILE DEPLOYED. The SNAPSHOT itself used to be
         # gated on `_running`, so a boat that had not been started published env_set_kn as
@@ -7658,6 +7810,10 @@ def main():
                          "for the current at the VESSEL'S position, not along a line that "
                          "might cross a model boundary. cbofs/ngofs2/sfbofs/... for a hull "
                          "working elsewhere")
+    ap.add_argument("--no-stream-predictions", action="store_true",
+                    help="the surface current from the OFS alone: no NOAA tidal current predictions and no PacIOOS "
+                         "model window (stream_fusion.py). A deterministic or offline rehearsal; every test harness's "
+                         "console passes it (tests/lib/console_state.py)")
     ap.add_argument("--fetch-charts", metavar='"LAT,LON,RADIUS_KM"',
                     help="prefetch chart tiles around a position into charts/ and exit")
     ap.add_argument("--zooms", default="8-16", help="zoom range for --fetch-charts (default 8-16)")
@@ -7769,6 +7925,8 @@ def main():
     # Gulf of Maine position. Set the fallback first, then let the active port have the
     # last word. (Boot ORDER again, twice in one feature.)
     CURRENTS._ofs = (args.currents_ofs or "dbofs").strip().lower() or "dbofs"
+    if args.no_stream_predictions:                       # before any fix reaches the monitor: nothing is fetched
+        CURRENTS.disable_sources()
     apply_port()
     AIS_NMEA_SPECS = list(args.ais_nmea or [])
     AIS_OPENCPN = (args.ais_opencpn or "").strip()

@@ -333,6 +333,9 @@ try:
             return {"ok": True, "source": "fake", "speed_kn": 1.0, "set_deg": 90.0, "projected_h": 0.0}
 
     C = FastCurrents()
+    # These monitors test the LOOP and the OFS path, so they get no station predictions: with them (2026-10-07) a
+    # monitor at New Castle reads the shared station cache and its reading turns good - check 12 went red that way.
+    C.disable_sources()
     C.update_position(44.9, -66.98)
     time.sleep(1.4)
     n_ens, n_smp = calls["ensure"], calls["sample"]
@@ -441,6 +444,7 @@ try:
             return {"ok": True, "source": "fake", "speed_kn": 1.0, "set_deg": 90.0, "projected_h": 0.0}
 
     K = SlowCurrents()
+    K.disable_sources()                          # the loop and the OFS path only (see C above)
     K.update_position(44.9, -66.98)
     until(lambda: ens["n"] >= 1, 2.0)
     before = ens["n"]
@@ -509,6 +513,7 @@ try:
     A.currents.ensure_cycle_covering = no_cover
     try:
         N = NoCover()
+        N.disable_sources()                      # the OFS path's refusal (see C above): New Castle has stations
         N.update_position(43.07, -70.71)
         said = until(lambda: "cover" in (N.snapshot().get("note") or ""), 3.0)
         t_said = time.time()

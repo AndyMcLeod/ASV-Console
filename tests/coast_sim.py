@@ -96,6 +96,9 @@ class _FakeCurrents:
     def snapshot(self):
         return {"ok": True, "speed_kn": self.kn, "set_deg": self.set_deg, "source": "test"}
 
+    def field_at(self, *a):          # the sim asks for the stream at her position every tick (2026-10-07): uniform here
+        return (self.kn, self.set_deg)
+
     def update_position(self, *a):
         pass
 
