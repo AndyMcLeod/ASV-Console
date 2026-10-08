@@ -9859,7 +9859,7 @@ async function doGoTo(target){
   plan.coast = gCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("goto", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // her first leg begins where she is (SimVcu.start), not at a waypoint
-  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("Go-To: "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("Go-To: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10016,7 +10016,7 @@ async function doRTH(opts){
   plan.coast = rCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("rth", plan, plan.route); updateMissionCard();   // draw the transit line + waypoints like a survey
   legStartsHere(0, r);                           // see doGoTo
-  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // this plan's lane, not the last plan's
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // this plan's lane, not the last plan's
   if(plan.heldOff) showBanner("RTH: Home "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)
     +" off it, at the nearest clear water"+(plan.routed?(", routed via "+plan.route.length+" waypoints"):"")+(note?" · "+note:"")+".");
   else if(plan.routed || note || plan.insideStandoff) showBanner("RTH: "+(plan.routed?("routed around nogo zone(s) via "+plan.route.length+" waypoints"):"direct")+(note?" \u00b7 "+note:"")+(plan.insideStandoff?" ⚠ inside the "+(+plan.standoffM).toFixed(1)+" m transit standoff (no route at that clearance) — expect the guard to slow or hold her there":"")+".");
@@ -10216,7 +10216,7 @@ async function doTransit(){
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
   const added = plan.route.length - transit.length;
-  const note = buoyageNote(plan.lane, plan.partial, plan.how);   // accumulated over every leg of THIS plan
+  const note = [buoyageNote(plan.lane, plan.partial, plan.how), mooredNote(plan)].filter(Boolean).join(" \u00b7 ");   // accumulated over every leg of THIS plan
   if(added>0 || note) showBanner("Transit: "+(added>0?("routed clear of ENC obstacles ("+added+" detour waypoint(s) added)"):"clear")+(note?" \u00b7 "+note:"")+".");
   setMode("pan"); render();
 }
@@ -11548,6 +11548,68 @@ function unchartedTip(u, partWay){
 /** A planner's refusal in the operator's units: a route past the chart read is said through fmtDist (the planner's own
  *  words are meters), anything else as the planner said it. For the paths that plan without planInsideChart. */
 function planWhy(p){ return p && p.uncharted ? (p.uncharted.say || beyondChartSay(p.uncharted, fmtDist)) : (p && p.error); }
+// THE VESSELS ALONG A PASSAGE, READ AS IT IS PLANNED (Andy, 2026-10-07: "build ... Solution 2" - stopped or moored AIS
+// contacts as fixed obstacles in the route planner, re-read at every plan). His RTH outbound passed NORD LOGOS, 132 m and
+// stopped at the Newington pier, 79 m off her fix at 10 kn; the route had not known she was there. passage.js passageKo
+// lays a passage round the vessels NOT under way in what this reads (`nogo.ais`); a vessel under way stays the guard's.
+//   The AIS proxy answers within its display radius of ONE center (the card's range), and a passage runs past it - that
+// RTH was 18 km - so the plan's own legs are read from centers along them, spaced 1.5 radii (every point of the plan is
+// within one of a center), PASSAGE_AIS_MAX_READS at most, and the answers merged by MMSI. On a Great Lake the proxy
+// answers the whole lake from any center, so one read is the lot.
+//   ⚠ A READ THAT FAILS LEAVES NOTHING: `nogo.ais` null, and the passage is laid in the chart's model alone, as it was
+// before this - the guard still answers every contact on the water. Each read is bounded (PASSAGE_AIS_TIMEOUT_MS).
+const PASSAGE_AIS_MAX_READS = 8;
+const PASSAGE_AIS_TIMEOUT_MS = 4000;
+/** Centers along the polyline `pts` every `stepM` meters, past its first point (read already) and to its last, at most
+ *  `max` of them - spread evenly over its length where it would take more. */
+function passageReadCenters(pts, stepM, max){
+  const cum = [0];
+  for(let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distTo(pts[i - 1], pts[i]));
+  const L = cum[cum.length - 1];
+  if(!(L > 0) || !(stepM > 0) || !(max > 0)) return [];
+  const step = Math.max(stepM, L / max), out = [];
+  for(let s = step; s < L + step - 1e-6 && out.length < max; s += step){
+    const d = Math.min(s, L);
+    let i = 1; while(i < cum.length - 1 && cum[i] < d) i++;
+    const t = cum[i] > cum[i - 1] ? (d - cum[i - 1]) / (cum[i] - cum[i - 1]) : 0;
+    out.push({lat: pts[i - 1].lat + (pts[i].lat - pts[i - 1].lat) * t, lon: pts[i - 1].lon + (pts[i].lon - pts[i - 1].lon) * t});
+  }
+  return out;
+}
+async function readPassageAis(pts){
+  nogo.ais = null;
+  if(typeof fetch !== "function" || !pts || !pts.length) return;
+  const read = async (c) => {
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    const t = ac ? setTimeout(() => ac.abort(), PASSAGE_AIS_TIMEOUT_MS) : null;
+    try{
+      const r = await fetch(`/api/ais?center=${c.lat.toFixed(5)},${c.lon.toFixed(5)}`, ac ? {signal: ac.signal} : undefined);
+      const d = await r.json();
+      return d && d.ok && Array.isArray(d.vessels) ? d : null;    // `ok` is the proxy's "I am up", as pollAIS reads it
+    }catch(e){ return null; }
+    finally{ if(t) clearTimeout(t); }
+  };
+  try{
+    const first = await read(pts[0]);
+    if(!first) return;
+    const byId = new Map();
+    const add = (d) => { for(const v of d.vessels) byId.set(v.mmsi != null ? String(v.mmsi) : v.lat + "," + v.lon, v); };
+    add(first);
+    const area = first.area || {};
+    if(area.mode !== "lake" && area.show_km > 0){
+      const more = await Promise.all(passageReadCenters(pts, area.show_km * 1500, PASSAGE_AIS_MAX_READS - 1).map(read));
+      for(const d of more) if(d) add(d);
+    }
+    nogo.ais = {vessels: [...byId.values()], polledAt: Date.now()};
+  }catch(e){ nogo.ais = null; }
+}
+/** What a passage was laid round that the chart does not hold (passageKo): the vessels not under way it passes near. */
+function mooredNote(plan){
+  const m = (plan && plan.moored) || [];
+  if(!m.length) return "";
+  const names = m.map((k) => String(k).replace(/^AIS: /, ""));
+  return "clear of " + (names.length <= 2 ? names.join(" and ") : names.length + " vessels not under way") + " (AIS)";
+}
 async function planInsideChart(pts, opts, plan, what){
   let own = nogo.ready && nogo.bbox ? beyondChart(pts, nogo.bbox) : null;
   if(own){
@@ -11567,6 +11629,7 @@ async function planInsideChart(pts, opts, plan, what){
               uncharted: {...own, route: [], say, rounds: 0, cause: tooBig ? "size" : "failed"}};
     }
   }
+  await readPassageAis(pts);                     // the vessels not under way along it, for passageKo (2026-10-07)
   aisKeepoutsNow();
   let p = plan(), why = null, cause = null, round = 0;
   while(p && p.uncharted){

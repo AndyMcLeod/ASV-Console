@@ -222,6 +222,8 @@ eval([
   // ... and the words a refusal is said in (1y drives the Upload's)
   grabDecl("STALL_TICK_MS"), grabDecl("ENC_MAX_SPAN_DEG"), grab("encSpanRefusal"), grab("sizeWhy"), grab("unchartedTip"),
   "function aisKeepoutsNow(){ return aisKoDrawn; }",
+  // the vessels along a passage (2026-10-07): no AIS proxy answers here, so the read takes nothing - tests/chart_box.js 10
+  "async function readPassageAis(){}",
   grab("planInsideChart"),
   // review #14: the guard and the governor act only in the SUPERVISING tab; this world is that tab. A view-only one is tests/supervisor_page.js's subject.
   "const supervising = () => true;",

@@ -448,6 +448,10 @@ function world(opts) {
                            // reading-and-replanning it does when one does is tests/chart_box.js's subject.
                            + grabDecl("CHART_WIDEN_ROUNDS") + "\n" + grabDecl("CHART_WIDEN_PAD_M") + "\n"
                            + 'const aisKeepoutsNow = () => [];' + "\n"
+                           // the vessels along a passage (2026-10-07): no AIS proxy answers in this world, so the
+                           // read takes nothing and each plan is laid in the chart's model; the read itself is
+                           // tests/chart_box.js's subject (10). The banner's words for what one names are the page's own.
+                           + 'const readPassageAis = async () => {};' + "\n" + grab("mooredNote") + "\n"
                            // its first question - are the command's own points inside the box the chart was read
                            // over? - needs a model; this one has no box, so nothing is judged (as with no extract)
                            + 'const nogo = W.nogo || {ready: true, bbox: null};' + "\n"

@@ -34,10 +34,15 @@
 //     contact bearing down reads in extremis - and steers the escape out of her way - while
 //     there is still water to do it in. It is not a buffer: a stationary contact has none.
 //
-// ⚠ IT IS NOT PART OF THE PLANNER'S MODEL, AND MUST NEVER BE. `nogo.ko` is what the punch, the
-// router and the readouts are built from; these polygons are folded into the copy the clearance
-// guard acts on, per frame, and into nothing else. A ship crossing the survey area reconfigures
-// no pattern - the boat avoids her and goes back (static/asv.html, aisReturnTick).
+// ⚠ A CONTACT UNDER WAY IS NOT PART OF THE PLANNER'S MODEL, AND MUST NEVER BE. `nogo.ko` is what
+// the punch, the router and the readouts are built from; these polygons are folded into the copy
+// the clearance guard acts on, per frame. A ship crossing the survey area reconfigures no pattern -
+// the boat avoids her and goes back (static/asv.html, aisReturnTick).
+// ⚠⚠ ONE EXCEPTION, AND ONLY FOR A PASSAGE (Andy, 2026-10-07): a vessel NOT under way is as fixed
+// as the pier she lies at, and a Go-To, an RTH or a transit leg is laid round her as round the
+// pier - aisMooredKeepouts below, folded in by passage.js passageKo, never into `nogo.ko` itself
+// and never into a survey pattern's lines. His RTH outbound passed NORD LOGOS, 132 m, stopped at
+// the Newington pier, 79 m off her AIS fix at 10 kn, and nothing in the route had known she was there.
 //
 // ⚠ NOTHING HERE COMMANDS ANYTHING, and nothing here is cached: every call builds the polygons
 // from the contacts it is handed and the clock it is given, so the answer can never be older
@@ -397,4 +402,43 @@ export function aisKeepouts(vessels, frame, opts = {}) {
   }
   return { polys, stale: false,
            note: polys.length + " AIS contact" + (polys.length === 1 ? "" : "s") + " modelled" };
+}
+
+/**
+ * THE VESSELS NOT UNDER WAY, FOR A PASSAGE (Andy, 2026-10-07: "build ... Solution 2" - stopped or moored AIS contacts
+ * as fixed obstacles in the route planner, re-read at every plan). His RTH outbound past the Newington pier passed
+ * NORD LOGOS, 132 m and stopped alongside, 79 m off her AIS fix at 10.3 kn - roughly 20-30 m off her stern if the fix
+ * is amidships - and neither the route nor the guard said a word: the route did not know she was there, and the guard
+ * answers only a projected ENTRY into her hull.
+ *
+ * Each contact aisMotion (the one rule) calls not under way, as the guard models her (aisKeepout, unswept: her hull
+ * along her heading, or the disc of every orientation where she reports none) - wherever she lies in `bbox`, not only
+ * within AIS_KO_RANGE_M of the boat, because a passage reaches the whole chart it was read over. The router keeps its
+ * standoff outside her as outside a pier; nothing is added here. A contact UNDER WAY is not in it, ever: she will not
+ * be where the plan saw her, and the guard answers her on the water.
+ *
+ * Returns {polys, stale, note}: `stale` as aisKeepouts says it - an empty model with its reason, never a quiet sea.
+ * opts: now (ms), polledAt (ms the contacts were read), staleS (default AIS_KO_STALE_S), bbox ({W,S,E,N} degrees).
+ */
+export function aisMooredKeepouts(vessels, frame, opts = {}) {
+  const now = +opts.now || 0;
+  if (!frame) return { polys: [], stale: false, note: "no chart frame" };
+  const polledAt = +opts.polledAt || 0;
+  if (!(polledAt > 0)) return { polys: [], stale: true, note: "no AIS read for this plan" };
+  const ageS = Math.max(0, (now - polledAt) / 1000);
+  const staleS = opts.staleS == null ? AIS_KO_STALE_S : +opts.staleS;
+  if (ageS > staleS) return { polys: [], stale: true, note: "the AIS read is " + Math.round(ageS) + " s old" };
+  const b = opts.bbox;
+  const polys = [];
+  for (const v of (vessels || [])) {
+    if (!v || v.lat == null || v.lon == null) continue;
+    if (b && !(+v.lat >= b.S && +v.lat <= b.N && +v.lon >= b.W && +v.lon <= b.E)) continue;
+    const m = aisMotion(v, { now, polledAt });
+    if (m.moving) continue;
+    const q = aisKeepout(v, frame, { now, polledAt, sweepS: 0 });
+    if (!q) continue;
+    // aisKeepout names moored / at anchor / aground where she says so; a stopped ship that says nothing is "stopped"
+    polys.push({ ...q, moored: true, kind: m.navStopped ? q.kind : q.kind.replace(/\)$/, ", stopped)") });
+  }
+  return { polys, stale: false, note: polys.length + " vessel" + (polys.length === 1 ? "" : "s") + " not under way" };
 }

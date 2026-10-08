@@ -18,6 +18,9 @@
 //   * contacts beyond AIS_KO_RANGE_M are not modelled, and a poll older than AIS_KO_STALE_S (or
 //     none) is STALE - an empty model with a reason, never a quiet sea.
 //
+//   * and, for a PASSAGE only (2026-10-07), the vessels NOT under way in the chart box are laid round as a pier is,
+//     in a copy of the chart's model - never one under way, never a survey pattern's own lines (M1-M8).
+//
 //   node tests/ais_keepout.js      # exit 0 = pass, 1 = fail   (stdlib Node)
 //
 // ASV_AIS_KEEPOUT names a sidecar copy of the module for a mutation run (it must sit in
@@ -399,6 +402,91 @@ console.log("An AIS contact as a keep-out:");
               && Math.abs(r2 - A.aisDiscM(q2.box)) < 1e-6 && Math.abs(A.aisDiscM(q2.box) - Math.hypot(30, 10) / 2) < 1e-6,
         () => "AMAZON hdg " + (q1 && q1.hdg) + " (" + (q1 && q1.ring.length) + " corners); CABRILLO hdg " + (q2 && q2.hdg)
             + ", " + (q2 && q2.ring.length) + "-point disc of " + (r2 == null ? "—" : r2.toFixed(2)) + " m");
+}
+
+// ── M1-M8. THE VESSELS NOT UNDER WAY, FOR A PASSAGE (Andy, 2026-10-07: "build ... Solution 2") ──────────────────
+// His RTH outbound passed NORD LOGOS, 132 m and stopped at the Newington pier, 79 m off her AIS fix at 10 kn, and the
+// route had not known she was there. A vessel NOT under way (aisMotion) is now laid round by a passage as a pier is -
+// her hull as the guard models it, wherever she is in the chart box - in a COPY of the chart's model (passage.js
+// passageKo), never in nogo.ko, never for a vessel under way, and never for a survey pattern's own lines.
+{
+  const P = require("../static/js/passage.js");
+  const K = require("../static/js/keepouts.js");
+  const { nogo } = require("../static/js/state.js");
+  const box = { W: ll(-4000, -4000).lon, S: ll(-4000, -4000).lat, E: ll(4000, 4000).lon, N: ll(4000, 4000).lat };
+  const T0 = Date.now();
+  const ship = (o = {}) => contact(0, 0, { mmsi: 374033000, name: "TESTSHIP", heading: 90, length: 132, ...o });   // 132 x 22 m, e -66..66, n -11..11
+  // M1-M2: the model itself
+  const got = A.aisMooredKeepouts([ship(), ship({ mmsi: 1, name: "UNDERWAY", sog: 6, cog: 90 }),
+                                   ship({ mmsi: 2, name: "MOORED", nav: 5, sog: 0.3, lat: ll(0, 900).lat }),
+                                   ship({ mmsi: 3, name: "SLOWOLD", sog: 1.0, age: 500, lat: ll(0, 1800).lat }),
+                                   ship({ mmsi: 4, name: "FAR", lat: ll(0, 3500).lat }),
+                                   ship({ mmsi: 5, name: "OUTSIDE", lat: ll(0, 6000).lat })],
+                                  ref, { now: T0, polledAt: T0, bbox: box });
+  const names = got.polys.map((q) => q.name).join(",");
+  const one = got.polys.find((q) => q.name === "TESTSHIP"), ref1 = A.aisKeepout(ship(), ref, { now: T0, polledAt: T0, sweepS: 0 });
+  check("M1. the vessels NOT under way in the chart box are the model: stopped, moored, and reporting like one at anchor; "
+        + "3.5 km off as well (no AIS_KO_RANGE_M here: a passage reaches the whole chart); not one under way, not one outside the box",
+        names === "TESTSHIP,MOORED,SLOWOLD,FAR" && one && JSON.stringify(one.ring) === JSON.stringify(ref1.ring)
+          && /132 x 22 m, stopped\)$/.test(one.kind) && /moored\)$/.test(got.polys[1].kind) && got.polys.every((q) => q.moored),
+        names + " | " + (one && one.kind) + " | " + (got.polys[1] && got.polys[1].kind));
+  const stale = A.aisMooredKeepouts([ship()], ref, { now: T0, polledAt: T0 - 60000, bbox: box });
+  const none = A.aisMooredKeepouts([ship()], ref, { now: T0, polledAt: 0, bbox: box });
+  check("M2. a read older than AIS_KO_STALE_S, or none at all, is no model - with its reason, never a quiet sea",
+        stale.polys.length === 0 && stale.stale && /60 s old/.test(stale.note) && none.polys.length === 0 && none.stale,
+        stale.note + " / " + none.note);
+  // M3-M6: planNogoRoute past her, in open water
+  const open = { polys: [], lines: [], points: [], marks: [], sys: K.markSystems([]), chans: [], restricted: [] };
+  const saved = { ready: nogo.ready, frame: nogo.frame, ko: nogo.ko, buffer: nogo.buffer, bbox: nogo.bbox, ais: nogo.ais };
+  Object.assign(nogo, { ready: true, frame: ref, ko: open, buffer: 3, bbox: box, ais: null });
+  const A0 = ll(-700, 20), B0 = ll(700, 20);                       // 9 m off her side, straight
+  const hull = one;
+  const passM = (route, from) => {
+    const pts = [from, ...route].map((p) => ref.toEN(p));
+    let m = 1e9;
+    for (let i = 1; i < pts.length; i++) for (let k = 0; k <= 50; k++) {
+      const p = { e: pts[i - 1].e + (pts[i].e - pts[i - 1].e) * k / 50, n: pts[i - 1].n + (pts[i].n - pts[i - 1].n) * k / 50 };
+      m = Math.min(m, clearanceM(p, { polys: [hull], lines: [], points: [] }, 500));
+    }
+    return m;
+  };
+  const plain = P.planNogoRoute(A0, B0, { standoffM: 20 });
+  nogo.ais = { vessels: [ship()], polledAt: Date.now() };
+  const laid = P.planNogoRoute(A0, B0, { standoffM: 20 });
+  const koAfter = nogo.ko;
+  check("M3. A GO-TO / RTH PAST A STOPPED SHIP IS LAID ROUND HER: no read, the straight route 9 m off her side (as before); "
+        + "read, routed at the standoff (20 m) or more, and she is named on the plan",
+        plain.direct && passM(plain.route, A0) < 10 && laid.routed && passM(laid.route, A0) >= 19.5
+          && laid.moored.length === 1 && /TESTSHIP \(132 x 22 m, stopped\)/.test(laid.moored[0]),
+        "no read: " + passM(plain.route, A0).toFixed(1) + " m; read: " + passM(laid.route, A0).toFixed(1) + " m via "
+          + laid.route.length + " waypoints, named " + JSON.stringify(laid.moored));
+  check("M4. ... in a COPY: nogo.ko is the chart's model still (the guard models every contact itself and would hold her twice)",
+        koAfter === open && open.polys.length === 0 && !("moored" in open), "nogo.ko polys " + open.polys.length);
+  nogo.ais = { vessels: [ship({ sog: 6, cog: 90 })], polledAt: Date.now() };
+  const moving = P.planNogoRoute(A0, B0, { standoffM: 20 });
+  check("M5. THE SAME SHIP UNDER WAY IS NOT LAID ROUND: she will not be where the plan saw her - the guard answers her",
+        moving.direct && moving.moored.length === 0, "direct " + moving.direct + ", named " + JSON.stringify(moving.moored));
+  nogo.ais = { vessels: [ship()], polledAt: Date.now() - 60000 };
+  const old = P.planNogoRoute(A0, B0, { standoffM: 20 });
+  check("M6. a stale read lays nothing: the chart's model alone, as before", old.direct && old.moored.length === 0,
+        "direct " + old.direct);
+  // M7-M8: routePlan - the transit legs are laid round her, a pattern's own lines are not
+  nogo.ais = { vessels: [ship()], polledAt: Date.now() };
+  const tr = P.routePlan(A0, [B0], true, 20);
+  const pat = P.routePlan(ll(-700, 400), [ll(-700, 13), ll(700, 13)], false, 20);   // the approach, then a LINE 2 m off her side
+  const line = pat.route.slice(-2).map((p) => ref.toEN(p));
+  nogo.ais = null;
+  const patPlain = P.routePlan(ll(-700, 400), [ll(-700, 13), ll(700, 13)], false, 20);
+  check("M7. A DRAWN TRANSIT IS LAID ROUND HER as a Go-To is", passM(tr.route, A0) >= 19.5 && tr.moored.length === 1,
+        passM(tr.route, A0).toFixed(1) + " m, named " + JSON.stringify(tr.moored));
+  check("M8. A SURVEY PATTERN'S OWN LINE IS NOT: a coverage line 2 m off her side is flown as drawn (a moored ship "
+        + "reconfigures no survey, Andy 2026-09-25); the guard answers her on the water",
+        JSON.stringify(pat.route) === JSON.stringify(patPlain.route) && Math.abs(line[0].n - 13) < 0.5
+          && Math.abs(line[0].e + 700) < 0.5 && Math.abs(line[1].n - 13) < 0.5 && Math.abs(line[1].e - 700) < 0.5
+          && pat.unroutable.length === 0,
+        "the plan with the read is the plan without it (" + pat.route.length + " points); the line "
+          + line.map((p) => p.e.toFixed(0) + "," + p.n.toFixed(0)).join(" -> "));
+  Object.assign(nogo, saved);
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");

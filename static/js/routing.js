@@ -1009,7 +1009,9 @@ export const CHART_MARCH_MAX_M = 2000;
  * outside the charted fairway for 1.7 km between two stretches inside it, further than the
  * 60 m a path beside a channel is captured at (LANE_CAPTURE_STANDOFF_M), so the lane would
  * have let go of her round the whole bend. A path that leaves a channel and never comes back
- * to it is not bridged: only the water BETWEEN two stretches of the channel is.
+ * to it is not bridged: only the water BETWEEN two stretches of the channel is - measured
+ * stretches either side, found past a little declined water at the edge she crosses
+ * (chartOwnership's bend cut, 2026-10-07: the Newington pier).
  */
 export const CHART_BRIDGE_REACH_M = 200;
 
@@ -1283,15 +1285,34 @@ export function chartOwnership(pathLL, frame, ko, buf, baseLL = null, clr = buf)
     else if (inAny(samp[i])) kind[i] = 'in';
   }
   // The bend cut: see CHART_BRIDGE_REACH_M.
+  //   ⚠ BOUNDED ACROSS THE EDGE IT CROSSES (2026-10-07). A path leaving a channel at a shallow angle
+  // lands a sample or two INSIDE it whose cross-section the measurement declines ('in'), and a cut
+  // that began only right after a measured sample was never bridged: his RTH outbound past the
+  // Newington pier stepped out over one such sample and the chart's lane let 525 m of it go - out of
+  // the channel, past a 132 m ship at the pier (only at a standoff over 21.5 m, his 1.87 kn set's;
+  // at 21.4 the same water left the channel cleanly and was bridged). The measured samples that bound
+  // a cut may lie past CHART_TAN_M of declined water at either end; that water stays 'in', for the
+  // carry below, which reads it between the measured samples once the cut is.
+  //   ⚠ AND A BEND CUT IS NOT ASKED THE ALONG TEST. It is the water where her track does NOT run
+  // along the channel - that is what cutting a bend is - and the channel measured along her heading
+  // runs out across the bend: there the first sample out was declined with the channel 31-259 m to
+  // port, 1.5 of its width not reached along her heading. Bounded on both
+  // sides by water that IS measured along the channel, a sample needs only a cross-section within
+  // CHART_BRIDGE_REACH_M over open water (`chord`).
+  const EDGE_IN = Math.max(1, Math.round(CHART_TAN_M / STEP));
   for (let i = 1; i < N - 1; i++) {
-    if (kind[i] !== 'out' || kind[i - 1] !== 'good') continue;
+    if (kind[i] !== 'out') continue;
+    let a = i - 1, nA = 0;
+    while (a > 0 && kind[a] === 'in' && nA < EDGE_IN) { a--; nA++; }
     let j = i;
     while (j < N - 1 && kind[j] === 'out') j++;
-    if (j < N - 1 && kind[j] === 'good') {
+    let b = j, nB = 0;
+    while (b < N - 1 && kind[b] === 'in' && nB < EDGE_IN) { b++; nB++; }
+    if (kind[a] === 'good' && b < N - 1 && kind[b] === 'good') {
       const fill = [];
       for (let k = i; k < j; k++) {
         const c = chord(k, CHART_BRIDGE_REACH_M);
-        if (!(c && along(k, c))) break;
+        if (!c) break;
         fill.push(c);
       }
       if (fill.length === j - i) for (let k = i; k < j; k++) { ch[k] = fill[k - i]; kind[k] = 'good'; }

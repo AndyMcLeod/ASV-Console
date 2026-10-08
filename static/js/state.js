@@ -113,9 +113,12 @@ export const NOGO_ENF = {land:true, depth:true, haz:true, area:false, wreck:true
 // `builtOffset`: the water level (m above chart datum) the model in `ko` was built at, or null
 // before the first build. The page's applyWaterOffset rebuilds the model once the live level
 // has moved TIDE_REBUILD_M away from it, because buildKeepouts reads the level only at build.
+// `ais` (2026-10-07): the page's read of the AIS proxy along a passage, taken as the passage is
+// planned - {vessels, polledAt} - from which passage.js passageKo lays the route round the
+// vessels NOT under way. null: no read, and a passage is laid in the chart's model alone.
 export const nogo = {ready:false, busy:false, frame:null, ko:null, band:null, note:"nogo not loaded",
             buffer:V.NOGO_BUFFER_M, enf:{...NOGO_ENF}, features:null, bbox:null, center:null,
-            builtOffset:null};
+            builtOffset:null, ais:null};
 
 // --- live chart state ------------------------------------------------------------------
 // These three ARE reassigned, so they are fields on an object rather than exported bindings

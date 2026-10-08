@@ -471,8 +471,11 @@ water she will occupy within the next 45 s — so a contact crossing ahead holds
 before her track and one bearing down reads in extremis while there is still water to escape
 in. The contacts are polled whenever the console is armed, **layer or no layer**, and drawn in
 the keep-out red whenever the guard has them (dashed where it is the sweep). They reach the
-**guard's model only**: the punch, the router and the plan never see a contact, so **a ship
-crossing the survey area reconfigures nothing**. After a contact has stopped or steered the
+**guard's model only** while they are under way: the punch, the router and the plan never see one, so **a ship
+crossing the survey area reconfigures nothing**. A vessel **not under way** - moored, at anchor or stopped - is
+the one exception, and only for a **passage** (2026-10-07): a Go-To, an RTH, a drawn transit and an Upload's
+transit legs are planned round her at the standoff, as round a pier, from the traffic read along the whole route
+as it is planned, and the banner names her; a survey's own lines are never moved for her. After a contact has stopped or steered the
 boat off a survey line, the console **brings her back itself** once the contact is clear of
 the line for 4 s: it rejoins **100 m back down the line** over water already run, so the
 coverage overlaps, and carries on — with none of the operator's resume latches (no LOW

@@ -258,7 +258,10 @@ check("8. Upload routes mission.waypoints IN ORDER from the fix, laning only leg
             // was read over, read again and re-planned when the route runs past it (planInsideChart, 2026-10-03)
             && /const plan = await planInsideChart\(\[\{lat:asv\.lat, lon:asv\.lon\}, \.\.\.wps\], \{plan: true\},\s*\(\) => routePlan\(\{lat:asv\.lat, lon:asv\.lon\}, wps, false, transitStandoffM\(\), surveyEntries\(wps\)\), "Upload"\);/.test(upload)
             && /cmd\("\/api\/cmd\/upload", \{route: plan\.route,/.test(upload)
-            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /legPath\(prev, wp, ref, ko, transit \? want : buf\)/.test(routePlan)
+            // (2026-10-07: a transit leg in passageKo's model - the vessels not under way in it - a pattern's own legs in
+            // the chart's alone, `ko`)
+            && /wps\.forEach\(\(wp, i\)=>\{/.test(routePlan) && /const kL = transit \? koT : ko;/.test(routePlan)
+            && /legPath\(prev, wp, ref, kL, transit \? want : buf\)/.test(routePlan)
             && /const transit = keepRightAll \|\| i===0 \|\| !!\(transitAt && transitAt\.has\(i\)\);/.test(routePlan)
             && /if\(transit\)\{/.test(routePlan)
             && /out\.push\(\{lat:seg\[k\]\.lat, lon:seg\[k\]\.lon\}\)/.test(routePlan),

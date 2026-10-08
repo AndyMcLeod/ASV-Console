@@ -57,6 +57,9 @@ import { V, nogo, sea } from "./state.js";
 import { blockedInfo, firstBlockAlong, legClear } from "./chart.js";
 // Where a boat is asked to hold, and how much water it has there (the hold DISC).
 import { HOLD_RADIUS_MIN_M, holdClearM, holdMarginM, snapCapM, snapClearRadial } from "./hold.js";
+// The vessels NOT under way, laid round by a passage as a pier is (passageKo, 2026-10-07).
+import { aisMooredKeepouts } from "./ais_keepout.js";
+import { clearanceM } from "./keepouts.js";
 // The shared routing layer. `legPath` is used below by planNogoRoute and routePlan; the
 // rest pass straight through to this console's importers, which are untouched.
 import { LANE_FRAC, SEG_LEN_M, buoyChannelLane, narrowChannelLane, smoothTrack,
@@ -470,15 +473,46 @@ export function beyondChartSay(u, fmt){
   return u.outM > 0 ? said + f(u.outM) + " beyond the water the chart was read over"
                     : said + "within " + f(u.edgeM) + " of the edge of the water the chart was read over";
 }
+/**
+ * THE MODEL A PASSAGE IS LAID IN: the chart's, and the vessels NOT under way in the chart box (Andy, 2026-10-07 -
+ * ais_keepout.js aisMooredKeepouts). `nogo.ais` is the page's read of the AIS proxy taken for the plan
+ * ({vessels, polledAt}); absent, stale, or with no vessel stopped in the box, the chart's own model, the same
+ * object - so nothing that plans without a read changes. Folded into a COPY: `nogo.ko` itself stays the chart's,
+ * because the punch, the readouts and the guard's own AIS layer are built from it (the guard models every contact
+ * itself, moving or not, and would hold her twice). `moored` names what was added.
+ */
+export function passageKo(base = nogo.ko, now = Date.now()){
+  const a = nogo.ais;
+  if(!base || !a || !nogo.frame) return base;
+  const r = aisMooredKeepouts(a.vessels, nogo.frame, {now, polledAt: a.polledAt, bbox: nogo.bbox});
+  return r.polys.length ? {...base, polys: (base.polys || []).concat(r.polys), moored: r.polys} : base;
+}
+/** The vessels not under way that a route passes within this of, in meters: the ones its banner names (a chart box
+ *  can hold dozens at their berths, and naming every one would say nothing about this route). */
+export const MOORED_SAY_M = 250;
+/** The kinds of the vessels in `moored` that the route `routeLL` passes within MOORED_SAY_M of, sampled every 25 m. */
+export function mooredPassed(routeLL, ref, moored){
+  if(!moored || !moored.length || !routeLL || routeLL.length < 2) return [];
+  const pts = [];
+  for(let i = 1; i < routeLL.length; i++){
+    const a = ref.toEN(routeLL[i - 1]), b = ref.toEN(routeLL[i]);
+    const n = Math.max(1, Math.ceil(Math.hypot(b.e - a.e, b.n - a.n) / 25));
+    for(let k = 0; k <= n; k++) pts.push({e: a.e + (b.e - a.e) * k / n, n: a.n + (b.n - a.n) * k / n});
+  }
+  return moored.filter((q) => pts.some((p) => clearanceM(p, {polys: [q], lines: [], points: []}, MOORED_SAY_M + 1) <= MOORED_SAY_M))
+               .map((q) => q.kind);
+}
 // Plan an ENC-aware path from -> to ending at `to` - or at the nearest clear water to
 // `to` when it sits in a keep-out (see holdTarget). {route} on success, {error} when no
 // clear route exists (refuse + warn). Keeps to the starboard side of channels (Rule 9).
 // A route that runs past the water the chart was read over is refused too - `uncharted`
 // carries it, its route included, for the page to read the chart over and plan again.
+// Laid in passageKo's model: the vessels not under way are kept clear as a pier is (2026-10-07), and the
+// target is held off one exactly as off a pier; a caller's own `opts.ko` (the way round a contact) stands as it was.
 export function planNogoRoute(from, to, opts){
   if(!nogo.ready) return {route:[{lat:to.lat,lon:to.lon}], direct:true, degraded:true};
-  const ref=nogo.frame, ko=(opts && opts.ko) || nogo.ko, buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
-  const ht = holdTarget(to, opts);
+  const ref=nogo.frame, ko=(opts && opts.ko) || passageKo(nogo.ko), buf=nogo.buffer;   // opts.ko: see holdTarget (2026-09-27)
+  const ht = holdTarget(to, ko === nogo.ko ? opts : {...(opts || {}), ko});
   if(ht.error) return ht;
   to = ht.to;
   const heldOff = ht.heldOff, holdClear = ht.holdClear;
@@ -532,7 +566,8 @@ export function planNogoRoute(from, to, opts){
                   reason: {mode: "uncharted", info: {kind: "water the chart was not read over"}, at: out.at, near: !(out.outM > 0)}};
   return {route, direct: !routed, routed, lane: kr.lane, partial: kr.partial,
           how: kr.how, marks: kr.marks,
-          heldOff, holdClear, insideStandoff, standoffM: want};
+          heldOff, holdClear, insideStandoff, standoffM: want,
+          moored: mooredPassed([{lat: from.lat, lon: from.lon}, ...route], ref, ko.moored)};
 }
 /** The lane pass's result re-gated at `want` (every leg clear of the standoff, spliced with the standoff's own
  *  route where it is not) and re-pruned at it. The lane is kept wherever the gate did not have to abandon it. */
@@ -593,6 +628,9 @@ export function keepStandoff(kr, fallback, ref, ko, want){
 export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   if(!nogo.ready || !start) return {route: wps.map(p=>({lat:p.lat,lon:p.lon})), unroutable:[], degraded:true};
   const ref=nogo.frame, ko=nogo.ko, buf=nogo.buffer;
+  // THE TRANSIT LEGS ARE LAID ROUND THE VESSELS NOT UNDER WAY (passageKo, 2026-10-07); a pattern's own legs - its
+  // coverage lines and the hops between them - are not: a moored ship reconfigures no survey (Andy, 2026-09-25).
+  const koT = passageKo(ko);
   const out=[]; const unroutable=[]; let prev={lat:start.lat, lon:start.lon};
   // ANY leg riding a lane makes it true for the plan. Accumulated here rather than read
   // back afterwards: this runs channelLaneRoute once per leg, so a per-call flag would
@@ -612,9 +650,10 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   const legVerdicts = [];
   wps.forEach((wp, i)=>{
     const transit = keepRightAll || i===0 || !!(transitAt && transitAt.has(i));   // the legs the page routes itself
-    let leg = legPath(prev, wp, ref, ko, transit ? want : buf);  // the standoff first (2026-09-26)
+    const kL = transit ? koT : ko;                               // (a transit's model holds the vessels not under way)
+    let leg = legPath(prev, wp, ref, kL, transit ? want : buf);  // the standoff first (2026-09-26)
     let atStandoff = transit && want > buf + 0.05;               // ... and whether the leg was FOUND there
-    if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, ko, buf); if(leg){ insideStandoff++; atStandoff = false; } }
+    if(!leg && transit && want > buf){ leg = legPath(prev, wp, ref, kL, buf); if(leg){ insideStandoff++; atStandoff = false; } }
     if(!leg){ unroutable.push([prev, {lat:wp.lat,lon:wp.lon}]); out.push({lat:wp.lat,lon:wp.lon}); prev=wp; return; }
     let seg = [prev, ...leg];                       // prev … wp
     // Rule 9 keep-right applies to a TRANSIT: the approach out (leg 0), and every
@@ -640,8 +679,8 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
       // smoothing, the gate and the knot prune run at the BUFFER, and a transit leg found at the 19.5 m standoff came
       // out of them 6.3-14.1 m off a hull-sized block across it (tests/planner_guard_seam.js 7g). A leg found only at
       // the buffer - counted in insideStandoff - keeps the buffer's pass.
-      const kr0 = channelLaneRoute(seg, ref, ko, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
-      const kr = atStandoff ? keepStandoff(kr0, seg, ref, ko, want) : kr0;
+      const kr0 = channelLaneRoute(seg, ref, koT, buf, {standoffM: atStandoff ? want : 0});   // see planNogoRoute
+      const kr = atStandoff ? keepStandoff(kr0, seg, ref, koT, want) : kr0;
       seg = kr.route; if(kr.lane) lane = true; if(kr.partial) partial = true;
       if(kr.how){
         for(const f of ["pairs", "charted", "narrow", "reach", "gaps"]) if(kr.how[f]) how[f] = true;
@@ -673,5 +712,6 @@ export function routePlan(start, wps, keepRightAll, standoffM, transitAt){
   // included, since a survey line over water nobody read is no more checked than a transit over it. `uncharted` is null
   // or what beyondChart found; the route is still returned, and the page refuses it (doTransit, doUpload).
   const uncharted = beyondChart([{lat: start.lat, lon: start.lon}, ...out], nogo.bbox);
-  return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted};
+  return {route: out, unroutable, lane, partial, how, insideStandoff, standoffM: want, uncharted,
+          moored: mooredPassed([{lat: start.lat, lon: start.lon}, ...out], ref, koT.moored)};
 }

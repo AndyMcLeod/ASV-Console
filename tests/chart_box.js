@@ -233,6 +233,14 @@ const unchartedTip = eval("(" + grab("unchartedTip") + ")");
 const planWhy = eval("(" + grab("planWhy") + ")");
 // eslint-disable-next-line no-eval
 const bbUnion = eval("(" + grabDecl("bbUnion").replace(/^const\s+bbUnion\s*=\s*/, "").replace(/;\s*$/, "") + ")");
+// THE VESSELS ALONG A PASSAGE (2026-10-07): the page's own read, run in this world - where no AIS proxy answers (a
+// relative URL fetches nothing in node) - so it leaves nogo.ais null and every plan here is laid in the chart's model.
+const PASSAGE_AIS_MAX_READS = declValue("PASSAGE_AIS_MAX_READS"), PASSAGE_AIS_TIMEOUT_MS = declValue("PASSAGE_AIS_TIMEOUT_MS");
+const { distTo } = require("../static/js/geodesy.js");
+// eslint-disable-next-line no-eval
+const passageReadCenters = eval("(" + grab("passageReadCenters") + ")");
+// eslint-disable-next-line no-eval
+const readPassageAis = eval("(" + grab("readPassageAis") + ")");
 // eslint-disable-next-line no-eval
 const planInsideChart = eval("(" + grab("planInsideChart") + ")");
 const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; coverAnswer = null; };
@@ -595,6 +603,50 @@ const fresh = () => { banners = []; downs = []; covers = []; aisTaken = 0; cover
         () => /if\(nogo\.ready\)\{\s*showBanner\("The chart model finished loading while Upload was waiting - NOTHING WAS UPLOADED/.test(between)
               && /render\(\); return;/.test(between),
         "doUpload");
+
+  // ── 10. THE VESSELS ALONG A PASSAGE, READ AS IT IS PLANNED (2026-10-07) ───────────────────────────────────────────
+  // The page's own readPassageAis against a stand-in proxy: it answers the vessels within `show_km` of each center it
+  // is asked, as the real one does at sea (or the whole lake). Along an 18 km passage the plan is read from centers 1.5
+  // radii apart - every point of it within a radius of one - the answers merged by MMSI; at most PASSAGE_AIS_MAX_READS
+  // reads; one read on a lake; and nothing at all, nogo.ais null, when the proxy does not answer.
+  {
+    const realFetch = globalThis.fetch, asked = [];
+    const vessels = [0, 4000, 9000, 13500, 18000].map((n, i) => { const p = F.fromEN(0, n); return { mmsi: 100 + i, lat: p.lat, lon: p.lon, sog: 0 }; });
+    let mode = "sea", up = true;
+    globalThis.fetch = async (url) => {
+      const [lat, lon] = url.split("center=")[1].split(",").map(Number);
+      asked.push({ lat, lon });
+      if (!up) return { json: async () => ({ ok: false, vessels: [] }) };
+      const within = mode === "lake" ? vessels : vessels.filter((v) => distTo({ lat, lon }, v) <= 9260);
+      // (the real proxy sends no radius with a lake; this one does, so it is the lake rule that holds it to one read)
+      return { json: async () => ({ ok: true, vessels: within, area: mode === "lake" ? { mode: "lake", name: "Lake Test", show_km: 9.26 }
+                                                                                       : { mode: "sea", show_km: 9.26 } }) };
+    };
+    const A10 = F.fromEN(0, 0), B10 = F.fromEN(0, 18000);
+    try {
+      await readPassageAis([A10, B10]);
+      const sea = { reads: asked.length, ids: (nogo.ais && nogo.ais.vessels.map((v) => v.mmsi).sort().join(",")) || "",
+                    fresh: !!(nogo.ais && Date.now() - nogo.ais.polledAt < 5000),
+                    covered: [0, 3000, 6000, 9000, 12000, 15000, 18000].every((n) => asked.some((c) => distTo(c, F.fromEN(0, n)) <= 9260)) };
+      asked.length = 0;
+      const many = []; for (let k = 0; k <= 20; k++) many.push(F.fromEN(k % 2 ? 2000 : 0, k * 9000));   // a 180 km plan
+      await readPassageAis(many);
+      const capped = asked.length;
+      asked.length = 0; mode = "lake";
+      await readPassageAis([A10, B10]);
+      const lake = asked.length;
+      asked.length = 0; mode = "sea"; up = false;
+      await readPassageAis([A10, B10]);
+      const down = { reads: asked.length, ais: nogo.ais };
+      check("10. AN 18 km PASSAGE IS READ ALONG ITS LENGTH: centers 1.5 radii apart cover every point of it, the answers "
+            + "merged by MMSI (all five vessels, each once); a 180 km plan is held to PASSAGE_AIS_MAX_READS reads; a lake is "
+            + "one read; and a proxy that does not answer leaves nogo.ais null (the chart's model alone, as before)",
+            sea.reads === 3 && sea.covered && sea.ids === "100,101,102,103,104" && sea.fresh
+              && capped === PASSAGE_AIS_MAX_READS && lake === 1 && down.reads === 1 && down.ais === null,
+            "sea: " + sea.reads + " reads, vessels " + sea.ids + ", covered " + sea.covered + "; 180 km: " + capped
+              + " reads; lake: " + lake + "; down: " + down.reads + " read, nogo.ais " + JSON.stringify(down.ais));
+    } finally { globalThis.fetch = realFetch; nogo.ais = null; }
+  }
 
   console.log(fails ? fails + " CHECK(S) FAILED of " + ran : "all checks passed (" + ran + ")");
   process.exit(fails ? 1 : 0);
