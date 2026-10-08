@@ -322,6 +322,9 @@ check("16. ... and a stopped boat does not re-arm anything either",
   // handler can tell "the plan I found" from "a plan commanded while I was in flight".
   eval(grabDecl("planGen") + "\n" + grab("setPlanIntent") + "\n" + grab("wptRole"));
   var planIntent = null;
+  // (HOW SHE ARRIVES is arrivalSay's line, 2026-10-08 - it reads the vessel's speeds and laws, none of which this
+  // world has; these checks are about the routing lines, and say nothing of the arrival)
+  var arrivalSay = () => null;
   const R = (n) => Array.from({length: n}, (_, i) => ({lat: 38.7 + i * 1e-3, lon: -75.1}));
 
   // 17. A ROUTED plan says so, and quotes the count the operator can check on the chart.

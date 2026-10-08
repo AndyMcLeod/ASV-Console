@@ -317,6 +317,39 @@ export function leadWant(want, v, ahead, law, latencyS = 0, latched = -1, setMs 
   return out;
 }
 
+// THE ROUTE LEFT as plane points ending at the berth (solveCoast): `o.path` as given, or the final leg
+// straight back along `o.hdg` for `o.legM` - or without end, as the solver always took it with no leg.
+function routeLeft(o) {
+  if (Array.isArray(o.path) && o.path.length >= 2) return o.path;
+  if (o.hdg == null || !o.H) return null;
+  const hr = o.hdg * D2R, L = o.legM != null ? Math.max(0, o.legM) : 1e6;
+  return [{ e: o.H.e - Math.sin(hr) * L, n: o.H.n - Math.cos(hr) * L }, o.H];
+}
+function pathLen(P) {
+  let s = 0;
+  for (let i = 1; i < P.length; i++) s += Math.hypot(P[i].e - P[i - 1].e, P[i].n - P[i - 1].n);
+  return s;
+}
+// The point `m` meters back along P from its end (its first point, if P is shorter).
+function backAlong(P, m) {
+  let left = m;
+  for (let i = P.length - 1; i > 0; i--) {
+    const a = P[i], b = P[i - 1], L = Math.hypot(b.e - a.e, b.n - a.n);
+    if (left <= L) return L > 0 ? { e: a.e + (b.e - a.e) * (left / L), n: a.n + (b.n - a.n) * (left / L) } : { e: a.e, n: a.n };
+    left -= L;
+  }
+  return { e: P[0].e, n: P[0].n };
+}
+const bearingEN = (a, b) => (Math.atan2(b.e - a.e, b.n - a.n) / D2R + 360) % 360;
+// The coast's ground run along heading `hdg`, for the first of solveCoast's two passes: as solveCoast
+// solves it below, and only its length.
+function coastAlong(hdg, v0Ms, lc, sE, sN) {
+  const hr = hdg * D2R, hE = Math.sin(hr), hN = Math.cos(hr);
+  const v1 = Math.max(COAST_ARRIVE_MS, -(sE * hE + sN * hN));
+  const run = v1 < v0Ms ? coastRun(v0Ms, v1, lc) : null;
+  return { nominalM: run ? Math.hypot(hE * run.m + sE * run.s, hN * run.m + sN * run.s) : 0 };
+}
+
 /**
  * Where to stop the prop so the boat arrives at `H` with the way off it - and whether that
  * is safe to do.
@@ -335,13 +368,14 @@ export function leadWant(want, v, ahead, law, latencyS = 0, latched = -1, setMs 
  * exactly (measured, DriX: 0.33 kn set -> release 40.6 m, arrive 0.64 kn; 2 kn set ->
  * release 6.8 m, arrive 0.00 kn).
  *
- * @param {object} o  {H, ko, buf, frame, setMs, setDeg, v0Ms, lc, holdClear}
+ * @param {object} o  {H, ko, buf, frame, setMs, setDeg, v0Ms, lc, holdClear} and EITHER `path` - the route left,
+ *          plane points ending at the berth (2026-10-08) - OR `hdg` and `legM`, the final leg
  * @returns {{ok, release, releaseLL, hdg, waterM, groundM, secs, arriveMs, v1, band, why}}
  *          `ok:false` carries `why` in words. Refusing is a real answer - the caller powers
  *          in exactly as it does today.
  */
 export function solveCoast(o) {
-  const { H, ko, buf, frame, v0Ms, lc } = o;
+  const { ko, buf, frame, v0Ms, lc } = o;
   const setMs = Math.max(0, o.setMs || 0);
   if (!(lc > 0)) return { ok: false, why: "this vessel has no measured coast length" };
   if (!(v0Ms > 0)) return { ok: false, why: "no approach speed to shed" };
@@ -355,10 +389,17 @@ export function solveCoast(o) {
   // stops. What the set still buys is real, and it is collected below - hold.js has already
   // placed the berth down-set of the hazard, so a route ending there is generally stemming
   // the set anyway, and the more it does the gentler this arrival gets.
-  const hdg = o.hdg;
-  if (hdg == null) return { ok: false, why: "no approach heading to coast along" };
-  const hr = hdg * D2R;
-  const hE = Math.sin(hr), hN = Math.cos(hr);
+  //
+  // ⚠⚠ AND THE ROUTE LEFT, NOT THE LAST LEG (2026-10-08). `o.path`, when given, is the route she has
+  // left to fly as plane points, ending at the berth, and the release range is measured ALONG IT: the
+  // vessel arms the drift-in on the range left along its plan now. It armed on the last leg only, and a
+  // laned route's last leg is 28-56 m where a drift-in from 14 kn needs 74-150 m - every Go-To and RTH of
+  // his sessions of 2026-10-07/08 was refused here and ran onto its hold point at 14 kn. With no path the
+  // route left is the final leg, straight back along `hdg` for `legM` (or without end), and every answer
+  // is the one this solver has always given.
+  const P = routeLeft(o);
+  if (!P) return { ok: false, why: "no approach heading to coast along" };
+  const H = P[P.length - 1], routeM = pathLen(P);
 
   // The set as a vector, and its component ALONG the approach. A set on the nose (negative
   // along-track) brakes the boat and is canceled exactly at v1 = -alongSet, arriving dead
@@ -366,6 +407,19 @@ export function solveCoast(o) {
   // floor applies and the arrival carries it.
   const sr = (o.setDeg || 0) * D2R;
   const sE = setMs * Math.sin(sr), sN = setMs * Math.cos(sr);
+  // ⚠ ON A BENDING ROUTE THE HEADING IS THE CHORD OF THE STRETCH THE COAST SPANS, release point to berth -
+  // the way she makes good while the prop is out - solved on the final leg's heading first for the range,
+  // then again on that chord. On a straight approach the two are one; with no path it is `hdg`, as it was.
+  let hdg = o.path ? bearingEN(P[P.length - 2], H) : o.hdg;
+  if (o.path) {
+    const pre = coastAlong(hdg, v0Ms, lc, sE, sN);
+    if (pre.nominalM > 0.5) {
+      const b = backAlong(P, Math.min(pre.nominalM, routeM));
+      if (Math.hypot(H.e - b.e, H.n - b.n) > 0.5) hdg = bearingEN(b, H);
+    }
+  }
+  const hr = hdg * D2R;
+  const hE = Math.sin(hr), hN = Math.cos(hr);
   const alongSet = sE * hE + sN * hN;               // + = set pushing us along the approach
   const v1 = Math.max(COAST_ARRIVE_MS, -alongSet);
   if (v1 >= v0Ms) {
@@ -409,28 +463,32 @@ export function solveCoast(o) {
   // where the handover is expected to fall, and how far that could slide either way.
   const slackM = run.m * COAST_LC_TOL + setMs * run.s * COAST_SET_TOL;
   const releaseM = nominalM;
-  // ⚠⚠ THE RELEASE RANGE HAS TO FIT ON THE LEG THE VESSEL LATCHES ON. The only number that
-  // crosses to the boat is the scalar `groundM`, and the vessel arms the drift-in on the LAST
-  // LEG ONLY - `_wp_index == len(_plan) - 1 and dist_b <= _coast_from_m`. So a release range
-  // longer than that leg is already satisfied the instant she enters it: the prop stops at
-  // the leg's START, not `groundM` out, and she arrives at v0*exp(-leg/Lc) rather than at the
-  // speed this function quoted. Measured on the DriX: a 10 m last leg against a 49.7 m
-  // release turns a 0.98 kn / 175 J arrival into 2.98 kn / 1622 J - and the banner still said
-  // one knot. Refused in the idiom COAST_MAX_S already uses, because a coast that cannot be
+  // ⚠⚠ THE RELEASE RANGE HAS TO FIT ON THE ROUTE THE VESSEL LATCHES ON. The only number that
+  // crosses to the boat is the scalar `groundM`, and the vessel arms the drift-in once the range
+  // left along its plan is down to it (SimVcu._route_left_m; until 2026-10-08 the LAST LEG ONLY).
+  // So a release range longer than the route left is already satisfied the instant she starts:
+  // the prop stops where she is, not `groundM` out, and she arrives at v0*exp(-route/Lc) rather
+  // than at the speed this function quoted. Measured on the DriX: a 10 m last leg against a
+  // 49.7 m release turns a 0.98 kn / 175 J arrival into 2.98 kn / 1622 J - and the banner still
+  // said one knot. Refused in the idiom COAST_MAX_S already uses, because a coast that cannot be
   // flown as solved is not a coast.
-  if (o.legM != null && releaseM > o.legM) {
+  if (releaseM > routeM) {
     return { ok: false, release: null, hdg,
-             why: "the release range (" + releaseM.toFixed(0) + " m) is longer than the final "
-                  + "leg (" + o.legM.toFixed(0) + " m) - the prop would stop at the leg's "
-                  + "start and she would arrive with way still on" };
+             why: o.path
+               ? "the release range (" + releaseM.toFixed(0) + " m) is longer than the route left ("
+                 + routeM.toFixed(0) + " m) - the prop would stop where she is and she would arrive "
+                 + "with way still on"
+               : "the release range (" + releaseM.toFixed(0) + " m) is longer than the final "
+                 + "leg (" + o.legM.toFixed(0) + " m) - the prop would stop at the leg's "
+                 + "start and she would arrive with way still on" };
   }
   // ⚠⚠ AND THE WALK STARTS WHERE THE PROP ACTUALLY STOPS, WHICH IS NOT ALONG `u`. The latch
-  // is RANGE TO THE LAST WAYPOINT on a boat the line-follower is holding ON the route, so the
-  // release point is `releaseM` back along the APPROACH. Stepping back along the ground track
+  // is RANGE LEFT ALONG THE ROUTE on a boat the line-follower is holding ON it, so the
+  // release point is `releaseM` back along the ROUTE, round whatever bends it has. Stepping back along the ground track
   // agrees only when the set is dead ahead or dead astern: a 1 kn beam set puts the two 28 m
   // apart and a 2 kn one 60 m, so the water being checked was not the water she passes
   // through - and the one number the vessel acts on was solved against it.
-  const release = { e: H.e - hE * releaseM, n: H.n - hN * releaseM };
+  const release = backAlong(P, releaseM);
   const band = { shortM: Math.max(0, nominalM - slackM), longM: nominalM + slackM, slackM };
 
   // The ground velocity she carries at the nominal stop: her remaining way plus the set.
@@ -449,7 +507,7 @@ export function solveCoast(o) {
     // gave her - and only PAST it, with the way off, is she set bodily. So the run in follows
     // the heading and only the overshoot follows the ground track.
     const q = d <= releaseM
-      ? { e: release.e + hE * d, n: release.n + hN * d }
+      ? backAlong(P, releaseM - d)
       : { e: H.e + uE * (d - releaseM), n: H.n + uN * (d - releaseM) };
     if (blocked(q, ko, buf)) {
       return { ok: false, release, hdg,
@@ -461,7 +519,7 @@ export function solveCoast(o) {
 
   return {
     ok: true, release, releaseLL: frame ? frame.fromEN(release.e, release.n) : null,
-    hdg, waterM: run.m, groundM: releaseM, nominalM, slackM, secs: run.s, v1, arriveMs, band,
+    hdg, waterM: run.m, groundM: releaseM, nominalM, slackM, secs: run.s, v1, arriveMs, band, routeM,
     why: "prop stopped " + releaseM.toFixed(0) + " m out, arriving at about "
          + (arriveMs / 0.514444).toFixed(1) + " kn after " + run.s.toFixed(0) + " s"
          + (alongSet < -0.02 ? ", stemming the set" : (alongSet > 0.02 ? ", set astern" : ""))
@@ -480,9 +538,16 @@ export function solveCoast(o) {
  * (vel and drift become the same vector, so tEntry and tEntryDrift are always equal and only
  * `clear` and `helm` remain reachable). Rather than teach a safety ladder about a new state,
  * the coast simply never runs where the ladder has anything to say.
+ *
+ * ⚠⚠ AND THE HOLD DISC NO LONGER DECIDES IT (Andy, 2026-10-08: "slow gradually on approach until it is
+ * at or near dead stop prior to triggering the loiter command or whatever the next command may be").
+ * It did - "not worth stopping the prop for less than the hold disc the boat may wander anyway" - and
+ * four of the eight Go-Tos and RTHs in his logs of 2026-10-07/08 had a disc of 87 to 140 m, so each of those
+ * would have had to coast further than that before this allowed it at all. A hold point is where she comes in
+ * slow, whatever the water round it. Only a coast of COAST_MIN_M or less is not worth stopping the prop for. (`holdClear` is
+ * still taken, and no longer read, so a caller written for the old rule asks the new one.)
  */
-export function coastWorthIt(groundM, holdClear) {
-  // Not worth stopping the prop for less than the hold disc the boat may wander anyway.
-  if (!(groundM > 0)) return false;
-  return groundM > Math.max(5, (holdClear || 0));
+export const COAST_MIN_M = 5;
+export function coastWorthIt(groundM, holdClear) {   // eslint-disable-line no-unused-vars
+  return groundM > COAST_MIN_M;
 }

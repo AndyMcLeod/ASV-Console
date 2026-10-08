@@ -3810,7 +3810,7 @@ class SimVcu(VcuLink):
         # for a routed re-approach (`_hold_wants_route`) - see the station-keep branch.
         self._hold_clear_m = None
         self._hold_wants_route = False # set beyond the certified water: needs a routed return
-        # THE DRIFT-IN. `_coast_from_m` is the range from the LAST waypoint at which the
+        # THE DRIFT-IN. `_coast_from_m` is the range LEFT ALONG THE PLAN at which the
         # console asked for the prop to be stopped; None (the default) is today's behavior
         # exactly. Once inside it `_coasting` latches and the way comes off under hull drag
         # instead of the engine-governed ramp - see the speed block in tick().
@@ -3870,7 +3870,7 @@ class SimVcu(VcuLink):
             # degrade as a Go-To with no route. A number is the console's certified clear disc.
             "hold_clear_m": None if hold_clear_m is None else max(0.0, float(hold_clear_m)),
             # A FRESH PLAN IS NEVER MID-COAST. None keeps the engine-governed approach exactly
-            # as it was; a number is the range from the last waypoint at which to stop the prop.
+            # as it was; a number is the range left along the plan at which to stop the prop.
             "coast_from_m": None if coast_from_m is None else max(0.0, float(coast_from_m)),
         }
         if self._running:
@@ -3915,6 +3915,18 @@ class SimVcu(VcuLink):
         self._coast_spent = False      # a FRESH plan runs at its own speed
         self._laps = 0
         self._xte_i = 0.0              # fresh plan: drop the old trim
+
+    def _route_left_m(self, dist_b, cap):
+        """Meters LEFT ALONG THE PLAN: `dist_b` to the waypoint she is steering for, then leg by leg to the last one -
+        summed only until it passes `cap`, the drift-in's arming range, which is all it is ever asked against (a laned
+        route is ~60 m legs, so a few legs, never the whole plan, at every tick)."""
+        left = dist_b
+        for i in range(self._wp_index, len(self._plan) - 1):
+            if left > cap:
+                break
+            a, b = self._plan[i], self._plan[i + 1]
+            left += range_bearing(a["lat"], a["lon"], b["lat"], b["lon"])[0]
+        return left
 
     def amend_plan(self, waypoints):
         """Replace the UNFLOWN remainder of the running plan. The run is the same run.
@@ -4135,10 +4147,19 @@ class SimVcu(VcuLink):
             desired -= self._xte_i
             self.heading = _turn_toward(self.heading, desired, MAX_TURN_RATE_DEG_S * dt)  # vessel turn-rate cap
             # ── THE DRIFT-IN: STOP THE PROP ─────────────────────────────────────────────
-            # Latched on the LAST leg only, at the range the console solved for. It is
-            # tested HERE, before the waypoint advance below, because that advance sets
-            # `_holding` and the station-keep branch is an `elif` - entering from there
-            # would be one tick late by construction, and one tick at 4 kn is half a meter.
+            # Latched at the range the console solved for, measured ALONG WHAT IS LEFT OF THE
+            # PLAN (`_route_left_m`). It is tested HERE, before the waypoint advance below,
+            # because that advance sets `_holding` and the station-keep branch is an `elif` -
+            # entering from there would be one tick late by construction, and one tick at 4 kn
+            # is half a meter.
+            #
+            # ⚠⚠ NOT ON THE LAST LEG ONLY (2026-10-08). It was, and on a laned route the last
+            # leg is 28-56 m while a drift-in from 14 kn needs 74-150 m: the console refused the
+            # coast on every Go-To and RTH of his two sessions of 2026-10-07/08, and she ran
+            # onto every hold point at 14 kn (Andy: "it hits the final waypoint at full ordered
+            # speed"). Measured along the plan, the release falls where it was solved to,
+            # whatever legs lie between, and the waypoints go on advancing under her as she
+            # drifts.
             #
             # ⚠ NEVER stop()/pause()/set_neutral() to achieve this. All three clear
             # `_running`, which switches OFF both the wind forcing and the tidal stream in
@@ -4146,8 +4167,8 @@ class SimVcu(VcuLink):
             # opposite of a drift-in, and env_set_kn would read 0.00 while the truth is
             # "the set is no longer modelled". A coast is a state inside a running link.
             if (self._coast_from_m is not None and not self._coasting
-                    and COAST_LENGTH_M and self._wp_index == len(self._plan) - 1
-                    and dist_b <= self._coast_from_m):
+                    and COAST_LENGTH_M
+                    and self._route_left_m(dist_b, self._coast_from_m) <= self._coast_from_m):
                 self._coasting = True
                 self._coast_s0 = (self.lat, self.lon)
             # advance once the boat passes the waypoint along-track, or is within the
@@ -4233,8 +4254,32 @@ class SimVcu(VcuLink):
         #
         # The cap lives until a new plan or a new Start, which is the same life as the coast
         # it belongs to: an approach that has spent its coast ends at walking pace.
-        if self._coast_spent and COAST_END_KN:
-            target_kn = min(target_kn, COAST_END_KN)
+        #
+        # ⚠⚠ BUT NOT ONCE SHE IS STATION-KEEPING (2026-10-08). The cap is the APPROACH's - the
+        # last meters to the hold point - and the station-keep branch above already asks for
+        # no more than the slowest speed that makes way against the set (hold_speed_kn). Capped
+        # at a walking pace there too, a boat that coasted in could not hold station in any set
+        # over a knot: in his 2.36 kn set she would be carried off at 1.36 kn or more to the edge
+        # of her disc and routed back, again and again. Unseen only because the coast refused
+        # every Go-To and RTH in his logs (see the latch above).
+        #
+        # ⚠⚠ AND NEVER BELOW THE SET ON HER NOSE (2026-10-08). A walking pace through the water
+        # is no pace at all against a stronger set: a coast spent short of the berth in 2 kn of
+        # head set left her capped at 1 kn, SET ASTERN at 1 kn over the ground for as long as
+        # anyone watched - 260 m from the berth within ten minutes, never arriving, never
+        # holding, so no station-keep and no routed re-approach ever engaged. So the cap is the
+        # walking pace OR the set against her course plus the margin a hold makes way by
+        # (HOLD_MAKES_WAY_KN), the greater: still a walking pace over the ground in a head set,
+        # and exactly COAST_END_KN in slack water or a set astern - the measured case above.
+        if self._coast_spent and COAST_END_KN and not self._holding:
+            cap = COAST_END_KN
+            if self._wp_index < len(self._plan):
+                w = self._plan[self._wp_index]
+                _d, brg_w = range_bearing(self.lat, self.lon, w["lat"], w["lon"])
+                de, dn = self._drift_en
+                head_kn = -(de * math.sin(math.radians(brg_w)) + dn * math.cos(math.radians(brg_w))) * 1.9438
+                cap = max(cap, head_kn + HOLD_MAKES_WAY_KN)
+            target_kn = min(target_kn, cap)
 
         # ── SPEED: THE THROTTLE (RAMP, OR A CUT IN GEAR), OR HULL-GOVERNED DECAY WHILE COASTING
         #
@@ -4495,6 +4540,11 @@ class SimVcu(VcuLink):
             # maneuver gave it a producer. `coast_run_m` is what she has actually made good
             # since the prop stopped, which is the number a coast-down trial reads off.
             "drifting": bool(self._coasting),
+            # ... and the drift-in still ARMED: the range left along the plan at which the prop will stop, or None
+            # (none sent, spent, or disarmed by an amendment). The page's governor slows her in gear to the speed
+            # the drift-in was solved from by THIS point, and to the hold point itself when there is none
+            # (2026-10-08) - the vessel is the one authority on whether it is still armed.
+            "coast_from_m": (None if self._coast_from_m is None else round(self._coast_from_m, 1)),
             "coast_run_m": (round(range_bearing(self._coast_s0[0], self._coast_s0[1],
                                                 self.lat, self.lon)[0], 1)
                             if self._coasting and self._coast_s0 else None),
@@ -5093,7 +5143,7 @@ class Engine:
         end. Shared by Go-To / Return-to-Home / Hold / Transit / the routed re-approach.
         `hold_clear_m` is the console's certified clear disc around the end point (see
         SimVcu's station-keep branch); None keeps the vessel's direct re-approach.
-        `coast_from_m` is the range from the last waypoint at which to stop the prop and
+        `coast_from_m` is the range left along the route at which to stop the prop and
         come in on the drift (coast.js solved it); None powers in exactly as before.
         `continuing` marks a leg of the run in progress (the re-approach): refused unless that
         run is still under way, and checked here, under the lock, so a Stop that lands between
@@ -5215,13 +5265,14 @@ class Engine:
                         "In extremis: steered clear. Holding here - the end-of-plan return "
                         "does not chain from an escape; re-command when ready.", hold_clear_m)
 
-    def transit(self, route, hold_clear_m=None):
+    def transit(self, route, hold_clear_m=None, coast_from_m=None):
         # Follow a single- or multi-segment transit line (ENC-aware route from the
-        # client), station-keeping at the end. Independent of any survey plan.
+        # client), station-keeping at the end. Independent of any survey plan. Like Go-To and
+        # RTH it may come in on the drift (`coast_from_m`, 2026-10-08): its end is a hold too.
         r = self._sanitize_route(route)
         self._run_route(r, "transit",
                         "Transit: following the route (%d wpts), will station-keep at the end." % len(r),
-                        hold_clear_m)
+                        hold_clear_m, coast_from_m)
 
     def hold(self, hold_clear_m=None):
         st = self.status
@@ -6746,7 +6797,7 @@ class Handler(BaseHTTPRequestHandler):
                 ENGINE.go_to(body.get("lat"), body.get("lon"), body.get("route"),
                              body.get("hold_clear_m"), body.get("coast_from_m"))
             elif path == "/api/cmd/transit":           # behavior: follow a transit line + hold
-                ENGINE.transit(body.get("route"), body.get("hold_clear_m"))
+                ENGINE.transit(body.get("route"), body.get("hold_clear_m"), body.get("coast_from_m"))
             elif path == "/api/cmd/hold":              # behavior: station-keep here
                 ENGINE.hold(body.get("hold_clear_m"))
             elif path == "/api/cmd/reapproach":        # the routed way back onto station

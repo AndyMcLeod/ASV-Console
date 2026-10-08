@@ -36,6 +36,12 @@ TEETH - mutations RUN, and the checks each turned red:
     `drifting` dropped from telemetry                           -> 5
     upload_plan does not clear _coasting on a fresh plan        -> 6
     coast_from_m validation dropped (a 500 instead of a 409)    -> 8
+and THE ARRIVAL's (2026-10-08), each in a scratch copy of the tree:
+    the latch on the last leg only                              -> 16, 16c
+    the walking-pace cap kept while she holds                   -> 17
+    the cap never above a walking pace (a head set)             -> 17b
+    the armed range not published                               -> 16b, 7c
+    a transit that drops coast_from_m                           -> 7c
 
 ⚠ THIS SUITE'S check() TAKES A VALUE, not a thunk - the shape hold_station.py and currents.py
 use. A lambda passed as `cond` is an object and always truthy. tests/coast.js is the other
@@ -500,6 +506,103 @@ check("15. a slow-down block that is not one is NO law - the engine's ramp - nev
       "sim %s; page %s" % (_py_laws, _js_laws if _js_laws is not None else "NOT ASKED (no node)"))
 
 
+# --- 16-18: THE ARRIVAL (2026-10-08) ------------------------------------------------- #
+#
+# Andy: "AS the ASV approaches end of RTH or GOTO, it hits the final waypoint at full ordered speed ... it would be best
+# to slow gradually on approach until it is at or near dead stop prior to triggering the loiter command", then "build it
+# with the coast". The drift-in armed on the LAST LEG only, and a laned route's last leg (28-56 m in his logs) is shorter
+# than any coast from transit speed, so the console refused every one. It arms on the range LEFT ALONG THE PLAN now, and
+# publishes what it has armed; and the walking-pace cap after a spent coast is the approach's, not the station-keep's.
+def _route_run(coast_from_m, legs, set_kn=0.0, set_deg=0.0, hold_clear_m=30.0, secs=400.0):
+    """A plan of `legs` [(bearing, m)] from a start, flown at LOW from LOW: the first frame that drifts (the range left
+    along the plan and the straight range to the end there), and the frames after it."""
+    _C.CURRENTS = _FakeCurrents(set_kn, set_deg)
+    v = _C.SimVcu(43.07, -70.71)
+    pts, p = [], (v.lat, v.lon)
+    for brg, m in legs:
+        p = _C.dest_point(p[0], p[1], brg, m)
+        pts.append({"lat": p[0], "lon": p[1]})
+    v.heading = legs[0][0]
+    v.upload_plan(pts, 2.0, "low", 1.0, completion="loiter", hold_clear_m=hold_clear_m, coast_from_m=coast_from_m)
+    v.start()
+    v.sog_kn = 4.0
+    out = {"release": None, "frames": [], "armed_before": None, "end": pts[-1]}
+    for _ in range(int(secs / 0.25)):
+        tel = v.tick(0.25)
+        if out["release"] is None:
+            out["armed_before"] = tel.get("coast_from_m")
+            if tel["drifting"]:
+                left = 0.0
+                if v._wp_index < len(v._plan):
+                    w = v._plan[v._wp_index]
+                    left = _C.range_bearing(v.lat, v.lon, w["lat"], w["lon"])[0]
+                    for i in range(v._wp_index, len(v._plan) - 1):
+                        a, b = v._plan[i], v._plan[i + 1]
+                        left += _C.range_bearing(a["lat"], a["lon"], b["lat"], b["lon"])[0]
+                out["release"] = (left, _C.range_bearing(v.lat, v.lon, pts[-1]["lat"], pts[-1]["lon"])[0], v._wp_index)
+        out["frames"].append(tel)
+    return out
+
+
+# A route that BENDS, in 20 m legs: 100 m north, then 40 m east - the last leg is 20 m, the release range 50 m, so the
+# release lies round the corner, 10 m back up the north legs, and 41 m from the end in a straight line.
+BEND = [(0.0, 20.0)] * 5 + [(90.0, 20.0)] * 2
+r16 = _route_run(50.0, BEND)
+rel = r16["release"]
+check("16. the drift-in arms on the range LEFT ALONG THE PLAN, not on the last leg: with 20 m legs round a bend and a "
+      "50 m release she stops the prop 50 m short of the end ALONG the route - two legs and a half out, round the "
+      "corner, 41 m from the end in a straight line - where it armed only on the last leg, 20 m out",
+      rel is not None and abs(rel[0] - 50.0) <= 1.0 and rel[1] < 49.0 and rel[2] < len(BEND) - 1,
+      ("released %.1f m along the route from the end (%.1f m straight), steering for waypoint %d of %d"
+       % (rel[0], rel[1], rel[2] + 1, len(BEND))) if rel else "never released")
+spent = [f for f in r16["frames"] if f.get("holding")]
+check("16b. ... and the vessel PUBLISHES the range it has armed - the page's governor slows her for it - until the "
+      "release spends it",
+      r16["armed_before"] == 50.0 and spent and spent[-1].get("coast_from_m") is None,
+      "armed %s before the release; %s once she holds" % (r16["armed_before"], spent[-1].get("coast_from_m") if spent else "--"))
+arr = [f["sog_kn"] for f in r16["frames"] if f.get("holding")]
+pw = [f["sog_kn"] for f in _route_run(None, BEND, secs=200.0)["frames"] if f.get("holding")]
+check("16c. ... and she ARRIVES SLOW: under 1.5 kn when the hold begins, where the same route powered in arrives at her "
+      "LOW, 4 kn - a seventh of the energy or less (the line-follower cuts the corner a little, so she can reach the hold "
+      "point a few meters before the coast hands back at 1 kn)",
+      bool(arr) and bool(pw) and arr[0] < 1.5 and pw[0] > 3.5 and (arr[0] / pw[0]) ** 2 < 1 / 7.0,
+      "%.2f kn when the hold began, drifting in; %.2f kn powered in" % (arr[0] if arr else -1, pw[0] if pw else -1))
+
+# 17. THE HOLD AFTER A SPENT COAST MAKES WAY AGAINST THE SET. 2 kn of set along the approach: the station-keep asks for
+# the slowest speed that beats it (hold_speed_kn: LOW, 4 kn), and the walking-pace cap would have held her to 1 kn. (The
+# 50 m release is not one the solver would give in this set - it lengthens a release a following set carries - so she
+# reaches the hold point still drifting and is carried past it until the coast ends; the hold is judged from then.)
+r17 = _route_run(50.0, [(0.0, 20.0)] * 8, set_kn=2.0, set_deg=0.0, hold_clear_m=30.0, secs=500.0)
+held = [f for f in r17["frames"] if f.get("holding")]
+powered = [f for f in held if not f.get("drifting")]
+offs = [f.get("off_station_m") or 0.0 for f in powered[240:]]     # from 60 s after the coast ended
+wants = any(f.get("hold_wants_route") for f in held)
+check("17. the walking-pace cap after a spent coast is the APPROACH's, not the hold's: in a 2 kn set she comes back onto "
+      "station and holds it once the coast is over - capped at 1 kn she was carried to the edge of her 30 m disc and "
+      "asked to be routed back",
+      r17["release"] is not None and len(offs) > 400 and max(offs) < 5.0 and not wants,
+      "drifted in: %s; held under power %d s, at most %.1f m off station from 60 s after the coast ended; routed "
+      "re-approach asked: %s" % (r17["release"] is not None, len(powered) // 4, max(offs) if offs else -1, wants))
+
+# 17b. ... AND THE APPROACH'S CAP IS NEVER BELOW THE SET ON HER NOSE. 2 kn of set ahead and a coast spent 25 m short of the
+# berth: capped at a walking pace through the water she was set astern at a knot over the ground, back down her route
+# for as long as the run lasted (260 m from the berth within ten minutes), never arriving and never holding.
+r17b = _route_run(25.0, [(0.0, 20.0)] * 8, set_kn=2.0, set_deg=180.0, hold_clear_m=30.0, secs=400.0)
+h17b = [i for i, f in enumerate(r17b["frames"]) if f.get("holding")]
+check("17b. ... and the approach's cap is never BELOW THE SET ON HER NOSE: a coast spent short of the berth in 2 kn of head "
+      "set still arrives and holds - capped at 1 kn through the water she was set astern for as long as anyone watched",
+      r17b["release"] is not None and bool(h17b) and h17b[0] < 1200,
+      ("released %.1f m out; holding from %.0f s" % (r17b["release"][0], h17b[0] / 4.0)) if h17b and r17b["release"]
+      else "released: %s; never held in %d s" % (r17b["release"] is not None, len(r17b["frames"]) // 4))
+
+# 18. ACCEPTANCE: a plan with no drift-in powers in as it always did, and publishes none armed.
+r18 = _route_run(None, BEND, secs=200.0)
+check("18. ACCEPTANCE: with no drift-in sent nothing is armed, published or flown - she powers in as she always did",
+      r18["release"] is None and all(f.get("coast_from_m") is None for f in r18["frames"])
+      and any(f.get("holding") for f in r18["frames"]),
+      "released: %s; holding: %s" % (r18["release"], any(f.get("holding") for f in r18["frames"])))
+
+
 # --- 7-8: the wire ------------------------------------------------------------------ #
 def free_port():
     s = socket.socket()
@@ -550,6 +653,21 @@ try:
                                           "coast_from_m": 55.0})
     check("7b. coast_from_m rides a Go-To through the engine to the vessel",
           code == 200, "code %s" % code)
+
+    # 7c (2026-10-08): ... and a drawn TRANSIT, whose end is a hold too, and the state frame says what is armed - the
+    # page's governor slows her in gear for exactly that range.
+    code_t, _ = api(port, "/api/cmd/transit", {"route": [tgt], "hold_clear_m": 8.0, "coast_from_m": 42.0})
+    armed = None
+    for _ in range(20):
+        try:
+            armed = api(port, "/api/state", timeout=2)[1]["status"].get("coast_from_m")
+        except Exception:
+            armed = None
+        if armed == 42.0:
+            break
+        time.sleep(0.25)
+    check("7c. ... and a drawn TRANSIT carries it too (its end is a hold), and the state frame publishes the range "
+          "armed", code_t == 200 and armed == 42.0, "code %s; status.coast_from_m %s" % (code_t, armed))
 
     bad = [api(port, "/api/cmd/goto", {"lat": tgt["lat"], "lon": tgt["lon"],
                                        "coast_from_m": v})[0] for v in ("abc", -4)]

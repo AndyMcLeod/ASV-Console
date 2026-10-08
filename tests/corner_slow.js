@@ -613,6 +613,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
     + "    S.status.cog_deg = cog; S.status.sog_kn = 6; window._wpIndex = wp; S.wp_index = wp;\n"
     + "    lineClock = performance.now()/1000 - 0.25; accumLineTime(); },\n"
     + "  setSog: (k) => { S.status.sog_kn = k; }, setBehavior: (b) => { S.behavior = b; }, lead: () => govLead,\n"
+    + "  setStatus: (o) => { Object.assign(S.status, o); },\n"
     + "  setSet: (kn, deg) => { S.status.env_set_kn = kn; S.status.env_set_deg = deg; },\n"
     + "  setCorners: (set, n) => { cornerSlow = new Set(set); cornerSlowFor = n; S.wp_total = n; },\n"
     + "  ran: () => lastRunLine, turnFrom: () => (curTurn >= 0 && turnSeg[curTurn]\n"
@@ -795,7 +796,7 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
       W.reset(); W.setBehavior("goto");
       const goto = flyUp(() => 7);
       check("19i. ... and a hull with NO measured slow-down is commanded at the leg, byte for byte - survey to the "
-            + "line's end - and no run but a survey takes a lead",
+            + "line's end - and a Go-To takes no lead on its way (its one slower leg is its END: 19p)",
             () => zb.every((r) => r.got === "survey" && r.lead === null) && goto.every((r) => r.lead === null),
             "no-law hull: " + [...new Set(zb.map((r) => r.got))].join("/") + " to " + zb[zb.length - 1].d.toFixed(0)
               + " m; a Go-To: " + [...new Set(goto.map((r) => r.got))].join("/") + ", no lead");
@@ -869,6 +870,50 @@ check("20. the unrouted upload path clears the set rather than leaving a stale o
                   && /function leadShown\(\)\{\n\s*if\(supervising\(\)\) return govLead;\n\s*viewLead = leadFor\(roleSpeed\(speedRole\(\)\), viewLead\);/
                        .test(H.replace(/\r\n/g, "\n")),
             "agree test and 'for' row read leadShown(); a view-only tab computes its own");
+      // 19p-19r. THE ARRIVAL (Andy, 2026-10-08: "AS the ASV approaches end of RTH or GOTO, it hits the final waypoint at
+      // full ordered speed ... slow gradually on approach until it is at or near dead stop prior to triggering the
+      // loiter command", then "build it with the coast"). A Go-To flies one role throughout, and its one slower leg is
+      // its END: the hold role's speed, LOW here, led to where the drift-in releases - the range the vessel publishes
+      // armed, `coast_from_m` - or to the hold point with none armed. A 600 m Go-To due north in 60 m legs, flown at her
+      // 14 kn transit (HIGH) toward its end.
+      const GOTO = Array.from({ length: 11 }, (_, k) => P(k * 60, 0));
+      const flyGoto = (armed) => {
+        W.setMission({ lines: [], waypoints: GOTO, arrival_radius_m: 8, speed: "survey",
+                       speeds: { transit: "high", turn: "survey", survey: "survey" } });
+        W.reset(); W.setBehavior("goto");
+        const out = [];
+        for (let n = 0; n <= 598; n += 2) {
+          W.tick(P(n, 0), 0, Math.min(GOTO.length - 1, Math.floor(n / 60) + 1));
+          W.setSog(14); W.setStatus({ coast_from_m: armed });
+          out.push({ d: 600 - n, got: W.speedGovernor(), lead: W.lead() });
+        }
+        return out;
+      };
+      const want14 = C.slowLeadM(14 * 0.514444, 4 * 0.514444, C.slowLaw(drixM.slowdown), SPEED_CMD_LATENCY_S);
+      V.VESSEL = { ...vSaved, maneuvering: { ...vSaved.maneuvering, slowdown: drixM.slowdown } };
+      const armedRun = flyGoto(50), aFirst = armedRun.find((r) => r.got === "low");
+      check("19p. THE ARRIVAL: on a Go-To the governor commands the hold role's LOW where her in-gear cut from her 14 kn "
+            + "transit must begin to have her at LOW by the drift-in's release - 50 m armed + " + want14.toFixed(1) + " m - "
+            + "HIGH before it, and the lead it reports names the drift-in as what she is slowing for",
+            () => aFirst && aFirst.d <= 50 + want14 && aFirst.d > 50 + want14 - 2.1
+                  && armedRun.filter((r) => r.d > 50 + want14).every((r) => r.got === "high")
+                  && aFirst.lead && aFirst.lead.arrival === true && aFirst.lead.coast === true && aFirst.lead.key === "low"
+                  && armedRun.filter((r) => r.d <= aFirst.d).every((r) => r.got === "low"),
+            aFirst ? "LOW first " + aFirst.d.toFixed(1) + " m before the end (release 50 + lead " + want14.toFixed(1) + " m); "
+                     + "held LOW to the end: " + armedRun.filter((r) => r.d <= aFirst.d).every((r) => r.got === "low")
+                   : "never LOW: " + [...new Set(armedRun.map((r) => r.got))].join("/"));
+      const bareRun = flyGoto(null), bFirst = bareRun.find((r) => r.got === "low");
+      check("19q. ... and with NO drift-in armed (none solved, spent, or disarmed by an amendment) it leads to the hold "
+            + "point itself - LOW " + want14.toFixed(1) + " m before the end - and says so",
+            () => bFirst && bFirst.d <= want14 && bFirst.d > want14 - 2.1 && bFirst.lead && bFirst.lead.coast === false,
+            bFirst ? "LOW first " + bFirst.d.toFixed(1) + " m before the end, for " + (bFirst.lead && bFirst.lead.coast ? "a drift-in" : "the hold point")
+                   : "never LOW");
+      V.VESSEL = vSaved;
+      const noLaw = flyGoto(50);
+      check("19r. ACCEPTANCE: a hull with no measured slow-down is not led to the end at all - her transit speed to the "
+            + "hold point, as before (she sheds it on the engine's ramp in a few meters)",
+            () => noLaw.every((r) => r.got === "high" && r.lead === null),
+            "no-law hull: " + [...new Set(noLaw.map((r) => r.got))].join("/") + " to the end");
     } finally {
       V.VESSEL = vSaved; V.SPEED_KN = kSaved;
     }

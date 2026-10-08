@@ -346,7 +346,7 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   check("9b. ... and RTH, Transit, Hold and the guard's hold rung all send it too",
         () => /routeCmd\("\/api\/cmd\/rth", \{route:plan\.route, hold_clear_m:plan\.holdClear,[\s\S]{0,120}?\}\)/.test(rth)
               && /holdTarget\(transit\[transit\.length-1\], holdOpts\(\)\)/.test(tran)
-              && /routeCmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear\}\)/.test(tran)
+              && /routeCmd\("\/api\/cmd\/transit", \{route: plan\.route, hold_clear_m: plan\.holdClear,[\s\S]{0,120}?\}\)/.test(tran)
               && /cmd\("\/api\/cmd\/hold", \{hold_clear_m: holdClearAt\(asv\)\}\)/.test(guard)
               // ⚠ THE WHOLE HANDLER, NOT A 300-CHARACTER WINDOW. #b_hold grew a comment
               // when it started reading its command's answer, and the post fell outside
@@ -379,11 +379,13 @@ check("5. holdClearM is the water round a point LESS the buffer: 12 m off the fa
   // 9d. The two patterns above were loosened to admit a second field on those commands, so
   // this names what that field has to be - otherwise "anything at all may follow the disc"
   // is all they still assert.
-  check("9d. the solved drift-in rides the same commands as the disc, on both approaches "
-        + "that end at a berth",
+  check("9d. the solved drift-in rides the same commands as the disc, on the three approaches "
+        + "that end at a berth (the drawn transit since 2026-10-08: its end is a hold too)",
         () => /coast_from_m: gCoast \? gCoast\.groundM : null/.test(goTo)
               && /coast_from_m: rCoast \? rCoast\.groundM : null/.test(rth)
-              && /solveCoastFor\(plan\)/.test(goTo) && /solveCoastFor\(plan\)/.test(rth),
+              && /coast_from_m: tCoast \? tCoast\.groundM : null/.test(tran)
+              && /solveCoastFor\(plan\)/.test(goTo) && /solveCoastFor\(plan\)/.test(rth)
+              && /solveCoastFor\(plan\)/.test(tran),
         "null is the honest degrade - a hull with no coast datum powers in as it always did");
   check("10. the hold radius is the vessel model's own floor, never below it",
         () => /Math\.max\(HOLD_RADIUS_MIN_M, \+\(mission\.approach_radius_m\) \|\| 0\)/.test(hr)

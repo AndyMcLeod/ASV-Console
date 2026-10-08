@@ -18,6 +18,14 @@
 //   the keep-out walk stops at the berth instead of past it    -> 8
 //   the walk is dropped entirely                               -> 7
 //   COAST_MAX_S dropped (a five-minute glide ships)            -> 9
+// and THE ARRIVAL's (2026-10-08), each in a scratch copy of the tree:
+//   the release laid straight back down the last leg          -> 8e
+//   the walk stepped along the chord, not round the route     -> 8g2
+//   the route-left gate dropped                               -> 8c, 8f
+//   the hold disc deciding whether to coast again             -> 12
+//   the page solving from the higher speed always             -> 29, 31
+//   ... without asking for the water to lead her down first   -> 30
+//   ... and falling back to 14 kn when the slow one is refused -> 31
 //
 // ⚠ THIS FILE'S check() TAKES A THUNK - it CALLS `cond`. tests/end_action.js and
 // tests/hold_station.py do NOT; each reads its condition directly, and a thunk there is a
@@ -185,6 +193,56 @@ check("8d. ACCEPTANCE: a leg with room for the whole release range still coasts,
                       + "; no legM -> " + (none.ok ? none.groundM.toFixed(1) + " m"
                                                    : none.why); })());
 
+// ⚠⚠ 8e-8h. THE ROUTE LEFT, NOT THE LAST LEG (2026-10-08; Andy: "AS the ASV approaches end of RTH or GOTO, it hits
+// the final waypoint at full ordered speed", then "build it with the coast"). The vessel arms the drift-in on the range
+// left ALONG ITS PLAN now, so the release is laid back along the route the page passes as `path` - round its bends -
+// refused only when it is longer than the whole route left, and the keep-out walk follows the route she flies. A laned
+// route's last leg was 28-56 m in his logs; every drift-in was refused on it.
+{
+  const BENT = [{ e: -100, n: -30 }, { e: 0, n: -30 }, { e: 0, n: 0 }];     // 100 m east, then 30 m north to the berth
+  const bent = at({ path: BENT });
+  check("8e. the release is laid BACK ALONG THE ROUTE LEFT, round its bend: 30 m back down the last leg and the rest "
+        + "along the one before it - not straight back down the last leg's heading",
+        () => bent.ok && bent.groundM > 30
+              && Math.abs(bent.release.n + 30) < 1e-6 && Math.abs(bent.release.e + (bent.groundM - 30)) < 1e-6
+              && Math.abs(bent.routeM - 130) < 1e-9,
+        bent.ok ? "release e=" + bent.release.e.toFixed(1) + " n=" + bent.release.n.toFixed(1) + " for a "
+                  + bent.groundM.toFixed(1) + " m release (straight back it would be e=0 n=" + (-bent.groundM).toFixed(1) + ")"
+                : bent.why);
+  const short = at({ path: [{ e: 0, n: -40 }, { e: 0, n: 0 }] }), room = at({ path: [{ e: 0, n: -400 }, { e: 0, n: 0 }] });
+  check("8f. ... refused only when it is longer than the WHOLE route left, in words - and a route with room coasts",
+        () => !short.ok && /route left \(40 m\)/.test(short.why) && room.ok,
+        short.why + " | 400 m: " + (room.ok ? room.groundM.toFixed(1) + " m" : room.why));
+  // a block of keep-out straight back down the last leg's heading, 40-60 m south of the berth, off the route she flies
+  const SOUTH = [{ e: -5, n: -60 }, { e: 5, n: -60 }, { e: 5, n: -40 }, { e: -5, n: -40 }];
+  const KO = { polys: [{ ring: SOUTH, bb: bbOf(SOUTH), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const walked = at({ path: BENT, ko: KO, holdClear: 0 }), straight = at({ hdg: 0, ko: KO, holdClear: 0 });
+  check("8g. the keep-out walk FOLLOWS THE ROUTE: a pier straight back down the last leg's heading, off the route she "
+        + "flies, refuses the old straight-back solve and not this one",
+        () => walked.ok && !straight.ok && /keep-out/.test(straight.why),
+        "along the route: " + (walked.ok ? "clear" : walked.why) + " | straight back: " + (straight.ok ? "clear" : straight.why));
+  // 8g2. ... AND IT WALKS THE ROUTE ITSELF, NOT THE CHORD ACROSS ITS BEND (found by mutation: a walk stepped straight from
+  // the release point at the chord's heading passed 8g, the pier there lying off both). An islet inside the bend, 8 m
+  // off the last leg and 12 m off the one before - outside the 5 m buffer of both - lies on the chord.
+  const ISLET = [{ e: -12, n: -18 }, { e: -8, n: -18 }, { e: -8, n: -12 }, { e: -12, n: -12 }];
+  const KOI = { polys: [{ ring: ISLET, bb: bbOf(ISLET), kind: "land" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const roundBend = at({ path: BENT, ko: KOI, holdClear: 0 });
+  const chordWalk = (() => { const r = bent.release, steps = 40; for (let i = 0; i <= steps; i++) {
+    const q = { e: r.e * (1 - i / steps), n: r.n * (1 - i / steps) }; if (q.e > -13 && q.e < -7 && q.n > -19 && q.n < -11) return true; }
+    return false; })();
+  check("8g2. ... and it walks the ROUTE, round its bend - not the chord across it: an islet inside the bend that the route "
+        + "clears by more than the buffer, and the chord runs through, does not refuse the drift-in",
+        () => roundBend.ok && chordWalk,
+        "round the bend: " + (roundBend.ok ? "clear" : roundBend.why) + "; the chord from the release crosses the islet: " + chordWalk);
+  const sp = at({ path: [{ e: 0, n: -400 }, { e: 0, n: 0 }], setMs: 1.0 * KN, setDeg: 270 });
+  const sh = at({ hdg: 0, setMs: 1.0 * KN, setDeg: 270 });
+  check("8h. ACCEPTANCE: on a STRAIGHT approach the route left gives the answer the last leg's heading always gave - "
+        + "in a cross set too",
+        () => sp.ok && sh.ok && Math.abs(sp.groundM - sh.groundM) < 1e-9
+              && Math.hypot(sp.release.e - sh.release.e, sp.release.n - sh.release.n) < 1e-6,
+        sp.ok && sh.ok ? "route left " + sp.groundM.toFixed(3) + " m, heading " + sh.groundM.toFixed(3) + " m" : (sp.why || sh.why));
+}
+
 // ── 9. A COAST IS AN APPROACH, NOT AN ABDICATION ───────────────────────────────────────
 check("9. a coast that would outlast the set reading it was solved from is refused",
       () => { const s = at({ v0Ms: 14 * KN, lc: 400 });
@@ -215,10 +273,12 @@ check("9. a coast that would outlast the set reading it was solved from is refus
 }
 
 // ── 12. NOT WORTH STOPPING THE PROP FOR ────────────────────────────────────────────────
-check("12. a coast shorter than the hold disc the boat may wander anyway is not worth "
-      + "stopping the prop for",
-      () => !C.coastWorthIt(3, 8) && C.coastWorthIt(40, 8),
-      "the manoeuvre has to buy more than the berth already allows");
+check("12. a coast of COAST_MIN_M (5 m) or less is not worth stopping the prop for - and the hold disc no longer decides "
+      + "it (Andy, 2026-10-08: \"slow gradually on approach until it is at or near dead stop\"): a 40 m coast into 140 m "
+      + "of clear water is flown, where it was not",
+      () => !C.coastWorthIt(3, 8) && !C.coastWorthIt(5, 0) && C.coastWorthIt(6, 0) && C.coastWorthIt(40, 8)
+            && C.coastWorthIt(40, 140) && C.COAST_MIN_M === 5,
+      "four of his eight logged Go-Tos and RTHs had a disc of 87-140 m");
 
 // ── 13-18. SLOWING DOWN IN GEAR IS NOT A COAST (measured from the DriX-8's logs, 2026-10-03; Andy: "Build the fix
 //    with the 3.3 s lag"). The guard's SLOW is flown at idle with the clutch in: a dead time, then a decay toward her
@@ -453,6 +513,72 @@ check("12. a coast shorter than the hold disc the boat may wander anyway is not 
   check("28b. ... and the crab across a set is taken from the speed she is doing: slowing from 7 kn down a line 4 m off a "
         + "wall with a 1.5 kn set onto it, she crabs harder as she comes down and holds the line clear of the 2 m buffer",
         () => crabbed === null, "entry " + JSON.stringify(crabbed));
+}
+
+// ── 29-32. THE PAGE'S SOLVE (asv.html solveCoastFor, 2026-10-08; Andy: "build it with the coast") ──────────────
+// On a hull that slows in gear the governor brings her down to the speed she arrives at - the hold role's - before the
+// drift-in's release, so the drift-in is solved FROM that speed; where the route left cannot hold the cut and the coast
+// both, from the higher of the passage speed and her own, as it always was; and a drift-in from the arrival speed that
+// the solver refuses is NO drift-in, never one solved from 14 kn (which would release her ~100 m out once she is at
+// LOW). The page's own function, in a world of the real coast.js and a stand-in for the page's speed roles.
+{
+  const fs = require("fs"), path = require("path"), G = require("../static/js/geodesy.js");
+  const PAGE = fs.readFileSync(path.join(__dirname, "..", "static", "asv.html"), "utf8");
+  const grab = (name) => {
+    const start = PAGE.indexOf("function " + name + "(");
+    if (start < 0) throw new Error("test setup: function " + name + " not found (renamed?)");
+    let k = PAGE.indexOf("{", start), depth = 0;
+    for (;;) { const c = PAGE[k]; if (c === "{") depth++; else if (c === "}") { depth--; if (!depth) break; } k++; }
+    return PAGE.slice(start, k + 1);
+  };
+  const drix = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vessels", "drix08.json"), "utf8"));
+  const LAT0 = 43.07, LON0 = -70.71, F = G.planeFrame({ lat: LAT0, lon: LON0 });
+  const at0 = F.fromEN(0, 0);
+  // eslint-disable-next-line no-new-func
+  const solveFor = new Function("nogo", "asv", "S", "V", "roleSpeed", "coastLc", "solveCoast", "coastWorthIt",
+                                "slowLaw", "slowLeadM", "SPEED_CMD_LATENCY_S", grab("solveCoastFor") + "\nreturn solveCoastFor;");
+  const page = (o) => solveFor(
+    { ready: true, frame: F, buffer: 5, ko: o.ko || OPEN }, { lat: at0.lat, lon: at0.lon },
+    { status: { sog_kn: o.sog == null ? 14 : o.sog, env_set_kn: o.setKn || 0, env_set_deg: o.setDeg || 0 } },
+    { VESSEL: { maneuvering: o.law === false ? { coast: drix.maneuvering.coast } : drix.maneuvering },
+      SPEED_KN: { low: 4, survey: 7, high: 14 } },
+    (r) => (r === "hold" ? "low" : "high"), C.coastLc, C.solveCoast, C.coastWorthIt, C.slowLaw, C.slowLeadM, 1.0);
+  const north = (m, step) => Array.from({ length: Math.round(m / step) }, (_, k) => F.fromEN(0, (k + 1) * step));
+  const plan = (m, extra) => Object.assign({ route: north(m, 60), holdClear: 8 }, extra || {});
+  const lc = C.coastLc(drix.maneuvering.coast).lc;
+  const fromLow = C.coastRun(4 * KN, C.COAST_ARRIVE_MS, lc).m, from14 = C.coastRun(14 * KN, C.COAST_ARRIVE_MS, lc).m;
+  const long = page({})(plan(600));
+  check("29. on the DriX the page solves the drift-in FROM THE SPEED SHE ARRIVES AT - LOW, 4 kn: " + fromLow.toFixed(1)
+        + " m in slack water - where the governor has the route to lead her down to it, not from her 14 kn transit ("
+        + from14.toFixed(1) + " m)",
+        () => long && Math.abs(long.groundM - fromLow) < 0.01 && long.slowTo === "low",
+        long ? "release " + long.groundM.toFixed(1) + " m, slowed to " + long.slowTo : "no drift-in");
+  const shortRun = page({})(plan(120));
+  check("30. ... and where the route left cannot hold the in-gear cut AND the coast (120 m against ~" + (C.slowLeadM(14 * KN, 4 * KN, C.slowLaw(drix.maneuvering.slowdown), 1.0) + fromLow).toFixed(0)
+        + " m), from the higher speed, as it always was - she reaches the release slower than that and stops short, the "
+        + "safe side",
+        () => shortRun && Math.abs(shortRun.groundM - from14) < 0.01 && !shortRun.slowTo,
+        shortRun ? "release " + shortRun.groundM.toFixed(1) + " m, slowTo " + shortRun.slowTo : "no drift-in");
+  // A beam set (1 kn, setting her east) puts the ground track past the berth further east from 4 kn than from 14 - the
+  // run from 4 kn is slower, so the set has longer per meter - and a pier there blocks the slow drift-in's overshoot
+  // walk only. Refused, the page sends NO drift-in, rather than the 14 kn one that walk does not reach.
+  const PIER = [{ e: 21, n: 33 }, { e: 25, n: 33 }, { e: 25, n: 37 }, { e: 21, n: 37 }].map((q) => ({ e: q.e, n: q.n + 600 }));
+  const KO = { polys: [{ ring: PIER, bb: bbOf(PIER), kind: "a dock / pier" }], lines: [], points: [], marks: [], sys: [], chans: [] };
+  const beam = page({ ko: KO, setKn: 1.0, setDeg: 90 })(plan(600, { holdClear: 40 }));
+  const beam14 = C.solveCoast({ H: { e: 0, n: 600 }, ko: KO, buf: 5, frame: F, v0Ms: 14 * KN, lc, setMs: 1.0 * KN, setDeg: 90,
+                                path: [{ e: 0, n: 0 }, ...north(600, 60).map((p) => F.toEN(p))], holdClear: 40 });
+  const beam4 = C.solveCoast({ H: { e: 0, n: 600 }, ko: KO, buf: 5, frame: F, v0Ms: 4 * KN, lc, setMs: 1.0 * KN, setDeg: 90,
+                               path: [{ e: 0, n: 0 }, ...north(600, 60).map((p) => F.toEN(p))], holdClear: 40 });
+  check("31. ... and a drift-in from the arrival speed that the solver REFUSES is no drift-in at all - never one solved "
+        + "from 14 kn, which would release her ~100 m out once the governor has her at LOW",
+        () => beam === null && !beam4.ok && beam14.ok,
+        "page: " + (beam ? "a drift-in from " + beam.groundM.toFixed(1) + " m" : "none") + "; from 4 kn: "
+          + (beam4.ok ? "solves" : beam4.why) + "; from 14 kn: " + (beam14.ok ? "solves" : beam14.why));
+  const noLaw = page({ law: false })(plan(600));
+  check("32. ACCEPTANCE: a hull with a coast and NO in-gear law (the governor leads nothing) solves from the higher speed, "
+        + "as it always did",
+        () => noLaw && Math.abs(noLaw.groundM - from14) < 0.01 && !noLaw.slowTo,
+        noLaw ? "release " + noLaw.groundM.toFixed(1) + " m" : "no drift-in");
 }
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)"

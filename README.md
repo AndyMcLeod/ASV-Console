@@ -1476,6 +1476,33 @@ of the operator.
    (`tests/coast.js` 17, 19–25, `tests/coast_sim.py` 10–15, `tests/corner_slow.js` 14d, 19g–19o,
    28–30, `tests/turn_refusal.js` 17c).
 
+   *And at the end of a Go-To, a return home or a drawn transit, she comes in slow* (2026-10-08,
+   Andy: "AS the ASV approaches end of RTH or GOTO, it hits the final waypoint at full ordered
+   speed ... it would be best to slow gradually on approach until it is at or near dead stop prior
+   to triggering the loiter command", then "build it with the coast"). She did: the drift-in -
+   where the prop stops so she arrives with the way off - armed on the route's LAST LEG only, a
+   laned route's last leg is 28–56 m, and from her 14 kn transit the DriX needs 74–150 m of drift,
+   so it was refused on all eight Go-Tos and RTHs of his sessions of 2026-10-07/08 and she ran onto
+   each hold point at 14 kn. Now, on a hull that slows in gear, the end of a passage is its one
+   slower leg: the governor commands the hold speed (the slowest that makes way against the set -
+   LOW, 4 kn, in calm water) where her in-gear cut must begin to have her there by the drift-in's
+   release - about 133 m before the end of a 14 kn Go-To in slack water - and the drift-in is solved
+   from that speed (about 52 m in slack water, shorter against a set) and measured ALONG THE ROUTE
+   LEFT. The vessel arms it on the range left along her plan, round whatever legs lie between, and
+   publishes it (`coast_from_m`) for the governor to lead to; she comes in at about a knot, and
+   station-keeping takes over. Where the route is too short for the cut and the drift both, the
+   drift-in is solved from her higher speed, as it always was (she stops short - the safe side);
+   where the solver refuses the slow drift-in (a keep-out on its track) there is none, and she is
+   brought down to the hold speed at the hold point itself. The Intent card says which, and the RUN
+   block says "SLOWING to low N m before the drift-in". The hold disc no longer decides whether to
+   coast (four of those eight had discs of 87–140 m), and a drawn transit comes in on the drift too.
+   Two faults of the coast that could not show while it never fired are fixed with it: after a
+   spent drift-in the walking-pace cap (1 kn) no longer applies once she is station-keeping - she
+   could not hold station in a set over a knot - and on the approach it is never below the set on
+   her nose plus half a knot (in 2 kn of head set she was set astern, never arriving). Hulls with
+   no slow-down block are commanded as before (`tests/coast.js` 8e–8h, 12, 29–32,
+   `tests/coast_sim.py` 7c, 16–18, `tests/corner_slow.js` 19p–19r).
+
    *A lead is not coverage, but it is the survey speed.* The LINES table keeps `len m` as
    coverage and adds a `lead m` column beside it — the `plan` column times the whole run,
    because `actual` is clocked over the whole run — and the survey card's **Line len**

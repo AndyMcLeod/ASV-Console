@@ -1573,10 +1573,11 @@ function runLegKeys(route){
  * coast.js leadWant, with no set (it has no drift model) and no latency (the governor spends it), so Upload
  * certifies the corners she rounds.
  *
- * ⚠ ONLY ON A HULL WITH THE LAW, AND ONLY ON A SURVEY RUN. With no `slowdown` block this returns null before
- * anything else is read: every other hull is commanded at the leg, byte for byte. And only a survey run has the
- * per-leg table the walk judged (routeSpeedKeys + the corner set); a Go-To, an RTH or a transit flies one role
- * throughout. (A committed SEARCH pattern is uploaded as a survey run too: its legs are no lines, so the table keys
+ * ⚠ ONLY ON A HULL WITH THE LAW, AND ON A SURVEY RUN OR A PASSAGE'S ARRIVAL. With no `slowdown` block this returns
+ * null before anything else is read: every other hull is commanded at the leg, byte for byte. Only a survey run has
+ * the per-leg table the walk judged (routeSpeedKeys + the corner set); a Go-To, an RTH or a transit flies one role
+ * throughout, and its one slower leg is its END (2026-10-08 - THE ARRIVAL, below: `idx` route.length, `arrival` true,
+ * `coast` true where it leads to an armed drift-in's release rather than the hold point). (A committed SEARCH pattern is uploaded as a survey run too: its legs are no lines, so the table keys
  * them transit, and the governor flies them at transit as well - the two agree, and the lead leads to nothing.)
  *
  * PURE: it reads and commands nothing. leadSpeedKey is the governor's door (it keeps `govLead`, the latch);
@@ -1592,13 +1593,36 @@ function leadFor(want, prev){
   if(!sd) return null;
   const law = slowLaw(sd), route = indexedRoute(), st = (S && S.status) || {};
   const wi = (S && S.wp_index) || 0;
-  if(!law || !route || !asv || !(S && S.behavior === "survey") || !(wi >= 0) || wi >= route.length - 1) return null;
+  const passage = !!(S && (S.behavior === "goto" || S.behavior === "rth" || S.behavior === "transit"));
+  if(!law || !route || !asv || !(S && (S.behavior === "survey" || passage)) || !(wi >= 0)
+     || wi >= route.length - (passage ? 0 : 1)) return null;
   // her way through the water, as guardTrack measures it: ground velocity less the set - the in-gear cut is a law of the
   // water - and the set ALONG her track, which carries her further over the ground while the cut takes its 15 s
   const gv = groundVel(st.cog_deg, st.sog_kn), dr = groundVel(st.env_set_deg, st.env_set_kn) || {e: 0, n: 0};
   const v = gv ? Math.hypot(gv.e - dr.e, gv.n - dr.n) : 0;
   if(!(v > 0.05)) return null;
   const gs = Math.hypot(gv.e, gv.n), setAlong = gs > 0.05 ? (dr.e * gv.e + dr.n * gv.n) / gs : 0;
+  // ⚠⚠ THE ARRIVAL (Andy, 2026-10-08: "AS the ASV approaches end of RTH or GOTO, it hits the final waypoint at full
+  // ordered speed ... it would be best to slow gradually on approach until it is at or near dead stop prior to
+  // triggering the loiter command or whatever the next command may be"). A Go-To, an RTH and a drawn transit fly one
+  // role throughout and end in a hold, and the end is their one slower "leg": the hold role's speed (roleSpeed - the
+  // slowest that makes way against the set), beginning where the drift-in releases - the range left along the route
+  // the vessel publishes armed (`coast_from_m`, solveCoastFor solved it from this very speed) - or at the hold point
+  // itself with none armed (none solved, spent, or disarmed by an amendment). In gear the DriX needs ~74 m and 20 s to
+  // come from her 14 kn transit to 4: commanded on arrival, as it was, she ran onto the hold point at 14 kn and
+  // carried ~33 m past it. idx is route.length - past the last waypoint - and `arrival` says so to the readouts.
+  if(passage){
+    const arrKey = roleSpeed("hold"), arrMs = (V.SPEED_KN[arrKey] || 0) * 0.514444;
+    if(!(arrMs > 0)) return null;
+    let left = wi < route.length ? distTo(asv, route[wi]) : 0;
+    for(let i = wi; i < route.length - 1; i++) left += distTo(route[i], route[i + 1]);
+    const relM = st.coast_from_m != null && st.coast_from_m > 0 ? +st.coast_from_m : 0;
+    const d = Math.max(0, left - relM);
+    const latched = (prev && prev.route === route && prev.arrival) ? 0 : -1;
+    const lw = leadWant((V.SPEED_KN[want] || 0) * 0.514444, v, j => (j === 0 ? {d, ms: arrMs} : null),
+                        law, SPEED_CMD_LATENCY_S, latched, setAlong);
+    return lw.j < 0 ? null : {route, idx: route.length, key: arrKey, d, arrival: true, coast: relM > 0};
+  }
   const lines = mission.lines || [];
   const sig = [route.length, (mission.waypoints || []).length, lines.length, lines.map(l => l.slow_turn_out ? 1 : 0).join(""),
                cornerSlowFor, S && S.wp_total, roleSpeed("turn"), roleSpeed("survey"), roleSpeed("transit")].join("|");
@@ -1776,36 +1800,52 @@ function holdOpts(){
 // or return null and power in exactly as before. Called at COMMIT time, with the routed
 // plan in hand, so the reasoning travels with the plan like every other decision here.
 //
-// ⚠ v0 IS THE SPEED THE BOAT MIGHT BE DOING AT RELEASE, NOT THE ONE IT IS DOING NOW, and it
-// is deliberately the HIGHER of the two. Solving against too low a speed releases LATE and
-// the boat carries past the berth; solving against too high a speed releases EARLY and it
-// stops short, which station-keeping closes as it always has. Only one of those two errors
-// hits a pier, so the estimate is biased into the other.
+// ⚠ v0 IS THE SPEED THE BOAT MIGHT BE DOING AT RELEASE, NOT THE ONE IT IS DOING NOW. Solving
+// against too low a speed releases LATE and the boat carries past the berth; solving against
+// too high a speed releases EARLY and it stops short, which station-keeping closes as it always
+// has. Only one of those two errors hits a pier, so the estimate is biased into the other.
+//
+// ⚠⚠ ON A HULL THAT SLOWS IN GEAR THAT SPEED IS NOW THE ARRIVAL SPEED (Andy, 2026-10-08: "slow
+// gradually on approach until it is at or near dead stop prior to triggering the loiter command",
+// then "build it with the coast"). The governor slows her in gear to the hold role's speed - the
+// slowest that makes way against the set - where the cut must begin to have her there BY THE
+// RELEASE POINT (leadFor's arrival, from the range the vessel publishes armed: `coast_from_m`), so
+// the drift-in is solved from that speed: from 4 kn the DriX coasts ~52 m in calm water, where from
+// her 14 kn transit she needs 98 m, more in a following set. Only when the route left has the water
+// for the cut and the coast both: with too little, the cut cannot finish first and the drift-in is
+// solved from the higher of the passage speed and her own, as it always was - she arrives at the
+// release slower than that and stops short, the safe side. A drift-in from the arrival speed that
+// the solver refuses is no drift-in at all - the governor still brings her down to that speed at the
+// hold point itself - and NOT one solved from 14 kn, which would release her ~100 m out at LOW.
+// A hull with a coast datum and no in-gear law (none today) is led by nothing: the higher speed.
 function solveCoastFor(plan){
   if(!plan || plan.degraded || !nogo.ready || !nogo.ko || !nogo.frame || !asv) return null;
-  const lc = coastLc(((V.VESSEL && V.VESSEL.maneuvering) || {}).coast);
+  const man = (V.VESSEL && V.VESSEL.maneuvering) || {};
+  const lc = coastLc(man.coast);
   if(!lc) return null;                       // this hull has no coast datum - it does not coast
   const route = plan.route || [];
-  const H = route.length ? route[route.length-1] : null;
-  if(!H) return null;
+  if(!route.length) return null;
   const st = (S && S.status) || {};
-  const roleKn = V.SPEED_KN[roleSpeed(speedRole())] || 0;
-  const v0Ms = Math.max(roleKn, st.sog_kn || 0) * 0.514444;
-  // The heading of the ROUTE'S OWN final leg - the coast decides where along the cleared
-  // path the prop stops, never which way the boat goes. One waypoint means the leg is the
-  // run in from where the boat is now.
-  const prev = route.length > 1 ? route[route.length-2] : {lat:asv.lat, lon:asv.lon};
-  const sol = solveCoast({
-    H: nogo.frame.toEN({lat:H.lat, lon:H.lon}), ko: nogo.ko, buf: nogo.buffer || 0,
-    frame: nogo.frame, v0Ms, lc: lc.lc,
-    setMs: (st.env_set_kn || 0) * 0.514444, setDeg: st.env_set_deg,
-    // ⚠ `legM` IS THE LEG THE VESSEL LATCHES THE COAST ON, and without it the solver could
-    // return a release range longer than the leg itself - the prop then stops at the leg's
-    // start rather than `groundM` out, and she arrives with way still on while the banner
-    // quotes the speed she would have had. Same two points the heading is taken from, so it
-    // is one more measurement of a leg already in hand, not new geometry.
-    hdg: azTo(prev, H), legM: distTo(prev, H), holdClear: plan.holdClear,
-  });
+  const KN = 0.514444, setMs = (st.env_set_kn || 0) * KN;
+  // ⚠ THE ROUTE LEFT, from where she is to the hold point (2026-10-08): the release range is measured
+  // ALONG it, as the vessel arms the drift-in on the range left along its plan (SimVcu._route_left_m) -
+  // the coast decides where along the cleared route the prop stops, never which way the boat goes. It
+  // was the final leg alone, and a laned route's final leg was too short for every coast in his logs.
+  const path = [{lat:asv.lat, lon:asv.lon}, ...route].map(p => nogo.frame.toEN({lat:p.lat, lon:p.lon}));
+  const solveFrom = v0Ms => solveCoast({H: path[path.length-1], ko: nogo.ko, buf: nogo.buffer || 0,
+                                        frame: nogo.frame, v0Ms, lc: lc.lc, setMs, setDeg: st.env_set_deg,
+                                        path, holdClear: plan.holdClear});
+  const passKn = V.SPEED_KN[roleSpeed("transit")] || 0;
+  const vHigh = Math.max(passKn, st.sog_kn || 0) * KN;
+  const arrKey = roleSpeed("hold"), arrKn = V.SPEED_KN[arrKey];
+  const law = slowLaw(man.slowdown);
+  let sol = null;
+  if(law && arrKn > 0 && arrKn * KN < vHigh){
+    const s = solveFrom(Math.min(passKn || arrKn, arrKn) * KN);
+    if(!s.ok) return null;
+    if(s.routeM - s.groundM >= slowLeadM(vHigh, arrKn * KN, law, SPEED_CMD_LATENCY_S, setMs)){ sol = s; sol.slowTo = arrKey; }
+  }
+  if(!sol) sol = solveFrom(vHigh);
   if(!sol.ok || !coastWorthIt(sol.groundM, plan.holdClear)) return null;
   sol.lc = lc;
   return sol;
@@ -1893,10 +1933,9 @@ function setPlanIntent(kind, plan, route){
   // THE DRIFT-IN, CAPTURED WITH THE PLAN THAT FLIES IT. An arrival under 1 kn instead of the
   // 6.07 kn measured at Eastport is a fortyfold cut in the energy that reaches the pier, and
   // the operator should be able to read WHY the prop is about to stop.
-  if(plan.coast)
-    w.push({t:"lane", s:"coming in on the drift - " + plan.coast.why
-                        + (plan.coast.lc && !plan.coast.lc.measured
-                           ? " (on an ESTIMATED coast length, never measured on this hull)" : "")});
+  // ... AND THE SLOW-DOWN BEFORE IT (2026-10-08) - arrivalSay.
+  const arrive = arrivalSay(kind, plan);
+  if(arrive) w.push({t:"lane", s:arrive});
   if(plan.lane){
     // WHICH KEEP-RIGHT IT WAS (2026-10-03). There are four, and they put her in different water: the chart's own
     // channel, the water single marks buoy where the chart draws none (2026-10-05), the lane off a pair of buoy
@@ -1930,6 +1969,25 @@ function setPlanIntent(kind, plan, route){
   const r = route||[];
   if(r.length) planIntent.target = r[r.length-1];
   return planIntent;
+}
+// HOW SHE ARRIVES, in one line for the Intent card's "why" (2026-10-08), or null. On a hull that slows in gear the
+// governor brings her down to the speed she arrives at - the hold role's, the slowest that makes way against the set -
+// before the end of a Go-To, an RTH or a transit (leadFor's arrival), and the drift-in is solved from that speed
+// (`plan.coast.slowTo`). With no drift-in solved she still comes down to it, at the hold point - said, so a powered
+// arrival is not read as a fault. A coast with no in-gear slow-down first reads as it always did.
+function arrivalSay(kind, plan){
+  const passage = kind === "goto" || kind === "rth" || kind === "transit";
+  if(!plan.coast && !passage) return null;
+  const arrKey = roleSpeed("hold"), arrKn = V.SPEED_KN[arrKey];
+  const arrSay = arrKey + (arrKn != null ? " (" + arrKn.toFixed(1) + " kn)" : "");
+  if(plan.coast)
+    return "coming in on the drift - " + (plan.coast.slowTo ? "slowed in gear to " + arrSay + " first, then the " : "")
+           + plan.coast.why
+           + (plan.coast.lc && !plan.coast.lc.measured ? " (on an ESTIMATED coast length, never measured on this hull)" : "");
+  if(!plan.degraded && slowLaw(((V.VESSEL && V.VESSEL.maneuvering) || {}).slowdown)
+     && arrKn < (V.SPEED_KN[roleSpeed("transit")] || 0))
+    return "slowing in gear to " + arrSay + " before the hold point - no drift-in solved, so the prop is not stopped";
+  return null;
 }
 // WHAT EACH WAYPOINT IS FOR. Labeled only from what is KNOWN, never guessed: a point that
 // matches a committed plan waypoint IS one, the last point IS the target, and the rest are
@@ -5126,7 +5184,8 @@ function renderIntent(){
   else if(lsh && lsh.key)
     // THE LEAD, SAID (2026-10-03): the speed told is not this leg's role speed, and the reason is ahead of her
     html += row("for", spRole.toUpperCase() + " — " + act.detail + " · SLOWING to " + lsh.key + " "
-                + fmtDist(lsh.d) + " before the leg to waypoint " + (lsh.idx + 1)
+                + fmtDist(lsh.d) + " before " + (lsh.arrival ? (lsh.coast ? "the drift-in (the prop stops there)" : "the hold point")
+                                                       : "the leg to waypoint " + (lsh.idx + 1))
                 + " — in gear she needs that water to come down", "#e8c07a");
   else
     html += row("for", spRole.toUpperCase() + " — " + act.detail,
@@ -10201,9 +10260,12 @@ async function doTransit(){
     return;
   }
   clearViolation();
+  // ... and it comes in on the drift as Go-To and RTH do (2026-10-08): its end is a hold too.
+  const tCoast = solveCoastFor(plan);
   // The same rule doRTH carries. See doRTH: the answer has three states and only a REFUSAL
   // is a fact about the vessel.
-  const r = await routeCmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear});
+  const r = await routeCmd("/api/cmd/transit", {route: plan.route, hold_clear_m: plan.holdClear,
+                                                coast_from_m: tCoast ? tCoast.groundM : null});
   if(!took(r)){
     const say = notTookSay(r, "TRANSIT");
     if(say) showBanner(say + " - the boat is still on her previous plan.");
@@ -10212,6 +10274,7 @@ async function doTransit(){
   // NOT in the unroutable branch above: that one DRAWS the blocked legs and returns without
   // posting - "NOT started. Edit the line." A motion that never happened replaced nothing.
   if(planGen === wasGen) releaseEscapeClaim("the transit replaced it");   // see doGoTo
+  plan.coast = tCoast;
   runRoute = plan.route; runUnsafe = []; setPlanIntent("transit", plan, plan.route); updateMissionCard();   // draw the path she is actually flying
   legStartsHere(0, r);                           // see doGoTo
   if(plan.heldOff) showBanner("Transit: the last point "+heldOffWhy(plan.heldOff)+" — holding "+fmtDist(plan.heldOff.m)+" off it, in water a boat can sit in.");
@@ -16061,9 +16124,9 @@ async function resumeHeldLeg(opts){
   }
   const end = tail[tail.length - 1];
   const hc = holdClearAt(end);                        // the end point's disc, counting the contacts (2026-09-29)
-  const coast = (beh === "goto" || beh === "rth") ? solveCoastFor({route: tail, holdClear: hc}) : null;
+  const coast = (beh === "goto" || beh === "rth" || beh === "transit") ? solveCoastFor({route: tail, holdClear: hc}) : null;   // (transit: 2026-10-08)
   const body = beh === "goto" ? {lat: end.lat, lon: end.lon, route: tail, hold_clear_m: hc, coast_from_m: coast ? coast.groundM : null}
-             : beh === "rth" ? {route: tail, hold_clear_m: hc, coast_from_m: coast ? coast.groundM : null}
+             : (beh === "rth" || beh === "transit") ? {route: tail, hold_clear_m: hc, coast_from_m: coast ? coast.groundM : null}
              : {route: tail, hold_clear_m: hc};
   const r = await cmd("/api/cmd/" + beh, body);
   if(!took(r)){
@@ -17405,14 +17468,16 @@ function updateMissionCard(){
             ? "the in-extremis escape's claim on the throttle — it holds until you command "
               + "her somewhere, hold her, or set a speed by hand."
             : (shown && shown.key)
-            ? "the speed of the slower leg ahead (to waypoint " + (shown.idx + 1) + "), commanded "
+            ? (shown.arrival ? "the speed she arrives at (" + (shown.coast ? "the drift-in" : "the hold point") + " ahead), commanded "
+                             : "the speed of the slower leg ahead (to waypoint " + (shown.idx + 1) + "), commanded ")
               + fmtDist(shown.d) + " early because she sheds speed in gear and needs that water."
             : "what the command bar has selected.")
         : "DISAGREEMENT: the vessel is running to " + k + " but the command bar selects "
           + (escapeThrottle ? "high (the in-extremis escape's claim)"
              : clearance.slowed ? "low (safety override)"
              : resumeSlow ? "low (held there since the run was resumed; change any speed to release it)"
-             : (shown && shown.key) ? shown.key + " (slowing ahead of the leg to waypoint " + (shown.idx + 1) + ")"
+             : (shown && shown.key) ? shown.key + " (slowing ahead of " + (shown.arrival ? (shown.coast ? "the drift-in" : "the hold point")
+                                                                          : "the leg to waypoint " + (shown.idx + 1)) + ")"
              : roleSpeed(speedRole()) + " for the "
                + speedRole() + " it is doing") + ". The vessel's value is the one moving it.";
     }
@@ -17424,8 +17489,11 @@ function updateMissionCard(){
   $("#mi_len").textContent = rr ? fmtDist(rr.total) : "--";
   const spdPlan=roleSpeedMS(speedRole());
   const sog=(st.sog_kn||0)*0.514444, spd=(sog>0.15? sog : spdPlan);
-  const ended = st.holding || st.drifting;
+  // ⚠ DRIFTING IS NOT ARRIVED (2026-10-08). The drift-in now begins ~50 m out, along the route, so "arrived" here read
+  // as arrived for the last minute of the approach; it says what is left, and that she is drifting it.
+  const ended = st.holding;
   $("#mi_toend").textContent = ended ? "arrived"
+    : st.drifting ? (rr ? fmtDist(rr.remain) + " · drifting in" : "drifting in")
     : (rr && spd>0 ? fmtDist(rr.remain)+" · ~"+fmtMS(rr.remain/spd) : "--");
   $("#mi_endmode").textContent = endAction();     // "rth" while an end-of-plan RTH is still to come
   // plan status -> through to the END state (the common paradigm's last phase)
