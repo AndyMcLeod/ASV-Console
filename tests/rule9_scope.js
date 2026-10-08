@@ -248,9 +248,12 @@ const ENF = { land: true, depth: true, haz: true, area: false };
   check("8. `lane:false` skips the OFFSET, never the smooth / gate / prune pipeline",
         () => /const laneWanted = opts\.lane !== false;/.test(CLR) &&
               // (2026-10-05: the three run in `finish`, asked of the reach lane's path and, where that lane is
-              // not kept, of the path without it - never of neither)
+              // not kept, of the path without it - never of neither. 2026-10-08: the reach lane's path is finished
+              // in `judge`, once per laying of it, and the route that ships is that one's or the plain one's)
               /gateLegClear\(smoothTrack\(path, frame, ko, buf, \{ keep: keepV \}\), pathLL, frame, ko, buf\)/.test(CLR) &&
-              /pruneStitch\(g\.route/.test(CLR) && /let fin = finish\(reach\.path, keep, pass\);/.test(CLR) &&
+              /pruneStitch\(g\.route/.test(CLR) && /const fin = finish\(rc\.path, keep, pass\);/.test(CLR) &&
+              /plainFin = finish\(charted\.path, keep0, passed\.pass \|\| keep0\)/.test(CLR) &&
+              /let fin = J\.fin, keep = J\.keep, pass = J\.pass;/.test(CLR) && /fin = J\.plain;/.test(CLR) &&
               /const \{ g, clean, mk \} = fin;/.test(CLR),
         "the gate is a per-leg keep-out re-check and every route needs it, laned or not");
 }

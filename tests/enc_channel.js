@@ -87,7 +87,8 @@
 //          round; 87, no re-aim costing a mark its distance; 88, no turn over the stage's limit the route without the
 //          lane does not have (88b: where it is); 89, the reach asked again in the standoff's re-gate; 90, a lane that
 //          puts a counted mark right not vetoed for it; 91, no nearer a rock than the lane's floor where the route
-//          without it was further off (91b: nor a bridge support); 92, a drawn transit through a buoyed reach claims it; 93, A ROCK IS A SHALLOW
+//          without it was further off (91b: nor a bridge support; 91c: a graze held off where it is, the lane kept
+//          everywhere else); 92, a drawn transit through a buoyed reach claims it; 93, A ROCK IS A SHALLOW
 //          POINT, NOT AN EDGE (his call on the review): in mid-reach she holds her lane past it in both models (93b:
 //          on the lane's line, passed either side at each model's floor; 93c: anything built is the bank; 93d: on
 //          whichever side is the smaller move; 93e: the page's choice reaches the planner; 93f: rocks closer than
@@ -2438,6 +2439,30 @@ const P2 = (a) => a.map(([e, n]) => ({ e, n }));
         rowsB.every((q) => q.off >= REACH_LIMIT - 0.5 && q.ok) && rowsB.some((q) => q.reach),
         rowsB.map((q) => "support " + q.x + " m at n+" + q.dn + ": " + f1(q.off) + " m, lane " + q.reach).join("; ") + " (the floor " + REACH_LIMIT
           + "; with no backstop, 6.2 and 8.3)");
+  // (c) ... AND A GRAZE IS ANSWERED WHERE IT IS (Andy, 2026-10-08: "the ASV shies away from Pierce and Goat islands and
+  // violates the stay-right protocol"). The same support in the same five places, against the same river without it.
+  // Dropped for the WHOLE route at its first graze, as it was, the lane was lost in two of the five down all 6 km of
+  // the river for one support at n 1500: she ran her own path, 276 m to port of the lane, end to end - as his RTH of
+  // 09:19 lost keep-right past Pierce Island and Henderson Point to one dock at the Memorial Bridge. Laid again held
+  // off what it grazed (buoyedReachLane `hold`), it is kept in all five, passes the support at its floor or more, and
+  // 1.5 km short of the support and 1.25 km past it stands where it stands with no support at all.
+  const none = lane(model({ polys: banks, marks: greens }), [{ e: -100, n: -1500 }, { e: -100, n: 4500 }]);
+  const rowsC = [];
+  for (const [x, dn] of [[15, 0], [15, 6], [15, 12], [20, 0], [25, 6]]) {
+    const sup = { e: -100 + x, n: 1500 + dn, r: 0, kind: "a bridge support" };
+    const w = model({ polys: banks, marks: greens, points: [sup] }), r = lane(w, [{ e: -100, n: -1500 }, { e: -100, n: 4500 }]);
+    const at = (n) => { const a = eAtN(r.track, n), b = eAtN(none.track, n); return a == null || b == null ? NaN : a - b; };
+    rowsC.push({ x, dn, reach: r.how.reach, off: nearestTo(r.track, (p) => Math.hypot(p.e - sup.e, p.n - sup.n)),
+                 short: at(0), past: at(2750), ok: legsClear(r, w) });
+  }
+  check("91c. ... AND A GRAZE IS ANSWERED WHERE IT IS: with a support 15-25 m off her path the lane is held off it and "
+        + "kept everywhere else - in all five places, at the floor or more, and on its own line 1.5 km short of it and "
+        + "1.25 km past it",
+        none.how.reach === true && eAtN(none.track, 0) > 150 && R.REACH_HOLD_ROUNDS === 3
+          && rowsC.every((q) => q.reach === true && q.off >= REACH_LIMIT - 0.5 && Math.abs(q.short) < 1 && Math.abs(q.past) < 1 && q.ok),
+        rowsC.map((q) => "support " + q.x + " m at n+" + q.dn + ": lane " + q.reach + ", " + f1(q.off) + " m off, e vs no support "
+          + f1(q.short) + " at n 0, " + f1(q.past) + " at n 2750").join("; ") + " (the floor " + REACH_LIMIT + "; with no support the lane at e "
+          + f1(eAtN(none.track, 0)) + "; dropped whole at a graze, two of the five ran e -100 end to end)");
 }
 // 92. A DRAWN TRANSIT THROUGH A BUOYED REACH CLAIMS IT. routePlan lanes each transit leg alone and adds `how` up over
 // them; run over the reach of 69 as a transit of two legs, the plan says "right of center in the buoyed channel"

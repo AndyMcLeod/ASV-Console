@@ -2342,7 +2342,13 @@ of the operator.
       own 45 degree limit where the route without it has none as sharp (within 5
       degrees) within 30 m, and no keep-out passed nearer than the lane's own clearance
       (a rock: its model's floor, below) and nearer, by more than the buffer or 3 m
-      (the less), than the route without it passed it. In a set, where the planner
+      (the less), than the route without it passed it. A lane that fails only that
+      last test is laid again held off what it grazed — not moved anywhere a shift
+      could bring her inside that hazard's floor, eased off and back on either side —
+      and judged again, up to three times; it is dropped for the whole route only if
+      it still grazes, or fails any other test (dropped whole at its first graze, one
+      dock at the Memorial Bridge cost an RTH its keep-right past Pierce Island and
+      Henderson Point, and in Little Bay). In a set, where the planner
       re-gates the route at the standoff, the route without the lane is re-gated too,
       and two of these are asked again of what comes out — a mark on its wrong hand
       that the other has right, and a lane the gate abandoned — but not the turn, the

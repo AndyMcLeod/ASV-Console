@@ -2503,6 +2503,18 @@ export const REACH_MAX_WIDTH_M = 800;
 export const REACH_MIN_M = 150;
 
 /**
+ * HOW MANY TIMES A REACH LANE THAT GRAZES A HAZARD IS LAID AGAIN, held off what it grazed, before it is dropped
+ * (Andy, 2026-10-08: "the ASV shies away from Pierce and Goat islands and violates the stay-right protocol. ... Can
+ * it be adjusted in the basic settings or is there a basic coding issue?" - a coding issue). channelLaneRoute judges
+ * the lane on the route that ships, and one graze anywhere used to drop it for the WHOLE route: his RTH of 09:19 lost
+ * keep-right past Pierce Island and Henderson Point to a dock at the Memorial Bridge, which the lane passed 24.2 m off
+ * where the route without it passed 29.7 m - the floor that morning 33.8 m, his 2.36 kn set's standoff and 7 m. (No
+ * setting moved it: a 2.9 m depth floor for his 5.0, or a 7 kn transit, and the lane was still dropped; only with no
+ * set at all did it stand.)
+ */
+export const REACH_HOLD_ROUNDS = 3;
+
+/**
  * A ROCK: a keep-out no bigger than this across - a charted rock, wreck or obstruction, a small shoal
  * patch or islet, or a cluster of them - standing at least twice the lane's floor off everything else.
  * It is a shallow point on the sea bottom to be passed, on either side, and not an edge of the
@@ -3126,6 +3138,23 @@ export function buoyedReachLane(pathLL, frame, ko, buf, opts = {}) {
   // her as far to starboard as that line and no further (`slack`), and where she is on it,
   // not at all.
   for (let i = 0; i < N; i++) if (owned(i)) cap[i] = Math.min(cap[i], slack[i]);
+  // ... AND OFF A HAZARD THE ROUTE THAT SHIPS FOUND IT GRAZING (`opts.hold`: [{f, r}], channelLaneRoute, 2026-10-08),
+  // and nowhere else: she is not moved at all at any sample a shift could bring within `r` of it, and the lane eases
+  // down to that and back up from it no steeper than LANE_SLEW (`close`). Not measured sample by sample: a graze the
+  // smoothing makes is not seen at the samples - the lane 280 m to starboard of her path dipped back inside a bridge
+  // support 15 m off it (the support is the bank: `room`), and the smoothing cut the dip's corner to 6.2 m off it with
+  // every sample of the dip 9 m or more off.
+  //   (A sample with no cross-section of its own, T 0, is held by its neighbors: layLine carries the lane across it at
+  // theirs, held or not. Should that bring her inside the floor, the judging sees the graze again and the lane is
+  // dropped, as it was.)
+  if (opts.hold) for (const h of opts.hold) {
+    const K1 = h.f.ring ? { polys: [h.f], lines: [], points: [] } : h.f.pts ? { polys: [], lines: [h.f], points: [] }
+                                                                           : { polys: [], lines: [], points: [h.f] };
+    for (let i = 0; i < N; i++) {
+      const shift = Math.min(cap[i], Math.max(0, T[i]));
+      if (shift > 0 && clearanceM(samp[i], K1, h.r + shift + 1) < h.r + shift) cap[i] = 0;
+    }
+  }
   const close = () => {
     for (let i = 1; i < N; i++) cap[i] = Math.min(cap[i], cap[i - 1] + g);
     for (let i = N - 2; i >= 0; i--) cap[i] = Math.min(cap[i], cap[i + 1] + g);
@@ -3798,15 +3827,17 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
       return best ? best.slack : null;
     };
   })();
-  const reach = marksOn
-    ? buoyedReachLane(charted.path, frame, ko, buf, { marks: passed.marks, owns, standoffM: opts.standoffM, rockModel: opts.rockModel })
-    : { path: charted.path, used: false };
+  // (laid with `hold`: the hazards the route that ships found an earlier laying grazing - see the judging, below)
+  const layReach = (hold) => (marksOn
+    ? buoyedReachLane(charted.path, frame, ko, buf, { marks: passed.marks, owns, standoffM: opts.standoffM, rockModel: opts.rockModel, hold })
+    : { path: charted.path, used: false });
+  let reach = layReach(null);
   // (a run the reach lane moved is no longer a run: only the vertices still on her path are kept)
-  const onPath = (() => {
-    if (!reach.used) return () => true;
-    const pe = reach.path.map((p) => frame.toEN(p));
+  const onPathOf = (rc) => {
+    if (!rc.used) return () => true;
+    const pe = rc.path.map((p) => frame.toEN(p));
     return (q) => pe.some((p) => Math.hypot(p.e - q.e, p.n - q.n) < 0.3);
-  })();
+  };
   const stubs = marksOn || chartOn;                          // (see pruneStitch: a maneuver prunes as it did)
   // The smoothing, the gate and the knot prune, and the marks counted on what comes out.
   const finish = (path, keepV, passV) => {
@@ -3814,8 +3845,6 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
     const clean = pruneStitch(g.route, frame, ko, buf, { keep: passV, stubs });
     return { g, clean, mk: marksKept(clean, frame, passed.marks) };
   };
-  let keep = keep0.filter(onPath), pass = passed.pass ? passed.pass.filter(onPath) : keep;
-  let fin = finish(reach.path, keep, pass);
   // ⚠ AND THE REACH LANE IS KEPT ONLY WHERE THE ROUTE THAT SHIPS IS NO WORSE FOR IT: no mark on
   // its wrong hand that the route without it has right, no lane the gate had to abandon, no
   // lateral mark of ANY kind between the two routes (a mark with no hand read is counted by
@@ -3831,9 +3860,17 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
     const a = markVerdicts(laned, frame, passed.marks), b = markVerdicts(without, frame, passed.marks);
     return a.some((v, i) => !v.proper && b[i] && b[i].proper);
   };
-  let reachUsed = !!reach.used, withoutReach = null;
-  if (reachUsed) {
-    const plain = finish(charted.path, keep0, passed.pass || keep0);
+  // The route without the reach lane: the same for every laying of it, so finished once and only when asked for.
+  let plainFin = null;
+  const plainOf = () => (plainFin || (plainFin = finish(charted.path, keep0, passed.pass || keep0)));
+  // JUDGED: {ok, other, grazed, fin, keep, pass, plain}. `grazed` are the hazards the laid lane passes nearer than its
+  // floor by more than the slack; `other`, any of the other reasons it is not kept - those are never answered locally.
+  const judge = (rc) => {
+    const onPath = onPathOf(rc);
+    const keep = keep0.filter(onPath), pass = passed.pass ? passed.pass.filter(onPath) : keep;
+    const fin = finish(rc.path, keep, pass);
+    if (!rc.used) return { ok: false, other: true, grazed: [], fin, keep, pass, plain: null };
+    const plain = plainOf();
     const A = plain.clean.map((p) => frame.toEN(p)), B = fin.clean.map((p) => frame.toEN(p));
     const between = A.concat(B.slice().reverse());              // (the water the lane moved her across)
     // (a mark NO count speaks for - no number, a junction mark: a counted one is judged mark by mark
@@ -3868,22 +3905,41 @@ export function channelLaneRoute(pathLL, frame, ko, buf, opts = {}) {
       return m;
     };
     const walls = [...(ko.polys || []), ...(ko.lines || []), ...(ko.points || []).filter((q) => q.kind !== 'a channel buoy')];
-    const grazes = walls.some((f) => {
+    const floorOf = (f) => (rc.rocks && rc.rocks.has(f) ? rc.rockFloor : floorM);
+    const grazed = [];
+    for (const f of walls) {
       // (a rock at its own floor: the lane passes it, either side, at that - `rockModel`)
-      const fl = reach.rocks && reach.rocks.has(f) ? reach.rockFloor : floorM;
+      const fl = floorOf(f);
       const dl = nearest(dB, f, fl);
-      if (!(dl < fl - 0.5)) return false;
-      return dl < nearest(dA, f, fl + slackM + 1) - slackM;
-    });
+      if (!(dl < fl - 0.5)) continue;
+      if (dl < nearest(dA, f, fl + slackM + 1) - slackM) grazed.push({ f, r: fl });
+    }
     // (a turn is the lane's where the route without it has none as sharp near it: compared as
     // whole-route maxima, a 57 degree S-turn the lane laid beside Seavey Island shipped because
     // the route without it turned 75 degrees 3.4 km away)
-    if (worseFor(fin.clean, plain.clean) || (fin.g.abandoned && !plain.g.abandoned) || crossed || grazes
-        || newLaneTurn(A, B)) {
-      fin = plain; reachUsed = false; keep = keep0; pass = passed.pass || keep0;
-    } else if (!plain.g.abandoned) {
-      withoutReach = { route: plain.clean, keep: passed.pass || keep0 };
-    }
+    const other = worseFor(fin.clean, plain.clean) || (fin.g.abandoned && !plain.g.abandoned) || crossed || newLaneTurn(A, B);
+    return { ok: !other && !grazed.length, other: !!other, grazed, fin, keep, pass, plain };
+  };
+  // ⚠⚠ A GRAZE IS ANSWERED WHERE IT IS (2026-10-08). The lane is laid again HELD OFF what it grazed (buoyedReachLane
+  // `hold`) and judged again, up to REACH_HOLD_ROUNDS times; only a lane that still grazes, or fails any other way, is
+  // dropped, as before, for the whole route. Dropped whole for one graze, one dock at the Memorial Bridge cost his RTH
+  // keep-right past Pierce Island and Henderson Point, 1-2 km on, and in Little Bay, 12 km back up the river.
+  let J = judge(reach), hold = [];
+  for (let round = 0; round < REACH_HOLD_ROUNDS && reach.used && !J.ok && !J.other && J.grazed.length; round++) {
+    // (a round with nothing new to hold would lay the same lane again: the one before it is the last)
+    const fresh = J.grazed.filter((q) => !hold.some((h) => h.f === q.f));
+    if (!fresh.length) break;
+    hold = hold.concat(fresh);
+    const again = layReach(hold);
+    if (!again.used) break;
+    reach = again; J = judge(again);
+  }
+  let reachUsed = !!reach.used && J.ok, withoutReach = null;
+  let fin = J.fin, keep = J.keep, pass = J.pass;
+  if (reach.used && !J.ok) {
+    fin = J.plain; keep = keep0; pass = passed.pass || keep0;
+  } else if (reachUsed && !J.plain.g.abandoned) {
+    withoutReach = { route: J.plain.clean, keep: passed.pass || keep0 };
   }
   const { g, clean, mk } = fin;
   // ⚠ THE KNOT PRUNE KEEPS A RUN'S PASS POINT, NOT ITS ENDS (`pass`) - an end gives way and the
