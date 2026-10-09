@@ -3242,6 +3242,48 @@ class EnvMonitor:
 ENV = EnvMonitor()
 
 
+# THE CURRENT'S OWN PAGE (Andy, 2026-10-09: "add web page link to top bar for the page to the water current data
+# used in the model"). The reading is a BLEND (stream_fusion): NOAA's tidal-current PREDICTIONS at the stations
+# round the boat, and a gridded model away from them, weighted by distance to the nearest station. The page is the
+# source carrying MORE of the number: the heaviest-weighted prediction station, at the BIN the fusion read (a station
+# predicts at several depths and the page shows one), or the OFS's own page where the model carries more. A PacIOOS
+# window has no NOAA page, so it never gets one - the stations' page if they carry any of it, else none: no page is
+# better than a page that is not the data. Nothing is configured: the id comes off the reading, so the page follows
+# the boat the way the tide's and the weather's do (STATION_WINDOWS in the page re-points one tab).
+COOPS_CURRENT_PAGE_URL = "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=%s"
+OFS_PAGE_URL = "https://tidesandcurrents.noaa.gov/ofs/%s/%s.html"
+
+
+def current_page(snap, ofs):
+    """(url, what) for the source carrying a current reading, or (None, None) when there is none to show.
+
+    `snap` is CurrentsMonitor's reading: the fused one carries `stations` [(id, name, dist_m, share, bin)],
+    `w_stations` and `model` {label}; the OFS-alone one carries only `source`. `ofs` is the monitor's model id."""
+    snap = snap or {}
+    if not snap.get("ok"):
+        return None, None
+    used = [s for s in (snap.get("stations") or []) if len(s) >= 4 and str(s[0] or "").strip()]
+    w = snap.get("w_stations")
+    if w is None:                                   # the OFS-alone reading: the model's entirely
+        w = 1.0 if used else 0.0
+    label = str((snap.get("model") or {}).get("label") or snap.get("source") or "")
+    ofs = re.sub(r"[^a-z0-9]", "", str(ofs or "").lower())
+    model_page = bool(ofs) and label.lower().startswith(ofs) and (1.0 - w) > 0.005
+    if used and w > 0.005 and (w >= 0.5 or not model_page):
+        top = max(used, key=lambda s: s[3] or 0)
+        sid = re.sub(r"[^A-Za-z0-9]", "", str(top[0]))
+        b = top[4] if len(top) > 4 else None
+        b = str(b) if isinstance(b, int) or (isinstance(b, str) and b.isdigit()) else ""
+        if sid:
+            return (COOPS_CURRENT_PAGE_URL % (sid + ("_" + b if b else "")),
+                    "NOAA current predictions at %s (%s%s) - the stations carry %d%% of the reading"
+                    % (top[1] or sid, sid, ", bin " + b if b else "", round(100 * w)))
+    if model_page:
+        return (OFS_PAGE_URL % (ofs, ofs),
+                "the %s forecast model - it carries %d%% of the reading" % (ofs.upper(), round(100 * (1.0 - w))))
+    return None, None
+
+
 class CurrentsMonitor:
     """Surface CURRENT at the vessel's own position, from a NOAA Operational
     Forecast System (`currents.py`, vendored — see its header).
@@ -3398,9 +3440,10 @@ class CurrentsMonitor:
     def snapshot(self):
         with self._lock:
             out = dict(self._last)
-            at, err = self._sampled_at, self._error
+            at, err, ofs = self._sampled_at, self._error, self._ofs
         out["age_s"] = _age_s(at) if out.get("ok") else None      # since it was computed (review #13)
         out["monitor_error"] = err
+        out["page"], out["page_for"] = current_page(out, ofs)   # the top bar's Current window (2026-10-09)
         return out
 
     def _sample(self, lat, lon):

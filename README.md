@@ -408,6 +408,15 @@ only ever open a second tab beside the stale one. If the browser blocks the pop-
 the console says so and gives you the URL rather than leaving a pill that appears to do
 nothing.
 
+A **`⏏ Current`** pill (2026-10-09) does the same for the CURRENT, through the same one-tab
+mechanism. The current is a blend — NOAA's tidal-current *predictions* at the stations round
+the boat, and a gridded forecast model away from them — so the page is the source carrying
+more of the reading: the heaviest station's NOAA predictions page, at the depth bin the
+console read (`noaacurrents/predictions?id=DEB2102_21`), or the OFS model's own page
+(`ofs/dbofs/dbofs.html`) where the model carries more. Hover the pill to see which, and its
+share. A PacIOOS model has no NOAA page, so a reading from it alone offers no pill — and
+neither does no reading at all.
+
 Independently of any window, the console **prints which gauge the correction came from and
 what it is made of** whenever the station changes — that correction is applied to charted
 depths whether or not a browser is open at all.

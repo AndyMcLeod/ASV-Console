@@ -371,7 +371,9 @@ class StationPredictions:
 
 def stations_field(tables, lat, lon, t, reach_m=STATION_REACH_M, k=IDW_K):
     """The station layer at (lat, lon, t): inverse-distance-squared weighting of the nearest `k` stations within
-    `reach_m` whose tables cover `t`. Returns {u, v, near_m, used: [(id, name, dist_m, weight)]} or None."""
+    `reach_m` whose tables cover `t`. Returns {u, v, near_m, used: [(id, name, dist_m, weight, bin)]} or None.
+    The BIN is last (2026-10-09): a station predicts at several depths and its NOAA page shows one, so the console's
+    Current window needs the one this read - see asv_console.current_page."""
     cand = []
     for tab in tables or ():
         d = dist_m(lat, lon, tab.lat, tab.lon)
@@ -390,7 +392,7 @@ def stations_field(tables, lat, lon, t, reach_m=STATION_REACH_M, k=IDW_K):
     u = sum(wi * c[2][0] for wi, c in zip(w, cand)) / sw
     v = sum(wi * c[2][1] for wi, c in zip(w, cand)) / sw
     return {"u": u, "v": v, "near_m": cand[0][0],
-            "used": [(c[1].id, c[1].name, round(c[0]), round(wi / sw, 3)) for wi, c in zip(w, cand)]}
+            "used": [(c[1].id, c[1].name, round(c[0]), round(wi / sw, 3), c[1].bin) for wi, c in zip(w, cand)]}
 
 
 # --------------------------------------------------------------------------- #

@@ -155,6 +155,7 @@ late = SF.stations_field([A, B], 43.10, -70.80, T0 + 7200)
 check("6. a boat on a station takes that station (weight over 0.99); half way between two the vectors are averaged "
       "evenly; past STATION_REACH_M, or at a time no table covers, the layer is None - not a zero",
       lambda: on_a["used"][0][3] > 0.99 and abs(SF.speed_set(on_a["u"], on_a["v"])[0] - 2.0) < 0.02
+      and on_a["used"][0][4] == 1      # the BIN rides last - the Current window's page needs it (2026-10-09)
       and abs(mid["used"][0][3] - 0.5) < 0.01 and far is None and late is None,
       lambda: "on A %.2f kn w %.3f; mid weights %s; far %s; late %s" % (
           SF.speed_set(on_a["u"], on_a["v"])[0], on_a["used"][0][3], [u[3] for u in mid["used"]], far, late))

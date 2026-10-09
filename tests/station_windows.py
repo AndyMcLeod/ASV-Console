@@ -457,5 +457,60 @@ check("28. a blocked pop-up is REPORTED with the URL, not swallowed",
                                                               HTML.index("function openStationWindow") + 900],
       "the pill would otherwise look broken")
 
+# ── 29-34. THE CURRENT WINDOW (Andy, 2026-10-09: "add web page link to top bar for the page to the water current
+# data used in the model") ─────────────────────────────────────────────────────────────────────────────────────────
+# The current is a BLEND (stream_fusion): NOAA's current PREDICTIONS at the stations round the boat, and a gridded model
+# away from them. The page is the source carrying MORE of the number - the heaviest station at the bin it read, or the
+# OFS's page - and a PacIOOS window, which has no NOAA page, never gets one. The URLs were opened, not assumed:
+# predictions?id=DEB2102_21 resolved to 38.8199 N 75.0528 W, and /ofs/X/X.html titled itself for dbofs, wcofs, gomofs,
+# cbofs, ngofs2, sfbofs, tbofs, leofs, nyofs, ciofs and sscofs.
+STNS = [("DEB2101", "Upstream", 900, 0.2, 13), ("DEB2102", "Brandywine Shoal", 500, 0.8, 21)]
+FUSED = {"ok": True, "source": "NOAA predictions + dbofs", "w_stations": 0.96, "stations": STNS,
+         "model": {"label": "dbofs", "gain": 1.0}}
+u29, what29 = C.current_page(FUSED, "dbofs")
+check("29. where the stations carry the reading, the page is the HEAVIEST station's NOAA predictions, at the bin it "
+      "read - and the tooltip says which and how much",
+      lambda: u29 == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=DEB2102_21"
+      and "Brandywine Shoal" in what29 and "bin 21" in what29 and "96%" in what29,
+      lambda: "%s | %s" % (u29, what29))
+u30, what30 = C.current_page(dict(FUSED, w_stations=0.2), "dbofs")
+u30b, _ = C.current_page({"ok": True, "source": "dbofs", "tag": "x", "speed_kn": 1.0}, "dbofs")
+check("30. where the MODEL carries more (80%), or is the reading alone, the page is the OFS's own",
+      lambda: u30 == "https://tidesandcurrents.noaa.gov/ofs/dbofs/dbofs.html" and "DBOFS" in what30
+      and "80%" in what30 and u30b == u30,
+      lambda: "%s | %s | alone %s" % (u30, what30, u30b))
+pac = dict(FUSED, w_stations=0.2, model={"label": "PacIOOS Oahu"})
+u31, _ = C.current_page(pac, "dbofs")
+u31b, w31b = C.current_page(dict(pac, w_stations=0.0, stations=[]), "dbofs")
+check("31. a PacIOOS model has no NOAA page: the stations' page if they carry any of the reading, else NONE - never "
+      "the OFS's page for water the OFS did not read",
+      lambda: u31 == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=DEB2102_21"
+      and u31b is None and w31b is None,
+      lambda: "%s | alone %s" % (u31, u31b))
+check("32. no reading -> no page (a refusal, an empty snapshot, None); a station with no bin gets its id alone; an id "
+      "or model name cannot carry anything but letters and digits into the URL",
+      lambda: C.current_page({"ok": False, "source": "dbofs", "note": "no cycle"}, "dbofs") == (None, None)
+      and C.current_page({}, "dbofs") == (None, None) and C.current_page(None, "dbofs") == (None, None)
+      and C.current_page(dict(FUSED, stations=[("ACT4101", "X", 10, 1.0)]), "dbofs")[0]
+      == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=ACT4101"
+      and C.current_page(dict(FUSED, stations=[("A/../b?c=1", "X", 10, 1.0, "2&x")]), "dbofs")[0]
+      == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=Abc1"
+      and C.current_page({"ok": True, "source": "dbofs"}, "DB/OFS")[0]
+      == "https://tidesandcurrents.noaa.gov/ofs/dbofs/dbofs.html")
+_m = C.CurrentsMonitor("wcofs")
+_m._last = {"ok": True, "source": "wcofs", "speed_kn": 0.3, "set_deg": 120.0}
+_snap = _m.snapshot()
+check("33. the monitor's snapshot - what rides the state frame as `current` - publishes the page and what it is",
+      lambda: _snap.get("page") == "https://tidesandcurrents.noaa.gov/ofs/wcofs/wcofs.html"
+      and "WCOFS" in (_snap.get("page_for") or "") and '"current": CURRENTS.snapshot()' in SRC,
+      lambda: "%s | %s" % (_snap.get("page"), _snap.get("page_for")))
+check("34. the page offers it as a THIRD entry in the one registry - its own pill on the top bar, wired, read from "
+      "S.current, its tooltip naming the source - and with no --no-current-window flag it is on",
+      lambda: 'current: {name: "asvCurrentWindow", pill: "#curWin"' in HTML
+      and "src: () => (S.current || {})" in HTML and 'id="curWin"' in HTML
+      and '$("#curWin").onclick  = ()=> openStationWindow("current");' in HTML
+      and "on[k] !== false" in HTML and "w.page_for ||" in HTML,
+      "one mechanism re-points all three tabs; a second one would drift")
+
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

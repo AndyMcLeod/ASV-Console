@@ -408,6 +408,7 @@
     <div class="pill" id="ctlReopen" title="Reopen the controls window (it closed or crashed — the toolbar and panels moved back to this window)" style="cursor:pointer;color:var(--ink-dim);">⏏ Controls</div>
     <div class="pill" id="tideWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Tide</div>
     <div class="pill" id="wxWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Weather</div>
+    <div class="pill" id="curWin" style="display:none;cursor:pointer;color:var(--ink-dim);">⏏ Current</div>
     <div class="spacer"></div>
     <div class="pill"><span class="k">POS</span><b id="p_pos">no fix</b></div>
     <div class="pill"><span class="k">SOG</span><b id="p_sog">--</b></div>
@@ -14058,6 +14059,12 @@ const STATION_WINDOWS = {
             src: () => (S.water || {}), what: "water-level station"},
   weather: {name: "asvWeatherWindow", pill: "#wxWin",   label: "Weather",
             src: () => (S.env || {}),   what: "weather buoy"},
+  // THE CURRENT (Andy, 2026-10-09: "add web page link to top bar for the page to the water current data used in the
+  // model"). The server names the page off the reading (asv_console.current_page): the heaviest NOAA current-
+  // prediction station at the bin it read, or the OFS model's page where the model carries more - and `page_for`
+  // says which, in the pill's tooltip. No page (no reading, or a PacIOOS window alone) offers no pill.
+  current: {name: "asvCurrentWindow", pill: "#curWin",  label: "Current",
+            src: () => (S.current || {}), what: "current source"},
 };
 function stationWinAlive(k){
   const w = STATION_WINDOWS[k].w;
@@ -14090,12 +14097,13 @@ function updateStationWinPills(){
   for(const k of Object.keys(STATION_WINDOWS)){
     const cfg = STATION_WINDOWS[k], el = $(cfg.pill);
     if(!el) continue;
-    const offer = !!(on[k] && cfg.want && !stationWinAlive(k));
+    // `!== false`: the current has no --no-*-window flag, so a kind the server does not publish is on (2026-10-09)
+    const offer = !!(on[k] !== false && cfg.want && !stationWinAlive(k));
     el.style.display = offer ? "" : "none";
     if(offer){
       const w = cfg.src();
       el.title = "Open the " + cfg.label.toLowerCase() + " window for "
-        + (w.name || w.station || "the nearest " + cfg.what)
+        + (w.page_for || w.name || w.station || "the nearest " + cfg.what)
         // ⚠ THROUGH fmtDist, WHICH THE PILL DRIVES. The pill's tooltip names
         // tide-station distance in its own scope; these printed raw km whatever it said.
         + (w.dist_km != null ? " (" + fmtDist(w.dist_km * 1000, 1) + " off)" : "")
@@ -14119,6 +14127,7 @@ function openStationWindow(k){
 }
 $("#tideWin").onclick = ()=> openStationWindow("tide");
 $("#wxWin").onclick   = ()=> openStationWindow("weather");
+$("#curWin").onclick  = ()=> openStationWindow("current");
 
 // --- vessel-status card drag/persist ------------------------------------- //
 // --- RESIZABLE CARDS (chart window) --------------------------------------- //
