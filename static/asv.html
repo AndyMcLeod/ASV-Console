@@ -1306,9 +1306,21 @@ function clearTrack(){ track=[]; clearTimeout(trackSaveTimer); trackSaveTimer=nu
 // and the live id on every frame after that. One comparison serves both - a page refresh
 // into a rebooted server, and a reboot under a page that never reloaded.
 function checkBoot(id){
-  const prev = bootChecked ? sessionBootId : savedBootId;
+  const prev = bootChecked ? sessionBootId : savedBootId, live = bootChecked;
   sessionBootId = id || null; bootChecked = true;
-  if(prev && sessionBootId && prev !== sessionBootId){ clearTrack(); render(); } }
+  if(prev && sessionBootId && prev !== sessionBootId){
+    clearTrack();
+    // ⚠ AND THE PLAN THIS PAGE DREW UNDER THE LAST CONSOLE GOES WITH IT (Andy, 2026-10-09: "On Mission Status Card:
+    // The Intent section retains information from the previous session. Clear these data when starting a new
+    // mission"). A console restarted under an open page comes back with nothing running, and the route, its unsafe
+    // legs and the Intent card's reasoning this page still held belonged to the session that ended - shown until the
+    // first command of the new one. Given up through the one door, which says why on the card. Only by a page that saw
+    // the console BEFORE this frame (`live`): one loaded fresh into a rebooted server has drawn nothing, and saying it
+    // cleared something would be false.
+    if(live) giveUpRoute("the console restarted, so this is a new session");
+    render();
+  }
+}
 let track = loadTrack();                      // restore the trail from the last session
 let asv = null;                              // {lat,lon,hdg}
 // The trail's pending write goes out when the page goes away or out of sight - a reload, a closed tab, a sleeping one.

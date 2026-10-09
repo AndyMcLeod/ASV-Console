@@ -132,12 +132,14 @@ function makeWorld(stored) {
   const body = [
     "let asv = null, renders = 0;",
     "function render(){ renders++; }",
+    // (checkBoot gives up the old session's plan picture through the page's one door, 2026-10-09 - recorded here)
+    "const gaveUp = []; function giveUpRoute(why){ gaveUp.push(why); }",
     grab("lsGet"), grab("lsSet"), grab("lsDel"),
     "const MAX_TRACK = " + MAX_TRACK + ";",
     TRACK_BLOCK,
     "function __push(a){ asv = a;\n" + PUSH + "\n}",
     "return { checkBoot, clearTrack, saveTrack, push: __push,",
-    "         get track(){ return track; }, get renders(){ return renders; } };",
+    "         get track(){ return track; }, get renders(){ return renders; }, get gaveUp(){ return gaveUp.slice(); } };",
   ].join("\n");
   const w = new Function("localStorage", "distTo", body)(store, G.distTo);
   w.store = store;
@@ -278,6 +280,27 @@ check("14. dropping the trail redraws the chart - the line goes at once",
       () => W5.renders > r0,
       () => "renders " + r0 + " -> " + W5.renders);
 
+// 15. AND THE PLAN THE PAGE DREW UNDER THE LAST CONSOLE GOES WITH IT (Andy, 2026-10-09: "On Mission Status Card: The
+//     Intent section retains information from the previous session. Clear these data when starting a new mission").
+//     A console restarted under an OPEN page gives up the route, its unsafe legs and the Intent card's reasoning
+//     through the page's one door (giveUpRoute) - once, saying why. A page loaded fresh into a rebooted server has
+//     drawn nothing and gives up nothing (it would say it cleared something it never held); nor does a frame of the
+//     same boot.
+const Wlive = makeWorld();
+Wlive.checkBoot("boot-A"); Wlive.checkBoot("boot-A");
+const sameBoot = Wlive.gaveUp.length;
+Wlive.checkBoot("boot-B");
+const afterRestart = Wlive.gaveUp;
+const Wfresh = makeWorld({ bootId: "boot-A", track: OLD_TRAIL });
+Wfresh.checkBoot("boot-B");
+check("15. a console restarted under an OPEN page gives up the plan it drew there - once, saying why - and a page loaded "
+      + "fresh into a rebooted server, or a frame of the same boot, gives up nothing",
+      () => sameBoot === 0 && afterRestart.length === 1 && /console restarted/.test(afterRestart[0])
+            && Wfresh.gaveUp.length === 0 && Wfresh.track.length === 0,
+      () => "same boot: " + sameBoot + "; after the restart: " + JSON.stringify(afterRestart)
+            + "; a fresh page into a rebooted server: " + JSON.stringify(Wfresh.gaveUp)
+            + " (its stored trail dropped: " + (Wfresh.track.length === 0) + ")");
+
 // Check 13 has to outlive saveTrack's throttle (TRACK_SAVE_MS, read off the page - it was a
 // literal 900 ms here while the page waited 800, and review #21 made the page wait 3000: a
 // fixed wait shorter than the throttle passes whether or not the write was cancelled), so it
@@ -309,6 +332,8 @@ check("14. dropping the trail redraws the chart - the line goes at once",
 //   drop clearTrack's clearTimeout                     -> 13
 //   move doSpawn's clearTrack back above the ok gate   -> 10
 //   put `track = []` back in resetForNewArea           -> 11
+//   (2026-10-09) drop checkBoot's giveUpRoute          -> 15
+//   (2026-10-09) give up on a fresh page's first frame too -> 15
 //
 // 10 mutations, 10 killed, none survived and none crashed the suite.
 //

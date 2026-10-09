@@ -135,6 +135,7 @@ function makeWorld(store, clock) {
   const body = [
     "\"use strict\";",
     "let renders = 0;",
+    "function giveUpRoute(){}",   // (checkBoot gives up the old session's plan picture, 2026-10-09 - spawn_trail 15 judges it)
     "function render(){ renders++; }",
     grab("lsGet"), grab("lsSet"), grab("lsDel"),
     "const MAX_TRACK = " + MAX_TRACK + ";",

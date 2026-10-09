@@ -173,7 +173,7 @@ the console stays ready; it is the file the rule is about. A real vessel's recor
 pauses. `/api/state` carries `log_quiet`; `--log-quiet-s` shortens the wait for a harness
 (`tests/log_quiet.py`).
 
-**Intent — what, why, and what next.** The bottom section of the **Mission Status** card,
+**Intent — what, why, and what next.** The section under Run on the **Mission Status** card,
 answering the question a moving track raises: *why is it doing that?* Three parts, updated
 every telemetry frame. It was its own draggable pop-out behind an `INTENT` chip until
 2026-09-05; the chip and the pop-out are gone, and it sits under the Run section on the
@@ -239,7 +239,13 @@ card is resizable and remembers its size):
 The reasoning is recorded *with* the route and dropped with it — never re-derived, since
 a re-derivation would describe the console's current state rather than the route being
 flown. A plan committed before the page was loaded therefore says so outright rather than
-showing an empty section.
+showing an empty section. And it goes with the SESSION: a console restarted under a page
+that stayed open comes back with nothing running, so the page gives up the route, its unsafe
+legs and this reasoning, and the section says so (`Cleared with the route — the console
+restarted, so this is a new session`). Until 2026-10-09 the last session's intent stood until
+the first command of the new one. The **History** section under it is NOT cleared: it is the
+last 20 things the console did, each with its time, kept in the browser across a reload and
+a restart.
 
 **History — last 20.** Below Intent, the Mission Status card lists what the console **did**,
 newest first, each line with its time: every command it sent with the answer it got — the
