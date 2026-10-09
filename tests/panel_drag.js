@@ -582,21 +582,23 @@ check("26c no call site hard-codes a display any more - every one derives it",
   // THIS RUNS roseCentre RATHER THAN PATTERN-MATCHING IT. The first version asserted the
   // literal `Math.max(ROSE_R` and so failed the moment the clamp was IMPROVED - widened
   // to the rose's true drawn extent, which reaches past R (cardinal letters at 1.20 R,
-  // the wind and current readings hanging to 1.70 R below). A check that pins the shape
+  // the wind and current readings hanging below them - ROSE_READ, to 2.06 R and 0.20 R tall
+  // since 2026-10-08, moved down off the "S"). A check that pins the shape
   // of an expression fails on correct changes and passes on wrong ones with the same
   // shape; the property is what matters, so drive the function and look at the answer.
   {
     const VW = 900, VH = 700;
     // eslint-disable-next-line no-eval
     const centreAt = eval(
-      "(function(px, py){ " + grabDecl("ROSE_R") + "\n" +
+      "(function(px, py){ " + grabDecl("ROSE_R") + "\n" + grabDecl("ROSE_READ") + "\n" +
       "  var rosePos = {x:px, y:py};\n" +
       "  var viewSize = function(){ return {w:" + VW + ", h:" + VH + "}; };\n" +
       grab("roseCentre") + "\n  return roseCentre(); })");
     const farOut = centreAt(99999, 99999), farNeg = centreAt(-99999, -99999);
     // The whole rose must land inside the viewport, readings included - not just its hub.
     const R = parseFloat(grabDecl("ROSE_R").match(/=\s*([\d.]+)/)[1]);
-    const below = R * 1.70, side = R * 1.20;
+    const READ = JSON.parse(grabDecl("ROSE_READ").match(/=\s*(\[[^\]]*\])/)[1]);
+    const below = R * (READ[READ.length - 1] + 0.20), side = R * 1.20;   // to the foot of the current's line, 0.20 R tall
     const inside = (p) => p.x - side >= -1 && p.x + side <= VW + 1
                        && p.y - side >= -1 && p.y + below <= VH + 1;
     check("27d. the position is clamped inside the viewport every time it is read",

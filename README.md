@@ -292,9 +292,11 @@ and refused outright past three cycles). The model fetch runs on a background th
 a multi-megabyte download never sits on a request. `GET /api/currents` (`?force=1` to
 kick a refresh) serves the same reading headlessly. The **chart's wind rose carries it
 too**: a single-headed **sea-blue arrow** riding the ring, pointing where the water goes,
-with `set N.NN kn DDD°` beneath the wind's reading. It is a different *shape* from the
+with `current N.NN kn DDD°` beneath the wind's reading - the **Current** row's reading, labeled
+so (it said `set`, and read as a second, disagreeing **Set / crab** row: that one is the whole set,
+the wind's and the sea's leeway in it). It is a different *shape* from the
 wind needle on purpose — wind is named by where it blows **from**, a current's set is
-where it **goes**, and two needles differing only in colour is exactly how one gets read
+where it **goes**, and two needles differing only in color is exactly how one gets read
 as the other. A projected (estimated) current draws **hollow** and keeps its `~`.
 
 ## Run

@@ -6508,6 +6508,11 @@ function render(){
 // meteorological convention the readouts already use), speed in knots at the center.
 const ROSE_KEY = "asv_windrose_v1";
 const ROSE_R = 92;                                    // the ONE dimension; everything derives
+// WHERE THE READINGS HANG BELOW THE HUB, in R: the wind's speed, its direction, the current's line (each the TOP of
+// its text). Below the "S" (Andy, 2026-10-08: "The south 'S' in the compass rose is being covered by the wind speed
+// and set notice. Move that down"): the letter is centered at 1.20 R, 0.24 R high, and the speed hung from 1.02 R.
+// roseCentre's clamp reads the same table, so the drawn extent and the clamp cannot part.
+const ROSE_READ = [1.40, 1.76, 2.06];
 // Ring + lettering ink (Andy, 2026-08-10: "make the rings and lettering black"). Kept as
 // named constants so the two are changed together and neither drifts into a literal.
 const ROSE_INK = "rgba(8,14,20,0.92)";                // rings, ticks, cardinal letters
@@ -6519,10 +6524,10 @@ let roseCur = null;                                   // last `current` block (N
 function roseCentre(){
   const {w,h} = viewSize();
   // CLAMP THE DRAWN EXTENT, NOT THE RADIUS. The rose paints well outside R: the cardinal
-  // letters sit at 1.20 R and the readings hang below at 1.02 / 1.38 / 1.70 R. Clamping to
-  // R alone let the wind's direction line - and then the current's - slide under the
-  // bottom edge while the ring itself still looked correctly placed.
-  const below = ROSE_R*1.70 + ROSE_R*0.22, side = ROSE_R*1.34;
+  // letters sit at 1.20 R and the readings hang below them (ROSE_READ, the last 0.22 R tall).
+  // Clamping to R alone let the wind's direction line - and then the current's - slide under
+  // the bottom edge while the ring itself still looked correctly placed.
+  const below = ROSE_R*ROSE_READ[2] + ROSE_R*0.22, side = ROSE_R*1.34;
   const p = rosePos || {x: w - (side + 14), y: h - (below + 16)};      // default: clear of the scale bar
   return {x: Math.max(side, Math.min(w - side, p.x)),
           y: Math.max(ROSE_R*1.30, Math.min(h - below, p.y))};
@@ -6732,19 +6737,26 @@ function drawWindRose(){
   ctx.fillStyle = live ? ROSE_INK : "rgba(60,72,84,0.75)";
   ctx.textAlign = "center"; ctx.textBaseline = "top";
   ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.075;
-  ctx.strokeText(txt, 0, R*1.02); ctx.fillText(txt, 0, R*1.02);
+  ctx.strokeText(txt, 0, R*ROSE_READ[0]); ctx.fillText(txt, 0, R*ROSE_READ[0]);
   if(sub){ ctx.font = "600 " + (R*0.22).toFixed(1) + "px Consolas,monospace";
-    ctx.strokeText(sub, 0, R*1.38); ctx.fillText(sub, 0, R*1.38); }
+    ctx.strokeText(sub, 0, R*ROSE_READ[1]); ctx.fillText(sub, 0, R*ROSE_READ[1]); }
   // The current's own line, BELOW the wind's and LABELED. Two speeds in knots stacked
-  // unlabelled would be a guessing game; "set" names both the quantity and its
-  // convention. A projected value keeps the same `~` it carries in the vessel card.
+  // unlabelled would be a guessing game. A projected value keeps the same `~` it carries
+  // in the vessel card.
+  //   ⚠ LABELED "current", NOT "set" (Andy, 2026-10-08: "set data from the mission card and
+  // the compass rose differ"). This is the CURRENT row's reading - the stream forecast at her
+  // position, recomputed once a minute - and the card's SET row is the WHOLE set the vessel
+  // reports: that stream at her own position every tick plus the wind's and the sea's
+  // leeway. In his evening session the two ran up to 0.6 kn and 32° apart in 6-9 kn of
+  // westerly; labeled "set" here, the rose read as a second, disagreeing SET row. The arrow
+  // still points where the water goes.
   if(cs != null && cset != null){
-    const ct = "set " + cs.toFixed(2) + " kn " + String(Math.round(cset)).padStart(3,"0") + "°"
+    const ct = "current " + cs.toFixed(2) + " kn " + String(Math.round(cset)).padStart(3,"0") + "°"
              + (cproj ? " ~" : "");
     ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
     ctx.fillStyle = cproj ? "rgba(120,96,20,0.95)" : "rgba(12,74,120,0.95)";
     ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
-    ctx.strokeText(ct, 0, R*1.70); ctx.fillText(ct, 0, R*1.70);
+    ctx.strokeText(ct, 0, R*ROSE_READ[2]); ctx.fillText(ct, 0, R*ROSE_READ[2]);
   }
   ctx.restore();
 }
