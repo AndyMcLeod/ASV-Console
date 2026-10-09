@@ -379,7 +379,7 @@ def validate_port(p, source="port"):
     # Delaware, so a console pointed at New Castle NH under the dbofs default asked for a
     # box the model does not contain and logged a failure every poll (caught by
     # data_routes check 13 the first time this shipped). The model belongs to the PLACE.
-    # Blank = fall back to whatever --currents-ofs says.
+    # Blank = the model named by --currents-ofs, or NONE - never the last port's (apply_port, 2026-10-09).
     return {"id": (p.get("id") or _port_id(name)), "name": name,
             "lat": lat, "lon": lon, "ofs": (p.get("ofs") or "").strip().lower(),
             "note": (p.get("note") or "").strip()}
@@ -587,6 +587,10 @@ def active_port():
     return None
 
 
+#: The model named by --currents-ofs: the fallback for a port that names none ("" = no model). Set by main().
+CURRENTS_CLI_OFS = ""
+
+
 def apply_port():
     """Point the sim spawn at the active port. Called after apply_vessel (which sets
     SPAWN from the hull file) so the PORT WINS when one is selected - the vessel's own
@@ -595,10 +599,14 @@ def apply_port():
     p = active_port()
     if p:
         SPAWN_LAT, SPAWN_LON = p["lat"], p["lon"]
-        # ... and the current forecast follows the base to its own regional model.
-        # CURRENTS may not exist yet, given import ordering.
-        if p.get("ofs") and "CURRENTS" in globals():
-            CURRENTS.set_ofs(p["ofs"])
+        # ... and the current forecast follows the base to its own regional model - OR TO NONE (Andy, 2026-10-09:
+        # "fix the port with no model issue"). A blank "ofs" used to be skipped here, so the console kept whichever
+        # model the LAST port had named: Portland, Maine read gomofs arriving from New Castle and dbofs arriving from
+        # Lewes, and the current at a port depended on the order the ports were visited. Now a port that names no
+        # model gets the one named on the command line (--currents-ofs), else none: NOAA's station predictions and
+        # PacIOOS carry the stream, and the card says no model is named. CURRENTS may not exist yet (import order).
+        if "CURRENTS" in globals():
+            CURRENTS.set_ofs(p.get("ofs") or CURRENTS_CLI_OFS)
     return p
 
 ARRIVAL_DEFAULT_M = 2.0
@@ -3284,6 +3292,10 @@ def current_page(snap, ofs):
     return None, None
 
 
+# What a reading says when no forecast model is named - by the port's "ofs" or by --currents-ofs (2026-10-09).
+NO_OFS_NOTE = "no forecast model named for this port"
+
+
 class CurrentsMonitor:
     """Surface CURRENT at the vessel's own position, from a NOAA Operational
     Forecast System (`currents.py`, vendored — see its header).
@@ -3328,7 +3340,7 @@ class CurrentsMonitor:
     REFETCH_KM = 15.0                    # a move this far re-scopes the fetch bbox
     BBOX_DEG = 0.35                      # ~39 km half-box around the boat
 
-    def __init__(self, ofs="dbofs"):
+    def __init__(self, ofs=""):                # "" = no model until a port or --currents-ofs names one (2026-10-09)
         self._lock = threading.Lock()
         self._pos = None
         self._ofs = ofs
@@ -3425,15 +3437,17 @@ class CurrentsMonitor:
         return (f["speed_kn"], f["set_deg"]) if f else None
     def set_ofs(self, ofs):
         """Point at another NOAA model - an operating port carries its own (see
-        validate_port). Drops the cached cycle: it belongs to the old grid."""
+        validate_port) - or at NONE: a blank id is no model (2026-10-09; it used to be
+        ignored, which kept the last port's). Drops the cached cycle: it belongs to the old grid."""
         ofs = (ofs or "").strip().lower()
-        if not ofs or ofs == self._ofs:
+        if ofs == self._ofs:
             return
         with self._lock:
             self._ofs = ofs
             self._cur = None
             self._tag = None
-            self._last = {"ok": False, "source": ofs, "note": "switching to %s" % ofs}
+            self._last = ({"ok": False, "source": ofs, "note": "switching to %s" % ofs} if ofs
+                          else {"ok": False, "source": "none", "note": NO_OFS_NOTE})
         self._force.set()
 
 
@@ -3477,11 +3491,12 @@ class CurrentsMonitor:
                 why.append(status["note"])
             if not ofs.get("ok") and ofs.get("note"):
                 why.append(ofs["note"])
-            return {"ok": False, "source": label or self._ofs, "note": "; ".join(why)}
+            return {"ok": False, "source": label or self._ofs or "none", "note": "; ".join(why)}
         out = {"ok": True, "source": f["source"], "speed_kn": round(f["speed_kn"], 2), "set_deg": round(f["set_deg"], 1),
                "projected_h": 0.0, "w_stations": f["w_stations"], "stations": f["stations"],
                "near_station_m": f["near_station_m"], "model": f["model"], "sources": status}
-        if ofs.get("ok") and f["model"] is not None and f["w_stations"] < 0.995 and (label or "").startswith(self._ofs):
+        if (ofs.get("ok") and self._ofs and f["model"] is not None and f["w_stations"] < 0.995
+                and (label or "").startswith(self._ofs)):
             for k in ("tag", "cycle_start_utc", "cycle_end_utc", "projected_h", "note"):
                 if ofs.get(k) is not None:
                     out[k] = ofs[k]
@@ -3489,6 +3504,8 @@ class CurrentsMonitor:
 
     def _ofs_sample(self, lat, lon):
         """The OFS reading at (lat, lon) NOW, or an honest refusal. Never raises."""
+        if not self._ofs:                    # no model named (2026-10-09): nothing to read, and nothing was fetched
+            return {"ok": False, "source": "none", "note": NO_OFS_NOTE}
         cur = self._cur
         if cur is None:
             return {"ok": False, "source": self._ofs, "note": "no cycle cached yet"}
@@ -3518,6 +3535,8 @@ class CurrentsMonitor:
     def _ensure_cycle(self, lat, lon):
         """Cache a cycle covering NOW, scoped to a box around the boat. Best effort: returns why no
         cycle could be had, or None."""
+        if not self._ofs:                    # no model named: no NOAA request at all (2026-10-09)
+            return NO_OFS_NOTE
         now = datetime.now(timezone.utc)
         bbox = (lat - self.BBOX_DEG, lon - self.BBOX_DEG,
                 lat + self.BBOX_DEG, lon + self.BBOX_DEG)
@@ -3590,6 +3609,8 @@ class CurrentsMonitor:
             # On a refusal it replaces the generic "no cycle cached yet" wherever that stands in the sentence.
             if res.get("ok"):
                 res = dict(res, model_note=self._no_cycle_why)
+            elif self._no_cycle_why in (res.get("note") or ""):
+                pass                         # the sample already says why - and keeps the stations' reason beside it
             elif "no cycle cached yet" in (res.get("note") or ""):
                 res = dict(res, note=res["note"].replace("no cycle cached yet", self._no_cycle_why))
             else:
@@ -7900,9 +7921,10 @@ def main():
                          "new_castle_nh or lewes_de). Named --base, not --port, because "
                          "--port is already the HTTP port. Omitted = whatever ports.json "
                          "has as active")
-    ap.add_argument("--currents-ofs", default="dbofs", metavar="MODEL",
-                    help="NOAA Operational Forecast System for the surface-current readout "
-                         "(default dbofs = Delaware Bay). One model only: the console asks "
+    ap.add_argument("--currents-ofs", default=None, metavar="MODEL",
+                    help="NOAA Operational Forecast System for the surface current where the "
+                         "active port names none in ports.json (default: none - the NOAA "
+                         "station predictions and PacIOOS alone). One model only: the console asks "
                          "for the current at the VESSEL'S position, not along a line that "
                          "might cross a model boundary. cbofs/ngofs2/sfbofs/... for a hull "
                          "working elsewhere")
@@ -8020,7 +8042,11 @@ def main():
     # default - so a console started at New Castle NH asked the Delaware model for a
     # Gulf of Maine position. Set the fallback first, then let the active port have the
     # last word. (Boot ORDER again, twice in one feature.)
-    CURRENTS._ofs = (args.currents_ofs or "dbofs").strip().lower() or "dbofs"
+    # ⚠ AND NO IMPLICIT dbofs (2026-10-09): the flag defaulted to the Delaware model, so a port that named none -
+    # Portland, Honolulu, Vladivostok - asked dbofs for water it does not have. Unset now means no model.
+    global CURRENTS_CLI_OFS
+    CURRENTS_CLI_OFS = (args.currents_ofs or "").strip().lower()
+    CURRENTS._ofs = CURRENTS_CLI_OFS
     if args.no_stream_predictions:                       # before any fix reaches the monitor: nothing is fetched
         CURRENTS.disable_sources()
     apply_port()

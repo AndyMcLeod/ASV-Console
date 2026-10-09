@@ -492,6 +492,80 @@ check("18. a console given --no-stream-predictions reads the OFS alone (the stat
       and abs(before4[0] - 3.0) < 0.05 and abs(after4[0] - 1.0) < 0.05 and abs(after4[1] - 0.0) < 1,
       lambda: "args %s; field before %s, after %s" % (ConsoleState().args(), before4, after4))
 
+# ── 19. A PORT THAT NAMES NO MODEL GETS NONE (Andy, 2026-10-09: "fix the port with no model issue") ──────────────────
+# A blank "ofs" was skipped by apply_port and ignored by set_ofs, so the console kept the LAST port's model: Portland read
+# gomofs arriving from New Castle and dbofs arriving from Lewes. Asked, he chose "No model": blank is none, or the model
+# named by --currents-ofs, and the reading says so. NOAA's model server is never asked for a model nobody named.
+fetched = []
+_real_ecc = C.currents.ensure_cycle_covering
+C.currents.ensure_cycle_covering = lambda *a, **k: fetched.append(k.get("ofs")) or (None, False)
+try:
+    mon5 = C.CurrentsMonitor.__new__(C.CurrentsMonitor)
+    mon5._lock, mon5._force = threading.Lock(), threading.Event()
+    mon5._ofs, mon5._tag, mon5._cur, mon5._last = "gomofs", "gomofs_t00z", _Cur(), {}
+    mon5._no_cycle_why, mon5._sampled_at, mon5._error = None, None, None
+    mon5._sources = SF.StreamSources(os.path.join(TMP, "mon5"), fetch=dead_fetch, start=False)
+    mon5._sources.stations._tables = (table("FTP", 43.0712, -70.7098, 300.0, 120.0, [NOWT - 3600, NOWT + 3600], [1.0, 1.0],
+                                            name="Fort Point"),)
+    mon5.set_ofs("")
+    after_set = (mon5._ofs, mon5._cur, dict(mon5._last))
+    mon5._pass((43.0712, -70.7098), True)            # on a station, looking for a cycle
+    on_st = dict(mon5._last)
+    mon5._pass((43.20, -70.50), True)                # no station in reach
+    off_st = dict(mon5._last)
+    field_off = mon5.field_at(43.20, -70.50)
+finally:
+    C.currents.ensure_cycle_covering = _real_ecc
+page_on = C.current_page(on_st, mon5._ofs)
+check("19. a blank model is NO model: set_ofs('') drops the cycle and says so; looking for one asks NOAA for nothing; on a "
+      "station the reading is the station's, its model_note saying no model is named; off them it refuses with BOTH reasons, "
+      "the simulator gets no stream there, and the Current pill offers the station's page, never an OFS page",
+      lambda: after_set[0] == "" and after_set[1] is None and after_set[2].get("note") == C.NO_OFS_NOTE
+      and fetched == [] and on_st.get("ok") and on_st.get("model_note") == C.NO_OFS_NOTE
+      and off_st.get("ok") is False and "no NOAA current-prediction station" in off_st.get("note", "")
+      and C.NO_OFS_NOTE in off_st.get("note", "") and off_st.get("source") == "none" and field_off is None
+      and (page_on[0] or "").startswith("https://tidesandcurrents.noaa.gov/noaacurrents/"),
+      lambda: "after set %r; fetched %s; on station ok %s model_note %r; off %r; field %s; page %s" % (
+          after_set[0], fetched, on_st.get("ok"), on_st.get("model_note"), off_st.get("note"), field_off, page_on[0]))
+
+
+class _Rec:
+    def __init__(self):
+        self.got = []
+
+    def set_ofs(self, ofs):
+        self.got.append(ofs)
+
+
+_saved = (C.PORTS, C.CURRENTS, C.CURRENTS_CLI_OFS, C.SPAWN_LAT, C.SPAWN_LON)
+_rec = _Rec()
+seq = []
+try:
+    C.CURRENTS = _rec
+    C.PORTS = {"active": None, "ports": [
+        C.validate_port({"id": "nc", "name": "New Castle", "lat": 43.07, "lon": -70.71, "ofs": "gomofs"}, "t"),
+        C.validate_port({"id": "lw", "name": "Lewes", "lat": 38.78, "lon": -75.12, "ofs": "dbofs"}, "t"),
+        C.validate_port({"id": "pm", "name": "Portland", "lat": 43.65, "lon": -70.25}, "t")]}
+    for cli in ("", "cbofs"):
+        C.CURRENTS_CLI_OFS = cli
+        for pid in ("nc", "pm", "lw", "pm"):
+            C.PORTS["active"] = pid
+            C.apply_port()
+        seq.append(list(_rec.got))
+        _rec.got.clear()
+finally:
+    C.PORTS, C.CURRENTS, C.CURRENTS_CLI_OFS, C.SPAWN_LAT, C.SPAWN_LON = _saved
+check("19b. a port that names no model gets the SAME answer whichever port came before it - none, or the --currents-ofs "
+      "model - never the last port's (Portland after New Castle and after Lewes)",
+      lambda: seq == [["gomofs", "", "dbofs", ""], ["gomofs", "cbofs", "dbofs", "cbofs"]],
+      lambda: "set_ofs calls: no CLI model %s; --currents-ofs cbofs %s" % (seq[0] if seq else None, seq[1:]))
+i_cli = SRC.find('CURRENTS_CLI_OFS = (args.currents_ofs or "").strip().lower()')
+check("19c. no implicit dbofs: --currents-ofs defaults to none, and main sets that fallback before the port has its say",
+      lambda: re.search(r'add_argument\("--currents-ofs", default=None', SRC) is not None and i_cli > 0
+      and "CURRENTS._ofs = CURRENTS_CLI_OFS" in SRC and SRC.find("apply_port()", i_cli) > i_cli
+      and 'def __init__(self, ofs=""):' in SRC,
+      "")
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("\n%s (%d ran)" % ("%d CHECK(S) FAILED" % fails if fails else "all checks passed", ran))
 sys.stdout.flush()

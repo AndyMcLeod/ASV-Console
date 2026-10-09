@@ -272,7 +272,9 @@ station predictions and a model (`stream_fusion.py`) rather than read from one m
   not a straight line. Between stations the vectors are weighted by inverse distance
   squared, out to 3 km.
 - **A gridded model** gives the pattern away from the stations: the NOAA **Operational
-  Forecast System** the port names (`dbofs` by default, `--currents-ofs` otherwise), or a
+  Forecast System** the port names (where it names none, the one given with `--currents-ofs`;
+  with neither, no model: the stations and PacIOOS carry the stream, and the card says no model
+  is named, never the previous port's model, which a blank port kept until 2026-10-09), or a
   **PacIOOS** regional ocean model at Honolulu, Samoa, the main Hawaiian Islands and the
   western North Pacific. Where stations lie inside it, the model is **calibrated** to them
   by a gain and a time lag along each station's axis, and only where the fit is a fit.

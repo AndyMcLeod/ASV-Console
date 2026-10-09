@@ -383,7 +383,7 @@ c.push(TBL(["Field", "Value", "Drives"], [
   ["`id`", "stable key, derived from the name when absent", "What `--base` and the picker refer to"],
   ["`name`", "display name", "What the operator reads in the dropdown"],
   ["`lat` / `lon`", "decimal degrees", "The chart's opening view, and where the simulated vessel spawns"],
-  ["`ofs`", "optional NOAA Operational Forecast System id", "Which regional current model covers this base. A model is REGIONAL: the wrong one answers with an error rather than a current"],
+  ["`ofs`", "optional NOAA Operational Forecast System id", "Which regional current model covers this base. A model is REGIONAL: the wrong one answers with an error rather than a current. Left blank, the base gets the model named by --currents-ofs, or none - never the previous port's, which a blank port kept until 9 October 2026"],
   ["`note`", "free text", "Why this position and not another - siting, charted depth, known limits"],
 ], [1500, 3700, 4160]));
 c.push(SP());

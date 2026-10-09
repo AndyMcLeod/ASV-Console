@@ -512,7 +512,7 @@ try:
 
     A.currents.ensure_cycle_covering = no_cover
     try:
-        N = NoCover()
+        N = NoCover("dbofs")                     # NAMES its model: a monitor has no implicit dbofs since 2026-10-09
         N.disable_sources()                      # the OFS path's refusal (see C above): New Castle has stations
         N.update_position(43.07, -70.71)
         said = until(lambda: "cover" in (N.snapshot().get("note") or ""), 3.0)
