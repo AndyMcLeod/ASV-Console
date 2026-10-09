@@ -297,7 +297,11 @@ so (it said `set`, and read as a second, disagreeing **Set / crab** row: that on
 the wind's and the sea's leeway in it). It is a different *shape* from the
 wind needle on purpose — wind is named by where it blows **from**, a current's set is
 where it **goes**, and two needles differing only in color is exactly how one gets read
-as the other. A projected (estimated) current draws **hollow** and keeps its `~`.
+as the other. A projected (estimated) current draws **hollow** and keeps its `~`. And the
+**Set / crab** row's own value is on the rose too: a shorter **amber arrow** out from the hub,
+with `set N.NN kn DDD°` beneath (in the current line's place when there is none). It is always
+there - the vessel reports its set every tick - where the current needs a forecast: none at a
+port whose entry names no model (`ofs`), nor while NOAA's model server is down.
 
 ## Run
 

@@ -81,10 +81,10 @@ const world = { $: (s) => els[s], waterTrust, WATER_STALE_S, document: { activeE
 // TEXT, and ui_tooltips owns the hover behavior itself.
 function setTip(el, text){ if(el) el.title = text; }
 const page = eval("(function(){ \"use strict\"; const $ = world.$, waterTrust = world.waterTrust, WATER_STALE_S = world.WATER_STALE_S,"
-  + " document = world.document, fmtDist = world.fmtDist; let roseEnv = null, roseCur = null;\n"
+  + " document = world.document, fmtDist = world.fmtDist; let roseEnv = null, roseCur = null, roseSet = null;\n"   // (roseSet: the rose's SET arrow, 2026-10-08)
   + decl("^const CURRENT_AGE_SHOW_S = [^;]*;") + "\n"
   + ["fmtAge", "monitorErrTxt", "dirTxt", "updateWaterUI", "updateEnvUI", "currentBasisTxt", "updateCurrentUI"].map(grab).join("\n")
-  + "\nreturn { fmtAge, updateWaterUI, updateEnvUI, updateCurrentUI, CURRENT_AGE_SHOW_S }; })()");
+  + "\nreturn { fmtAge, updateWaterUI, updateEnvUI, updateCurrentUI, CURRENT_AGE_SHOW_S, roseSet: () => roseSet }; })()");
 
 const station = (extra) => Object.assign({ ok: true, offset_m: 0.19, datum: "MLLW", method: "idw3", data_kind: "observed",
   name: "Eastport", source: "station", stations: [{ name: "Eastport", dist_km: 1.2, offset_m: 0.19 }], monitor_error: null }, extra);
@@ -193,6 +193,19 @@ check("8. the SET row says when it is the tidal-stream FORECAST the console fill
             && /leeway is not in it/.test(setFc.tip)
             && /^1\.75 kn @ /.test(setOwn.row) && !/forecast/.test(setOwn.row) && /The set the vessel reports/.test(setOwn.tip),
       () => "forecast row '" + setFc.row + "'; own row '" + setOwn.row + "'");
+
+// 9. THE ROSE'S SET IS THE SET ROW'S (Andy, 2026-10-08: "the set arrow on the compass rose is gone. bring it back",
+//    then "Set and current both"). The chart rose draws the vessel's SET as its own arrow beside the current's, and it
+//    is fed from the very frame and fields the SET row is written from - so the two cannot disagree, which is what the
+//    rose's old "set" (really the current forecast) did. Where the console filled in the forecast, it carries that too.
+page.updateEnvUI(env(), { env_set_kn: 1.75, env_set_deg: 272 });
+const rsOwn = page.roseSet();
+page.updateEnvUI(env(), { env_set_kn: 1.2, env_set_deg: 45, env_set_src: "stream" });
+const rsFc = page.roseSet();
+check("9. the chart rose's SET arrow is fed the SET row's own value, frame by frame - and knows when it is the filled-in forecast",
+      () => rsOwn && rsOwn.kn === 1.75 && rsOwn.deg === 272 && rsOwn.src == null
+            && rsFc && rsFc.kn === 1.2 && rsFc.deg === 45 && rsFc.src === "stream",
+      () => "own " + JSON.stringify(rsOwn) + "; forecast " + JSON.stringify(rsFc));
 
 console.log(fails ? "\n" + fails + " CHECK(S) FAILED (" + ran + " ran)" : "\nall checks passed (" + ran + ")");
 process.exit(fails ? 1 : 0);

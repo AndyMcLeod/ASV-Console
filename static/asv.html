@@ -6511,8 +6511,9 @@ const ROSE_R = 92;                                    // the ONE dimension; ever
 // WHERE THE READINGS HANG BELOW THE HUB, in R: the wind's speed, its direction, the current's line (each the TOP of
 // its text). Below the "S" (Andy, 2026-10-08: "The south 'S' in the compass rose is being covered by the wind speed
 // and set notice. Move that down"): the letter is centered at 1.20 R, 0.24 R high, and the speed hung from 1.02 R.
-// roseCentre's clamp reads the same table, so the drawn extent and the clamp cannot part.
-const ROSE_READ = [1.40, 1.76, 2.06];
+// roseCentre's clamp reads the same table, so the drawn extent and the clamp cannot part. The fourth is the vessel's
+// SET (2026-10-08, beside the current's line).
+const ROSE_READ = [1.40, 1.76, 2.06, 2.36];
 // Ring + lettering ink (Andy, 2026-08-10: "make the rings and lettering black"). Kept as
 // named constants so the two are changed together and neither drifts into a literal.
 const ROSE_INK = "rgba(8,14,20,0.92)";                // rings, ticks, cardinal letters
@@ -6521,13 +6522,14 @@ let rosePos = lsGet(ROSE_KEY, null);                  // {x,y} chart-local cente
 let roseDrag = null;                                  // {dx,dy} grab offset while dragging
 let roseEnv = null;                                   // last env block seen (wind lives here)
 let roseCur = null;                                   // last `current` block (NOAA OFS forecast)
+let roseSet = null;                                   // the vessel's own SET {kn, deg, src} - the card's SET row (2026-10-08)
 function roseCentre(){
   const {w,h} = viewSize();
   // CLAMP THE DRAWN EXTENT, NOT THE RADIUS. The rose paints well outside R: the cardinal
   // letters sit at 1.20 R and the readings hang below them (ROSE_READ, the last 0.22 R tall).
   // Clamping to R alone let the wind's direction line - and then the current's - slide under
   // the bottom edge while the ring itself still looked correctly placed.
-  const below = ROSE_R*ROSE_READ[2] + ROSE_R*0.22, side = ROSE_R*1.34;
+  const below = ROSE_R*ROSE_READ[ROSE_READ.length - 1] + ROSE_R*0.22, side = ROSE_R*1.34;
   const p = rosePos || {x: w - (side + 14), y: h - (below + 16)};      // default: clear of the scale bar
   return {x: Math.max(side, Math.min(w - side, p.x)),
           y: Math.max(ROSE_R*1.30, Math.min(h - below, p.y))};
@@ -6724,6 +6726,30 @@ function drawWindRose(){
     ctx.fillStyle = fill; ctx.fill(); ctx.stroke();
     ctx.restore();
   }
+  // --- the SET ARROW (Andy, 2026-10-08: "the set arrow on the compass rose is gone. bring it back", then, offered
+  // the vessel's set, the current, or both: "Set and current both"). The SET the vessel reports - the card's SET row:
+  // the stream at her own position every tick plus the wind's and the sea's leeway - as an arrow of its own, AMBER,
+  // INSIDE the star from the hub, while the current rides the ring in sea-blue. It is always there: the current needs a
+  // forecast (none at a port that names no model, nor while NOAA's model server is down - both at Los Angeles that
+  // evening, so the rose had no arrow at all), the set is the vessel's own every tick. Where the two point the same way
+  // the set ends just short of where the current begins, so they line up rather than overlap. Drawn before the hub,
+  // which covers its tail.
+  const sk = (roseSet && roseSet.kn != null && roseSet.kn > 0.01) ? roseSet.kn : null;
+  const sdeg = (roseSet && roseSet.deg != null) ? roseSet.deg : null;
+  if(sk != null && sdeg != null){
+    ctx.save(); ctx.rotate(sdeg * Math.PI/180);        // a set IS the toward-direction
+    const fill = "rgba(232,150,30,0.95)", line = "rgba(110,62,8,0.95)";
+    const tip = R*0.56, tail = R*0.10, hw = R*0.075, hl = R*0.17;
+    ctx.beginPath();                                   // shaft
+    ctx.moveTo(-R*0.030, -tail); ctx.lineTo(R*0.030, -tail);
+    ctx.lineTo(R*0.030, -(tip-hl)); ctx.lineTo(-R*0.030, -(tip-hl)); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.lineWidth = R*0.018; ctx.strokeStyle = line; ctx.stroke();
+    ctx.beginPath();                                   // head
+    ctx.moveTo(0, -tip); ctx.lineTo(hw, -(tip-hl)); ctx.lineTo(-hw, -(tip-hl)); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   // --- hub + the reading -----------------------------------------------------
   ctx.beginPath(); ctx.arc(0,0, R*0.13, 0, 2*Math.PI);
   ctx.fillStyle = "rgba(10,20,28,0.90)"; ctx.fill();
@@ -6757,6 +6783,18 @@ function drawWindRose(){
     ctx.fillStyle = cproj ? "rgba(120,96,20,0.95)" : "rgba(12,74,120,0.95)";
     ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
     ctx.strokeText(ct, 0, R*ROSE_READ[2]); ctx.fillText(ct, 0, R*ROSE_READ[2]);
+  }
+  // ... and the SET's, below it, in its arrow's amber, worded as the card's SET row reads ("stream" where the link
+  // reports no set of its own and the console fills in the forecast - with_forecast_set). With no current line it
+  // takes that line's place rather than hanging under a gap.
+  if(sk != null && sdeg != null){
+    const stx = "set " + sk.toFixed(2) + " kn " + String(Math.round(sdeg)).padStart(3,"0") + "°"
+              + (roseSet.src === "stream" ? " (stream)" : "");
+    const sy = R*ROSE_READ[(cs != null && cset != null) ? 3 : 2];
+    ctx.font = "600 " + (R*0.20).toFixed(1) + "px Consolas,monospace";
+    ctx.fillStyle = "rgba(140,80,10,0.95)";
+    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = R*0.070;
+    ctx.strokeText(stx, 0, sy); ctx.fillText(stx, 0, sy);
   }
   ctx.restore();
 }
@@ -17338,6 +17376,7 @@ $("#sp_water").onchange = ()=>{
 function dirTxt(d){ return d==null ? "" : Math.round(d)+"°"; }
 function updateEnvUI(env, st){
   roseEnv = env;                                  // the chart's wind rose reads the same block
+  roseSet = {kn: st.env_set_kn, deg: st.env_set_deg, src: st.env_set_src};   // ... and the SET row's value (2026-10-08)
   const simOff = env.source==="off";
   const w = env.wind, sea = env.sea;
   // HOW OLD (review #13): buoys report hourly or so, so the age is shown rather than judged - the oldest
