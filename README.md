@@ -416,8 +416,10 @@ the boat, and a gridded forecast model away from them — so the page is the sou
 more of the reading: the heaviest station's NOAA predictions page, at the depth bin the
 console read (`noaacurrents/predictions?id=DEB2102_21`), or the OFS model's own page
 (`ofs/dbofs/dbofs.html`) where the model carries more. Hover the pill to see which, and its
-share. A PacIOOS model has no NOAA page, so a reading from it alone offers no pill — and
-neither does no reading at all.
+share. Where a PacIOOS model carries it, PacIOOS's own dataset page opens instead. The pill
+always shows: with no current data at the boat it is **ghosted**, still opening the page of
+the model the port names (the console has no reading from it right now), or nothing when the
+port names none (2026-10-09).
 
 Independently of any window, the console **prints which gauge the correction came from and
 what it is made of** whenever the station changes — that correction is applied to charted

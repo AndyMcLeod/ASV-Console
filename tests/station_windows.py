@@ -479,24 +479,33 @@ check("30. where the MODEL carries more (80%), or is the reading alone, the page
       lambda: u30 == "https://tidesandcurrents.noaa.gov/ofs/dbofs/dbofs.html" and "DBOFS" in what30
       and "80%" in what30 and u30b == u30,
       lambda: "%s | %s | alone %s" % (u30, what30, u30b))
-pac = dict(FUSED, w_stations=0.2, model={"label": "PacIOOS Oahu"})
-u31, _ = C.current_page(pac, "dbofs")
-u31b, w31b = C.current_page(dict(pac, w_stations=0.0, stations=[]), "dbofs")
-check("31. a PacIOOS model has no NOAA page: the stations' page if they carry any of the reading, else NONE - never "
-      "the OFS's page for water the OFS did not read",
-      lambda: u31 == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=DEB2102_21"
-      and u31b is None and w31b is None,
-      lambda: "%s | alone %s" % (u31, u31b))
-check("32. no reading -> no page (a refusal, an empty snapshot, None); a station with no bin gets its id alone; an id "
+pac = dict(FUSED, w_stations=0.2, model={"label": "PacIOOS Oahu South Shore"})
+u31, w31 = C.current_page(pac, "dbofs")
+u31b, _ = C.current_page(dict(pac, w_stations=0.6), "dbofs")
+u31c, w31c = C.current_page(dict(pac, model={"label": "another model"}, w_stations=0.0, stations=[]), "dbofs")
+check("31. where a PacIOOS model carries more of the reading, its own dataset page (it has no NOAA page; since "
+      "2026-10-09); the stations' where they carry more; a model that is neither the port's OFS nor PacIOOS gets NO page "
+      "- never the OFS's page for water the OFS did not read",
+      lambda: u31 == "https://pae-paha.pacioos.hawaii.edu/erddap/griddap/roms_hiomsg.html" and "PacIOOS" in w31
+      and u31b == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=DEB2102_21"
+      and u31c is None and w31c is None,
+      lambda: "%s (%s) | stations carry more %s | another model %s" % (u31, w31, u31b, u31c))
+check("32. no reading and no model named -> no page (a refusal, an empty snapshot, None); a station with no bin gets its id alone; an id "
       "or model name cannot carry anything but letters and digits into the URL",
-      lambda: C.current_page({"ok": False, "source": "dbofs", "note": "no cycle"}, "dbofs") == (None, None)
-      and C.current_page({}, "dbofs") == (None, None) and C.current_page(None, "dbofs") == (None, None)
+      lambda: C.current_page({"ok": False, "source": "none", "note": "no cycle"}, "") == (None, None)
+      and C.current_page({}, "") == (None, None) and C.current_page(None, None) == (None, None)
       and C.current_page(dict(FUSED, stations=[("ACT4101", "X", 10, 1.0)]), "dbofs")[0]
       == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=ACT4101"
       and C.current_page(dict(FUSED, stations=[("A/../b?c=1", "X", 10, 1.0, "2&x")]), "dbofs")[0]
       == "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=Abc1"
       and C.current_page({"ok": True, "source": "dbofs"}, "DB/OFS")[0]
       == "https://tidesandcurrents.noaa.gov/ofs/dbofs/dbofs.html")
+u32b, w32b = C.current_page({"ok": False, "source": "wcofs",
+                             "note": "no NOAA current-prediction station within 3 km; no cycle cached yet"}, "wcofs")
+check("32b. NO READING, but the port names a model: that model's page, said to have no reading from it now - the pill "
+      "shows it GHOSTED (Andy, 2026-10-09: 'show the pill but ghost it if theres no available data')",
+      lambda: u32b == "https://tidesandcurrents.noaa.gov/ofs/wcofs/wcofs.html" and "no reading" in (w32b or ""),
+      lambda: "%s | %s" % (u32b, w32b))
 _m = C.CurrentsMonitor("wcofs")
 _m._last = {"ok": True, "source": "wcofs", "speed_kn": 0.3, "set_deg": 120.0}
 _snap = _m.snapshot()
@@ -511,6 +520,47 @@ check("34. the page offers it as a THIRD entry in the one registry - its own pil
       and '$("#curWin").onclick  = ()=> openStationWindow("current");' in HTML
       and "on[k] !== false" in HTML and "w.page_for ||" in HTML,
       "one mechanism re-points all three tabs; a second one would drift")
+
+# 34b. THE PILL ITSELF, run: the page's own STATION_WINDOWS, stationWinAlive and updateStationWinPills under node, three
+# readings - live, no data with a model page, no data and nothing to open. The Tide pill, with no page, stays hidden.
+import json as _json, subprocess as _sp
+PILL_JS = r'''
+const fs = require("fs"); const H = fs.readFileSync(process.argv[1], "utf8");
+function grab(name){ const i = H.indexOf("function " + name + "("); if(i < 0) throw new Error(name);
+  let k = H.indexOf("{", i), d = 0; for(;;){ const c = H[k]; if(c === "{") d++; else if(c === "}"){ d--; if(!d) break; } k++; }
+  return H.slice(i, k + 1); }
+const reg = H.match(/const STATION_WINDOWS = \{[\s\S]*?\n\};/)[0];
+const mk = () => ({ style: {}, title: "" });
+const els = { "#tideWin": mk(), "#wxWin": mk(), "#curWin": mk() };
+let S = {}; const $ = (s) => els[s]; const fmtDist = (m) => Math.round(m / 1000) + " km";
+eval(reg.replace("const STATION_WINDOWS", "var STATION_WINDOWS") + "\n" + grab("stationWinAlive") + "\n" + grab("updateStationWinPills"));
+function run(cur){ S = { current: cur, water: {}, env: {} };
+  for (const k of Object.keys(STATION_WINDOWS)) STATION_WINDOWS[k].want = STATION_WINDOWS[k].src().page || null;
+  updateStationWinPills(); const e = els["#curWin"];
+  return { display: e.style.display, opacity: e.style.opacity || "", cursor: e.style.cursor || "", title: e.title,
+           tide: els["#tideWin"].style.display }; }
+console.log(JSON.stringify({
+  live: run({ ok: true, page: "https://x/predictions?id=A_1", page_for: "NOAA current predictions at A" }),
+  ghostModel: run({ ok: false, note: "no cycle cached yet", page: "https://x/ofs/wcofs/wcofs.html",
+                    page_for: "the WCOFS forecast model - no reading from it right now" }),
+  ghostNone: run({ ok: false, note: "no forecast model named for this port", page: null }) }));
+'''
+_r = _sp.run(["node", "-e", PILL_JS, os.path.join(APP, "static", "asv.html")], capture_output=True, text=True,
+             encoding="utf-8", errors="replace", timeout=120)
+try:
+    PILL = _json.loads(_r.stdout.strip().splitlines()[-1])
+except Exception:
+    PILL = {"error": (_r.stderr or _r.stdout)[-300:]}
+check("34b. the Current pill always shows: live it is full strength and opens its page; with no data it is GHOSTED - "
+      "still opening the named model's page, or opening nothing and saying so; the Tide pill with no page stays hidden",
+      lambda: PILL["live"]["display"] == "" and PILL["live"]["opacity"] == "" and PILL["live"]["cursor"] == "pointer"
+      and PILL["ghostModel"]["display"] == "" and PILL["ghostModel"]["opacity"] == "0.45"
+      and PILL["ghostModel"]["cursor"] == "pointer" and "No current data at the boat" in PILL["ghostModel"]["title"]
+      and "WCOFS" in PILL["ghostModel"]["title"]
+      and PILL["ghostNone"]["display"] == "" and PILL["ghostNone"]["opacity"] == "0.45"
+      and PILL["ghostNone"]["cursor"] == "default" and "nothing to open" in PILL["ghostNone"]["title"]
+      and PILL["live"]["tide"] == "none",
+      lambda: _json.dumps(PILL)[:400])
 
 print("%d checks, %d failed" % (ran, fails))
 sys.exit(1 if fails else 0)

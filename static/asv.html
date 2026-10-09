@@ -14065,7 +14065,7 @@ const STATION_WINDOWS = {
   // prediction station at the bin it read, or the OFS model's page where the model carries more - and `page_for`
   // says which, in the pill's tooltip. No page (no reading, or a PacIOOS window alone) offers no pill.
   current: {name: "asvCurrentWindow", pill: "#curWin",  label: "Current",
-            src: () => (S.current || {}), what: "current source"},
+            src: () => (S.current || {}), what: "current source", always: true},   // ghosted with no data (2026-10-09)
 };
 function stationWinAlive(k){
   const w = STATION_WINDOWS[k].w;
@@ -14099,10 +14099,21 @@ function updateStationWinPills(){
     const cfg = STATION_WINDOWS[k], el = $(cfg.pill);
     if(!el) continue;
     // `!== false`: the current has no --no-*-window flag, so a kind the server does not publish is on (2026-10-09)
-    const offer = !!(on[k] !== false && cfg.want && !stationWinAlive(k));
+    // `always` - the current (Andy, 2026-10-09: "show the pill but ghost it if theres no available data"): shown
+    // whether or not there is a page, GHOSTED while the reading has no data. A ghosted pill still opens the model the
+    // port names (the server's page for it says there is no reading from it now); with none named it opens nothing.
+    const offer = !!(on[k] !== false && (cfg.want || cfg.always) && !stationWinAlive(k));
     el.style.display = offer ? "" : "none";
     if(offer){
       const w = cfg.src();
+      const ghost = !!cfg.always && !w.ok;
+      el.style.opacity = ghost ? "0.45" : "";
+      el.style.cursor = cfg.want ? "pointer" : "default";
+      if(ghost){
+        el.title = "No " + cfg.label.toLowerCase() + " data at the boat right now" + (w.note ? " (" + w.note + ")" : "") + ". "
+          + (cfg.want ? "Opens the window for " + (w.page_for || "the " + cfg.what) + "." : "There is nothing to open here.");
+        continue;
+      }
       el.title = "Open the " + cfg.label.toLowerCase() + " window for "
         + (w.page_for || w.name || w.station || "the nearest " + cfg.what)
         // ⚠ THROUGH fmtDist, WHICH THE PILL DRIVES. The pill's tooltip names

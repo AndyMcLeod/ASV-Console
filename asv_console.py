@@ -3508,10 +3508,12 @@ DENSITY = WaterDensity()
 # used in the model"). The reading is a BLEND (stream_fusion): NOAA's tidal-current PREDICTIONS at the stations
 # round the boat, and a gridded model away from them, weighted by distance to the nearest station. The page is the
 # source carrying MORE of the number: the heaviest-weighted prediction station, at the BIN the fusion read (a station
-# predicts at several depths and the page shows one), or the OFS's own page where the model carries more. A PacIOOS
-# window has no NOAA page, so it never gets one - the stations' page if they carry any of it, else none: no page is
-# better than a page that is not the data. Nothing is configured: the id comes off the reading, so the page follows
-# the boat the way the tide's and the weather's do (STATION_WINDOWS in the page re-points one tab).
+# predicts at several depths and the page shows one), or the OFS's own page where the model carries more, or - since
+# 2026-10-09 - PacIOOS's own dataset page where a PacIOOS model does (it has no NOAA page). A model that is neither
+# gets none: no page is better than a page that is not the data. WITH NO READING AT ALL (Andy, 2026-10-09: "show the
+# pill but ghost it if theres no available data") a port that names a model still gets that model's page, said to
+# have no reading from it now, and the page shows the pill GHOSTED. Nothing is configured: the id comes off the
+# reading, so the page follows the boat the way the tide's and the weather's do (STATION_WINDOWS re-points one tab).
 COOPS_CURRENT_PAGE_URL = "https://tidesandcurrents.noaa.gov/noaacurrents/predictions?id=%s"
 OFS_PAGE_URL = "https://tidesandcurrents.noaa.gov/ofs/%s/%s.html"
 
@@ -3522,16 +3524,22 @@ def current_page(snap, ofs):
     `snap` is CurrentsMonitor's reading: the fused one carries `stations` [(id, name, dist_m, share, bin)],
     `w_stations` and `model` {label}; the OFS-alone one carries only `source`. `ofs` is the monitor's model id."""
     snap = snap or {}
+    ofs = re.sub(r"[^a-z0-9]", "", str(ofs or "").lower())
     if not snap.get("ok"):
+        # no reading: the named model's page, ghosted by the page (2026-10-09) - or nothing, with no model named
+        if ofs:
+            return (OFS_PAGE_URL % (ofs, ofs), "the %s forecast model - no reading from it right now" % ofs.upper())
         return None, None
     used = [s for s in (snap.get("stations") or []) if len(s) >= 4 and str(s[0] or "").strip()]
     w = snap.get("w_stations")
     if w is None:                                   # the OFS-alone reading: the model's entirely
         w = 1.0 if used else 0.0
     label = str((snap.get("model") or {}).get("label") or snap.get("source") or "")
-    ofs = re.sub(r"[^a-z0-9]", "", str(ofs or "").lower())
     model_page = bool(ofs) and label.lower().startswith(ofs) and (1.0 - w) > 0.005
-    if used and w > 0.005 and (w >= 0.5 or not model_page):
+    # a PacIOOS model carrying part of it: its own ERDDAP dataset page (verified 2026-10-09, all four answer)
+    pac = next((m for m in stream_fusion.ERDDAP_MODELS if m["label"] in label), None) \
+        if not model_page and (1.0 - w) > 0.005 else None
+    if used and w > 0.005 and (w >= 0.5 or not (model_page or pac)):
         top = max(used, key=lambda s: s[3] or 0)
         sid = re.sub(r"[^A-Za-z0-9]", "", str(top[0]))
         b = top[4] if len(top) > 4 else None
@@ -3543,6 +3551,9 @@ def current_page(snap, ofs):
     if model_page:
         return (OFS_PAGE_URL % (ofs, ofs),
                 "the %s forecast model - it carries %d%% of the reading" % (ofs.upper(), round(100 * (1.0 - w))))
+    if pac:
+        return (pac["url"] + ".html",
+                "the %s model - it carries %d%% of the reading" % (pac["label"], round(100 * (1.0 - w))))
     return None, None
 
 
